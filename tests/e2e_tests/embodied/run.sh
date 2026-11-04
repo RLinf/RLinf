@@ -18,6 +18,8 @@ fi
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+# setup_sim_env is defined in sim_env.sh.
+source "${REPO_PATH}/examples/embodiment/sim_env.sh"
 
 # A "mock" config runs a real-world env against faked vendor SDKs, so the
 # hardware paths run without a robot. The fakes install themselves through
@@ -29,17 +31,7 @@ if [[ "${CONFIG}" == *mock* ]]; then
     echo "[mock] faking the vendor SDKs; no robot is required"
 fi
 
-# Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
-# Only required when running the behavior experiment.
-export OMNIGIBSON_DATA_PATH=$OMNIGIBSON_DATA_PATH
-export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/behavior-1k-assets/}
-export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
-export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
-export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
-# Base path to Isaac Sim, only required when running the behavior experiment.
-export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
-export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
-export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
+setup_sim_env
 
 # Libero variant: standard, pro, plus
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
