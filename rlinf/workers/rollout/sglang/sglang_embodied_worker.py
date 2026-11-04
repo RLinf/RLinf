@@ -154,7 +154,13 @@ class SGLangEmbodiedWorker(Worker):
             else:
                 merged[key] = values
         reset = any(b.get("final_obs") is not None for b in obs_batches)
-        return {"obs": merged, "reset": reset}
+        return {
+            "obs": merged,
+            "reset": reset,
+            "eval_epoch_done": any(
+                bool(batch.get("eval_epoch_done")) for batch in obs_batches
+            ),
+        }
 
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
@@ -207,6 +213,7 @@ class SGLangEmbodiedWorker(Worker):
             desc="Evaluating Rollout Epochs",
             disable=(self._rank != 0),
         ):
+            eval_epoch_done = False
             for _ in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.num_pipeline_stages):
                     env_output = await self.recv_from(
@@ -219,6 +226,9 @@ class SGLangEmbodiedWorker(Worker):
                         merge_fn=self._merge_obs_batches,
                         infer_batch_size_fn=self._infer_env_batch_size,
                     ).async_wait()
+                    if env_output.get("eval_epoch_done"):
+                        eval_epoch_done = True
+                        break
                     obs = {
                         **env_output["obs"],
                         "_rlinf_stage_id": stage_id,
@@ -236,3 +246,6 @@ class SGLangEmbodiedWorker(Worker):
                         async_op=True,
                         batch_size=self.eval_batch_size,
                     )
+
+                if eval_epoch_done:
+                    break
