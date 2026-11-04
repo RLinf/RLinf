@@ -85,6 +85,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-ogbench
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
@@ -527,6 +528,15 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: OGBench QAM
+##################################################################################################
+FROM embodied-common-image AS embodied-ogbench-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv ogbench --env ogbench
+
+RUN echo "source ${UV_PATH}/ogbench/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

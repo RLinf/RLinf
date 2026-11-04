@@ -262,7 +262,9 @@ class OfflineRunner:
             _step = self.global_step
             next_step = _step + 1
             if not worker_step_synced:
-                self.actor.set_global_step(_step)
+                # The remote setter must finish before run_training starts;
+                # otherwise it can reset the worker's step after an update.
+                self.actor.set_global_step(_step).wait()
 
             with self.timer("step"):
                 actor_training_handle: Handle = self.actor.run_training()

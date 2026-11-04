@@ -177,6 +177,12 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              - 'rlinf/models/embodiment/qam_policy.py'
+              - 'rlinf/workers/actor/qam_policy_worker.py'
+              - 'rlinf/runners/qam_runner.py'
+              - 'examples/embodiment/train_qam.py'
+              - 'examples/embodiment/config/ogbench_qam_antmaze.yaml'
+              - 'tests/parity_tests/test_qam_reference.py'
               - 'rlinf/robotics/**'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay
