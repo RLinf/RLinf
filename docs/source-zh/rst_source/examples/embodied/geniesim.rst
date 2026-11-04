@@ -10,14 +10,14 @@
 
    Genie Sim 系统概览（图片来源：`GenieSim <https://github.com/AgibotTech/genie_sim>`__）。
 
-本项目是 `GenieSim <https://github.com/AgibotTech/genie_sim>`__ 官方基于 RLinf 的后训练项目，支持视觉语言动作（VLA）模型的训练与评测。Genie Sim 是智元机器人推出的一站式具身智能仿真平台，集成场景重建、资产生成、数据采集、自动评测、模型后训练功能，为具身智能模型的训练、验证与迭代提供统一的仿真工具链。任务涵盖指令理解、空间理解和操作技能，通过多样化的物体、场景与指令组合，支持模型泛化能力的研究。项目支持使用 PPO 和 GRPO 微调 VLA 模型，提供单任务与多任务训练流程，提升双臂操作能力。
+本文档介绍 `GenieSim <https://github.com/AgibotTech/genie_sim>`__ 官方的后训练流程，用 RLinf 训练和评测视觉语言动作（VLA）模型。Genie Sim 是智元机器人的具身智能仿真平台，把场景重建、资产生成、数据采集、自动评测和模型后训练放在同一套工具链里，用来训练、验证和迭代具身模型。任务覆盖指令理解、空间理解和操作技能。物体、场景和指令都会变化，用来看模型能不能泛化。RLinf 可以用 PPO 和 GRPO 微调这些模型，单任务和多任务都能训，目标是提高双臂操作能力。
 
-GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿真节点使用 NVIDIA RTX 系列显卡。
+GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是训练节点，跑仿真的是仿真节点。仿真节点用 NVIDIA RTX 系列显卡。
 
 概览
 ----------------------------------------
 
-通过 PPO 和 GRPO 提升自然语言引导的双臂操作能力。相较于 SFT 检查点，10 任务 PPO 将按颜色抓取方块的成功率从 71% 提升至 95%，按尺寸抓取方块从 60% 提升至 92%。
+用 PPO 和 GRPO 提高由自然语言引导的双臂操作。相对 SFT 检查点，10 任务 PPO 把按颜色抓方块的成功率从 71% 提到 95%，按尺寸抓方块从 60% 提到 92%。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -42,13 +42,13 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 
       两个 GPU 节点
 
-| **你将完成：** 安装 → 启动 GenieSim 服务 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 可连通的 GenieSim 服务 · 一个 VLA 检查点。
+| **操作顺序：** 安装 → 启动 GenieSim 服务 → 启动 ``run_embodiment.sh`` → 看 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一台能连上的 GenieSim 服务 · 一个 VLA 检查点。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-25 个任务覆盖指令理解、空间理解和操作技能，可通过下文的单任务或多任务配方开展训练。完整任务标识见文末 :ref:`任务附录 <geniesim-training-tasks>`。
+这 25 个任务覆盖指令理解、空间理解和操作技能，可以用下面的单任务或多任务配方来训练。全部任务名见文末 :ref:`任务附录 <geniesim-training-tasks>`。
 
 .. list-table::
    :header-rows: 1
@@ -70,7 +70,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-下文 G2 实验使用的 OpenPI |pi| 配置结合三路相机图像、双臂与夹爪状态，以及自然语言任务指令。:ref:`任务附录 <geniesim-training-tasks>` 按能力类别列出 25 个任务。
+下面的 G2 实验用的是 OpenPI |pi|。模型看到的是三路相机图像、双臂和夹爪的状态，以及一句自然语言任务指令。:ref:`任务附录 <geniesim-training-tasks>` 按能力把这 25 个任务分了类。
 
 .. list-table::
    :header-rows: 1
@@ -79,29 +79,29 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
    * - 字段
      - 规格
    * - 观测
-     - 三路 640×480 RGB 图像。输入模型前保持宽高比缩放并填充至 224×224。本体状态使用 14 个臂部关节位置和 2 个夹爪开合角度。
+     - 三路 640×480 的 RGB 图像。送进模型之前，按原来的宽高比缩放，再填充到 224×224。本体状态是 14 个手臂关节位置，外加 2 个夹爪开合角度。
    * - 动作
-     - 16 维连续动作：14 个臂部关节位置目标与 2 个夹爪目标，每次执行 10 步动作块，增量预测。
+     - 16 维连续动作：14 个手臂关节的目标位置，外加 2 个夹爪目标。模型预测的是增量，每次输出 10 步，组成一个动作块。
    * - 奖励
-     - 使用稀疏奖励，成功时奖励为 1，否则为 0。
+     - 仿真器维护一个 0 到 1 的任务完成度。能分成先后阶段的任务，完成度等于已完成阶段数除以总阶段数；分不成阶段的任务只有 0（没成功）和 1（成功）。每一步的奖励是这一步的完成度减去上一步的完成度。以 ``pick_block_color`` 为例，先对准、再抓起，两段各让完成度增加 0.5，所以各给 0.5 的奖励，一整局加起来是 1。
    * - 任务指令
-     - 使用 ``task_descriptions`` 中的完整自然语言任务指令。
+     - 使用 ``task_descriptions`` 里的完整自然语言指令。
 
-模型在 32 维输入与输出空间中使用 16 个有效状态和动作维度。仿真器状态中的额外通道会被掩码，模型输出则截取为机器人控制所需的 16 维。状态与动作的归一化使用检查点中的 ``assets/norm_stats.json``。
+模型的输入和输出都是 32 维，其中有效的状态和动作各占 16 维。仿真器状态里多出来的通道会被掩掉，模型输出也只保留机器人控制要用的那 16 维。状态和动作按检查点里的 ``assets/norm_stats.json`` 做归一化。
 
 安装
 ----------------------------------------
 
-在 RLinf 主机上执行以下源码准备命令，命令在容器外运行。
+先在训练节点上、任何容器之外，执行仓库的准备命令。
 
 .. include:: _setup_common.rst
    :end-before: 然后，使用下列两种方式之一准备依赖
 
-以下两种安装方式任选其一，都会安装 GenieSim ``v3.5.0`` 中的 ``rlinf-geniesim-client``，``install.sh`` 会自动克隆对应源码。如需使用已有的 GenieSim 源码，将 ``GENIESIM_PATH`` 设为其路径。前置依赖和 GPU 驱动要求见 :doc:`安装 </rst_source/start/installation>`。
+下面两种装法选一种。两种都会装上 GenieSim ``v3.5.0`` 里的 ``rlinf-geniesim-client``，``install.sh`` 会自动克隆对应源码。本机已经有 GenieSim 源码时，把 ``GENIESIM_PATH`` 指到那个目录。前置依赖和 GPU 驱动见 :doc:`安装 </rst_source/start/installation>`。
 
 **自定义环境**
 
-在 RLinf 主机的 RLinf 仓库根目录安装 OpenPI 与 GenieSim 客户端，并激活环境：
+在训练节点的仓库根目录安装 OpenPI 和 GenieSim 客户端，然后激活环境：
 
 .. code:: bash
 
@@ -111,7 +111,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 
 **Docker 镜像**
 
-在 RLinf 主机的 RLinf 仓库根目录构建镜像：
+在训练节点的仓库根目录构建镜像：
 
 .. code:: bash
 
@@ -120,9 +120,9 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
      --build-arg NO_MIRROR=1 \
      -t rlinf:embodied-geniesim .
 
-镜像提供基于 NVIDIA CUDA 12.8 的 OpenPI 训练环境和 GenieSim 客户端，连接 GenieSim 服务即可开展训练。
+镜像基于 NVIDIA CUDA 12.8，里面有 OpenPI 训练环境和 GenieSim 客户端。连上 GenieSim 服务就可以开始训练。
 
-仍在 RLinf 主机的 RLinf 仓库根目录，启动容器并挂载代码仓库：
+还是在训练节点的 RLinf 仓库根目录，启动容器并挂载仓库：
 
 .. code:: bash
 
@@ -134,7 +134,7 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
       --workdir /workspace/RLinf \
       rlinf:embodied-geniesim
 
-容器启动后位于 ``/workspace/RLinf``。在 RLinf 容器内激活 OpenPI：
+容器启动后位于 ``/workspace/RLinf``。在容器里激活 OpenPI：
 
 .. code:: bash
 
@@ -143,11 +143,11 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
 下载模型
 ----------------------------------------
 
-下载面向 GenieSim 的 OpenPI |pi| SFT 检查点 `RLinf-Pi05-GenieSim-G2-Instruction-SFT <https://huggingface.co/RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT>`__，作为 PPO 或 GRPO 训练的起点。
+下载 GenieSim 用的 OpenPI |pi| SFT 检查点 `RLinf-Pi05-GenieSim-G2-Instruction-SFT <https://huggingface.co/RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT>`__，作为 PPO 或 GRPO 的起点。
 
-该检查点使用 `GenieSim3.0-Dataset 的 instruction_and_robust 任务集 <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__ 中的 5,000 条轨迹进行 SFT，训练 45,000 步，action chunk 长度设为 10。
+这个检查点用 `GenieSim3.0-Dataset 的 instruction_and_robust 任务集 <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__ 里的 5,000 条轨迹做监督微调，训了 45,000 步，action chunk 长度是 10。
 
-在已激活的 OpenPI 环境中下载模型：Docker 用户在 RLinf 容器内的 ``/workspace/RLinf`` 执行，自定义环境用户在主机的 RLinf 仓库根目录执行。已有检查点时，将 ``GENIESIM_CHECKPOINT_PATH`` 设为当前环境可访问的检查点目录，然后继续“运行”部分。
+在已经激活的 OpenPI 环境里下载。用 Docker 时，在训练节点的 RLinf 容器内、``/workspace/RLinf`` 执行；用自定义环境时，在训练节点的 RLinf 仓库根目录执行。已经有检查点的话，把 ``GENIESIM_CHECKPOINT_PATH`` 设成当前环境能读到的目录，然后直接看「运行」。
 
 .. code:: bash
 
@@ -160,32 +160,32 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
    hf download RLinf/RLinf-Pi05-GenieSim-G2-Instruction-SFT \
       --local-dir "$GENIESIM_CHECKPOINT_PATH"
 
-示例将检查点保存到 RLinf 仓库下的目录；使用其他目录时，在下载前修改 ``GENIESIM_CHECKPOINT_PATH``。训练与评测均通过该变量读取模型路径，也可以直接在 YAML 中设置 RLinf 进程可访问的路径：
+示例把检查点放在 RLinf 仓库下面。要换目录，下载前改 ``GENIESIM_CHECKPOINT_PATH``。训练和评测都从这个变量读模型路径，也可以在 YAML 里直接写成 RLinf 进程能访问的路径：
 
 .. include:: _model_path.rst
 
 运行
 ----------------------------------------
 
-在仿真主机上，按照 `GenieSim post-training server 说明 <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__ 准备 ``geniesim_assets`` 并构建基于 Isaac Sim 6.0.1 的镜像。使用 GenieSim ``v3.5.0``，与已安装的客户端版本一致。
+在仿真节点上，按 `GenieSim post-training server 说明 <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__ 准备 ``geniesim_assets``，并构建基于 Isaac Sim 6.0.1 的镜像。GenieSim 用 ``v3.5.0``，和已经装好的客户端是同一个版本。
 
 **启动仿真 server**
 
-在仿真主机上、容器外的 GenieSim 仓库根目录，启动并进入 server 容器：
+在仿真节点上、容器外的 GenieSim 仓库根目录，启动并进入 server 容器：
 
 .. code:: bash
 
    geniesim docker --profile post-train up --headless
    geniesim docker --profile post-train into
 
-在 ``post_train_server`` 容器内的 ``/workspace`` 目录，启动 server 并查看状态。下方数量、起始端口和 GPU 均为示例，请按所用 RLinf 配置调整：
+进入 ``post_train_server`` 容器后，在 ``/workspace`` 启动 server 并查看状态。下面的数量、起始端口和 GPU 都是例子，按实际的 RLinf 配置改：
 
 .. code:: bash
 
    geniesim post-train server start --count 2 --base-port 5601 --devices 0
    geniesim post-train server status --count 2 --base-port 5601
 
-示例在 GPU 0 上启动单任务配方所需的两个 server。各配方所需的 server 和 GPU 如下，仿真 GPU 为 RTX 4090。``--devices`` 会把连续端口分配到同一张 GPU，与配方中每个 env 进程负责的一组端点相对应：
+这个例子在 GPU 0 上启动单任务配方需要的两个 server。各配方要多少 server、多少 GPU，见下表。仿真 GPU 是 RTX 4090。``--devices`` 把连续的端口分到同一张 GPU 上，对应配方里每个 env 进程负责的那一组端点：
 
 .. list-table::
    :header-rows: 1
@@ -227,24 +227,24 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
      - 4
      - ``0,1,2,3``
 
-启动各配方的训练 server 时，``--count`` 取表中的 server 数，``--base-port`` 为 5601，``--devices`` 取表中的值。
+启动某个配方的训练 server 时，``--count`` 填表里的 server 数，``--base-port`` 用 5601，``--devices`` 填表里的值。
 
-在仿真主机另开终端，于容器外的任意目录查看主机 IP 和监听中的 TCP 端口：
+在仿真节点上另开一个终端，不要进容器，在任意目录查看这台机器的 IP 和正在监听的 TCP 端口：
 
 .. code:: bash
 
    hostname -I
    ss -ltn
 
-将下文的 ``sim-host`` 替换为 RLinf 主机可访问的仿真主机 IP，并使用 server 实际监听的端口。详细参数见 `GenieSim server 说明 <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__。
+把下文的 ``sim-host`` 换成训练节点能够访问的仿真节点 IP，端口用 server 实际在听的端口。详细参数见 `GenieSim server 说明 <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__。
 
-以下 RLinf 命令均在已激活的 OpenPI 环境和 RLinf 仓库根目录执行：Docker 用户使用 RLinf 容器内的 ``/workspace/RLinf``，自定义环境用户使用主机上的仓库目录。检查点路径沿用上文设置的 ``GENIESIM_CHECKPOINT_PATH``。
+下面的 RLinf 命令都在训练节点上、已激活的 OpenPI 环境里、RLinf 仓库根目录下执行。Docker 用户用容器内的 ``/workspace/RLinf``，自定义环境用训练节点上的仓库目录。检查点路径沿用上面设好的 ``GENIESIM_CHECKPOINT_PATH``。
 
 .. note::
 
-   在 RTX 4090 上，使用默认渲染宽度 640 时，建议每张 GPU 最多运行 42 个并行环境；将 ``env.train.override_cfg.render_width`` 设为 360 时，建议每张 GPU 最多运行 64 个。同一张 GPU 上的 server 共用这一额度。
+   在 RTX 4090 上，渲染宽度用默认的 640 时，建议每张 GPU 最多跑 42 个并行环境；把 ``env.train.override_cfg.render_width`` 设成 360 时，建议每张 GPU 最多跑 64 个。同一张 GPU 上的几个 server 合起来不能超过这个数。
 
-   ``env.train.override_cfg.images_at_chunk_end_only`` 默认开启。开启后，RLinf 与仿真端以整个 action chunk 为单位交互，并只渲染该 chunk 最后一帧的图像。
+   ``env.train.override_cfg.images_at_chunk_end_only`` 默认是开的。打开之后，RLinf 和仿真器按整个 action chunk 交互，并且只渲染这个 chunk 的最后一帧。
 
 **训练**
 
@@ -255,20 +255,20 @@ GenieSim 仿真与 RLinf 训练分别运行在两个 GPU 节点上，其中仿�
    export GENIESIM_HOST_0=sim-host
    bash examples/embodiment/run_embodiment.sh geniesim_pick_block_color_ppo_openpi_pi05
 
-GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.override_cfg.addresses`` 列出所需的 server 端点；使用其他主机或端口时，修改该列表。
+GRPO 和多任务配方列在 `可视化与结果`_。每个配方的 ``env.train.override_cfg.addresses`` 写着要用的 server 地址。换地址或端口时，改这个列表。
 
-训练默认关闭验证。将 ``runner.val_check_interval`` 设为正数启用后，还需将 ``GENIESIM_EVAL_HOST`` 设为验证用仿真主机，并按 ``env.eval.override_cfg.addresses`` 列出的端口额外启动与训练数量相同的 server。
+训练时默认不做验证。把 ``runner.val_check_interval`` 设成正数就会打开。打开之后，还要把 ``GENIESIM_EVAL_HOST`` 设成验证用的仿真节点，并按 ``env.eval.override_cfg.addresses`` 里的端口再启动一批 server，数量和训练 server 相同。
 
 **评测**
 
-设置仿真 server 的地址并运行独立评测。下方地址仅为示例，请替换为实际使用的 IP 和端口：
+先设好仿真 server 的地址，再跑单独的评测。下面的地址只是例子，换成实际的 IP 和端口：
 
 .. code:: bash
 
    export GENIESIM_EVAL_SERVER_ADDR=tcp://sim-host:5601
    bash evaluations/run_eval.sh geniesim_pick_block_color_eval
 
-``GENIESIM_EVAL_SERVER_ADDR`` 对应 ``evaluations/geniesim/geniesim_pick_block_color_eval.yaml`` 中的 ``env.eval.override_cfg.address``，变量值应包含实际使用的端口。更多选项见 :doc:`评测 CLI <../../evaluations/reference/cli>`。
+``GENIESIM_EVAL_SERVER_ADDR`` 对应 ``evaluations/geniesim/geniesim_pick_block_color_eval.yaml`` 里的 ``env.eval.override_cfg.address``，值里要带上实际端口。更多选项见 :doc:`评测 CLI <../../evaluations/reference/cli>`。
 
 可视化与结果
 ----------------------------------------
@@ -279,10 +279,10 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
 
    tensorboard --logdir ../results --port 6006
 
-最关键的信号是 ``env/success_once``。全部可记录指标见
+最值得看的指标是 ``env/success_once``。全部会记下来的指标见
 :doc:`训练指标 <../../reference/metrics>`。
 
-需要 rollout 视频时，在 env 配置中开启：
+要保存 rollout 视频时，在 env 配置里打开：
 
 .. code:: yaml
 
@@ -291,9 +291,9 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
      info_on_video: True
      video_base_dir: ${runner.logger.log_path}/video/train
 
-以下实验使用 Agibot G2 双臂轮式机器人，GenieSim 仿真运行在 RTX 4090 上。
+下面这些实验用的是智元 G2 双臂轮式机器人，GenieSim 跑在 RTX 4090 上。
 
-下表比较 SFT 初始检查点、单任务 PPO 与 GRPO，以及分别使用 4、6、10 个任务混训的 PPO 模型，所有检查点采用统一评测设置。
+表里比较的是 SFT 起点、单任务 PPO、单任务 GRPO，以及分别用 4 个、6 个、10 个任务混在一起训练的 PPO。所有检查点用同一套评测。
 
 .. list-table::
    :class: geniesim-results-table
@@ -378,14 +378,14 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
      - 8.00%
      - 18.00%\ :sup:`※`
 
-:sup:`※` 表示该任务包含在对应多任务模型的训练组合中。
+:sup:`※` 表示这个任务包含在对应多任务模型的训练任务里。
 
-表中每个成功率对子任务的每个测试用例（一个场景实例与一条指令的组合）只统计一次。独立评测配置运行 128 条轨迹，多于子任务的测试用例数，部分用例会跑两次；计算成功率前已去掉重复的部分。因此，运行时记录的成功率包含重复部分，可能与表中数值略有差异。
+表里的每个成功率，对子任务的每个测试用例只算一次。一个测试用例是一个场景实例配一条指令。单独评测会跑 128 条轨迹，比一个子任务的测试用例多，所以有的用例会跑两遍。写进表里之前，重复的那一遍已经去掉。训练或评测过程中记下来的成功率还含着这些重复，所以可能和表里的数差一点。
 
-对应的训练参考配置均位于 ``examples/embodiment/config/``：
+对应的训练配置都在 ``examples/embodiment/config/``：
 
-- 单任务 PPO：``geniesim_pick_block_color_ppo_openpi_pi05.yaml``；训练其他任务时调整任务选择。
-- 单任务 GRPO：``geniesim_pick_block_color_grpo_openpi_pi05.yaml``；训练其他任务时调整任务选择。
+- 单任务 PPO：``geniesim_pick_block_color_ppo_openpi_pi05.yaml``。换任务时改任务选择。
+- 单任务 GRPO：``geniesim_pick_block_color_grpo_openpi_pi05.yaml``。换任务时改任务选择。
 - 4 任务 PPO：``geniesim_multitask4_ppo_openpi_pi05.yaml``。
 - 6 任务 PPO：``geniesim_multitask6_ppo_openpi_pi05.yaml``。
 - 10 任务 PPO：``geniesim_multitask10_ppo_openpi_pi05.yaml``。
@@ -407,43 +407,43 @@ GRPO 和多任务配方见 `可视化与结果`_。各配方的 ``env.train.over
      - 说明
    * - ``env.train.seed``
      - ``0``
-     - 训练随机种子；非负值启用 reset 随机扰动。
+     - 训练用的随机种子。设成非负数时，reset 会加随机扰动。
    * - ``env.eval.seed``
      - ``-1``
-     - 关闭评测时的 reset 随机扰动。
+     - 评测时关闭 reset 的随机扰动。
    * - ``override_cfg.randomization``
      - ``null``
-     - 在 env.train 或 env.eval 下配置；null 沿用仿真端默认值。下列泛化字段均写在该配置中。
+     - 写在 env.train 或 env.eval 下面。null 表示沿用仿真器的默认值。下面的泛化字段都写在这项里。
    * - ``use_task_generalization``
      - ``true``
-     - 继承任务默认设置；false 关闭该来源，显式配置值优先。
+     - 沿用任务自带的设置。false 表示不用这一层。单独写明的值优先。
    * - ``use_benchmark_generalization``
      - ``true``
-     - 继承基准设置；false 关闭该来源，显式配置值优先。
+     - 沿用基准测试的设置。false 表示不用这一层。单独写明的值优先。
    * - ``object_xy_radius``
      - ``0.03``
-     - 物体 XY 位置扰动幅度，单位 m；设为 0 关闭。
+     - 物体在 XY 方向上的位置扰动，单位是米。设为 0 即关闭。
    * - ``init_joint_thresh``
      - ``0.05``
-     - 关节初始位置扰动范围为 ±0.05 rad；设为 0 关闭。
+     - 关节初始位置在 ±0.05 弧度内扰动。设为 0 即关闭。
    * - ``init_base_xy_thresh``
      - ``[0.05, 0.05]``
-     - 底盘 X、Y 各扰动 ±0.05 m；null 关闭。任务自带逐实例底盘位姿时跳过默认扰动。
+     - 底盘的 X、Y 各在 ±0.05 米内扰动。null 表示关闭。任务如果已经按实例给了底盘位姿，就不再加这层默认扰动。
    * - ``render.lights.enable``
      - ``false``
-     - 灯光扰动开关；true 开启。
+     - 是否扰动灯光。true 为开启。
    * - ``render.material.enable``
      - ``false``
-     - 材质扰动开关；true 开启。
+     - 是否扰动材质。true 为开启。
    * - ``render.background.enable``
      - ``false``
-     - 背景变化开关；true 开启。
+     - 是否更换背景。true 为开启。
    * - ``render.camera_pose.enable``
      - ``false``
-     - 相机位姿扰动开关；true 开启，并设置 render.camera_pose.threshold 中的非零阈值。
+     - 是否扰动相机位姿。设为 true 开启，并在 render.camera_pose.threshold 里填非零阈值。
    * - ``joint_pd.enable``
      - ``false``
-     - 关节 PD 参数扰动开关；true 开启，并设置 joint_pd.kp_scale 与 joint_pd.kd_scale 的倍率范围。
+     - 是否扰动关节 PD 参数。设为 true 开启，并在 joint_pd.kp_scale 和 joint_pd.kd_scale 里填倍率范围。
 
 .. _geniesim-training-tasks:
 
