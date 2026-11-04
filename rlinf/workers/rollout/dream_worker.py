@@ -203,20 +203,30 @@ class DreamRolloutWorker(MultiStepRolloutWorker):
 
     def __init__(self, cfg: DictConfig) -> None:
         super().__init__(cfg)
-        if (
-            self._world_size != 1
-            or cfg.env.eval.total_num_envs != 1
-            or cfg.rollout.pipeline_stage_num != 1
-            or cfg.env.eval.auto_reset
-            or not cfg.runner.only_eval
-            or self.env_decoupled_mode
-            or self.enable_offload
-            or cfg.env.eval.enable_offload
-            or (cfg.rollout.model.num_action_chunks, cfg.rollout.model.action_dim)
-            != (48, 14)
-        ):
+        constraints = (
+            ("rollout world size", self._world_size, 1),
+            ("env.eval.total_num_envs", cfg.env.eval.total_num_envs, 1),
+            ("rollout.pipeline_stage_num", cfg.rollout.pipeline_stage_num, 1),
+            ("env.eval.auto_reset", cfg.env.eval.auto_reset, False),
+            ("runner.only_eval", cfg.runner.only_eval, True),
+            ("runner.enable_decoupled_mode", self.env_decoupled_mode, False),
+            ("rollout.enable_offload", self.enable_offload, False),
+            ("env.eval.enable_offload", cfg.env.eval.enable_offload, False),
+            (
+                "rollout.model.num_action_chunks",
+                cfg.rollout.model.num_action_chunks,
+                48,
+            ),
+            ("rollout.model.action_dim", cfg.rollout.model.action_dim, 14),
+        )
+        mismatches = [
+            f"{name}={actual!r} (expected {expected!r})"
+            for name, actual, expected in constraints
+            if actual != expected
+        ]
+        if mismatches:
             raise ValueError(
-                "Dream requires one evaluation environment, 48x14 chunks, auto_reset=false and offload=false."
+                "Unsupported Dream evaluation configuration: " + ", ".join(mismatches)
             )
         self.client = None
 
@@ -224,9 +234,9 @@ class DreamRolloutWorker(MultiStepRolloutWorker):
         """Initialize the optional Dream SDK in the rollout process."""
         from dream import DreamClient
 
+        self.setup_sample_params()
         self.client = DreamPolicy(DreamClient(), self.cfg.rollout)
         self.hf_model = self.client
-        self.setup_sample_params()
 
     async def evaluate(
         self, input_channel: Channel, output_channel: Channel

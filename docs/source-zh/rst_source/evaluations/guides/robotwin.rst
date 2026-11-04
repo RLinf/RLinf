@@ -90,10 +90,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
      - LingbotVLA 2.0
    * - ``robotwin_dream_aloha_click_bell_eval.yaml``
      - click_bell
-     - Dream API (ALOHA)
-   * - ``robotwin_dream_piper_click_bell_eval.yaml``
-     - click_bell
-     - Dream API (Piper)
+     - Dream API (ALOHA / Piper)
 
 若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
@@ -115,7 +112,8 @@ Dream SDK 使用 Python 3.11–3.13。按上方「环境准备」克隆 RoboTwin
    uv pip install "numpy<2" pandas opencv-python scipy zarr
    uv venv --python "$(command -v python)" .venv-dream
    export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
-   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e '.[dream]' \
+   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
+     dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
      "ray==$(python -c 'import ray; print(ray.__version__)')"
 
 RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DREAM_ROLLOUT_PYTHON`` 启动 rollout worker，RoboTwin 仍在 ``.venv`` 中运行。
@@ -124,7 +122,7 @@ RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DR
 
 **启动评测**
 
-按所用机器人选择配置运行 click_bell。切换到 Piper 时，同时更换配置和机械臂描述文件：
+配置默认使用 ALOHA。评测 Piper 时，请切换机械臂描述文件，并覆盖机器人配置和动作频率：
 
 .. code-block:: bash
 
@@ -134,44 +132,17 @@ RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DR
      env.eval.assets_path=${ROBOTWIN_PATH}
 
    export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
-   bash evaluations/run_eval.sh robotwin robotwin_dream_piper_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH}
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH} \
+     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
 
 两个示例均在逆运动学求解前修正任务臂的末端目标。若要关闭修正，运行时传入 ``rollout.dream.eef_target_bias=false``。
 
 **查看结果**
 
-每份配置使用单环境运行十个 episode，每回合上限为 400 步。ALOHA 频率为 20 Hz，Piper 为 30 Hz，均使用 48 步、14 维动作块。
+配置使用单环境运行十个 episode，每回合上限为 400 步。ALOHA 频率为 20 Hz，Piper 为 30 Hz，均使用 48 步、14 维动作块。
 
-两份配置均通过 ``env.eval.seeds_path`` 读取 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中预筛选的 success seeds，遵循 :ref:`robotwin-eval-config`。RLinf 根据配置种子打乱该任务的种子列表，十个回合分别使用不同的 seed。通过 ``eval/success_once`` 查看成功率，日志和视频位置见 :doc:`../reference/results`。
-
-历史结果
-~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-
-   * - 机械臂
-     - 任务
-     - 成功次数
-   * - aloha-agilex
-     - click_bell
-     - 5/10
-   * - aloha-agilex
-     - move_playingcard_away
-     - 3/10
-   * - piper
-     - click_bell
-     - 6/10
-
-接口检查
-~~~~~~~~
-
-使用 mock SDK 运行 CPU 测试，检查配置加载、相机编码、动作传输、seed 轮换和会话清理：
-
-.. code-block:: bash
-
-   PYTHONPATH=. pytest -q tests/unit_tests/test_models.py -k dream_api --confcutdir=tests/unit_tests
+配置通过 ``env.eval.seeds_path`` 读取 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中预筛选的 success seeds，遵循 :ref:`robotwin-eval-config`。RLinf 根据配置种子打乱该任务的种子列表，十个回合分别使用不同的 seed。通过 ``eval/success_once`` 查看成功率，日志和视频位置见 :doc:`../reference/results`。
 
 完整评测流程
 ------------

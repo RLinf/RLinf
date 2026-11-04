@@ -77,10 +77,6 @@ Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
 [project.optional-dependencies]
-dream = [
-    "dreamlabs==1.0.17; python_version >= '3.11' and python_version < '3.14'",
-    "dreamlabs-client==1.0.9; python_version >= '3.11' and python_version < '3.14'",
-]
 agentic = [
     "numpy==2.2",
     # uvloop is not compatible with simulators, put it here
@@ -111,10 +107,6 @@ conflicts = [
     [
       { extra = "agentic" },
       { extra = "embodied" }
-    ],
-    [
-      { extra = "agentic" },
-      { extra = "dream" }
     ],
 ]
 override-dependencies = [

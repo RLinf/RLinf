@@ -89,10 +89,7 @@ Available under ``evaluations/robotwin/``:
      - LingbotVLA 2.0
    * - ``robotwin_dream_aloha_click_bell_eval.yaml``
      - click_bell
-     - Dream API (ALOHA)
-   * - ``robotwin_dream_piper_click_bell_eval.yaml``
-     - click_bell
-     - Dream API (Piper)
+     - Dream API (ALOHA / Piper)
 
 If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
 
@@ -114,7 +111,8 @@ Use Python 3.11–3.13 for the Dream SDK. Prepare the RoboTwin repository and as
    uv pip install "numpy<2" pandas opencv-python scipy zarr
    uv venv --python "$(command -v python)" .venv-dream
    export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
-   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e '.[dream]' \
+   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
+     dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
      "ray==$(python -c 'import ray; print(ray.__version__)')"
 
 RoboTwin uses NumPy 1 with MPLib; the Dream SDK requires NumPy 2. RLinf runs the rollout worker with ``DREAM_ROLLOUT_PYTHON`` and keeps RoboTwin in ``.venv``.
@@ -123,7 +121,7 @@ Set ``DREAM_API_KEY`` in the rollout worker's environment and point ``ROBOTWIN_P
 
 **Launch evaluation**
 
-Run click_bell with the config for your robot. When switching from ALOHA to Piper, change both the config and arm specification:
+The config defaults to ALOHA. For Piper, switch the arm specification and override the embodiment and action frequency:
 
 .. code-block:: bash
 
@@ -133,44 +131,17 @@ Run click_bell with the config for your robot. When switching from ALOHA to Pipe
      env.eval.assets_path=${ROBOTWIN_PATH}
 
    export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
-   bash evaluations/run_eval.sh robotwin robotwin_dream_piper_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH}
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH} \
+     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
 
 Both examples adjust the task arm's end-effector targets before inverse kinematics. To run either example without this adjustment, pass ``rollout.dream.eef_target_bias=false``.
 
 **Check results**
 
-Each config runs ten episodes in one environment, with a 400-step limit per episode. ALOHA runs at 20 Hz and Piper at 30 Hz; both use 48-step, 14-dimensional action chunks.
+The config runs ten episodes in one environment, with a 400-step limit per episode. ALOHA runs at 20 Hz and Piper at 30 Hz; both use 48-step, 14-dimensional action chunks.
 
-Both configs load the pre-filtered success seeds from ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` through ``env.eval.seeds_path``, following :ref:`robotwin-eval-config`. RLinf shuffles the task's seed list deterministically and uses a different seed for each of the ten episodes. Monitor ``eval/success_once`` for the success rate; see :doc:`../reference/results` for logs and videos.
-
-Historical Results
-~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-
-   * - Robot
-     - Task
-     - Success
-   * - aloha-agilex
-     - click_bell
-     - 5/10
-   * - aloha-agilex
-     - move_playingcard_away
-     - 3/10
-   * - piper
-     - click_bell
-     - 6/10
-
-Interface Checks
-~~~~~~~~~~~~~~~~
-
-Run the CPU tests with a mock SDK to check config loading, camera encoding, action transport, seed rotation and session cleanup:
-
-.. code-block:: bash
-
-   PYTHONPATH=. pytest -q tests/unit_tests/test_models.py -k dream_api --confcutdir=tests/unit_tests
+The config loads the pre-filtered success seeds from ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` through ``env.eval.seeds_path``, following :ref:`robotwin-eval-config`. RLinf shuffles the task's seed list deterministically and uses a different seed for each of the ten episodes. Monitor ``eval/success_once`` for the success rate; see :doc:`../reference/results` for logs and videos.
 
 End-to-End Workflow
 -------------------

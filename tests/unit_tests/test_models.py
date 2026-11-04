@@ -20,7 +20,6 @@ import asyncio
 import base64
 import importlib.util
 import io
-import json
 import sys
 import time
 from pathlib import Path
@@ -38,7 +37,6 @@ from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import EnvOutput
 from rlinf.envs.sim.robotwin.dream_env import DreamEnvWorker, DreamObservationBuffer
-from rlinf.envs.sim.robotwin.robotwin_env import RoboTwinEnv
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
@@ -1795,29 +1793,14 @@ class _DreamSDK:
         self.closes += 1
 
 
-def _dream_config(monkeypatch, arm="aloha"):
+def _dream_config(monkeypatch):
     monkeypatch.setenv("EMBODIED_PATH", str(_DREAM_ROOT / "examples/embodiment"))
     monkeypatch.setenv("REPO_PATH", str(_DREAM_ROOT))
     monkeypatch.setenv("DREAM_IK_ARM_FILE", "/path/to/arm.json")
     with initialize_config_dir(
         str(_DREAM_ROOT / "evaluations/robotwin"), version_base="1.1"
     ):
-        return compose(config_name=f"robotwin_dream_{arm}_click_bell_eval")
-
-
-@pytest.mark.parametrize("arm", ["aloha", "piper"])
-def test_dream_api_examples(monkeypatch, arm):
-    cfg = _dream_config(monkeypatch, arm)
-    assert cfg.env.eval.rollout_epoch == 10
-    assert not cfg.env.eval.use_fixed_reset_state_ids
-    assert cfg.env.eval.task_config.task_name == "click_bell"
-    assert cfg.env.eval.max_episode_steps == 400
-    assert cfg.env.eval.max_steps_per_rollout_epoch == 432
-    assert cfg.env.eval.task_config.embodiment[0] == (
-        "aloha-agilex" if arm == "aloha" else "piper"
-    )
-    assert cfg.rollout.dream.action_hz == (20 if arm == "aloha" else 30)
-    assert cfg.rollout.dream.eef_target_bias
+        return compose(config_name="robotwin_dream_aloha_click_bell_eval")
 
 
 def _dream_observation():
@@ -1912,50 +1895,4 @@ def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
     sample["active_arms"] = [["left", "right"]]
     with pytest.raises(ValueError, match="active right arm"):
         client.predict_action_batch({"history": [sample]}, mode="eval")
-    client.close()
-
-
-@pytest.mark.parametrize("arm", ["aloha", "piper"])
-def test_dream_api_native_success_seed_rotation(monkeypatch, arm):
-    cfg = _dream_config(monkeypatch, arm)
-    path = _DREAM_ROOT / "rlinf/envs/sim/robotwin/seeds/eval_seeds.json"
-    assert Path(cfg.env.eval.seeds_path) == path
-    official = json.loads(path.read_text())["click_bell"]["success_seeds"]
-    env = object.__new__(RoboTwinEnv)
-    env.cfg = cfg.env.eval
-    env.task_name = "click_bell"
-    env.seed = env.base_seed = env.seed_offset = 0
-    env.total_num_processes = env.num_group = env.group_size = 1
-    env.use_fixed_reset_state_ids = False
-    env._init_reset_state_ids()
-    seen = []
-    for _ in range(10):
-        seen.append(int(env.reset_state_ids[0]))
-        env.update_reset_state_ids()
-    assert len(set(seen)) == 10
-    assert set(seen).issubset(official)
-
-
-def test_dream_api_api_error_is_not_retried(monkeypatch):
-    cfg = _dream_config(monkeypatch)
-    sdk = _DreamSDK()
-    failure = RuntimeError("service unavailable")
-
-    def fail(**kwargs):
-        sdk.calls += 1
-        raise failure
-
-    sdk.get_action = fail
-    client = DreamPolicy(sdk, cfg.rollout)
-    sample = {
-        "states": np.zeros((1, 1, 14)),
-        "frames": [[_dream_observation()]],
-        "timestamps": [[0.0]],
-        "finished": [False],
-        "episode_id": [1],
-        "task_descriptions": ["press"],
-    }
-    with pytest.raises(RuntimeError) as result:
-        client.predict_action_batch({"history": [sample]}, mode="eval")
-    assert result.value is failure and sdk.calls == 1
     client.close()

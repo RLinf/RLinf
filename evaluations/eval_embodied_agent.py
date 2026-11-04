@@ -15,7 +15,6 @@
 import json
 
 import hydra
-import ray
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
@@ -127,15 +126,8 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    try:
-        runner.init_workers()
-        runner.run()
-    finally:
-        if rollout_backend == "dream" and ray.is_initialized():
-            try:
-                rollout_group.close().wait()
-            finally:
-                env_group.close().wait()
+    runner.init_workers()
+    runner.run()
 
 
 if __name__ == "__main__":
