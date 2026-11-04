@@ -3051,14 +3051,14 @@ install_paddle_gpu() {
         cuda_major=""
     fi
 
-    if [ -n "$cuda_major" ] && [ "$cuda_major" -ge 12 ]; then
+    if [ "$cuda_major" = "12" ]; then
         paddle_gpu_ver="2.6.2.post120"
         paddle_gpu_index="$paddle_gpu_index_cuda12"
     elif [ "$cuda_major" = "11" ]; then
         paddle_gpu_ver="2.6.2"
         paddle_gpu_index="$paddle_gpu_index_cuda11"
     else
-        echo "[install.sh] --paddle-gpu requires CUDA 11 or newer; detected CUDA ${cuda_major:-<none>}." >&2
+        echo "[install.sh] --paddle-gpu supports only CUDA 11.x and 12.x; detected CUDA ${cuda_major:-<none>}." >&2
         return 1
     fi
 
