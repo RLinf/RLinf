@@ -67,8 +67,8 @@ YAM
 
 Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data collection guides.
 
-Piper, SO101, and LeKiwi Setup
-------------------------------
+Piper, SO101, LeKiwi, and UR5e Setup
+------------------------------------
 
 Use these guides to connect a robot and run its hardware test script. Piper, SO101, and LeKiwi do not yet have supported real-world training workflows.
 
@@ -93,6 +93,12 @@ Use these guides to connect a robot and run its hardware test script. Piper, SO1
 
       Set up the wheel motors, check the front webcam, and drive the mobile base.
 
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      Check the UR5e driver and record SpaceMouse demonstrations with a camera and Robotiq gripper.
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -106,3 +112,4 @@ Use these guides to connect a robot and run its hardware test script. Piper, SO1
    Piper <embodied/piper>
    SO101 <embodied/so101>
    LeKiwi <embodied/lekiwi>
+   UR5e <embodied/ur5e>

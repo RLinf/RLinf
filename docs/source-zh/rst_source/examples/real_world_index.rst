@@ -67,8 +67,8 @@ YAM
 
 进入 :doc:`YAM 页面 <embodied/yam_index>`，查看双臂配置与数据采集指南。
 
-Piper、SO101 与 LeKiwi 配置
---------------------------------
+Piper、SO101、LeKiwi 与 UR5e 配置
+----------------------------
 
 通过以下指南连接机器人并运行硬件测试脚本。Piper、SO101 和 LeKiwi 目前尚未提供真机训练流程。
 
@@ -93,6 +93,12 @@ Piper、SO101 与 LeKiwi 配置
 
       配置轮电机、检查前置摄像头，并驱动移动底盘。
 
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      检查 UR5e 驱动，使用相机、Robotiq 夹爪与 SpaceMouse 采集演示。
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -106,3 +112,4 @@ Piper、SO101 与 LeKiwi 配置
    Piper <embodied/piper>
    SO101 <embodied/so101>
    LeKiwi <embodied/lekiwi>
+   UR5e <embodied/ur5e>

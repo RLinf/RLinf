@@ -5753,3 +5753,518 @@ def test_robotwin_env_passes_its_camera_near_to_robotwin(
     assert handed_over["task_config"]["task_name"] == "place_shoe"
     assert "camera_near" not in env.cfg.task_config  # the config is not modified
     assert camera_cls._rlinf_camera_near_installed
+
+
+def _ur_collection_env(hardware=None, **overrides):
+    """Build a local UR collection env against caller-installed SDK fakes."""
+    from rlinf.envs.real.ur5e import URCollectionEnv
+    from rlinf.robotics import UR5eConfig
+
+    config = {
+        "ee_pose_limit_min": [-0.5, -0.5, 0.0, -np.pi, -np.pi, -np.pi],
+        "ee_pose_limit_max": [0.5, 0.5, 0.8, np.pi, np.pi, np.pi],
+        "reset_ee_pose": [0.4, 0.05, 0.3, 0.0, 0.0, np.pi / 2],
+        "reset_duration": 0.001,
+        "step_frequency": 1000.0,
+        "enable_camera_player": False,
+    }
+    config.update(overrides)
+    hardware = hardware or UR5eConfig(node_rank=0, robot_ip="192.0.2.40")
+    return URCollectionEnv(config, robot_info=_robot_info(hardware))
+
+
+@pytest.fixture
+def ur_collection_env():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        env = _ur_collection_env()
+        try:
+            yield env, made
+        finally:
+            env.close()
+
+
+def test_ur_collection_connect_reset_and_zero_action_do_not_command_motion(
+    ur_collection_env,
+):
+    env, made = ur_collection_env
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+
+    first, _ = env.reset()
+    for _ in range(2):
+        observation, reward, terminated, truncated, info = env.step(np.zeros(6))
+
+    assert control.commands == []
+    assert set(first) == {"state"}
+    assert set(first["state"]) == {"tcp_pose"}
+    np.testing.assert_array_equal(
+        first["state"]["tcp_pose"], observation["state"]["tcp_pose"]
+    )
+    assert env.observation_space.contains(observation)
+    assert (reward, terminated, truncated, info) == (0.0, False, False, {})
+    assert env.num_steps == 2
+    env.reset()
+    assert env.num_steps == 0
+    assert control.commands == []
+
+
+def test_ur_collection_records_a_cartesian_delta_action_contract(ur_collection_env):
+    from rlinf.robotics.actions import ActionKind
+
+    env, _ = ur_collection_env
+    assert env.action_space.shape == (6,)
+    parts = env.action_parts()
+    assert [(part.name, part.width, part.kind) for part in parts] == [
+        ("arm", 6, ActionKind.CARTESIAN_DELTA)
+    ]
+    np.testing.assert_array_equal(env.get_action_scale(), [0.02, 0.1, 1.0])
+
+
+def test_ur_collection_scales_deltas_and_composes_base_frame_rotation(
+    ur_collection_env, monkeypatch
+):
+    from scipy.spatial.transform import Rotation
+
+    env, made = ur_collection_env
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    initial = np.asarray(receive.pose)
+    read_pose = receive.getActualTCPPose
+    reads = []
+
+    def measured_pose():
+        reads.append(None)
+        return read_pose()
+
+    monkeypatch.setattr(receive, "getActualTCPPose", measured_pose)
+
+    env.step(np.array([0.5, -0.5, 0.25, 0.5, 0, 0]))
+    assert len(reads) == 1, "Each step must use one whole-robot observation."
+    np.testing.assert_allclose(env.get_tcp_pose()[:3], initial[:3])
+    assert len(reads) == 1, "Teleop context must reuse the cached observation."
+    assert control.servo_called.wait(1.0)
+    sent = next(args[0] for name, args in control.commands if name == "servoL")
+    np.testing.assert_allclose(sent[:3], initial[:3] + [0.01, -0.01, 0.005], atol=1e-7)
+    expected = (
+        Rotation.from_euler("xyz", [0.05, 0, 0]) * Rotation.from_rotvec(initial[3:])
+    ).as_matrix()
+    np.testing.assert_allclose(
+        Rotation.from_rotvec(sent[3:]).as_matrix(), expected, atol=1e-7
+    )
+
+
+def test_ur_collection_clips_positions_to_configured_workspace(ur_collection_env):
+    env, made = ur_collection_env
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive.pose[:3] = [0.499, -0.499, 0.799]
+    env.step(np.zeros(6))
+
+    env.step(np.array([10.0, -10.0, 10.0, 0, 0, 0]))
+    assert control.servo_called.wait(1.0)
+    sent = next(args[0] for name, args in control.commands if name == "servoL")
+    np.testing.assert_allclose(sent[:3], [0.5, -0.5, 0.8], atol=1e-7)
+
+
+def test_ur_collection_refuses_to_jump_into_workspace_from_outside(ur_collection_env):
+    env, made = ur_collection_env
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive.pose[0] = 0.8
+
+    env.step(np.zeros(6))
+    with pytest.raises(ValueError, match="outside the configured"):
+        env.step(np.array([-0.1, 0, 0, 0, 0, 0]))
+    assert control.commands == []
+
+
+def test_ur_collection_clips_orientation_across_the_pi_boundary(monkeypatch):
+    from robot_mocks import mocked_sdks
+    from scipy.spatial.transform import Rotation
+
+    with mocked_sdks() as made:
+        receive_cls = made["rtde_receive"].RTDEReceiveInterface
+        monkeypatch.setattr(
+            receive_cls,
+            "getActualTCPPose",
+            lambda self: [0.4, 0.05, 0.3, 0, 0, -np.pi + 0.04],
+        )
+        env = _ur_collection_env(
+            reset_ee_pose=[0.4, 0.05, 0.3, 0, 0, np.pi],
+            ee_pose_limit_min=[-0.5, -0.5, 0, -0.1, -0.1, np.pi - 0.05],
+            ee_pose_limit_max=[0.5, 0.5, 0.8, 0.1, 0.1, np.pi + 0.05],
+        )
+        try:
+            env.step(np.array([0, 0, 0, 0, 0, 0.5]))
+            control = made["rtde_control"].RTDEControlInterface.instances[-1]
+            assert control.servo_called.wait(1.0)
+            target = next(
+                args[0] for name, args in control.commands if name == "servoL"
+            )
+            np.testing.assert_allclose(
+                Rotation.from_rotvec(target[3:]).as_matrix(),
+                Rotation.from_euler("z", np.pi + 0.05).as_matrix(),
+                atol=1e-7,
+            )
+        finally:
+            env.close()
+
+
+def test_ur_hold_actions_follow_the_public_realworld_contract():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.env import RealWorldEnv
+    from rlinf.robotics import UR5eConfig
+
+    cfg = OmegaConf.load(
+        _ROOT / "examples/embodiment/config/env/realworld_ur5e_collect.yaml"
+    )
+    cfg.teleop = "none"
+    cfg.keyboard_reward_wrapper = None
+    cfg.override_cfg.update(
+        {
+            "ee_pose_limit_min": [-0.5, -0.5, 0, -np.pi, -np.pi, -np.pi],
+            "ee_pose_limit_max": [0.5, 0.5, 0.8, np.pi, np.pi, np.pi],
+            "reset_ee_pose": [0.4, 0.05, 0.3, 0, 0, np.pi / 2],
+            "reset_duration": 0.001,
+            "camera_names": {"MOCK0001": "main"},
+        }
+    )
+    hardware = UR5eConfig(
+        node_rank=0,
+        robot_ip="192.0.2.40",
+        gripper_type="robotiq",
+        gripper_connection="/dev/mock-ur-hold",
+        camera_serials=["MOCK0001"],
+    )
+    worker = SimpleNamespace(
+        rank=0, cluster_node_rank=None, hardware_infos=[_robot_info(hardware)]
+    )
+    with mocked_sdks():
+        env = RealWorldEnv(
+            cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=worker
+        )
+        try:
+            env.reset()
+            np.testing.assert_array_equal(env.get_hold_actions(), np.zeros((1, 7)))
+            np.testing.assert_array_equal(
+                env.get_hold_actions(np.ones((1, 7))), np.zeros((1, 7))
+            )
+        finally:
+            env.close()
+
+
+def test_ur_collection_rejects_a_nonscalar_gripper_before_connecting(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import EndEffector, UR5eConfig
+
+    monkeypatch.setattr(EndEffector, "_BACKENDS", EndEffector.backends().copy())
+
+    @EndEffector.register("ur_test_gripper")
+    class Gripper(EndEffector):
+        is_gripper = True
+        action_dim = state_dim = 2
+        control_mode = "continuous"
+
+        def get_state(self):
+            return np.zeros(2)
+
+        def command(self, action):
+            return True
+
+    with mocked_sdks() as made:
+        hardware = UR5eConfig(
+            node_rank=0, robot_ip="192.0.2.40", gripper_type="ur_test_gripper"
+        )
+        with pytest.raises(ValueError, match="scalar"):
+            _ur_collection_env(hardware)
+        assert made["rtde_control"].RTDEControlInterface.instances == []
+        assert made["rtde_receive"].RTDEReceiveInterface.instances == []
+
+
+@pytest.mark.parametrize(
+    "action", [np.zeros(7), np.full(6, np.nan), np.full(6, np.inf)]
+)
+def test_ur_collection_rejects_invalid_actions_without_commanding(
+    ur_collection_env, action
+):
+    env, made = ur_collection_env
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    with pytest.raises(ValueError, match="shape.*finite"):
+        env.step(action)
+    assert control.commands == []
+
+
+def test_ur_collection_zero_after_motion_holds_measured_pose(ur_collection_env):
+    env, made = ur_collection_env
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    env.step(np.array([0.5, 0, 0, 0, 0, 0]))
+    assert control.servo_called.wait(1.0)
+
+    env.step(env.get_hold_action())
+    expected = np.asarray(receive.pose)
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        commands = [args[0] for name, args in control.commands if name == "servoL"]
+        if np.allclose(commands[-1], expected, atol=1e-7):
+            break
+        time.sleep(0.001)
+    np.testing.assert_allclose(commands[-1], expected, atol=1e-7)
+
+
+@pytest.mark.parametrize("outcome", ["b", "c"])
+def test_ur_eval_control_holds_after_operator_ends_policy(
+    ur_collection_env, monkeypatch, outcome
+):
+    from rlinf.envs.real.wrappers.episode import session
+    from rlinf.envs.real.wrappers.episode.eval_control import KeyboardEvalControlWrapper
+
+    keys = [[], ["a"]]
+
+    class Keyboard:
+        def __init__(self, device=None):
+            pass
+
+        def pop_pressed_keys(self):
+            return keys.pop(0) if keys else []
+
+    monkeypatch.setattr(session, "KeyboardListener", Keyboard)
+    base, made = ur_collection_env
+    env = KeyboardEvalControlWrapper(base)
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    env.reset()
+    assert control.commands == []
+
+    action = np.array([0.5, 0, 0, 0, 0, 0])
+    env.step(action)
+    assert control.servo_called.wait(1.0)
+    keys.append([outcome])
+    _, reward, terminated, _, info = env.step(action)
+    assert terminated and info["success"] == (outcome == "c")
+    assert reward == float(outcome == "c")
+
+    env.step(action)
+    expected = np.asarray(receive.pose)
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        commands = [args[0] for name, args in control.commands if name == "servoL"]
+        if np.allclose(commands[-1], expected, atol=1e-7):
+            break
+        time.sleep(0.001)
+    np.testing.assert_allclose(commands[-1], expected, atol=1e-7)
+
+
+def test_ur_collection_reset_replaces_previous_target_without_repeating_idle_hold(
+    ur_collection_env,
+):
+    env, made = ur_collection_env
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    env.step(np.array([0.5, 0, 0, 0, 0, 0]))
+    assert control.servo_called.wait(1.0)
+    expected = np.asarray(receive.pose)
+
+    observation, _ = env.reset()
+    assert env.num_steps == 0
+    np.testing.assert_allclose(observation["state"]["tcp_pose"][:3], expected[:3])
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        commands = [args[0] for name, args in control.commands if name == "servoL"]
+        if np.allclose(commands[-1], expected, atol=1e-7):
+            break
+        time.sleep(0.001)
+    np.testing.assert_allclose(commands[-1], expected, atol=1e-7)
+
+    # A later idle step must not publish a second measured-pose hold.
+    receive.pose[0] -= 0.001
+    env.step(np.zeros(6))
+    commands = [args[0] for name, args in control.commands if name == "servoL"]
+    np.testing.assert_allclose(commands[-1], expected, atol=1e-7)
+
+
+@pytest.mark.parametrize("reaches_target", [True, False])
+def test_ur_reset_waits_for_the_configured_tcp_pose(monkeypatch, reaches_target):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        control_cls = made["rtde_control"].RTDEControlInterface
+        receive_cls = made["rtde_receive"].RTDEReceiveInterface
+        servo = control_cls.servoL
+
+        def track_target(control, pose, *args):
+            result = servo(control, pose, *args)
+            if reaches_target:
+                receive_cls.instances[-1].pose = list(pose)
+            return result
+
+        monkeypatch.setattr(control_cls, "servoL", track_target)
+        env = _ur_collection_env(
+            reset_ee_pose=[0.42, 0.05, 0.3, 0, 0, np.pi / 2],
+            reset_timeout=0.1,
+            reset_position_tolerance=0.001,
+        )
+        try:
+            if reaches_target:
+                observation, _ = env.reset()
+                np.testing.assert_allclose(
+                    observation["state"]["tcp_pose"][:3], [0.42, 0.05, 0.3]
+                )
+                assert env.num_steps == 0
+            else:
+                with pytest.raises(TimeoutError):
+                    env.reset()
+                deadline = time.monotonic() + 1.0
+                expected = receive_cls.instances[-1].pose
+                while time.monotonic() < deadline:
+                    targets = [
+                        args[0]
+                        for name, args in control_cls.instances[-1].commands
+                        if name == "servoL"
+                    ]
+                    if np.allclose(targets[-1], expected, atol=1e-7):
+                        break
+                    time.sleep(0.001)
+                np.testing.assert_allclose(targets[-1], expected, atol=1e-7)
+            control = control_cls.instances[-1]
+            assert control.servo_called.is_set()
+        finally:
+            env.close()
+
+
+@pytest.mark.parametrize(
+    "overrides,match",
+    [
+        ({"ee_pose_limit_min": None, "ee_pose_limit_max": None}, "ee_pose_limit"),
+        ({"ee_pose_limit_min": [0] * 6, "ee_pose_limit_max": [0] * 6}, "ee_pose_limit"),
+        ({"ee_pose_limit_max": [1, float("inf"), 1, 1, 1, 1]}, "ee_pose_limit"),
+        ({"reset_ee_pose": None}, "reset_ee_pose"),
+        ({"action_scale": [0.02, 0.1]}, "action_scale"),
+        ({"step_frequency": 0}, "step_frequency"),
+    ],
+)
+def test_ur_collection_validates_limits_before_opening_hardware(overrides, match):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        with pytest.raises(ValueError, match=match):
+            _ur_collection_env(**overrides)
+        assert made["rtde_control"].RTDEControlInterface.instances == []
+        assert made["rtde_receive"].RTDEReceiveInterface.instances == []
+
+
+def test_ur_collection_dummy_env_is_seeded_without_hardware():
+    from rlinf.envs.real.ur5e import URCollectionEnv
+
+    env = URCollectionEnv({"is_dummy": True, "enable_camera_player": False})
+    try:
+        first, _ = env.reset(seed=31)
+        second, _ = env.reset(seed=31)
+        np.testing.assert_array_equal(
+            first["state"]["tcp_pose"], second["state"]["tcp_pose"]
+        )
+        assert env.observation_space.contains(first)
+    finally:
+        env.close()
+
+
+def test_ur_collection_camera_frames_are_named_cropped_resized_rgb(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import UR5eConfig
+
+    with mocked_sdks() as made:
+        frame = np.full((48, 64, 3), [5, 17, 31], dtype=np.uint8)
+        frame[12:36, 16:48] = [32, 96, 192]
+        color = SimpleNamespace(is_video_frame=lambda: True, get_data=lambda: frame)
+        monkeypatch.setattr(
+            made["pyrealsense2"].pipeline,
+            "wait_for_frames",
+            lambda self: SimpleNamespace(get_color_frame=lambda: color),
+        )
+        hardware = UR5eConfig(
+            node_rank=0,
+            robot_ip="192.0.2.40",
+            camera_serials=["MOCK0001"],
+            camera_type="realsense",
+        )
+        env = _ur_collection_env(
+            hardware,
+            camera_names={"MOCK0001": "main"},
+            camera_crop_regions={"MOCK0001": [0.25, 0.25, 0.75, 0.75]},
+            image_size=[16, 20],
+        )
+        try:
+            observation, _ = env.reset()
+            frames = observation["frames"]
+            assert set(frames) == {"main"}
+            assert frames["main"].shape == (16, 20, 3)
+            np.testing.assert_array_equal(
+                frames["main"], np.broadcast_to([192, 96, 32], (16, 20, 3))
+            )
+            assert env.observation_space.contains(observation)
+            assert made["pyrealsense2"].opened == ["MOCK0001"]
+        finally:
+            env.close()
+
+
+def test_ur_collection_camera_open_failure_closes_the_arm(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import UR5eConfig
+
+    with mocked_sdks() as made:
+
+        def fail_start(self, config):
+            raise RuntimeError("pipeline start failed")
+
+        monkeypatch.setattr(made["pyrealsense2"].pipeline, "start", fail_start)
+        hardware = UR5eConfig(
+            node_rank=0,
+            robot_ip="192.0.2.40",
+            camera_serials=["MOCK0001"],
+            camera_type="realsense",
+        )
+        with pytest.raises(RuntimeError, match="pipeline start failed"):
+            _ur_collection_env(hardware)
+        control = made["rtde_control"].RTDEControlInterface.instances[-1]
+        receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+        assert not control.connected
+        assert not receive.connected
+
+
+def test_ur_collection_binary_gripper_buttons_preserve_idle_and_reset_state():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import UR5eConfig
+
+    with mocked_sdks() as made:
+        hardware = UR5eConfig(
+            node_rank=0,
+            robot_ip="192.0.2.40",
+            gripper_type="robotiq",
+            gripper_connection="/dev/mock-ur-gripper",
+            end_effector_config={"max_width": 0.085},
+        )
+        env = _ur_collection_env(hardware)
+        try:
+            initial, _ = env.reset()
+            assert env.action_space.shape == (7,)
+            assert initial["state"]["gripper_position"][0] == pytest.approx(0.085)
+            closed, *_ = env.step(np.array([0, 0, 0, 0, 0, 0, -1]))
+            assert closed["state"]["gripper_position"][0] == pytest.approx(0.0)
+            assert not env.get_gripper_open()
+            idle, *_ = env.step(np.zeros(7))
+            reset, _ = env.reset()
+            assert idle["state"]["gripper_position"][0] == pytest.approx(0.0)
+            assert reset["state"]["gripper_position"][0] == pytest.approx(0.0)
+            opened, *_ = env.step(np.array([0, 0, 0, 0, 0, 0, 1]))
+            assert opened["state"]["gripper_position"][0] == pytest.approx(0.085)
+            assert (
+                made["rtde_control"].RTDEControlInterface.instances[-1].commands == []
+            )
+        finally:
+            env.close()
