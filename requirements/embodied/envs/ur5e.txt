@@ -1,6 +1,5 @@
 ur_rtde==1.6.5
 pyspacemouse>=2.1,<3
-pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'
 pymodbus>=3,<4
 pyserial
 evdev

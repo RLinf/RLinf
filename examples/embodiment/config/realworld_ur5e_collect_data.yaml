@@ -33,8 +33,8 @@ cluster:
             end_effector_config:
               max_width: 0.085
             camera_serials: ["CAMERA_SERIAL"]
-            camera_type: realsense
-            camera_resolution: [640, 480]
+            camera_type: orbbec
+            camera_resolution: [1280, 720]
             camera_fps: 15
             camera_node_rank: null
 

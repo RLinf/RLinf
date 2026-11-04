@@ -1,7 +1,7 @@
 UR5e 配置与控制
 ================
 
-本文介绍如何在同一控制主机上配置 UR5e、通过 USB-RS485 连接的 Robotiq 2F-85、一台固定在环境中的 RealSense 相机和 SpaceMouse。完成驱动与遥操作检查后，将演示保存为 LeRobot 数据集，微调 π₀.₅，再使用相同的观测和笛卡尔增量动作部署 policy。
+本文介绍如何在同一控制主机上配置 UR5e、通过 USB-RS485 连接的 Robotiq 2F-85、一台固定在环境中的 Orbbec Femto Bolt 相机和 SpaceMouse。使用相机的 RGB 图像完成驱动与遥操作检查后，将演示保存为 LeRobot 数据集，微调 π₀.₅，再使用相同的观测和笛卡尔增量动作部署 policy。
 
 概览
 ----
@@ -43,7 +43,9 @@ UR5e 配置与控制
    source .venv-ur5e/bin/activate
    export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
-该流程安装 OpenPI，以及 ``ur_rtde``、RealSense 采集、SpaceMouse、串口 Modbus、键盘输入和 LeRobot 采集依赖。后续命令均使用这个已激活的环境。
+该流程安装 OpenPI，以及 ``ur_rtde``、Orbbec 采集、SpaceMouse、串口 Modbus、键盘输入和 LeRobot 采集依赖。后续命令均使用这个已激活的环境。
+
+UR5e 安装流程通过 ``--no-deps`` 安装 ``pyorbbecsdk2==2.1.2``，保留 OpenPI 使用的 NumPy 和 OpenCV 版本。该包通过 ``pyorbbecsdk`` 导入。USB 设备权限和 SDK 图像流要求见 :doc:`Orbbec 相机配置 <franka_orbbec>`。
 
 检查机器人组合
 --------------
@@ -153,21 +155,24 @@ UR5e 配置与控制
 
 伺服循环在机械臂连接所在的计算机上运行，与环境提交目标的频率分开。按预期负载验证该计算机上的控制周期，参考 `ur_rtde 实时配置指南 <https://sdurobotics.gitlab.io/ur_rtde/pages/core_concepts/guides/realtime_setup.html>`_。组合与节点放置见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
-检查 RealSense 相机
--------------------
+检查 Orbbec RGB 相机
+--------------------
 
-机械臂检查完成后，先验证相机图像流，再组合设备进行遥操作。采集模板使用 ``camera_type: realsense`` 和已安装的 ``pyrealsense2`` SDK。将相机连接到控制主机，查询序列号：
+机械臂检查完成后，先验证相机图像流，再组合设备进行遥操作。采集模板使用 ``camera_type: orbbec`` 和已安装的 ``pyorbbecsdk`` SDK。将 Femto Bolt 连接到控制主机，查询序列号：
 
 .. code-block:: bash
 
    python - <<'PY'
-   import pyrealsense2 as rs
+   import pyorbbecsdk as ob
 
-   for device in rs.context().devices:
-       print(device.get_info(rs.camera_info.serial_number))
+   context = ob.Context()
+   context.enable_net_device_enumeration(False)
+   devices = context.query_devices()
+   for index in range(devices.get_count()):
+       print(devices.get_device_serial_number_by_index(index))
    PY
 
-记录要使用的相机序列号。在以下读取示例中，将 ``CAMERA_SERIAL`` 替换为该值，并将 ``resolution`` 按宽、高顺序填写，``fps`` 设为设备支持的彩色流帧率。示例值与可编辑的采集模板一致：
+记录要使用的相机序列号。在以下读取示例中，将 ``CAMERA_SERIAL`` 替换为该值，并将 ``resolution`` 按宽、高顺序填写，``fps`` 设为设备支持的彩色流帧率。示例值与可编辑的采集模板一致；``enable_depth=False`` 仅启用彩色流：
 
 .. code-block:: bash
 
@@ -177,9 +182,10 @@ UR5e 配置与控制
    camera = Camera.of(CameraInfo(
        name="main",
        serial_number="CAMERA_SERIAL",
-       camera_type="realsense",
-       resolution=(640, 480),
+       camera_type="orbbec",
+       resolution=(1280, 720),
        fps=15,
+       enable_depth=False,
    ))
    try:
        camera.connect()
@@ -189,7 +195,7 @@ UR5e 配置与控制
        camera.disconnect()
    PY
 
-后端请求 BGR 彩色图像。输出应显示所选高、宽和三个通道，dtype 为 ``uint8``。``finally`` 在读取结束后关闭图像流。将相同的序列号、分辨率和帧率填入采集硬件条目的 ``camera_serials``、``camera_resolution`` 和 ``camera_fps``，并在 ``camera_names`` 中将该序列号映射为 ``main``，与这里的视角名称一致。
+后端返回 BGR 彩色图像，输出应为 ``(720, 1280, 3)``，dtype 为 ``uint8``。UR 采集环境将图像转换为 RGB 后记录。``finally`` 在读取结束后关闭图像流。将相同的序列号、分辨率和帧率填入采集硬件条目的 ``camera_serials``、``camera_resolution`` 和 ``camera_fps``，并在 ``camera_names`` 中将该序列号映射为 ``main``，与这里的视角名称一致。
 
 演示采集与 policy 执行时，应保持相机安装位置、视角、裁剪、图像名称和颜色处理一致。在 PolyScope 中，按安装的夹爪配置工具 TCP 与负载。
 
@@ -200,7 +206,7 @@ UR5e 配置与控制
 
 启动前，在 ``env/realworld_ur5e_collect.yaml`` 的 ``override_cfg`` 中填写 ``reset_ee_pose``、``ee_pose_limit_min`` 和 ``ee_pose_limit_max``。这些字段沿用 Franka 的位姿配置方式，均为 UR 基座坐标系下的 ``[x, y, z, rx, ry, rz]``，位置单位为米，姿态为 xyz Euler 角，单位为弧度。将模板中的 ``null`` 替换为实测复位目标和任务边界。复位目标与启动时的实测 TCP 均应在边界内，环境会拒绝从范围外开始运动。位置与姿态目标会裁剪到该范围，姿态使用以复位姿态为中心的连续窗口。按采集任务设置 ``task_description``。
 
-在硬件条目中，``camera_resolution`` 按宽、高设置原生流尺寸，``camera_fps`` 设置原生流帧率；模板为 640 × 480、15 fps，应选择实际 RealSense 设备支持的 profile。在 ``env.eval.override_cfg`` 中，``image_size`` 设置裁剪缩放后的记录尺寸，按高、宽排列，默认为 224 × 224；``camera_names`` 与 ``camera_crop_regions`` 配置视角。环境通过组合机器人读取机械臂、夹爪和相机观测，再构造 policy 输入。``step_frequency`` 与数据集 ``fps`` 默认均为 10，调整采集频率时应保持一致。将 ``env.eval.override_cfg.enable_camera_player`` 设为 ``true`` 可预览图像。
+在硬件条目中，``camera_resolution`` 按宽、高设置相机输出尺寸，``camera_fps`` 设置帧率。Orbbec 后端按指定帧率选择最接近输出尺寸的原生彩色流，再缩放到输出尺寸；模板使用 1280 × 720、15 fps，仅采集彩色图像。在 ``env.eval.override_cfg`` 中，``image_size`` 设置裁剪缩放后的记录尺寸，按高、宽排列，默认为 224 × 224；``camera_names`` 与 ``camera_crop_regions`` 配置视角。环境通过组合机器人读取机械臂、夹爪和相机观测，再构造 policy 输入。``step_frequency`` 与数据集 ``fps`` 默认均为 10，调整采集频率时应保持一致。将 ``env.eval.override_cfg.enable_camera_player`` 设为 ``true`` 可预览图像。
 
 启动采集和保存成功 episode 后，环境会将 TCP 返回 ``reset_ee_pose``，并保持夹爪状态。插值至少持续 ``reset_duration`` 秒，每一步受 ``action_scale`` 限制，因此距离较远时回位时间会增加。插值结束后，``reset_timeout`` 设置到位检查超时参数，位置与姿态容差分别由 ``reset_position_tolerance``\ （单位为米）和 ``reset_orientation_tolerance``\ （单位为弧度）设置。启动采集前，先确认该复位路径。
 

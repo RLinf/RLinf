@@ -475,6 +475,7 @@ class URCollectionEnv(gym.Env):
                     camera_type=self.hardware.camera_type,
                     resolution=self.hardware.camera_resolution,
                     fps=self.hardware.camera_fps,
+                    enable_depth=False,
                     crop_region=crop,
                 )
             )

@@ -1,8 +1,9 @@
 UR5e Setup and Control
 ======================
 
-Set up a UR5e, a USB-RS485 Robotiq 2F-85, one environment-mounted RealSense
-camera, and a SpaceMouse on one controller computer. Check the driver and
+Set up a UR5e, a USB-RS485 Robotiq 2F-85, one environment-mounted Orbbec Femto
+Bolt camera, and a SpaceMouse on one controller computer. Use the camera's RGB
+stream, check the driver and
 teleoperation, record LeRobot demonstrations, then fine-tune and deploy a
 π₀.₅ policy with the same observations and Cartesian-delta actions.
 
@@ -59,9 +60,14 @@ UR5e and OpenPI environment:
    source .venv-ur5e/bin/activate
    export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
-This installs OpenPI together with ``ur_rtde``, RealSense capture, SpaceMouse,
+This installs OpenPI together with ``ur_rtde``, Orbbec capture, SpaceMouse,
 serial Modbus, keyboard input, and LeRobot collection dependencies. Keep this environment activated for
 subsequent commands.
+
+The UR5e installer includes ``pyorbbecsdk2==2.1.2`` with ``--no-deps`` to
+preserve OpenPI's NumPy and OpenCV versions. The package imports as
+``pyorbbecsdk``. See :doc:`Orbbec camera setup <franka_orbbec>` for USB device
+permissions and the SDK's stream requirements.
 
 Check the Robot Composition
 ---------------------------
@@ -230,27 +236,31 @@ timing on that computer under its expected load using the
 See :doc:`Robotics Interface </rst_source/concepts/robotics>` for composition
 and placement.
 
-Check the RealSense Camera
---------------------------
+Check the Orbbec RGB Camera
+---------------------------
 
 After the arm check, verify the camera stream before combining the devices for
-teleoperation. The collection template uses ``camera_type: realsense`` and the
-installed ``pyrealsense2`` SDK. Connect the camera to the controller computer
+teleoperation. The collection template uses ``camera_type: orbbec`` and the
+installed ``pyorbbecsdk`` SDK. Connect the Femto Bolt to the controller computer
 and query its serial number:
 
 .. code-block:: bash
 
    python - <<'PY'
-   import pyrealsense2 as rs
+   import pyorbbecsdk as ob
 
-   for device in rs.context().devices:
-       print(device.get_info(rs.camera_info.serial_number))
+   context = ob.Context()
+   context.enable_net_device_enumeration(False)
+   devices = context.query_devices()
+   for index in range(devices.get_count()):
+       print(devices.get_device_serial_number_by_index(index))
    PY
 
 Record the serial of the camera you will use. In the following read, replace
 ``CAMERA_SERIAL`` with that value and set ``resolution`` (width, height) and
 ``fps`` to a color-stream profile supported by the device. The values shown
-match the editable collection template:
+match the editable collection template. ``enable_depth=False`` starts only
+the color stream:
 
 .. code-block:: bash
 
@@ -260,9 +270,10 @@ match the editable collection template:
    camera = Camera.of(CameraInfo(
        name="main",
        serial_number="CAMERA_SERIAL",
-       camera_type="realsense",
-       resolution=(640, 480),
+       camera_type="orbbec",
+       resolution=(1280, 720),
        fps=15,
+       enable_depth=False,
    ))
    try:
        camera.connect()
@@ -272,8 +283,9 @@ match the editable collection template:
        camera.disconnect()
    PY
 
-The backend requests BGR color. The output should show the selected height and
-width with three channels, and dtype ``uint8``. The ``finally`` block closes
+The backend returns BGR color. The output should show ``(720, 1280, 3)`` and
+dtype ``uint8``. UR collection converts this image to RGB before recording.
+The ``finally`` block closes
 the capture stream after the read. Use the same serial, resolution, and frame
 rate in the collection hardware entry's ``camera_serials``,
 ``camera_resolution``, and ``camera_fps``. Map that serial to ``main`` in
@@ -302,9 +314,10 @@ reset target and starting TCP must lie inside the limits; motion from outside
 the range is rejected. The environment clips position and orientation targets
 to this range, using a continuous window around the reset orientation. Set
 ``task_description`` for the demonstrations you will record.
-In the hardware entry, ``camera_resolution`` requests native stream width then
-height and ``camera_fps`` requests its rate. The template uses 640 × 480 at
-15 fps; select a profile supported by the actual RealSense device. In
+In the hardware entry, ``camera_resolution`` sets the camera output width then
+height and ``camera_fps`` requests its rate. The Orbbec backend selects the
+nearest native color resolution at that exact rate, then resizes to the output
+size. The template uses 1280 × 720 at 15 fps and captures color only. In
 ``env.eval.override_cfg``, ``image_size`` sets the recorded height then width,
 defaulting to 224 × 224 after crop and resize; ``camera_names`` and
 ``camera_crop_regions`` configure the views there. The environment reads the
