@@ -1,0 +1,97 @@
+defaults:
+  - env/realworld_ur5e_collect@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout:
+      node_group: ur5e
+      placement: 0
+    env:
+      node_group: ur5e
+      placement: 0
+  node_groups:
+    - label: ur5e
+      node_ranks: 0
+      hardware:
+        type: UR5e
+        configs:
+          - robot_ip: ROBOT_IP
+            node_rank: 0
+            controller_node_rank: null
+            frequency: 500.0
+            lookahead_time: 0.1
+            gain: 300.0
+            gripper_type: robotiq
+            gripper_connection: "/dev/serial/by-id/ROBOTIQ_SERIAL"
+            end_effector_config:
+              max_width: 0.085
+            camera_serials: ["CAMERA_SERIAL"]
+            camera_type: realsense
+            camera_resolution: [640, 480]
+            camera_fps: 15
+            camera_node_rank: null
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: ur5e_openpi_eval
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  max_steps: 1
+  only_eval: true
+  val_check_interval: -1
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  eval:
+    total_num_envs: 1
+    auto_reset: true
+    max_episode_steps: 300
+    max_steps_per_rollout_epoch: 300
+    rollout_epoch: 1
+    teleop: none
+    # a starts the policy; c/b end the episode and reset before the next start.
+    keyboard_reward_wrapper: eval_control
+    video_cfg:
+      save_video: true
+    override_cfg:
+      task_description: TASK_DESCRIPTION
+      camera_names:
+        "CAMERA_SERIAL": main
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: false
+  collect_prev_infos: false
+  model:
+    model_path: /path/to/ur5e_sft/checkpoints/global_step_30000
+    precision: bf16
+    num_action_chunks: 5
+    action_dim: 7
+    rewrite_chunk_gripper: false
+    openpi:
+      task: eval
+      config_name: pi05_ur5e
+      num_images_in_input: 1
+      discrete_state_input: true
+      action_horizon: 20
+    openpi_data:
+      norm_stats_path: /path/to/ur5e_dataset/norm_stats.json
