@@ -110,5 +110,6 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    STEAM <embodied/steam>
    Co-Training <embodied/co_training>
    IQL (D4RL) <embodied/iql_d4rl>
+   QAM (OGBench) <embodied/qam_ogbench>
    OPD <embodied/opd>
    RL Token <embodied/rlt>

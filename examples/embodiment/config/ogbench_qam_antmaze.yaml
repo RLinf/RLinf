@@ -1,0 +1,63 @@
+# QAM reference: 2726d767c9a0a7a46d49693f0391f73dc2cf58ac.
+# Ranks are three independent seeds, not DDP replicas.
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+seeds: [10001, 20002, 30003]
+gpu_start: 1
+gpu_end: 3
+data:
+  dataset_type: ogbench
+  task_name: antmaze-large-navigate-singletask-task1-v0
+env:
+  env_type: ogbench
+  task_name: antmaze-large-navigate-singletask-task1-v0
+algorithm:
+  loss_type: qam
+actor:
+  lr: 0.0003
+  batch_size: 256
+  updates_per_call: 1000
+  model:
+    model_type: qam_policy
+    precision: fp32
+    is_lora: false
+    load_to_device: false
+    obs_dim: 29
+    action_dim: 8
+    actor_hidden_dims: [512, 512, 512, 512]
+    value_hidden_dims: [512, 512, 512, 512]
+    actor_layer_norm: false
+    value_layer_norm: true
+    horizon_length: 1
+    action_chunking: true
+    num_qs: 10
+    rho: 0.5
+    discount: 0.99
+    tau: 0.005
+    flow_steps: 10
+    best_of_n: 1
+    inv_temp: 10.0
+    residual: false
+    fql_alpha: 0.0
+    edit_scale: 0.0
+runner:
+  max_epochs: 1500000
+  max_steps: 1500000
+  offline_steps: 1000000
+  online_steps: 500000
+  start_training: 5000
+  val_check_interval: 50000
+  save_interval: 250000
+  log_interval: 1000
+  eval_episodes: 50
+  only_eval: false
+  per_worker_log: true
+  resume_dir: null
+  logger:
+    log_path: logs
+    project_name: rlinf-qam
+    experiment_name: qam-antmaze-3seed
+    logger_backends: [tensorboard]

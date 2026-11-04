@@ -54,6 +54,13 @@ def register_model(
 
 
 def _register_builtin_models():
+    def _build_qam(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.qam_policy import build_qam_model
+
+        return build_qam_model(cfg, torch_dtype)
+
+    register_model("qam_policy", _build_qam, category="embodied", force=True)
+
     def _build_openvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openvla import get_model
 

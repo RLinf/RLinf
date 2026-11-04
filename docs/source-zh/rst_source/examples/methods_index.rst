@@ -110,5 +110,6 @@ RL
    STEAM <embodied/steam>
    Co-Training <embodied/co_training>
    IQL (D4RL) <embodied/iql_d4rl>
+   QAM (OGBench) <embodied/qam_ogbench>
    OPD <embodied/opd>
    RL Token <embodied/rlt>

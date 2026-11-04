@@ -72,6 +72,51 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-ogbench-qam-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create OGBench environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env ogbench
+
+      - name: QAM offline and online smoke test
+        timeout-minutes: 25
+        run: |
+          source .venv/bin/activate
+          export MUJOCO_GL=egl
+          export PYOPENGL_PLATFORM=egl
+          export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
+          python examples/embodiment/train_qam.py \
+            --config-path "$(pwd)/tests/e2e_tests/embodied" \
+            --config-name ogbench_qam_antmaze
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          root = Path("logs/qam-ci-smoke/seed_10001")
+          status = json.loads((root / "status.json").read_text())
+          evaluations = list(csv.DictReader((root / "eval.csv").open()))
+          assert status["phase"] == "completed" and status["step"] == 8
+          assert [int(row["step"]) for row in evaluations] == [4, 8]
+          for step in (4, 8):
+              checkpoint = Path(f"logs/qam-ci-smoke/checkpoints/global_step_{step}/actor/seed_10001.pt")
+              assert checkpoint.is_file(), checkpoint
+          PY
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-d4rl-offline-iql-test:
     runs-on: embodied
     steps:
