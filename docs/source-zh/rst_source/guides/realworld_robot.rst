@@ -210,6 +210,108 @@ YAML 配置
    ZED SDK 须在 GPU 节点、在 ``ray start`` **之前** 安装到 Ray 使用的同一虚拟环境中；
    Robotiq 串口权限须在 NUC 控制节点上配置好。详见 :doc:`../examples/embodied/franka_zed_robotiq`。
 
+Kuavo 硬件配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在机器人控制节点安装 Kuavo 环境依赖。如果 SDK 尚未由机器人的 ROS workspace 提供，可将安装器指向 SDK 源码目录：
+
+.. code-block:: bash
+
+   KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
+     bash requirements/install.sh embodied --env kuavo
+
+使用 ``hardware.type: Kuavo`` 选择内置的 Kuavo 机器人组合。配置中指定平台版本、使用的手臂、末端执行器、可选头部初始位置、控制频率、ROS 观测 topic 和安全限位。目前支持关节位置控制。
+
+.. code-block:: yaml
+
+   - label: kuavo
+     node_ranks: 1
+     hardware:
+       type: Kuavo
+       configs:
+         - node_rank: 1
+           platform_type: 4pro       # 4pro、5 或 5w
+           which_arm: both           # left、right 或 both
+           end_effector_type: leju_claw  # leju_claw、qiangnao 或 rq2f85
+           only_arm: true
+           direct_to_wbc: false
+           qiangnao_dof_needed: 1
+           is_binary: false
+           head_position: null       # 省略时保持当前头部位置
+           ros_rate: 10
+           control_rate: 100
+           controller_node_rank: 1
+           feedback_timeout_s: 2.0
+           feedback_stale_timeout_s: 0.5
+           image_size: [848, 480]
+           depth_range: [0, 1500]
+           joint_limits_min: [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14, -3.14]
+           joint_limits_max: [3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14, 3.14]
+           end_effector_limits_min: [0.0, 0.0]
+           end_effector_limits_max: [1.0, 1.0]
+           arm_state_keys: [joint_q, gripper]
+           obs_key_map:
+             head_cam_h:
+               topic: /cam_h/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             wrist_cam_l:
+               topic: /cam_l/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             wrist_cam_r:
+               topic: /cam_r/color/image_raw/compressed
+               msg_type: CompressedImage
+               frequency: 30
+             joint_q:
+               topic: /sensors_data_raw
+               msg_type: sensorsData
+               frequency: 500
+             leju_claw:
+               topic: /leju_claw_state
+               msg_type: lejuClawState
+               frequency: 500
+
+在机器人控制节点安装 Kuavo SDK，在相机所在节点安装 ROS 图像消息包。设备连接打开时才会加载这些依赖；创建硬件配置本身不会连接机器人。
+
+当前适配会明确拒绝底盘控制、direct WBC、多自由度 Qiangnao policy 动作、二值末端动作和笛卡尔手臂控制，避免接受实际无法执行的配置。
+
+每只选中的手臂分别通过 ``left.arm`` 或 ``right.arm`` 访问，规范观测和动作字段都是以弧度表示的 ``arm_joint_position``；对应末端执行器通过 ``left.gripper`` 或 ``right.gripper`` 访问，目标值归一化到 ``0..1``。``KuavoRobot.build()`` 组合这些手臂和末端执行器零部件，并通过 ``cameras`` 参数接收相机描述。
+
+双臂任务使用 ``examples/embodiment/config/env/realworld_kuavo_joint.yaml``，通过共享的 ``env_type: real`` 入口选择已注册的 ``KuavoJointEnv-v1``。该任务要求 ``which_arm: both`` 和 ``arm_state_keys: [joint_q, gripper]``。环境读取 ``active_obs_key_map()`` 返回的三个相机 route，由 ``ROSCamera`` 零部件按 ``topic`` 和 ``msg_type`` 订阅，支持 ``Image`` 和 ``CompressedImage``。图像缩放到 ``image_size``，相机输出 BGR，环境转换为 RGB；头部图像进入 ``main_images``，左腕、右腕图像依次进入 ``extra_view_images``。连接还会订阅 ``obs_key_map`` 中的 ``joint_q`` 和所选末端执行器 topic。关节反馈使用 ``sensorsData``，按配置的平台截取手臂关节；Leju claw 反馈使用 ``lejuClawState``，Qiangnao 和 RQ2F85 使用 ``JointState``。
+
+任务的 ``override_cfg.control_mode`` 为 ``joint``；设备设置放在 ``hardware.configs`` 中。
+
+使用 Leju claw 时，连接前应启动类型为 ``controlLejuClaw`` 的 ``/control_robot_leju_claw`` 服务，连接会等待该服务，最长为 ``feedback_timeout_s`` 秒。请求包含 ``left_claw`` 和 ``right_claw`` 两个名称，并将归一化目标转换为 ``0..100``。同一步中更新一侧时，会保留另一侧已接受的目标。服务拒绝请求会报错；服务接受只表示命令已收到，是否到位应检查 ``lejuClawState`` 中的实测反馈。
+
+每次服务响应也须在 ``feedback_timeout_s`` 内返回。超时会将连接标记为故障并拒绝后续夹爪命令。重新连接前须先关闭连接；若此前的请求仍未结束，同一进程内的连接都会拒绝再次使用该服务。超时不能撤销控制器已经收到的命令，重启 worker 进程前应先确认控制器状态。
+
+连接会先等待有效的手臂和夹爪反馈，最长等待 ``feedback_timeout_s`` 秒，默认 ``2.0`` 秒，然后才切换控制模式。后续读取会拒绝超过 ``feedback_stale_timeout_s`` 的反馈，默认 ``0.5`` 秒。这两个反馈超时字段放在 ``hardware.configs`` 中。相机等待和过期阈值分别由任务 ``override_cfg`` 中的 ``camera_frame_timeout_s`` 和 ``camera_stale_timeout_s`` 设置，默认 ``1.0`` 秒和 ``2.0`` 秒。过期判断按本地收到消息后的时间计算，不代表传感器时间戳之间已经同步。
+
+首次 reset 打开连接并读取当前姿态，不执行手臂归位或夹爪张开。SDK 连接会将手臂切换到外部控制模式；若配置了 ``head_position``，还会下发头部位置。每次 step 都先检查完整的 16 维动作和相机帧是否有效，再下发命令。目标值先限制在硬件限位内，每个关节目标与实测位置的偏差再限制为 ``max_joint_delta`` 弧度，默认 ``0.05``。步进间隔默认使用 ``ros_rate``，可通过 ``step_frequency`` 覆盖。相机 route 的 ``frequency`` 描述发布端频率，不会修改发布速率；``control_rate`` 也不会启动额外的高频控制循环。
+
+基础任务返回零奖励，配置沿用 ``keyboard_reward_wrapper: eval_control``，由操作者标记 episode 的结果；任务描述和 episode 长度按实际场景设置。相机输入缺失、过期或无法解码时会报错，不会用空图像继续运行。
+
+step 期间读取观测或下发动作失败时，环境会尝试根据有效的实测关节位置发送一次保持命令，随后拒绝继续操作，直到关闭并重新创建环境。若关节反馈缺失、过期或超出配置的限位，保持命令也不会下发，更不会用零目标代替。
+
+.. warning::
+
+   保持机器人的物理急停装置可用。单次保持命令不属于急停机制，也不能保证机器人停止运动。
+
+   在启动 Python 和相关节点的 Ray 进程前，设置：
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   连接已有 ROS master 的 driver、环境、控制器和相机节点都应设置此变量。先启动机器人的 ROS 服务，再启动任务；Kuavo 和 ``ROSCamera`` 连接已有服务，不负责启动或停止这些服务。仅启动 ``roscore`` 不会启动机器人控制器和相机发布节点。
+
+   此设置作用于整个进程，并非只作用于 Kuavo。未设置或设置为 ``reset`` 时，RLinf 保持原有清理行为：加载真机任务时停止 ROS core 进程，每次显式调用 ``realworld_setup()`` 也会再次清理。有些采集脚本会在读取 YAML 前加载任务，因此 YAML 字段不能替代这个启动前的环境变量。Kuavo 构造函数会拒绝未设置 ``preserve`` 的启动，但无法撤销此前导入已经执行的清理。
+
+   运行期间不要切换此变量。初始化出错后，应修正启动环境并重启进程。共享同一 master 的所有任务都需保持设置一致；另一个使用 ``reset`` 的任务仍可能停止该 master。
+
+对于双臂 GR00T N1.7 checkpoint，可从 ``examples/embodiment/config/model/gr00t_n1d7_kuavo.yaml`` 开始配置。这个模型配置选择 Kuavo 输入输出转换器，state 和 action 都按 16 维排列：左臂 7 个关节、左夹爪、右臂 7 个关节、右夹爪。动作使用弧度表示的绝对关节目标和 ``0..1`` 的夹爪目标。``KuavoJointEnv-v1`` 按头部、左腕、右腕的顺序提供 RGB 图像，并附带任务文本。运行 policy 还需要匹配的 checkpoint、processor 和 backbone 文件。
+
 从环境变量自动配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

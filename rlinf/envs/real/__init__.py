@@ -36,6 +36,7 @@ _ROBOT_PACKAGES = (
     ".dosw1",
     ".franka",
     ".gim_arm",
+    ".kuavo",
     ".piper",
     ".so101",
     ".xsquare",

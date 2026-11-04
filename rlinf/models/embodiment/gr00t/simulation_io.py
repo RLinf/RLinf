@@ -70,6 +70,74 @@ def convert_maniskill_obs_to_gr00t_format(env_obs):
     return groot_obs
 
 
+def convert_kuavo_obs_to_gr00t_format(env_obs: dict) -> dict:
+    """Map Kuavo's 16 joint/gripper values and three RGB views to GR00T."""
+    states = env_obs["states"]
+    if states.ndim != 2 or states.shape[-1] != 16:
+        raise ValueError(f"Expected Kuavo states [B, 16], got {tuple(states.shape)}")
+    main_images = env_obs["main_images"]
+    wrist_images = env_obs["extra_view_images"]
+    if main_images.ndim != 4 or main_images.shape[-1] != 3:
+        raise ValueError(
+            f"Expected Kuavo head images [B, H, W, 3], got {tuple(main_images.shape)}"
+        )
+    if (
+        wrist_images.ndim != 5
+        or wrist_images.shape[1] != 2
+        or wrist_images.shape[-1] != 3
+    ):
+        raise ValueError(
+            "Expected Kuavo wrist images [B, 2, H, W, 3] in left/right order, "
+            f"got {tuple(wrist_images.shape)}"
+        )
+    if (
+        main_images.shape[0] != states.shape[0]
+        or wrist_images.shape[0] != states.shape[0]
+    ):
+        raise ValueError("Expected matching Kuavo state and image batch sizes")
+
+    states = states.detach().cpu().float().unsqueeze(1).numpy()
+    return {
+        "video.head": main_images.detach().cpu().unsqueeze(1).numpy(),
+        "video.wrist_left": wrist_images[:, 0].detach().cpu().unsqueeze(1).numpy(),
+        "video.wrist_right": wrist_images[:, 1].detach().cpu().unsqueeze(1).numpy(),
+        "state.left_arm": states[..., :7],
+        "state.left_gripper": states[..., 7:8],
+        "state.right_arm": states[..., 8:15],
+        "state.right_gripper": states[..., 15:16],
+        "annotation.human.task_description": env_obs["task_descriptions"],
+    }
+
+
+def convert_to_kuavo_action_n1d7(
+    action_chunk: dict[str, np.ndarray], chunk_size: int = 1
+) -> np.ndarray:
+    """Return absolute arm angles in radians and gripper positions in [0, 1]."""
+    if chunk_size < 1:
+        raise ValueError(
+            f"Expected a positive Kuavo action chunk size, got {chunk_size}"
+        )
+    components = []
+    for key, width in (
+        ("left_arm", 7),
+        ("left_gripper", 1),
+        ("right_arm", 7),
+        ("right_gripper", 1),
+    ):
+        component = np.asarray(action_chunk[key])
+        if component.ndim != 3 or component.shape[-1] != width:
+            raise ValueError(
+                f"Expected Kuavo {key} actions [B, T, {width}], got {component.shape}"
+            )
+        if component.shape[1] < chunk_size:
+            raise ValueError(
+                f"Expected at least {chunk_size} Kuavo actions, "
+                f"got {component.shape[1]}"
+            )
+        components.append(component[:, :chunk_size])
+    return np.concatenate(components, axis=-1)
+
+
 def convert_to_libero_action_n1d5(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
@@ -209,6 +277,7 @@ def convert_to_isaaclab_stack_cube_action(
 
 
 OBS_CONVERSION = {
+    "kuavo": convert_kuavo_obs_to_gr00t_format,
     "maniskill": convert_maniskill_obs_to_gr00t_format,
     "libero": convert_libero_obs_to_gr00t_format,
     "isaaclab_stack_cube": convert_libero_obs_to_gr00t_format,
@@ -227,6 +296,7 @@ ACTION_CONVERSION_N1D6 = {
 }
 
 ACTION_CONVERSION_N1D7 = {
+    "kuavo": convert_to_kuavo_action_n1d7,
     "libero": convert_to_libero_action_n1d7,
     "maniskill": convert_to_maniskill_action,
     "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
