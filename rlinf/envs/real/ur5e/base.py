@@ -202,12 +202,10 @@ class URCollectionEnv(gym.Env):
         return self._num_steps
 
     def get_tcp_pose(self) -> np.ndarray:
-        """Return the measured base-frame pose for teleoperation context."""
+        """Read the current base-frame pose without waiting for camera frames."""
         if self.config.is_dummy:
             return self.observation_space["state"]["tcp_pose"].sample()
-        return np.asarray(
-            self._last_reading["arm"]["tcp_pose"], dtype=np.float32
-        ).copy()
+        return np.asarray(self._arm.get_state().tcp_pose, dtype=np.float32).copy()
 
     def get_action_scale(self) -> np.ndarray:
         """Return the translation, rotation, and gripper action scales."""
@@ -322,14 +320,11 @@ class URCollectionEnv(gym.Env):
                 f"UR action must have shape {self.action_space.shape} and finite values."
             )
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        observation = None
         if not self.config.is_dummy:
             if self._with_gripper:
                 self._gripper_action(float(action[6]) * self.config.action_scale[2])
             moving = bool(np.any(action[:6]))
             if moving or self._arm_was_driving:
-                if not moving:
-                    observation = self._get_observation()
                 pose = self.get_tcp_pose().astype(np.float64)
                 if moving:
                     self._check_current_pose(pose)
@@ -342,11 +337,10 @@ class URCollectionEnv(gym.Env):
                 self.robot.send_action({"arm": {"tcp_pose": pose.astype(np.float32)}})
             self._arm_was_driving = moving
         self._num_steps += 1
-        if observation is None:
-            observation = self._get_observation()
         time.sleep(
             max(0.0, 1.0 / self.config.step_frequency - (time.monotonic() - started))
         )
+        observation = self._get_observation()
         return observation, 0.0, False, False, {}
 
     def _gripper_action(self, signal: float) -> None:

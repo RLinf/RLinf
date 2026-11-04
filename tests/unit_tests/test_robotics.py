@@ -1987,6 +1987,34 @@ def test_disconnecting_a_spacemouse_stops_its_thread_and_closes_the_handle():
         assert handle.closed
 
 
+def test_spacemouse_yields_between_polls_without_holding_the_state_lock(monkeypatch):
+    import threading
+
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.teleop import spacemouse
+
+    with mocked_sdks() as made:
+        reader = spacemouse.SpaceMouseExpert.__new__(spacemouse.SpaceMouseExpert)
+        reader._device = made["pyspacemouse"].open()
+        reader.state_lock = threading.Lock()
+        reader.latest_data = {}
+        reader._stop = False
+        waits = []
+
+        def pause(seconds):
+            assert reader.state_lock.acquire(blocking=False)
+            reader.state_lock.release()
+            waits.append(seconds)
+            reader._stop = True
+
+        monkeypatch.setattr(spacemouse, "time", SimpleNamespace(sleep=pause))
+        reader._read_spacemouse()
+        assert waits == [0.005]
+        assert reader.get_action()[1] == [0, 0]
+        reader._device.close()
+
+
 def test_disconnecting_a_gello_stops_its_thread_and_releases_the_port():
     """The same leak on the leader arm, which holds a serial port open."""
     from robot_mocks import mocked_sdks

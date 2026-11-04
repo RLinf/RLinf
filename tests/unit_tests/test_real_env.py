@@ -4899,7 +4899,7 @@ def test_ur_collection_records_a_cartesian_delta_action_contract(ur_collection_e
 
 
 def test_ur_collection_scales_deltas_and_composes_base_frame_rotation(
-    ur_collection_env, monkeypatch
+    ur_collection_env,
 ):
     from scipy.spatial.transform import Rotation
 
@@ -4907,19 +4907,8 @@ def test_ur_collection_scales_deltas_and_composes_base_frame_rotation(
     control = made["rtde_control"].RTDEControlInterface.instances[-1]
     receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
     initial = np.asarray(receive.pose)
-    read_pose = receive.getActualTCPPose
-    reads = []
-
-    def measured_pose():
-        reads.append(None)
-        return read_pose()
-
-    monkeypatch.setattr(receive, "getActualTCPPose", measured_pose)
-
     env.step(np.array([0.5, -0.5, 0.25, 0.5, 0, 0]))
-    assert len(reads) == 1, "Each step must use one whole-robot observation."
     np.testing.assert_allclose(env.get_tcp_pose()[:3], initial[:3])
-    assert len(reads) == 1, "Teleop context must reuse the cached observation."
     assert control.servo_called.wait(1.0)
     sent = next(args[0] for name, args in control.commands if name == "servoL")
     np.testing.assert_allclose(sent[:3], initial[:3] + [0.01, -0.01, 0.005], atol=1e-7)
@@ -4929,6 +4918,42 @@ def test_ur_collection_scales_deltas_and_composes_base_frame_rotation(
     np.testing.assert_allclose(
         Rotation.from_rotvec(sent[3:]).as_matrix(), expected, atol=1e-7
     )
+
+
+def test_ur_collection_uses_fresh_pose_and_observes_after_control_period(
+    ur_collection_env, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from rlinf.envs.real.ur5e import base
+
+    env, made = ur_collection_env
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive.pose[0] = 0.41
+    np.testing.assert_allclose(env.get_tcp_pose()[0], 0.41)
+    events = []
+    read_pose = receive.getActualTCPPose
+
+    def measured_pose():
+        events.append("read")
+        return read_pose()
+
+    def wait_for_motion(duration):
+        events.append("wait")
+        receive.pose[0] = 0.411
+
+    monkeypatch.setattr(receive, "getActualTCPPose", measured_pose)
+    monkeypatch.setattr(
+        base, "time", SimpleNamespace(monotonic=lambda: 0.0, sleep=wait_for_motion)
+    )
+    observation, *_ = env.step(np.array([0.1, 0, 0, 0, 0, 0]))
+
+    assert control.servo_called.wait(1.0)
+    target = next(args[0] for name, args in control.commands if name == "servoL")
+    np.testing.assert_allclose(target[0], 0.412, atol=1e-7)
+    np.testing.assert_allclose(observation["state"]["tcp_pose"][0], 0.411)
+    assert events == ["read", "wait", "read"]
 
 
 def test_ur_collection_clips_positions_to_configured_workspace(ur_collection_env):
