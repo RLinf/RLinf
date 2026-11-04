@@ -119,7 +119,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "ur5e" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -2578,6 +2578,13 @@ EOF
             uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
+        ur5e)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_ur5e_env
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps
@@ -3164,7 +3171,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
+        franka|franka-ros|ur5e|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
@@ -3180,6 +3187,9 @@ install_env_only() {
             ;;
         franka-ros)
             install_franka_ros_realworld_env
+            ;;
+        ur5e)
+            install_ur5e_env
             ;;
         xsquare_turtle2)
             install_xsquare_turtle2_env
@@ -3690,6 +3700,12 @@ install_franka_franky_env() {
     install_lerobot -r "$SCRIPT_DIR/embodied/envs/franka.txt"
     # Ruiyan dexterous-hand and data-glove drivers.
     uv pip install "RLinf-dexterous-hands[glove]"
+    use_opencv_gui_wheel
+}
+
+install_ur5e_env() {
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/ur5e.txt"
+    install_lerobot -r "$SCRIPT_DIR/embodied/envs/ur5e.txt"
     use_opencv_gui_wheel
 }
 

@@ -67,8 +67,8 @@ YAM
 
 进入 :doc:`YAM 页面 <embodied/yam_index>`，查看双臂配置与数据采集指南。
 
-Piper 与 SO101 配置
---------------------------------
+Piper、SO101 与 UR5e 配置
+-------------------------
 
 通过以下指南连接机械臂并运行硬件测试脚本。Piper 和 SO101 目前尚未提供真机任务或训练流程。
 
@@ -87,6 +87,12 @@ Piper 与 SO101 配置
 
       配置电机、标定 SO-101，并运行关节与夹爪测试脚本。
 
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      检查 UR5e 驱动，使用相机、Robotiq 夹爪与 SpaceMouse 采集演示。
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -99,3 +105,4 @@ Piper 与 SO101 配置
    DOS-W1 <embodied/dosw1>
    Piper <embodied/piper>
    SO101 <embodied/so101>
+   UR5e <embodied/ur5e>

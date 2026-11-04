@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fake arm SDKs: franky, ROS, lerobot, pyAgxArm, and i2rt."""
+"""Fake arm SDKs: franky, ROS, lerobot, pyAgxArm, i2rt, and ur_rtde."""
 
 from __future__ import annotations
 
@@ -1020,6 +1020,115 @@ class FreeToolKinematics:
         return YamIKResult(reason is None, joints, 0.0, 0.0, 0.0, reason)
 
 
+def ur_rtde() -> dict[str, types.ModuleType]:
+    """Return RTDE control and receive SDK doubles for driver tests."""
+
+    class RTDEReceiveInterface:
+        instances: list[Any] = []
+        connect_error: Exception | None = None
+
+        def __init__(self, robot_ip, frequency=-1.0, variables=None, **kwargs):
+            if self.connect_error is not None:
+                raise self.connect_error
+            self.instances.append(self)
+            self.robot_ip = robot_ip
+            self.frequency = frequency
+            self.connected = True
+            self.joints = [0.1, -1.2, 1.5, -1.8, -1.4, 0.2]
+            self.velocity = [0.02] * 6
+            self.pose = [0.4, 0.05, 0.3, 0.0, 0.0, np.pi / 2]
+            self.tcp_speed = [0.01, 0.02, 0.03, 0.1, 0.2, 0.3]
+            self.robot_mode = 7
+            self.safety_mode = 1
+            self.disconnect_count = 0
+
+        def isConnected(self):
+            return self.connected
+
+        def getActualQ(self):
+            return self.joints.copy()
+
+        def getActualQd(self):
+            return self.velocity.copy()
+
+        def getActualTCPPose(self):
+            return self.pose.copy()
+
+        def getActualTCPSpeed(self):
+            return self.tcp_speed.copy()
+
+        def getRobotMode(self):
+            return self.robot_mode
+
+        def getSafetyMode(self):
+            return self.safety_mode
+
+        def disconnect(self):
+            self.connected = False
+            self.disconnect_count += 1
+
+    class RTDEControlInterface:
+        instances: list[Any] = []
+        connect_error: Exception | None = None
+
+        def __init__(self, robot_ip, frequency=-1.0, *args, **kwargs):
+            if self.connect_error is not None:
+                raise self.connect_error
+            self.instances.append(self)
+            self.robot_ip = robot_ip
+            self.frequency = frequency
+            self.connected = True
+            self.program_running = True
+            self.commands: list[tuple[str, tuple[Any, ...]]] = []
+            self.servo_called = threading.Event()
+            self.servo_error: Exception | None = None
+            self.servo_result = True
+            self.disconnect_count = 0
+
+        def isConnected(self):
+            return self.connected
+
+        def isProgramRunning(self):
+            return self.program_running
+
+        def initPeriod(self):
+            return time.monotonic()
+
+        def waitPeriod(self, start):
+            time.sleep(max(0, 1.0 / self.frequency - (time.monotonic() - start)))
+
+        def servoL(self, pose, speed, acceleration, duration, lookahead, gain):
+            self.commands.append(
+                ("servoL", (list(pose), speed, acceleration, duration, lookahead, gain))
+            )
+            self.servo_called.set()
+            if self.servo_error is not None:
+                raise self.servo_error
+            return self.servo_result
+
+        def servoStop(self, *args):
+            self.commands.append(("servoStop", args))
+            return True
+
+        def stopScript(self):
+            self.commands.append(("stopScript", ()))
+            self.program_running = False
+            return True
+
+        def disconnect(self):
+            self.connected = False
+            self.disconnect_count += 1
+
+    return {
+        "rtde_control": module(
+            "rtde_control", RTDEControlInterface=RTDEControlInterface
+        ),
+        "rtde_receive": module(
+            "rtde_receive", RTDEReceiveInterface=RTDEReceiveInterface
+        ),
+    }
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return fake arm SDKs keyed by import name."""
     made = {"franky": franky()}
@@ -1027,4 +1136,5 @@ def modules(**_: Any) -> dict[str, types.ModuleType]:
     made.update(lerobot())
     made.update(pyagxarm())
     made.update(i2rt())
+    made.update(ur_rtde())
     return made

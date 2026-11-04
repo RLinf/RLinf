@@ -67,8 +67,8 @@ YAM
 
 Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data collection guides.
 
-Piper and SO101 Setup
----------------------
+Piper, SO101, and UR5e Setup
+----------------------------
 
 Use these guides to connect an arm and run its hardware test script. Piper and SO101 do not yet have supported real-world tasks or training workflows.
 
@@ -87,6 +87,12 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
 
       Set up motors, calibrate an SO-101, and run the joint and gripper test script.
 
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      Check the UR5e driver and record SpaceMouse demonstrations with a camera and Robotiq gripper.
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -99,3 +105,4 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
    DOS-W1 <embodied/dosw1>
    Piper <embodied/piper>
    SO101 <embodied/so101>
+   UR5e <embodied/ur5e>
