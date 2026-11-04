@@ -893,6 +893,32 @@ def test_pinned_offload_restores_after_cuda_copy_and_exception():
     assert torch.Tensor.to is original_to
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda", dtype=torch.float32)
+    original_to = torch.Tensor.to
+    allocator_error = RuntimeError("pinned allocator exhausted")
+
+    def fail_allocation(*args, **kwargs):
+        assert kwargs["pin_memory"] is True
+        raise allocator_error
+
+    monkeypatch.setattr(torch, "empty_like", fail_allocation)
+    with pytest.raises(
+        RuntimeError, match="Failed to allocate pinned CPU memory"
+    ) as info:
+        with pinned_offload_context():
+            source.to("cpu")
+    assert info.value.__cause__ is allocator_error
+    assert "shape=(2,)" in str(info.value)
+    assert "dtype=torch.float32" in str(info.value)
+    assert f"source_device={source.device}" in str(info.value)
+    assert "requested_bytes=8" in str(info.value)
+    assert torch.Tensor.to is original_to
+
+
 @pytest.mark.parametrize("dirty", [False, True])
 def test_diffusion_launcher_records_source_revision_and_tracked_changes(
     tmp_path, dirty

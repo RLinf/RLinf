@@ -53,12 +53,21 @@ def _pinned_tensor_to(self: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Te
         and torch.device(device).type == "cpu"
         and self.device.type != "cpu"
     ):
-        buffer = torch.empty_like(
-            self,
-            device="cpu",
-            pin_memory=True,
-            memory_format=kwargs.get("memory_format", torch.preserve_format),
-        )
+        try:
+            buffer = torch.empty_like(
+                self,
+                device="cpu",
+                pin_memory=True,
+                memory_format=kwargs.get("memory_format", torch.preserve_format),
+            )
+        except RuntimeError as error:
+            raise RuntimeError(
+                "Failed to allocate pinned CPU memory for offload: "
+                f"shape={tuple(self.shape)}, dtype={self.dtype}, "
+                f"source_device={self.device}, "
+                f"requested_bytes={self.numel() * self.element_size()}. "
+                "Check available host memory and pinned-memory limits."
+            ) from error
         buffer.copy_(self)
         return buffer
 

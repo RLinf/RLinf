@@ -216,7 +216,7 @@ reference model。
 
    bash requirements/install.sh embodied --model diffusion --paddle-gpu
 
-根据 CUDA 版本，GPU wheel 大约为 760--800 MB。安装脚本会选择 CUDA 11 或 CUDA 12 对应的版本；如果环境中已经安装正确版本，则会跳过下载。 diffusion 安装中的两次项目同步都会保留外部安装的包，因此重复安装时会保留匹配的 GPU wheel。切换 CPU/GPU Paddle 时会卸载另一种 distribution；其他模型仍采用精确同步。
+根据 CUDA 版本，GPU wheel 大约为 760--800 MB。GPU 安装支持检测到的 CUDA 11 和 12，分别选择 ``cu118`` 和 ``cu120`` 构建。安装脚本优先检查 PyTorch 的 CUDA 构建版本，再检查 ``nvcc``；其他版本会在替换现有 Paddle 包之前报错。如果已安装匹配的 GPU 构建，则会跳过下载。diffusion 安装中的两次项目同步都会保留外部安装的包，因此重复安装时会保留匹配的 GPU wheel。切换 CPU/GPU Paddle 时会卸载另一种 distribution；其他模型仍采用精确同步。
 
 .. warning::
 
@@ -296,6 +296,8 @@ prompt，``env.*.dataset.split`` 用于选择对应文件。
       env.eval.dataset.path=/path/to/dataset/ocr
 
 更多参数位于 ``examples/diffusion/config/*.yaml``。
+
+将 ``runner.resume_dir`` 设为 ``checkpoints/global_step_N`` 目录即可恢复 NFT 训练。Off-policy checkpoint 在 actor 训练状态之外，还通过 ``actor/nft_rollout_state.pt`` 保存 EMA rollout 权重。加载缺少 EMA 权重的旧 checkpoint 时，actor 会记录告警，并从已恢复的 actor 权重初始化 EMA；这种兼容方式不属于精确续训。
 
 预期实验结果
 ------------

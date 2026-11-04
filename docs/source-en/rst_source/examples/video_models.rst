@@ -236,9 +236,12 @@ CUDA-enabled PaddlePaddle wheel for those configurations:
 
    bash requirements/install.sh embodied --model diffusion --paddle-gpu
 
-The GPU wheel is approximately 760--800 MB, depending on the CUDA version. The
-installer selects the CUDA 11 or CUDA 12 build and skips the download when the
-matching build is already installed. Both project synchronization steps preserve
+The GPU wheel is approximately 760--800 MB, depending on the CUDA version.
+GPU installation supports detected CUDA major versions 11 and 12, selecting the
+``cu118`` and ``cu120`` builds respectively. The installer checks PyTorch's CUDA
+build first, then ``nvcc``. Other versions fail before replacing installed Paddle
+packages. A matching GPU build is reused without downloading it again.
+Both project synchronization steps preserve
 external packages for diffusion installs, so a matching GPU wheel survives a
 repeated installation. Switching between CPU and GPU Paddle removes the opposite
 distribution; other model installs retain exact synchronization.
@@ -323,6 +326,12 @@ model and dataset paths.
       env.eval.dataset.path=/path/to/dataset/ocr
 
 Configure further in ``examples/diffusion/config/*.yaml``.
+
+Set ``runner.resume_dir`` to a ``checkpoints/global_step_N`` directory to
+resume NFT training. Off-policy checkpoints include the EMA rollout weights in
+``actor/nft_rollout_state.pt`` alongside the actor training state. When loading
+an older checkpoint without EMA weights, the actor logs a warning and initializes
+EMA from the restored actor weights; that fallback is not an exact resume.
 
 Expected Results
 ----------------

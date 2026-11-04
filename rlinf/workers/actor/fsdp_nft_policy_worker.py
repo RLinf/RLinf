@@ -107,6 +107,74 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 else:
                     self.rollout_model_state_dict[key] = value
 
+    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
+        """Save actor training state and the replicated NFT EMA weights."""
+        super().save_checkpoint(save_path, step)
+        if not self.rollout_model_state_dict:
+            return
+
+        path = os.path.join(save_path, "nft_rollout_state.pt")
+        status = [None]
+        save_error = None
+        if self._rank == 0:
+            try:
+                state = {
+                    key: value.detach().cpu() if torch.is_tensor(value) else value
+                    for key, value in self.rollout_model_state_dict.items()
+                }
+                torch.save(state, path + ".tmp")
+                os.replace(path + ".tmp", path)
+            except Exception as error:
+                save_error = error
+                status[0] = f"Failed to save NFT EMA weights to '{path}': {error}"
+        torch.distributed.broadcast_object_list(status, src=0)
+        if status[0] is not None:
+            raise RuntimeError(status[0]) from save_error
+
+    def load_checkpoint(self, load_path: str) -> None:
+        """Restore actor training state and NFT EMA weights, if present."""
+        super().load_checkpoint(load_path)
+        if not self.rollout_model_state_dict:
+            return
+
+        path = os.path.join(load_path, "nft_rollout_state.pt")
+        if not os.path.isfile(path):
+            self.log_warning(
+                f"NFT checkpoint '{path}' has no EMA weights; initializing EMA "
+                "from the restored actor. This is not an exact training resume."
+            )
+            self.init_rollout_model()
+            return
+
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        expected_keys = set(self.rollout_model_state_dict)
+        if set(state) != expected_keys:
+            raise ValueError(
+                "NFT EMA checkpoint keys do not match the actor: "
+                f"missing={sorted(expected_keys - set(state))}, "
+                f"unexpected={sorted(set(state) - expected_keys)}."
+            )
+        for key, target in self.rollout_model_state_dict.items():
+            value = state[key]
+            if torch.is_tensor(target) and (
+                not torch.is_tensor(value)
+                or value.shape != target.shape
+                or value.dtype != target.dtype
+            ):
+                raise ValueError(
+                    f"NFT EMA checkpoint tensor '{key}' expected shape "
+                    f"{tuple(target.shape)} and dtype {target.dtype}, found "
+                    f"shape {getattr(value, 'shape', None)} and dtype "
+                    f"{getattr(value, 'dtype', None)}."
+                )
+        with torch.no_grad():
+            for key, target in self.rollout_model_state_dict.items():
+                if torch.is_tensor(target):
+                    target.copy_(state[key])
+                else:
+                    self.rollout_model_state_dict[key] = state[key]
+        self._cached_ref_model = None
+
     def _get_current_nft_tau(self) -> float:
         """Return scalar tau or linearly annealed tau from [start, end, s0, s1]."""
         tau = self.cfg.algorithm.get("nft_tau", 1.0)
