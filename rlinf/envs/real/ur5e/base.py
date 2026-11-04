@@ -146,7 +146,7 @@ class URCollectionEnv(gym.Env):
     TELEOP = ("spacemouse",)
     TELEOP_DEFAULT = "spacemouse"
     ACTION_WRAPPERS = ("GripperCloseEnv",)
-    TRANSFORMS = ()
+    TRANSFORMS = ("RelativeFrame", "Quat2EulerWrapper")
 
     def __init__(
         self,

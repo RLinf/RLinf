@@ -155,7 +155,7 @@ class UR5eConfig(RobotConfig):
     """Settings for the selected gripper, such as its maximum opening width."""
 
     camera_serials: Optional[list[str]] = None
-    """Camera identifiers. ``None`` or ``[]`` runs with the arm alone."""
+    """Camera identifiers; ``None`` enables discovery and ``[]`` disables cameras."""
 
     camera_type: str = "orbbec"
     """Camera backend used for explicitly configured camera identifiers."""

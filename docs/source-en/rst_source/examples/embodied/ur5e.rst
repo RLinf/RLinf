@@ -375,24 +375,33 @@ start pose. Restore the task objects before starting the next recording.
 Check the Recorded Representation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Inspect a short recorded episode before collecting a full dataset. The
-collection action differs from the arm backend's absolute TCP pose: with the
-Robotiq gripper, it has seven normalized channels,
-``[dx, dy, dz, droll, dpitch, dyaw, gripper]``. Translation and rotation are
-base-frame increments scaled by ``action_scale``. Its default ``[0.02, 0.1, 1]``
-means at most 0.02 m and 0.1 rad per axis per full-input step. The final signal
-is negative for close and positive for open.
+Inspect a short recorded episode before collecting a full dataset. With the
+Robotiq gripper, policy and recorded actions have seven normalized channels,
+``[dx, dy, dz, droll, dpitch, dyaw, gripper]``. As in the single-arm Franka
+workflow, ``use_relative_frame: True`` enables the shared ``RelativeFrame``
+wrapper. It expresses Cartesian actions in the current end-effector frame and
+maps policy actions back to the base frame before the UR environment applies
+``action_scale``. The default ``[0.02, 0.1, 1]`` limits each base-frame
+translation and rotation axis to 0.02 m and 0.1 rad per full-input step.
+The gripper signal is negative for close and positive for open. SpaceMouse
+retains its base-frame mapping; the wrapper converts its recorded intervention
+actions to the same frame used by the policy.
 
-The raw state contains ``tcp_pose`` (seven values, metres and xyzw quaternion)
-and ``gripper_position`` (one opening width in metres). ``RealWorldEnv`` sorts
-state keys before flattening, so the recorded eight-value state is
-``[gripper_position, x, y, z, qx, qy, qz, qw]``. The environment camera supplies one RGB image under the recorded ``image``
-key. Its ``main`` name selects the primary image in the environment.
+The driver exposes ``tcp_pose`` as absolute position and an xyzw quaternion.
+The shared wrappers convert this pose relative to the measured pose returned
+by reset, then convert the quaternion to xyz Euler angles with
+``Quat2EulerWrapper``. Immediately after reset, all six relative pose values
+are zero. ``RealWorldEnv`` sorts state keys before flattening, so with the
+gripper the recorded seven-value state is
+``[gripper_position, x_rel, y_rel, z_rel, roll_rel, pitch_rel, yaw_rel]``.
+The gripper width and positions are in metres; angles are in radians. The
+camera supplies one RGB image under the recorded ``image`` key, selected by
+the environment's ``main`` view name.
 
-The ``pi05_ur5e`` data configuration maps this image, eight-value state,
+The ``pi05_ur5e`` data configuration maps this image, seven-value state,
 seven-value action, and task prompt to OpenPI. It preserves the recorded delta
-actions. Keep the state order, camera view, task prompt, collection rate, and
-``action_scale`` consistent during collection and deployment.
+actions. Keep ``use_relative_frame``, state order, camera view, task prompt,
+collection rate, and ``action_scale`` consistent during collection and deployment.
 
 Fine-Tune π₀.₅
 ---------------
@@ -410,7 +419,7 @@ inference will use:
 
 Pass the directory containing ``meta/info.json``. The command reports where it
 writes ``norm_stats.json``; use that file for both training and deployment.
-Statistics use the same data transforms as training: the state keeps its eight
+Statistics use the same data transforms as training: the state keeps its seven
 values, and the seven recorded delta-action channels are padded to the model
 dimension.
 

@@ -11,6 +11,7 @@ max_steps_per_rollout_epoch: 100
 max_episode_steps: null
 no_gripper: False
 main_image_key: main
+use_relative_frame: True
 
 teleop: spacemouse
 keyboard_reward_wrapper: start_end
