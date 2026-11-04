@@ -2525,6 +2525,8 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
     """The public stack records operator actions and pedal segment boundaries."""
     from robot_mocks import mocked_sdks
 
+    from rlinf.envs.real.utils.pose import construct_adjoint_matrix
+
     pytest.importorskip("lerobot")
     parquet = pytest.importorskip("pyarrow.parquet")
     try:
@@ -2563,10 +2565,15 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
     assert len(rows) == 3, "Preview and the start edge must not become dataset frames."
     states = np.stack([row["state"] for row in rows])
     actions = np.stack([row["actions"] for row in rows])
-    assert states.shape == (3, 8)
+    assert states.shape == (3, 7)
     np.testing.assert_allclose(states[0], start["states"][0].numpy())
+    np.testing.assert_allclose(states[0, 1:], np.zeros(6), atol=1e-6)
     np.testing.assert_allclose(actions, expected_actions)
-    np.testing.assert_allclose(actions[:, :6], [[0.0, 0.25, 0.0, 0.0, 0.0, 0.0]] * 3)
+    pose = np.array([0.4, 0.05, 0.3, 0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4)])
+    relative_action = np.linalg.solve(
+        construct_adjoint_matrix(pose), [0, 0.25, 0, 0, 0, 0]
+    )
+    np.testing.assert_allclose(actions[:, :6], [relative_action] * 3, atol=1e-6)
     assert actions.shape == (3, 7) and np.all(np.abs(actions) <= 1.0)
     assert [np.asarray(row["segment_id"]).item() for row in rows] == [0, 1, 1]
     assert all(np.asarray(row["intervene_flag"]).item() for row in rows)
@@ -2578,7 +2585,7 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
     )
     first = dataset[0]
     assert len(dataset) == 3
-    assert first["state"].shape == (8,)
+    assert first["state"].shape == (7,)
     assert first["actions"].shape == (7,)
     assert first["image"].shape == (3, 48, 64)
     assert first["task"] == "move the UR5e TCP"
@@ -2597,7 +2604,7 @@ def test_ur_openpi_transforms_preserve_tcp_state_and_cartesian_delta_actions():
 
     config = get_openpi_config("pi05_ur5e")
     data = config.data.create(config.assets_dirs, config.model)
-    state = np.array([0.04, 0.3, 0.1, 0.4, 0, 0, 0, 1], dtype=np.float32)
+    state = np.array([0.04, 0.01, -0.02, 0.03, 0.1, 0, -0.1], dtype=np.float32)
     actions = np.tile(
         np.array([0.25, -0.5, 0.1, 0.2, -0.1, 0.3, -1], dtype=np.float32),
         (config.model.action_horizon, 1),
