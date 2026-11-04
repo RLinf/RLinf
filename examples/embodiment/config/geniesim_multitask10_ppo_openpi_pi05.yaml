@@ -162,6 +162,7 @@ env:
         - tcp://${oc.env:GENIESIM_EVAL_HOST,127.0.0.1}:5622
         - tcp://${oc.env:GENIESIM_EVAL_HOST,127.0.0.1}:5623
         - tcp://${oc.env:GENIESIM_EVAL_HOST,127.0.0.1}:5624
+      slots: ${env.train.override_cfg.slots}
       task_name: ${env.train.override_cfg.task_name}
       sub_task_name: ${env.train.override_cfg.sub_task_name}
 

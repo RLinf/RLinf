@@ -18,8 +18,9 @@ variations for studying generalization. RLinf supports PPO and GRPO
 fine-tuning of VLA models, with single-task and multi-task training
 workflows for improving dual-arm manipulation.
 
-GenieSim simulation and RLinf training run on two GPU nodes. The simulation
-node uses an NVIDIA RTX-series GPU.
+GenieSim simulation and RLinf training run on two GPU nodes. The node that
+runs RLinf is the training node, and the node that runs the simulator is the
+simulation node. The simulation node uses an NVIDIA RTX-series GPU.
 
 Overview
 --------
@@ -99,7 +100,7 @@ The :ref:`task appendix <geniesim-training-tasks>` groups the 25 tasks by capabi
      - 16-dim continuous action: 14 arm joint-position targets and 2 gripper
        targets, predicted as deltas in chunks of 10 steps.
    * - Reward
-     - Sparse reward: 1 on task success and 0 otherwise.
+     - The simulator keeps a task-completion score from 0 to 1. A task that splits into ordered stages scores the fraction of stages finished. A task that does not split is only 0 (not done) or 1 (done). Each step's reward is the new score minus the previous score. ``pick_block_color`` first approaches the block and then picks it up, so each stage raises the score by 0.5 and pays 0.5. The episode return adds up to 1.
    * - Task prompt
      - The full natural-language task instruction from ``task_descriptions``.
 
@@ -111,7 +112,7 @@ normalization uses the checkpoint's ``assets/norm_stats.json``.
 Installation
 ------------
 
-Run the repository setup commands on the RLinf host, outside any container.
+On the training node, outside any container, run the repository setup commands.
 
 .. include:: _setup_common.rst
    :end-before: Then set up the dependencies
@@ -125,8 +126,8 @@ GPU driver setup.
 
 **Custom environment**
 
-On the RLinf host, stay in the RLinf repository root to install OpenPI and
-the GenieSim client, then activate the environment:
+On the training node, from the RLinf repository root, install OpenPI and the
+GenieSim client, then activate the environment:
 
 .. code:: bash
 
@@ -136,7 +137,7 @@ the GenieSim client, then activate the environment:
 
 **Docker image**
 
-On the RLinf host, run this build from the RLinf repository root:
+On the training node, run this build from the RLinf repository root:
 
 .. code:: bash
 
@@ -148,7 +149,7 @@ On the RLinf host, run this build from the RLinf repository root:
 The image provides an NVIDIA CUDA 12.8 training environment with OpenPI and
 the GenieSim client. Connect it to your GenieSim service to run training.
 
-Still on the RLinf host and in the RLinf repository root, start the container
+Still on the training node, in the RLinf repository root, start the container
 with the repository mounted:
 
 .. code:: bash
@@ -179,11 +180,11 @@ The checkpoint was trained with 5,000 trajectories from the
 `instruction_and_robust suite of GenieSim3.0-Dataset <https://huggingface.co/datasets/agibot-world/GenieSim3.0-Dataset/tree/main/task_suite/instruction_and_robust>`__.
 SFT ran for 45,000 steps with an action chunk length of 10.
 
-Run the download in the activated OpenPI environment: inside the RLinf
-container at ``/workspace/RLinf``, or in the host's RLinf repository root for
-a custom installation. If you already have the checkpoint, set
-``GENIESIM_CHECKPOINT_PATH`` to its directory as seen from that environment
-and continue to ``Run It``.
+Run the download in the activated OpenPI environment. With Docker, run it on
+the training node inside the RLinf container at ``/workspace/RLinf``. With a
+custom installation, run it on the training node in the RLinf repository
+root. If you already have the checkpoint, set ``GENIESIM_CHECKPOINT_PATH`` to
+a directory that environment can read, then continue to ``Run It``.
 
 .. code:: bash
 
@@ -207,13 +208,13 @@ RLinf process:
 Run It
 ------
 
-On the simulation host, follow the `GenieSim post-training server guide <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__
+On the simulation node, follow the `GenieSim post-training server guide <https://github.com/AgibotTech/genie_sim#39-post-training-server>`__
 to prepare ``geniesim_assets`` and build the Isaac Sim 6.0.1-based image.
 Use GenieSim ``v3.5.0``, the same revision as the installed client.
 
 **Start the Simulation Server**
 
-On the simulation host, outside containers and from the GenieSim repository
+On the simulation node, outside containers and from the GenieSim repository
 root, start and enter the server container:
 
 .. code:: bash
@@ -278,21 +279,24 @@ matches how each recipe groups its endpoints by env process:
 Start each recipe's training servers with ``--count`` set to its server
 count, ``--base-port 5601``, and the ``--devices`` value from the table.
 
-In another terminal on the simulation host, outside containers and from any
-directory, list the host's IP addresses and listening TCP ports:
+In another terminal on the simulation node, outside containers and from any
+directory, list this machine's IP addresses and listening TCP ports:
 
 .. code:: bash
 
    hostname -I
    ss -ltn
 
-Replace ``sim-host`` below with an IP reachable from the RLinf host, and use
-the server's listening port. For detailed options, see the
+Replace ``sim-host`` below with an IP of the simulation node that the training
+node can reach, and use the port the server is listening on. For detailed
+options, see the
 `GenieSim server guide <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__.
 
-Run the RLinf commands in the activated OpenPI environment, from the RLinf
-repository root: ``/workspace/RLinf`` inside the RLinf container, or the host
-checkout for a custom installation. Use ``GENIESIM_CHECKPOINT_PATH`` set above.
+Run the RLinf commands on the training node, in the activated OpenPI
+environment, from the RLinf repository root. With Docker, that is
+``/workspace/RLinf`` inside the container. With a custom installation, use
+the repository directory on the training node. Keep the
+``GENIESIM_CHECKPOINT_PATH`` set above.
 
 .. note::
 
@@ -316,17 +320,17 @@ Launch single-task PPO:
 
 GRPO and multi-task recipes are listed in `Visualization and Results`_.
 Each recipe's ``env.train.override_cfg.addresses`` lists the required server
-endpoints; edit this list to change hosts or ports.
+endpoints; edit this list to change the address or port.
 
 Training-time validation is disabled by default. If you enable it with a
 positive ``runner.val_check_interval``, set ``GENIESIM_EVAL_HOST`` to the
-validation host and start one more server for each port listed in
+simulation node used for validation and start one more server for each port listed in
 ``env.eval.override_cfg.addresses``, as many as the training servers.
 
 **Evaluate**
 
 Set the simulation server's address and launch standalone evaluation.
-The address below is an example; replace its host and port with your server's:
+The address below is an example; replace it with the server's IP and port:
 
 .. code:: bash
 

@@ -17,20 +17,29 @@
 from __future__ import annotations
 
 import copy
-import dataclasses
-import hashlib
-import json
-from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 
-from rlinf.envs.sim.geniesim.adapter import _CAM_MAP, GenieSimAdapter
+from rlinf.envs.sim.geniesim.resolvers import (
+    _client_kwargs,
+    _override_dict,
+    resolve_geniesim_address,
+    resolve_geniesim_randomization,
+    resolve_geniesim_render_width,
+    resolve_geniesim_slot_overrides,
+    resolve_geniesim_task_names,
+    resolve_geniesim_work_item_shard,
+)
+from rlinf.envs.sim.geniesim.work_items import (
+    GenieSimWorkItem,
+    build_geniesim_reset_vectors,
+    build_geniesim_work_items,
+    parse_geniesim_task_metadata,
+)
 from rlinf.envs.utils import to_tensor
 from rlinf.utils.logging import get_logger
-from rlinf.utils.nested_dict_process import update_nested_cfg
 
 
 def _nonfinite_state_error_types() -> tuple[type[BaseException], ...]:
@@ -46,37 +55,20 @@ def _nonfinite_state_error_types() -> tuple[type[BaseException], ...]:
     return (SimStateNonFiniteError,)
 
 
+# Raw simulator camera key -> the name used by the embodied observation.
+_CAM_MAP = {
+    "main_images": "main",
+    "wrist_images": "wrist_left",
+    "wrist_images_right": "wrist_right",
+}
 # Camera keys in the raw simulator observation.
 _IMAGE_KEYS = frozenset(_CAM_MAP)
-
-
-@dataclasses.dataclass(frozen=True)
-class GenieSimTaskMetadata:
-    task_name: str
-    sub_task_name: str
-    switchable_instance_ids: list[int]
-    instructions_by_instance: dict[int, list[int]]
-
-
-@dataclasses.dataclass(frozen=True)
-class GenieSimWorkItem:
-    task_name: str
-    sub_task_name: str
-    instance_id: int
-    instruction_id: int
-    episode_idx: int
 
 
 def _as_numpy(value: Any) -> np.ndarray:
     if hasattr(value, "detach"):
         value = value.detach().cpu().numpy()
     return np.asarray(value)
-
-
-def _override_dict(cfg: Any) -> dict[str, Any]:
-    if "override_cfg" not in cfg or cfg.override_cfg is None:
-        return {}
-    return dict(OmegaConf.to_container(cfg.override_cfg, resolve=True) or {})
 
 
 def _make_geniesim_client(backend: str, **kwargs: Any) -> Any:
@@ -91,407 +83,77 @@ def _make_geniesim_venv(client: Any, **kwargs: Any) -> Any:
     return GenieSimVecEnv(client, **kwargs)
 
 
-def _client_kwargs(
-    override: dict[str, Any], *, address: str | None = None
-) -> tuple[str, dict[str, Any]]:
-    backend = str(override.get("comm_backend", "zmq"))
-    if backend != "zmq":
-        raise ValueError("GenieSim task_metadata/init requires comm_backend=zmq")
-    timeout_s = float(override.get("client_timeout_s", 60.0))
-    if timeout_s <= 0:
-        raise ValueError(f"GenieSim client_timeout_s must be positive, got {timeout_s}")
-    return backend, {
-        "address": str(address or override.get("address", "tcp://127.0.0.1:5601")),
-        "timeout_s": timeout_s,
-    }
-
-
-def resolve_geniesim_render_width(override: dict[str, Any]) -> int | None:
-    """Resolve a positive render width; None or zero keeps the native resolution."""
-    raw = override.get("render_width")
-    if raw is None:
-        return None
-    width = int(raw)
-    if width == 0:
-        return None
-    if width < 0:
+def _task_descriptions(raw_obs: dict[str, Any], num_envs: int) -> list[str]:
+    raw = raw_obs.get("task_descriptions")
+    if isinstance(raw, str) or not isinstance(raw, list | tuple):
+        raise ValueError("GenieSim task_descriptions must be a list of strings")
+    if len(raw) != num_envs:
         raise ValueError(
-            f"GenieSim render_width must be positive or 0 (=native), got {width}"
+            f"GenieSim task_descriptions must have length {num_envs}, got {len(raw)}"
         )
-    return width
+    if any(not isinstance(value, str) or not value.strip() for value in raw):
+        raise ValueError("GenieSim task_descriptions must contain non-empty strings")
+    return [value.strip() for value in raw]
 
 
-_RANDOMIZATION_KEYS = frozenset(
-    {
-        "object_xy_radius",
-        "exclude",
-        "min_gap",
-        "object_constraints",
-        "init_joint_thresh",
-        "init_base_xy_thresh",
-        "joint_pd",
-        "render",
-        "use_task_generalization",
-        "use_benchmark_generalization",
-    }
-)
-_RANDOMIZATION_SUBKEYS = {
-    "render": frozenset({"lights", "material", "background", "camera_pose"}),
-}
+def _frame_batch(value: Any) -> np.ndarray:
+    frames = _as_numpy(value)
+    if frames.ndim != 4 or frames.shape[-1] != 3:
+        raise ValueError(f"Expected an NHWC image batch, got shape {frames.shape}")
+    return np.ascontiguousarray(frames.astype(np.uint8, copy=False))
 
 
-def resolve_geniesim_randomization(override: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate the randomization section passed to each GenieSim task init."""
-    raw = override.get("randomization")
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"GenieSim randomization must be a mapping of the sim's randomization keys, got {raw!r}"
-        )
-    if "object_xy_radius" in raw and raw["object_xy_radius"] is None:
-        raise ValueError(
-            "GenieSim randomization.object_xy_radius: null does not turn object "
-            "randomization off (the engine falls back to 0.03 m); write object_xy_radius: 0"
-        )
-    unknown = [key for key in raw if key not in _RANDOMIZATION_KEYS]
-    for section, allowed in _RANDOMIZATION_SUBKEYS.items():
-        sub = raw.get(section)
-        if sub is None:
-            continue
-        if not isinstance(sub, dict):
-            raise ValueError(
-                f"GenieSim randomization.{section} must be a mapping, got {sub!r}"
-            )
-        unknown += [f"{section}.{key}" for key in sub if key not in allowed]
-    if unknown:
-        raise ValueError(
-            f"GenieSim randomization has unsupported keys {unknown}. "
-            f"Supported keys: {sorted(_RANDOMIZATION_KEYS)}, "
-            f"render.{sorted(_RANDOMIZATION_SUBKEYS['render'])}"
-        )
-    return raw
-
-
-def resolve_geniesim_task_names(override: dict[str, Any]) -> list[str]:
-    """Resolve allowed backgrounds in preference order.
-
-    Each sub-task selects the first compatible background from server metadata.
-    All configured backgrounds must share the policy's robot and camera layout."""
-    raw = override.get("task_name")
-    if raw is None:
-        return []
-    if isinstance(raw, str | bytes):
-        scalar = str(raw).strip()
-        return [scalar] if scalar else []
-    if not isinstance(raw, Sequence):
-        raise TypeError(
-            f"GenieSim override_cfg.task_name must be a string or a sequence of "
-            f"strings, got {type(raw).__name__}"
-        )
-    names = [str(value).strip() for value in raw]
-    if not names or not all(names):
-        raise ValueError(
-            "GenieSim override_cfg.task_name must be a non-empty list of "
-            f"non-empty names, got {list(raw)!r}"
-        )
-    # This list is a priority order consumed by ``next()``, so a repeat is
-    # unreachable and can only mean the author mistyped.
-    if len(set(names)) != len(names):
-        raise ValueError(
-            f"GenieSim override_cfg.task_name must not repeat a background, got {names!r}"
-        )
-    return names
-
-
-def resolve_geniesim_address(
-    override: dict[str, Any], *, rank: int, world_size: int
-) -> str:
-    raw_addresses = override.get("addresses")
-    if raw_addresses is None:
-        if world_size > 1:
-            raise ValueError(
-                "GenieSim multi-rank execution requires override_cfg.addresses"
-            )
-        return str(override.get("address", "tcp://127.0.0.1:5601")).strip()
-
-    if isinstance(raw_addresses, str | bytes) or not isinstance(
-        raw_addresses, Sequence
-    ):
-        raise TypeError("GenieSim override_cfg.addresses must be a sequence")
-    addresses = [str(value).strip() for value in raw_addresses]
-    if len(addresses) != world_size:
-        raise ValueError(
-            "GenieSim override_cfg.addresses must contain exactly one endpoint "
-            f"per env rank: expected {world_size}, got {len(addresses)}"
-        )
-    if len(set(addresses)) != len(addresses):
-        raise ValueError(
-            "GenieSim override_cfg.addresses must contain unique endpoints"
-        )
-    return addresses[rank]
-
-
-# Endpoints stay in the single logical-rank-indexed ``addresses`` list so that
-# uniqueness is validated in exactly one place (``resolve_geniesim_address``).
-# A slot that could also name its own ``address`` would let two slots point at
-# the same sim server with no check at all -- the failure is two clients
-# fighting over one server's task, which looks like a hang, not a config error.
-_SLOT_FORBIDDEN_KEYS = ("address", "addresses", "slots")
-
-# Keys that decide *which* work items an env walks. Two slots agreeing on all
-# of them share one catalogue and therefore must share one shard group; slots
-# differing in any of them own independent catalogues.
-_WORK_ITEM_IDENTITY_KEYS = (
-    "task_name",
-    "sub_task_name",
-    "instance_ids",
-    "instruction_ids_by_instance",
-    "num_episodes",
-    "work_item_budget",
-)
-
-
-def _work_item_identity(override: Mapping[str, Any]) -> str:
-    """Canonical identity of one env's work-item catalogue.
-
-    JSON with sorted keys rather than ``repr``: two slots may spell the same
-    ``instruction_ids_by_instance`` in different key order and must still be
-    recognised as the same catalogue.
-    """
-    return json.dumps(
-        {key: override.get(key) for key in _WORK_ITEM_IDENTITY_KEYS},
-        sort_keys=True,
-        default=str,
-    )
-
-
-def resolve_geniesim_slot_overrides(
-    override: dict[str, Any], *, world_size: int
-) -> list[dict[str, Any]] | None:
-    """Merge overrides for each logical slot (worker rank × stages + stage ID).
-
-    Return None when no slot-specific overrides are configured."""
-    raw_slots = override.get("slots")
-    if raw_slots is None:
-        return None
-    if isinstance(raw_slots, str | bytes) or not isinstance(raw_slots, Sequence):
-        raise TypeError("GenieSim override_cfg.slots must be a sequence")
-    if len(raw_slots) != world_size:
-        raise ValueError(
-            "GenieSim override_cfg.slots must contain exactly one entry per "
-            f"logical env slot: expected {world_size}, got {len(raw_slots)}"
-        )
-    base = {key: value for key, value in override.items() if key != "slots"}
-    merged: list[dict[str, Any]] = []
-    for index, slot in enumerate(raw_slots):
-        if not isinstance(slot, Mapping):
-            raise TypeError(
-                f"GenieSim override_cfg.slots[{index}] must be a mapping, "
-                f"got {type(slot).__name__}"
-            )
-        forbidden = [key for key in _SLOT_FORBIDDEN_KEYS if key in slot]
-        if forbidden:
-            raise ValueError(
-                f"GenieSim override_cfg.slots[{index}] must not set {forbidden}: "
-                "endpoints come from the logical-rank-indexed override_cfg.addresses, "
-                "which is where uniqueness across slots is validated"
-            )
-        merged.append(update_nested_cfg(copy.deepcopy(base), dict(slot)))
-    return merged
-
-
-def resolve_geniesim_work_item_shard(
-    override: Mapping[str, Any],
-    slot_overrides: Sequence[Mapping[str, Any]] | None,
+def wrap_geniesim_observation(
+    raw_obs: dict[str, Any],
     *,
-    rank: int,
-    world_size: int,
-) -> tuple[int, int]:
-    """``(shard_rank, shard_world_size)`` for this env's work-item cursor.
+    main_image_key: str = "main",
+    extra_image_keys: list[str] | None = None,
+) -> dict[str, Any]:
+    """Convert one vector observation returned by ``GenieSimVecEnv``.
 
-    The cursor deals items round-robin across every env that shares the same
-    catalogue: base ``shard_rank * num_envs``, stride ``shard_world * num_envs``.
-    Getting the group wrong is silent -- too large a ``shard_world`` makes the
-    stride skip whole congruence classes, e.g. a 100-item catalogue walked with
-    stride 32 only ever reaches 25 items.
-
-    Three sources, in precedence order:
-
-    1. explicit ``work_item_shard_rank`` + ``work_item_shard_world_size``;
-    2. derived from ``slots`` -- position within, and size of, the set of slots
-       whose catalogue keys match this one. Slots with distinct tasks each get
-       ``(0, 1)`` and therefore walk their own catalogue from item 0; R replicas
-       of one task get ``(0..R-1, R)``;
-    3. no ``slots`` -> ``(rank, world_size)``, i.e. the whole job is one shard
-       group, which is the historical single-task behaviour.
+    Wrist cameras are stacked into ``extra_view_images`` in ``extra_image_keys``
+    order. Task descriptions stay a list of strings.
     """
-    explicit_rank = override.get("work_item_shard_rank")
-    explicit_world = override.get("work_item_shard_world_size")
-    if (explicit_rank is None) != (explicit_world is None):
+    states = _as_numpy(raw_obs["states"]).astype(np.float32, copy=False)
+    if states.ndim != 2:
+        raise ValueError(f"Expected a 2-D GenieSim state batch, got {states.shape}")
+    num_envs = states.shape[0]
+    if num_envs == 0:
         raise ValueError(
-            "GenieSim work_item_shard_rank and work_item_shard_world_size must be "
-            "set together (a half-specified shard silently mixes two conventions)"
-        )
-    if explicit_rank is not None:
-        shard_rank, shard_world = int(explicit_rank), int(explicit_world)
-    elif slot_overrides is None:
-        shard_rank, shard_world = int(rank), int(world_size)
-    else:
-        identity = _work_item_identity(override)
-        peers = [
-            index
-            for index, slot_override in enumerate(slot_overrides)
-            if _work_item_identity(slot_override) == identity
-        ]
-        shard_rank, shard_world = peers.index(rank), len(peers)
-    if shard_world < 1:
-        raise ValueError(
-            f"GenieSim work_item_shard_world_size must be >= 1, got {shard_world}"
-        )
-    if not 0 <= shard_rank < shard_world:
-        raise ValueError(
-            f"GenieSim work_item_shard_rank must be in [0, {shard_world}), "
-            f"got {shard_rank}"
-        )
-    return shard_rank, shard_world
-
-
-def parse_geniesim_task_metadata(
-    response: dict[str, Any], *, task_names: Sequence[str], sub_task_name: str
-) -> GenieSimTaskMetadata:
-    """Validate the server's catalog entry for ``sub_task_name`` and pick its
-    background.
-
-    ``task_names`` is a preference list (see ``resolve_geniesim_task_names``);
-    the returned ``metadata.task_name`` is the first entry the server reports as
-    valid for this sub-task. A sub-task none of them covers is a hard error --
-    never a silent substitution, because the failure would be a run on a
-    different scene that looks perfectly healthy in the logs.
-    """
-    if not isinstance(response, dict) or not isinstance(
-        response.get("sub_tasks"), dict
-    ):
-        raise ValueError("GenieSim task_metadata response must contain sub_tasks")
-    catalog = response["sub_tasks"]
-    if sub_task_name not in catalog:
-        raise ValueError(
-            f"Unknown GenieSim sub_task_name={sub_task_name!r}; "
-            f"available={sorted(catalog)}"
-        )
-    entry = catalog[sub_task_name]
-
-    valid_task_names: list[str] = []
-    for raw in entry.get("task_names") or []:
-        name = raw.get("task_name") if isinstance(raw, dict) else raw
-        if name:
-            valid_task_names.append(str(name))
-    chosen = next((name for name in task_names if name in valid_task_names), None)
-    if chosen is None:
-        raise ValueError(
-            f"none of task_name={list(task_names)!r} is valid for sub task "
-            f"{sub_task_name!r}; available={valid_task_names}"
+            "wrap_geniesim_observation received an empty observation batch"
         )
 
-    switchable = [int(value) for value in entry.get("switchable_instance_ids") or []]
-    if not switchable:
-        raise ValueError(
-            f"GenieSim sub task {sub_task_name!r} has no switchable instances"
-        )
-
-    raw_by_instance = entry.get("instructions_by_instance") or {}
-    instructions_by_instance: dict[int, list[int]] = {}
-    for instance_id in switchable:
-        raw_entries = raw_by_instance.get(
-            instance_id, raw_by_instance.get(str(instance_id))
-        )
-        if not isinstance(raw_entries, list) or not raw_entries:
-            raise ValueError(f"GenieSim instance {instance_id} has no instructions")
-        instructions_by_instance[instance_id] = [int(raw["id"]) for raw in raw_entries]
-
-    return GenieSimTaskMetadata(
-        task_name=chosen,
-        sub_task_name=sub_task_name,
-        switchable_instance_ids=switchable,
-        instructions_by_instance=instructions_by_instance,
-    )
-
-
-def build_geniesim_work_items(
-    metadata: GenieSimTaskMetadata,
-    *,
-    instance_ids: Sequence[int] | None,
-    instruction_ids_by_instance: dict[int, Sequence[int]] | None,
-    num_episodes: int,
-) -> list[GenieSimWorkItem]:
-    selected_instances = (
-        list(metadata.switchable_instance_ids)
-        if instance_ids is None
-        else [int(value) for value in instance_ids]
-    )
-    requested = {
-        int(instance_id): [int(value) for value in values]
-        for instance_id, values in (instruction_ids_by_instance or {}).items()
+    descriptions = _task_descriptions(raw_obs, num_envs)
+    frames = {
+        dst: _frame_batch(raw_obs[src])
+        for src, dst in _CAM_MAP.items()
+        if src in raw_obs
     }
-    items: list[GenieSimWorkItem] = []
-    for episode_idx in range(int(num_episodes)):
-        for instance_id in selected_instances:
-            available = metadata.instructions_by_instance[instance_id]
-            instruction_ids = requested.get(instance_id)
-            instructions = available if instruction_ids is None else instruction_ids
-            unknown = set(instructions) - set(available)
-            if unknown:
-                raise ValueError(
-                    f"GenieSim instance {instance_id} has no instruction IDs {sorted(unknown)}"
-                )
-            for instruction in instructions:
-                items.append(
-                    GenieSimWorkItem(
-                        task_name=metadata.task_name,
-                        sub_task_name=metadata.sub_task_name,
-                        instance_id=instance_id,
-                        instruction_id=instruction,
-                        episode_idx=episode_idx,
-                    )
-                )
-    if not items:
-        raise ValueError("GenieSim work-item selection is empty")
-    return items
-
-
-def derive_geniesim_seed(base_seed: int, item: GenieSimWorkItem) -> int:
-    seed = int(base_seed)
-    if seed == -1:
-        return -1
-    payload = "\0".join(
-        (
-            str(seed),
-            item.task_name,
-            item.sub_task_name,
-            str(item.instance_id),
-            str(item.instruction_id),
-            str(item.episode_idx),
+    if main_image_key not in frames:
+        raise KeyError(
+            f"GenieSim observation is missing main camera {main_image_key!r}"
         )
-    ).encode("utf-8")
-    digest = hashlib.blake2s(payload, digest_size=4).digest()
-    return int.from_bytes(digest, "little") & 0x7FFFFFFF
+    if any(frame.shape[0] != num_envs for frame in frames.values()):
+        raise ValueError("GenieSim image batches must match the state batch size")
 
-
-def build_geniesim_reset_vectors(
-    num_envs: int,
-    env_ids: Sequence[int],
-    work_items_by_env: Sequence[GenieSimWorkItem],
-    base_seed: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    seeds = np.full(num_envs, -1, dtype=np.int64)
-    instance_ids = np.full(num_envs, -1, dtype=np.int64)
-    instruction_ids = np.full(num_envs, -1, dtype=np.int64)
-    for env_id in np.asarray(env_ids, dtype=np.int64).reshape(-1).tolist():
-        item = work_items_by_env[env_id]
-        seeds[env_id] = derive_geniesim_seed(base_seed, item)
-        instance_ids[env_id] = int(item.instance_id)
-        instruction_ids[env_id] = int(item.instruction_id)
-    return seeds, instance_ids, instruction_ids
+    out: dict[str, Any] = {
+        "states": states,
+        "main_images": frames[main_image_key],
+    }
+    extra_keys = (
+        list(extra_image_keys)
+        if extra_image_keys is not None
+        else ["wrist_left", "wrist_right"]
+    )
+    extra_keys = extra_keys or sorted(key for key in frames if key != main_image_key)
+    if extra_keys:
+        missing = [key for key in extra_keys if key not in frames]
+        if missing:
+            raise KeyError(f"GenieSim observation is missing cameras: {missing}")
+        out["extra_view_images"] = np.stack([frames[key] for key in extra_keys], axis=1)
+    tensor_out = to_tensor(out)
+    tensor_out["task_descriptions"] = descriptions
+    return tensor_out
 
 
 class GenieSimEnv:
@@ -582,11 +244,9 @@ class GenieSimEnv:
         self._base_seed = int(cfg.get("seed", 0))
         self._cycle_work_items = bool(override.get("cycle_work_items", True))
 
-        self._adapter = GenieSimAdapter(
-            main_image_key=str(cfg.get("main_image_key", "main")),
-            extra_image_keys=(
-                list(cfg.extra_image_keys) if "extra_image_keys" in cfg else None
-            ),
+        self._main_image_key = str(cfg.get("main_image_key", "main"))
+        self._extra_image_keys = (
+            list(cfg.extra_image_keys) if "extra_image_keys" in cfg else None
         )
         self._elapsed_steps = np.zeros(self._num_envs, dtype=np.int32)
         # Shard work by task catalogue and GRPO group; group members share an item and seed.
@@ -612,6 +272,18 @@ class GenieSimEnv:
             raise ValueError(
                 f"GenieSim group_size {self._group_size} must divide the per-process "
                 f"env count {self._num_envs}"
+            )
+        if self._group_size > 1 and self._auto_reset:
+            # Auto-reset hands only the finished envs to reset(). That advances
+            # the whole group's work item while the other members are still in
+            # the previous episode, so a group-relative baseline compares
+            # different tasks. GRPO keeps one fixed horizon and resets the
+            # group together at the epoch boundary.
+            raise ValueError(
+                "GenieSim group_size > 1 requires auto_reset: False. "
+                "An automatic reset only includes the envs that finished, which "
+                "advances the whole group's work item while the other members "
+                "are still in the previous episode."
             )
         self._num_group = self._num_envs // self._group_size
         self._work_stride = self._work_item_shard_world_size * self._num_group
@@ -783,6 +455,13 @@ class GenieSimEnv:
             f"envs={ids.tolist()}"
         ) from last_exc
 
+    def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
+        return wrap_geniesim_observation(
+            raw_obs,
+            main_image_key=self._main_image_key,
+            extra_image_keys=self._extra_image_keys,
+        )
+
     def reset(
         self, *, seed: int | None = None, options=None, env_idx=None
     ) -> tuple[dict, dict]:
@@ -831,7 +510,7 @@ class GenieSimEnv:
         self._truncated[ids] = False
         self.is_start = False
         self._first_reset = False
-        obs = self._adapter.wrap_batch(raw_obs)
+        obs = self._wrap_obs(raw_obs)
         # Log the resolved prompt and work item to diagnose server-side instruction fallback.
         get_logger().info(
             f"[geniesim] instruction[0]={obs['task_descriptions'][0]!r} "
@@ -948,7 +627,7 @@ class GenieSimEnv:
         # Fill skipped frames before replacing the cached observation.
         self._fill_unrendered_frames(raw_obs)
         self._last_raw_obs = raw_obs
-        obs = self._adapter.wrap_batch(raw_obs)
+        obs = self._wrap_obs(raw_obs)
         # Use progress at the end of the action chunk.
         rewards = _as_numpy(rewards).astype(np.float32)[:, -1]
         terminations = _as_numpy(terminations).astype(bool)[:, 0]
@@ -1108,7 +787,7 @@ class GenieSimEnv:
         successes = (
             _as_numpy(venv_info["chunk_success"]).astype(bool).reshape(n, horizon)
         )
-        obs = self._adapter.wrap_batch(raw_obs)
+        obs = self._wrap_obs(raw_obs)
         self._last_raw_obs = raw_obs
 
         rewards_out = []

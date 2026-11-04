@@ -26,8 +26,11 @@ from omegaconf import OmegaConf
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.sim.geniesim import geniesim_env
-from rlinf.envs.sim.geniesim.adapter import GenieSimAdapter
-from rlinf.envs.sim.geniesim.geniesim_env import GenieSimEnv
+from rlinf.envs.sim.geniesim.geniesim_env import GenieSimEnv, wrap_geniesim_observation
+from rlinf.envs.sim.geniesim.resolvers import (
+    resolve_geniesim_address,
+    resolve_geniesim_randomization,
+)
 
 
 @pytest.mark.parametrize(
@@ -70,7 +73,7 @@ def test_example_endpoints_match_placement(recipe, devices, monkeypatch):
         assert (env_cfg.total_num_envs // slots) % env_cfg.group_size == 0
         override = OmegaConf.to_container(env_cfg.override_cfg, resolve=True)
         endpoints.extend(
-            geniesim_env.resolve_geniesim_address(override, rank=i, world_size=slots)
+            resolve_geniesim_address(override, rank=i, world_size=slots)
             for i in range(slots)
         )
     assert len(endpoints) == len(set(endpoints))
@@ -98,7 +101,7 @@ def test_example_endpoints_match_placement(recipe, devices, monkeypatch):
 @pytest.mark.parametrize("dimension", ["noise", "occlusion", "drop_frame"])
 def test_sensor_randomization_is_rejected(dimension):
     with pytest.raises(ValueError, match="sensor"):
-        geniesim_env.resolve_geniesim_randomization(
+        resolve_geniesim_randomization(
             {"randomization": {"sensor": {dimension: {"enable": True}}}}
         )
 
@@ -266,7 +269,7 @@ def test_registration_and_observation_action_contract():
     assert get_env_cls("geniesim") is GenieSimEnv
     raw = _VecEnv(_Client())
     raw.init({"num_envs": 2})
-    obs = GenieSimAdapter().wrap_batch(raw._observation())
+    obs = wrap_geniesim_observation(raw._observation())
     assert tuple(obs["main_images"].shape) == (2, 8, 8, 3)
     assert tuple(obs["extra_view_images"].shape) == (2, 2, 8, 8, 3)
     assert tuple(obs["states"].shape) == (2, 24)

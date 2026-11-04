@@ -89,7 +89,7 @@ class GenieSimInputs(transforms.DataTransformFn):
         base_image = _parse_image(data["observation/image"])
 
         # ``extra_view_image`` is [2, H, W, C] = (left wrist, right wrist), the
-        # layout produced by ``GenieSimAdapter``'s extra_image_keys ordering.
+        # layout produced by ``wrap_geniesim_observation``'s extra_image_keys ordering.
         left_wrist = right_wrist = None
         if data.get("observation/extra_view_image") is not None:
             extra = np.asarray(data["observation/extra_view_image"])
