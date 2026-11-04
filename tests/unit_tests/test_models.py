@@ -1771,6 +1771,7 @@ class _DreamSDK:
     def __init__(self):
         self.calls = self.closes = self.resets = 0
         self.observations = []
+        self._policy = SimpleNamespace(_post=lambda observation: None)
         self.right = np.full((48, 7), 0.75)
 
     def policy(self, config):
@@ -1784,6 +1785,9 @@ class _DreamSDK:
 
     def get_action(self, *, commanded=None):
         self.calls += 1
+        self.action_before_ik = self._policy._post(
+            {"state.left_eef_xyz": [0, 0, 0.1], "state.right_eef_xyz": [0, 0, 0.1]}
+        )
         self.commanded = commanded
         return {"q_l_chunk": np.full((48, 7), 0.25), "q_r_chunk": self.right}
 
@@ -1813,6 +1817,7 @@ def test_dream_api_examples(monkeypatch, arm):
         "aloha-agilex" if arm == "aloha" else "piper"
     )
     assert cfg.rollout.dream.action_hz == (20 if arm == "aloha" else 30)
+    assert cfg.rollout.dream.eef_target_bias
 
 
 def _dream_observation():
@@ -1867,6 +1872,24 @@ def test_dream_api_images_and_sdk_lifecycle(monkeypatch):
     client.close()
     client.close()
     assert sdk.closes == 1
+
+
+def test_dream_api_click_bell_bias_before_ik(monkeypatch):
+    sdk = _DreamSDK()
+    left, right = "action.left_eef_xyz", "action.right_eef_xyz"
+    targets = {left: [[0, 0, 0.05]], right: [[0, 0, 0]]}
+    sdk._policy._post = lambda observation: {"per_key": targets.copy()}
+    client = DreamPolicy(sdk, _dream_config(monkeypatch).rollout)
+    buffer = DreamObservationBuffer()
+
+    for side, expected in (("left", [[-0.003, 0, 0.01]]), ("right", targets[left])):
+        buffer.reset()
+        buffer.append(_dream_observation(), 0.0)
+        sample = buffer.pack(["press"], None, finished=False, active_arms=(side,))
+        client.predict_action_batch({"history": [sample]})
+        action = sdk.action_before_ik["per_key"]
+        np.testing.assert_allclose(action[left], expected)
+        np.testing.assert_allclose(action[right], targets[right])
 
 
 def test_dream_api_nonfinite_active_arm_fails(monkeypatch):

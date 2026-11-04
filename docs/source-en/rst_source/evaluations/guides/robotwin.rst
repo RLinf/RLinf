@@ -136,6 +136,8 @@ Run click_bell with the config for your robot. When switching from ALOHA to Pipe
    bash evaluations/run_eval.sh robotwin robotwin_dream_piper_click_bell_eval \
      env.eval.assets_path=${ROBOTWIN_PATH}
 
+Both examples adjust the task arm's end-effector targets before inverse kinematics. To run either example without this adjustment, pass ``rollout.dream.eef_target_bias=false``.
+
 **Check results**
 
 Each config runs ten episodes in one environment, with a 400-step limit per episode. ALOHA runs at 20 Hz and Piper at 30 Hz; both use 48-step, 14-dimensional action chunks.

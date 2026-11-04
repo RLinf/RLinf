@@ -81,9 +81,30 @@ class DreamPolicy(BasePolicy):
                     },
                 }
             )
+            if cfg.dream.get("eef_target_bias", False):
+                # The SDK has no public hook between action decoding and IK.
+                sdk._policy._post = self._with_eef_bias(sdk._policy._post)
         except Exception:
             self.close()
             raise
+
+    def _with_eef_bias(self, post):
+        def apply(observation):
+            action = post(observation)
+            per_key = action.get("per_key") if isinstance(action, dict) else None
+            if self.task_arm is None or not isinstance(per_key, dict):
+                return action
+            key = f"action.{self.task_arm}_eef_xyz"
+            if not (xyz := per_key.get(key)):
+                return action
+            if self.eef_bias is None:
+                start_z = observation[f"state.{self.task_arm}_eef_xyz"][2]
+                self.eef_bias = xyz[-1][2] - start_z > -0.08
+            if self.eef_bias:
+                per_key[key] = [[x - 0.003, y, z - 0.04] for x, y, z in xyz]
+            return action
+
+        return apply
 
     def default_forward(self, **kwargs: Any) -> None:
         """Reject training forwards for the evaluation-only API policy."""
@@ -118,10 +139,13 @@ class DreamPolicy(BasePolicy):
         states = np.asarray(sample["states"], dtype=np.float32)
         if bool(sample["finished"][0]):
             return np.repeat(states[:, -1:], 48, axis=1), {}
+        active_arms = sample.get("active_arms", [["left", "right"]])[0]
         episode_id = int(sample["episode_id"][0])
         if episode_id != self.episode_id:
             self.sdk.reset_episode()
             self.episode_id = episode_id
+            self.task_arm = active_arms[0] if len(active_arms) == 1 else None
+            self.eef_bias = None
         frames = sample["frames"][0]
         timestamps = np.asarray(sample["timestamps"])
         prompt = sample["task_descriptions"][0]
@@ -153,7 +177,6 @@ class DreamPolicy(BasePolicy):
             np.asarray(reply[key], dtype=np.float32)
             for key in ("q_l_chunk", "q_r_chunk")
         ]
-        active_arms = sample.get("active_arms", [["left", "right"]])[0]
         for i, (side, arm) in enumerate(zip(("left", "right"), arms, strict=True)):
             if arm.shape != (48, 7):
                 raise ValueError("Dream must return two [48,7] joint chunks.")

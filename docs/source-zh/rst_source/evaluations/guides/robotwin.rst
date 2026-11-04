@@ -137,6 +137,8 @@ RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DR
    bash evaluations/run_eval.sh robotwin robotwin_dream_piper_click_bell_eval \
      env.eval.assets_path=${ROBOTWIN_PATH}
 
+两个示例均在逆运动学求解前修正任务臂的末端目标。若要关闭修正，运行时传入 ``rollout.dream.eef_target_bias=false``。
+
 **查看结果**
 
 每份配置使用单环境运行十个 episode，每回合上限为 400 步。ALOHA 频率为 20 Hz，Piper 为 30 Hz，均使用 48 步、14 维动作块。
