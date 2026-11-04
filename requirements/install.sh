@@ -1578,7 +1578,7 @@ apply_model_default_torch() {
     local model_torch="-"
     case "$MODEL" in
         openpi)
-            if [ "$ENV_NAME" = "yam" ]; then
+            if [ "$ENV_NAME" = "yam" ] || [ "$ENV_NAME" = "ur5e" ]; then
                 # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
                 model_torch="2.7.1"
             fi
@@ -3706,6 +3706,8 @@ install_franka_franky_env() {
 install_ur5e_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/ur5e.txt"
     install_lerobot -r "$SCRIPT_DIR/embodied/envs/ur5e.txt"
+    # The SDK's example dependencies and NumPy pin conflict with OpenPI.
+    uv pip install --no-deps "pyorbbecsdk2==2.1.2"
     use_opencv_gui_wheel
 }
 

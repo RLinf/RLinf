@@ -5256,17 +5256,21 @@ def test_ur_collection_camera_frames_are_named_cropped_resized_rgb(monkeypatch):
     with mocked_sdks() as made:
         frame = np.full((48, 64, 3), [5, 17, 31], dtype=np.uint8)
         frame[12:36, 16:48] = [32, 96, 192]
-        color = SimpleNamespace(is_video_frame=lambda: True, get_data=lambda: frame)
-        monkeypatch.setattr(
-            made["pyrealsense2"].pipeline,
-            "wait_for_frames",
-            lambda self: SimpleNamespace(get_color_frame=lambda: color),
-        )
+        sdk = made["pyorbbecsdk"]
+        read_frames = sdk.Pipeline.wait_for_frames
+
+        def frames_with_crop(pipeline, timeout_ms):
+            frames = read_frames(pipeline, timeout_ms)
+            frames.get_color_frame().data = frame
+            return frames
+
+        monkeypatch.setattr(sdk.Pipeline, "wait_for_frames", frames_with_crop)
         hardware = UR5eConfig(
             node_rank=0,
             robot_ip="192.0.2.40",
             camera_serials=["MOCK0001"],
-            camera_type="realsense",
+            camera_type="orbbec",
+            camera_resolution=(64, 48),
         )
         env = _ur_collection_env(
             hardware,
@@ -5283,27 +5287,25 @@ def test_ur_collection_camera_frames_are_named_cropped_resized_rgb(monkeypatch):
                 frames["main"], np.broadcast_to([192, 96, 32], (16, 20, 3))
             )
             assert env.observation_space.contains(observation)
-            assert made["pyrealsense2"].opened == ["MOCK0001"]
+            assert sdk.opened == ["MOCK0001"]
+            assert set(sdk.pipelines[0].config.streams) == {"color"}
+            assert set(observation) == {"state", "frames"}
         finally:
             env.close()
 
 
-def test_ur_collection_camera_open_failure_closes_the_arm(monkeypatch):
+def test_ur_collection_camera_open_failure_closes_the_arm():
     from robot_mocks import mocked_sdks
 
     from rlinf.robotics import UR5eConfig
 
     with mocked_sdks() as made:
-
-        def fail_start(self, config):
-            raise RuntimeError("pipeline start failed")
-
-        monkeypatch.setattr(made["pyrealsense2"].pipeline, "start", fail_start)
+        made["pyorbbecsdk"].fail_start = True
         hardware = UR5eConfig(
             node_rank=0,
             robot_ip="192.0.2.40",
             camera_serials=["MOCK0001"],
-            camera_type="realsense",
+            camera_type="orbbec",
         )
         with pytest.raises(RuntimeError, match="pipeline start failed"):
             _ur_collection_env(hardware)

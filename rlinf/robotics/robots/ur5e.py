@@ -157,11 +157,11 @@ class UR5eConfig(RobotConfig):
     camera_serials: Optional[list[str]] = None
     """Camera identifiers. ``None`` or ``[]`` runs with the arm alone."""
 
-    camera_type: str = "realsense"
+    camera_type: str = "orbbec"
     """Camera backend used for explicitly configured camera identifiers."""
 
-    camera_resolution: tuple[int, int] = (640, 480)
-    """Requested native stream width and height, supported by the camera SDK."""
+    camera_resolution: tuple[int, int] = (1280, 720)
+    """Camera output width and height; the backend selects a supported stream."""
 
     camera_fps: int = 15
     """Native camera frame rate, independent of environment stepping."""

@@ -2505,7 +2505,8 @@ def _ur_collection_data_env(monkeypatch):
         gripper_connection="/dev/mock-ur-collection-data",
         end_effector_config={"max_width": 0.085},
         camera_serials=["MOCK0001"],
-        camera_type="realsense",
+        camera_type="orbbec",
+        camera_resolution=(64, 48),
     )
     worker = SimpleNamespace(
         rank=0,
@@ -2583,7 +2584,9 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
     assert first["task"] == "move the UR5e TCP"
     np.testing.assert_allclose(first["state"].numpy(), states[0])
     np.testing.assert_allclose(first["actions"].numpy(), actions[0])
-    np.testing.assert_allclose(first["image"][:, 0, 0].numpy(), [0, 0, 1 / 255])
+    np.testing.assert_allclose(
+        first["image"][:, 0, 0].numpy(), np.array([192, 96, 32]) / 255
+    )
 
 
 def test_ur_openpi_transforms_preserve_tcp_state_and_cartesian_delta_actions():
