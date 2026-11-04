@@ -3,7 +3,7 @@
 set -euo pipefail
 
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
-SUPPORT_LIST=("maniskill" "openpi")
+SUPPORT_LIST=("maniskill" "openpi" "simple")
 GITHUB_PREFIX=${GITHUB_PREFIX:-""}
 USE_MIRRORS=${USE_MIRRORS:-0}
 ASSETS=()
@@ -26,6 +26,8 @@ Examples:
   bash requirements/embodied/download_assets.sh --assets maniskill
   bash requirements/embodied/download_assets.sh --dir /opt/.assets --assets maniskill,openpi
   bash requirements/embodied/download_assets.sh --use-mirror --assets maniskill,openpi
+  # Unpacks into --dir; link <SIMPLE checkout>/data to that directory.
+  bash requirements/embodied/download_assets.sh --assets simple --dir /path/to/simple_assets
 EOF
 }
 
@@ -133,6 +135,49 @@ download_openpi_assets() {
 	fi
 }
 
+# Assets shared by the SIMPLE G1 Teleop tasks. SIMPLE reads them from
+# <SIMPLE checkout>/data and otherwise downloads them on the first rollout.
+# Unpack them the same way resolve_data_path does, so once data/ links to
+# this directory a run sees the extracted paths and skips Hugging Face.
+download_simple_assets() {
+	local data_dir=$1
+	local entry zip_name marker
+
+	mkdir -p "$data_dir"
+	# vMaterials_2.zip is large; the default hub read timeout stalls on it.
+	export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
+	# zip|relative path that resolve_data_path checks before downloading.
+	local -a assets=(
+		"robots_g1.zip|robots/g1"
+		"assets_graspnet.zip|assets/graspnet"
+		"assets_articulated.zip|assets/articulated"
+		"vMaterials_2.zip|vMaterials_2"
+	)
+	for entry in "${assets[@]}"; do
+		zip_name="${entry%%|*}"
+		marker="${entry#*|}"
+		if [ -e "${data_dir}/${marker}" ]; then
+			echo "[download_assets] SIMPLE ${zip_name} already unpacked at ${data_dir}/${marker}, skipping."
+			continue
+		fi
+		echo "[download_assets] Downloading ${zip_name} into ${data_dir}"
+		retry_cmd hf download USC-PSI-Lab/SIMPLE "$zip_name" \
+			--repo-type dataset \
+			--local-dir "$data_dir"
+		if [ ! -f "${data_dir}/${zip_name}" ]; then
+			echo "[download_assets] Download did not materialize ${data_dir}/${zip_name}" >&2
+			return 1
+		fi
+		unzip -o -q "${data_dir}/${zip_name}" -d "$data_dir"
+		rm -f "${data_dir}/${zip_name}"
+		if [ ! -e "${data_dir}/${marker}" ]; then
+			echo "[download_assets] Extracted ${zip_name} but ${data_dir}/${marker} is missing" >&2
+			return 1
+		fi
+		echo "[download_assets] Extracted ${zip_name}"
+	done
+}
+
 parse_args() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
@@ -193,6 +238,9 @@ main() {
 				;;
 			openpi)
 				download_openpi_assets "$DOWNLOAD_DIR"
+				;;
+			simple)
+				download_simple_assets "$DOWNLOAD_DIR"
 				;;
 			*)
 				echo "Unknown asset group: $asset. Supported: ${SUPPORT_LIST[*]}" >&2
