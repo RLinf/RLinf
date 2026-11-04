@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from contextlib import nullcontext
 from typing import Any, SupportsFloat
 
 import numpy as np
@@ -115,68 +116,44 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         """Hold the leader before the runner resets the saved episode."""
         self._hold_before_reset()
 
-    def _finalize_random_reset_target(
-        self, seed: int | None
-    ) -> tuple[Any, bool] | None:
-        """Finalize a randomized target before teleop builds reset context."""
-        try:
-            config = self.env.get_wrapper_attr("config")
-            enabled = bool(getattr(config, "enable_random_reset"))
-            base_qpos = self.env.get_wrapper_attr("_base_reset_qpos")
-            noise_limit = float(getattr(config, "random_joint_noise"))
-            low = np.asarray(self.env.get_wrapper_attr("_joint_limit_low"), dtype=float)
-            high = np.asarray(
-                self.env.get_wrapper_attr("_joint_limit_high"), dtype=float
-            )
-        except (AttributeError, TypeError, ValueError):
-            return None
-        if not enabled:
-            return None
-        rng = np.random.default_rng(seed)
-        noise = rng.uniform(-noise_limit, noise_limit, size=len(base_qpos))
-        target = np.clip(np.asarray(base_qpos, dtype=float) + noise, low, high)
-        config.reset_joint_qpos = target.tolist()
-        config.enable_random_reset = False
-        return config, enabled
-
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
     ) -> tuple[Any, dict[str, Any]]:
         """Reset leader and follower together before the next episode."""
-        prepared_random_reset = self._finalize_random_reset_target(seed)
-        prepare_hook = self._teleop_attr("prepare_reset")
-        abort = self._teleop_attr("abort_reset")
-        context = self._teleop_context()
-        errors: list[BaseException] = []
-        reset_thread: threading.Thread | None = None
-        completed = False
+        prepare_target = getattr(self.env.unwrapped, "prepared_reset_target", None)
+        target_context = prepare_target(seed) if prepare_target else nullcontext()
+        with target_context:
+            prepare_hook = self._teleop_attr("prepare_reset")
+            abort = self._teleop_attr("abort_reset")
+            context = self._teleop_context()
+            errors: list[BaseException] = []
+            reset_thread: threading.Thread | None = None
+            completed = False
 
-        def prepare_leader() -> None:
+            def prepare_leader() -> None:
+                try:
+                    prepare_hook(context)
+                except BaseException as error:  # noqa: BLE001
+                    errors.append(error)
+
             try:
-                prepare_hook(context)
-            except BaseException as error:  # noqa: BLE001
-                errors.append(error)
-
-        try:
-            if prepare_hook is not None:
-                reset_thread = threading.Thread(
-                    target=prepare_leader, name="so101-leader-reset", daemon=True
-                )
-                reset_thread.start()
-            result = super().reset(seed=seed, options=options)
-            if reset_thread is not None:
-                reset_thread.join()
-            if errors:
-                raise errors[-1]
-            completed = True
-            return result
-        finally:
-            if reset_thread is not None:
-                reset_thread.join()
-            if not completed and abort is not None:
-                abort(context)
-            if prepared_random_reset is not None:
-                prepared_random_reset[0].enable_random_reset = prepared_random_reset[1]
+                if prepare_hook is not None:
+                    reset_thread = threading.Thread(
+                        target=prepare_leader, name="so101-leader-reset", daemon=True
+                    )
+                    reset_thread.start()
+                result = super().reset(seed=seed, options=options)
+                if reset_thread is not None:
+                    reset_thread.join()
+                if errors:
+                    raise errors[-1]
+                completed = True
+                return result
+            finally:
+                if reset_thread is not None:
+                    reset_thread.join()
+                if not completed and abort is not None:
+                    abort(context)
 
     def _step_with_hold(
         self, action: ActType, *, hold: bool

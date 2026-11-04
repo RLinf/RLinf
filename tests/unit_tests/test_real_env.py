@@ -1640,7 +1640,8 @@ def test_so101_idle_leader_hold_is_recorded_as_the_executed_action(monkeypatch):
     np.testing.assert_array_equal(frame.action, idle_action.astype(np.float32))
 
 
-def test_so101_reset_builds_teleop_context_after_random_target(monkeypatch):
+def _so101_random_reset_stack(monkeypatch):
+    from rlinf.envs.real.so101 import SO101ReachEnv
     from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
     from rlinf.envs.real.wrappers.episode import session as session_module
     from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
@@ -1654,74 +1655,74 @@ def test_so101_reset_builds_teleop_context_after_random_target(monkeypatch):
 
     class Group:
         parts = ()
-        context_keys = frozenset({"reset_joint_positions"})
-        synchronized_reset_context_keys = context_keys
 
         def __init__(self):
-            self.contexts = []
+            self.devices = (self,)
+            self.targets = []
 
         def prepare_reset(self, context):
-            self.contexts.append(dict(context))
+            self.targets.append(np.asarray(context["reset_joint_positions"]).copy())
 
         def reset(self, context):
-            self.contexts.append(dict(context))
+            del context
 
         def abort_reset(self, context):
             del context
 
-    class Config:
-        enable_random_reset = True
-        random_joint_noise = 0.1
-
-    class Env(gym.Env):
-        def __init__(self):
-            self.config = Config()
-            self._base_reset_qpos = [0.2] * 5
-            self.config.reset_joint_qpos = list(self._base_reset_qpos)
-            self._joint_limit_low = np.full(5, -1.0)
-            self._joint_limit_high = np.full(5, 1.0)
-
-        def reset(self, seed=None, options=None):
-            del seed, options
-            return {}, {}
-
-        def step(self, action):
-            del action
-            return {}, 0.0, False, False, {}
-
-        def get_reset_joint_positions(self):
-            return np.asarray(self.config.reset_joint_qpos)[None, :]
-
-        def get_wrapper_attr(self, name):
-            if name == "config":
-                return self.config
-            if name == "_base_reset_qpos":
-                return self._base_reset_qpos
-            if name == "_joint_limit_low":
-                return self._joint_limit_low
-            if name == "_joint_limit_high":
-                return self._joint_limit_high
-            if name == "random_joint_noise":
-                return self.config.random_joint_noise
-            if name == "get_reset_joint_positions":
-                return self.get_reset_joint_positions
-            raise AttributeError(name)
-
     monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
-    inner = Env()
+    inner = SO101ReachEnv(
+        {
+            "is_dummy": True,
+            "target_joint_qpos": [0.0] * 5,
+            "reset_joint_qpos": [0.2] * 5,
+            "enable_random_reset": True,
+            "random_joint_noise": 0.1,
+        }
+    )
     group = Group()
     teleop = ComposedTeleop(group, {})
-    teleop.context_from = lambda env: {
-        "reset_joint_positions": env.get_wrapper_attr("get_reset_joint_positions")()
-    }
     wrapper = SO101StartEndWrapper(TeleopIntervention(inner, teleop))
-    wrapper.reset(seed=3)
+    return inner, wrapper, teleop, group
 
-    np.testing.assert_allclose(
-        group.contexts[-1]["reset_joint_positions"],
-        inner.get_reset_joint_positions(),
+
+def test_so101_reset_builds_teleop_context_after_random_target(monkeypatch):
+    inner, wrapper, _, group = _so101_random_reset_stack(monkeypatch)
+    original_target = list(inner.config.reset_joint_qpos)
+
+    wrapper.reset(seed=3)
+    first_target = group.targets[-1]
+    expected = np.clip(
+        np.asarray(original_target) + np.random.default_rng(3).uniform(-0.1, 0.1, 5),
+        inner.config.joint_limit_low,
+        inner.config.joint_limit_high,
     )
-    assert inner.config.reset_joint_qpos != inner._base_reset_qpos
+    np.testing.assert_allclose(first_target, expected[None, :])
+    assert inner.config.reset_joint_qpos == original_target
+    assert inner.config.enable_random_reset is True
+
+    wrapper.reset(seed=4)
+    assert len(group.targets) == 2
+    assert not np.allclose(group.targets[0], group.targets[1])
+    assert inner.config.reset_joint_qpos == original_target
+
+    inner.reset(seed=5)
+    assert inner.config.reset_joint_qpos == original_target
+
+
+def test_so101_random_reset_restores_config_after_context_failure(monkeypatch):
+    inner, wrapper, teleop, group = _so101_random_reset_stack(monkeypatch)
+    original_target = list(inner.config.reset_joint_qpos)
+
+    def fail_context(env):
+        del env
+        raise RuntimeError("context unavailable")
+
+    monkeypatch.setattr(teleop, "context_from", fail_context)
+    with pytest.raises(RuntimeError, match="context unavailable"):
+        wrapper.reset(seed=3)
+
+    assert group.targets == []
+    assert inner.config.reset_joint_qpos == original_target
     assert inner.config.enable_random_reset is True
 
 
