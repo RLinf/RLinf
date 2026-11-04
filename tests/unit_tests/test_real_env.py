@@ -5980,6 +5980,32 @@ def test_ur_hold_actions_follow_the_public_realworld_contract():
             env.close()
 
 
+def test_ur_collection_stack_uses_relative_actions_and_euler_observations(
+    ur_collection_env,
+):
+    from rlinf.envs.real.wrappers import build_stack
+
+    raw, made = ur_collection_env
+    env = build_stack(raw, {"teleop": "none", "keyboard_reward_wrapper": None})
+    observation, _ = env.reset()
+    np.testing.assert_allclose(observation["state"]["tcp_pose"], np.zeros(6), atol=1e-6)
+    assert env.observation_space.contains(observation)
+
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    env.step(np.array([0.2, 0, 0, 0, 0, 0], dtype=np.float32))
+    assert control.servo_called.wait(1.0)
+    target = next(args[0] for name, args in control.commands if name == "servoL")
+    np.testing.assert_allclose(target[:3], [0.4, 0.054, 0.3], atol=1e-6)
+
+    receive.pose = [0.41, 0.07, 0.3, 0, 0, np.pi / 2 + 0.1]
+    observation, *_ = env.step(np.zeros(6))
+    np.testing.assert_allclose(
+        observation["state"]["tcp_pose"], [0.02, -0.01, 0, 0, 0, 0.1], atol=1e-6
+    )
+    assert env.observation_space.contains(observation)
+
+
 def test_ur_collection_rejects_a_nonscalar_gripper_before_connecting(monkeypatch):
     from robot_mocks import mocked_sdks
 

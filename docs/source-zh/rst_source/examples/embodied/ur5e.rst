@@ -233,11 +233,11 @@ runner 创建带时间戳的日志目录，并将 LeRobot 数据集写入其中�
 检查记录格式
 ~~~~~~~~~~~~
 
-大量采集前，先检查一小段 episode。采集动作与机械臂后端的绝对 TCP 位姿不同：安装 Robotiq 夹爪时，动作包含七个归一化通道 ``[dx, dy, dz, droll, dpitch, dyaw, gripper]``。平移和旋转是在基座坐标系中表示的增量，按 ``action_scale`` 缩放。默认 ``[0.02, 0.1, 1]`` 表示满输入 step 的每个平移轴最多为 0.02 m，每个旋转轴最多为 0.1 rad；最后一个信号为负时关闭夹爪，为正时打开夹爪。
+大量采集前，先检查一小段 episode。安装 Robotiq 夹爪时，policy 与数据集动作包含七个归一化通道 ``[dx, dy, dz, droll, dpitch, dyaw, gripper]``。与单臂 Franka 流程一致，默认的 ``use_relative_frame: True`` 启用公共 ``RelativeFrame`` wrapper，以当前末端坐标系表示笛卡尔动作，并在执行前将 policy 动作转换回基座坐标系，由 UR 环境按 ``action_scale`` 缩放。默认 ``[0.02, 0.1, 1]`` 将满输入 step 的基座系每轴平移和旋转分别限制为 0.02 m、0.1 rad。最后一个信号为负时关闭夹爪，为正时打开夹爪。SpaceMouse 保持原有基座系映射，wrapper 将记录的人工干预动作转换到与 policy 相同的坐标系。
 
-原始状态包含 ``tcp_pose``\ （七个值，位置单位为米，姿态为 xyzw 四元数）和 ``gripper_position``\ （一个值，为以米表示的开度）。``RealWorldEnv`` 在展开状态前按 key 排序，因此记录的八维状态为 ``[gripper_position, x, y, z, qx, qy, qz, qw]``。环境相机记录一张 RGB 图像，数据集中的 key 为 ``image``；环境使用名称 ``main`` 选择该主图像。
+驱动暴露的 ``tcp_pose`` 仍为绝对位置与 xyzw 四元数。公共 wrapper 先将位姿转换为相对复位返回的实测位姿，再通过 ``Quat2EulerWrapper`` 将姿态转换为 xyz Euler 角；刚复位时，六个相对位姿值均为零。``RealWorldEnv`` 在展开状态前按 key 排序，因此安装夹爪时记录的七维状态为 ``[gripper_position, x_rel, y_rel, z_rel, roll_rel, pitch_rel, yaw_rel]``。夹爪开度和位置的单位为米，角度的单位为弧度。环境相机记录一张 RGB 图像，数据集中的 key 为 ``image``；环境通过视角名称 ``main`` 选择该主图像。
 
-``pi05_ur5e`` 数据配置将该图像、八维状态、七维动作和任务描述映射到 OpenPI，并保留记录的增量动作。采集与部署时，应保持状态顺序、相机视角、任务描述、采集频率和 ``action_scale`` 一致。
+``pi05_ur5e`` 数据配置将该图像、七维状态、七维动作和任务描述映射到 OpenPI，并保留记录的增量动作。采集与部署时，应保持 ``use_relative_frame``、状态顺序、相机视角、任务描述、采集频率和 ``action_scale`` 一致。
 
 微调 π₀.₅
 ----------
@@ -250,7 +250,7 @@ runner 创建带时间戳的日志目录，并将 LeRobot 数据集写入其中�
      --config-name pi05_ur5e \
      --repo-id /path/to/ur5e_dataset
 
-传入包含 ``meta/info.json`` 的数据集目录。命令会报告 ``norm_stats.json`` 的输出位置；训练和部署均使用该文件。统计采用与训练相同的数据转换：状态保留八维，记录的七维增量动作补齐到模型维度。
+传入包含 ``meta/info.json`` 的数据集目录。命令会报告 ``norm_stats.json`` 的输出位置；训练和部署均使用该文件。统计采用与训练相同的数据转换：状态保留七维，记录的七维增量动作补齐到模型维度。
 
 按 :doc:`OpenPI SFT <sft_openpi>` 中的下载与转换步骤准备 RLinf OpenPI 格式的基础权重。本流程转换时使用 ``--action-dim 32``、``--action-horizon 20`` 和 ``--max-token-len 200``。模型内部补齐后的 32 维动作与 UR 环境接收的七维动作分别配置。
 
