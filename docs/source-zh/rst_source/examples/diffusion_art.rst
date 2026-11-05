@@ -128,7 +128,7 @@ DiffusionNFT 同样利用最终输出的奖励。它在生成样本上重新加�
 
 每个 :math:`x_{0,i}` 都是具有 :math:`D` 个坐标的干净 latent 终点，不是解码后的 RGB 图像。高于组内平均分的候选贡献正项，低于平均分的候选贡献负项。归一化用于统一不同 prompt 和奖励范围下的方向尺度。若组内奖励完全相同，就没有相对优劣信号，RLinf 会将该组引导清零。
 
-``_art_scalar_covariance`` 在拆分 micro-batch 前，对完整 prompt 组计算统计量。当前配方的 ``art_covariance_reduction=unbiased`` 使用 :math:`K-1` 作分母，``population`` 使用论文中的 :math:`K`。理想 RMS 归一化会抵消正标量倍数。historical 路径先除以奖励的平均绝对偏差，再用带 epsilon 下限的 RMS 归一化，worker 随后再次归一化。信号高于这些数值下限时，默认单位幅度引导满足 :math:`H_c=G_c`；非常小的非零信号可能被 epsilon 下限衰减。``art_zero_signal_mode=exact`` 会显式清除常量奖励产生的浮点残差。
+``art_scalar_covariance`` 在拆分 micro-batch 前，对完整 prompt 组计算统计量。当前配方的 ``art_covariance_reduction=unbiased`` 使用 :math:`K-1` 作分母，``population`` 使用论文中的 :math:`K`。理想 RMS 归一化会抵消正标量倍数。historical 路径先除以奖励的平均绝对偏差，再用带 epsilon 下限的 RMS 归一化，worker 随后再次归一化。信号高于这些数值下限时，默认单位幅度引导满足 :math:`H_c=G_c`；非常小的非零信号可能被 epsilon 下限衰减。``art_zero_signal_mode=exact`` 会显式清除常量奖励产生的浮点残差。
 
 冻结速度目标
 ~~~~~~~~~~~~
@@ -149,7 +149,7 @@ ART 将同一个组方向应用到 ODE 生成时实际经过的状态。论文�
    \mathcal L_\theta(s)=w(s)\frac1D
    \|v_\theta(s)-v_{\mathrm{tgt}}(s)\|_2^2.
 
-由于时间差为负，把速度减去 :math:`H_c` 会让下一个 latent 朝 :math:`H_c` 移动。这解释了 ``_art_loss`` 相对于论文出现的负号。停止梯度操作保持旧预测与奖励方向固定，梯度只更新当前模型。
+由于时间差为负，把速度减去 :math:`H_c` 会让下一个 latent 朝 :math:`H_c` 移动。这解释了 ``art_loss`` 相对于论文出现的负号。停止梯度操作保持旧预测与奖励方向固定，梯度只更新当前模型。
 
 ``_precompute_old_velocities`` 在两次 optimizer update 之前，对全部选中状态重算并缓存旧速度；两个更新窗口共用该缓存。rollout tensor 保存中间状态、当前及下一步噪声水平，以及最终终点。SD3 和 Wan 通过各自的速度 forward 接口接入同一个 ART actor。
 

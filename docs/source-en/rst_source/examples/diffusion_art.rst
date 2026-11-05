@@ -174,7 +174,7 @@ below it contributes negatively. Normalization fixes the direction's scale
 across prompts with different reward ranges. Constant rewards give no relative
 signal, so RLinf assigns that group zero guidance.
 
-``_art_scalar_covariance`` computes this statistic over complete prompt groups
+``art_scalar_covariance`` computes this statistic over complete prompt groups
 before micro-batching. The recipes use ``art_covariance_reduction=unbiased``,
 which divides by :math:`K-1`; ``population`` uses the paper's :math:`K`.
 A positive scalar factor cancels under ideal RMS normalization. The historical
@@ -208,7 +208,7 @@ With this convention, the implemented target and loss are
 
 Reducing velocity by :math:`H_c` moves the next latent toward :math:`H_c`
 because the timestep difference is negative. This explains the minus sign in
-``_art_loss`` relative to the paper. The stop-gradient operation keeps the old
+``art_loss`` relative to the paper. The stop-gradient operation keeps the old
 prediction and reward direction fixed while only the current model receives
 gradients.
 
