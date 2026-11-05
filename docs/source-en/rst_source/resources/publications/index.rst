@@ -15,7 +15,7 @@ Detailed publication pages
    * - :doc:`STEAM <steam>`
      - Self-supervised temporal ensemble advantage modeling for real-world robot learning.
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
-   * - :doc:`RLinf-USER <rlinf_user>`
+   * - :doc:`USER <rlinf_user>`
      - Unified system for real-world online policy learning.
      - `RSS 2026 <https://roboticsproceedings.org/rss22/p037.html>`__
    * - :doc:`RLinf-VLA <rlinf_vla>`

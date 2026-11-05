@@ -15,7 +15,7 @@
    * - :doc:`STEAM <steam>`
      - 面向真实机器人学习的自监督时序集成优势建模。
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
-   * - :doc:`RLinf-USER <rlinf_user>`
+   * - :doc:`USER <rlinf_user>`
      - 统一真机在线策略学习系统。
      - `RSS 2026 <https://roboticsproceedings.org/rss22/p037.html>`__
    * - :doc:`RLinf-VLA <rlinf_vla>`
