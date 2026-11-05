@@ -56,7 +56,7 @@ You never reproduce the PR yourself: you have read the implementation. The unit 
 
 ## 4. Review
 
-Work through [reference.md](reference.md) in this order, and judge every design choice against [patterns.md](patterns.md). Each finding gets one category, which also decides the question of the main comment that summarizes it:
+Work through [reference.md](reference.md) in this order, and judge every design choice against [patterns.md](patterns.md): its patterns first, and its design philosophy when no pattern fits. Each finding gets one category, which also decides the question of the main comment that summarizes it:
 
 | Category | Covers | Question |
 |---|---|---|
