@@ -327,10 +327,13 @@ consistent when changing the collection rate. Set
 ``env.eval.override_cfg.enable_camera_player: true`` to preview the images.
 
 At startup and after a saved episode, the environment returns the TCP to
-``reset_ee_pose`` while preserving the gripper state. It interpolates for at
-least ``reset_duration`` seconds; the per-step ``action_scale`` limit can
-lengthen a distant return. After interpolation, ``reset_timeout`` sets the
-arrival-check timeout against ``reset_position_tolerance`` in metres and
+``reset_ee_pose``. ``open_gripper_on_reset`` defaults to ``false`` to preserve
+the gripper state. Set it to ``true`` to open a closed gripper before the TCP
+return, with a 0.6 s settling wait as in Franka's pick-and-place task.
+The TCP return takes at least ``reset_duration`` seconds; the per-step
+``action_scale`` limit can lengthen a distant return. After interpolation,
+``reset_timeout`` sets the arrival-check timeout against
+``reset_position_tolerance`` in metres and
 ``reset_orientation_tolerance`` in radians. Confirm the reset path before
 starting collection.
 
@@ -342,8 +345,8 @@ increments; the first zero command after motion holds the measured pose.
 .. warning::
 
    Connecting a Robotiq gripper runs its clear-and-activate sequence, which can
-   move the fingers. Clear the space around them before connecting. TCP reset
-   leaves the gripper unchanged.
+   move the fingers. Clear the space around them before connecting. Enabling
+   ``open_gripper_on_reset`` also releases the grasp before each TCP reset.
 
 Collection uses the existing Linux evdev episode listener. Give the runtime
 user access to the SpaceMouse HID device, camera, serial adapter, and physical
@@ -466,6 +469,10 @@ addresses, serial paths, reset pose, pose limits, camera settings, and task desc
 used for collection. Its hardware and environment fields follow the collection
 configuration. Keep the environment camera in the same position and preserve
 ``action_scale`` and ``step_frequency``.
+
+The evaluation template sets ``open_gripper_on_reset: true``: startup and each
+episode reset open a closed gripper before returning the TCP. Set it to
+``false`` when the task must keep its grasp during reset.
 
 Set the model path to the SFT checkpoint directory, and point the statistics
 path to the training copy:
