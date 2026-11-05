@@ -127,10 +127,12 @@ Each channel item holds a complete prompt group, so GRPO advantages and loss
 scales are computed before packing and redistribution across ranks. Actor
 weights and optimizer states stay resident during disaggregated training.
 
-The three-GPU layout is an example allocation; choose model size and sequence
-length to fit your devices. It has not yet been validated in a GPU training
-run. The reward and performance curves below describe the existing reference
-run.
+The split layout was validated on three A800 80GB PCIe GPUs with
+Qwen2.5-1.5B-Instruct, sequence length 1024, FP16, FlashAttention 2, and Liger.
+Validation covered training, checkpoint resume, updated rollout weights, and a
+small-corpus HTTP search service. Choose model size, sequence length, and batch
+size to fit your devices. The reward and performance curves below describe the
+existing reference run.
 
 Checkpoint Export and Evaluation
 --------------------------------
