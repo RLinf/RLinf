@@ -21,7 +21,7 @@ The payload is the JSON body of GitHub's create-review API
     {
         "commit_id": "<PR head SHA>",
         "event": "COMMENT",
-        "body": "<the eight-question report>",
+        "body": "<the main comment>",
         "comments": [
             {"path": "rlinf/x.py", "line": 42, "side": "RIGHT", "body": "..."},
             {"path": "rlinf/y.py", "start_line": 10, "line": 12, "body": "..."},
@@ -55,6 +55,7 @@ QUESTIONS = (
     "Does the integration follow RLinf's design?",
     "Does it reuse existing modules/functions properly?",
     "Are tests and documentation adequate?",
+    "Does the documentation follow the docs style guide?",
     "What is your recommendation?",
 )
 HINTS = (
@@ -69,8 +70,10 @@ HINTS = (
     "Sibling compared against. Interfaces, registration, config, worker "
     "conventions, containment. Points needing senior judgment.",
     "Duplication or a helper to reuse. Otherwise the implementation compared.",
-    "Whether tests cover the changed behavior. Docs, EN/ZH, install/CI. Tests "
-    "run and skipped, with hardware.",
+    "Whether tests cover the changed behavior. Docs, EN/ZH, README highlight, "
+    "install/CI. Tests run and skipped, with hardware.",
+    "Each changed page and its type, against docs/STYLE_GUIDE.md. Failing rules "
+    "with inline pointers. Build result in EN and ZH. Or: the PR changes no docs.",
     "Ready for senior review, Changes requested, or Blocked. Remaining actions "
     "and expert review needed.",
 )
@@ -290,7 +293,7 @@ class ReviewLinter:
         if preamble and (not sections or preamble[0] < sections[0][0]):
             self.error(
                 "body",
-                f"line {preamble[0]} comes before the first question; the body holds only the eight sections",
+                f"line {preamble[0]} comes before the first question; the body holds only the {len(QUESTIONS)} question sections",
             )
         expected = [f"### {i}. {q}" for i, q in enumerate(QUESTIONS, 1)]
         found = [heading for _, heading, _ in sections]
@@ -306,7 +309,8 @@ class ReviewLinter:
                 detail.append("sections are out of order")
             self.error(
                 "body",
-                "headings must be the eight questions in order: " + "; ".join(detail),
+                f"headings must be the {len(QUESTIONS)} questions in order: "
+                + "; ".join(detail),
             )
         for n, heading, lines in sections:
             if not "\n".join(lines).strip():
@@ -315,11 +319,13 @@ class ReviewLinter:
         picked = [r for r in RECOMMENDATIONS if r.lower() in "\n".join(last).lower()]
         if not picked:
             self.error(
-                "body", f"question 8 must name one recommendation: {RECOMMENDATIONS}"
+                "body",
+                f"question {len(QUESTIONS)} must name one recommendation: {RECOMMENDATIONS}",
             )
         elif len(picked) > 1:
             self.warn(
-                "body", f"question 8 names several recommendations {picked}; state one"
+                "body",
+                f"question {len(QUESTIONS)} names several recommendations {picked}; state one",
             )
 
     def check_comment(self, i: int, c: dict, seen: set) -> None:
