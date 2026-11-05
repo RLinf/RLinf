@@ -102,6 +102,12 @@ class EnvIO:
     def _observation_dict_to_device(self, processed: dict) -> Observation:
         """Convert a per-key dict into a device-resident Observation."""
         device = self.device
+        if self._config.pytorch_numerics:
+            from torch.utils._pytree import tree_map
+
+            processed = tree_map(
+                lambda x: x.to(device) if isinstance(x, torch.Tensor) else x, processed
+            )
         obs = Observation.from_dict(processed)
 
         def _move(x):

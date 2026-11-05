@@ -14,6 +14,7 @@
 
 import asyncio
 from collections import defaultdict
+from contextlib import ExitStack
 from typing import Any
 
 import numpy as np
@@ -1258,6 +1259,16 @@ class EnvWorker(Worker):
 
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        with ExitStack() as cleanup:
+            # Training validation reuses these environments on the next evaluation.
+            if self.only_eval:
+                for env in self.eval_env_list:
+                    close = get_env_attr(env, "close")
+                    if callable(close):
+                        cleanup.callback(close)
+            return self._evaluate(input_channel, rollout_channel)
+
+    def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:

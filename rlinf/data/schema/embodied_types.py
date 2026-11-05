@@ -1727,6 +1727,8 @@ class EnvOutput:
             "states": states,
             "task_descriptions": task_descriptions,
         }
+        if obs.get("active_mask") is not None:
+            prepared["active_mask"] = obs["active_mask"]
         if "reset_mask" in obs:
             prepared["reset_mask"] = obs["reset_mask"]
         return prepared

@@ -102,6 +102,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
+        "pytorch_numerics": bool(
+            OmegaConf.select(model_cfg, "pytorch_numerics", default=False)
+        ),
     }
     discrete_state_input = OmegaConf.select(
         model_cfg, "discrete_state_input", default=None
@@ -141,6 +144,13 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             config_name=config_name,
             state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
             rlt_cfg=rlt_cfg,
+            eval_batch_size=OmegaConf.select(
+                model_cfg, "eval_batch_size", default=None
+            ),
+            eval_seed=OmegaConf.select(model_cfg, "eval_seed", default=None),
+            sample_compile=bool(
+                OmegaConf.select(model_cfg, "sample_compile", default=False)
+            ),
             rtc_enabled=bool(OmegaConf.select(model_cfg, "rtc_enabled", default=False)),
             rtc_guidance_mode=str(
                 OmegaConf.select(model_cfg, "rtc_guidance_mode", default="approx")
