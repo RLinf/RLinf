@@ -73,7 +73,7 @@ class URRTDEArm(BaseArm):
     ROBOT_MODE_RUNNING: ClassVar[int] = 7
     SAFETY_MODE_NORMAL: ClassVar[int] = 1
     SAFETY_MODE_REDUCED: ClassVar[int] = 2
-    JOIN_WARNING_TIMEOUT_S: ClassVar[float] = 2.0
+    JOIN_TIMEOUT_S: ClassVar[float] = 2.0
     STATE_FIELDS: ClassVar[tuple[str, ...]] = (
         "tcp_pose",
         "tcp_vel",
@@ -248,6 +248,8 @@ class URRTDEArm(BaseArm):
     def is_robot_up(self) -> bool:
         """Report a running control program with normal or reduced safety mode."""
         self._check_error()
+        if self._stop.is_set():
+            return False
         with self._control_lock:
             return bool(
                 self._control is not None
@@ -352,12 +354,12 @@ class URRTDEArm(BaseArm):
             self._target = None
             self._condition.notify_all()
         if self._thread is not None:
-            self._thread.join(self.JOIN_WARNING_TIMEOUT_S)
+            self._thread.join(self.JOIN_TIMEOUT_S)
             if self._thread.is_alive():
-                self._logger.warning(
-                    "Waiting for the in-flight UR control call before disconnecting."
+                raise TimeoutError(
+                    f"UR servo thread did not stop within {self.JOIN_TIMEOUT_S:g} "
+                    "seconds; SDK sessions were left open to avoid concurrent access."
                 )
-            self._thread.join()
             self._thread = None
         errors: list[tuple[str, Exception]] = []
         with self._control_lock:
