@@ -86,6 +86,14 @@ def main(cfg) -> None:
         rollout_group = rollout_worker_cls.create_group(cfg).launch(
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
+    elif rollout_backend == "phyai":
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+
+        rollout_group = PhyAIRolloutWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
     else:
         raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
     # Create env worker group
