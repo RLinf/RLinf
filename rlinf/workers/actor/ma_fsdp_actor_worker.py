@@ -58,11 +58,39 @@ from rlinf.workers.actor.fsdp_actor_worker import (
 
 
 class MAFSDPActor(FSDPActor):
-    """FSDP actor for Search-R1 multi-agent dynamic rollouts.
+    """FSDP actor for collocated or disaggregated Search-R1 rollouts."""
 
-    The actor requires collocated placement because dynamic rollout batches are
-    consumed and trained within the same actor group.
-    """
+    @staticmethod
+    def validate_placement(
+        cfg: DictConfig,
+        placement: ModelParallelComponentPlacement,
+    ) -> None:
+        """Validate deployment requirements before launching workers."""
+        if not (placement.is_collocated or placement.is_disaggregated):
+            raise ValueError(
+                "MAFSDPActor requires collocated or disaggregated placement"
+            )
+        batch_size = cfg.data.rollout_batch_size
+        if (
+            batch_size < placement.actor_world_size
+            or batch_size % placement.actor_world_size
+        ):
+            raise ValueError(
+                f"rollout_batch_size ({batch_size}) must be a positive multiple "
+                f"of actor DP world size ({placement.actor_world_size})"
+            )
+        if placement.is_disaggregated:
+            if placement.has_dedicated_actor_inference:
+                raise ValueError(
+                    "Disaggregated MAFSDPActor computes logprobs on the actor; "
+                    "remove inference from cluster.component_placement"
+                )
+            if cfg.actor.fsdp_config.strategy != "fsdp2":
+                raise ValueError("Disaggregated MAFSDPActor requires FSDP2")
+            if not cfg.algorithm.recompute_logprobs:
+                raise ValueError(
+                    "Disaggregated MAFSDPActor requires algorithm.recompute_logprobs=True"
+                )
 
     def __init__(
         self,
@@ -70,6 +98,7 @@ class MAFSDPActor(FSDPActor):
         placement: ModelParallelComponentPlacement,
         cfg_fsdp: Optional[DictConfig] = None,
     ) -> None:
+        self.validate_placement(cfg, placement)
         super().__init__(cfg, placement, cfg_fsdp)
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch, (
@@ -79,9 +108,6 @@ class MAFSDPActor(FSDPActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
         self.placement = placement
-        assert self.placement.is_collocated, (
-            "Only collocated placement is supported for multi-agent actor"
-        )
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             raise ValueError(
                 "importance_sampling_fix is not supported for dynamic rollout batch"
@@ -97,7 +123,14 @@ class MAFSDPActor(FSDPActor):
         group, while `num_sequence` inside that item can vary across turns. Therefore the
         receive loop should be counted in rollout-result units, not sequence units.
         """
-        return self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
+        world_size = torch.distributed.get_world_size()
+        batch_size = self.cfg.data.rollout_batch_size
+        if batch_size < world_size or batch_size % world_size:
+            raise ValueError(
+                f"rollout_batch_size ({batch_size}) must be a positive multiple "
+                f"of actor DP world size ({world_size})"
+            )
+        return batch_size // world_size
 
     def get_rollout_metrics_group(self, batch: dict[str, torch.Tensor]):
         """Return the process group used to aggregate rollout metrics."""
@@ -168,7 +201,9 @@ class MAFSDPActor(FSDPActor):
             )
 
         logits: torch.Tensor = outputs.logits
-        logits.div_(self.cfg.algorithm.sampling_params.temperature)
+        # FSDP backward hooks attach to the model output before temperature scaling.
+        if self.cfg.algorithm.sampling_params.temperature != 1.0:
+            logits = logits / self.cfg.algorithm.sampling_params.temperature
 
         if self.enable_dynamic_batch_size:
             # unpack_fsdp_logprobs is expected to return logprobs unpacked to
@@ -249,12 +284,34 @@ class MAFSDPActor(FSDPActor):
         rollout_result: DynamicRolloutResult,
         compute_ref_logprobs: bool,
     ):
+        num_sequence = rollout_result.num_sequence
+        max_num_sequence = torch.tensor(num_sequence, device=batch["input_ids"].device)
+        torch.distributed.all_reduce(
+            max_num_sequence, op=torch.distributed.ReduceOp.MAX
+        )
+        padded_num_sequence = int(max_num_sequence.item())
+        micro_batch_size = self.cfg.algorithm.logprob_forward_micro_batch_size
+        if not self.enable_dynamic_batch_size:
+            padded_num_sequence = (
+                (padded_num_sequence + micro_batch_size - 1)
+                // micro_batch_size
+                * micro_batch_size
+            )
+        # Equal row counts keep FSDP forward collectives aligned across DP ranks.
+        indices_to_keep = list(range(num_sequence)) + [0] * (
+            padded_num_sequence - num_sequence
+        )
+        batch = {
+            key: value[indices_to_keep]
+            if isinstance(value, torch.Tensor)
+            else [value[i] for i in indices_to_keep]
+            for key, value in batch.items()
+        }
         micro_batches_iter, _, dbs_indices = self._split_to_micro_batch(
             batch,
             self.enable_dynamic_batch_size,
             max_tokens_per_mbs=self.max_tokens_per_mbs,
-            split_num=rollout_result.num_sequence
-            // self.cfg.algorithm.logprob_forward_micro_batch_size,
+            split_num=padded_num_sequence // micro_batch_size,
         )
         if self.enable_dynamic_batch_size:
             indices = sum(dbs_indices, [])
@@ -295,7 +352,10 @@ class MAFSDPActor(FSDPActor):
                     )
                     ref_logprobs = ref_logprobs[revert_indices]
 
-        return recomputed_logprobs, ref_logprobs
+        return (
+            recomputed_logprobs[:num_sequence],
+            ref_logprobs[:num_sequence] if ref_logprobs is not None else None,
+        )
 
     def run_inference(
         self,
@@ -312,7 +372,7 @@ class MAFSDPActor(FSDPActor):
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
         assert not self.is_pipeline, (
-            "MAFSDPActor currently only supports collocated inference"
+            "MAFSDPActor requires actor-side inference without a pipeline"
         )
 
         batches = []
@@ -404,16 +464,17 @@ class MAFSDPActor(FSDPActor):
             loss_mask=loss_mask,
             clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
             clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
-            fast_path_zero_loss_mask=True,
+            # Padding can precede valid rows and must retain a backward graph.
+            fast_path_zero_loss_mask=False,
         )
 
-        entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        entropy_loss = torch.tensor(0.0, device=logprobs.device)
         if self.calculate_entropy:
             entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
             if self.calculate_entropy_loss:
                 loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-        kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        kl_loss = torch.tensor(0.0, device=logprobs.device)
         if self.kl_beta > 0 and ref_logprobs is not None:
             kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
             kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
@@ -493,7 +554,7 @@ class MAFSDPActor(FSDPActor):
             "do_offload argument of run_inference/run_training is not supported in FSDP for now"
         )
         assert not self.is_pipeline, (
-            "MAFSDPActor currently only supports collocated training"
+            "MAFSDPActor requires full-batch training without a pipeline"
         )
 
         batches = []
@@ -552,7 +613,7 @@ class MAFSDPActor(FSDPActor):
             global_batch = self._dp_load_balance_dynamic(
                 global_batch,
                 batch_pad,
-                self.cfg.actor.micro_batch_size,
+                self.cfg.actor.micro_batch_size * self.cfg.algorithm.n_minibatches,
             )
 
         mini_batches = get_iterator_k_split(
