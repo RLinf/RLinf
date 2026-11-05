@@ -109,16 +109,18 @@ Dream SDK 使用 Python 3.11–3.13。按上方「环境准备」克隆 RoboTwin
 
    bash requirements/install.sh embodied --env robotwin
    source .venv/bin/activate
-   uv pip install "numpy<2" pandas opencv-python scipy zarr
+   uv pip install "numpy>=1.26.4,<2" pandas opencv-python
    uv venv --python "$(command -v python)" .venv-dream
    export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
    uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
      dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
      "ray==$(python -c 'import ray; print(ray.__version__)')"
 
-RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DREAM_ROLLOUT_PYTHON`` 启动 rollout worker，RoboTwin 仍在 ``.venv`` 中运行。
+MPLib 使用 NumPy 1，因此需要与 pandas 和 OpenCV 一起解析兼容版本。Dream SDK 需要 NumPy 2，因此 RLinf 使用 ``DREAM_ROLLOUT_PYTHON`` 启动 rollout worker，RoboTwin 仍在 ``.venv`` 中运行。
 
 在 rollout worker 的环境中设置 ``DREAM_API_KEY``。``ROBOTWIN_PATH`` 应指向包含 ``assets/`` 目录的 RoboTwin 仓库根目录。通过 ``DREAM_IK_ARM_FILE`` 指定所选机器人的 Dream SDK 机械臂描述文件，确认其 URDF、关节顺序、base 坐标系和 TCP 与仿真机器人一致。
+
+每个 JSON 机械臂描述文件都需要 ``urdf``、``base``、``flange``、``tcp``、``approach``、``jaw`` 和 ``rest``。已报告的评测中，ALOHA 使用 ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``；Piper 使用 ``assets/embodiments/piper/piper.urdf`` 的副本，并将六个机械臂关节限位放宽到 ±6.283185307 弧度，供 SDK 的 IK 使用。
 
 **启动评测**
 
@@ -136,7 +138,7 @@ RoboTwin 的 MPLib 使用 NumPy 1，Dream SDK 需要 NumPy 2。RLinf 使用 ``DR
      env.eval.assets_path=${ROBOTWIN_PATH} \
      'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
 
-两个示例均在逆运动学求解前修正任务臂的末端目标。若要关闭修正，运行时传入 ``rollout.dream.eef_target_bias=false``。
+click_bell 修正默认关闭；如需启用，运行时传入 ``rollout.dream.eef_target_bias=true``。在任务臂的 base 坐标系下，如果第一个动作块的末个目标 z 减去观测 z 大于 -0.08 米，RLinf 会在 IK 前将该臂的目标沿 x 轴平移 -0.003 米、沿 z 轴平移 -0.04 米。这个条件在每个 episode 中只判断一次，仅在任务有一条活动臂时生效。
 
 **查看结果**
 

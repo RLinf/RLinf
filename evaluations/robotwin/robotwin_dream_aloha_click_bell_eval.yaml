@@ -68,7 +68,7 @@ rollout:
   dream:
     arm: ${oc.env:DREAM_IK_ARM_FILE}
     action_hz: 20
-    eef_target_bias: true
+    eef_target_bias: false
     timeout_ms: 30000
 
 hydra:

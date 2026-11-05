@@ -108,16 +108,18 @@ Use Python 3.11–3.13 for the Dream SDK. Prepare the RoboTwin repository and as
 
    bash requirements/install.sh embodied --env robotwin
    source .venv/bin/activate
-   uv pip install "numpy<2" pandas opencv-python scipy zarr
+   uv pip install "numpy>=1.26.4,<2" pandas opencv-python
    uv venv --python "$(command -v python)" .venv-dream
    export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
    uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
      dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
      "ray==$(python -c 'import ray; print(ray.__version__)')"
 
-RoboTwin uses NumPy 1 with MPLib; the Dream SDK requires NumPy 2. RLinf runs the rollout worker with ``DREAM_ROLLOUT_PYTHON`` and keeps RoboTwin in ``.venv``.
+MPLib uses NumPy 1, so resolve pandas and OpenCV with that version. The Dream SDK requires NumPy 2, so RLinf runs the rollout worker with ``DREAM_ROLLOUT_PYTHON`` and keeps RoboTwin in ``.venv``.
 
 Set ``DREAM_API_KEY`` in the rollout worker's environment and point ``ROBOTWIN_PATH`` to the RoboTwin repository root, which contains the ``assets/`` directory. For each robot, use a matching Dream SDK arm specification in ``DREAM_IK_ARM_FILE``. Its URDF, joint order, base frame and TCP must agree with the simulated robot.
+
+Each JSON arm file requires ``urdf``, ``base``, ``flange``, ``tcp``, ``approach``, ``jaw``, and ``rest``. For the reported runs, ALOHA uses ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``; Piper uses a copy of ``assets/embodiments/piper/piper.urdf`` with the six arm joint limits widened to ±6.283185307 radians for SDK IK.
 
 **Launch evaluation**
 
@@ -135,7 +137,7 @@ The config defaults to ALOHA. For Piper, switch the arm specification and overri
      env.eval.assets_path=${ROBOTWIN_PATH} \
      'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
 
-Both examples adjust the task arm's end-effector targets before inverse kinematics. To run either example without this adjustment, pass ``rollout.dream.eef_target_bias=false``.
+The click_bell correction is off by default; pass ``rollout.dream.eef_target_bias=true`` to enable it. In the task arm's base frame, if the final target z in the first action chunk minus the observed z is greater than -0.08 m, RLinf shifts that arm's targets by -0.003 m in x and -0.04 m in z before IK. This condition is evaluated once per episode and applies when the task has one active arm.
 
 **Check results**
 

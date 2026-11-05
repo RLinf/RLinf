@@ -36,6 +36,8 @@ class DreamPolicy(BasePolicy):
         self.calls = 0
         self.inactive_arm_holds = 0
         self.episode_id = None
+        self.task_arm = None
+        self.eef_bias = None
         self.closed = False
         try:
             sdk.policy(
@@ -82,7 +84,7 @@ class DreamPolicy(BasePolicy):
                 }
             )
             if cfg.dream.get("eef_target_bias", False):
-                # The SDK has no public hook between action decoding and IK.
+                # dreamlabs-client 1.0.9 has no public hook between decoding and IK.
                 sdk._policy._post = self._with_eef_bias(sdk._policy._post)
         except Exception:
             self.close()

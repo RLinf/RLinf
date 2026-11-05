@@ -1858,11 +1858,21 @@ def test_dream_api_images_and_sdk_lifecycle(monkeypatch):
 
 
 def test_dream_api_click_bell_bias_before_ik(monkeypatch):
+    cfg = _dream_config(monkeypatch)
+    assert not cfg.rollout.dream.eef_target_bias
+    sdk = _DreamSDK()
+    post = sdk._policy._post
+    disabled = DreamPolicy(sdk, cfg.rollout)
+    assert sdk._policy._post is post
+    disabled.close()
+
     sdk = _DreamSDK()
     left, right = "action.left_eef_xyz", "action.right_eef_xyz"
     targets = {left: [[0, 0, 0.05]], right: [[0, 0, 0]]}
     sdk._policy._post = lambda observation: {"per_key": targets.copy()}
-    client = DreamPolicy(sdk, _dream_config(monkeypatch).rollout)
+    cfg.rollout.dream.eef_target_bias = True
+    client = DreamPolicy(sdk, cfg.rollout)
+    assert client.task_arm is None and client.eef_bias is None
     buffer = DreamObservationBuffer()
 
     for side, expected in (("left", [[-0.003, 0, 0.01]]), ("right", targets[left])):
@@ -1873,6 +1883,13 @@ def test_dream_api_click_bell_bias_before_ik(monkeypatch):
         action = sdk.action_before_ik["per_key"]
         np.testing.assert_allclose(action[left], expected)
         np.testing.assert_allclose(action[right], targets[right])
+        if side == "left":
+            targets[left] = [[0, 0, -0.1]]
+            client.predict_action_batch({"history": [sample]})
+            np.testing.assert_allclose(
+                sdk.action_before_ik["per_key"][left], [[-0.003, 0, -0.14]]
+            )
+            targets[left] = [[0, 0, 0.05]]
 
 
 def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
