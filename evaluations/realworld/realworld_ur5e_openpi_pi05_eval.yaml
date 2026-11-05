@@ -70,6 +70,7 @@ env:
       save_video: true
     override_cfg:
       task_description: TASK_DESCRIPTION
+      open_gripper_on_reset: true
       camera_names:
         "CAMERA_SERIAL": main
 

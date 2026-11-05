@@ -59,6 +59,8 @@ class URCollectionEnvConfig:
     """Seconds to wait for the reset target after sending the trajectory."""
     reset_position_tolerance: float = 0.005
     reset_orientation_tolerance: float = 0.02
+    open_gripper_on_reset: bool = False
+    """Open a fitted gripper before returning the TCP to its reset pose."""
 
     binary_gripper_threshold: float = 0.5
     camera_names: Optional[dict[str, str]] = None
@@ -71,6 +73,8 @@ class URCollectionEnvConfig:
 
     def __post_init__(self) -> None:
         """Validate command limits before opening any hardware."""
+        if not isinstance(self.open_gripper_on_reset, bool):
+            raise ValueError("UR open_gripper_on_reset must be a boolean.")
         if not np.isfinite(self.step_frequency) or self.step_frequency <= 0:
             raise ValueError("UR step_frequency must be finite and positive.")
         self.action_scale = np.asarray(self.action_scale, dtype=np.float64)
@@ -139,8 +143,8 @@ class URCollectionEnv(gym.Env):
     The arm action contains normalized base-frame translation and xyz Euler
     increments. An optional seventh value is the established binary gripper
     signal: negative closes, positive opens. Reset interpolates to the configured
-    TCP pose and leaves the gripper unchanged. Opening a fitted Robotiq connection
-    runs its activation procedure, which may move it.
+    TCP pose and optionally opens the gripper first. Opening a fitted Robotiq
+    connection runs its activation procedure, which may move it.
     """
 
     TELEOP = ("spacemouse",)
@@ -385,6 +389,15 @@ class URCollectionEnv(gym.Env):
             self._get_observation()
             start = self.get_tcp_pose().astype(np.float64)
             self._check_current_pose(start)
+            if (
+                self.config.open_gripper_on_reset
+                and self._with_gripper
+                and not self._end_effector.is_open
+            ):
+                self._gripper_action(1.0)
+                time.sleep(0.6)
+                start = self.get_tcp_pose().astype(np.float64)
+                self._check_current_pose(start)
             target = np.concatenate(
                 [
                     self.config.reset_ee_pose[:3],

@@ -208,13 +208,13 @@ UR5e 安装流程通过 ``--no-deps`` 安装 ``pyorbbecsdk2==2.1.2``，保留 Op
 
 在硬件条目中，``camera_resolution`` 按宽、高设置相机输出尺寸，``camera_fps`` 设置帧率。Orbbec 后端按指定帧率选择最接近输出尺寸的原生彩色流，再缩放到输出尺寸；模板使用 1280 × 720、15 fps，仅采集彩色图像。在 ``env.eval.override_cfg`` 中，``image_size`` 设置裁剪缩放后的记录尺寸，按高、宽排列，默认为 224 × 224；``camera_names`` 与 ``camera_crop_regions`` 配置视角。环境通过组合机器人读取机械臂、夹爪和相机观测，再构造 policy 输入。``step_frequency`` 与数据集 ``fps`` 默认均为 10，调整采集频率时应保持一致。将 ``env.eval.override_cfg.enable_camera_player`` 设为 ``true`` 可预览图像。
 
-启动采集和保存成功 episode 后，环境会将 TCP 返回 ``reset_ee_pose``，并保持夹爪状态。插值至少持续 ``reset_duration`` 秒，每一步受 ``action_scale`` 限制，因此距离较远时回位时间会增加。插值结束后，``reset_timeout`` 设置到位检查超时参数，位置与姿态容差分别由 ``reset_position_tolerance``\ （单位为米）和 ``reset_orientation_tolerance``\ （单位为弧度）设置。启动采集前，先确认该复位路径。
+启动采集和保存成功 episode 后，环境会将 TCP 返回 ``reset_ee_pose``。``open_gripper_on_reset`` 默认为 ``false``，保留夹爪状态；设为 ``true`` 后，会在 TCP 回位前打开已关闭的夹爪，并沿用 Franka 抓放任务的 0.6 秒等待。回位插值至少持续 ``reset_duration`` 秒，每一步受 ``action_scale`` 限制，因此距离较远时回位时间会增加。插值结束后，``reset_timeout`` 设置到位检查超时参数，位置与姿态容差分别由 ``reset_position_tolerance``\ （单位为米）和 ``reset_orientation_tolerance``\ （单位为弧度）设置。启动采集前，先确认该复位路径。
 
 推拉或旋转 SpaceMouse 摇杆按与 Franka 相同的映射，在基座坐标系中发送笛卡尔增量。左键关闭夹爪，右键打开夹爪。松开摇杆后停止添加增量，运动后的第一条零输入会保持实测位姿。
 
 .. warning::
 
-   连接 Robotiq 夹爪时会执行清除与激活流程，手指可能移动。每次连接前都应清空手指周围区域。TCP 复位保持夹爪状态。
+   连接 Robotiq 夹爪时会执行清除与激活流程，手指可能移动。每次连接前都应清空手指周围区域。启用 ``open_gripper_on_reset`` 后，每次 TCP 复位前还会松开夹持。
 
 采集使用现有 Linux evdev episode 监听器。运行用户需要能够访问 SpaceMouse HID 设备、相机、串口适配器和实体键盘或踏板。设备发现有歧义时，通过 ``env.eval.keyboard_device`` 或 ``RLINF_KEYBOARD_DEVICE`` 选择后者。在 SSH 终端输入的按键不属于该设备的 evdev 输入。
 
@@ -278,6 +278,8 @@ SFT 将 checkpoint 保存在本次运行的 ``ur5e_openpi_sft/checkpoints/global
 --------------------
 
 将训练后的 checkpoint 和同一份统计文件放到机器人主机。编辑 ``evaluations/realworld/realworld_ur5e_openpi_pi05_eval.yaml``，填写采集时使用的硬件地址、串口路径、复位位姿、位姿边界、相机设置和任务描述。硬件与环境字段沿用采集配置；保持环境相机的安装位置、``action_scale`` 和 ``step_frequency`` 一致。
+
+评估模板设置 ``open_gripper_on_reset: true``，启动和每次 episode 复位时，会先打开已关闭的夹爪，再返回 TCP 起点。任务需要在回位时保持夹持状态时，将该值设为 ``false``。
 
 将模型路径指向 SFT checkpoint 目录，并填写训练时的统计文件路径：
 

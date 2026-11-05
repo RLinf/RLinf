@@ -41,5 +41,6 @@ override_cfg:
   reset_timeout: 5.0
   reset_position_tolerance: 0.005
   reset_orientation_tolerance: 0.02
+  open_gripper_on_reset: False
   image_size: [224, 224]
   enable_camera_player: False
