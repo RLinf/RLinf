@@ -5272,6 +5272,7 @@ def test_ur_reset_waits_for_the_configured_tcp_pose(monkeypatch, reaches_target)
         ({"reset_ee_pose": None}, "reset_ee_pose"),
         ({"action_scale": [0.02, 0.1]}, "action_scale"),
         ({"step_frequency": 0}, "step_frequency"),
+        ({"open_gripper_on_reset": "true"}, "open_gripper_on_reset"),
     ],
 )
 def test_ur_collection_validates_limits_before_opening_hardware(overrides, match):
@@ -5366,7 +5367,10 @@ def test_ur_collection_camera_open_failure_closes_the_arm():
         assert not receive.connected
 
 
-def test_ur_collection_binary_gripper_buttons_preserve_idle_and_reset_state():
+@pytest.mark.parametrize("open_gripper_on_reset", [False, True])
+def test_ur_collection_binary_gripper_buttons_and_reset(
+    open_gripper_on_reset, monkeypatch
+):
     from robot_mocks import mocked_sdks
 
     from rlinf.robotics import UR5eConfig
@@ -5379,7 +5383,7 @@ def test_ur_collection_binary_gripper_buttons_preserve_idle_and_reset_state():
             gripper_connection="/dev/mock-ur-gripper",
             end_effector_config={"max_width": 0.085},
         )
-        env = _ur_collection_env(hardware)
+        env = _ur_collection_env(hardware, open_gripper_on_reset=open_gripper_on_reset)
         try:
             initial, _ = env.reset()
             assert env.action_space.shape == (7,)
@@ -5388,13 +5392,28 @@ def test_ur_collection_binary_gripper_buttons_preserve_idle_and_reset_state():
             assert closed["state"]["gripper_position"][0] == pytest.approx(0.0)
             assert not env.get_gripper_open()
             idle, *_ = env.step(np.zeros(7))
+            control = made["rtde_control"].RTDEControlInterface.instances[-1]
+            receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+            assert control.commands == []
+            receive.pose[0] -= 0.01
+            servo = control.servoL
+            gripper_at_motion = []
+
+            def track_reset(pose, *args):
+                gripper_at_motion.append(env.get_gripper_open())
+                result = servo(pose, *args)
+                receive.pose = list(pose)
+                return result
+
+            monkeypatch.setattr(control, "servoL", track_reset)
             reset, _ = env.reset()
             assert idle["state"]["gripper_position"][0] == pytest.approx(0.0)
-            assert reset["state"]["gripper_position"][0] == pytest.approx(0.0)
+            assert reset["state"]["gripper_position"][0] == pytest.approx(
+                0.085 if open_gripper_on_reset else 0.0
+            )
+            assert env.get_gripper_open() == open_gripper_on_reset
+            assert gripper_at_motion[0] == open_gripper_on_reset
             opened, *_ = env.step(np.array([0, 0, 0, 0, 0, 0, 1]))
             assert opened["state"]["gripper_position"][0] == pytest.approx(0.085)
-            assert (
-                made["rtde_control"].RTDEControlInterface.instances[-1].commands == []
-            )
         finally:
             env.close()
