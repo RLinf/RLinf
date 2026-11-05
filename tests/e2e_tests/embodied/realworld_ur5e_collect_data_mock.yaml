@@ -1,0 +1,72 @@
+# UR5e SpaceMouse collection against faked vendor SDKs.
+# run.sh installs the fakes when the config name contains "mock".
+# RLINF_FAKE_KEYS supplies the keyboard's start, segment and success presses.
+defaults:
+  - env/realworld_ur5e_collect@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: ur5e
+      placement: 0
+  node_groups:
+    - label: ur5e
+      node_ranks: 0
+      hardware:
+        type: UR5e
+        configs:
+          - node_rank: 0
+            robot_ip: 192.0.2.40
+            gripper_type: robotiq
+            gripper_connection: /dev/mock-ur-gripper
+            end_effector_config:
+              max_width: 0.085
+            camera_serials: [MOCK0001]
+            camera_type: orbbec
+            camera_resolution: [64, 48]
+            camera_fps: 15
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/results/realworld_ur5e_collect_data_mock
+    project_name: rlinf
+    experiment_name: ci-test
+    logger_backends: [tensorboard]
+  num_data_episodes: 1
+  record_task_description: true
+
+seed: 1234
+
+env:
+  group_name: EnvGroup
+  eval:
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    override_cfg:
+      # Reset to the pose the RTDE fake already reports.
+      reset_ee_pose: [0.4, 0.05, 0.3, 0.0, 0.0, 1.5707963267948966]
+      ee_pose_limit_min: [-0.5, -0.5, 0.0, -3.141593, -3.141593, -3.141593]
+      ee_pose_limit_max: [0.5, 0.5, 0.8, 3.141593, 3.141593, 3.141593]
+      reset_duration: 0.1
+      camera_names:
+        MOCK0001: main
+      image_size: [48, 64]
+      task_description: move the UR5e TCP
+    data_collection:
+      enabled: true
+      save_dir: ${runner.logger.log_path}
+      export_format: lerobot_dataset
+      only_success: true
+      robot_type: ur5e
+      fps: 10
