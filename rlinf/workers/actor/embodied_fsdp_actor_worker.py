@@ -60,6 +60,25 @@ from rlinf.utils.utils import (
 )
 
 
+def _reshape_recompute_logprob_gap(
+    logprob_gap: torch.Tensor, cfg: DictConfig
+) -> torch.Tensor:
+    """Return the logprob gap as ``[..., chunks, action_dim]``.
+
+    OpenVLA, OpenVLA-OFT, and LingBot-VLA V2 return one flat logprob per action
+    dimension; OpenPI already returns this layout.
+    """
+    model_type = SupportedModel(cfg.actor.model.model_type)
+    if model_type in (
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+        SupportedModel.LINGBOTVLAV2,
+    ):
+        action_dim = cfg.actor.model.get("action_dim", 7)
+        return logprob_gap.reshape(*logprob_gap.shape[:-1], -1, action_dim)
+    return logprob_gap
+
+
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -471,17 +490,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         clear_memory()
 
-        # Logprobs are per action token, the mask and the advantages per action.
-        action_dim = self.cfg.actor.model.get("action_dim", 7)
-        log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
-            *rollout_logprobs.shape[:-1], -1, action_dim
+        log_ratio = _reshape_recompute_logprob_gap(
+            recomputed_logprobs - rollout_logprobs, self.cfg
         )
         loss_mask = self.rollout_batch.get("loss_mask", None)
-        mask = (
-            None
-            if loss_mask is None
-            else loss_mask.bool().unsqueeze(-1).expand_as(log_ratio)
-        )
+        mask = None
+        if loss_mask is not None:
+            mask = loss_mask.bool()
+            while mask.ndim < log_ratio.ndim:
+                mask = mask.unsqueeze(-1)
+            mask = mask.expand_as(log_ratio)
         joint_log_ratio = (
             log_ratio if mask is None else log_ratio.masked_fill(~mask, 0)
         ).sum(dim=(-2, -1))
@@ -501,6 +519,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"found {joint_gap}."
             )
 
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            self.rollout_batch["rollout_logprobs"] = rollout_logprobs
         self.rollout_batch["prev_logprobs"] = recomputed_logprobs
         return metrics
 
@@ -799,6 +819,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "log_logprob_diagnostics", False
             ),
         }
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
+            loss_kwargs["importance_sampling_clip"] = (
+                self.cfg.algorithm.importance_sampling_clip
+            )
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
