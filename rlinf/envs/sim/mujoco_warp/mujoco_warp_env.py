@@ -53,7 +53,7 @@ class _TaskSpec:
         healthy_angle_range: Optional[tuple[float, float]],
         reset_noise_scale: float,
         reset_noise_type: str,
-    ):
+    ) -> None:
         self.xml_file = xml_file
         self.obs_qpos_skip = obs_qpos_skip
         self.frame_skip = frame_skip
@@ -129,7 +129,16 @@ class MujocoWarpEnv(gym.Env):
 
     All ``num_envs`` worlds are stepped together on device with one
     ``mujoco_warp.step`` call per frame, so there is no per-env Python loop
-    in the physics path. Observations are ``{"states": Tensor[num_envs, obs_dim]}``.
+    in the physics path. Observations contain ``states`` and, when video is
+    enabled, an ``images`` batch.
+
+    Args:
+        cfg: Task, simulation, reset, reward, and video configuration.
+        num_envs: Number of parallel simulation worlds.
+        seed_offset: Offset added to the configured random seed.
+        total_num_processes: Total number of environment worker processes.
+        worker_info: Worker metadata supplied by the scheduler.
+        record_metrics: Whether to accumulate episode returns and lengths.
     """
 
     def __init__(
@@ -140,7 +149,7 @@ class MujocoWarpEnv(gym.Env):
         total_num_processes: int = 1,
         worker_info: Any = None,
         record_metrics: bool = True,
-    ):
+    ) -> None:
         super().__init__()
         self.total_num_processes = int(total_num_processes)
         self.worker_info = worker_info
@@ -263,6 +272,7 @@ class MujocoWarpEnv(gym.Env):
 
     @property
     def is_start(self) -> bool:
+        """Whether the environment is in its initial state."""
         return self._is_start
 
     @is_start.setter
@@ -271,13 +281,16 @@ class MujocoWarpEnv(gym.Env):
 
     @property
     def elapsed_steps(self) -> torch.Tensor:
+        """Return the current episode step count for every world."""
         return self._elapsed_steps
 
     @property
     def info_logging_keys(self) -> list[str]:
+        """Return additional info keys exposed for metric logging."""
         return []
 
     def close(self) -> None:
+        """Release the native MuJoCo renderer and its associated state."""
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
@@ -314,6 +327,7 @@ class MujocoWarpEnv(gym.Env):
         self.update_reset_state_ids()
 
     def update_reset_state_ids(self) -> None:
+        """Sample new deterministic reset IDs for all environment groups."""
         if self.is_eval or self.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
@@ -363,7 +377,12 @@ class MujocoWarpEnv(gym.Env):
         self._render_camera.elevation = -20.0
 
     def render(self) -> np.ndarray:
-        """Render all worlds as an RGB batch using native MuJoCo."""
+        """Render all worlds as an RGB batch using native MuJoCo.
+
+        Returns:
+            A ``uint8`` array with shape
+            ``(num_envs, render_height, render_width, 3)``.
+        """
         import mujoco
 
         if self._renderer is None:
@@ -429,7 +448,7 @@ class MujocoWarpEnv(gym.Env):
 
     def _vector_step(
         self, actions: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         expected_shape = (self.num_envs, self.action_dim)
         if actions.shape != expected_shape:
             raise ValueError(
@@ -474,7 +493,16 @@ class MujocoWarpEnv(gym.Env):
         env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
         reset_state_ids: Optional[np.ndarray] = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Reset selected worlds and return observations for the full batch."""
+        """Reset selected worlds and return observations for the full batch.
+
+        Args:
+            env_idx: World indices to reset. ``None`` resets all worlds.
+            reset_state_ids: Optional deterministic noise ID for each selected
+                world. New IDs are sampled when this is ``None``.
+
+        Returns:
+            The full-batch observation dictionary and an empty info dictionary.
+        """
         had_last_obs = self._last_obs is not None
         if env_idx is None:
             env_idx_arr = np.arange(self.num_envs, dtype=np.int64)
@@ -534,6 +562,16 @@ class MujocoWarpEnv(gym.Env):
     ) -> tuple[
         dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]
     ]:
+        """Advance every world by one control step.
+
+        Args:
+            actions: Control batch with shape ``(num_envs, action_dim)``.
+            auto_reset: Whether finished worlds may reset immediately.
+
+        Returns:
+            Observations, scaled rewards, terminations, truncations, and infos.
+            Terminal observations and infos are preserved when auto-reset occurs.
+        """
         if isinstance(actions, np.ndarray):
             actions = torch.as_tensor(actions, dtype=torch.float32)
         obs, rewards, terminations = self._vector_step(actions)
@@ -617,7 +655,17 @@ class MujocoWarpEnv(gym.Env):
         torch.Tensor,
         list[dict[str, Any]],
     ]:
-        """Step a chunk of actions and return EnvWorker-compatible batch outputs."""
+        """Step a chunk of actions and return EnvWorker-compatible batch outputs.
+
+        Args:
+            chunk_actions: Actions with shape
+                ``(num_envs, chunk_steps, action_dim)``. A single-step batch with
+                shape ``(num_envs, action_dim)`` is also accepted.
+
+        Returns:
+            Per-step observations, rewards, terminations, truncations, and infos.
+            Done flags are aggregated onto the last sub-step during auto-reset.
+        """
         acts = (
             chunk_actions.detach()
             if isinstance(chunk_actions, torch.Tensor)

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import numpy as np
 import pytest
 import torch
@@ -27,7 +29,7 @@ from rlinf.envs.wrappers.record_video import RecordVideo
 
 
 class _Cfg:
-    def __init__(self, task_name="half_cheetah", **overrides):
+    def __init__(self, task_name: str = "half_cheetah", **overrides: Any) -> None:
         self.task_name = task_name
         self.seed = 0
         self.auto_reset = True
@@ -38,7 +40,9 @@ class _Cfg:
             setattr(self, key, value)
 
 
-def _make_env(task_name="half_cheetah", num_envs=4, **overrides):
+def _make_env(
+    task_name: str = "half_cheetah", num_envs: int = 4, **overrides: Any
+) -> MujocoWarpEnv:
     return MujocoWarpEnv(
         _Cfg(task_name, **overrides),
         num_envs=num_envs,
@@ -48,12 +52,12 @@ def _make_env(task_name="half_cheetah", num_envs=4, **overrides):
     )
 
 
-def test_env_registration():
+def test_env_registration() -> None:
     env_cls = get_env_cls(SupportedEnvType.MUJOCO_WARP.value)
     assert env_cls is MujocoWarpEnv
 
 
-def test_all_tasks_reset_and_step_shapes():
+def test_all_tasks_reset_and_step_shapes() -> None:
     for task_name in TASK_SPECS.keys():
         env = _make_env(task_name)
         obs, infos = env.reset()
@@ -67,7 +71,7 @@ def test_all_tasks_reset_and_step_shapes():
         assert torch.isfinite(obs["states"]).all()
 
 
-def test_truncation_triggers_auto_reset_and_episode_metrics():
+def test_truncation_triggers_auto_reset_and_episode_metrics() -> None:
     env = _make_env(max_episode_steps=3)
     env.reset()
     actions = torch.zeros(env.num_envs, env.action_dim)
@@ -82,7 +86,7 @@ def test_truncation_triggers_auto_reset_and_episode_metrics():
     assert env.elapsed_steps.max().item() == 0
 
 
-def test_chunk_step_aggregates_dones_to_last_step():
+def test_chunk_step_aggregates_dones_to_last_step() -> None:
     env = _make_env(max_episode_steps=2)
     env.reset()
     actions = torch.zeros(env.num_envs, 3, env.action_dim)
@@ -97,7 +101,7 @@ def test_chunk_step_aggregates_dones_to_last_step():
     assert torch.isfinite(infos_list[-1]["final_observation"]["states"]).all()
 
 
-def test_reset_with_same_state_ids_is_deterministic_per_world():
+def test_reset_with_same_state_ids_is_deterministic_per_world() -> None:
     env = _make_env(num_envs=2)
     obs1, _ = env.reset(reset_state_ids=np.array([1, 2]))
     obs2, _ = env.reset(reset_state_ids=np.array([1, 2]))
@@ -111,14 +115,14 @@ def test_reset_with_same_state_ids_is_deterministic_per_world():
     assert not torch.allclose(obs1["states"], colliding_sum["states"])
 
 
-def test_initial_partial_reset_initializes_all_worlds():
+def test_initial_partial_reset_initializes_all_worlds() -> None:
     env = _make_env(num_envs=2, specific_reset_id=0)
     partial, _ = env.reset(env_idx=[1], reset_state_ids=np.array([0]))
     reference, _ = env.reset(reset_state_ids=np.array([0, 0]))
     assert torch.allclose(partial["states"], reference["states"])
 
 
-def test_reward_scale_preserves_dynamics_and_scales_rewards():
+def test_reward_scale_preserves_dynamics_and_scales_rewards() -> None:
     base_env = _make_env(num_envs=2)
     scaled_env = _make_env(num_envs=2, reward_scale=2.5)
     reset_ids = np.array([3, 7])
@@ -133,26 +137,28 @@ def test_reward_scale_preserves_dynamics_and_scales_rewards():
     assert torch.allclose(scaled_rewards, base_rewards * 2.5)
 
 
-def test_video_frames_follow_worlds_and_staggered_terminal_states(monkeypatch):
+def test_video_frames_follow_worlds_and_staggered_terminal_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeRenderer:
-        def __init__(self, model, height, width):
+        def __init__(self, model: mujoco.MjModel, height: int, width: int) -> None:
             self.height = height
             self.width = width
             self.value = 0.0
             self.closed = False
 
-        def update_scene(self, data, camera):
+        def update_scene(self, data: mujoco.MjData, camera: mujoco.MjvCamera) -> None:
             assert camera.trackbodyid == 1
             self.value = float(data.qpos[1])
 
-        def render(self):
+        def render(self) -> np.ndarray:
             packed = np.array([self.value], dtype=np.float32).view(np.uint8)
             frame = np.empty((self.height, self.width, 3), dtype=np.uint8)
             for channel in range(3):
                 frame[..., channel] = packed[channel]
             return frame
 
-        def close(self):
+        def close(self) -> None:
             self.closed = True
 
     monkeypatch.setattr(mujoco, "Renderer", FakeRenderer)
