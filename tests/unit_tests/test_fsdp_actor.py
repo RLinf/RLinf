@@ -689,26 +689,48 @@ def test_sharded_actor_matches_unsharded_update_and_checkpoint_resume(
     )
 
 
-def test_fsdp_entrypoint_import_and_validation_do_not_load_megatron():
+@pytest.mark.parametrize(
+    "placement_mode", ["collocated", "disaggregated", "unsupported"]
+)
+def test_fsdp_entrypoint_import_and_validation_do_not_load_megatron(placement_mode):
     repo = Path(__file__).resolve().parents[2]
     script = """
 import sys
+import runpy
 from pathlib import Path
 from hydra import compose, initialize_config_dir
-from examples.agent.searchr1.train import get_ma_actor_worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from test_placement import create_fake_cluster
+from rlinf import config
 
+get_ma_actor_worker = runpy.run_path('examples/agent/searchr1/train.py')['get_ma_actor_worker']
 with initialize_config_dir(version_base='1.1', config_dir=str(Path.cwd() / 'examples/agent/searchr1/config')):
     cfg = compose(config_name='train_qwen2.5_fsdp_disaggregated')
+mode = sys.argv[1]
+if mode == 'collocated':
+    cfg.cluster.component_placement.actor = '0-1'
+    cfg.cluster.component_placement.rollout = '0-1'
+if mode == 'unsupported':
+    cfg.actor.fsdp_config.strategy = 'fsdp'
+config.Cluster = lambda: create_fake_cluster(1, 3)
+if mode == 'unsupported':
+    try:
+        config.validate_searchr1_cfg(cfg)
+    except ValueError as exc:
+        assert 'requires FSDP2' in str(exc), str(exc)
+    else:
+        raise AssertionError('Disaggregated FSDP1 passed config validation')
+else:
+    config.validate_searchr1_cfg(cfg)
 actor = get_ma_actor_worker(cfg)
 assert actor.__name__ == 'MAFSDPActor'
-actor.validate_placement(cfg, ModelParallelComponentPlacement(cfg, create_fake_cluster(1, 3)))
+if mode != 'unsupported':
+    actor.validate_placement(cfg, ModelParallelComponentPlacement(cfg, create_fake_cluster(1, 3)))
 assert not any(name == 'megatron' or name.startswith('megatron.') for name in sys.modules)
 print('FSDP entrypoint validated without Megatron')
 """
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, "-c", script, placement_mode],
         cwd=repo,
         env={
             **os.environ,
