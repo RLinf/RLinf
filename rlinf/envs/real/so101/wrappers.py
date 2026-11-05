@@ -210,6 +210,9 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         obs, reward, terminated, truncated, info = self._step_with_hold(
             action, hold=hold
         )
+        # Collection success comes from the operator's terminal key, not the
+        # reach task's joint-distance reward.
+        reward = 0.0
         idle_hold_action = info.pop("so101_idle_hold_action", None)
         if self._recording and idle_hold_action is not None:
             info["intervene_action"] = idle_hold_action

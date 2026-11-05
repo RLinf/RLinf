@@ -1499,7 +1499,7 @@ def test_so101_start_end_preserves_abort_lockout_and_episode_accounting(monkeypa
     _, reward, terminated, _, info = env.step(np.zeros(1))
     assert info["keyboard_event"] is None
     assert not terminated
-    assert reward == 0.25
+    assert reward == 0.0
     assert env._recording
 
     env.ABORT_LOCKOUT_S = 0.0

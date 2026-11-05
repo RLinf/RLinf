@@ -70,11 +70,11 @@ from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
-    SO101JointDataConfig,
-)
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    SO101JointDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.yam_dataconfig import (
     LeRobotYamDataConfig,
@@ -564,7 +564,7 @@ _CONFIGS = [
         ),
         data=LeRobotIsaacLabStackCubeDataConfig(
             repo_id="RLinf/IsaacLab-Stack-Cube-Data",
-            base_config=DataConfig(prompt_from_task=True),
+            base_config=DataConfig(prompt_from_task=False),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_isaaclab/assets"),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
