@@ -14,7 +14,17 @@
 
 from omegaconf import DictConfig
 
-from .math_verifier.verify import math_verify_call
+
+def math_verify_call(
+    responses: list[str],
+    references: list[list[str]],
+    timeout: int = 10,
+    check_xml_format: bool = False,
+) -> list[bool]:
+    """Verify math answers without initializing the verifier at import time."""
+    from .math_verifier.verify import math_verify_call as verify
+
+    return verify(responses, references, timeout, check_xml_format)
 
 
 class MathReward:
