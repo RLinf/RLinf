@@ -70,7 +70,7 @@ Work through [reference.md](reference.md) in this order, and judge every design 
 
 For every changed function, read the `main` version and the PR version side by side. Label a finding that came from reading `main` rather than the diff alone as a main-branch cross-check.
 
-Check docs style as a pass of its own, after the docs checks. Read every page the PR adds or changes in full and in both languages, because a page's lead, section order, and flow do not show in a diff hunk. Classify each page as an index, recipe, concept or guide, reference, or extending page, and apply the rules for its type from [reference.md § docs-style](reference.md#docs-style-question-8).
+Check docs style as a pass of its own, after the docs checks. Read every page the PR adds or changes in full and in both languages, because a page's lead, section order, and flow do not show in a diff hunk. Read it as a reader who is new to RLinf and has not seen its code: the page should tell that reader what the feature does, how it works, what to prepare, and how to run it. Classify each page as an index, recipe, concept or guide, reference, or extending page, and apply the rules for its type from [reference.md § docs-style](reference.md#docs-style-question-8).
 
 ## 5. Verify every finding
 
@@ -86,7 +86,7 @@ Then give each confirmed or unresolved finding a severity:
 - **major**: a break with [patterns.md](patterns.md), or missing tests, docs, or CI for a user-facing change. It must change before merge.
 - **minor**: a local fix such as naming, a comment, or a small style issue. It should change but does not block.
 
-A docs-style finding is major when a page fails as a whole: no lead, the wrong structure for its page type, the wrong place in the docs tree, a Chinese page that tracks the English one sentence for sentence, or a new build warning. It is minor when the wording of a line or two fails.
+A docs-style finding is major when a page fails as a whole: a first-time reader cannot tell what the feature does or how to run it, the page explains code layout instead of behavior, it has no lead or no connected line of thought, the wrong structure for its page type, the wrong place in the docs tree, a Chinese page that tracks the English one sentence for sentence, or a new build warning. It is minor when the wording of a line or two fails.
 
 Report only problems. When correctness, design, and reuse yield nothing, the report says so and lists what was checked. Do not invent findings to fill a category.
 
@@ -219,12 +219,12 @@ class FooPolicy(BasePolicy):
 A docs-style finding:
 
 ````markdown
-The page opens by describing itself ("This section provides a comprehensive guide to …"), so a reader has to reach the second paragraph to learn what they will do here. The style guide asks the first sentence to state the page's purpose directly (`docs/STYLE_GUIDE.md`, "Voice and tone").
+This paragraph explains the rollout loop by listing the worker, model, and channel files it passes through. A reader new to RLinf cannot connect those paths to anything they see when they run the example, and none of them is a file the reader opens or edits. The style guide asks pages to explain a mechanism through what happens in the run (`docs/STYLE_GUIDE.md`, "Write for a first-time reader").
 
-Suggested fix: open with what the reader does on this page.
+Suggested fix: describe the loop as the reader sees it, and keep only the config key they set.
 
 ```suggestion
-Fine-tune π₀ on LIBERO with PPO and track its success rate in TensorBoard.
+During rollout, the policy reads each observation from the simulator, predicts the next chunk of actions, and sends it back; the simulator steps every environment and returns the next observation. `actor.model.num_action_chunks` sets how many actions the policy predicts at a time.
 ```
 ````
 
@@ -239,5 +239,5 @@ The main comment holds only the nine sections, each under its question as a `###
 5. **Does the integration follow RLinf's design?** The existing implementation compared against; whether interfaces, registration, config, worker conventions, and containment match it; mismatches; and anything that needs a senior maintainer's judgment.
 6. **Does it reuse existing modules/functions properly?** Avoidable duplication and the existing helper to reuse, or else the implementation compared against.
 7. **Are tests and documentation adequate?** Whether the tests cover the changed behavior; whether docs, EN/ZH updates, the README highlight for a feature worth announcing, and install and CI integration are there where needed; the tests that ran (command, hardware, result) and the ones skipped, with why.
-8. **Does the documentation follow the docs style guide?** Every page the PR adds or changes, in both languages, with its type and whether it follows `docs/STYLE_GUIDE.md`: the lead, voice, explain-before-naming order, the structure its page type needs, its place in the docs tree, and the Chinese writing conventions. For each rule that fails, the page, the rule, and a pointer to the inline comment that rewrites it, then the build result for both languages. Question 3 is whether the docs could be followed; this question is whether they are written to the guide. When the PR changes no docs, say so; a page that is missing belongs in question 7.
+8. **Does the documentation follow the docs style guide?** Every page the PR adds or changes, in both languages, with its type and whether it follows `docs/STYLE_GUIDE.md`: whether a first-time reader learns what the feature does, how it works, what to prepare, and how to run it without knowing RLinf's code; the lead and the flow from sentence to section; voice and natural phrasing in each language; the structure its page type needs; and its place in the docs tree. For each rule that fails, the page, the rule, and a pointer to the inline comment that rewrites it, then the build result for both languages. Question 3 is whether the docs could be followed; this question is whether they are written to the guide. When the PR changes no docs, say so; a page that is missing belongs in question 7.
 9. **What is your recommendation?** Exactly one of `Ready for senior review` (no open critical or major finding, and the reproduction succeeded or was not needed), `Changes requested` (open critical or major findings the author can fix), or `Blocked` (progress needs more than the author's fixes: a maintainer decision, hardware or assets nobody has, another PR, or a reproduction failure the docs cannot explain). Then the remaining actions as a list, and the expert review needed.
