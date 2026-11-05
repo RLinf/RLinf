@@ -101,6 +101,36 @@ With `agentloop.is_dynamic_rollout_batch: True`, the entrypoint selects
 before FSDP training to avoid recomputing shared prefixes. Keep it enabled for
 the provided Search-R1 FSDP recipe.
 
+Train on Separate Actor and Rollout GPUs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``train_qwen2.5_fsdp_disaggregated.yaml`` to keep the FSDP2 actor on
+GPUs 0–1 and the rollout engine on GPU 2. Set the model, dataset, and search
+server paths as above, then launch:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_disaggregated
+
+This runs the synchronous ``AgentRunner``: each step synchronizes the actor
+weights to rollout, collects multi-turn groups, recomputes policy and reference
+logprobs on the actor, and then updates the actor. Keep
+``algorithm.recompute_logprobs: True`` and
+``actor.enable_dp_load_balance: True``. Configure only ``actor``, ``rollout``,
+and ``reward`` in ``cluster.component_placement``; actor-side inference uses
+the training GPUs. ``reward`` shares the rollout GPU allocation, while the
+Search-R1 agent loop computes its rule-based rewards.
+
+Set ``data.rollout_batch_size`` to a positive multiple of the actor DP size.
+Each channel item holds a complete prompt group, so GRPO advantages and loss
+scales are computed before packing and redistribution across ranks. Actor
+weights and optimizer states stay resident during disaggregated training.
+
+The three-GPU layout is an example allocation; choose model size and sequence
+length to fit your devices. It has not yet been validated in a GPU training
+run. The reward and performance curves below describe the existing reference
+run.
+
 Checkpoint Export and Evaluation
 --------------------------------
 
