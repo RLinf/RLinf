@@ -2001,7 +2001,11 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "Synchronous SearchR1 PPO requires actor, critic, and rollout "
             "to share the same GPUs."
         )
-    if not component_placement.is_collocated:
+    if cfg.actor.training_backend == "fsdp":
+        from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+        MAFSDPActor.validate_placement(cfg, component_placement)
+    elif not component_placement.is_collocated:
         raise ValueError(
             "SearchR1 multi-agent actors support only collocated component placement."
         )
