@@ -14,6 +14,7 @@
 
 import itertools
 import logging
+import threading
 import typing
 from typing import Optional, Union
 
@@ -182,6 +183,7 @@ class AgentRunner(ReasoningRunner):
             self._stop_rollouts()
             return
 
+        tqdm.set_lock(threading.RLock())
         global_pbar = tqdm(
             initial=self.global_steps,
             total=self.max_steps,
