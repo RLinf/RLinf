@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import threading
 from importlib.metadata import version
 from typing import Any, Callable, Literal
 
@@ -714,8 +715,12 @@ def validate_weight_diff(model, weight_norm_dict):
 
 
 def run_scheduler_process(*args, **kwargs):
+    from tqdm import tqdm
+
     from rlinf.utils.patcher import Patcher
 
+    # Each scheduler owns its progress bars; avoid a process-local POSIX semaphore.
+    tqdm.set_lock(threading.RLock())
     Patcher.clear()
     Patcher.add_patch(
         "sglang.srt.managers.scheduler.Scheduler",
