@@ -803,8 +803,16 @@ def test_single_cuda_fsdp_actor_update_and_checkpoint_resume(tmp_path):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires one CUDA GPU")
 @pytest.mark.parametrize("actor_group", ["cuda"], indirect=True)
 def test_single_cuda_fsdp_reference_swap_preserves_policy(actor_group):
-    actor = _sharded_actor(False, "qwen", world_size=1)
+    _check_fsdp_reference_swap()
+
+
+def _check_fsdp_reference_swap():
+    actor = _sharded_actor(False, "qwen", world_size=dist.get_world_size())
     reference = _actor(model_type="qwen")
+    reference_initial = {
+        name: parameter.detach().clone()
+        for name, parameter in reference.model.named_parameters()
+    }
     rollout = _rollout()
     batch = rollout.to_actor_batch(10, 0)
     actor.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(actor, is_fsdp=True)
@@ -818,7 +826,8 @@ def test_single_cuda_fsdp_reference_swap_preserves_policy(actor_group):
         expected = reference.forward_batch(batch).cpu()
         reference.model.lm_head.weight[0].add_(0.25)
         expected_ref = reference.forward_batch(batch).cpu()
-        actor.ref_policy_state_dict["lm_head.weight"].to_local()[0].add_(0.25)
+        if dist.get_rank() == 0:
+            actor.ref_policy_state_dict["lm_head.weight"].to_local()[0].add_(0.25)
         actual, ref = actor.inference_step(batch, rollout, True)
         after = actor.get_model_state_dict(cpu_offload=True, full_state_dict=True)
     mask = batch["response_mask"].cpu()
@@ -827,3 +836,39 @@ def test_single_cuda_fsdp_reference_swap_preserves_policy(actor_group):
     assert (actual[mask] - ref[mask]).abs().max() > 1e-5
     for name in initial:
         torch.testing.assert_close(after[name], initial[name], atol=0, rtol=0)
+    with torch.no_grad():
+        for name, parameter in actor.model.named_parameters():
+            torch.testing.assert_close(
+                parameter.full_tensor(),
+                reference_initial[name],
+                atol=0,
+                rtol=0,
+            )
+
+
+def _check_cuda_sharded_reference_swap(rank, init_file):
+    Worker.torch_device_type = "cuda"
+    Worker.torch_platform = torch.cuda
+    torch.cuda.set_device(rank)
+    torch.set_num_threads(1)
+    dist.init_process_group(
+        "nccl",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=90),
+    )
+    try:
+        _check_fsdp_reference_swap()
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires two CUDA GPUs")
+def test_cuda_sharded_fsdp_reference_swap_preserves_policy(tmp_path):
+    torch.multiprocessing.spawn(
+        _check_cuda_sharded_reference_swap,
+        args=(str(tmp_path / "group"),),
+        nprocs=2,
+        join=True,
+    )
