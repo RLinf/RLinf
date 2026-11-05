@@ -329,6 +329,9 @@ class Cluster:
         self._ray_code_sync_fragment, self._runtime_code_sync_strip_roots = (
             Cluster._prepare_ray_code_sync_runtime_env_fragment()
         )
+        object_store_memory = (
+            self._cluster_cfg.object_store_memory_bytes if self._cluster_cfg else None
+        )
 
         try:
             # First try to connect to an existing Ray cluster
@@ -348,11 +351,24 @@ class Cluster:
                     Cluster.get_full_env_var_name(ClusterEnvVar.CODE_WORKING_DIR),
                 )
             ray.init(**ray_init_kwargs)
+            if object_store_memory is not None:
+                self._logger.warning(
+                    "cluster.object_store_memory_mb is ignored: RLinf connected to a "
+                    "running Ray cluster, whose object store size was set by "
+                    "`ray start --object-store-memory`."
+                )
         except ConnectionError:
             ray_init_kwargs = {
                 "logging_level": Cluster.LOGGING_LEVEL,
                 "namespace": Cluster.NAMESPACE,
             }
+            if object_store_memory is not None:
+                ray_init_kwargs["object_store_memory"] = object_store_memory
+                self._logger.info(
+                    "Limiting the Ray object store to "
+                    f"{object_store_memory // (1024 * 1024)} MiB. "
+                    "The Ray memory monitor stays enabled."
+                )
             if self._ray_code_sync_fragment is not None:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
             self._start_local_ray(ray_init_kwargs)

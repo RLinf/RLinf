@@ -35,6 +35,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - RoboCasa365
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - SuperMimic (G1 motion / velocity tracking)
+     - LAFAN1 and BONES-SEED reference motion; Appendix G.2 velocity step test
+     - ``supermimic/supermimic_lafan1_zita_eval.yaml``, ``supermimic/supermimic_push_recovery.yaml``, etc.
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
@@ -82,6 +85,12 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - PolaRiS tabletop manipulation.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
+   * - :doc:`SuperMimic <../examples/embodied/supermimic>`
+     - G1 motion tracking, velocity tracking, and push recovery. Motion and
+       velocity use ``evaluations/eval_supermimic.py``; push recovery uses
+       ``evaluations/eval_supermimic_push.py``. ``run_eval.sh supermimic_*``
+       selects the entry, on one GPU without Ray, with the checkpoint given
+       by ``eval.checkpoint``. See the Evaluate section of that page.
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 whole-body humanoid evaluation.
 

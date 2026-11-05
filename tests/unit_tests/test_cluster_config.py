@@ -489,6 +489,28 @@ def test_cluster_config_num_nodes_must_be_positive():
         ClusterConfig.from_dict_cfg(config)
 
 
+def test_cluster_config_object_store_memory_has_a_ray_floor():
+    from ray._private.ray_constants import OBJECT_STORE_MINIMUM_MEMORY_BYTES
+
+    def parse(**extra):
+        return ClusterConfig.from_dict_cfg(
+            DictConfig({"num_nodes": 1, "component_placement": {}, **extra})
+        )
+
+    mib = 1024 * 1024
+    assert parse().object_store_memory_bytes is None
+    assert parse(object_store_memory_mb=512).object_store_memory_bytes == 512 * mib
+    minimum_mib = -(-OBJECT_STORE_MINIMUM_MEMORY_BYTES // mib)
+    assert (
+        parse(object_store_memory_mb=minimum_mib).object_store_memory_bytes
+        == minimum_mib * mib
+    )
+    with pytest.raises(ValueError, match="OBJECT_STORE_MINIMUM_MEMORY_BYTES"):
+        parse(object_store_memory_mb=minimum_mib - 1)
+    with pytest.raises(ValueError, match="integer"):
+        parse(object_store_memory_mb="512")
+
+
 def test_cluster_config_parses_profiling_settings():
     config = DictConfig(
         {

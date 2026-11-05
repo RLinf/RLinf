@@ -526,6 +526,22 @@ class ClusterConfig:
     collective: Optional[CollectiveConfig] = None
     """Optional job-wide configuration for collective communication."""
 
+    object_store_memory_mb: Optional[int] = None
+    """Ray object store size in MiB for a Ray instance that RLinf starts itself.
+
+    None keeps Ray's default, about 30% of host memory. A Ray cluster started
+    beforehand with ``ray start`` fixed its store size then (``--object-store-memory``),
+    so RLinf ignores this value when it connects to one and logs a warning.
+    The value must be at least Ray's ``OBJECT_STORE_MINIMUM_MEMORY_BYTES``.
+    """
+
+    @property
+    def object_store_memory_bytes(self) -> Optional[int]:
+        """``object_store_memory_mb`` in bytes, or None for Ray's default."""
+        if self.object_store_memory_mb is None:
+            return None
+        return self.object_store_memory_mb * 1024 * 1024
+
     @staticmethod
     def from_dict_cfg(cfg_dict: DictConfig) -> "ClusterConfig":
         """Create a ClusterConfig instance from a dictionary configuration.
@@ -724,6 +740,17 @@ class ClusterConfig:
         assert type(self.num_nodes) is int and self.num_nodes > 0, (
             f"'num_nodes' must be a positive integer. But got {self.num_nodes} of type {type(self.num_nodes)}."
         )
+
+        if self.object_store_memory_mb is not None:
+            from ray._private.ray_constants import OBJECT_STORE_MINIMUM_MEMORY_BYTES
+
+            minimum_mib = -(-OBJECT_STORE_MINIMUM_MEMORY_BYTES // (1024 * 1024))
+            value = self.object_store_memory_mb
+            if type(value) is not int or value < minimum_mib:
+                raise ValueError(
+                    "cluster.object_store_memory_mb must be an integer of at least "
+                    f"{minimum_mib} (Ray's OBJECT_STORE_MINIMUM_MEMORY_BYTES), got {value!r}"
+                )
 
     def __str__(self) -> str:
         """String representation of the NodeInfo."""

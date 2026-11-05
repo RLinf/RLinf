@@ -1,0 +1,38 @@
+name: SuperMimic Tests
+
+on:
+  workflow_call:
+
+jobs:
+  # The general unit-test venv (--env dummy) has no mjlab, so most SuperMimic
+  # tests skip there. This job installs the SuperMimic stack and runs them,
+  # including the MuJoCo Warp smoke test on the GPU.
+  supermimic-tests-cuda:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create environment and install dependencies
+        run: |
+          unset UV_DEFAULT_INDEX
+          bash requirements/install.sh --no-flash-attn embodied --env supermimic
+
+      - name: Run pytest
+        timeout-minutes: 60
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          source .venv/bin/activate
+          python -c "import mjlab, mujoco_warp, warp, torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+          for file in tests/unit_tests/test_supermimic*.py; do
+              code=0
+              pytest "$file" -rs || code=$?
+              ray stop
+              [ $code -eq 0 ] || exit $code
+          done
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune

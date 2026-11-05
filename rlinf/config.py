@@ -27,6 +27,7 @@ from omegaconf.dictconfig import DictConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
+from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
@@ -181,6 +182,7 @@ SUPPORTED_TASK_TYPE = [
     "coding_online_rl",
     "sft",
     "offline",
+    "supermimic",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -2105,6 +2107,12 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_sft_cfg(cfg)
     elif cfg.runner.task_type == "offline":
         cfg = validate_offline_cfg(cfg)
+    elif cfg.runner.task_type == "supermimic":
+        # No actor/rollout backends to check. Batch sizes split over ranks.
+        world_size = HybridComponentPlacement(cfg, Cluster()).get_world_size(
+            "supermimic"
+        )
+        return validate_supermimic_cfg(cfg, world_size=world_size)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
         if adv_requires_group_baseline(
