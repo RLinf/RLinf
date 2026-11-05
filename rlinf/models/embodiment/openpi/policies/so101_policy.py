@@ -76,9 +76,13 @@ class SO101Inputs(transforms.DataTransformFn):
         if "actions" in data:
             actions = np.asarray(data["actions"], dtype=np.float32)
             if actions.ndim != 2 or actions.shape[-1] != SO101_ACTION_DIM:
-                raise ValueError(f"Expected SO-101 actions (N, 6), got {actions.shape}.")
+                raise ValueError(
+                    f"Expected SO-101 actions (N, 6), got {actions.shape}."
+                )
             inputs["actions"] = transforms.pad_to_dim(actions, self.action_dim)
         if "prompt" in data:
             prompt = data["prompt"]
-            inputs["prompt"] = prompt.decode("utf-8") if isinstance(prompt, bytes) else str(prompt)
+            inputs["prompt"] = (
+                prompt.decode("utf-8") if isinstance(prompt, bytes) else str(prompt)
+            )
         return inputs
