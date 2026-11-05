@@ -1,0 +1,79 @@
+# Standalone GenieSim evaluation for the pick_block_color task.
+#
+# The simulator runs as its own server: export GENIESIM_EVAL_SERVER_ADDR to
+# point at it, and GENIESIM_CHECKPOINT_PATH at the pi0.5 checkpoint.
+defaults:
+  - env/geniesim@env.eval
+  - model/pi0_5@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "geniesim_pick_block_color_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    seed: -1
+    # 32 envs over 4 epochs = 128 trajectories. The sub-task has 100 work
+    # items, so the last 28 trajectories repeat items from the start.
+    rollout_epoch: 4
+    total_num_envs: 32
+    auto_reset: False
+    max_steps_per_rollout_epoch: 200
+    group_size: 1
+    video_cfg:
+      # Recording renders every substep, which costs the one-call chunk path.
+      # Turn it on when you want the rollout videos.
+      save_video: False
+      fps: 10
+    override_cfg:
+      address: ${oc.env:GENIESIM_EVAL_SERVER_ADDR,tcp://127.0.0.1:5601}
+      task_name: table_task_1_g2_op
+      sub_task_name: pick_block_color
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_path: ${oc.env:GENIESIM_CHECKPOINT_PATH}
+    # The G2 checkpoint predicts 14 joints and 2 grippers.
+    action_dim: 16
+    num_steps: 10
+    openpi_data:
+      norm_stats_path: ${..model_path}/assets/norm_stats.json
+    openpi:
+      task: eval
+      config_name: "pi05_geniesim_g2_ah10"
