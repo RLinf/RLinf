@@ -43,6 +43,9 @@ from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig imp
 from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
     CustomDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.geniesim_dual_arm_dataconfig import (
+    LeRobotGenieSimDualArmDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.gsenv_dataconfig import (
     LeRobotGSEnvDataConfig,
 )
@@ -130,6 +133,15 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_geniesim_g2_ah10",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotGenieSimDualArmDataConfig(
+            base_config=DataConfig(prompt_from_task=True),
+        ),
     ),
     TrainConfig(
         name="pi0_maniskill",

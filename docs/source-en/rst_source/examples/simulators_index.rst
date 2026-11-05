@@ -180,6 +180,19 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/geniesim.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: contain; background: #000; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/geniesim_post_train.mp4" type="video/mp4">
+         Your browser does not support the video tag.
+       </video></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/geniesim.html" style="text-decoration: underline; color: blue;">
+           <b>RL with GenieSim Benchmark</b>
+         </a><br>
+         Support GenieSim+π₀.₅+PPO/GRPO training
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -201,4 +214,5 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    PolaRiS <embodied/polaris>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
+   GenieSim <embodied/geniesim>
    Real-World Simulator <embodied/real_simulator>
