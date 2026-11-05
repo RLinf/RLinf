@@ -390,18 +390,20 @@ def failure_signals(
         ref_state = ref_state.unsqueeze(0)
     body = PELVIS if termination_body == "pelvis" else TORSO
     # Signed errors. The hard threshold uses the absolute value.
-    # Tilt is the reference-frame gravity z minus the robot's, not tilt from upright.
+    # Tilt is the robot's projected gravity z minus the reference's.
     if body == g1_kinematics().free_tracked:
         # The tree walk copies the free-joint body's position from the state.
         height_err = state[:, 2] - ref_state[:, 2]
+        tilt = (
+            projected_gravity(state[..., 3:7])[..., 2]
+            - projected_gravity(ref_state[..., 3:7])[..., 2]
+        )
     else:
-        pos, _, _, _ = differentiable_fk(state)
-        ref_pos, _, _, _ = differentiable_fk(ref_state)
+        pos, rot, _, _ = differentiable_fk(state)
+        ref_pos, ref_rot, _, _ = differentiable_fk(ref_state)
         height_err = pos[:, body, 2] - ref_pos[:, body, 2]
-    tilt = (
-        projected_gravity(state[..., 3:7])[..., 2]
-        - projected_gravity(ref_state[..., 3:7])[..., 2]
-    )
+        # Projected gravity's z component is -R[2, 2] for the selected body.
+        tilt = ref_rot[:, body, 2, 2] - rot[:, body, 2, 2]
     failed = (height_err.abs() > FAILURE_HEIGHT_M) | (tilt.abs() > FAILURE_TILT)
     if squeezed:
         return height_err.squeeze(0), tilt.squeeze(0), failed.squeeze(0)

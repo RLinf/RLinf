@@ -185,15 +185,13 @@ jobs:
               - 'rlinf/runners/supermimic_runner.py'
               - 'examples/embodiment/train_supermimic.py'
               - 'examples/embodiment/run_supermimic.sh'
-              - 'examples/embodiment/slurm_supermimic.sh'
               - 'examples/embodiment/config/supermimic*.yaml'
               - 'evaluations/eval_supermimic.py'
               - 'evaluations/eval_supermimic_push.py'
               - 'evaluations/supermimic/**'
               - 'toolkits/supermimic/**'
               - 'requirements/embodied/envs/supermimic*.txt'
-              - 'tests/unit_tests/test_supermimic*.py'
-              - 'tests/unit_tests/_supermimic_support.py'
+              - 'tests/e2e_tests/embodied/test_supermimic.py'
               - '.github/workflows/supermimic-tests.yml'
             unit_test_filter: &unit
               - *shared
@@ -202,7 +200,7 @@ jobs:
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
-              # The SuperMimic CPU tests also run in the dummy-env unit job.
+              # Keep shared SuperMimic changes covered by the unit-test job.
               - *supermimic
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               # test_data.py loads this script to test reward split preprocessing.

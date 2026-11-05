@@ -20,3 +20,10 @@ from pathlib import Path
 for _path in (Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "placement: hosts parts in real scheduler workers; run it in its own process",
+    )

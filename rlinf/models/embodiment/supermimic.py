@@ -14,7 +14,7 @@
 
 """SiLU MLPs for SuperMimic. Not registered in EMBODIED_MODEL.
 
-Trainer and evaluator construct ``SuperMimicModels`` directly. This is not
+Worker and evaluator construct ``SuperMimicModels`` directly. This is not
 a generic embodied policy, so it is not added to that registry.
 """
 

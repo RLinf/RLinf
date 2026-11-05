@@ -36,7 +36,7 @@ Overview
    .. grid-item-card:: Training
       :text-align: center
 
-      One process per GPU; NCCL data parallel; Slurm multi-node
+      One process per GPU; NCCL data parallel; Ray multi-node (experimental)
       (experimental)
 
 | **You'll do:** install a dedicated environment -> prepare the LAFAN1 clips
@@ -802,33 +802,36 @@ Collectives use NCCL on GPU with the timeout ``RLINF_TIMEOUT`` (minutes). If a
 rank fails, RLinf's worker group stops the driver and the other ranks at once
 instead of waiting for that timeout.
 
-Multiple Nodes with Slurm (Experimental)
-----------------------------------------
+Multiple Nodes (Experimental)
+-----------------------------
 
-``examples/embodiment/slurm_supermimic.sh`` starts one Ray node per Slurm
-node, exports a unique ``RLINF_NODE_RANK`` before each ``ray start``, and runs
-the driver on the first node with a placement over every GPU. Partition,
-account, and GPU count come from your ``sbatch`` options.
+Start one Ray node on each allocated machine following
+:doc:`/rst_source/guides/multi_node`, with a unique
+``RLINF_NODE_RANK`` set before ``ray start``. Activate the same SuperMimic
+environment on every node and use shared paths for code, motion data and
+checkpoints.
 
-Before submitting:
-
-* Run ``sbatch`` from the RLinf repository root with the SuperMimic
-  environment activated. ``sbatch`` exports the current environment to the
-  job, so every node uses that environment's ``python`` and ``ray``.
-* Put the code, the virtual environment, the data, and ``log_path`` on storage
-  every node can read and write; each rank writes its own checkpoint shard.
-* Export site network settings such as ``NCCL_SOCKET_IFNAME`` before
-  ``sbatch`` when your network needs them.
+For Slurm, obtain an allocation through your site's job script or an
+interactive allocation, for example:
 
 .. code-block:: bash
 
-   sbatch --nodes=2 --gpus-per-node=8 --partition=<partition> \
-       examples/embodiment/slurm_supermimic.sh supermimic_lafan1_zita \
+   salloc --nodes=2 --ntasks-per-node=1 --gpus-per-node=8 --partition=your_partition
+
+Inside that allocation, start Ray on the allocated nodes using the multi-node
+guide, then run the training entry point once on the head node:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_supermimic.sh supermimic_lafan1_zita \
+       cluster.num_nodes=2 cluster.component_placement.supermimic=0-15 \
        env.motion_path=/shared/lafan1_g1 runner.logger.log_path=/shared/runs/lafan1 \
        runner.save_interval=1000 'runner.logger.logger_backends=[tensorboard]'
 
-This script has been checked with stubbed ``srun`` and ``ray`` only; it has not
-run on a Slurm cluster.
+The placement above spans all sixteen GPUs. Training batch sizes are global
+and are split across those ranks. Set network interfaces and release the Ray
+nodes through your site's allocation lifecycle. Multi-node and Slurm execution
+have not been validated for this integration.
 
 Checkpoints and Resume
 ----------------------
@@ -1153,7 +1156,7 @@ is compiled with ``torch.compile`` into seven graphs: goal, post-processing
 and bootstrap during collection, one each; world-model fitting and the
 imagined rollout, each split into a step graph called from a Python loop
 and a score graph run once over every step after the loop. The critic
-update, sampling and the optimizers are not compiled. Each trainer keeps its
+update, sampling and the optimizers are not compiled. Each worker keeps its
 own in-process compilation cache and reuses it across updates. The compiled kernels
 go to PyTorch's default inductor cache, ``/tmp/torchinductor_<user>``. A
 new process on the same machine still retraces the graphs but reads the

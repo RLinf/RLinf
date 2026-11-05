@@ -15,7 +15,7 @@
 """SuperMimic policy evaluation without a replay buffer or optimizers.
 
 Used by ``evaluations/eval_supermimic.py``, by the training entry with
-``runner.only_eval=true``, and by the trainer's periodic evaluation.
+``runner.only_eval=true``, and by the worker's periodic evaluation.
 """
 
 from __future__ import annotations
@@ -334,6 +334,7 @@ class SuperMimicEvaluator:
                 "algorithm.velocity_tracking=true; these models have no velocity "
                 "encoder"
             )
+        torch.manual_seed(int(seed))
         command_table, names, planes = commands or step_test_commands()
         n_commands = int(command_table.shape[0])
         jobs = [

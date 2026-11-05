@@ -29,7 +29,7 @@ SuperMimic：用可微世界模型训练 G1 动作跟踪
    .. grid-item-card:: 训练
       :text-align: center
 
-      每张 GPU 一个进程；NCCL 数据并行；Slurm 多节点（实验性）
+      每张 GPU 一个进程；NCCL 数据并行；Ray 多节点（实验性）
 
 | **你将完成：** 安装独立环境 -> 准备 LAFAN1 片段 -> 用 smoke 配置训练、恢复、评测 -> 换成论文配置在一张或多张 GPU 上训练。
 | **前置条件：** NVIDIA GPU，或实验性的 AMD MI300X 路径（见 `安装`_）；RLinf 仓库（:doc:`安装说明 <../../start/installation>`）；LAFAN1 G1 片段（见 `准备参考动作`_）。
@@ -521,25 +521,27 @@ RLinf 会按 placement 为训练 Worker 设置设备可见性，启动前的 ``C
 
 GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定。如果某个 rank 出错，RLinf 的 worker group 会立即停掉 driver 和其他 rank，不会等到这个超时。
 
-用 Slurm 跑多节点（实验性）
----------------------------
+多节点训练（实验性）
+--------------------
 
-``examples/embodiment/slurm_supermimic.sh`` 在每个 Slurm 节点上启动一个 Ray 节点，在每次 ``ray start`` 之前导出唯一的 ``RLINF_NODE_RANK``，并在第一个节点上运行 driver，placement 覆盖所有 GPU。分区、账号和 GPU 数来自你的 ``sbatch`` 选项。
+按照 :doc:`/rst_source/guides/multi_node` 在分配到的每台机器上启动一个 Ray 节点，并在 ``ray start`` 前设置唯一的 ``RLINF_NODE_RANK``。所有节点激活同一个 SuperMimic 环境，代码、运动数据和检查点路径使用共享存储。
 
-提交前需要满足：
-
-* 在 RLinf 仓库根目录、激活 SuperMimic 环境后执行 ``sbatch``。``sbatch`` 会把当前环境变量带进作业，各节点用的就是这个环境里的 ``python`` 和 ``ray``。
-* 代码、虚拟环境、数据和 ``log_path`` 都放在所有节点能读写的共享存储上；每个 rank 都要写自己那份检查点。
-* 网络需要指定接口时（例如 ``NCCL_SOCKET_IFNAME``），在 ``sbatch`` 之前 ``export``。
+使用 Slurm 时，通过站点的作业脚本或交互式分配申请资源，例如：
 
 .. code-block:: bash
 
-   sbatch --nodes=2 --gpus-per-node=8 --partition=<partition> \
-       examples/embodiment/slurm_supermimic.sh supermimic_lafan1_zita \
+   salloc --nodes=2 --ntasks-per-node=1 --gpus-per-node=8 --partition=your_partition
+
+进入已分配的节点后，按照多节点指南启动 Ray，再在 head 节点运行一次训练入口：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_supermimic.sh supermimic_lafan1_zita \
+       cluster.num_nodes=2 cluster.component_placement.supermimic=0-15 \
        env.motion_path=/shared/lafan1_g1 runner.logger.log_path=/shared/runs/lafan1 \
        runner.save_interval=1000 'runner.logger.logger_backends=[tensorboard]'
 
-这个脚本只用打桩的 ``srun`` 和 ``ray`` 检查过，还没有在 Slurm 集群上运行。
+上述 placement 覆盖十六张 GPU，全局训练批量会拆分给这些 rank。网络接口设置和 Ray 节点清理由站点的作业生命周期管理。当前集成尚未验证多节点或 Slurm 运行。
 
 检查点与恢复
 ------------
@@ -680,7 +682,7 @@ TensorBoard 记录每一次更新。控制台每 100 次更新打印一行 ``sup
 * PyTorch 峰值分配 17.1 GB（reserved 18.8 GB），驱动看到的整卡用量 20.1 GB，Warp 内存池峰值 0.48 GB，主机 RSS 约 4.0 GB。
 * 结束时累计 40064 个向量仿真步、约 1.64 亿个环境转移。
 
-**编译与缓存。** 大批量（不少于 256 行）的 CUDA 计算会用 ``torch.compile`` 编成七张图：采集里的 goal、采集后处理和 bootstrap 各一张；世界模型拟合和想象 rollout 各拆成"单步"和"批量打分"两张，单步那张在 Python 循环里调用，打分那张在循环结束后对所有步一次算完。critic 更新、采样和优化器不编译。进程内的编译缓存由每个 trainer 分别持有，同一实例在多次更新之间复用。编好的 kernel 写在 PyTorch 默认的 inductor 缓存目录 ``/tmp/torchinductor_<用户名>``。同一台机器上再启动时，新进程仍要重新追踪计算图，但 kernel 直接从盘上读，上面那次从启动到第 100 次更新只用了 110 秒。换机器或 ``/tmp`` 被清空时要重新编译，冷缓存下要几分钟。``SUPERMIMIC_SCAN_EAGER=1`` 和 ``SUPERMIMIC_FK_EAGER=1`` 分别关掉训练扫描和正运动学的编译，结果不变，只用于在 GPU 上跑单元测试，能把几十分钟的测试缩到几分钟；正式训练不要设。
+**编译与缓存。** 大批量（不少于 256 行）的 CUDA 计算会用 ``torch.compile`` 编成七张图：采集里的 goal、采集后处理和 bootstrap 各一张；世界模型拟合和想象 rollout 各拆成"单步"和"批量打分"两张，单步那张在 Python 循环里调用，打分那张在循环结束后对所有步一次算完。critic 更新、采样和优化器不编译。进程内的编译缓存由每个 worker 分别持有，同一实例在多次更新之间复用。编好的 kernel 写在 PyTorch 默认的 inductor 缓存目录 ``/tmp/torchinductor_<用户名>``。同一台机器上再启动时，新进程仍要重新追踪计算图，但 kernel 直接从盘上读，上面那次从启动到第 100 次更新只用了 110 秒。换机器或 ``/tmp`` 被清空时要重新编译，冷缓存下要几分钟。``SUPERMIMIC_SCAN_EAGER=1`` 和 ``SUPERMIMIC_FK_EAGER=1`` 分别关掉训练扫描和正运动学的编译，结果不变，只用于在 GPU 上跑单元测试，能把几十分钟的测试缩到几分钟；正式训练不要设。
 
 **分段计时。** ``SUPERMIMIC_PROFILE=1`` 让训练在各段前后同步 GPU，``time/*`` 才是各段真实耗时，训练会因此变慢。worker 的环境变量来自 Ray 节点，已有 Ray 集群时要在 ``ray start`` 之前设置。
 

@@ -96,7 +96,7 @@ class MotionLibrary:
         self._index_cache: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = {}
         # Body position, rotation, linear and angular velocity of every frame.
         # The reference clip does not change, so training gathers these instead
-        # of walking the kinematic tree again. Built on first use per device.
+        # of walking the kinematic tree again. Cached on the frames' storage device.
         self._kin_cache: dict[torch.device, tuple[torch.Tensor, ...]] = {}
         # Source name per clip, for per-clip evaluation rows.
         self.clip_names = [f"clip_{i:03d}" for i in range(len(clips))]
@@ -190,21 +190,25 @@ class MotionLibrary:
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Tracked-body pose and velocity of the reference frames.
 
-        Same index rules as :meth:`state_at`. The tensors are detached: the
-        reference clip has no gradient. Predicted states still run FK online.
+        Cache and gather on the frames' storage device, then transfer queried
+        rows as in :meth:`state_at`. Reference tensors are detached; predicted
+        states still run FK online.
         """
         squeezed = motion_id.dim() == 0
         if squeezed:
             motion_id = motion_id.unsqueeze(0)
             time = time.unsqueeze(0)
         query_device = motion_id.device
-        pos, rot, lin, ang = self._kinematics(query_device)
-        offsets, lengths = self._index(query_device)
-        mid = motion_id.long()
-        index = time.to(device=query_device).long().clamp_min(0)
+        store = self.frames.device
+        pos, rot, lin, ang = self._kinematics(store)
+        offsets, lengths = self._index(store)
+        mid = motion_id.to(device=store, dtype=torch.long)
+        index = time.to(device=store, dtype=torch.long).clamp_min(0)
         index = torch.minimum(index, lengths[mid] - 1)
         flat = offsets[mid] + index
         out = (pos[flat], rot[flat], lin[flat], ang[flat])
+        if store != query_device:
+            out = tuple(item.to(device=query_device) for item in out)
         if squeezed:
             out = tuple(item.squeeze(0) for item in out)
         return out

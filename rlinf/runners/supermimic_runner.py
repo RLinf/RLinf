@@ -93,7 +93,7 @@ def aggregate_rank_metrics(
 
 
 class SuperMimicRunner:
-    """Outer loop: iteration, logging, checkpoint, eval. No Channel."""
+    """Sequence worker training phases, logging, checkpoints and evaluation."""
 
     def __init__(self, cfg: DictConfig, worker: Any):
         self.cfg = cfg
@@ -142,7 +142,35 @@ class SuperMimicRunner:
         return metrics
 
     def _iteration(self) -> dict:
-        per_rank = self.worker.run_iteration().wait()
+        collected = self.worker.collect().wait()
+        per_rank = [metrics for metrics, _ in collected]
+        ready = {int(count) for _, count in collected}
+        if len(ready) != 1:
+            raise RuntimeError(f"ranks disagree on ready update count: {sorted(ready)}")
+        updates = min(ready.pop(), self.max_steps - self.global_step)
+
+        def merge(result):
+            for metrics, phase_metrics in zip(per_rank, result.wait(), strict=True):
+                if phase_metrics:
+                    metrics.update(phase_metrics)
+
+        for index in range(updates):
+            merge(self.worker.fit_world_model())
+            actor_updated = self.global_step + index >= int(
+                self.cfg.algorithm.get("wm_only_updates", 0)
+            )
+            for metrics in per_rank:
+                metrics["train/wm_only"] = 0.0 if actor_updated else 1.0
+            if actor_updated:
+                self.worker.imagine_motion().wait()
+                merge(self.worker.train_motion_actor())
+                merge(self.worker.train_motion_critic())
+                if bool(self.cfg.algorithm.get("velocity_tracking", False)):
+                    self.worker.imagine_velocity().wait()
+                    merge(self.worker.train_velocity_actor())
+                    self.worker.train_velocity_critic().wait()
+            self.worker.finish_update(actor_updated).wait()
+        merge(self.worker.training_metrics(updated=updates > 0))
         return aggregate_rank_metrics(
             per_rank, bool(self.cfg.runner.get("log_per_rank_metrics", False))
         )
@@ -189,6 +217,8 @@ class SuperMimicRunner:
         # Imported here so only_eval does not load the Ray worker.
         from rlinf.utils.runner_utils import check_progress
 
+        if self.global_step < self.max_steps:
+            self.worker.warmup().wait()
         last = {}
         first = True
         while self.global_step < self.max_steps:
@@ -214,7 +244,7 @@ class SuperMimicRunner:
             # Like the embodied runner: evaluate every val_check_interval
             # updates and on the last one, when evaluation is enabled.
             run_val, save_model, train_end = check_progress(
-                self.global_step,
+                min(self.global_step, self.max_steps),
                 self.max_steps,
                 int(self.cfg.runner.get("val_check_interval", -1)),
                 int(self.cfg.runner.get("save_interval", -1)),

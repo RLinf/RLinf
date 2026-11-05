@@ -55,7 +55,7 @@ from rlinf.models.embodiment.supermimic import running_state_loss
 
 
 class CompileCache:
-    """Compiled functions and fallback state owned by one trainer or scan."""
+    """Compiled functions and fallback state owned by one worker or scan."""
 
     def __init__(self):
         self.compiled: dict = {}
@@ -140,7 +140,7 @@ def make_dynamics_window(
     ``loss_mode`` is ``paper``, ``scaled`` or ``running``.
     ``residual_frame`` is ``heading`` or ``body``. With ``compile_name`` the
     step and the loss are compiled under that name.
-    ``compile_cache`` belongs to the trainer; if omitted, this scan owns its cache.
+    ``compile_cache`` belongs to the worker; if omitted, this scan owns its cache.
 
     Every per-step loss is a mean over the same batch, so ``k`` times the
     mean over all ``B * k`` rows is the sum of the per-step losses.
@@ -219,7 +219,7 @@ def make_imagination(
     Reward, termination and critic features never feed the next state, so
     they run once on all ``B * H`` imagined rows after the loop. With
     ``compile_name`` the step and the score are compiled under that name.
-    ``compile_cache`` belongs to the trainer; if omitted, this scan owns its cache.
+    ``compile_cache`` belongs to the worker; if omitted, this scan owns its cache.
     """
     call = _caller(compile_name, compile_cache)
 
