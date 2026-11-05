@@ -227,4 +227,5 @@
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
+   MuJoCo Warp <embodied/mujoco_warp>
    真机仿真器 <embodied/real_simulator>

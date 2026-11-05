@@ -227,4 +227,5 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
+   MuJoCo Warp <embodied/mujoco_warp>
    Real-World Simulator <embodied/real_simulator>
