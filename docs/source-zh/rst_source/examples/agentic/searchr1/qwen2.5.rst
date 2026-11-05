@@ -105,7 +105,7 @@ RLinf 同时提供基于 FSDP2 的 Search-R1 多智能体 Actor 实现。使用
 
 将 ``data.rollout_batch_size`` 设置为 actor DP 数量的正整数倍。每条 channel 消息包含一个完整的问题组，先计算 GRPO advantage 和 loss scale，再做 packing 和跨 rank 数据分发。分卡训练期间，actor 权重和 optimizer state 常驻训练设备。
 
-三卡布局是配置示例，请根据设备显存选择模型规模和序列长度；该配置尚未完成 GPU 训练实测。下文的 reward 和性能曲线来自已有参考运行。
+分卡布局已在三张 A800 80GB PCIe 上使用 Qwen2.5-1.5B-Instruct、序列长度 1024、FP16、FlashAttention 2 和 Liger 完成验证，覆盖训练、checkpoint 恢复、更新后的 rollout 权重以及小语料 HTTP 检索服务。请根据设备显存选择模型规模、序列长度和 batch size。下文的 reward 和性能曲线来自已有参考运行。
 
 Checkpoint 导出与评测
 ----------------------------------------
