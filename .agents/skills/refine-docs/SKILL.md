@@ -82,14 +82,16 @@ When the two disagree, the style guide wins.
 10. **Keep EN ↔ ZH parity:** same structure and (translated) headings; identical,
    untranslated code identifiers (config keys, CLI flags, env/model names); stable
    `:doc:` / `:ref:` links (no hardcoded ReadTheDocs URLs); never glue `**bold**`
-   directly between CJK characters.
+   directly between CJK characters. Locale-specific network and download notes
+   (mainland-China mirrors, ModelScope, proxy commands) may exist only on the
+   Chinese page.
    Write each language natively: preserve meaning and structure, not English
    clause order. Keep familiar developer terms in English when a Chinese
    translation would sound unusual or make the code harder to search.
-   Keep each Chinese prose paragraph or prose list item on one source line.
-   reStructuredText renders a hard wrap inside prose as a visible space, which
-   leaves an unnatural gap between Chinese characters. Keep structural line
-   breaks in headings, directives, tables, and code blocks.
+   Chinese prose must render without an inserted space between Chinese
+   characters: keep the paragraph on one source line, or end each wrapped line
+   with `\`. Keep structural line breaks in headings, directives, tables, and
+   code blocks.
 11. **Verify (the gate)** — see below.
 
 ## Natural-language gate

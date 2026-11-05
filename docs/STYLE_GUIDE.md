@@ -427,7 +427,7 @@ Tasks                                ← H3, always a TABLE (never a bullet list
 
 Observation and Action               ← H3
 ~~~~~~~~~~~~~~~~~~~~~~~
-.. list-table::   (Observation · Action · Reward · Task prompt)
+.. list-table::   (Field · Specification; rows Observation · Action · Reward · Prompt)
 
 Installation              → .. include:: _setup_common.rst + recipe-specific tag / --env
 Download the Model        → recipe-specific download + .. include:: _model_path.rst
@@ -525,6 +525,11 @@ Visualization and Results → TensorBoard / video / logger + link to Training me
 - **ZH:** don't put `**bold**` directly between CJK characters — docutils won't
   render it and a literal `**` leaks into the page. Use a space-bounded boundary,
   Chinese quotes, or drop the emphasis.
+- **Locale-specific network notes may be ZH-only.** Mirrors and download helpers
+  for mainland China (`--use-mirror`, `HF_ENDPOINT`, ModelScope, `gh-proxy`)
+  belong on the Chinese page when they only serve that audience; the English
+  page does not need a matching paragraph. Commands, config keys, identifiers,
+  and the rest of the structure stay in parity.
 
 ### Writing the Chinese pages
 
@@ -540,7 +545,7 @@ Conventions, on every page:
 - 标题后的第一句应直接说明本页介绍什么、帮助读者完成什么，或可供查阅什么。若页面以图片开头，则从图片后的第一句开始遵循此要求。不要先铺陈背景，到后文才交代页面用途。
 - 全角标点：，。、；：（）「」。中文句子里不要混用半角逗号句号。
 - 中文与英文、数字之间空一格，例如「在 node_rank 指定的节点上」。
-- 中文正文不要按列宽手动换行。每个段落或列表项的正文在 RST 源文件中保持一行；reStructuredText 会把段内换行渲染成空格，在两个汉字之间留下不自然的间隔。标题、directive、表格和代码块所需的结构换行不受此规则影响。
+- 中文正文可以按列宽手动换行，但换行必须保证渲染结果正确。reStructuredText 会把段内换行渲染成空格，因此若断行两侧都是汉字，需在行尾加 `\` 续行（该反斜杠会吞掉换行和缩进，不插入空格），或避免在两个汉字之间断行。判断标准是渲染结果而不是源文件行数：行尾 `\` 之后的一行如果以内联标记（双反引号或 `**`）开头，内联标记会和前一个汉字粘连，需要改写句子或换行位置。标题、directive、表格和代码块所需的结构换行不受此规则影响。
 - 英文技术名词保留原文，不要硬译；术语前后统一。强化学习中的 policy 统一写作 policy，不译成“策略”；描述通用决策方法时仍可使用“策略”，例如“placement 策略”。
 - 自然不等于口语化。正文应采用清晰、克制的书面技术表达，避免“看看长什么样”“等需要时再看”“不用跟着改”等聊天式说法；同时避免“本文旨在”“进行相关操作”等公文腔。
 - 不要滥用「的」；少用「进行/实现/提供/负责/使得」这类空动词。

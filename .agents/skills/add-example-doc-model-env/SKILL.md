@@ -50,6 +50,9 @@ developer terms in English when an unusual translation would obscure the code.
    Path: `docs/source-zh/rst_source/examples/<category>/<name>.rst`.  
    Keep the same structure, sections, commands, and technical meaning as English,
    but rewrite the prose in natural Chinese. Do not mirror English sentence order.
+   Locale-specific network and download notes (mainland-China mirrors,
+   ModelScope, proxy commands) may be added on the Chinese page without an
+   English counterpart.
    Use existing EN/ZH pairs under the same category (e.g. `embodied/libero.rst` in
    both `source-en` and `source-zh`) as reference.
 
