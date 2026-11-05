@@ -24,6 +24,7 @@ import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, fields
@@ -6338,6 +6339,65 @@ def test_ur_reconnect_cleans_old_sessions_before_opening_new_ones(ur_arm, monkey
     assert not control.connected
     assert len(controls) == len(receives) == 2
     assert controls[-1].commands == []
+
+
+def test_ur_shutdown_timeout_preserves_sessions_until_reconnect(ur_arm, monkeypatch):
+    arm, made = ur_arm
+    control_cls = made["rtde_control"].RTDEControlInterface
+    receive_cls = made["rtde_receive"].RTDEReceiveInterface
+    control, receive = control_cls.instances[-1], receive_cls.instances[-1]
+    entered, unblock, closed = (threading.Event() for _ in range(3))
+    errors = []
+    availability = []
+    servo = control.servoL
+
+    def blocked_servo(*args):
+        entered.set()
+        unblock.wait()
+        return servo(*args)
+
+    def close():
+        try:
+            arm.disconnect()
+        except Exception as error:
+            errors.append(error)
+        try:
+            availability.append(arm.is_robot_up())
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(arm, "JOIN_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(control, "servoL", blocked_servo)
+    target = {"tcp_pose": arm.get_state().tcp_pose}
+    arm.send_action(target)
+    thread = arm._thread
+    closer = threading.Thread(target=close, daemon=True)
+    try:
+        assert entered.wait(2)
+        closer.start()
+        assert closed.wait(1), "UR shutdown did not report its timeout"
+        assert len(errors) == 1 and isinstance(errors[0], TimeoutError)
+        assert "SDK sessions were left open" in str(errors[0])
+        assert arm._control is control and arm._receive is receive
+        assert control.connected and receive.connected and control.commands == []
+        assert availability == [False]
+        with pytest.raises(RuntimeError, match="disconnected"):
+            arm.get_state()
+        with pytest.raises(RuntimeError, match="disconnected"):
+            arm.send_action(target)
+        with pytest.raises(TimeoutError):
+            arm.connect()
+        assert len(control_cls.instances) == len(receive_cls.instances) == 1
+    finally:
+        unblock.set()
+        thread.join(2)
+        if closer.ident is not None:
+            closer.join(2)
+        arm.connect()
+        arm.disconnect()
+    assert not control.connected and not receive.connected
+    assert len(control_cls.instances) == len(receive_cls.instances) == 2
+    assert not any(name == "servoL" for name, _ in control_cls.instances[-1].commands)
 
 
 def test_ur_robot_registration_and_arm_declaration():
