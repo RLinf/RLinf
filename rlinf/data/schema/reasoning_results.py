@@ -1010,46 +1010,44 @@ class DynamicRolloutResult:
 
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
-            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            *pad_seq_shape, dtype=torch.bool, device=Worker.torch_device_type
         )
         attention_mask[:, :1] = True
         batch_pad = {
             "input_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=Worker.torch_device_type
             ),
             "attention_mask": attention_mask,
             "response_mask": torch.zeros(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.bool, device=Worker.torch_device_type
             ),
             "position_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=Worker.torch_device_type
             ),
-            "is_end": torch.zeros(
-                1, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
+            "is_end": torch.zeros(1, dtype=torch.bool, device=Worker.torch_device_type),
             "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
+                1, dtype=torch.int32, device=Worker.torch_device_type
             ),
             "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
+                1, dtype=torch.int32, device=Worker.torch_device_type
             ),
             "ref_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "recomputed_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "rollout_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "rewards": torch.zeros(
-                1, dtype=torch.float32, device=torch.cuda.current_device()
+                1, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "advantages": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "loss_scales": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "values": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
