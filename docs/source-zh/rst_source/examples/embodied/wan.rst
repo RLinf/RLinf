@@ -258,6 +258,7 @@ VLA 模型下载
 - ``num_inference_steps``：世界模型生成/推理步数（默认 ``5``）。步数越少生成越快，但可能降低画质；即使单步生成也能带来性能提升。
 - ``reward_model.type``：奖励模型类别——``ResnetRewModel`` 或 ``TaskEmbedResnetRewModel``。
 - ``reset_gripper_open``：是否以张开夹爪初始化。训练与评估默认 ``True``，不建议修改。
+- ``terminate_at_max_episode_steps``：episode 达到 ``max_episode_steps`` 时以什么方式结束。默认 ``False`` 报截断（truncation），开启 ``auto_reset`` 时 RLinf 会把末尾观测的 value 加到最后一个奖励上。当 ``max_episode_steps`` 就是任务本身的时限时设为 ``True``，例如只在结束时给一次 episode 级成功奖励：时限之后不再有回报，episode 以终止（termination）结束，在默认的 ``algorithm.bootstrap_type: standard`` 而非 ``always`` 下不做 value 自举。时限只是截断了更长的任务时保持 ``False``，例如从 KIR 关键帧起跳的短 rollout。两种情况下成功率统计都只来自奖励。``True`` 需要同时开启 ``auto_reset``；不开 ``auto_reset`` 时本来就不做自举。
 
 **3. 启动**
 

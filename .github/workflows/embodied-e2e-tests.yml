@@ -409,6 +409,10 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
+          # resume is off, so LeRobot always creates rank_0/id_0. This runner
+          # keeps /workspace/results across jobs. Delete before create(); a
+          # cleanup step after this one never runs if create() raises here.
+          rm -rf /workspace/results/realworld_dual_yam_collect_data_mock
           bash tests/e2e_tests/embodied/run.sh realworld_dual_yam_collect_data_mock
 
       - name: Dual-YAM OpenPI Pi05 mock-robot evaluation test
@@ -420,6 +424,7 @@ jobs:
           bash tests/e2e_tests/evaluations/run.sh realworld_dual_yam_openpi_pi05_mock_eval
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           uv cache prune
@@ -1366,6 +1371,56 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-libero-phyai-test:
+    runs-on: embodied
+    timeout-minutes: 90
+    env:
+      CUDA_VISIBLE_DEVICES: 0,1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PhyAI environment
+        timeout-minutes: 45
+        run: |
+          unset UV_DEFAULT_INDEX PYTHONPATH
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          rm -rf "$GITHUB_WORKSPACE/.venv"
+          bash requirements/install.sh \
+            --python 3.12 \
+            --venv .venv \
+            --install-rlinf \
+            embodied \
+            --model openpi \
+            --env libero \
+            --engine phyai
+
+      - name: PhyAI rollout worker unit tests
+        timeout-minutes: 10
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py -k phyai
+
+      - name: Libero-Spatial PPO OpenPI Pi05 PhyAI test
+        timeout-minutes: 40
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_pi05_phyai_ci
+
+      - name: Clean up
+        if: always()
+        run: |
+          source .venv/bin/activate 2>/dev/null || true
+          ray stop --force || true
+          rm -rf "$GITHUB_WORKSPACE/.venv"
+          uv cache prune
+
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
     steps:
@@ -1986,7 +2041,7 @@ jobs:
           rm -rf .venv
           uv cache prune
 
-  embodied-gr00t_n1d6-maniskill-libero-test:
+  embodied-gr00t_n1d6-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -2015,7 +2070,7 @@ jobs:
           rm -rf .venv
           uv cache prune
 
-  embodied-gr00t_n1d7-maniskill-libero-test:
+  embodied-gr00t_n1d7-libero-test:
     runs-on: embodied
     steps:
       - name: Checkout code
@@ -2133,6 +2188,82 @@ jobs:
           export PI0FAST_ACTION_TOKENIZER=/workspace/dataset/pi0_fast/tokenizer-lib-mean
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_10_grpo_pi0_fast egl
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-lingbotvlav2-robotwin-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOTWIN_PATH=/workspace/dataset/RoboTwin
+          export LINGBOT_VLA_V2_PATH=/workspace/dataset/lingbot-vla-v2
+          bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin
+
+      - name: RoboTwin-LingBotVLA V2 PPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
+          export ROBOTWIN_ASSETS_PATH="/workspace/dataset/RoboTwin"
+          export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
+          export LINGBOT_VLA_V2_PATH="/workspace/dataset/lingbot-vla-v2"
+          bash tests/e2e_tests/embodied/run.sh robotwin_ppo_lingbotvlav2
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-psi0-simple-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        timeout-minutes: 90
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export SIMPLE_PATH=/workspace/dataset/psi0_simple/SIMPLE
+          bash requirements/install.sh embodied --model psi0 --env simple
+
+      - name: SIMPLE OpenOven Psi0 PPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export HF_HOME=/workspace/dataset/.cache/huggingface
+          bash tests/e2e_tests/embodied/run.sh simple_openoven_ppo_psi0
+
+      - name: SIMPLE OpenOven Psi0 evaluation test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export HF_HOME=/workspace/dataset/.cache/huggingface
+          bash tests/e2e_tests/evaluations/run.sh simple_openoven_psi0_eval
 
       - name: Clean up
         if: always()

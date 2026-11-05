@@ -8,8 +8,10 @@
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://deepwiki.com/RLinf/RLinf"><img src="https://img.shields.io/badge/Ask%20DeepWiki-1DA1F2?logo=databricks&logoColor=white&color=00ADEF" alt="Ask DeepWiki"></a>
+<br>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/WeChat%20Group-green?logo=wechat&amp"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20Channel?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack Channel"></a>
+<a href="https://github.com/RLinf/misc/blob/main/pic/discord.jpg?raw=true"><img src="https://img.shields.io/badge/Discord%20Community-5865F2?logo=discord&logoColor=white"></a>
 </div>
 
 <div align="center">
@@ -32,7 +34,11 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization. Doc: [PhyAI rollout backend](docs/source-en/rst_source/guides/rollout-engines/phyai.rst).
+- [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
+- [2026/10] 🎉 RLinf introducing **CEL** (Collective Experience Learning): robot fleets improve a shared policy from their own deployment experience without additional expert demonstrations or corrective actions, validated on up to 96 real robots across 5 real-world tasks. Project page: [CEL](https://cel-robot-learning.github.io/), paper: [arXiv:2610.25736](https://arxiv.org/abs/2610.25736). Code will release soon.
 - [2026/10] 🔥 RLinf supports MetaX (MACA) GPUs. PR: [MetaX GPU support (#1656)](https://github.com/RLinf/RLinf/pull/1656).
+- [2026/10] 🔥 RLinf supports RL on LingbotVLA 2.0 in RoboTwin with PPO. Doc: [LingbotVLA 2.0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvlav2.html).
 - [2026/09] 🔥 RLinf refactors real-world robots and environments, using a unified robotics interface to manage hardware, tasks, and rollout wrappers separately. Docs: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html), [Robotics Architecture](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics_architecture.html), [Real-World Tasks and Environments](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/realworld_envs.html), [Add a Robot](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_robot.html), [Add a Real-World Task](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_task.html), [Teleoperation](https://rlinf.readthedocs.io/en/latest/rst_source/guides/teleoperation.html).
 - [2026/09] 🔥 RLinf supports RL on π₀-FAST. Doc: [π₀-FAST](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html).
 - [2026/09] 🔥 RLinf supports Biren GPUs. PR: [Biren GPU support (#1581)](https://github.com/RLinf/RLinf/pull/1581).
@@ -82,7 +88,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/03] 🎉 RLinf v0.2 is released with major upgrades in Real-World RL and Multi-Agent RL. Release notes: [RLinf v0.2](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.1_v0.2.html).
 - [2026/03] 🔥 RLinf supports reinforcement learning fine-tuning for LIBERO-Pro & LIBERO-Plus. Doc: [LIBERO-Pro & LIBERO-Plus](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark).
 - [2026/03] 🔥 RLinf supports DAgger for embodied policies. Doc: [DAgger for Embodied Policies](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html).
-- [2026/03] 🔥 RLinf now supports evaluating and fine-tuning LingBot-VLA within the RoboTwin environment! Doc: [LingBot-VLA](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html).
+- [2026/03] 🔥 RLinf now supports evaluating and fine-tuning LingbotVLA 1.0 within the RoboTwin environment! Doc: [LingbotVLA 1.0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html).
 - [2026/03] 🔥 RLinf supports [FUSCO](https://github.com/infinigence/FUSCO) to accelerate the MoE All-to-All communication used in Megatron. Doc: [FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html), paper: [FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion](https://arxiv.org/pdf/2512.22036).
 - [2026/03] 🔥 RLinf supports reinforcement learning on multiagents. Website: [WideSeek-R1](https://wideseek-r1.github.io), quickstart: [QuickStart](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/wideseek_r1/index.html), paper: [WideSeek-R1: Exploring Width Scaling for Broad Information Seeking via Multi-Agent Reinforcement Learning](https://arxiv.org/abs/2602.04634), data: [Training Data](https://huggingface.co/datasets/RLinf/WideSeek-R1-train-data) and [Corpus](https://huggingface.co/datasets/RLinf/WideSeek-R1-Corpus).
 - [2026/03] 🔥 RLinf supports real-world RL with [XSquare](https://x2robot.com) Turtle2 dual-arm robot. Doc: [RL on XSquare Turtle2 in the RealWorld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html).
@@ -176,7 +182,8 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingbotVLA 1.0</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvlav2.html">LingbotVLA 2.0</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
@@ -262,6 +269,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a> ✅</li>
             <li>Lumos Camera ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_orbbec.html">Orbbec RGB-D Camera</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Hand</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html">Ruiyan Hand</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
@@ -460,11 +468,17 @@ If you use RL+VLA in RLinf, you can also cite our technical report and empirical
 ```
 
 ```bibtex
-@article{liu2025can,
-  title={What can rl bring to vla generalization? an empirical study},
-  author={Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and Wu, Yi and Yu, Chao and Wang, Yu},
-  journal={arXiv preprint arXiv:2505.19789},
-  year={2025}
+@inproceedings{NEURIPS2025_8c0fabe3,
+ author = {Liu, Jijia and Gao, Feng and Wei, Bingwen and Chen, Xinlei and Liao, Qingmin and WU, YI and Yu, Chao and Wang, Yu},
+ booktitle = {Advances in Neural Information Processing Systems},
+ doi = {10.52202/085713-3248},
+ editor = {D. Belgrave and C. Zhang and H. Lin and R. Pascanu and P. Koniusz and M. Ghassemi and N. Chen},
+ pages = {97121--97151},
+ publisher = {Curran Associates, Inc.},
+ title = {What Can RL Bring to VLA Generalization? An Empirical Study},
+ url = {https://proceedings.neurips.cc/paper_files/paper/2025/file/8c0fabe372177d2aded596be2d3b4544-Paper-Conference.pdf},
+ volume = {38, Main Conference},
+ year = {2025}
 }
 ```
 
@@ -479,13 +493,16 @@ If you use RL+VLA in RLinf, you can also cite our technical report and empirical
 
 If you train your policies in physical world with RLinf, you can cite our paper:
 ```bibtex
-@article{zang2026rlinfuser,
-  title={RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI}, 
-  author={Hongzhi Zang and Shu'ang Yu and Hao Lin and Tianxing Zhou and Zefang Huang and Zhen Guo and Xin Xu and Jiakai Zhou and Yuze Sheng and Shizhe Zhang and Feng Gao and Wenhao Tang and Yufeng Yue and Quanlu Zhang and Xinlei Chen and Chao Yu and Yu Wang},
-  year={2026},
-  journal={arXiv preprint arXiv:2602.07837},
-  url={https://arxiv.org/abs/2602.07837}, 
-}
+@INPROCEEDINGS{ZangH1-RSS-26, 
+    AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang}, 
+    TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}}, 
+    BOOKTITLE = {Proceedings of Robotics: Science and Systems}, 
+    YEAR      = {2026}, 
+    ADDRESS   = {Sydney, Australia}, 
+    MONTH     = {July}, 
+    DOI       = {10.15607/RSS.2026.XXII.037} 
+} 
+  
 ```
 
 If you use World Model + VLA + RL in RLinf, you can cite our paper:

@@ -10,7 +10,7 @@ ARG ROCM_VER=7.2
 ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.1.1-910b
 ARG MUSA_VER=v2.1.5-musa4.3.7
-ARG KUNLUN_VER=v1.7.2
+ARG KUNLUN_VER=v1.8.1
 ARG UBUNTU_VER=22.04
 # Reason-image only. A venv carries one flash-attention variant: FA2 and FA4
 # share the flash_attn package. FA4 backward is sm90+ and Docker builds cannot
@@ -84,6 +84,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
@@ -405,10 +406,11 @@ RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft, openpi, and lingbotvla envs
+# Install openvla-oft, openpi, lingbotvla, and lingbotvlav2 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env robotwin && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvlav2 --model lingbotvlav2 --env robotwin
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -503,6 +505,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: Psi0 + SIMPLE
+##################################################################################################
+FROM embodied-common-image AS embodied-simple-image
+
+ENV OMNI_KIT_ACCEPT_EULA=YES
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+    embodied --venv psi0 --model psi0 --env simple
+
+RUN echo "source ${UV_PATH}/psi0/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: Genesis

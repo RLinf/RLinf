@@ -44,7 +44,7 @@ Choose a Workflow
       :link: rollout-engines/index
       :link-type: doc
 
-      Launch sglang servers and routers behind a single inference endpoint.
+      Launch SGLang servers and routers, or run PhyAI as an in-process embodied rollout backend.
 
 .. toctree::
    :hidden:
