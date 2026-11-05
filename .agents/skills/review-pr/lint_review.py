@@ -96,20 +96,33 @@ class Markdown:
     must stay on one line.
     """
 
-    FENCE = re.compile(r"^\s*(```|~~~)")
+    FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
     BLOCK = re.compile(r"^\s*([#|>]|[-*+] |\d+[.)] |<)")
     HEADING = re.compile(r"^(#{1,6})\s")
     HINT = "<!--"
 
     @classmethod
     def unfenced(cls, text: str) -> list[tuple[int, str]]:
-        """Returns (line number, line) for every line outside code fences."""
-        out, in_fence = [], False
+        """Returns (line number, line) for every line outside code fences.
+
+        As in CommonMark, only a bare fence of the opening character, at least
+        as long as the opening one, closes a block, so fences can nest.
+        """
+        out, fence = [], ""
         for n, line in enumerate(text.splitlines(), 1):
-            if cls.FENCE.match(line):
-                in_fence = not in_fence
-            elif not in_fence:
-                out.append((n, line))
+            m = cls.FENCE.match(line)
+            if not fence:
+                if m:
+                    fence = m[1]
+                else:
+                    out.append((n, line))
+            elif (
+                m
+                and m[1][0] == fence[0]
+                and len(m[1]) >= len(fence)
+                and not m[2].strip()
+            ):
+                fence = ""
         return out
 
     @classmethod
