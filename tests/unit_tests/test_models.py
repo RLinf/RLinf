@@ -2066,15 +2066,11 @@ def test_steam_presets_use_each_checkpoint_for_normalization(monkeypatch, config
     assert expert_cfg.openpi_data.norm_stats_path is None
     assert feature_cfg.openpi_data.repo_id == "maniskill_peginsertionside_joint"
     assert expert_cfg.openpi_data.repo_id == feature_cfg.openpi_data.repo_id
-    checkpoint_root = Path("/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs")
-    assert Path(feature_cfg.model_path) == (
-        checkpoint_root / "step1000new/global_step_1000/actor"
-    )
-    assert Path(expert_cfg.model_path) == (
-        checkpoint_root / "step3000new/global_step_3000/actor"
-    )
-    assert Path(cfg.rollout.routing_gate.model.model_path).is_relative_to(
-        checkpoint_root / "steam_sft"
+    checkpoint_root = Path("/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints")
+    assert Path(feature_cfg.model_path) == (checkpoint_root / "global_step_1000/actor")
+    assert Path(expert_cfg.model_path) == (checkpoint_root / "global_step_3000/actor")
+    assert cfg.rollout.routing_gate.model.model_path == (
+        "/path/to/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor"
     )
     assert feature_cfg.prefix.pool == "masked_mean"
     assert feature_cfg.prefix.image_only is True
@@ -2098,7 +2094,7 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
     assert cfg.algorithm.rlt_gate_calibration.enable
     assert (
         cfg.algorithm.rlt_gate_calibration.save_path
-        == "/data/steam_peg/gate_calibration"
+        == f"{cfg.runner.logger.log_path}/{cfg.runner.logger.experiment_name}/gate_calibration"
     )
     assert cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 30000
     for mode in ("train", "eval"):
@@ -2114,9 +2110,18 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
     )
     assert training_cfg.rollout.routing_gate.actor_switch.enable
     assert training_cfg.rollout.routing_gate.actor_switch.phase_head_path == (
-        "/data/steam_peg/steam_phase_head.pt"
+        "/path/to/steam_phase_head.pt"
     )
-    assert training_cfg.rollout.routing_gate.expert_takeover.mode == "active"
+    assert (
+        training_cfg.rollout.routing_gate.actor_switch.enter_threshold
+        == pytest.approx(0.940951)
+    )
+    assert training_cfg.rollout.routing_gate.actor_switch.patience_chunks == 1
+    expert = training_cfg.rollout.routing_gate.expert_takeover
+    assert expert.mode == "shadow"
+    assert expert.enter_threshold == pytest.approx(-0.568753)
+    assert expert.patience_chunks == 6
+    assert expert.warmup_chunks == 4
     assert training_cfg.env.train.rlt_policy_switch.routing_source == "rollout"
     assert not training_cfg.algorithm.rlt_gate_calibration.enable
 

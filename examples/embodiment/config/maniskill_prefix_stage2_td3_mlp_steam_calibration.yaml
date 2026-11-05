@@ -13,7 +13,6 @@ runner:
 algorithm:
   rlt_gate_calibration:
     enable: True
-    save_path: /data/steam_peg/gate_calibration
 
 env:
   train:

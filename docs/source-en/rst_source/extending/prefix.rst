@@ -93,7 +93,7 @@ Prefix pooling
 * ``last`` reads the last valid token; without a mask it reads the final sequence position.
 * ``rlt_token`` is a configuration marker. OpenPI routes it to ``rlt_module.encode_flat`` instead of calling ``pool_prefix`` directly.
 
-``prefix.pool`` and ``prefix.image_only`` sit beside the ``openpi`` block of the OpenPI model config. When ``prefix.pool`` is unset, ``resolve_prefix_pool`` returns ``rlt_token`` if ``openpi.use_rlt`` is true and ``masked_mean`` otherwise. ``prefix.image_only`` defaults to true and keeps only image tokens before pooling or RLT encoding. Set both fields explicitly so the representation source can be inspected in both Stage 1 and Stage 2 configurations. The rollout worker checks at startup that the feature model's ``z_dim`` equals ``actor.model.z_dim``.
+``prefix.pool`` and ``prefix.image_only`` sit beside the ``openpi`` block of the OpenPI model config. When ``prefix.pool`` is unset, ``resolve_prefix_pool`` returns ``rlt_token`` if ``openpi.use_rlt`` is true and ``masked_mean`` otherwise. ``prefix.image_only`` defaults to true and keeps only image tokens before pooling or RLT encoding. Set both fields explicitly so the representation source can be inspected in both Stage 1 and Stage 2 configurations. The rollout worker checks at startup that the feature model's ``z_dim`` equals ``actor.model.z_dim``. Each ``extract_prefix_obs`` call also checks the last dimension of ``z_rl`` against the feature model's ``z_dim``.
 
 State history
 ^^^^^^^^^^^^^
@@ -110,12 +110,13 @@ Rollout and actor use the same ``actor.model.state_history`` configuration, whic
 PrefixPolicy forward contract
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``rlinf.models.embodiment.prefix.policy.PrefixPolicy`` inherits ``BasePolicy`` and exposes off-policy forward types:
+``rlinf.models.embodiment.prefix.policy.PrefixPolicy`` inherits ``BasePolicy`` and exposes semantic actor and critic forwards:
 
-* ``ForwardType.SAC`` calls the actor head and returns ``actions, logprobs, None``.
-* ``ForwardType.SAC_Q`` calls the critic head and returns one value per Q head.
-* ``ForwardType.CROSSQ_Q`` evaluates current and next state values when the critic supports CrossQ.
+* ``PrefixForwardType.ACTOR`` calls the actor head and returns ``actions, logprobs, None``.
+* ``PrefixForwardType.CRITIC`` returns ``current_q, next_q``, with one value per Q head. ``next_q`` is ``None`` for a non-joint critic.
 * ``predict_action_batch`` reshapes flat actions to ``[B, num_action_chunks, action_dim]`` and returns the action and Prefix observation in ``forward_inputs``.
+
+``PrefixPolicy`` selects the standard or joint CrossQ critic internally. Algorithms use the same semantic interface for either backend, and training calls pass through the FSDP-wrapped ``forward``.
 
 The policy state is ``concat(flatten(z_rl), flatten(proprio))``. The reference is reshaped by action dimension and truncated to ``num_action_chunks`` before it conditions the actor and supplies the BC target. ``ref_num_action_chunks`` may exceed the executed ``num_action_chunks``, so the feature model can expose a longer reference window.
 
@@ -134,6 +135,9 @@ The following fragment uses an OpenPI masked-mean feature model, a stochastic ML
      gamma: 0.99
      q_weight: 1.0
      bc_weight: 1.0
+     entropy_tuning:
+       alpha_type: fixed_alpha
+       initial_alpha: 0.0
 
    rollout:
      prefix_feature_model:
@@ -370,31 +374,101 @@ The built-in ``ac`` uses a stochastic actor and Q1 aggregation; ``algorithm.acto
 Training and Running
 --------------------
 
-The repository includes ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` as a Prefix Fine-Tune example. It uses masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Supply the four checkpoints at ``rollout.prefix_feature_model.model_path``, ``rollout.routing_gate.actor_switch.phase_head_path``, ``rollout.routing_gate.model.model_path``, and ``rollout.expert_model.model_path``. Set these local paths, the OpenPI ``repo_id``, and the environment assets to match your checkpoints. With ``norm_stats_path: null``, each OpenPI model loads ``<model_path>/<repo_id>/norm_stats.json`` from its own checkpoint. Then run:
+Use ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` to run Prefix Fine-Tune on ManiSkill peg insertion. The preset combines masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Start from the repository root with the OpenPI and ManiSkill environment described in :doc:`../examples/embodied/rlt` activated.
+
+Download the Checkpoints
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The preset keeps the four checkpoint paths and gate thresholds in one YAML file. Download the published resources for these fields:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 40 40
+
+   * - Resource
+     - Hugging Face Repository
+     - Preset Field
+   * - Base / feature SFT, step 1000
+     - `ChikaYokoyama/maniskill_rlt_1000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_1000_new>`_
+     - ``rollout.prefix_feature_model.model_path``
+   * - Expert SFT, step 3000
+     - `ChikaYokoyama/maniskill_rlt_3000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_3000_new>`_
+     - ``rollout.expert_model.model_path``
+   * - STEAM value model, step 5000
+     - `ChikaYokoyama/rlt_steam_value_model_sft_step_5000 <https://huggingface.co/ChikaYokoyama/rlt_steam_value_model_sft_step_5000>`_
+     - ``rollout.routing_gate.model.model_path``
+   * - Phase head and gate recommendation
+     - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
+     - ``rollout.routing_gate.actor_switch.phase_head_path``
+
+Choose a local checkpoint directory and download the inference weights, normalization statistics, and processor assets. To use hf-mirror, first run ``export HF_ENDPOINT=https://hf-mirror.com``.
+
+.. code:: bash
+
+   CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
+
+   hf download ChikaYokoyama/maniskill_rlt_1000_new \
+     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+     --exclude '*/dcp_checkpoint/*'
+   hf download ChikaYokoyama/maniskill_rlt_3000_new \
+     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+     --exclude '*/dcp_checkpoint/*'
+   hf download ChikaYokoyama/rlt_steam_value_model_sft_step_5000 \
+     --local-dir "$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
+     --exclude 'dcp_checkpoint/*'
+   hf download ChikaYokoyama/rlt_steam_phase_head \
+     --local-dir "$CHECKPOINT_ROOT"
+
+   hf download google/siglip-so400m-patch14-384 \
+     --local-dir "$CHECKPOINT_ROOT/siglip-so400m-patch14-384"
+   hf download google/gemma-3-270m \
+     --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
+
+The SFT repositories include ``global_step_1000/actor`` and ``global_step_3000/actor`` in their file paths. The STEAM repository contains the actor directory's contents at its root, so download it directly into the local ``global_step_5000/actor`` directory as shown above. The commands omit distributed training state while preserving the assets used for inference.
+
+In the preset, replace ``/path/to`` in the four checkpoint paths with the expanded absolute value of ``CHECKPOINT_ROOT``. Keep ``openpi_data.repo_id: maniskill_peginsertionside_joint`` and ``norm_stats_path: null``: each OpenPI model loads its own ``<model_path>/<repo_id>/norm_stats.json``.
+
+The downloaded STEAM ``config.json`` also contains local backbone paths. In ``$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json``, set ``vision_repo_id`` to the expanded absolute path of ``$CHECKPOINT_ROOT/siglip-so400m-patch14-384`` and ``language_repo_id`` to that of ``$CHECKPOINT_ROOT/gemma-3-270m``. Keep the tokenizer and image-processor files alongside the weights; the gate loads them from that checkpoint directory.
+
+.. warning::
+
+   The published phase head uses ``enter_threshold: 0.940951`` and ``patience_chunks: 1``. The expert candidate threshold ``-0.568753`` produced zero predicted takeovers and zero oracle-stall recall on the validation split. The preset therefore keeps expert takeover in ``shadow`` mode. Validate a new expert threshold on actor-controlled episodes before switching to ``active``. When using ``steam_gate_recommendation.yaml``, replace its source-machine phase-head path and retain the preset's shadow mode.
+
+Run Training
+^^^^^^^^^^^^
+
+After setting the local paths, launch the training preset:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-The frozen feature model explicitly uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Its ``z_rl`` pools only VLM image tokens; language still conditions the reference actions. STEAM routing selects among the base VLA, Stage 2 actor, and expert during rollout; the Prefix runtime still owns the heads and algorithm. ``rollout.routing_gate.cameras`` maps each STEAM processor camera key to the env observation key that supplies it.
+The frozen feature model explicitly uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Its ``z_rl`` pools only VLM image tokens; language still conditions the reference actions. STEAM controls the base-to-actor switch and records expert-takeover decisions in shadow mode. ``rollout.routing_gate.cameras`` maps each STEAM processor camera key to the env observation key that supplies it.
 
-For a first calibration without a phase head, use the collection preset:
+Collect Calibration Traces
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To fit a head for your own setup, use the collection preset. It clears the phase-head path, routes with the environment geometry gate, and keeps expert takeover in shadow mode:
 
 .. code:: bash
 
    STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
 
-This preset clears the phase-head path, routes with the environment geometry gate, and puts expert takeover in shadow mode. It enables ``rollout.routing_gate.actor_switch.collect_phase_features`` and ``algorithm.rlt_gate_calibration.enable``. The learner writes features, geometry labels, and gate diagnostics to ``/data/steam_peg/gate_calibration/rank_<rank>/trace_*.pt``. Use a separate trace directory for each collection run.
+The preset enables ``rollout.routing_gate.actor_switch.collect_phase_features`` to emit STEAM features and ``algorithm.rlt_gate_calibration.enable`` to save them with geometry labels and gate diagnostics. Each launch creates a run directory under ``logs/``; the learner writes ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``. The save directory is configured by ``algorithm.rlt_gate_calibration.save_path``.
 
-The 20 rollout rounds check collection and can supply an initial phase head if both geometry labels occur. They do not complete the preset's 30,000-update warmup; calibrate deployment expert thresholds on later, actor-controlled episodes. To fit the initial head, run the offline tool without a minimum-version filter:
+The 20 rollout rounds check collection and can supply an initial phase head if both geometry labels occur. They do not complete the preset's 30,000-update warmup; calibrate deployment expert thresholds on later, actor-controlled episodes. Set ``TRACE_DIR`` to the collected run's trace directory and fit the initial head without a minimum-version filter:
 
 .. code:: bash
 
-   python toolkits/rlt/calibrate_steam_gates.py /data/steam_peg/gate_calibration \
-     --phase-head-output /data/steam_peg/steam_phase_head.pt \
-     --yaml-output /data/steam_peg/steam_gate_recommendation.yaml --device cpu
+   TRACE_DIR=/path/to/run_log_dir/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration
+   python toolkits/rlt/calibrate_steam_gates.py "$TRACE_DIR" \
+     --phase-head-output "$CHECKPOINT_ROOT/steam_phase_head.pt" \
+     --yaml-output "$CHECKPOINT_ROOT/steam_gate_recommendation.yaml" --device cpu
 
-Copy the recommendation's ``rollout.routing_gate`` settings into the training preset, including the phase-head path and calibrated thresholds. Use the training preset for normal runs; its collection flags remain false and routing returns to the rollout gate. The calibration tool runs separately from training updates.
+Check the validation metrics before copying thresholds into the training preset, and set the phase-head path to your local output. The calibration tool runs offline, separately from training updates. Use the training preset for normal runs, with both collection flags false.
+
+Replay and Updates
+^^^^^^^^^^^^^^^^^^
 
 Stage 2 replay uses a fixed observation contract:
 

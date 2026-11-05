@@ -245,7 +245,7 @@ rollout:
 
   prefix_feature_model:
     model_type: "openpi"
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/step1000new/global_step_1000/actor"
+    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: ${actor.model.action_dim}
@@ -287,13 +287,11 @@ rollout:
     actor_switch:
       enable: True
       mode: active
-      phase_head_path: "/data/steam_peg/steam_phase_head.pt"
-      enter_threshold: 0.941209
+      phase_head_path: "/path/to/steam_phase_head.pt"
+      enter_threshold: 0.940951
       patience_chunks: 1
       # Enable only while collecting traces for phase-head calibration.
       collect_phase_features: False
-      # By default the gate reads the calibrated threshold and patience from
-      # this checkpoint. Set these fields explicitly only for an ablation.
     chunk_size: 10
     lookback_chunks: 2
     latch_until_done: True
@@ -303,21 +301,21 @@ rollout:
       wrist_image: wrist_images
     expert_takeover:
       enable: True
-      # Balanced profile calibrated from actor-only shadow traces.
-      mode: active
+      # Validate this candidate threshold on actor-controlled traces first.
+      mode: shadow
       warmup_chunks: 4
       patience_chunks: 6
-      enter_threshold: -0.611351
+      enter_threshold: -0.568753
       latch_until_done: True
     model:
       model_type: "steam_value_model"
-      model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/steam_sft/rlt_steam_value_model_sft-20260917-08:54:50/rlt_steam_value_model_sft/checkpoints/global_step_5000"
+      model_path: "/path/to/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor"
       precision: bf16
 
   # The simulation expert is invoked by the learned actor-to-expert gate.
   expert_model:
     model_type: "openpi"
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/step3000new/global_step_3000/actor"
+    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: 8

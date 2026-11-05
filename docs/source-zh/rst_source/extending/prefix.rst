@@ -93,7 +93,7 @@ Prefix pooling
 * ``last`` 读取最后一个有效 token；没有 mask 时读取序列末端。
 * ``rlt_token`` 是配置层的标记。OpenPI 会转到 ``rlt_module.encode_flat``，因此不会直接调用 ``pool_prefix``。
 
-``prefix.pool`` 和 ``prefix.image_only`` 与 OpenPI 模型配置中的 ``openpi`` 块并列。未设置 ``prefix.pool`` 时，``resolve_prefix_pool`` 在 ``openpi.use_rlt`` 为 true 时返回 ``rlt_token``，否则返回 ``masked_mean``。``prefix.image_only`` 默认为 true，会在 pooling 或 RLT 编码前只保留图像 token。建议在配置中显式写出这两个字段，这样 Stage 1 和 Stage 2 的表示来源可以直接检查。rollout worker 启动时会检查特征模型的 ``z_dim`` 与 ``actor.model.z_dim`` 一致。
+``prefix.pool`` 和 ``prefix.image_only`` 与 OpenPI 模型配置中的 ``openpi`` 块并列。未设置 ``prefix.pool`` 时，``resolve_prefix_pool`` 在 ``openpi.use_rlt`` 为 true 时返回 ``rlt_token``，否则返回 ``masked_mean``。``prefix.image_only`` 默认为 true，会在 pooling 或 RLT 编码前只保留图像 token。建议在配置中显式写出这两个字段，这样 Stage 1 和 Stage 2 的表示来源可以直接检查。rollout worker 启动时会检查特征模型的 ``z_dim`` 与 ``actor.model.z_dim`` 一致。每次调用 ``extract_prefix_obs`` 时，还会检查 ``z_rl`` 的最后一维与特征模型的 ``z_dim`` 一致。
 
 State history
 ^^^^^^^^^^^^^
@@ -110,12 +110,13 @@ rollout 和 actor 使用同一个 ``actor.model.state_history`` 配置，避免 
 PrefixPolicy 的 forward contract
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``rlinf.models.embodiment.prefix.policy.PrefixPolicy`` 继承 ``BasePolicy``，但它的训练入口是 off-policy forward：
+``rlinf.models.embodiment.prefix.policy.PrefixPolicy`` 继承 ``BasePolicy``，提供 actor 和 critic 的语义 forward 接口：
 
-* ``ForwardType.SAC`` 调用 actor head，返回 ``actions, logprobs, None``。
-* ``ForwardType.SAC_Q`` 调用 critic head，返回每个 Q head 的值。
-* ``ForwardType.CROSSQ_Q`` 在支持 CrossQ 的 critic 上同时评估当前和下一状态。
+* ``PrefixForwardType.ACTOR`` 调用 actor head，返回 ``actions, logprobs, None``。
+* ``PrefixForwardType.CRITIC`` 返回 ``current_q, next_q``，每个 Q head 对应一个值；非 joint critic 的 ``next_q`` 为 ``None``。
 * ``predict_action_batch`` 将 flat action reshape 为 ``[B, num_action_chunks, action_dim]``，并在 ``forward_inputs`` 中返回 action 与 Prefix observation。
+
+``PrefixPolicy`` 在内部选择普通 critic 或 joint CrossQ critic。algorithm 对两种后端使用同一套语义接口，训练调用均经过 FSDP 包装后的 ``forward``。
 
 policy state 是 ``concat(flatten(z_rl), flatten(proprio))``。reference 先按 action dimension reshape，再截取前 ``num_action_chunks``，用于 actor 条件输入和 BC target。``ref_num_action_chunks`` 可以大于实际执行的 ``num_action_chunks``，feature model 因此可以提供更长的 reference window。
 
@@ -134,6 +135,9 @@ PrefixPolicy 不读取 VLA 参数。VLA 由 rollout worker 单独持有，Prefix
      gamma: 0.99
      q_weight: 1.0
      bc_weight: 1.0
+     entropy_tuning:
+       alpha_type: fixed_alpha
+       initial_alpha: 0.0
 
    rollout:
      prefix_feature_model:
@@ -370,31 +374,101 @@ Prefix head 接收已经拼好的 state 和 reference/action tensor。actor 的 
 训练与运行
 ----------
 
-仓库提供 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 作为 Prefix Fine-Tune 示例。该配置使用 masked-mean VLM Prefix 特征、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。先在 ``rollout.prefix_feature_model.model_path``、``rollout.routing_gate.actor_switch.phase_head_path``、``rollout.routing_gate.model.model_path`` 和 ``rollout.expert_model.model_path`` 填入四个 checkpoint。请按 checkpoint 设置这些本地路径、OpenPI 的 ``repo_id`` 和环境资源。设置 ``norm_stats_path: null`` 时，每个 OpenPI 模型会从各自 checkpoint 的 ``<model_path>/<repo_id>/norm_stats.json`` 加载归一化统计量。然后运行：
+使用 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` 在 ManiSkill peg insertion 任务上运行 Prefix Fine-Tune。该 preset 使用 masked-mean VLM Prefix 特征、``deterministic_mlp``、``twin_q_mlp`` 和 ``algorithm.name: td3``。在仓库根目录操作，并激活 :doc:`../examples/embodied/rlt` 中的 OpenPI 与 ManiSkill 环境。
+
+下载 Checkpoint
+^^^^^^^^^^^^^^^
+
+四个 checkpoint 路径和 gate 阈值集中在同一个 YAML 中。各字段对应的公开资源如下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 40 40
+
+   * - 资源
+     - Hugging Face 仓库
+     - Preset 字段
+   * - Base / feature SFT，step 1000
+     - `ChikaYokoyama/maniskill_rlt_1000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_1000_new>`_
+     - ``rollout.prefix_feature_model.model_path``
+   * - Expert SFT，step 3000
+     - `ChikaYokoyama/maniskill_rlt_3000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_3000_new>`_
+     - ``rollout.expert_model.model_path``
+   * - STEAM value model，step 5000
+     - `ChikaYokoyama/rlt_steam_value_model_sft_step_5000 <https://huggingface.co/ChikaYokoyama/rlt_steam_value_model_sft_step_5000>`_
+     - ``rollout.routing_gate.model.model_path``
+   * - Phase head 与 gate 推荐配置
+     - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
+     - ``rollout.routing_gate.actor_switch.phase_head_path``
+
+选择本地 checkpoint 目录，下载推理权重、归一化统计量和 processor 文件。使用 hf-mirror 时，先执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
+
+.. code:: bash
+
+   CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
+
+   hf download ChikaYokoyama/maniskill_rlt_1000_new \
+     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+     --exclude '*/dcp_checkpoint/*'
+   hf download ChikaYokoyama/maniskill_rlt_3000_new \
+     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+     --exclude '*/dcp_checkpoint/*'
+   hf download ChikaYokoyama/rlt_steam_value_model_sft_step_5000 \
+     --local-dir "$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
+     --exclude 'dcp_checkpoint/*'
+   hf download ChikaYokoyama/rlt_steam_phase_head \
+     --local-dir "$CHECKPOINT_ROOT"
+
+   hf download google/siglip-so400m-patch14-384 \
+     --local-dir "$CHECKPOINT_ROOT/siglip-so400m-patch14-384"
+   hf download google/gemma-3-270m \
+     --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
+
+两份 SFT 仓库的文件路径已包含 ``global_step_1000/actor`` 和 ``global_step_3000/actor``。STEAM 仓库的根目录直接存放 actor 目录的内容，因此应按上述命令下载到本地 ``global_step_5000/actor`` 目录。这些命令保留推理所用的文件，跳过分布式训练状态。
+
+将 preset 中四个 checkpoint 路径的 ``/path/to`` 替换为 ``CHECKPOINT_ROOT`` 展开后的绝对路径。保留 ``openpi_data.repo_id: maniskill_peginsertionside_joint`` 和 ``norm_stats_path: null``，每个 OpenPI 模型会从各自的 ``<model_path>/<repo_id>/norm_stats.json`` 加载归一化统计量。
+
+下载的 STEAM ``config.json`` 也保存了本地 backbone 路径。编辑 ``$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json``，将 ``vision_repo_id`` 改为 ``$CHECKPOINT_ROOT/siglip-so400m-patch14-384`` 展开后的绝对路径，将 ``language_repo_id`` 改为 ``$CHECKPOINT_ROOT/gemma-3-270m`` 展开后的绝对路径。tokenizer 和 image processor 文件须与权重保存在同一 checkpoint 目录，gate 会从该目录加载它们。
+
+.. warning::
+
+   已发布的 phase head 使用 ``enter_threshold: 0.940951`` 和 ``patience_chunks: 1``。expert 候选阈值 ``-0.568753`` 在验证集上的 predicted takeover 数和 oracle-stall recall 均为 0，因此 preset 将 expert takeover 保持在 ``shadow`` 模式。切换到 ``active`` 前，应使用 actor 实际控制的 episode 重新校准并验证 expert 阈值。使用 ``steam_gate_recommendation.yaml`` 时，替换其中的源服务器 phase-head 路径，并保留 preset 的 shadow 模式。
+
+运行训练
+^^^^^^^^
+
+设置本地路径后，启动训练 preset：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-冻结的特征模型显式设置 ``prefix.pool: masked_mean``、``prefix.image_only: true`` 和 ``use_rlt: false``。``z_rl`` 只对 VLM 图像 token 做 pooling；语言仍用于生成 reference action。STEAM routing 只负责 base VLA、Stage 2 actor 与 expert 的 rollout route，head 和 algorithm 仍由 Prefix runtime 负责。``rollout.routing_gate.cameras`` 将每个 STEAM processor camera key 映射到提供该图像的 env observation key。
+冻结的特征模型显式设置 ``prefix.pool: masked_mean``、``prefix.image_only: true`` 和 ``use_rlt: false``。``z_rl`` 只对 VLM 图像 token 做 pooling；语言仍用于生成 reference action。STEAM 控制 base 到 actor 的切换，并在 shadow 模式下记录 expert takeover 决策。``rollout.routing_gate.cameras`` 将每个 STEAM processor camera key 映射到提供该图像的 env observation key。
 
-首次校准、还没有 phase head 时，使用采集 preset：
+采集校准数据
+^^^^^^^^^^^^
+
+要为自己的设置拟合 head，使用采集 preset。该 preset 清空 phase-head 路径，使用环境几何 gate 路由，并将 expert takeover 保持为 shadow 模式：
 
 .. code:: bash
 
    STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
 
-该 preset 清空 phase-head 路径，使用环境几何 gate 路由，并将 expert takeover 设为 shadow 模式。同时启用 ``rollout.routing_gate.actor_switch.collect_phase_features`` 和 ``algorithm.rlt_gate_calibration.enable``，由 learner 将特征、几何标签和 gate 诊断信息写入 ``/data/steam_peg/gate_calibration/rank_<rank>/trace_*.pt``。每次采集使用独立的 trace 目录。
+preset 启用 ``rollout.routing_gate.actor_switch.collect_phase_features`` 输出 STEAM 特征，并启用 ``algorithm.rlt_gate_calibration.enable`` 保存特征、几何标签和 gate 诊断信息。每次启动都会在 ``logs/`` 下创建独立的运行目录，learner 将数据写入 ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``。保存目录由 ``algorithm.rlt_gate_calibration.save_path`` 配置。
 
-20 轮 rollout 用于验证采集流程；正负几何标签都出现时，可以拟合初版 phase head。它们不足以完成 preset 的 30,000 次更新 warmup，部署用的 expert 阈值需要用后续 actor 实际控制的 episode 校准。拟合初版 head 时，不设置 minimum-version 过滤：
+20 轮 rollout 用于验证采集流程；正负几何标签都出现时，可以拟合初版 phase head。它们不足以完成 preset 的 30,000 次更新 warmup，部署用的 expert 阈值需要用后续 actor 实际控制的 episode 校准。将 ``TRACE_DIR`` 设为此次采集的 trace 目录，拟合初版 head 时不设置 minimum-version 过滤：
 
 .. code:: bash
 
-   python toolkits/rlt/calibrate_steam_gates.py /data/steam_peg/gate_calibration \
-     --phase-head-output /data/steam_peg/steam_phase_head.pt \
-     --yaml-output /data/steam_peg/steam_gate_recommendation.yaml --device cpu
+   TRACE_DIR=/path/to/run_log_dir/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration
+   python toolkits/rlt/calibrate_steam_gates.py "$TRACE_DIR" \
+     --phase-head-output "$CHECKPOINT_ROOT/steam_phase_head.pt" \
+     --yaml-output "$CHECKPOINT_ROOT/steam_gate_recommendation.yaml" --device cpu
 
-将推荐文件的 ``rollout.routing_gate`` 设置复制到训练 preset，包括 phase-head 路径与校准后的阈值。正常运行时使用训练 preset；它的采集开关保持 false，路由恢复由 rollout gate 控制。校准工具与训练更新分开运行。
+检查验证指标后，再将阈值复制到训练 preset，并将 phase-head 路径设为本地输出位置。校准工具在训练更新之外离线运行。正常运行使用训练 preset，两个采集开关保持 false。
+
+Replay 与更新
+^^^^^^^^^^^^^
 
 Stage 2 replay 的 observation 固定为：
 
