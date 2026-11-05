@@ -197,6 +197,7 @@ def compute_rollout_metrics_dynamic(
     # Build final metrics dict
     rollout_metrics = {
         "total_num_sequence": num_seq,
+        "valid_response_tokens": n_valid_token,
         "prompt_length": sum_plen / num_seq,
         "response_length": sum_rlen / num_seq,
         "total_length": (sum_plen + sum_rlen) / num_seq,

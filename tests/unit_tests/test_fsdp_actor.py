@@ -43,7 +43,7 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import RolloutDataBalance
 from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.utils.utils import get_loss_agg_func
+from rlinf.utils.utils import get_loss_agg_func, retrieve_model_state_dict_in_cpu
 from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 
 
@@ -473,7 +473,7 @@ def _local_channel(name):
     return channel
 
 
-def _sharded_actor(dynamic, model_type="token"):
+def _sharded_actor(dynamic, model_type="token", world_size=2):
     from torch.distributed.device_mesh import init_device_mesh
 
     actor = _actor(dynamic, model_type)
@@ -502,9 +502,11 @@ def _sharded_actor(dynamic, model_type="token"):
         },
     )
     actor._cfg = actor.cfg.actor
-    actor._strategy = FSDPStrategyBase.create(actor.cfg.actor, 2, dist.group.WORLD)
+    actor._strategy = FSDPStrategyBase.create(
+        actor.cfg.actor, world_size, dist.group.WORLD
+    )
     actor.model = actor._strategy.wrap_model(
-        actor.model, init_device_mesh(Worker.torch_device_type, (2,))
+        actor.model, init_device_mesh(Worker.torch_device_type, (world_size,))
     )
     actor.optimizer = torch.optim.SGD(actor.model.parameters(), lr=0.01, momentum=0.9)
     actor.lr_scheduler = torch.optim.lr_scheduler.StepLR(
@@ -560,7 +562,8 @@ def _unsharded_update(temperature=1.0, model_type="token"):
 
 def _run_sharded_step(actor, rank):
     inputs, inference = _local_channel("input"), _local_channel("inference")
-    inputs.put(_rollout(bool(rank)))
+    for group_index in range(rank, 2, dist.get_world_size()):
+        inputs.put(_rollout(bool(group_index)))
     actor.run_inference(inputs, inference, compute_ref_logprobs=False)
     metrics = actor.run_training(inference)
     assert inputs.empty() and inference.empty()
@@ -575,6 +578,7 @@ def _check_sharded_training(
     temperature,
     device="cpu",
     model_type="token",
+    world_size=2,
 ):
     Worker.torch_device_type = device
     Worker.torch_platform = torch.cuda if device == "cuda" else _CPUPlatform
@@ -585,19 +589,24 @@ def _check_sharded_training(
         "nccl" if device == "cuda" else "gloo",
         init_method=f"file://{init_file}",
         rank=rank,
-        world_size=2,
+        world_size=world_size,
         timeout=timedelta(seconds=90),
     )
     try:
         expected, grads, norm, loss = _unsharded_update(temperature, model_type)
-        actor = _sharded_actor(dynamic, model_type)
+        actor = _sharded_actor(dynamic, model_type, world_size)
         actor.cfg.algorithm.sampling_params.temperature = temperature
         assert all(
             isinstance(p, torch.distributed.tensor.DTensor)
             for p in actor.model.parameters()
         )
-        assert any(p.to_local().numel() < p.numel() for p in actor.model.parameters())
+        if world_size > 1:
+            assert any(
+                p.to_local().numel() < p.numel() for p in actor.model.parameters()
+            )
         rollout_metrics, training_metrics = _run_sharded_step(actor, rank)
+        assert rollout_metrics["total_num_sequence"] == 5
+        assert rollout_metrics["valid_response_tokens"] == 10
         assert len(training_metrics) == 1
         torch.testing.assert_close(
             torch.tensor(training_metrics[0]["actor/grad_norm"]), norm.cpu()
@@ -641,7 +650,7 @@ def _check_sharded_training(
                     {
                         "model": model_type,
                         "device": device,
-                        "world_size": 2,
+                        "world_size": world_size,
                         "dynamic_batch": dynamic,
                         "temperature": temperature,
                         "loss": float(loss.detach()),
@@ -749,3 +758,50 @@ def test_cuda_sharded_actor_update_and_checkpoint_resume(tmp_path, dynamic):
         nprocs=2,
         join=True,
     )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires one CUDA GPU")
+def test_single_cuda_fsdp_actor_update_and_checkpoint_resume(tmp_path):
+    torch.multiprocessing.spawn(
+        _check_sharded_training,
+        args=(
+            str(tmp_path / "group"),
+            str(tmp_path / "checkpoint"),
+            False,
+            0.7,
+            "cuda",
+            "qwen",
+            1,
+        ),
+        nprocs=1,
+        join=True,
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires one CUDA GPU")
+@pytest.mark.parametrize("actor_group", ["cuda"], indirect=True)
+def test_single_cuda_fsdp_reference_swap_preserves_policy(actor_group):
+    actor = _sharded_actor(False, "qwen", world_size=1)
+    reference = _actor(model_type="qwen")
+    rollout = _rollout()
+    batch = rollout.to_actor_batch(10, 0)
+    actor.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(actor, is_fsdp=True)
+    assert all(
+        isinstance(value, torch.distributed.tensor.DTensor)
+        and value.device.type == "cpu"
+        for value in actor.ref_policy_state_dict.values()
+    )
+    with torch.no_grad():
+        initial = actor.get_model_state_dict(cpu_offload=True, full_state_dict=True)
+        expected = reference.forward_batch(batch).cpu()
+        reference.model.lm_head.weight[0].add_(0.25)
+        expected_ref = reference.forward_batch(batch).cpu()
+        actor.ref_policy_state_dict["lm_head.weight"].to_local()[0].add_(0.25)
+        actual, ref = actor.inference_step(batch, rollout, True)
+        after = actor.get_model_state_dict(cpu_offload=True, full_state_dict=True)
+    mask = batch["response_mask"].cpu()
+    torch.testing.assert_close(actual[mask], expected[mask])
+    torch.testing.assert_close(ref[mask], expected_ref[mask])
+    assert (actual[mask] - ref[mask]).abs().max() > 1e-5
+    for name in initial:
+        torch.testing.assert_close(after[name], initial[name], atol=0, rtol=0)
