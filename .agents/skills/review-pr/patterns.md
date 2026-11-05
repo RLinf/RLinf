@@ -114,5 +114,6 @@ Simulators, robot SDKs, and model-specific packages are imported inside the func
 ## Docs
 
 - Follow [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md): the first sentence states the page's purpose, ideas come before names, pages describe what exists now, and English and Chinese change together.
+- A feature worth announcing (a new model, env, algorithm, backend, accelerator, robot, or major capability) is highlighted in both READMEs in the same PR: a dated "What's NEW!" entry and an item in the matching support list or hardware table, each linking to its docs page.
 - Guide pages are plain and technical: simple task headings, one config example, one worked example, and only the config keys a user writes. They leave out equations, tensor-shape tables, and internal class, function, or file names.
 - Use the [docs-check](../docs-check/SKILL.md) skill for doc-to-code checks and EN/ZH parity, and [refine-docs](../refine-docs/SKILL.md) for structure and voice.

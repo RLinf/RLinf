@@ -64,7 +64,7 @@ Work through [reference.md](reference.md) in this order, and judge every design 
 | `design` | extension points, containment, special cases, abstractions, protection code, config, unnecessary changes | 5 |
 | `reuse` | duplicated logic and the existing helper to use | 6 |
 | `tests` | test coverage and layout, mocks, install, Docker, CI | 7 |
-| `docs` | docs against code, EN/ZH parity, doc style and usability | 7 (3 for usability) |
+| `docs` | docs against code, EN/ZH parity, README highlights, doc style and usability | 7 (3 for usability) |
 | `style` | code conventions, headers, commits, PR title and description | 8 |
 
 For every changed function, read the `main` version and the PR version side by side. Label a finding that came from reading `main` rather than the diff alone as a main-branch cross-check.
@@ -209,5 +209,5 @@ The main comment holds only the eight sections, each under its question as a `##
 4. **Are there bugs or unresolved concerns?** The confirmed issues and the unresolved concerns, each with its trigger and evidence and a pointer to its inline comment, then the dismissed findings with one line each on why. "No issue found" says what was checked.
 5. **Does the integration follow RLinf's design?** The existing implementation compared against; whether interfaces, registration, config, worker conventions, and containment match it; mismatches; and anything that needs a senior maintainer's judgment.
 6. **Does it reuse existing modules/functions properly?** Avoidable duplication and the existing helper to reuse, or else the implementation compared against.
-7. **Are tests and documentation adequate?** Whether the tests cover the changed behavior; whether docs, EN/ZH updates, and install and CI integration are there where needed; the tests that ran (command, hardware, result) and the ones skipped, with why.
+7. **Are tests and documentation adequate?** Whether the tests cover the changed behavior; whether docs, EN/ZH updates, the README highlight for a feature worth announcing, and install and CI integration are there where needed; the tests that ran (command, hardware, result) and the ones skipped, with why.
 8. **What is your recommendation?** Exactly one of `Ready for senior review` (no open critical or major finding, and the reproduction succeeded or was not needed), `Changes requested` (open critical or major findings the author can fix), or `Blocked` (progress needs more than the author's fixes: a maintainer decision, hardware or assets nobody has, another PR, or a reproduction failure the docs cannot explain). Then the remaining actions as a list, and the expert review needed.
