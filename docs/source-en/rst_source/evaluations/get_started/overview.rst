@@ -11,7 +11,10 @@ All evaluation code and configs live under ``evaluations/`` at the repository ro
 .. code-block:: text
 
    evaluations/
-   ├── eval_embodied_agent.py   # Main evaluation program
+   ├── eval_embodied_agent.py   # Generic embodied evaluation
+   ├── eval_supermimic.py       # G1 motion / velocity evaluation
+   ├── eval_supermimic_push.py  # G1 standing-pose push recovery
+   ├── supermimic/             # SuperMimic eval configs
    ├── run_eval.sh              # One-click launcher
    ├── libero/                  # LIBERO eval configs
    ├── robotwin/                # RoboTwin eval configs
@@ -23,14 +26,18 @@ All evaluation code and configs live under ``evaluations/`` at the repository ro
 Evaluation Architecture
 -----------------------
 
-Evaluation is driven by ``EmbodiedEvalRunner``: the environment worker and rollout worker communicate through Channels and run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files. SuperMimic does not use this pipeline; it has its own single-GPU entry, ``eval_supermimic.py``, described in the Evaluate section of :doc:`../../examples/embodied/supermimic`.
+Evaluation is driven by ``EmbodiedEvalRunner``: the environment worker and rollout worker communicate through Channels and run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files.
 
-Typical data flow:
+Typical data flow for this worker-based entry:
 
 1. **Config loading** — Hydra reads YAML from ``evaluations/<benchmark>/`` and references environment and model presets from ``examples/embodiment/config/`` via ``defaults``.
 2. **Worker launch** — Env and Rollout workers start on GPUs according to ``cluster.component_placement``.
 3. **Parallel rollout** — Env workers reset environments and return observations; Rollout workers generate actions from the model; loop until episodes finish.
 4. **Metric aggregation** — Task-level metrics such as ``success_once`` and ``return`` are computed and logged.
+
+SuperMimic uses dedicated single-GPU entries for motion/velocity tracking
+and standing-pose push recovery. Follow the Evaluate section of
+:doc:`../../examples/embodied/supermimic` for its workflow.
 
 Next Steps
 ----------

@@ -37,11 +37,10 @@ Overview
       :text-align: center
 
       One process per GPU; NCCL data parallel; Ray multi-node (experimental)
-      (experimental)
 
 | **You'll do:** install a dedicated environment -> prepare the LAFAN1 clips
-  -> train, resume, and evaluate with the smoke config -> train the paper
-  config on one or more GPUs.
+  -> train, resume, and evaluate at a small scale -> train the main recipe
+  or apply the paper-oriented overrides.
 | **Prerequisites:** an NVIDIA GPU, or the experimental AMD MI300X path
   (see `Installation`_); the RLinf repository
   (:doc:`installation <../../start/installation>`); LAFAN1 G1 clips (see
@@ -61,15 +60,16 @@ Overview
      - Track reference motion clips (LAFAN1 or BONES-SEED retargeted to the
        G1); optionally track velocity commands with a second goal encoder.
    * - Observation
-     - The last 10 frames of joint positions relative to the default pose,
-       joint velocities, base angular velocity, projected gravity, and the
-       previous action (93 values per frame), with uniform sensor noise.
+     - Ten frames of joint positions relative to the default pose, joint
+       velocities, base angular velocity, projected gravity and previous
+       action, with sensor noise. The main recipe has 99 values per frame,
+       including 6-d reference orientation; the paper overrides use 93.
    * - Action
      - 29 joint setpoints :math:`q_{sp} = \alpha a + q_0` for low-gain PD
        control.
    * - Goal
-     - 10 reference frames of 68 values (680-d), or one of the variants in
-       `Configurations`_.
+     - The main recipe uses a 730-d goal (10 frames of 73 values). The paper
+       overrides use 680-d; see `Configurations`_ for the other interfaces.
    * - Entry points
      - Training uses ``examples/embodiment/run_supermimic.sh`` (not the generic
        ``run_embodiment.sh``); evaluation uses
@@ -106,18 +106,12 @@ repository root, create a dedicated virtual environment with RLinf's installer:
 In every new shell, return to the repository root and run
 ``source .venv-supermimic/bin/activate`` first.
 
-The NVIDIA installer selects torch 2.14.0 for this environment only, because
-its pinned mjlab requires ``torch>=2.14.0``; RLinf's project-wide torch pin is unchanged. torch
-2.14.0 requires ``setuptools>=77.0.3``, so for this environment the installer
-also replaces the project-wide ``setuptools<75.9`` override with
-``setuptools>=77.0.3,<82`` (setuptools 82 removes ``pkg_resources``). When
-the installed torch is a CUDA 12 build, it also installs the CUDA 12 build of
-``warp-lang`` 1.18.0 (the PyPI wheel is a CUDA 13 build). The script selects
-an ``x86_64`` or ``aarch64`` wheel for the host architecture, treating
-``arm64`` as ``aarch64``. The SuperMimic packages are listed in ``requirements/embodied/envs/supermimic.txt``.
-Installing that file with ``pip`` into an existing RLinf environment upgrades
-its torch, so keep SuperMimic in its own environment. ``docker/Dockerfile``
-has an ``embodied-supermimic-image`` target that runs the same install.
+The NVIDIA environment uses torch 2.14.0 and ``warp-lang`` 1.18.0,
+with dependencies listed in ``requirements/embodied/envs/supermimic.txt``.
+Keep it separate from other RLinf environments because these requirements
+upgrade torch. The installer selects the CUDA 12 Warp wheel by host
+architecture when needed. ``docker/Dockerfile`` also provides an
+``embodied-supermimic-image`` target using the same installation.
 
 The G1 model, joint order, actuator gains, and the standing keyframe come from
 mjlab. Every reference clip carries the default pose ``q0`` it was converted
@@ -156,52 +150,10 @@ compile target and defaults to MI300X's ``gfx942``. After installation, use
 the same data preparation, training and evaluation entries below. Select
 the training GPU with ``cluster.component_placement.supermimic``.
 
-`ZJLi2013's PR #1767 feedback <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_
-reports two MI300X runs based on commit ``0a19b154`` with their two old-stack
-compatibility edits. Both used ``supermimic_lafan1_zita``, seed 0 and the
-40 LAFAN1 clips; the only config change was ``runner.save_interval=500``.
-The reported checkpoints are:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 12 22 22 22 22
-
-   * - Run
-     - Update 14000: clips without failure
-     - Update 14000: normalized return
-     - Update 16000: clips without failure
-     - Update 16000: normalized return
-   * - Run A
-     - 39/40
-     - 0.832
-     - 38/40
-     - 0.832
-   * - Run B
-     - 40/40
-     - 0.851
-     - 39/40
-     - 0.844
-
-Clips without failure counts reference motions that reached the end;
-normalized return measures tracking return normalized by the full clip
-length. They are different metrics. The commenter attributes the gap to
-the A800 report to run-to-run variation. These two runs support similar
-tracking performance, but do not establish strict cross-platform equivalence.
-They evaluate motions included in training.
-
-Run A took about 4 h 15 min for 16000 updates, with roughly 0.97 s per update
-in steady state after update 600 and about 6 min for the first actor compile.
-The commenter reports that ``torch.compile`` worked on ROCm and no training
-scan fell back to eager. The A800 value of 0.856 cited in the comment belongs
-to the PR's earlier update-16000 report; the optimized A800 run recorded
-elsewhere on this page scored 0.850 in about 2 h. They are different runs.
-
-These are third-party results for the old baseline with their compatibility
-edits. The new AMD installer branch and the current derived-constant fix
-have not been validated locally through a full AMD training run, and other
-AMD models have not been validated. After installation, follow the data
-preparation, training and evaluation steps below; these historical numbers
-are not a performance guarantee for the current installer branch.
+The AMD installer and current simulator changes have not been validated
+through a full AMD training run. Historical third-party MI300X results
+are listed under `Reported Tracking Results`_; they are not a performance
+guarantee for this installation path. Other AMD models remain unvalidated.
 
 Prepare Reference Motion
 ------------------------
@@ -519,32 +471,29 @@ The paper overrides above select a separate recipe explicitly.
 * ``algorithm.reward_anchor``: ``pelvis`` or ``torso`` (``torso_link``).
   The paper config writes ``torso``. ``termination_body`` still chooses the
   failure body.
-* ``algorithm.input_norm``: ``running`` keeps a Welford mean and variance,
-  after zita-ch's fixed scale on :math:`\xi`. ``none`` leaves the raw
-  values. The paper config writes ``none``.
-* ``algorithm.residual_frame``: ``body`` puts linear velocity in the full
-  body frame and stores the world-rate angular increment back as a body
-  rate. ``heading`` puts position and linear velocity in the yaw frame and
-  adds the angular residual to the stored body rate. The paper config
-  writes ``heading``.
-* ``algorithm.wm_state_loss``: ``running`` divides the frame-local error by
-  the running residual standard deviation and averages the 70 components.
-  ``paper`` is an unweighted square. ``scaled`` uses fixed block scales.
-  The paper config writes ``paper``.
+* ``algorithm.input_norm``: ``running`` normalizes model inputs using running
+  statistics; ``none`` leaves the raw values. The paper overrides use ``none``.
+* ``algorithm.residual_frame``: ``body`` or ``heading`` selects the frame of
+  the predicted state residual. The paper overrides use ``heading``; see
+  :doc:`the algorithm reference <../../reference/algorithms/supermimic>`
+  for the component-wise definitions.
+* ``algorithm.wm_state_loss``: ``running`` scales state errors by running
+  residual statistics, ``scaled`` uses fixed scales, and ``paper`` uses
+  unweighted squared error. The paper overrides use ``paper``.
+
+For a large LAFAN1 library, ``env.motion_on_cpu=true`` keeps both reference
+states and the full reference FK cache in host memory. Queries gather rows
+there and transfer only the requested states, body poses and velocities to
+the GPU. The cache still occupies host RAM. With ``motion_on_cpu=false``,
+the library and its FK cache stay on the training device. BONES-SEED
+libraries use CPU storage with the same query-transfer behavior.
 
 ``env.com_sampling`` chooses when the torso CoM offset in :math:`\xi` is
 drawn. ``per_env`` draws it once per environment, as zita-ch does;
-``per_reset`` draws a new one on every reset. A new offset recomputes
-MuJoCo Warp's model constants for every world, which was the largest part
-of collection time. Friction and joint offsets are drawn on every reset
+``per_reset`` draws a new one on every reset and incurs the cost of
+recomputing simulation constants. Friction and joint offsets are drawn on every reset
 either way. The paper config writes ``per_reset``, ``supermimic_lafan1_zita``
 writes ``per_env``, and an omitted key means ``per_env``.
-
-The simulator stores the CoM offset and the derived constants used by
-recomputation separately for each environment. When the CoM changes, each
-environment uses its own constants. On versions that store the solver's
-inertia scale as an array, ``stat.meaninertia`` also has one entry per
-environment. These arrays are expanded before simulation graphs are recaptured.
 
 ``supermimic_lafan1_zita`` sets ``pelvis``, ``running``, ``body`` and
 ``running`` in the complete training recipe. The simulator stays mjlab. It
@@ -552,59 +501,8 @@ refuses a checkpoint saved before those four fields were recorded. Linear
 layers run under bfloat16 autocast (``algorithm.matmul: bf16``);
 integration, kinematics, the losses and the Adam weights stay float32.
 
-In the optimized run before the review fixes, 16000 updates on one 80 GB
-A800 with 4096 environments took 1 h 59 min
-51 s, from the Ray cluster being ready to the metrics line of update 16000.
-The same zita-ch code, measured on an A800 of the same model, took 2 h
-15 min for 16000 updates. zita-ch's own report is update 14000 in 1.47 h
-on an RTX PRO 6000. The compile cache from an earlier start on the same
-machine was present (see `Performance and Hardware`_), and the run reached
-update 100 in 110 s. The first 500 updates train only the world model, at
-about 26 s per 100 updates; after that each 100 updates took 43-47 s,
-44.9 s on average. That timing run used this launch:
-
-.. code-block:: bash
-
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-   mkdir -p /data/runs/lafan1_zita
-   PYTHONUNBUFFERED=1 bash examples/embodiment/run_supermimic.sh supermimic_lafan1_zita \
-       cluster.component_placement.supermimic=0 \
-       runner.logger.log_path=/data/runs/lafan1_zita \
-       'runner.logger.logger_backends=[tensorboard]' \
-       > /data/runs/lafan1_zita/console.log 2>&1
-
-* ``cluster.component_placement.supermimic`` picks the GPU, 0 by default.
-  Keep other jobs off that GPU while timing. If a Ray cluster is already
-  running on the machine, point ``RAY_ADDRESS`` at it.
-* ``> console.log 2>&1``: every 100 updates the console prints one
-  timestamped ``supermimic metrics`` line. Time the run from the first
-  ``[INFO ... RLinf]`` line to the line with
-  ``'train/global_update': 16000.0``. ``PYTHONUNBUFFERED=1`` writes each
-  line to the file at once, so progress is visible during the run.
-* Do not set ``SUPERMIMIC_SCAN_EAGER``, ``SUPERMIMIC_FK_EAGER`` or
-  ``SUPERMIMIC_PROFILE``. The first two turn off the training compile, and
-  the third syncs the GPU between pieces. Each makes training much slower.
-* On a new machine, or after ``/tmp`` is cleared, the first start compiles
-  for a few minutes first, and the total grows by that much.
-
-The update-16000 checkpoint of this run scored ``eval/normalized_return``
-0.850 on the 40 LAFAN1 clips, and the update-14000 checkpoint scored
-0.828. zita-ch reports 0.829 at update 14000. An earlier run used the code
-from before the speed work, drew the CoM offset on every reset, compiled
-for about 30 minutes and trained for about 4.5 hours.
-
-Evaluate with ``supermimic_lafan1_zita_eval`` on one GPU, without Ray.
-Point ``eval.checkpoint`` at the ``supermimic_lafan1_zita`` directory under
-that ``log_path`` to use the newest complete checkpoint, or at one
-``global_step_<N>`` directory. The config saves every 2000 updates, so
-update 14000, the one zita-ch reports, has a checkpoint. To score update
-14000, point the checkpoint at that save:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
-       eval.checkpoint=/data/runs/lafan1_zita/supermimic_lafan1_zita/global_step_14000 \
-       eval.output_dir=/data/runs/lafan1_zita/eval_14000
+Historical tracking results and timing are summarized under
+`Reported Tracking Results`_ and `Performance and Hardware`_.
 
 Common Keys
 ~~~~~~~~~~~
@@ -700,7 +598,9 @@ run. So ``total_updates=16000`` is about 16000 / 0.4 = 40,000 vectorized
 simulator steps plus the warmup, and environment transitions are that times
 ``env.num_envs``. In the logs, ``train/global_update`` counts updates, and
 ``sim_vector_steps`` and ``env_transitions`` count simulator steps and
-transitions.
+transitions. Pending updates are capped at the remaining budget, even
+when ``updates_per_env_step`` exceeds one. The final update always saves a
+checkpoint and also runs evaluation when validation is enabled.
 
 **Global sizes.** ``env.num_envs``, ``algorithm.wm_window_batch``, and
 ``algorithm.imagine_batch`` are totals over all ranks, split evenly;
@@ -761,14 +661,10 @@ Multiple GPUs
 -------------
 
 ``cluster.component_placement.supermimic`` lists GPUs, one rank per GPU.
-Ranks run synchronous data parallelism: each steps its own environments,
-keeps its own replay, samples its share of each batch, and all-reduces
-gradients weighted by its sample count before clipping, so every rank applies
-the same update. Rank 0 broadcasts the initial weights and evaluates.
-``train/param_divergence`` checks that ranks hold identical weights and
-buffers every ``algorithm.param_check_interval`` updates. Running
-normalization merges each rank's batch count, mean, and variance before
-updating the shared statistics.
+Ranks train synchronously using shares of the global environments and
+batches. Rank 0 evaluates; ``train/param_divergence`` reports agreement of
+model parameters and buffers. Details of gradient and normalization
+reductions are in the :doc:`algorithm reference <../../reference/algorithms/supermimic>`.
 
 There are two ways to use more GPUs:
 
@@ -883,18 +779,6 @@ RLinf's generic eval configs such as ``rollout.model.model_path`` and
 ``runner.task_type: embodied_eval`` do not apply; SuperMimic takes the
 checkpoint from ``eval.checkpoint``.
 
-Motion, velocity and push-recovery evaluation stop with an error if an
-active rollout's policy produces NaN/Inf actions. The error lists the active
-row indices in the current batch; finished rows remain masked. For
-``non-finite policy actions in active evaluation rows``, first check that
-the checkpoint matches the evaluation config, then inspect policy outputs
-and input data for numerical problems.
-
-Motion-tracking and velocity evaluation also check active simulation and
-reference states at initialization and after each step. Non-finite values
-raise ``non-finite evaluation states in active rows`` before reward or metric
-calculation; finished rows remain masked.
-
 ``eval.checkpoint`` is a ``global_step_<N>`` folder or a folder of
 checkpoints such as ``log_path/<experiment_name>``, in which case the newest
 complete one is used. Eval configs per training config:
@@ -938,9 +822,13 @@ scheduled length, not the steps that ran, so an early failure keeps the
 unplayed part in the denominator and :math:`\mathrm{NR}_i \le 1`.
 ``eval/normalized_return`` is the unweighted mean over clips.
 
-**Velocity tracking** is chosen with ``eval.velocity``:
+**Velocity tracking** uses the same ``supermimic_lafan1_zita_eval`` config.
+Its default ``eval.velocity=none`` runs motion evaluation only. To evaluate
+an encoder trained with ``algorithm.velocity_tracking=true``, keep that
+model override and explicitly select ``eval.velocity=g2`` or
+``eval.velocity=smoke``:
 
-* ``g2`` (the velocity eval config's default) runs the Appendix G.2 step
+* ``g2`` (enabled with ``eval.velocity=g2``) runs the Appendix G.2 step
   test: 672 commands on a 15 x 15 grid in each of the (vx, vy), (vx, wz), and
   (vy, wz) planes without the standing command, four trials each, 5 s from
   mjlab's standing pose. The value of a trial is the norm of the mean velocity
@@ -956,6 +844,9 @@ unplayed part in the denominator and :math:`\mathrm{NR}_i \le 1`.
   ``eval_velocity_smoke/`` prefix. It checks that the velocity encoder runs;
   it is not a paper metric.
 
+For repeatable G.2 evaluation, keep ``eval.seed``, batch size, hardware
+and the other evaluation settings fixed.
+
 **Stationary standing-pose push recovery.** Paper §4.3 holds a static
 T-pose. This entry is a different protocol and does not claim to reproduce
 that T-pose. ``evaluations/run_eval.sh supermimic_push_recovery`` runs
@@ -964,30 +855,12 @@ an existing tracking checkpoint and does not train. The reference stays
 one standing pose for the whole trial, so the goal does not switch to a
 walk.
 
-The paper specifies a static T-pose in simulation and velocity pushes of
-0.5–4 m/s. The critic policy settles in 0.5–2.4 s; the critic-free policy
-keeps stumbling at 0.5 m/s and falls at 4 m/s. It does not publish the
-T-pose joint angles, the speed grid, the direction, the frame, the trial
-count, the pre-push wait, or a numerical definition of "settles". This
-implementation holds mjlab's knees-bent keyframe, ``KNEES_BENT_KEYFRAME``,
-the same pose as ``q0`` and ``reset_standing``. Forward kinematics puts
-each wrist about 0.10 m forward, 0.07 m outward, and 0.31 m below its
-``shoulder_roll_link``. Shoulder roll is ±0.2 rad and each elbow is 0.6
-rad, so both arms hang beside the torso. The asset has only
-``HOME_KEYFRAME`` and ``KNEES_BENT_KEYFRAME``, and the MJCF has no
-keyframe. With every joint at zero the forearm points about 0.20 m forward
-and 0.19 m below the shoulder, with almost no lateral offset, so that rest
-pose is not a T-pose either. Because the paper does not publish the joint
-angles, this code does not invent a horizontal-arm pose and call it the
-paper pose. The default speeds are 0.5, 1, 2, and 4 m/s, four trials each;
-that grid is this implementation's choice. ``eval.direction=random`` draws
-a horizontal direction, or pass ``eval.direction=[1.0,0.0]``.
-``eval.frame`` is ``world`` or ``heading``. ``eval.push_mode=add`` adds
-that horizontal velocity to the current world-frame root linear velocity;
-``set`` replaces xy and keeps z. The write goes into MuJoCo Warp's root
-velocity and ``forward`` refreshes derived state without integrating. The
-next ``step`` integrates it. The write does not change root position,
-angular velocity, or joint state.
+The reference uses mjlab's knees-bent standing pose, with arms beside the
+torso. The default speeds are 0.5, 1, 2 and 4 m/s, four trials each.
+``eval.direction=random`` samples a horizontal direction, or set
+``eval.direction=[1.0,0.0]``. ``eval.frame`` selects ``world`` or ``heading``.
+``eval.push_mode=add`` adds horizontal root velocity; ``set`` replaces it
+while preserving vertical velocity. These are settings of this protocol.
 
 A fall is the training ``failure_signals`` test against this static
 reference: height error above 0.25 m or tilt error above 0.8. The settle
@@ -1006,13 +879,10 @@ violation, or a non-finite state before the push is
 ``eval.settle_seconds`` (default 1 s) and ``eval.max_seconds`` (default
 5 s) are this implementation's wait and cutoff, not the paper's 0.5–2.4 s.
 
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_push_recovery \
-       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1_zita \
-       eval.output_dir=/data/runs/lafan1/push_recovery
-
-For a checkpoint from the main zita-aligned recipe, also pass all policy overrides below. The push evaluator otherwise keeps its original paper interface.
+For a checkpoint from the main zita-aligned recipe, pass the matching
+policy overrides below. The push config itself uses a 680-d goal and
+93-d observation, so these overrides are required for the main recipe's
+730-d/99-d interface.
 
 .. code-block:: bash
 
@@ -1031,14 +901,6 @@ measured velocity change, the outcome, and the reason.
 ``eval.save_trajectory=true`` also writes ``trajectory.csv``. An anchor,
 730-d goal, or 99-d observation checkpoint needs matching ``algorithm``
 overrides on the command line.
-
-On an 8 GB RTX 4060, a checkpoint from 3 updates was run at 0.5 m/s and
-1 m/s, one trial each, with 0.4 s before the push and at most 0.8 s after
-it, world +x. Both trials were standing when pushed. The measured
-horizontal speed changes were 0.5 m/s and 1.0 m/s. Both then fell under
-the training fall test, and the recovery times were empty. That shows the
-evaluator runs on the knees-bent standing pose. It does not show recovery
-under the paper's T-pose protocol.
 
 ``runner.only_eval=true runner.resume_dir=<checkpoint>`` evaluates through
 the training entry instead, using the training config's environment count;
@@ -1092,9 +954,94 @@ update when it is not a multiple of 100; update 0 goes to TensorBoard only.
 Each evaluation prints a ``supermimic eval {...}`` line. Values are visible
 on the console even with no backend enabled.
 
+.. _supermimic-reported-results:
+
+Reported Tracking Results
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The optimized A800 run used ``supermimic_lafan1_zita``, 40 training clips,
+4096 environments and the code before the review fixes. Results measure
+tracking of training motions, not generalization or a full reproduction
+of the paper's 680-d recipe.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 25 25
+
+   * - Run
+     - Update
+     - Mean normalized return
+   * - RLinf, optimized A800 run
+     - 14000
+     - 0.828
+   * - RLinf, optimized A800 run
+     - 16000
+     - 0.850
+   * - zita-ch, community report
+     - 14000
+     - 0.829
+
+The community's GPU, simulator and recipe differ, so this is not a
+controlled comparison. See `Performance and Hardware`_ for measured
+runtime and memory.
+
+MI300X Community Reproduction
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+`ZJLi2013's PR #1767 feedback <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_
+reports two MI300X runs based on commit ``0a19b154`` with their two old-stack
+compatibility edits. Both used ``supermimic_lafan1_zita``, seed 0 and the
+40 LAFAN1 clips; the only config change was ``runner.save_interval=500``.
+The reported checkpoints are:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 22 22 22 22
+
+   * - Run
+     - Update 14000: clips without failure
+     - Update 14000: normalized return
+     - Update 16000: clips without failure
+     - Update 16000: normalized return
+   * - Run A
+     - 39/40
+     - 0.832
+     - 38/40
+     - 0.832
+   * - Run B
+     - 40/40
+     - 0.851
+     - 39/40
+     - 0.844
+
+Clips without failure counts reference motions that reached the end;
+normalized return measures tracking return normalized by the full clip
+length. They are different metrics. The commenter attributes the gap to
+the A800 report to run-to-run variation. These two runs support similar
+tracking performance, but do not establish strict cross-platform equivalence.
+They evaluate motions included in training.
+
+Run A took about 4 h 15 min for 16000 updates, with roughly 0.97 s per update
+in steady state after update 600 and about 6 min for the first actor compile.
+The commenter reports that ``torch.compile`` worked on ROCm and no training
+scan fell back to eager. The A800 value of 0.856 cited in the comment belongs
+to the PR's earlier update-16000 report; the optimized A800 run recorded
+elsewhere on this page scored 0.850 in about 2 h. They are different runs.
+
+These third-party runs used the old baseline and compatibility edits.
+They do not validate the current AMD installer or establish performance
+for other AMD GPUs. Installation instructions are under
+`AMD MI300X (Experimental)`_.
+
 Troubleshooting
 ---------------
 
+* **Non-finite evaluation outputs.** Motion, velocity and push-recovery
+  evaluation stop if an active policy produces NaN/Inf actions. Motion and
+  velocity evaluation also stop on non-finite simulation or reference
+  states. Check the checkpoint/config match, policy inputs and motion data
+  when the error reports ``non-finite policy actions in active evaluation rows``
+  or ``non-finite evaluation states in active rows``.
 * **CUDA out of memory.** The error names the rank and its per-rank sizes.
   Add GPUs to keep the batch sizes, or reduce ``env.num_envs``,
   ``env.replay_length``, or the training batch sizes.
@@ -1126,10 +1073,6 @@ Troubleshooting
   directory during a run.
 * **"SuperMimic scan <name> stayed eager".** That piece failed to compile
   and runs eagerly from then on. Results are unchanged; training is slower.
-* **Solver iteration caps.** The mjlab adapter caps the MuJoCo Warp solver
-  at ``iterations=10`` and ``ls_iterations=20`` and turns off the
-  one-line-per-world warning when a cap is hit. The caps themselves are
-  unchanged.
 
 Performance and Hardware
 ------------------------
@@ -1144,29 +1087,15 @@ warm compile cache:
   updates. After that, 43-47 s per 100 updates, 44.9 s on average, or
   about 0.45 s per update. 16000 updates took 1 h 59 min 51 s. The same
   zita-ch code, measured on an A800 of the same model, took 2 h 15 min.
-* ``eval/normalized_return`` is 0.850 at update 16000 and 0.828 at update
-  14000. zita-ch reports 0.829 at update 14000.
 * PyTorch peak allocated 17.1 GB (18.8 GB reserved), whole GPU as the
   driver sees it 20.1 GB, Warp pool peak 0.48 GB, host RSS about 4.0 GB.
 * At the end: 40064 vectorized simulator steps, about 164 million
   environment transitions.
 
-**Compilation and cache.** CUDA work on large batches (at least 256 rows)
-is compiled with ``torch.compile`` into seven graphs: goal, post-processing
-and bootstrap during collection, one each; world-model fitting and the
-imagined rollout, each split into a step graph called from a Python loop
-and a score graph run once over every step after the loop. The critic
-update, sampling and the optimizers are not compiled. Each worker keeps its
-own in-process compilation cache and reuses it across updates. The compiled kernels
-go to PyTorch's default inductor cache, ``/tmp/torchinductor_<user>``. A
-new process on the same machine still retraces the graphs but reads the
-kernels from disk; the run above reached update 100 in 110 s. On a new
-machine, or after ``/tmp`` is cleared, compilation starts over and takes a
-few minutes with a cold cache. ``SUPERMIMIC_SCAN_EAGER=1`` and
-``SUPERMIMIC_FK_EAGER=1`` turn off the compile of the training scans and
-of forward kinematics. Results are unchanged. They are meant for unit tests
-on a GPU, where they cut tens of minutes to a few; do not set them for
-training.
+**Compilation.** A first large run compiles training scans and FK. The
+PyTorch kernel cache is under ``/tmp/torchinductor_<user>``; starting on a
+new machine or after clearing that cache takes longer. Keep
+``SUPERMIMIC_SCAN_EAGER`` and ``SUPERMIMIC_FK_EAGER`` unset for training.
 
 **Per-piece timing.** ``SUPERMIMIC_PROFILE=1`` syncs the GPU around each
 piece, so the ``time/*`` metrics become the real time of each piece, and
@@ -1181,61 +1110,12 @@ than that card has. These numbers come from a launch-bound laptop setup and
 do not predict datacenter GPUs; measure seconds per update on your hardware
 before planning a full run.
 
-What Has Been Run
------------------
+Validation Scope
+----------------
 
-On one 8 GB GPU with MuJoCo Warp and the LAFAN1 clips: short training of the
-LAFAN1 configs (680-d, 689-d, 730-d, 99-d observation, velocity) at small
-sizes, including resume after the driver was killed, motion and velocity
-evaluation, and the G.2 step test. Multi-GPU arithmetic is also tested with
-two CPU (Gloo) processes.
-
-A later acceptance run used two 80 GB A800 GPUs, the 40 LAFAN1 clips, and
-local scheduling (not inside a Slurm job). The run reported below reused an
-existing virtual environment, so its own stage 01 is not applicable. An
-earlier run of the same commit had already passed a from-scratch ``install.sh``
-install, and the training and evaluation below used that environment. What
-passed:
-
-* Unit tests: 10 files, 201 passed, 1 skipped because the machine does not
-  have 4 accelerators.
-* One-GPU MuJoCo Warp smoke training: 3 updates, monotonic counters, finite
-  metrics, and a complete checkpoint.
-* Checkpoint resume after the driver was killed, on one GPU and on two. A
-  two-GPU checkpoint continued on one GPU. After one rank was killed, the
-  remaining processes exited nonzero within 20.3 s and left no orphan
-  processes.
-* Motion evaluation of all 40 clips. Repeating it on the same checkpoint
-  stayed within tolerance (absolute :math:`5\times10^{-5}`, relative
-  :math:`2\times10^{-4}`) but was not bitwise identical. ``only_eval`` and
-  velocity evaluation passed. Velocity evaluation used the Appendix G.2
-  command grid with 2 trials per command, not the paper's 4.
-* One-GPU profiling measured throughput and memory at 128 and 512
-  environments. 4096 environments was only a linear estimate from the 512
-  measurement, not a measurement.
-* A small two-GPU run on real NCCL: ``train/param_divergence`` stayed 0,
-  the two ranks' counters matched term by term, and both rank checkpoints
-  were complete. The global sizes were 64 environments and 256 imagined
-  rollouts, not the paper's two-GPU recipe. A short velocity run at the
-  same width also finished.
-* A 12-update learning-signal run at that same two-GPU size. Metrics stayed
-  finite and counters stayed monotonic. Normalized return moved from
-  0.001892 to 0.001893 and the failure rate stayed at 1. One seed and a
-  short budget do not show that the policy learned to track.
-* A full ``supermimic_lafan1_zita`` run before the review fixes: one 80 GB
-  A800, 4096 environments, 16000 updates, warm compile cache, 1 h 59 min
-  51 s from the Ray cluster being ready to update 16000. The same zita-ch
-  code, measured on an A800 of the same model, took 2 h 15 min for 16000
-  updates. About 0.45 s per update in steady state, 17.1 GB PyTorch peak
-  allocated. ``eval/normalized_return`` is 0.850 at update 16000 and 0.828
-  at update 14000. zita-ch reports 0.829 at update 14000.
-* An earlier full ``supermimic_lafan1_zita`` run, with the code from before
-  the speed work and the CoM offset drawn on every reset: the first
-  compilation took about 30 minutes, and the 16000 updates took about
-  4.5 hours. The simulator was mjlab. This page still has no learning
-  curve for either run.
-
-Not yet run: the documented paper overrides (680-d goal, 320000
-updates), the paper's two-GPU recipe, multiple nodes, Slurm, real
-BONES-SEED data, and paper §4.3 T-pose recovery (this entry is a standing
-pose and does not stand in for that result).
+The retained main recipe has completed a 16000-update LAFAN1 run.
+Small-scale single- and two-GPU training, resume and evaluation have also
+been exercised. Full training with the documented paper overrides, the
+paper's two-GPU recipe, multiple nodes, Slurm, real BONES-SEED data and
+paper §4.3 T-pose recovery remain unvalidated. The full-run performance
+measurements above predate the review fixes.

@@ -388,12 +388,19 @@ def test_end_to_end_train_resume_and_evaluate(tmp_path, world, wm_only):
             "algorithm.goal_frame_dim=68",
             "algorithm.goal_encoding=paper",
         ]
+    devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    gpu_ids = (
+        [device.strip() for device in devices.split(",")]
+        if devices
+        else [str(i) for i in range(world)]
+    )
+    placement = ",".join(gpu_ids[:world])
     train = REPO / "examples/embodiment/train_supermimic.py"
     train_args = [
         "--config-name",
         "supermimic_lafan1_zita",
         *common,
-        f"cluster.component_placement.supermimic={'0-1' if world == 2 else '0'}",
+        f"cluster.component_placement.supermimic='{placement}'",
         "cluster.object_store_memory_mb=128",
         f"runner.logger.log_path={tmp_path / 'runs'}",
         "runner.logger.experiment_name=e2e",

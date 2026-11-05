@@ -10,15 +10,10 @@ for the Unitree G1 on MuJoCo Warp. This page describes the algorithm and where
 the implementation departs from the paper; installation, data, training, and
 evaluation commands are in :doc:`../../examples/embodied/supermimic`.
 
-The code is in ``rlinf/algorithms/supermimic/`` (objectives, networks, replay,
-return-based reset sampling), ``rlinf/envs/sim/g1_mimic/`` (reference motion,
-kinematics, reward, observation, MuJoCo Warp adapter), and
-``rlinf/workers/supermimic/`` (training loop, evaluation, checkpoints).
-
 Training loop
 -------------
 
-Each iteration of Algorithm A.1 has three steps, run in one process per GPU:
+Each iteration of Algorithm A.1 has three steps:
 
 1. **Collect.** The policy acts in the simulator with Gaussian action noise
    :math:`\epsilon_t \sim \mathcal{N}(0, 0.1^2)`; the replay buffer stores the
@@ -73,9 +68,16 @@ orientation is a quaternion. ``running`` uses
 observation heads are
 analytic: the reward is computed from the predicted state through
 differentiable forward kinematics of the G1 tree, and the observation from the
-state, the previous action, and :math:`\xi`. The termination head is a learned
-MLP on the height and tilt errors against the reference (and their
-magnitudes); the BCE label is 1 only for a tracking failure.
+state, the previous action, and :math:`\xi`. With
+``algorithm.termination_head: learned``, a termination MLP takes the height
+and tilt errors against the reference (and their magnitudes); the BCE label
+is 1 only for a tracking failure.
+
+With velocity tracking and a learned termination head, state loss is
+averaged over all sampled motion and velocity rows, while termination BCE
+is averaged over motion rows only. Distributed training uses the respective
+global row counts for these two means. A batch with no motion rows
+contributes no BCE; ranks with no local samples still join the reductions.
 
 Actor objective
 ---------------
@@ -117,10 +119,14 @@ while the critic is fit.
 Termination, timeouts, and clip ends
 ------------------------------------
 
-A motion episode fails when the pelvis height error exceeds 0.25 m or the
-tilt error (difference of the gravity direction's z component in the robot
-and reference pelvis frames) exceeds 0.8. Only a failure is a world-model
-positive and an evaluation failure. The 10 s training cap and the end of the
+``algorithm.termination_body`` selects ``pelvis`` (the default) or
+``torso``. A motion episode fails when the absolute height error of the
+selected body exceeds 0.25 m, or its absolute tilt error exceeds 0.8. Tilt
+is the difference of the gravity direction's z component in the robot's
+and reference's selected-body frames. The torso path uses its FK position
+and rotation, so waist roll and pitch affect torso tilt; the pelvis path
+uses the root state directly. Only a failure is a world-model positive and
+an evaluation failure. The 10 s training cap and the end of the
 reference clip end an episode but are not failures; imagination ignores both
 and holds the last reference frame past the end of a clip. The return used
 for reset sampling bootstraps a timeout with the motion critic and does not
@@ -242,7 +248,7 @@ Paper, community, and implementation choices
      - learned or analytic
      - learned
      - analytic sigmoid
-     - learned; ``termination_head: analytic`` is experimental
+     - learned or analytic; the main recipe selects analytic
    * - Input normalization
      - not specified
      - fixed scales
@@ -277,6 +283,21 @@ running residual standard deviation. Its critic uses zita-ch's extra
 features. The simulator is mjlab. Omitting those four keys also selects
 zita-ch. The paper overrides in the usage guide select ``torso``, ``none``, ``heading`` and ``paper``.
 
+Implementation Entry Points
+---------------------------
+
+The training entry is ``examples/embodiment/train_supermimic.py``. Its
+core components are:
+
+* Models: ``rlinf/models/embodiment/supermimic.py``.
+* Runner: ``rlinf/runners/supermimic_runner.py``.
+* Worker: ``rlinf/workers/supermimic/worker.py``.
+* Objectives, replay and reset sampling: ``rlinf/algorithms/supermimic/``.
+* Simulation, motion and rewards: ``rlinf/envs/sim/g1_mimic/``.
+
+The runner sequences training phases across workers. Each GPU has one
+worker holding its simulator, replay, models and optimizers.
+
 Known limitations
 -----------------
 
@@ -292,7 +313,7 @@ Known limitations
 * **The paper config has no input normalization.** Joint velocities reach
   about 20 in the observation and the calibration offsets in :math:`\xi`
   are about 0.01. The paper does not specify normalization, and
-  The documented paper overrides select ``input_norm: none``. ``input_norm:
+  the documented paper overrides select ``input_norm: none``. ``input_norm:
   running`` keeps a Welford mean and variance after a fixed scale on
   :math:`\xi`.
 * **BPTT gradient spikes.** The pre-clip actor gradient norm can spike by two
@@ -303,20 +324,7 @@ Known limitations
   against the §4.3 recovery times of a converged policy. A converter for the
   official BONES-SEED G1 CSV exists, and it has not been checked on a real
   release.
-* **Not demonstrated:** a full run with the documented paper overrides, the paper's
-  two-GPU recipe, and multi-node runs. ``supermimic_lafan1_zita`` has
-  finished 16000 updates on one 80 GB A800 with 4096 environments. With
-  the implementation before the review fixes and a warm compile cache,
-  the run took 1 h 59 min 51 s.
-  The same zita-ch code, measured on an A800 of the same model, took 2 h
-  15 min for 16000 updates. ``eval/normalized_return`` is 0.850 at update
-  16000 and 0.828 at update 14000. zita-ch reports 0.829 at update 14000.
-  A run before the speed work took about 4.5 hours. A short two-GPU run on
-  80 GB A800s has finished on real NCCL with zero parameter divergence. See
-  the user guide for what has and has not been run.
-
-* **Performance after the fixes:** the full-run numbers above predate the
-  review fixes. The implementation now stores derived constants per
-  environment and adds an AMD installation path. Full-training performance
-  after those changes has not been validated. See the user guide for the
-  third-party reproduction and installation steps.
+* **Validation scope:** full training with the paper overrides, the paper's
+  two-GPU recipe and multi-node execution remain unvalidated. Historical
+  LAFAN1 results and hardware measurements are in the user guide's
+  :ref:`reported results <supermimic-reported-results>`.

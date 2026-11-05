@@ -4,11 +4,14 @@ Configuration Reference
 .. note::
 
    This page describes configs for the generic embodied eval entry,
-   ``eval_embodied_agent.py``. SuperMimic motion and velocity configs
-   (``evaluations/supermimic/``) are read by ``eval_supermimic.py``, and push
-   recovery by ``eval_supermimic_push.py``. Each inherits the complete training recipe and overrides evaluation settings, taking the checkpoint from
-   ``eval.checkpoint`` and the results folder from ``eval.output_dir``, has no
-   ``rollout`` or ``env.eval`` section, and does not need
+   ``eval_embodied_agent.py``. SuperMimic's
+   ``supermimic_lafan1_zita_eval.yaml`` runs motion evaluation and, with
+   explicit overrides, velocity tracking through ``eval_supermimic.py``.
+   Push recovery uses ``supermimic_push_recovery.yaml`` with
+   ``eval_supermimic_push.py``. These configs inherit the complete training
+   recipe and override evaluation settings. They take the checkpoint from
+   ``eval.checkpoint`` and the results folder from ``eval.output_dir``;
+   they have no ``rollout`` or ``env.eval`` section and do not need
    ``runner.task_type: embodied_eval``. The required-field and
    derive-from-training sections below do not apply to it; see the Evaluate
    section of :doc:`../../examples/embodied/supermimic`.

@@ -50,19 +50,25 @@ Supported Benchmark Prefixes
 - ``realworld_*`` → realworld
 - ``maniskill_*`` → maniskill
 - ``polaris_*`` → polaris
-- ``supermimic_*`` → supermimic. This prefix switches to its own entry,
-  ``evaluations/eval_supermimic.py`` (one GPU, no Ray). The checkpoint comes
-  from ``eval.checkpoint`` and results go to ``eval.output_dir``; fields such
-  as ``rollout.model.model_path`` below do not apply.
-  ``supermimic_push_recovery`` uses ``evaluations/eval_supermimic_push.py``
-  instead. The protocol is in the Evaluate section of
-  :doc:`SuperMimic <../../examples/embodied/supermimic>`:
+- ``supermimic_*`` → supermimic; see `SuperMimic Evaluation`_ below.
 
-  .. code-block:: bash
+SuperMimic Evaluation
+---------------------
 
-     bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
+Use ``eval.checkpoint`` and ``eval.output_dir`` for SuperMimic's dedicated
+single-GPU evaluation entry. Motion and velocity use ``eval_supermimic.py``;
+``supermimic_push_recovery`` uses ``eval_supermimic_push.py``. For the main
+training recipe, run:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
        eval.checkpoint=/data/runs/lafan1/supermimic_lafan1_zita \
        eval.output_dir=/data/runs/lafan1/eval
+
+The command evaluates the latest complete checkpoint in that directory.
+For matching model overrides and protocol definitions, see the Evaluate
+section of :doc:`SuperMimic <../../examples/embodied/supermimic>`.
 
 Config Fallback
 ---------------

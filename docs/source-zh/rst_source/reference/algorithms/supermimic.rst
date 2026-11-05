@@ -3,12 +3,10 @@ SuperMimic
 
 SuperMimic 训练人形机器人全身动作跟踪 policy 的方式，是让想象出来的回报沿着一个可微的学习型世界模型反向传播，而不是像 PPO 那样给似然比加权。RLinf 在 MuJoCo Warp 上为 Unitree G1 实现了论文 *SuperMimic: Scaling Humanoid Whole-Body Control with One Differentiable World Model*\ （Liao 等，arXiv:2610.28480，`项目主页 <https://supermimic.github.io>`_）中的方法。本页讲算法本身，以及实现和论文不同的地方；安装、数据、训练和评测命令见 :doc:`../../examples/embodied/supermimic`。
 
-代码分三处：``rlinf/algorithms/supermimic/``\ （目标函数、网络、replay、按回报重置采样），``rlinf/envs/sim/g1_mimic/``\ （参考动作、运动学、奖励、观测、MuJoCo Warp 适配），``rlinf/workers/supermimic/``\ （训练循环、评测、检查点）。
-
 训练循环
 --------
 
-算法 A.1 的每次迭代分三步，每张 GPU 上一个进程完成全部工作：
+算法 A.1 的每次迭代分三步：
 
 1. **采集。** Policy 在仿真里执行带高斯噪声 :math:`\epsilon_t \sim \mathcal{N}(0, 0.1^2)` 的动作，replay 存的是实际执行的带噪动作。每个 episode 从按回报采样的重置点开始。
 2. **拟合世界模型**，用从 replay 里采的 ``k = 8`` 步窗口。
@@ -34,7 +32,9 @@ SuperMimic 训练人形机器人全身动作跟踪 policy 的方式，是让想�
 
 ``algorithm.residual_frame: heading`` 把位置和线速度残差放在偏航系，角速度直接加在已存的机体系角速度上。``body`` 的位置仍在偏航系，线速度改到完整机体系，角速度按世界系增量再写回机体系。论文配置写 ``heading``。代码里省略这一项时用 ``body``。
 
-``algorithm.wm_state_loss: paper`` 是不加权平方。旋转仍用相对旋转 :math:`\log(R_{pred} R_{target}^\top)`\ ，因为状态里的根朝向是四元数。``scaled`` 把各分量除以固定尺度。``running`` 用真实下一步的坐标系写出 70 维误差（旋转是 :math:`\log(R_{true}^\top R_{pred})`\ ），除以一步残差目标的滑动标准差（每维不低于固定地板），再对 70 维和 batch 取均值。论文配置写 ``paper``。代码里省略这一项时用 ``running``。奖励头和观测头是解析的：奖励由预测状态经 G1 运动学树的可微正运动学算出，观测由状态、上一动作和 :math:`\xi` 算出。终止头是一个学习型 MLP，输入是相对参考的高度误差、倾斜误差及其绝对值；BCE 标签只有跟踪失败才是 1。
+``algorithm.wm_state_loss: paper`` 是不加权平方。旋转仍用相对旋转 :math:`\log(R_{pred} R_{target}^\top)`\ ，因为状态里的根朝向是四元数。``scaled`` 把各分量除以固定尺度。``running`` 用真实下一步的坐标系写出 70 维误差（旋转是 :math:`\log(R_{true}^\top R_{pred})`\ ），除以一步残差目标的滑动标准差（每维不低于固定地板），再对 70 维和 batch 取均值。论文配置写 ``paper``。代码里省略这一项时用 ``running``。奖励头和观测头是解析的：奖励由预测状态经 G1 运动学树的可微正运动学算出，观测由状态、上一动作和 :math:`\xi` 算出。设置 ``algorithm.termination_head: learned`` 时，终止 MLP 输入相对参考的高度误差、倾斜误差及其绝对值；BCE 标签只有跟踪失败才是 1。
+
+启用速度跟踪和学习型终止头时，状态损失在采样到的全部动作与速度任务样本上取均值，终止 BCE 只在动作任务样本上取均值。分布式训练分别使用两类均值对应的全局样本数。批次中没有动作样本时，BCE 贡献为零；本地没有样本的 rank 仍参与归约。
 
 Actor 目标
 ----------
@@ -64,7 +64,7 @@ Critic 默认在 :math:`V_\psi(s, g, \xi)` 上再拼一个 4 维根误差，拟�
 终止、超时与片段结束
 --------------------
 
-动作任务在骨盆高度误差超过 0.25 m，或倾斜误差（机器人骨盆系与参考骨盆系下重力方向 z 分量之差）超过 0.8 时判为失败。只有失败才是世界模型的正样本，也只有失败算评测失败。10 s 的训练时长上限和参考片段结束都会结束 episode，但不算失败；想象过程不处理这两种情况，片段结束后保持最后一帧参考。重置采样用的回报在超时处用动作 critic 做 bootstrap，失败和片段结束不做 bootstrap。
+``algorithm.termination_body`` 选择 ``pelvis``\ （默认）或 ``torso``。动作任务在所选身体的高度误差绝对值超过 0.25 m，或倾斜误差绝对值超过 0.8 时判为失败。倾斜误差是重力方向在机器人与参考的所选身体坐标系下的 z 分量之差。躯干分支使用 FK 得到的位置和朝向，因此腰部 roll、pitch 会影响躯干倾角；骨盆分支直接使用根状态。只有失败才是世界模型的正样本，也只有失败算评测失败。10 s 的训练时长上限和参考片段结束都会结束 episode，但不算失败；想象过程不处理这两种情况，片段结束后保持最后一帧参考。重置采样用的回报在超时处用动作 critic 做 bootstrap，失败和片段结束不做 bootstrap。
 
 时间对齐
 --------
@@ -141,7 +141,7 @@ Critic 默认在 :math:`V_\psi(s, g, \xi)` 上再拼一个 4 维根误差，拟�
      - 学习或解析均可
      - 学习
      - 解析 sigmoid
-     - 学习；``termination_head: analytic`` 为实验选项
+     - 学习或解析；主配置使用解析终止头
    * - 输入归一化
      - 未规定
      - 固定尺度
@@ -165,6 +165,19 @@ Critic 默认在 :math:`V_\psi(s, g, \xi)` 上再拼一个 4 维根误差，拟�
 
 CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_）和 zita-ch（`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_）是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。上表描述的是开发时查阅的 ``main`` 分支，当时没有记录具体 commit；这两个仓库之后若有改动，以仓库当前代码为准。``supermimic_lafan1_zita`` 把 730 维 Goal、99 维观测、解析终止头、前 500 次只更新世界模型、骨盆奖励锚、滑动输入归一化、机体系残差，以及除以滑动标准差的世界模型误差放在同一次训练里，critic 用 zita-ch 的额外特征。仿真器是 mjlab。这四项在代码里省略时也是 zita-ch 的取值；使用指南中的论文覆盖项写成 ``torso``、``none``、``heading``、``paper``。
 
+实现入口
+--------
+
+训练入口为 ``examples/embodiment/train_supermimic.py``，核心组件如下：
+
+* 模型：``rlinf/models/embodiment/supermimic.py``。
+* Runner：``rlinf/runners/supermimic_runner.py``。
+* Worker：``rlinf/workers/supermimic/worker.py``。
+* 目标函数、replay 与重置采样：``rlinf/algorithms/supermimic/``。
+* 仿真、参考动作与奖励：``rlinf/envs/sim/g1_mimic/``。
+
+Runner 调度各 Worker 的训练阶段，每张 GPU 上一个 Worker 持有仿真环境、replay、模型和优化器。
+
 已知限制
 --------
 
@@ -172,6 +185,4 @@ CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMim
 * **论文配置没有输入归一化。** 观测里关节速度可达 20 左右，:math:`\xi` 里的零位偏差只有 0.01 左右。论文没有规定归一化，文档中的论文覆盖项写 ``input_norm: none``。``input_norm: running`` 才使用滑动均值和方差，并先按固定尺度缩放 :math:`\xi`。
 * **BPTT 梯度尖峰。** 裁剪前的 actor 梯度范数会突然升高两个数量级；论文的裁剪方式限制了每一步的幅度。
 * **没有实现：** 附录 G 的蒸馏编码器。推力恢复评测入口已经有了，协议是静止站立姿态（mjlab 屈膝关键帧），不是论文未公布关节角的 T-pose；还没有用收敛策略核对恢复时间。BONES-SEED 官方 G1 CSV 的转换器已经有了，但还没有用真实数据包核对过。
-* **尚未证明：** 文档中论文覆盖项的完整训练、论文双卡配方、多节点运行。``supermimic_lafan1_zita`` 已在一张 80 GB A800、4096 个环境上训完 16000 次更新：用评审修复前的代码、编译缓存已在时共 1 小时 59 分 51 秒。同一套 zita-ch 代码在同一型号的 A800 上实测，第 16000 次更新用时 2 小时 15 分。第 16000 次检查点的 ``eval/normalized_return`` 为 0.850，第 14000 次为 0.828。zita-ch 报告第 14000 次更新为 0.829。速度优化之前的一次训练约 4.5 小时。两张 80 GB 的 A800 上已经用真实 NCCL 跑过小规模双卡短训练，参数差保持为 0。哪些已经跑过、哪些没有，见使用指南。
-
-* **修复后的性能验证：** 上述完整训练数字来自评审修复前。当前已调整派生常量的逐环境存储，并新增 AMD 安装路径；两项改动之后的完整训练性能尚未验证，第三方复现与安装步骤见使用指南。
+* **验证范围：** 论文覆盖项的完整训练、论文双卡配方和多节点仍未验证。历史 LAFAN1 成绩与硬件测量见使用指南中的 :ref:`已报告结果 <supermimic-reported-results>`。

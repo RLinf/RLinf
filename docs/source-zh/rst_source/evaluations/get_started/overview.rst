@@ -11,7 +11,10 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 .. code-block:: text
 
    evaluations/
-   ├── eval_embodied_agent.py   # 评测主程序
+   ├── eval_embodied_agent.py   # 通用具身评测
+   ├── eval_supermimic.py       # G1 动作 / 速度评测
+   ├── eval_supermimic_push.py  # G1 站姿抗扰评测
+   ├── supermimic/             # SuperMimic 评测配置
    ├── run_eval.sh              # 一键启动脚本
    ├── libero/                  # LIBERO 评测配置
    ├── robotwin/                # RoboTwin 评测配置
@@ -23,14 +26,16 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 评测架构
 --------
 
-评测流程由 ``EmbodiedEvalRunner`` 驱动：Env Worker 与 Rollout Worker 通过 Channel 交互，在 ``env.eval`` 配置下完成并行评测。终端与日志中会输出 ``eval/success_once``、``eval/return`` 等指标。SuperMimic 不走这套流程，它使用独立的单卡评测入口 ``eval_supermimic.py``，见 :doc:`../../examples/embodied/supermimic` 的“评测”一节。
+评测流程由 ``EmbodiedEvalRunner`` 驱动：Env Worker 与 Rollout Worker 通过 Channel 交互，在 ``env.eval`` 配置下完成并行评测。终端与日志中会输出 ``eval/success_once``、``eval/return`` 等指标。
 
-典型数据流：
+该 Worker 评测入口的典型数据流：
 
 1. **配置加载** — Hydra 从 ``evaluations/<benchmark>/`` 读取 YAML，并通过 ``defaults`` 引用 ``examples/embodiment/config/`` 下的环境与模型 preset。
 2. **Worker 启动** — 根据 ``cluster.component_placement`` 在 GPU 上启动 Env Worker 与 Rollout Worker。
 3. **并行 Rollout** — Env Worker 重置环境并返回观测；Rollout Worker 根据模型生成动作；循环直至 episode 结束。
 4. **指标汇总** — 统计 ``success_once``、``return`` 等任务级指标并写入日志。
+
+SuperMimic 使用独立的单卡入口评测动作、速度和静止站立姿态推力恢复，流程见 :doc:`../../examples/embodied/supermimic` 的“评测”一节。
 
 下一步
 ------

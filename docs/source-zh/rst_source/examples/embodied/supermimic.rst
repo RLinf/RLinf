@@ -31,7 +31,7 @@ SuperMimic：用可微世界模型训练 G1 动作跟踪
 
       每张 GPU 一个进程；NCCL 数据并行；Ray 多节点（实验性）
 
-| **你将完成：** 安装独立环境 -> 准备 LAFAN1 片段 -> 用 smoke 配置训练、恢复、评测 -> 换成论文配置在一张或多张 GPU 上训练。
+| **你将完成：** 安装独立环境 -> 准备 LAFAN1 片段 -> 小规模训练、恢复、评测 -> 使用主配置或论文取向覆盖项训练。
 | **前置条件：** NVIDIA GPU，或实验性的 AMD MI300X 路径（见 `安装`_）；RLinf 仓库（:doc:`安装说明 <../../start/installation>`）；LAFAN1 G1 片段（见 `准备参考动作`_）。
 
 .. list-table::
@@ -45,11 +45,11 @@ SuperMimic：用可微世界模型训练 G1 动作跟踪
    * - 任务
      - 跟踪重定向到 G1 的参考动作片段（LAFAN1 或 BONES-SEED）；可以再加一个编码器跟踪速度命令。
    * - 观测
-     - 最近 10 帧的关节角（相对默认姿态）、关节速度、基座角速度、投影重力和上一动作，每帧 93 个数，带均匀传感器噪声。
+     - 最近 10 帧的关节角（相对默认姿态）、关节速度、基座角速度、投影重力和上一动作，带传感器噪声。主配置每帧 99 维，含 6 维参考朝向；论文覆盖项使用 93 维。
    * - 动作
      - 29 个关节设定点 :math:`q_{sp} = \alpha a + q_0`，由低增益 PD 跟随。
    * - Goal
-     - 10 帧参考，每帧 68 个数（680 维），或 `配置`_ 里的变体。
+     - 主配置使用 730 维 Goal（10 帧、每帧 73 维）；论文覆盖项使用 680 维，其他接口见 `配置`_。
    * - 入口
      - 训练用 ``examples/embodiment/run_supermimic.sh``\ （不是通用的 ``run_embodiment.sh``），评测用 ``evaluations/run_eval.sh supermimic_*``\ （内部调用 ``evaluations/eval_supermimic.py``）。
 
@@ -71,7 +71,7 @@ SuperMimic 工作原理
 
 之后每打开一个新终端，都要先回到仓库根目录并执行 ``source .venv-supermimic/bin/activate``。
 
-NVIDIA 路径的 mjlab 要求 ``torch>=2.14.0``，安装脚本只给这个环境选 torch 2.14.0，RLinf 全局的 torch 版本不变。torch 2.14.0 要求 ``setuptools>=77.0.3``，所以安装脚本也只为这个环境把全局的 ``setuptools<75.9`` 覆盖项换成 ``setuptools>=77.0.3,<82``\ （setuptools 82 移除了 ``pkg_resources``）。装好的 torch 是 CUDA 12 构建时，脚本会再装 ``warp-lang`` 1.18.0 的 CUDA 12 构建（PyPI 上的 wheel 是 CUDA 13 构建）。脚本按主机的 ``x86_64`` 或 ``aarch64`` 架构选择对应 wheel，``arm64`` 按 ``aarch64`` 处理。SuperMimic 专用的包列在 ``requirements/embodied/envs/supermimic.txt``；用 ``pip`` 把这个文件装进已有的 RLinf 环境会升级那里的 torch，所以请让 SuperMimic 用独立环境。``docker/Dockerfile`` 里的 ``embodied-supermimic-image`` 目标执行同样的安装。
+NVIDIA 环境使用 torch 2.14.0 和 ``warp-lang`` 1.18.0，依赖清单在 ``requirements/embodied/envs/supermimic.txt``。这些依赖会升级 torch，请与其他 RLinf 环境隔离安装。需要 CUDA 12 Warp 时，安装脚本按主机架构选择 wheel。``docker/Dockerfile`` 也提供执行同样安装的 ``embodied-supermimic-image`` 目标。
 
 G1 的模型、关节顺序、执行器增益和站立关键帧都来自 mjlab。每个参考片段都带着转换时用的默认姿态 ``q0``，如果它和 mjlab 的默认关节姿态不同，仿真器会拒绝加载：Goal 和观测减去的是 ``q0``，而 PD 目标加的是 mjlab 的默认姿态。
 
@@ -91,33 +91,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
 
 ``ROCM_PATH`` 指向 ROCm SDK，默认 ``/opt/rocm``。Warp 源码默认放在仓库旁的 ``../warp-rocm``，可用 ``SUPERMIMIC_WARP_PATH`` 指定复用的 checkout；安装时会切到上述固定提交并重新构建。``SUPERMIMIC_HIP_ARCH`` 指定编译目标，默认是 MI300X 的 ``gfx942``。先完成安装，再使用本页相同的数据准备、训练和评测入口；训练 GPU 仍由 ``cluster.component_placement.supermimic`` 选择。
 
-`PR #1767 中 ZJLi2013 的反馈 <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_ 报告了两次 MI300X 训练：以提交 ``0a19b154`` 为基线，加入对方的两处旧版兼容修改，使用 ``supermimic_lafan1_zita``、seed 0 和 40 条 LAFAN1 片段，只将 ``runner.save_interval`` 改为 500。两个检查点的结果如下：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 12 22 22 22 22
-
-   * - 运行
-     - 14000 次：无失败片段
-     - 14000 次：归一化回报
-     - 16000 次：无失败片段
-     - 16000 次：归一化回报
-   * - Run A
-     - 39/40
-     - 0.832
-     - 38/40
-     - 0.832
-   * - Run B
-     - 40/40
-     - 0.851
-     - 39/40
-     - 0.844
-
-“无失败片段”统计每条参考动作是否完整执行到结束；归一化回报是按完整片段长度归一化的跟踪回报，两者是不同指标。对方认为这些结果与 A800 报告的差距处于运行波动量级；两次运行支持训练效果接近，但不足以证明跨平台结果严格等价。它们衡量的是训练片段的跟踪效果。
-
-Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0.97 秒一次更新，actor 首次编译约 6 分钟。对方报告 ``torch.compile`` 在 ROCm 上生效，没有训练扫描回退到 eager。评论引用的 A800 0.856 来自 PR 较早一轮的 16000 次更新报告；本指南另有优化后 0.850、约 2 小时的 A800 记录，属于不同轮次。
-
-以上是第三方对旧基线及其兼容修改的复现记录。新增 AMD 安装分支、当前的派生常量修复尚未通过本地 AMD 完整训练验证，其他 AMD 型号也未验证。安装完成后沿用下面的数据准备、训练和评测步骤；这些历史数字不作为当前安装分支的性能承诺。
+当前 AMD 安装路径和仿真器改动尚未经过 AMD 完整训练验证。第三方 MI300X 历史成绩集中在 `已报告的跟踪结果`_，不代表当前安装路径的性能承诺；其他 AMD 型号尚未验证。
 
 准备参考动作
 ------------
@@ -355,40 +329,17 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 下面四项在代码里省略时按 zita-ch：骨盆奖励锚、滑动输入归一化、机体系残差、世界模型误差除以滑动标准差。上面的论文覆盖项显式选择另一套设置。
 
 * ``algorithm.reward_anchor``：``pelvis`` 是骨盆，``torso`` 是 ``torso_link``。论文配置写 ``torso``。终止身体仍由 ``termination_body`` 决定。
-* ``algorithm.input_norm``：``running`` 是滑动均值和方差，并先按固定尺度缩放 :math:`\xi`\ ；``none`` 保持原始数值。论文配置写 ``none``。
-* ``algorithm.residual_frame``：``body`` 把线速度放在完整机体系，角速度按世界系增量再存回机体系；``heading`` 把位置和线速度放在偏航系，角速度直接加在机体系角速度上。论文配置写 ``heading``。
-* ``algorithm.wm_state_loss``：``running`` 把坐标系里的误差除以残差滑动标准差后对 70 维取均值；``paper`` 是不加权平方；``scaled`` 是固定分块尺度。论文配置写 ``paper``。
+* ``algorithm.input_norm``：``running`` 使用滑动统计量归一化模型输入；``none`` 保持原始数值。论文覆盖项使用 ``none``。
+* ``algorithm.residual_frame``：``body`` 或 ``heading`` 选择预测状态残差的坐标系。论文覆盖项使用 ``heading``，各分量的定义见 :doc:`算法参考 <../../reference/algorithms/supermimic>`。
+* ``algorithm.wm_state_loss``：``running`` 按残差滑动统计量缩放状态误差，``scaled`` 使用固定尺度，``paper`` 使用不加权平方误差。论文覆盖项使用 ``paper``。
 
-``env.com_sampling`` 决定 :math:`\xi` 里的躯干质心偏移何时采样。``per_env`` 和 zita-ch 一样，每个环境只采一次；``per_reset`` 每次重置都重新采样。质心一变，MuJoCo Warp 就要为所有 world 重算模型常量，这曾是采集里最大的开销。摩擦和关节偏置两种设置下都在每次重置时重采。论文配置写 ``per_reset``，``supermimic_lafan1_zita`` 写 ``per_env``，省略时用 ``per_env``。仿真为每个环境分别存储质心偏移及重算所需的派生常量；质心变化时，各环境使用自己的常量。在用数组存储求解器惯性尺度的版本中，``stat.meaninertia`` 也为每个环境分别存储。这些数组先完成展开，再重新捕获仿真计算图。
+LAFAN1 动作库较大时，设置 ``env.motion_on_cpu=true`` 可将参考状态和完整的参考 FK 缓存保存在主机内存中。查询先在 CPU 上取行，只把需要的状态、身体位姿和速度传到 GPU；完整缓存仍占用主机内存。``motion_on_cpu=false`` 时，动作库和 FK 缓存都留在训练设备上。BONES-SEED 动作库使用 CPU 存储，查询结果采用同样的传输方式。
+
+``env.com_sampling`` 决定躯干质心偏移何时采样：``per_env`` 每个环境只采一次，``per_reset`` 每次重置都重新采样，并承担重算仿真常量的开销。两种设置下，摩擦和关节偏置都在每次重置时重采。论文覆盖项使用 ``per_reset``，主配置和省略该键时使用 ``per_env``。
 
 ``supermimic_lafan1_zita`` 显式写成 ``pelvis``、``running``、``body``、``running``，并在完整训练配置中显式保存这些设置。仿真器仍是 mjlab。它不能加载这四项还没写入检查点时训练出来的权重。线性层用 bfloat16 autocast（``algorithm.matmul: bf16``），积分、运动学、损失和 Adam 权重仍是 float32。
 
-在评审修复前的优化运行中，一张 80 GB A800 用 4096 个环境跑完 16000 次更新，从 Ray 集群就绪到打出第 16000 次更新的指标共 1 小时 59 分 51 秒。同一套 zita-ch 代码在同一型号的 A800 上实测，第 16000 次更新用时 2 小时 15 分。zita-ch 本人报告的是 RTX PRO 6000 上第 14000 次更新 1.47 小时。这次启动时同一台机器上的编译缓存已经在（见 `性能与硬件`_），从启动到第 100 次更新用了 110 秒。前 500 次只训练世界模型，约 26 秒 / 100 次；之后每 100 次 43–47 秒，平均 44.9 秒。该次计时使用以下启动方式：
-
-.. code-block:: bash
-
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-   mkdir -p /data/runs/lafan1_zita
-   PYTHONUNBUFFERED=1 bash examples/embodiment/run_supermimic.sh supermimic_lafan1_zita \
-       cluster.component_placement.supermimic=0 \
-       runner.logger.log_path=/data/runs/lafan1_zita \
-       'runner.logger.logger_backends=[tensorboard]' \
-       > /data/runs/lafan1_zita/console.log 2>&1
-
-* ``cluster.component_placement.supermimic``：用哪一张 GPU，默认是 0。计时期间这张卡上不要有别的任务。机器上已经有 Ray 集群时，用 ``RAY_ADDRESS`` 指向它。
-* ``> console.log 2>&1``：控制台每 100 次更新打印一行带时间戳的 ``supermimic metrics``。总耗时从第一行 ``[INFO ... RLinf]`` 算到 ``'train/global_update': 16000.0`` 那一行。``PYTHONUNBUFFERED=1`` 让输出立即写进文件，训练途中就能看到最新进度。
-* 不要设 ``SUPERMIMIC_SCAN_EAGER``、``SUPERMIMIC_FK_EAGER`` 或 ``SUPERMIMIC_PROFILE``。前两个关掉训练用的编译，第三个在各段之间插入 GPU 同步，都会让训练明显变慢。
-* 换了机器或 ``/tmp`` 被清空时，第一次启动要先编译几分钟，总时间会相应变长。
-
-这次训练的第 16000 次更新检查点在 40 条 LAFAN1 片段上的 ``eval/normalized_return`` 为 0.850，第 14000 次为 0.828。zita-ch 报告第 14000 次更新为 0.829。更早一次训练用的是速度优化之前的代码，当时质心偏移按每次重置采样，第一次编译约 30 分钟，训练约 4.5 小时。
-
-评测用 ``supermimic_lafan1_zita_eval``，单卡、不用 Ray。``eval.checkpoint`` 指向上面 ``log_path`` 下的 ``supermimic_lafan1_zita`` 目录时，会选最新的完整检查点，也可以指向某一个 ``global_step_<N>``。配置每 2000 次更新存一次，所以 zita-ch 报告的第 14000 次更新也有检查点。评第 14000 次更新时，把检查点指到该次保存的目录：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
-       eval.checkpoint=/data/runs/lafan1_zita/supermimic_lafan1_zita/global_step_14000 \
-       eval.output_dir=/data/runs/lafan1_zita/eval_14000
+历史跟踪成绩和计时结果见 `已报告的跟踪结果`_ 与 `性能与硬件`_。
 
 常用配置键
 ~~~~~~~~~~
@@ -460,7 +411,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
      - 见说明
      - 检查点和日志的根目录。``run_supermimic.sh`` 在没有给出时用 ``logs/<时间>-<配置名>``，每次启动都是新目录。
 
-**更新次数与仿真步数。** 训练循环每次采集一个向量仿真步（所有环境各走一步），累计 ``updates_per_env_step`` 次欠下的更新，累计满 1 就做一次更新。所以 ``total_updates=16000`` 大约对应 16000 / 0.4 = 40,000 个向量仿真步（另加预热），环境转移数再乘以 ``env.num_envs``。日志里的 ``train/global_update`` 是更新次数，``sim_vector_steps`` 和 ``env_transitions`` 是仿真步数和环境转移数。
+**更新次数与仿真步数。** 训练循环每次采集一个向量仿真步（所有环境各走一步），累计 ``updates_per_env_step`` 次欠下的更新，累计满 1 就做一次更新。所以 ``total_updates=16000`` 大约对应 16000 / 0.4 = 40,000 个向量仿真步（另加预热），环境转移数再乘以 ``env.num_envs``。日志里的 ``train/global_update`` 是更新次数，``sim_vector_steps`` 和 ``env_transitions`` 是仿真步数和环境转移数。待执行更新数受剩余预算限制，``updates_per_env_step`` 大于 1 时也不会超过目标。最终更新总会保存检查点，启用验证时还会执行最终评测。
 
 **全局量。** ``env.num_envs``、``algorithm.wm_window_batch`` 和 ``algorithm.imagine_batch`` 是所有 rank 的总和，按 rank 均分；``updates_per_env_step`` 和 ``total_updates`` 数的也是全局更新。所以加 GPU 而不改这些值，训练的数学含义不变，见 `多卡训练`_。
 
@@ -496,7 +447,7 @@ RLinf 会按 placement 为训练 Worker 设置设备可见性，启动前的 ``C
 多卡训练
 --------
 
-``cluster.component_placement.supermimic`` 列出使用的 GPU，每张 GPU 一个 rank。各 rank 做同步数据并行：各自步进自己的环境、维护自己的 replay、采自己那份批量，在裁剪之前按样本数加权 all-reduce 梯度，所以每个 rank 做完全相同的更新。rank 0 广播初始权重并负责评测。``train/param_divergence`` 每 ``algorithm.param_check_interval`` 次更新检查一次各 rank 的权重和 buffer 是否一致。running 归一化先把各 rank 这一批的样本量、均值和方差合并，再写入同一份滑动统计。
+``cluster.component_placement.supermimic`` 列出使用的 GPU，每张 GPU 一个 rank。各 rank 按全局环境数和批量分配份额，执行同步训练。rank 0 负责评测，``train/param_divergence`` 报告模型参数和 buffer 的一致性。梯度及归一化统计量的归约方式见 :doc:`算法参考 <../../reference/algorithms/supermimic>`。
 
 多用几张 GPU 有两种方式：
 
@@ -567,10 +518,6 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 
 ``evaluations/eval_supermimic.py`` 只从检查点加载网络，单卡运行，不需要 Ray。``evaluations/run_eval.sh`` 看到 ``supermimic_`` 开头的配置名就会调用它，所以 ``run_eval.sh supermimic_lafan1_zita_eval`` 和 ``run_eval.sh supermimic supermimic_lafan1_zita_eval`` 等价。``supermimic_push_recovery`` 改用 ``evaluations/eval_supermimic_push.py``。RLinf 通用评测配置里的 ``rollout.model.model_path``、``runner.task_type: embodied_eval`` 等字段对 SuperMimic 不适用；它用 ``eval.checkpoint`` 指定检查点。
 
-活动 rollout 的 policy 输出包含 NaN/Inf 动作时，动作、速度和推力恢复评测都会报错并终止本次评测；错误列出当前批次中异常的活动行号，已结束的行仍被屏蔽。遇到 ``non-finite policy actions in active evaluation rows`` 时，先核对检查点与评测配置是否匹配，再检查 policy 输出和输入数据的数值。
-
-动作跟踪和速度评测还会在初始化及每步仿真之后检查活动行的仿真状态和参考状态。若出现非有限值，会在计算奖励或指标之前报错 ``non-finite evaluation states in active rows`` 并终止本次评测；已结束的行仍被屏蔽。
-
 ``eval.checkpoint`` 可以是一个 ``global_step_<N>`` 目录，也可以是装着多个检查点的目录（如 ``log_path/<experiment_name>``），后者选最新的完整检查点。评测配置与训练配置的对应关系：
 
 主训练配置及其小规模运行使用 ``supermimic_lafan1_zita_eval``。其他变体须传入训练时相同的模型接口覆盖项，例如 ``"${PAPER_ARGS[@]}"`` 和 ``algorithm.velocity_tracking=true``。维度、Goal 编码、归一化、残差坐标系与 critic 特征必须与检查点匹配。
@@ -598,24 +545,20 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 
 其中 :math:`r_t` 是实际执行的每个控制步的奖励，0.1 是单步奖励的上限，:math:`T_i` 是片段在 50 Hz 控制网格上的帧数（计划控制步数）。分母用计划长度而不是实际执行的步数，所以提前失败时没播放的部分仍留在分母里，:math:`\mathrm{NR}_i \le 1`。``eval/normalized_return`` 是各片段的不加权平均。
 
-**速度跟踪** 用 ``eval.velocity`` 选择：
+**速度跟踪** 使用同一份 ``supermimic_lafan1_zita_eval`` 配置。默认的 ``eval.velocity=none`` 只执行动作评测。评测用 ``algorithm.velocity_tracking=true`` 训练的编码器时，保留该模型覆盖项，再显式设置 ``eval.velocity=g2`` 或 ``eval.velocity=smoke``：
 
-* ``g2``\ （速度评测配置的默认值）运行附录 G.2 阶跃测试：在 (vx, vy)、(vx, wz)、(vy, wz) 三个平面上各取 15 × 15 网格，去掉站立命令，共 672 条命令，每条 4 次试验，从 mjlab 的站立姿态开始执行 5 s。每次试验的值是最后 2 s 平均速度误差的范数除以命令范数；每条命令报告没有摔倒的试验的中位数；4 次都摔倒的命令没有数值（CSV 里是 NaN，``summary.json`` 里是 ``null``），计入 ``eval_velocity_g2/commands_all_trials_fell``。论文没有说明试验之间什么不同，本实现让仿真上下文和初始关节噪声各不相同。结果写到 ``velocity_g2.csv``，汇总指标以 ``eval_velocity_g2/`` 为前缀。
+* ``g2``\ （显式设置 ``eval.velocity=g2`` 时启用）运行附录 G.2 阶跃测试：在 (vx, vy)、(vx, wz)、(vy, wz) 三个平面上各取 15 × 15 网格，去掉站立命令，共 672 条命令，每条 4 次试验，从 mjlab 的站立姿态开始执行 5 s。每次试验的值是最后 2 s 平均速度误差的范数除以命令范数；每条命令报告没有摔倒的试验的中位数；4 次都摔倒的命令没有数值（CSV 里是 NaN，``summary.json`` 里是 ``null``），计入 ``eval_velocity_g2/commands_all_trials_fell``。论文没有说明试验之间什么不同，本实现让仿真上下文和初始关节噪声各不相同。结果写到 ``velocity_g2.csv``，汇总指标以 ``eval_velocity_g2/`` 为前缀。
 * ``smoke`` 从参考起点开始保持 7 条固定命令，写出 ``velocity_smoke.csv``，汇总指标以 ``eval_velocity_smoke/`` 为前缀。它只检查速度编码器能跑通，不是论文指标。
+
+重复 G.2 评测时，请固定 ``eval.seed``、批量大小、硬件和其余评测设置。
 
 **静止站立姿态推力恢复。** 论文 §4.3 要求静态 T-pose。本入口的协议是 stationary standing-pose push recovery，不把它当作论文的 T-pose 协议。``evaluations/run_eval.sh supermimic_push_recovery`` 调用 ``evaluations/eval_supermimic_push.py``，单卡、不需要 Ray，用已有跟踪检查点，不重新训练。参考在整个评测里保持同一个站立姿态，Goal 不会换成走路。
 
-论文规定的是：仿真中保持静态 T-pose，施加 0.5–4 m/s 的速度推力；带 critic 的策略在 0.5–2.4 s 内稳定，无 critic 的策略在 0.5 m/s 时持续踉跄、在 4 m/s 时摔倒。论文没有公布 T-pose 的关节角、区间内的速度网格、方向、坐标系、试验次数、推力前的等待，也没有公布“稳定”的数值门槛。本实现固定使用 mjlab 的屈膝关键帧 ``KNEES_BENT_KEYFRAME``，与 ``q0`` 和 ``reset_standing`` 相同。正运动学下，每侧手腕相对同侧 ``shoulder_roll_link`` 约在前方 0.10 m、外侧 0.07 m、下方 0.31 m；肩 roll 为 ±0.2 rad，肘为 0.6 rad，双臂垂在身侧而不是水平张开。资产里只有 ``HOME_KEYFRAME`` 和 ``KNEES_BENT_KEYFRAME``，MJCF 没有 keyframe；关节角全 0 时前臂朝前约 0.20 m、低于肩约 0.19 m，侧向几乎为 0，也不是 T-pose。论文没有公布 T-pose 关节角，所以这里不另造一套水平臂姿态并把它叫成论文姿态。默认速度是 0.5、1、2、4 m/s，每种 4 次，这些数字是本实现的选择。``eval.direction=random`` 在水平面随机取方向，也可以写成 ``eval.direction=[1.0,0.0]``。``eval.frame`` 取 ``world`` 或 ``heading``。``eval.push_mode=add`` 把该水平速度加到当前世界系根线速度上，``set`` 替换 xy 并保留 z。写入 MuJoCo Warp 的根速度后调用 ``forward``，这一步不积分；下一步 ``step`` 才使用新速度。这次写入不改根位置、角速度和关节状态。
+参考使用 mjlab 的屈膝站立姿态，双臂垂在身侧。默认速度为 0.5、1、2、4 m/s，每种 4 次。``eval.direction=random`` 在水平面随机取方向，也可以设置 ``eval.direction=[1.0,0.0]``；``eval.frame`` 选择 ``world`` 或 ``heading``。``eval.push_mode=add`` 增加根水平速度，``set`` 替换根水平速度并保留竖直速度。这些都是本评测协议的设置。
 
 跌倒沿用训练的 ``failure_signals``：相对这份静止参考，高度误差超过 0.25 m 或倾角误差超过 0.8 即摔倒。下面几项是本实现的约定。推力之后要同时满足：根水平速度不超过 ``eval.speed_threshold``\ （默认 0.15 m/s），根倾角差不超过 ``eval.tilt_threshold``\ （默认 0.35），躯干朝向误差不超过 ``eval.torso_ori_threshold``\ （默认 0.5 rad），并且连续保持 ``eval.stable_seconds``\ （默认 0.5 s）。``eval.max_xy_drift`` 默认是 ``null``，不要求回到原来的水平位置。``recovery_time_s`` 从推力施加时刻算到稳定窗口结束的那个控制步；``stable_onset_time_s`` 是这个窗口的第一帧。没有恢复的试次把时间留空，不写成 0。推力之前摔倒、关节越限或状态非有限，记为 ``initialization_failed``，不计入推力后的跌倒率。``eval.settle_seconds``\ （默认 1 s）和 ``eval.max_seconds``\ （默认 5 s）也是本实现的等待和截止，不是论文里的 0.5–2.4 s。
 
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_push_recovery \
-       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1_zita \
-       eval.output_dir=/data/runs/lafan1/push_recovery
-
-评测主 zita 对齐配置的检查点时，请同时传入下面全部模型覆盖项。抗扰评测默认仍保留原来的论文接口。
+评测主 zita 对齐配置的检查点时，使用下面的完整模型覆盖项。抗扰评测配置本身使用 680 维 Goal、93 维观测，因此评测主配置的 730/99 接口时需要这些覆盖项。
 
 .. code-block:: bash
 
@@ -627,8 +570,6 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
        eval.output_dir=/data/runs/lafan1_zita/push_recovery
 
 ``summary.json`` 按速度给出试验数、恢复率、跌倒率、超时率，以及成功试次的平均和中位恢复时间；某一档没有成功试次时，恢复时间是 ``null``。``per_trial.csv`` 每次一行，包含方向、读回的速度增量、结果和原因。``eval.save_trajectory=true`` 时另写 ``trajectory.csv``。锚点、730 维 Goal 或 99 维观测的检查点需要在命令里覆盖对应的 ``algorithm`` 字段，使它和检查点一致。
-
-在一张 8 GB 的 RTX 4060 上，用只更新了 3 步的检查点跑过 0.5 m/s 和 1 m/s 各 1 次，推力前 0.4 s、之后最多 0.8 s，世界系 +x。两次都在推力前站住，读回的水平速度增量分别是 0.5 m/s 和 1.0 m/s，随后按训练的跌倒条件摔倒，恢复时间为空。这只说明评测链路能跑完。这次用的是上述屈膝站立姿态，不能说明策略达到论文 T-pose 协议的恢复性能。
 
 也可以用 ``runner.only_eval=true runner.resume_dir=<检查点>`` 走训练入口评测，此时用训练配置的环境数，结果只记在日志里。设置了 ``runner.val_check_interval`` 时，训练每隔这么多次更新评测一次，最后一次更新后也会评测。动作和速度评测走这条路径；推力恢复只走上面的独立入口。
 
@@ -655,9 +596,67 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 
 TensorBoard 记录每一次更新。控制台每 100 次更新打印一行 ``supermimic metrics {...}``，最后一次更新不是 100 的倍数时也会打印；第 0 次只写进 TensorBoard。评测时打印 ``supermimic eval {...}``。没有开任何后端时也能从控制台看到数值。
 
+.. _supermimic-reported-results:
+
+已报告的跟踪结果
+~~~~~~~~~~~~~~~~
+
+优化后的 A800 运行使用主配置、40 条训练片段、4096 个环境，以及评审修复前的代码。结果衡量训练片段上的跟踪效果，不代表未见动作上的泛化，也不是论文 680 维配方的完整复现。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 25 25
+
+   * - 运行
+     - 更新次数
+     - 平均归一化回报
+   * - RLinf，优化后的 A800 运行
+     - 14000
+     - 0.828
+   * - RLinf，优化后的 A800 运行
+     - 16000
+     - 0.850
+   * - zita-ch 社区报告
+     - 14000
+     - 0.829
+
+社区报告使用不同的 GPU、仿真器和配方，因此这不是受控对比。运行时间和显存见 `性能与硬件`_。
+
+MI300X 社区复现
+^^^^^^^^^^^^^^^^
+
+`PR #1767 中 ZJLi2013 的反馈 <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_ 报告了两次 MI300X 训练：以提交 ``0a19b154`` 为基线，加入对方的两处旧版兼容修改，使用 ``supermimic_lafan1_zita``、seed 0 和 40 条 LAFAN1 片段，只将 ``runner.save_interval`` 改为 500。两个检查点的结果如下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 22 22 22 22
+
+   * - 运行
+     - 14000 次：无失败片段
+     - 14000 次：归一化回报
+     - 16000 次：无失败片段
+     - 16000 次：归一化回报
+   * - Run A
+     - 39/40
+     - 0.832
+     - 38/40
+     - 0.832
+   * - Run B
+     - 40/40
+     - 0.851
+     - 39/40
+     - 0.844
+
+“无失败片段”统计每条参考动作是否完整执行到结束；归一化回报是按完整片段长度归一化的跟踪回报，两者是不同指标。对方认为这些结果与 A800 报告的差距处于运行波动量级；两次运行支持训练效果接近，但不足以证明跨平台结果严格等价。它们衡量的是训练片段的跟踪效果。
+
+Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0.97 秒一次更新，actor 首次编译约 6 分钟。对方报告 ``torch.compile`` 在 ROCm 上生效，没有训练扫描回退到 eager。评论引用的 A800 0.856 来自 PR 较早一轮的 16000 次更新报告；本指南另有优化后 0.850、约 2 小时的 A800 记录，属于不同轮次。
+
+这些第三方运行使用旧基线及其兼容修改，不能据此认定当前 AMD 安装分支或其他 AMD GPU 已通过验证。安装步骤见 `AMD MI300X（实验性）`_。
+
 故障排查
 --------
 
+* **评测出现非有限值。** 动作、速度和推力恢复评测在活动 policy 输出 NaN/Inf 动作时终止；动作和速度评测还会检查仿真状态与参考状态。出现 ``non-finite policy actions in active evaluation rows`` 或 ``non-finite evaluation states in active rows`` 时，请核对检查点与配置是否匹配，并检查 policy 输入及动作数据。
 * **CUDA out of memory。** 报错会写出 rank 和它分到的规模。要保持批量就加 GPU，或者减小 ``env.num_envs``、``env.replay_length`` 或训练批量。
 * **Ray 因内存不足杀掉 worker。** 应该释放主机内存，而不是调高 ``RAY_memory_usage_threshold``；smoke 启动是唯一的例外。CPU 核多、内存少的机器上，Ray 会按核数预启动空闲 worker（每个约 50 MB），SuperMimic 用不到它们；设置 ``RAY_prestart_worker_first_driver=0`` 可以不启动这些进程，内存监控保持不变。
 * **"No verified G1 reference clips"。** ``SUPERMIMIC_MOTION_PATH`` 或 ``env.motion_path`` 没有指向准备好的片段。
@@ -668,7 +667,6 @@ TensorBoard 记录每一次更新。控制台每 100 次更新打印一行 ``sup
 * **没有 TensorBoard 文件。** ``runner.logger.logger_backends`` 还是默认的 ``[]``。
 * **日志停在 "Compiling a SuperMimic training scan"。** 第一次大批量在等编译，冷缓存时要几分钟，见 `性能与硬件`_。不要在训练途中删 inductor 缓存目录。
 * **"SuperMimic scan <名字> stayed eager"。** 这一段编译失败了，之后一直走 eager。结果不变，但训练会变慢。
-* **求解器迭代上限。** mjlab 适配层把 MuJoCo Warp 的求解器迭代上限定为 ``iterations=10``、``ls_iterations=20``，并关掉了碰到上限时每个 world 一行的警告。上限本身没有改。
 
 性能与硬件
 ----------
@@ -678,31 +676,16 @@ TensorBoard 记录每一次更新。控制台每 100 次更新打印一行 ``sup
 **A800 上的 zita 训练。** 一张 80 GB A800，单卡，``supermimic_lafan1_zita``\ （4096 个环境，``algorithm.matmul: bf16``），编译缓存已在：
 
 * 前 500 次只训世界模型，约 26 s / 100 次；之后 43–47 s / 100 次，平均 44.9 s，也就是约 0.45 s 一次更新。16000 次共 1 小时 59 分 51 秒。同一套 zita-ch 代码在同一型号的 A800 上实测为 2 小时 15 分。
-* 第 16000 次更新的 ``eval/normalized_return`` 为 0.850，第 14000 次为 0.828。zita-ch 报告第 14000 次更新为 0.829。
 * PyTorch 峰值分配 17.1 GB（reserved 18.8 GB），驱动看到的整卡用量 20.1 GB，Warp 内存池峰值 0.48 GB，主机 RSS 约 4.0 GB。
 * 结束时累计 40064 个向量仿真步、约 1.64 亿个环境转移。
 
-**编译与缓存。** 大批量（不少于 256 行）的 CUDA 计算会用 ``torch.compile`` 编成七张图：采集里的 goal、采集后处理和 bootstrap 各一张；世界模型拟合和想象 rollout 各拆成"单步"和"批量打分"两张，单步那张在 Python 循环里调用，打分那张在循环结束后对所有步一次算完。critic 更新、采样和优化器不编译。进程内的编译缓存由每个 worker 分别持有，同一实例在多次更新之间复用。编好的 kernel 写在 PyTorch 默认的 inductor 缓存目录 ``/tmp/torchinductor_<用户名>``。同一台机器上再启动时，新进程仍要重新追踪计算图，但 kernel 直接从盘上读，上面那次从启动到第 100 次更新只用了 110 秒。换机器或 ``/tmp`` 被清空时要重新编译，冷缓存下要几分钟。``SUPERMIMIC_SCAN_EAGER=1`` 和 ``SUPERMIMIC_FK_EAGER=1`` 分别关掉训练扫描和正运动学的编译，结果不变，只用于在 GPU 上跑单元测试，能把几十分钟的测试缩到几分钟；正式训练不要设。
+**编译。** 首次大规模运行会编译训练扫描和 FK。PyTorch kernel 缓存在 ``/tmp/torchinductor_<用户名>``，换机器或清空缓存后启动会更慢。正式训练保持 ``SUPERMIMIC_SCAN_EAGER`` 和 ``SUPERMIMIC_FK_EAGER`` 未设置。
 
 **分段计时。** ``SUPERMIMIC_PROFILE=1`` 让训练在各段前后同步 GPU，``time/*`` 才是各段真实耗时，训练会因此变慢。worker 的环境变量来自 Ray 节点，已有 Ray 集群时要在 ``ray start`` 之前设置。
 
 在 WSL2 下的一张 8 GB 笔记本 GPU 上：1024 个环境每秒采集约 3,900 个环境转移；用论文批量四分之一（1024 条想象 rollout、512 个窗口）做一次更新约 21 s，PyTorch 峰值 4.2 GB；论文批量下一次更新需要约 11 GB，超过这张卡的显存。这些数字来自受 kernel 启动开销限制的笔记本环境，不能用来推测数据中心 GPU 的表现；正式训练前请先在自己的硬件上测出每次更新的秒数。
 
-已经运行过的内容
-----------------
+验证范围
+--------
 
-在一张 8 GB GPU 上用 MuJoCo Warp 和 LAFAN1 片段跑过：LAFAN1 各配置（680 维、689 维、730 维、99 维观测、速度）的小规模短训练，包括 driver 被强杀后的恢复，动作和速度评测，以及 G.2 阶跃测试。多卡的数值逻辑用两个 CPU（Gloo）进程测试过。
-
-在两张 80 GB 的 A800 上，用 40 条 LAFAN1 片段又做了一轮本机调度的验收（不在 Slurm 作业里）。下面这份结果复用了已有的虚拟环境，所以它自己的阶段 01 记为不适用。在此之前，同一次提交上用 ``install.sh`` 从零安装的阶段 01 已经通过，后面的训练和评测用的就是那个环境。通过的内容是：
-
-* 单元测试 10 个文件：201 通过，1 个因为加速器数量不是 4 而跳过。
-* 单卡真实 MuJoCo Warp smoke：3 次更新，计数单调，指标有限，检查点完整。
-* 单卡在写出检查点后强杀 driver，从最近的完整检查点恢复并继续训练。双卡同样测过保存、强杀和恢复；双卡检查点可以换成单卡继续训练。杀掉一个 rank 后，其余进程在 20.3 秒内以非零状态退出，没有留下孤儿进程。
-* 动作评测覆盖 40 条片段。同一检查点重复评测的指标差在容差以内（绝对容差 :math:`5\times10^{-5}`，相对容差 :math:`2\times10^{-4}`），但不是逐位相同。训练入口的 ``only_eval`` 和速度评测通过。速度评测使用附录 G.2 的命令网格，每条命令 2 次试验，不是论文的 4 次。
-* 单卡 profiling 实测了 128 和 512 个环境的吞吐与显存。4096 个环境只做了从 512 线性外推的估计，没有实测。
-* 双卡小规模训练走真实 NCCL：两次运行的 ``train/param_divergence`` 都是 0，两边计数逐项相等，两个 rank 的检查点都完整。全局规模是 64 个环境、256 条想象 rollout，不是论文双卡配方。同样规模的速度配置短训练也完成了。
-* 同样的双卡规模上，短期学习信号跑了 12 次更新。指标有限、计数单调。归一化回报从 0.001892 到 0.001893，失败率保持为 1。这是单种子、短预算，不能据此说 policy 学会了跟踪。
-* ``supermimic_lafan1_zita`` 评审修复前代码的完整训练记录：一张 80 GB A800、4096 个环境、16000 次更新，编译缓存已在，从 Ray 集群就绪到第 16000 次更新共 1 小时 59 分 51 秒。同一套 zita-ch 代码在同一型号的 A800 上实测，第 16000 次更新用时 2 小时 15 分。稳态约 0.45 s 一次更新，PyTorch 峰值分配 17.1 GB。第 16000 次更新的 ``eval/normalized_return`` 为 0.850，第 14000 次为 0.828。zita-ch 报告第 14000 次更新为 0.829。
-* ``supermimic_lafan1_zita`` 更早的一次完整训练，用的是速度优化之前的代码，质心偏移按每次重置采样：第一次编译约 30 分钟，16000 次更新约 4.5 小时。仿真器是 mjlab。本页还没有这两次训练的学习曲线。
-
-尚未运行：文档中的论文覆盖项（680 维 Goal、320000 次更新）、论文双卡配方、多节点、Slurm、BONES-SEED 真实数据，以及论文 §4.3 的 T-pose 恢复性能（当前入口是静止站立姿态，不能代替该项）。
+保留的主配置已完成 16000 次 LAFAN1 更新；小规模单卡、双卡训练、恢复和评测也已运行。文档中的论文覆盖项完整训练、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。上面的完整训练性能来自评审修复前。
