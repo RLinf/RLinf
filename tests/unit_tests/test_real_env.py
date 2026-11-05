@@ -64,7 +64,7 @@ from rlinf.envs.real.wrappers.teleop.intervention import (  # noqa: E402
 )
 from rlinf.envs.real.xsquare.base import Turtle2Env, Turtle2EnvConfig
 from rlinf.envs.sim.robotwin import robotwin_env
-from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
+from rlinf.envs.utils import partition_success_seeds
 from rlinf.robotics import (
     DualFrankaConfig,
     FrankaConfig,
