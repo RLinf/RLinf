@@ -4,6 +4,8 @@ model_type: lingbotvlav2
 model_path: ${oc.env:LINGBOT_VLA_V2_CHECKPOINT}
 tokenizer_path: ${oc.env:QWEN3VL_PATH}
 precision: bf16
+eval_compute_dtype: bf16  # rollout compute dtype; set fp32 for official eval parity
+eval_sampling_upstream: false  # use upstream sample_actions for official-path eval
 
 num_action_chunks: 50
 action_dim: 14

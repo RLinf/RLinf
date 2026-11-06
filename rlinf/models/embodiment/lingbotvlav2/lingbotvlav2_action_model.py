@@ -174,33 +174,30 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             load_model(self.vla_model, str(weights / "model.safetensors"), strict=True)
         else:
             raise FileNotFoundError(f"No safetensors checkpoint in {weights}")
-        self.vla_model.to(dtype=_COMPUTE_DTYPE)
+        eval_compute_dtype = str(config.get("eval_compute_dtype", "bf16")).lower()
+        if eval_compute_dtype not in {"bf16", "fp32"}:
+            raise ValueError("eval_compute_dtype must be bf16 or fp32")
+        self.compute_dtype = (
+            torch.float32 if eval_compute_dtype == "fp32" else _COMPUTE_DTYPE
+        )
+        self.vla_model.to(dtype=self.compute_dtype)
         # No-grad inference kernels can have different numerical reductions.
         # The source package exposes a common differentiable MoE backend.
         self.vla_model.set_moe_forward_backend("differentiable")
-        # SFT 只用视觉-语言-动作主干：关闭上游预训练配置里的深度/未来视频辅助损失
-        # （我们的 LeRobot 数据没有 depth/video target，开启会在 _emb_loss 里报 None）。
+        # Disable auxiliary losses for SFT data without depth/video targets, but
+        # preserve checkpoint-defined query modules: embed_prefix uses their flags
+        # to append the trained depth/future-video tokens during inference.
         self.vla_model.config.align_params = {}
-        for _attr in (
-            "use_depth_align",
-            "use_future_video",
-            "use_future_video_patch",
-            "use_current_video_patch",
-            "use_current_shared_task_proj",
-            "use_future_video_cls",
-            "use_shared_future_task_proj",
-            "future_video_share_future_depth_query",
-        ):
-            if hasattr(self.vla_model.model, _attr):
-                setattr(self.vla_model.model, _attr, False)
-
+        parameter_dtype = (
+            torch.float32 if eval_compute_dtype == "fp32" else torch_dtype
+        )
         for name, param in self.vla_model.named_parameters():
             trainable = is_rl_trainable(name)
             param.requires_grad_(trainable)
             if trainable:
                 # Cast parameters only: buffers such as MoE routing biases must
                 # stay bf16 so actor and rollout route tokens identically.
-                param.data = param.data.to(torch_dtype)
+                param.data = param.data.to(parameter_dtype)
         self.value_head = None
         if config.add_value_head:
             self.value_head = ValueHead(
@@ -305,7 +302,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return {
             key: value.to(
                 device=device,
-                dtype=_COMPUTE_DTYPE if key in {"images", "state"} else value.dtype,
+                dtype=self.compute_dtype if key in {"images", "state"} else value.dtype,
             )
             for key, value in inputs.items()
         }
@@ -352,7 +349,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             inputs["state"],
             padding,
             cache,
-            x.to(_COMPUTE_DTYPE),
+            x.to(self.compute_dtype),
             time.expand(len(x)),
             prefix_position_ids=positions,
         ).float()
@@ -360,7 +357,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
     def _values(self, features: torch.Tensor) -> torch.Tensor:
         if self.value_head is None:
             return features.new_zeros((len(features), 1), dtype=torch.float32)
-        return self.value_head(features.to(_COMPUTE_DTYPE)).float()
+        return self.value_head(features.to(self.compute_dtype)).float()
 
     def _times(self, device: torch.device) -> torch.Tensor:
         return torch.linspace(
@@ -427,9 +424,14 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                     state=b["state"].to(dtype),
                     image_grid_thw=b.get("image_grid_thw"),
                 )
-            return self._unapply_norm_actions(prepared, norm_actions), {
-                "prev_logprobs": None,
-                "prev_values": None,
+            physical_actions = self._unapply_norm_actions(prepared, norm_actions)
+            # Eval-only upstream sampling has no RL transition statistics.
+            # Return shape-compatible placeholders for the rollout worker.
+            return physical_actions, {
+                "prev_logprobs": physical_actions.new_zeros(
+                    (len(physical_actions), self.horizon * self.config.action_dim)
+                ),
+                "prev_values": physical_actions.new_zeros((len(physical_actions), 1)),
                 "forward_inputs": {},
             }
         inputs = self._device_inputs(prepared)
