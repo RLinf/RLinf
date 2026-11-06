@@ -5617,6 +5617,8 @@ def test_ur_collection_binary_gripper_buttons_and_reset(
             assert opened["state"]["gripper_position"][0] == pytest.approx(0.085)
         finally:
             env.close()
+
+
 class _RecordingScene:
     """Stand-in for a SAPIEN scene that records the cameras it is asked for."""
 
