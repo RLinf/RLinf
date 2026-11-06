@@ -376,6 +376,7 @@ critic:
     overlap_param_gather_with_optimizer_step: false
     bf16: false
     fp16: true
+    # Start the fp16 value head conservatively; dynamic scaling adapts during training.
     initial_loss_scale: 32
     loss_scale_window: 1000
 

@@ -33,7 +33,7 @@ updates the actor and critic before generating the next batch.
    .. grid-item-card:: Hardware
       :text-align: center
 
-      8 NVIDIA A100 80 GB GPUs; Megatron and SGLang
+      8 NVIDIA A800 80 GB GPUs; Megatron and SGLang
 
 Tasks
 ~~~~~~~~~
@@ -127,10 +127,12 @@ Rollout and Training Order
 At each step, the runner publishes actor weights and waits for all episodes in the
 batch to finish, then offloads the rollout engine before critic inference. The critic predicts old values; the registered ``gae_dynamic`` algorithm computes fixed
 returns and normalizes advantages over all action tokens in the rollout batch.
-The critic worker computes these targets before updating its model and passes them
-to the actor. Normalization reduces action statistics across critic DP ranks.
+The critic worker computes these targets before updating its model and sends only
+fixed advantages to the actor. Old values and returns stay on the critic. Normalization reduces action statistics across critic DP ranks.
 Tool text and padding are excluded, and the terminal answer reward is applied once.
-Turn and token limits also terminate the episode with zero future value.
+Turn and token limits also terminate the episode with zero future value. Prompt
+lengths determine turn order within each episode, independently of channel arrival
+order.
 
 The runner trains the critic first and offloads its state before actor inference
 and training. The configuration enables ``offload_weight``, ``offload_grad``, and
@@ -155,7 +157,9 @@ Preserve Generated Tokens
 
 ``agentloop.truncate_response`` defaults to ``true`` and trims the generated token
 prefix at the closing search tag using the model-aware tokenizer. The PPO configuration
-selects ``false`` to retain the generated sequence and its behavior logprobs:
+selects ``false`` to train on every generated token within the remaining response
+budget, including any tokens emitted after the closing search tag. Those tokens
+also remain in the next turn's prompt:
 
 .. code-block:: yaml
 
@@ -165,6 +169,10 @@ selects ``false`` to retain the generated sequence and its behavior logprobs:
      recompute_logprobs: false
    rollout:
      return_logprobs: true
+
+Both truncation settings keep token IDs and behavior logprobs aligned, so either
+can use rollout logprobs without actor inference. Set ``truncate_response=true``
+to exclude tokens after the closing search tag from training and subsequent prompts.
 
 The remaining response-token budget always applies, regardless of the truncation
 flag. Tokens beyond that cap and their logprobs are removed together. The retained

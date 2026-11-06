@@ -29,7 +29,7 @@ PPO 复用已有的多轮 agent 和搜索工具接口。每个训练 step 先完
    .. grid-item-card:: 硬件
       :text-align: center
 
-      8 张 NVIDIA A100 80 GB GPU；Megatron 和 SGLang
+      8 张 NVIDIA A800 80 GB GPU；Megatron 和 SGLang
 
 任务
 ~~~~~~~~
@@ -107,7 +107,7 @@ PPO 当前要求 Megatron TP=PP=CP=1，actor、critic 和 rollout 完全共享 G
 Rollout 与训练顺序
 ~~~~~~~~~~~~~~~~~~~~~~
 
-每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。随后在 critic inference 前 offload rollout 引擎。Critic 预测 old values，注册在算法接口中的 ``gae_dynamic`` 沿 episode 的 action token 计算固定 returns，并在整个 rollout batch 的 action token 上归一化 advantages。Critic worker 在更新模型前计算这些目标，通过 DP 归约汇总 action 统计量完成归一化，再将固定目标传给 actor。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。
+每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。随后在 critic inference 前 offload rollout 引擎。Critic 预测 old values，注册在算法接口中的 ``gae_dynamic`` 沿 episode 的 action token 计算固定 returns，并在整个 rollout batch 的 action token 上归一化 advantages。Critic worker 在更新模型前计算这些目标，通过 DP 归约汇总 action 统计量完成归一化，仅将固定 advantages 传给 actor；old values 和 returns 留在 critic 侧。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。同一 episode 内的 turn 顺序由 prompt 长度确定，不依赖 channel 的到达顺序。
 
 Runner 先训练 critic，将其状态 offload 后，再执行 actor inference 和训练。配置对两个角色都开启 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer``，分别控制角色切换时哪些状态移到 CPU。训练结束时，runner 停止 rollout 引擎。
 
@@ -118,7 +118,7 @@ Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``a
 保留生成 Token
 ~~~~~~~~~~~~~~~~~~
 
-``agentloop.truncate_response`` 默认为 ``true``，使用模型对应的 tokenizer 在搜索结束标签处截取生成 token 前缀。PPO 配置将其设为 ``false``，保留生成序列及对应的 behavior logprobs：
+``agentloop.truncate_response`` 默认为 ``true``，使用模型对应的 tokenizer 在搜索结束标签处截取生成 token 前缀。PPO 配置将其设为 ``false``，对剩余响应预算内的全部生成 token 训练，包括搜索结束标签之后生成的 token。这些 token 也会保留在下一轮 prompt 中：
 
 .. code-block:: yaml
 
@@ -128,6 +128,8 @@ Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``a
      recompute_logprobs: false
    rollout:
      return_logprobs: true
+
+两种截断设置都会保持 token ID 与 behavior logprob 对齐，因此都可以直接使用 rollout logprobs，跳过 actor inference。设置 ``truncate_response=true`` 可将搜索结束标签之后的 token 排除在训练和后续 prompt 之外。
 
 无论截断开关为何值，剩余响应 token 预算始终生效：超出上限的 token 和对应 logprobs 一起删除。保留的 token 不会经过解码再编码；解码只为工具解析和 reward 提供文本。直接使用 rollout logprobs 可以跳过额外的 actor inference。若需重算，设置 ``algorithm.recompute_logprobs=true`` 和 ``rollout.return_logprobs=false``。
 
