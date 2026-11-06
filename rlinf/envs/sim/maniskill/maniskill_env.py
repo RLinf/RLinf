@@ -277,13 +277,12 @@ class ManiskillEnv(gym.Env):
         seed: Optional[Union[int, list[int]]] = None,
         options: Optional[dict] = None,
     ):
-        if options is None:
-            seed = self.seed
-            options = (
-                {"episode_id": self.reset_state_ids}
-                if self.use_fixed_reset_state_ids
-                else {}
-            )
+        options = dict(options or {})
+        if "env_idx" not in options:
+            if seed is None:
+                seed = self.seed
+            if self.use_fixed_reset_state_ids:
+                options.setdefault("episode_id", self.reset_state_ids)
         raw_obs, infos = self.env.reset(seed=seed, options=options)
         self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
