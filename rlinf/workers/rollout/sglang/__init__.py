@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""SGLang rollout workers.
+
+Every public name here needs a supported sglang install. Each one loads on
+first access, and the version check runs then, so the HTTP-only
+``SGLangEmbodiedWorker`` imports without sglang.
+"""
+
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
@@ -26,20 +33,16 @@ def get_version(pkg):
         return None
 
 
-package_name = "sglang"
-package_version = get_version(package_name)
+def _check_sglang_version() -> None:
+    package_version = get_version("sglang")
+    if package_version is None:
+        raise ValueError("sglang is not installed.")
+    if not parse("0.4.4") <= package_version <= parse("0.5.19"):
+        raise ValueError(
+            f"sglang version {package_version} is not supported "
+            "(supported range: >=0.4.4, <=0.5.19)."
+        )
 
-sglang_version = None
-
-if package_version is None:
-    raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
-    sglang_version = package_version
-else:
-    raise ValueError(
-        f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.19)."
-    )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.hybrid_engines.sglang.common import io_struct
@@ -93,6 +96,7 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name in _LAZY_ATTRS:
+        _check_sglang_version()
         module_name, attr = _LAZY_ATTRS[name]
         module = import_module(module_name)
         value = module if attr is None else getattr(module, attr)

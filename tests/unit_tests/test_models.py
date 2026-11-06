@@ -26,6 +26,7 @@ import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Callable
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -2485,3 +2486,171 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+
+
+def _wire_array(array: np.ndarray) -> dict:
+    return {
+        b"__ndarray__": True,
+        b"data": array.tobytes(),
+        b"dtype": array.dtype.str,
+        b"shape": list(array.shape),
+    }
+
+
+def _cosmos3_action_reply(server, offset: int) -> Callable[[dict], dict]:
+    # Row r of the server's n-th request gets x translation offset + 10 * n + r,
+    # so a test can follow each env row back to its server and request.
+    def reply(body: dict) -> dict:
+        num_rows = len(body["input"]["prompt"])
+        values = np.zeros((num_rows, 16, 10), dtype="<f4")
+        values[..., 3] = 1.0  # rot6d columns (1, 0, 0) and (0, 1, 0): no rotation
+        values[..., 7] = 1.0
+        first = offset + 10 * len(server.requests)
+        values[..., 0] = first + np.arange(num_rows)[:, None]
+        return {
+            "data": [
+                {"input_index": i, "action": {"values": _wire_array(values[i])}}
+                for i in range(num_rows)
+            ]
+        }
+
+    return reply
+
+
+def _external_cosmos3_eval_cfg(**sglang) -> OmegaConf:
+    return OmegaConf.create(
+        {
+            "runner": {"only_eval": True},
+            "env": {
+                "eval": {
+                    "env_type": "libero",
+                    "total_num_envs": 8,
+                    "rollout_epoch": 1,
+                    "max_steps_per_rollout_epoch": 16,
+                }
+            },
+            "rollout": {
+                "pipeline_stage_num": 1,
+                "model": {
+                    "model_type": "cosmos3",
+                    "num_action_chunks": 16,
+                    "size": "32x32",
+                },
+                "sglang": {
+                    "serving_mode": "embodied",
+                    "seed": 100,
+                    "http_max_retries": 0,
+                    "server": {"batching_max_size": 2},
+                    **sglang,
+                },
+            },
+        }
+    )
+
+
+def test_embodied_action_servers_come_from_exactly_one_source():
+    from rlinf.config import validate_embodied_action_servers
+
+    validate_embodied_action_servers(OmegaConf.create({"serving_mode": "embodied"}))
+    validate_embodied_action_servers(
+        OmegaConf.create(
+            {
+                "serving_mode": "embodied",
+                "launch_server": False,
+                "server_urls": ["http://10.0.0.5:8000"],
+            }
+        )
+    )
+    for launch_server, server_urls in ((True, ["http://10.0.0.5:8000"]), (False, [])):
+        with pytest.raises(ValueError, match="one source of action servers"):
+            validate_embodied_action_servers(
+                OmegaConf.create(
+                    {
+                        "serving_mode": "embodied",
+                        "launch_server": launch_server,
+                        "server_urls": server_urls,
+                    }
+                )
+            )
+
+
+def test_embodied_action_server_urls_must_be_a_list_of_urls():
+    from rlinf.config import validate_embodied_action_servers
+
+    def sglang_cfg(*overrides: str):
+        return OmegaConf.from_dotlist(
+            ["serving_mode=embodied", "launch_server=false", *overrides]
+        )
+
+    validate_embodied_action_servers(
+        sglang_cfg("server_urls=[http://h:8000,http://h:8001]")
+    )
+    for override in (
+        "server_urls=http://h:8000",  # no brackets: a string, not a list
+        "server_urls=[http://h:8000,'']",
+    ):
+        with pytest.raises(ValueError, match="list of non-empty URL strings"):
+            validate_embodied_action_servers(sglang_cfg(override))
+
+
+def test_embodied_http_eval_drives_running_action_servers(action_servers, monkeypatch):
+    from rlinf.scheduler import Cluster, NodePlacementStrategy
+    from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+        SGLangEmbodiedWorker,
+    )
+
+    servers = [action_servers(), action_servers()]
+    for index, server in enumerate(servers):
+        server.reply = _cosmos3_action_reply(server, offset=100 * index)
+    # The Cluster hands the driver's environment to its workers.
+    monkeypatch.setenv("RLINF_TEST_ACTION_KEY", "secret")
+    cluster = Cluster(num_nodes=1)
+    cfg = _external_cosmos3_eval_cfg(
+        launch_server=False,
+        server_urls=[server.url for server in servers],
+        api_key_env="RLINF_TEST_ACTION_KEY",
+    )
+    group = SGLangEmbodiedWorker.create_group(cfg, None).launch(
+        cluster,
+        name="ExternalActionClients",
+        placement_strategy=NodePlacementStrategy([0, 0]),
+    )
+    group.set_sglang_server_urls(cfg.rollout.sglang.server_urls).wait()
+    group.init_worker().wait()
+
+    # With batching_max_size 2, Cosmos3 posts envs [0, 2], [3] and [1].
+    obs = {
+        "task_descriptions": ["pick", "open", "pick", "pick"],
+        "main_images": torch.zeros(4, 8, 8, 3, dtype=torch.uint8),
+        "_rlinf_stage_id": 0,
+    }
+    results = group.predict(obs).wait()
+
+    for rank, (server, (actions, _)) in enumerate(zip(servers, results)):
+        assert [body["input"]["prompt"] for _, body in server.requests] == [
+            ["pick", "pick"],
+            ["pick"],
+            ["open"],
+        ]
+        assert {body["parameters"]["seed"] for _, body in server.requests} == {100}
+        assert {headers["Authorization"] for headers, _ in server.requests} == {
+            "Bearer secret"
+        }
+        assert actions.shape == (4, 16, 7)
+        # Rank i posts to server i. Env rows come back in env order: env 0
+        # and 2 from request 1, env 3 from request 2, env 1 from request 3.
+        expected = [10, 30, 11, 20]
+        assert actions[:, 0, 0].tolist() == [100 * rank + x for x in expected]
+
+
+def test_embodied_http_eval_refuses_a_named_api_key_that_is_not_set(monkeypatch):
+    from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+        SGLangEmbodiedWorker,
+    )
+
+    monkeypatch.delenv("RLINF_TEST_UNSET_KEY", raising=False)
+    sglang_cfg = OmegaConf.create({"api_key_env": "RLINF_TEST_UNSET_KEY"})
+
+    with pytest.raises(RuntimeError, match="RLINF_TEST_UNSET_KEY"):
+        SGLangEmbodiedWorker._auth_headers(sglang_cfg)
+    assert SGLangEmbodiedWorker._auth_headers(OmegaConf.create({})) == {}

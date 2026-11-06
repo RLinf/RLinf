@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
+from omegaconf.listconfig import ListConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
@@ -1182,6 +1183,36 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     )
 
 
+def validate_embodied_action_servers(sglang_cfg) -> None:
+    """Require exactly one action-server source on the embodied HTTP path.
+
+    The eval driver either launches servers (``launch_server: true``) or posts
+    to the running ones listed in ``server_urls`` (``launch_server: false``).
+    """
+    if sglang_cfg.get("serving_mode", None) != "embodied":
+        return
+    server_urls = sglang_cfg.get("server_urls", None)
+    if server_urls is None:
+        server_urls = []
+    if not isinstance(server_urls, (list, tuple, ListConfig)) or not all(
+        isinstance(url, str) and url.strip() for url in server_urls
+    ):
+        raise ValueError(
+            "rollout.sglang.server_urls must be a list of non-empty URL strings, "
+            "e.g. 'rollout.sglang.server_urls=[http://host:8000]'. "
+            f"Got {server_urls!r}."
+        )
+    server_urls = list(server_urls)
+    launch_server = bool(sglang_cfg.get("launch_server", True))
+    if launch_server == bool(server_urls):
+        raise ValueError(
+            "rollout.sglang needs one source of action servers: "
+            "launch_server=true to start them, or launch_server=false with "
+            "server_urls listing running ones. Got "
+            f"launch_server={launch_server}, server_urls={server_urls}."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1189,6 +1220,7 @@ def validate_embodied_cfg(cfg):
     )
     if only_eval:
         validate_only_eval_rollout_model(cfg.rollout.model)
+    validate_embodied_action_servers(cfg.rollout.get("sglang", None) or {})
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
