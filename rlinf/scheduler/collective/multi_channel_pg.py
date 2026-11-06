@@ -151,20 +151,22 @@ class MultiChannelProcessGroup:
 
     def init(
         self,
-        init_method: str,
+        init_method: Optional[str],
         world_size: int,
         rank: int,
         group_name: str,
         options: Optional[CollectiveGroupOptions] = None,
+        store: Optional[dist.Store] = None,
     ):
         """Initialize a MultiChannelProcessGroup. The parameters are of the same meaning as the torch.distributed.init_process_group function.
 
         Args:
-            init_method (str): The initialization method for the process group.
+            init_method (Optional[str]): The initialization method, or None when a store is provided.
             world_size (int): The total number of processes in the group.
             rank (int): The rank of the current process in the group.
             group_name (str): The name of the group.
             options (Optional[CollectiveGroupOptions]): The options for the collective group.
+            store (Optional[dist.Store]): An existing rendezvous store. Set init_method to None when providing it.
 
         """
         from ..cluster import Cluster
@@ -172,6 +174,11 @@ class MultiChannelProcessGroup:
         self._group_name = group_name
         timeout = Cluster.get_collective_timeout()
         self._logger.debug(f"Setting timeout to {timeout} for group {group_name}")
+
+        backend = "gloo" if self._no_accel_ccl else self._accel_ccl_backend
+        base_group_name = group_name + f"{backend}_send_0"
+        if store is not None:
+            store = dist.PrefixStore(base_group_name, store)
 
         if not self._no_accel_ccl:
             pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)
@@ -181,9 +188,10 @@ class MultiChannelProcessGroup:
             base_group = MultiChannelProcessGroup._create_process_group(
                 backend=self._accel_ccl_backend,  # Only NCCL group supports splitting
                 init_method=init_method,
+                store=store,
                 world_size=world_size,
                 rank=rank,
-                group_name=group_name + f"{self._accel_ccl_backend}_send_0",
+                group_name=base_group_name,
                 timeout=timeout,
                 pg_options=pg_options,
                 # device_id=torch.device(f"cuda:{torch.cuda.current_device()}"),
@@ -260,9 +268,10 @@ class MultiChannelProcessGroup:
             base_group = MultiChannelProcessGroup._create_process_group(
                 backend="gloo",
                 init_method=init_method,
+                store=store,
                 world_size=world_size,
                 rank=rank,
-                group_name=group_name + "gloo_send_0",
+                group_name=base_group_name,
                 timeout=timeout,
             )
             base_store = torch.distributed.distributed_c10d._get_process_group_store(
