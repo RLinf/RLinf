@@ -210,6 +210,7 @@ jobs:
               - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
+              - '.github/scripts/ci_select/**'
               - '.agents/skills/**'
               - '.claude/skills/**'
               - 'AGENTS.md'
@@ -310,6 +311,81 @@ jobs:
     needs: [check-changes]
     if: needs.check-changes.outputs.scheduler_test_filter == 'true'
     uses: ./.github/workflows/scheduler-tests.yml
+
+  # =============================================== job selector (shadow) ============================================
+  # The selector in .github/scripts/ci_select picks jobs from the files and lines
+  # a PR changes. In shadow mode it only reports: the path filters above still
+  # decide what runs, and ci-test-finish does not wait for these jobs.
+
+  ci-select-shadow:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Select jobs
+        run: |
+          pip install -q pyyaml
+          python .github/scripts/ci_select/select_jobs.py \
+            --base ${{ github.event.pull_request.base.sha }} --head HEAD --json > ci-select.json
+          python .github/scripts/ci_select/select_jobs.py \
+            --base ${{ github.event.pull_request.base.sha }} --head HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-select-selection
+          path: ci-select.json
+
+  ci-select-shadow-report:
+    needs: [
+      ci-select-shadow,
+      docker-tests,
+      unit-tests,
+      agent-reason-e2e-tests,
+      embodied-e2e-tests,
+      sft-e2e-tests,
+      offline-rl-e2e-tests,
+      scheduler-tests
+    ]
+    if: always() && needs.ci-select-shadow.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-select-selection
+
+      - name: Compare the selection with this run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install -q pyyaml
+          python .github/scripts/ci_select/shadow_report.py --selection ci-select.json --out ci-select-report.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-select-report
+          path: |
+            ci-select.json
+            ci-select-report.json
 
   # =============================================== finale ====================================================
 
