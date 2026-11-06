@@ -305,6 +305,12 @@ def compute_grpo_dynamic_advantages(
         rewards, group_size, idx_to_traj, advantage_mode
     )
 
+    if isinstance(loss_mask, list):
+        return [
+            mask.to(rewards.dtype) * value
+            for mask, value in zip(loss_mask, turn_advantages)
+        ], None
+
     advantages = torch.zeros_like(
         loss_mask, dtype=rewards.dtype
     ) + turn_advantages.view(1, -1)

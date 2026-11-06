@@ -26,8 +26,6 @@ training efficiency becomes the bottleneck.
      - System-level profiling of Ray worker processes.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
-   * - :doc:`Real-Length Agent Batches <ragged_batches>`
-     - Balance complete question groups before broadcast and defer sequence padding until the loss microbatch.
 
 .. toctree::
    :hidden:
@@ -40,4 +38,3 @@ training efficiency becomes the bottleneck.
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
    5D Parallelism <../5D>
-   Real-Length Agent Batches <ragged_batches>
