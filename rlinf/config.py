@@ -484,13 +484,40 @@ def validate_fp32_master_adamw_config(
     strategy: str,
     sharding_strategy: str,
 ) -> None:
-    """Validate the FSDP backend supported by FP32 master AdamW."""
+    """Validate the FSDP backends supported by FP32 master AdamW.
+
+    FP32MasterAdamW applies AdamW updates on FP32 master copies while keeping
+    model parameters in their original dtype, so it works with FSDP1 under
+    every sharding strategy and with FSDP2. Sharded configurations are
+    verified end to end: optimizer-state checkpoints round-trip through
+    torch.distributed.checkpoint, and training resumed from a checkpoint is
+    bit-identical to an uninterrupted run.
+
+    Args:
+        strategy: ``fsdp_config.strategy`` ("fsdp" or "fsdp2").
+        sharding_strategy: ``fsdp_config.sharding_strategy``. FSDP2 always
+            shards parameters and ignores this value.
+
+    Raises:
+        ValueError: If the strategy is unknown or FSDP1 is paired with an
+            unknown sharding strategy.
+    """
     strategy = str(strategy).lower()
     sharding_strategy = str(sharding_strategy).lower()
-    if strategy != "fsdp" or sharding_strategy != "no_shard":
+    if strategy not in ("fsdp", "fsdp2"):
         raise ValueError(
-            "use_fp32_master_params requires FSDP1 "
-            "with fsdp_config.strategy=fsdp and sharding_strategy=no_shard."
+            "use_fp32_master_params requires fsdp_config.strategy to be "
+            f"'fsdp' or 'fsdp2', got {strategy!r}."
+        )
+    if strategy == "fsdp" and sharding_strategy not in (
+        "no_shard",
+        "shard_grad_op",
+        "full_shard",
+    ):
+        raise ValueError(
+            "use_fp32_master_params with strategy='fsdp' requires "
+            "fsdp_config.sharding_strategy in ['no_shard', 'shard_grad_op', "
+            f"'full_shard'], got {sharding_strategy!r}."
         )
 
 

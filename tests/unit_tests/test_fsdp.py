@@ -18,6 +18,7 @@ import logging
 import os
 import socket
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 import torch
@@ -32,12 +33,13 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
-from rlinf.config import validate_fsdp_cfg
+from rlinf.config import validate_fp32_master_adamw_config, validate_fsdp_cfg
 from rlinf.hybrid_engines.fsdp.compat import apply_buffer_dtype_compatibility
 from rlinf.hybrid_engines.fsdp.mixed_precision import (
     build_mixed_precision,
     get_mixed_precision_wrap_policy,
 )
+from rlinf.hybrid_engines.fsdp.optim import FP32MasterAdamW
 from rlinf.hybrid_engines.fsdp.utils import (
     apply_fsdp2_to_model,
     clip_grad_by_total_norm_,
@@ -1223,3 +1225,221 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert output.dtype == torch.bfloat16
     assert after.dtype == torch.float32
     assert (after != before).all()
+
+
+# ---------------------------------------------------------------------------
+# FP32 master AdamW: full fine-tuning under sharded FSDP (issue #1649)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "strategy,sharding",
+    [
+        ("fsdp", "no_shard"),
+        ("fsdp", "shard_grad_op"),
+        ("fsdp", "full_shard"),
+        ("fsdp2", "full_shard"),
+        ("fsdp2", "no_shard"),  # fsdp2 ignores the knob; nothing to reject
+    ],
+)
+def test_fp32_master_adamw_accepts_fsdp1_sharding_and_fsdp2(strategy, sharding):
+    """FP32 master weights are not restricted to FSDP1 no_shard anymore."""
+    validate_fp32_master_adamw_config(strategy=strategy, sharding_strategy=sharding)
+
+
+@pytest.mark.parametrize(
+    "strategy,sharding,match",
+    [
+        ("megatron", "full_shard", "requires fsdp_config.strategy"),
+        ("fsdp", "hybrid_shard", "sharding_strategy in"),
+    ],
+)
+def test_fp32_master_adamw_rejects_unknown_backends(strategy, sharding, match):
+    """Unknown strategies still fail with actionable messages."""
+    with pytest.raises(ValueError, match=match):
+        validate_fp32_master_adamw_config(strategy=strategy, sharding_strategy=sharding)
+
+
+def test_fp32_master_adamw_escapes_the_bf16_dead_zone():
+    """bf16 in-place AdamW freezes |w| >= lr*2^8; master weights fix it.
+
+    With a constant gradient the AdamW update per step converges to lr, so
+    every bf16 element in the binade [2^-9, 2^-8) sits in the rounding dead
+    zone at lr=5e-6 and a native optimizer can never move it. The FP32
+    master path must move every element and stay within one bf16 ULP of a
+    pure-FP32 run.
+    """
+    lr, steps, n = 5e-6, 200, 2048
+    generator = torch.Generator().manual_seed(0)
+    magnitude = 2.0**-9 * (1.0 + torch.rand(n, generator=generator))
+    sign = torch.where(torch.rand(n, generator=generator) < 0.5, -1.0, 1.0)
+    w0 = (magnitude * sign).to(torch.bfloat16)
+
+    native = w0.detach().clone().requires_grad_(True)
+    opt_native = torch.optim.AdamW([native], lr=lr, eps=1e-8, weight_decay=0.0)
+    master = w0.detach().clone().requires_grad_(True)
+    opt_master = FP32MasterAdamW([master], lr=lr, eps=1e-8, weight_decay=0.0)
+    reference = w0.detach().clone().float().requires_grad_(True)
+    opt_reference = torch.optim.AdamW([reference], lr=lr, eps=1e-8, weight_decay=0.0)
+    for _ in range(steps):
+        for param in (native, master, reference):
+            param.grad = torch.full_like(param, 1e-3)
+        opt_native.step()
+        opt_master.step()
+        opt_reference.step()
+
+    moved_native = (native.view(torch.int16) != w0.view(torch.int16)).float().mean()
+    moved_master = (master.view(torch.int16) != w0.view(torch.int16)).float().mean()
+    assert moved_native < 0.05, (
+        "native bf16 AdamW should be frozen in the dead zone, moved "
+        f"{moved_native:.1%} of elements"
+    )
+    assert moved_master == 1.0, (
+        f"FP32 master AdamW only moved {moved_master:.1%} of dead-zone elements"
+    )
+    assert (master.float() - reference).abs().max() <= 2.0**-16, (
+        "FP32 master updates should track a pure-FP32 run within one bf16 ULP"
+    )
+
+
+def test_fp32_master_adamw_local_state_dict_roundtrip():
+    """Local optimizer state dicts keep FP32 state through a round-trip."""
+
+    def stepped(w0):
+        param = w0.detach().clone().requires_grad_(True)
+        optimizer = FP32MasterAdamW([param], lr=1e-3, eps=1e-8, weight_decay=0.0)
+        for _ in range(5):
+            param.grad = torch.full_like(param, 1e-3)
+            optimizer.step()
+        return optimizer
+
+    generator = torch.Generator().manual_seed(1)
+    w0 = (torch.randn(128, generator=generator) * 0.1).to(torch.bfloat16)
+    optimizer = stepped(w0)
+    restored = stepped(w0)  # different trajectory seed via fresh optimizer
+
+    saved = optimizer.state_dict()
+    restored.load_state_dict(saved)
+    for state, expected in zip(
+        restored.state.values(), optimizer.state.values(), strict=True
+    ):
+        assert state["step"].item() == expected["step"].item()
+        for key in ("exp_avg", "exp_avg_sq", "fp32_master_param"):
+            assert key in state, f"{key} missing after restore"
+            assert state[key].dtype == torch.float32, (
+                f"{key} lost its FP32 dtype through the round-trip"
+            )
+            assert torch.equal(state[key], expected[key])
+
+
+def _fp32_master_dcp_worker(rank, world_size, backend, sharding, port, ckpt, ok):
+    """Two-rank gloo worker: train, DCP save/load, resume, compare."""
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_state_dict,
+        set_state_dict,
+    )
+    from torch.distributed.fsdp import (
+        FullyShardedDataParallel as FSDP1,
+    )
+    from torch.distributed.fsdp import (
+        ShardingStrategy,
+        fully_shard,
+    )
+
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    os.environ["RANK"] = str(rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
+    torch.set_num_threads(2)
+    dist.init_process_group("gloo")
+    lr, grad, steps = 5e-6, 1e-3, 25
+
+    def make_stack():
+        torch.manual_seed(7)
+        model = nn.Sequential(nn.Linear(64, 128), nn.Linear(128, 64))
+        model = model.to(torch.bfloat16)
+        if backend == "fsdp1":
+            model = FSDP1(
+                model,
+                sharding_strategy=getattr(ShardingStrategy, sharding.upper()),
+                device_id=torch.device("cpu"),
+                use_orig_params=True,
+            )
+        else:
+            for layer in model:
+                fully_shard(layer)
+            fully_shard(model)
+        optimizer = FP32MasterAdamW(
+            model.parameters(), lr=lr, eps=1e-8, weight_decay=0.0
+        )
+        return model, optimizer
+
+    def local_bits(param):
+        tensor = param.to_local() if hasattr(param, "to_local") else param
+        return tensor.detach().clone().view(torch.int16)
+
+    def run_steps(model, optimizer, count):
+        for _ in range(count):
+            for param in model.parameters():
+                param.grad = torch.full_like(param, grad)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+    try:
+        model, optimizer = make_stack()
+        initial = [local_bits(p) for p in model.parameters()]
+        run_steps(model, optimizer, steps)
+        moved = sum(
+            (b != local_bits(p)).sum().item()
+            for b, p in zip(initial, model.parameters(), strict=True)
+        )
+        assert moved > 0, "FP32 master path moved no parameters at all"
+
+        options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+        model_sd, optim_sd = get_state_dict(
+            model=model, optimizers=optimizer, options=options
+        )
+        dcp.save({"model": model_sd, "optim": optim_sd}, checkpoint_id=str(ckpt))
+
+        model2, optimizer2 = make_stack()
+        run_steps(model2, optimizer2, 1)  # warm up optimizer state
+        m_sd, o_sd = get_state_dict(
+            model=model2, optimizers=optimizer2, options=options
+        )
+        dcp.load({"model": m_sd, "optim": o_sd}, checkpoint_id=str(ckpt))
+        set_state_dict(
+            model=model2,
+            optimizers=optimizer2,
+            model_state_dict=m_sd,
+            optim_state_dict=o_sd,
+            options=options,
+        )
+        run_steps(model, optimizer, steps)
+        run_steps(model2, optimizer2, steps)
+        for p, q in zip(model.parameters(), model2.parameters(), strict=True):
+            assert torch.equal(local_bits(p), local_bits(q)), (
+                "resumed trajectory diverged from the uninterrupted run"
+            )
+        if rank == 0:
+            Path(ok).write_text("PASS")
+        dist.barrier()
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    "backend,sharding",
+    [("fsdp1", "full_shard"), ("fsdp1", "shard_grad_op"), ("fsdp2", "full_shard")],
+)
+def test_fp32_master_dcp_roundtrip_under_sharding(tmp_path, backend, sharding):
+    """Sharded FP32-master training checkpoints and resumes bit-identically."""
+    ok_file = tmp_path / "ok"
+    torch.multiprocessing.spawn(
+        _fp32_master_dcp_worker,
+        args=(2, backend, sharding, free_port(), tmp_path / "ckpt", ok_file),
+        nprocs=2,
+        join=True,
+    )
+    assert ok_file.read_text() == "PASS"

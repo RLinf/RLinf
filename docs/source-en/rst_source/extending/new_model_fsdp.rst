@@ -421,3 +421,32 @@ gradients for specific wrappers. The optimizer preserves parameter groups and
 optimizer settings, converts gradients to FP32 during updates, and keeps FP32
 optimizer states. BF16/FP16 original parameters also have an FP32 master copy.
 Use the default ``keep_low_precision_grads: false`` with native AdamW.
+
+FP32 master weights also unblock full fine-tuning of low-precision parameters.
+Native AdamW updates such parameters in place, so any update smaller than half
+a ULP of the parameter dtype is rounded away: with bf16 weights and a small
+learning rate (for example ``lr=5e-6``), every element with
+``|w| >= lr * 2^8`` never changes at all. ``use_fp32_master_params: true``
+removes this dead zone and is supported with FSDP1 under every sharding
+strategy and with FSDP2:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       precision: null        # keep the shipped low-precision model
+     optim:
+       use_fp32_master_params: true
+     fsdp_config:
+       strategy: fsdp          # or fsdp2
+       sharding_strategy: full_shard
+
+The optimizer keeps an FP32 master copy of every low-precision trainable
+parameter plus FP32 moments, which costs about 8 extra bytes of optimizer
+memory per trainable parameter. Sharded optimizer-state checkpoints
+round-trip through ``torch.distributed.checkpoint``, and training resumed
+from a checkpoint is bit-identical to an uninterrupted run. Note that
+switching from the default low-precision optimizer path can change training
+dynamics: previously frozen weights start updating, so re-tune the learning
+rate and exploration noise when comparing against runs made with the default
+configuration.

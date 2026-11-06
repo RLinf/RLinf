@@ -93,7 +93,15 @@ class FSDPModelManager:
                 "to allow the optimizer to run in fp32 for better convergence. "
                 "Meanwhile, setting mixed_precision.param_dtype to 16-bit dtype "
                 "can help maximize speed, as it will automatically "
-                "convert fp32 to fp16 during operator execution."
+                "convert fp32 to fp16 during operator execution. "
+                "Note that native AdamW updates low-precision parameters in "
+                "place, so updates smaller than half a ULP of the parameter "
+                "dtype are rounded away: with lr small relative to |w| "
+                "(|w| >= lr * 2^8 for bf16) those weights never change. "
+                "Set actor.optim.use_fp32_master_params=true to update "
+                "through FP32 master weights instead, which works with FSDP1 "
+                "under every sharding strategy and with FSDP2 and costs about "
+                "8 extra bytes of optimizer memory per trainable parameter."
             )
 
         self.optimizer_steps = 0
