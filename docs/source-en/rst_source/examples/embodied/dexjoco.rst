@@ -168,8 +168,7 @@ action normalization statistics. Set these paths in
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-Train the CNN with Gaussian negative log-likelihood on the demonstrated action
-chunks:
+Train the CNN with mean squared error on the demonstrated action chunks:
 
 .. code:: bash
 
@@ -325,6 +324,15 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
      logger:
        logger_backends: ["tensorboard", "wandb"]
 
+.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/4b5dbf3db3a251fc33415113b6dbe504f6c08202/pic/dexjoco_cnn_sft_ppo.png
+   :align: center
+   :width: 100%
+   :alt: CNN success rate through 8000 SFT updates and 200 PPO iterations on water_plant.
+
+   CNN SFT + PPO on ``water_plant`` (64 evaluation episodes).
+
+`CNN PPO run logs <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__.
+
 .. figure:: https://raw.githubusercontent.com/matthewmzy/misc/11c9e5e117ae7231055ec4b561284e131df71c0a/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
@@ -342,9 +350,9 @@ contains the evaluation curves and source logs.
    * - Recipe
      - Success rate
    * - CNN + SFT
-     - Step 8000 reaches 42/64 (65.6%).
+     - Step 8000 reaches 46/64 (71.9%).
    * - CNN + PPO
-     - Continues SFT step 8000: 42/64 (65.6%) at iteration 0 → 59/64 (92.2%) at iteration 200; the peak is 61/64 at iteration 150.
+     - Continues SFT step 8000: 46/64 (71.9%) at iteration 0 → 44/64 (68.8%) at iteration 200; the peak is 60/64 (93.8%) at iteration 123.
    * - π₀.₅ + SFT
      - Step 5000 reaches 44/64 (68.75%).
    * - π₀.₅ + PPO

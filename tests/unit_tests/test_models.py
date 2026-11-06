@@ -2342,22 +2342,24 @@ def test_cnn_policy_normalizes_chunks_and_preserves_ppo_logprobs(tmp_path):
     )
 
 
-def test_cnn_policy_sft_updates_action_mean_and_std(tmp_path):
+def test_cnn_policy_sft_updates_action_mean_only(tmp_path):
     from rlinf.models.embodiment.base_policy import ForwardType
 
     model = _cnn_policy(tmp_path, 10, dropout=0.1).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    parameters = [model.actor_mean.weight, model.actor_logstd]
-    before = [parameter.detach().clone() for parameter in parameters]
+    initial_mean = model.actor_mean.weight.detach().clone()
+    initial_logstd = model.actor_logstd.detach().clone()
 
-    output = model(forward_type=ForwardType.SFT, data=_cnn_batch(3, 10))
-    output["loss"].backward()
-    for parameter in parameters:
-        assert parameter.grad is not None and torch.isfinite(parameter.grad).all()
-        assert parameter.grad.count_nonzero() > 0
+    loss = model(forward_type=ForwardType.SFT, data=_cnn_batch(3, 10))
+    assert loss.ndim == 0
+    loss.backward()
+    assert model.actor_mean.weight.grad is not None
+    assert torch.isfinite(model.actor_mean.weight.grad).all()
+    assert model.actor_mean.weight.grad.count_nonzero() > 0
+    assert model.actor_logstd.grad is None
     optimizer.step()
-    for parameter, initial in zip(parameters, before):
-        assert not torch.equal(parameter, initial)
+    assert not torch.equal(model.actor_mean.weight, initial_mean)
+    torch.testing.assert_close(model.actor_logstd, initial_logstd)
 
 
 @pytest.mark.parametrize("num_action_chunks", [1, 10])

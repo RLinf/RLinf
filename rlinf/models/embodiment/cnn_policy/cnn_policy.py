@@ -20,6 +20,7 @@ from typing import Any, Literal, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -334,7 +335,7 @@ class CNNPolicy(nn.Module, BasePolicy):
         )
         target_actions = data["action"].to(obs["states"].device)
         target_actions = target_actions.reshape(target_actions.shape[0], -1)
-        _, _, action_mean, action_logstd = self._actor_forward_from_processed_tensors(
+        _, _, action_mean, _ = self._actor_forward_from_processed_tensors(
             obs["main_images"],
             obs["states"],
             obs.get("extra_view_images"),
@@ -345,11 +346,7 @@ class CNNPolicy(nn.Module, BasePolicy):
                 f"got predicted {action_mean.shape} and target {target_actions.shape}."
             )
         target_actions = (target_actions - self.action_norm_mean) / self.action_norm_std
-        # Gaussian NLL also fits actor_logstd, which PPO then samples from.
-        probs = Normal(action_mean, torch.exp(action_logstd))
-        nll = -probs.log_prob(target_actions).mean()
-        mse = (action_mean.detach() - target_actions).pow(2).mean()
-        return {"loss": nll, "mse": mse}
+        return F.mse_loss(action_mean, target_actions)
 
     def default_forward(
         self,

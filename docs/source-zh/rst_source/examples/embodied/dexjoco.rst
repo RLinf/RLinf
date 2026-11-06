@@ -158,7 +158,7 @@ CNN：SFT 与 PPO
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-启动 SFT，以高斯负对数似然拟合示范动作块：
+启动 SFT，以均方误差拟合示范动作块：
 
 .. code:: bash
 
@@ -301,6 +301,15 @@ SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在
      logger:
        logger_backends: ["tensorboard", "wandb"]
 
+.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/4b5dbf3db3a251fc33415113b6dbe504f6c08202/pic/dexjoco_cnn_sft_ppo.png
+   :align: center
+   :width: 100%
+   :alt: CNN 在 water_plant 上经过 8000 步 SFT 和 200 轮 PPO 的成功率。
+
+   CNN 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测回合）。
+
+`CNN PPO 运行日志 <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__。
+
 .. figure:: https://raw.githubusercontent.com/matthewmzy/misc/11c9e5e117ae7231055ec4b561284e131df71c0a/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
@@ -317,9 +326,9 @@ SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在
    * - 配方
      - 成功率
    * - CNN + SFT
-     - 第 8000 步达到 42/64（65.6%）。
+     - 第 8000 步达到 46/64（71.9%）。
    * - CNN + PPO
-     - 从 SFT 第 8000 步继续训练：第 0 轮为 42/64（65.6%），第 200 轮达到 59/64（92.2%）；峰值为第 150 轮的 61/64。
+     - 从 SFT 第 8000 步继续训练：第 0 轮为 46/64（71.9%），第 200 轮为 44/64（68.8%）；峰值为第 123 轮的 60/64（93.8%）。
    * - π₀.₅ + SFT
      - 第 5000 步达到 44/64（68.75%）。
    * - π₀.₅ + PPO
