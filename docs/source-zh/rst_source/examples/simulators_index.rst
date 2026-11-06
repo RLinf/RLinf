@@ -204,6 +204,17 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/mujoco_warp.html" style="display: block;"><img src="https://raw.githubusercontent.com/google-deepmind/mujoco_warp/main/benchmarks/humanoid/rollout_three_humanoids.webp"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/mujoco_warp.html" style="text-decoration: underline; color: blue;">
+           <b>基于 MuJoCo Warp 的强化学习</b>
+         </a><br>
+         在五个经典运动控制任务上用 PPO 训练 MLP policy
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
