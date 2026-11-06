@@ -121,8 +121,13 @@ class Pi0RL(EnvIO, Pi0):
         self._mark_fsdp_wrap_names()
 
     @property
+    def _backbone_no_split_modules(self) -> list[str] | None:
+        """Backbone wrap classes; optional RL heads are added by this policy."""
+        return super()._no_split_modules
+
+    @property
     def _no_split_modules(self) -> list[str] | None:
-        names = list(super()._no_split_modules or [])
+        names = list(self._backbone_no_split_modules or [])
         if self.rl_cfg.add_value_head:
             names.append("ValueHead")
         if self.rl_cfg.noise_method == "flow_noise":

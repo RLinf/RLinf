@@ -299,14 +299,13 @@ class SGLangPi05RL(Pi0RL):
         self.core_model.paligemma_with_expert.to_selected_dtype(precision)
 
     @property
-    def _no_split_modules(self) -> list[str]:
+    def _backbone_no_split_modules(self) -> list[str]:
         # RMSNorm and vision embeddings retain fp32; FSDP1 wraps them separately.
         return [
             "PiGemmaDecoderLayer",
             "PiGemmaRMSNorm",
             "SiglipEncoderLayer",
             "SiglipVisionEmbeddings",
-            "ValueHead",
         ]
 
     @property
