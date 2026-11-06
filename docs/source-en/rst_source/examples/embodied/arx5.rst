@@ -1,5 +1,5 @@
-Dual-Arm ARX X5
-=================================================
+ARX X5
+======
 
 .. figure:: https://arx-global.us/assets/img/x5.webp
    :align: center
@@ -17,7 +17,6 @@ The ARX X5 collection recipe runs dual-arm control, three cameras, and PICO tele
 
 .. grid:: 1 2 2 2
    :gutter: 2
-   :class-container: arx5-overview-grid
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -31,26 +30,6 @@ The ARX X5 collection recipe runs dual-arm control, three cameras, and PICO tele
 
 | **You'll do:** install the ARX X5 runtime → check the hardware → configure the station → collect episodes → inspect the dataset.
 | **Prerequisites:** Ubuntu 24.04 · two ARX X5 arms and CAN adapters · three V4L2 cameras · a PICO headset with two controllers.
-
-Tasks
-~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 34 42
-
-   * - Task
-     - Config / entry point
-     - Description
-   * - Hardware check
-     - ``collect_data_dual_arx5``
-     - Verify both CAN interfaces and three camera paths before enabling motion.
-   * - Data collection
-     - ``collect_data.sh collect_data_dual_arx5``
-     - Record dual-arm PICO demonstrations and save successful episodes as LeRobot shards.
-   * - Dataset inspection
-     - ``visualize_lerobot_dataset.py``
-     - Export images, state/action text, and optional MP4 previews.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -66,14 +45,23 @@ Observation and Action
    * - Action
      - A 20-D absolute target in ``[left_xyz, left_rot6d, left_gripper, right_xyz, right_rot6d, right_gripper]`` order.
    * - Reward
-     - PICO ``X`` ends an episode with reward 1; PICO ``A`` ends it with reward 0. The provided config keeps successful episodes only.
+     - Press PICO ``X`` to end the episode with a reward of 1, or ``A`` to end it with a reward of 0.
    * - Prompt
      - ``env.eval.override_cfg.task_description`` sets the task text, which the LeRobot exporter writes into episode metadata.
 
 Install the Runtime
 -------------------
 
-First install RLinf's ARX X5, camera, and LeRobot dependencies in one Python environment:
+Clone the RLinf repository and enter its directory:
+
+.. code-block:: bash
+
+   # To use a mirror, replace the official clone command with the following line:
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+Install RLinf's ARX X5, camera, and LeRobot dependencies in one Python environment:
 
 .. code-block:: bash
 
@@ -97,7 +85,17 @@ Find stable V4L2 paths for the three cameras:
 
    ls -l /dev/v4l/by-path/
 
-Write the main, left-wrist, and right-wrist paths into ``base_camera_serials``, ``left_camera_serials``, and ``right_camera_serials`` respectively.
+In ``examples/embodiment/config/collect_data_dual_arx5.yaml``, set the CAN interface for each arm and the V4L2 path for each camera view to match your wiring.
+
+.. code-block:: yaml
+
+   left_can_port: can1  # Left arm CAN interface
+   right_can_port: can3  # Right arm CAN interface
+   arm_type: 0  # X5-2023 model
+   camera_fps: 30  # Choose a frame rate the cameras support
+   base_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.4:1.0-video-index0']  # Overhead view
+   left_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0']  # Left wrist
+   right_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.3:1.0-video-index0']  # Right wrist
 
 If OpenCV reports ``Could not open V4L2 camera``, check the device owner and your supplementary groups:
 
@@ -112,12 +110,26 @@ Sign out and reconnect, then confirm that ``id -nG`` includes ``video``. If Ray 
 Prepare the PICO Headset
 ------------------------
 
-Install the `XRoboToolkit APK <https://github.com/XR-Robotics>`_ on the PICO headset, then confirm that headset and controller tracking work correctly.
+Follow the headset instructions in :ref:`PICO / XRoboToolkit setup <pico-software-setup>` to install the APK, then check that the headset tracks both controllers.
 
 Collect Demonstrations
 ----------------------
 
-After activating the environment and configuring the SDK path, start a single-node Ray runtime and the collector from the repository root:
+Before launching the collector, edit the following fields in ``examples/embodiment/config/collect_data_dual_arx5.yaml``.
+
+.. code-block:: yaml
+
+   runner:
+     num_data_episodes: 50  # Number of successful demonstrations needed
+   env:
+     eval:
+       override_cfg:
+         step_frequency: 30  # Control rate in Hz
+         task_description: Pick and place the objects with both arms.  # Replace with the task instruction to store
+       data_collection:
+         fps: 30  # Dataset frame rate; match the control and camera rates
+
+With the Python environment active and the SDK on ``PYTHONPATH``, run these commands from the repository root.
 
 .. code-block:: bash
 
@@ -125,21 +137,7 @@ After activating the environment and configuring the SDK path, start a single-no
    ray start --head
    bash examples/embodiment/collect_data.sh collect_data_dual_arx5
 
-Override the episode count, horizon, rates, task text, and dual-arm reset targets from the command line when needed:
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh collect_data_dual_arx5 \
-       runner.num_data_episodes=50 \
-       env.eval.max_episode_steps=3000 \
-       env.eval.override_cfg.max_num_steps=3000 \
-       cluster.node_groups.0.hardware.configs.0.camera_fps=30 \
-       env.eval.override_cfg.step_frequency=30 \
-       env.eval.data_collection.fps=30 \
-       'env.eval.override_cfg.task_description=Pick and place the objects with both arms.' \
-       'env.eval.override_cfg.joint_reset_qpos=[[0,0.1,0.1,0,0,0],[0,0.1,0.1,0,0,0]]'
-
-This example collects 50 successful episodes. At 30 Hz, 3,000 steps allow up to 100 seconds per episode. Replace ``task_description`` and both reset targets with values validated for your task and station.
+After the arms reset, press **B** to start recording. Press **X** to end and save a successful demonstration, or **A** to end and discard a failed attempt.
 
 Inspect the Dataset
 -------------------

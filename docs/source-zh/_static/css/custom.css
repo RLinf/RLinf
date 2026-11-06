@@ -578,33 +578,3 @@ div.highlight button.copybtn {
 .bd-article table.geniesim-results-table td:not(:first-child) {
   white-space: nowrap;
 }
-
-/* Keep the ARX X5 collection recipe comfortable to read without changing the
-   typography of the rest of the documentation site. */
-#pico-arx-x5 {
-  font-size: 1.075rem;
-  line-height: 1.75;
-}
-
-#pico-arx-x5 .sd-card,
-#pico-arx-x5 table {
-  font-size: 1.025rem;
-}
-
-#pico-arx-x5 .arx5-overview-grid {
-  margin-inline: auto;
-  max-width: 720px;
-}
-
-#pico-arx-x5 .arx5-overview-grid .sd-row {
-  justify-content: center;
-}
-
-#pico-arx-x5 div.highlight pre {
-  font-size: 0.95rem;
-  line-height: 1.6;
-}
-
-#pico-arx-x5 > section {
-  margin-top: 2.4rem;
-}
