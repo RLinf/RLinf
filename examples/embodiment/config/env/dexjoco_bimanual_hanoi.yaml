@@ -1,9 +1,0 @@
-defaults:
-  - dexjoco
-  - _self_
-
-task_name: bimanual_hanoi
-task_description: "Execute the final two moves of the three-level Tower of Hanoi: move the medium disk from the middle peg to the right peg with the right hand, then move the small disk from the left peg to the right peg with the left hand."
-camera_names: [ego, wrist_left, wrist_right]
-max_episode_steps: 1500
-max_steps_per_rollout_epoch: 1500

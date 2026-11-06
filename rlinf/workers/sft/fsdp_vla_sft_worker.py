@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 import os
 from typing import Any
 
@@ -20,7 +19,6 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
-from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -131,14 +129,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
             if self._rank == 0:
                 torch.save(all_states, os.path.join(save_path, "data.pt"))
-                with open(os.path.join(save_path, "data_state.json"), "w") as f:
-                    json.dump(
-                        {
-                            "data_epoch": self._data_epoch,
-                            "data_iter_offset": self._data_iter_offset,
-                        },
-                        f,
-                    )
 
             torch.distributed.barrier()
 
@@ -154,13 +144,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().load_checkpoint(load_path)
 
         if isinstance(self.data_loader, StatefulDataLoader):
-            state_path = os.path.join(load_path, "data_state.json")
-            if os.path.exists(state_path):
-                with open(state_path) as f:
-                    data_state = json.load(f)
-                self._data_epoch = int(data_state.get("data_epoch", 0))
-                self._data_iter_offset = int(data_state.get("data_iter_offset", 0))
-                forward_set_epoch(self.data_loader, self._data_epoch)
             all_states = torch.load(
                 os.path.join(load_path, "data.pt"), weights_only=False
             )

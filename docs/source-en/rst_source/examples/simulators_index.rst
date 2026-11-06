@@ -198,7 +198,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
          <a href="embodied/dexjoco.html" style="text-decoration: underline; color: blue;">
            <b>RL with DexJoCo Benchmark</b>
          </a><br>
-         Support DexJoCo + CNN / π₀.₅ + SFT and PPO training
+         CNN / π₀.₅ SFT and PPO on WaterPlant
        </p>
      </div>
 

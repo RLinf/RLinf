@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from logging import Logger
@@ -365,49 +364,6 @@ class FSDPStrategyBase(ABC):
             raise e
 
         torch.distributed.barrier()
-
-    @classmethod
-    def count_checkpoint_param_groups(
-        cls, load_path: str, checkpoint_format: str = "dcp"
-    ) -> Optional[int]:
-        """
-        Count the parameter groups of the optimizer stored in a training state checkpoint.
-
-        Args:
-            load_path (str): The path the checkpoint was saved to.
-            checkpoint_format (str): "dcp" or "local_shard".
-
-        Returns:
-            Optional[int]: The number of parameter groups of the (first) optimizer,
-                or None if the checkpoint stores no optimizer state.
-        """
-        if checkpoint_format == "local_shard":
-            rank = torch.distributed.get_rank()
-            local_ckpt_file = os.path.join(
-                load_path, "local_shard_checkpoint", f"checkpoint_rank_{rank}.pt"
-            )
-            checkpoint = torch.load(local_ckpt_file, weights_only=False, mmap=True)
-            optim_sd = checkpoint.get("optimizers")
-            if isinstance(optim_sd, list):
-                optim_sd = optim_sd[0] if optim_sd else None
-            return len(optim_sd["param_groups"]) if optim_sd else None
-
-        from torch.distributed import checkpoint as dcp
-
-        dcp_dir = os.path.join(load_path, "dcp_checkpoint")
-        dcp_load_path = dcp_dir if os.path.isdir(dcp_dir) else load_path
-        metadata = dcp.FileSystemReader(dcp_load_path).read_metadata()
-        # DCP flattens the state dict: a single optimizer is stored under
-        # "optimizers.param_groups.<index>.<key>", a list under "optimizers.0...".
-        group_key = re.compile(
-            r"^fsdp_checkpoint\.optimizers\.(?:0\.)?param_groups\.(\d+)\."
-        )
-        groups = set()
-        for key in metadata.state_dict_metadata:
-            match = group_key.match(key)
-            if match is not None:
-                groups.add(match.group(1))
-        return len(groups) or None
 
     def get_model_state_dict(
         self, model: Union[FSDP, FSDPModule], cpu_offload: bool, full_state_dict: bool

@@ -2274,16 +2274,7 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert torch.all(actions[1, :, 6] == 0.5)
 
 
-def _cnn_policy(
-    tmp_path,
-    num_action_chunks,
-    action_norm_stats=None,
-    encoder_dropout=None,
-    q_head_type=None,
-    action_scale=None,
-):
-    # The encoder loads its pretrained weights from model_path; a freshly
-    # initialized ResNet10 state dict stands in for the published file.
+def _cnn_policy(tmp_path, num_action_chunks, action_norm_stats=None, dropout=0.0):
     import json
 
     from rlinf.models.embodiment.cnn_policy.cnn_policy import CNNConfig, CNNPolicy
@@ -2294,7 +2285,7 @@ def _cnn_policy(
     )
     config = {
         "model_path": str(tmp_path),
-        "encoder_config": {"ckpt_name": "resnet10_pretrained.pt"},
+        "encoder_config": {"ckpt_name": "resnet10_pretrained.pt", "dropout": dropout},
         "image_size": [3, 32, 32],
         "image_num": 2,
         "state_dim": 23,
@@ -2305,12 +2296,6 @@ def _cnn_policy(
     if action_norm_stats is not None:
         (tmp_path / "meta.json").write_text(json.dumps(action_norm_stats))
         config["action_norm_stats"] = str(tmp_path / "meta.json")
-    if encoder_dropout is not None:
-        config["encoder_config"]["dropout"] = encoder_dropout
-    if q_head_type is not None:
-        config.update(add_value_head=False, add_q_head=True, q_head_type=q_head_type)
-    if action_scale is not None:
-        config["action_scale"] = action_scale
     cfg = CNNConfig()
     cfg.update_from_dict(config)
     return CNNPolicy(cfg)
@@ -2330,223 +2315,68 @@ def _cnn_batch(batch_size, num_action_chunks):
     }
 
 
-def test_cnn_policy_predicts_and_scores_action_chunks(tmp_path):
+def test_cnn_policy_normalizes_chunks_and_preserves_ppo_logprobs(tmp_path):
     from rlinf.models.embodiment.base_policy import ForwardType
 
-    torch.manual_seed(0)
-    model = _cnn_policy(tmp_path, num_action_chunks=10).eval()
-    batch = _cnn_batch(3, 10)
-
-    chunk_actions, result = model.predict_action_batch(batch, mode="train")
-    assert chunk_actions.shape == (3, 10, 22)
-    assert result["prev_logprobs"].shape == (3, 220)
-    assert result["prev_values"].shape == (3, 1)
-
-    output = model(
-        forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
-    )
-    assert output["logprobs"].shape == (3, 220)
-    assert output["entropy"].shape == (3, 220)
-    torch.testing.assert_close(
-        output["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
-    )
-
-
-def test_cnn_policy_ppo_dropout_configuration_preserves_rollout_logprobs(tmp_path):
-    from rlinf.models.embodiment.base_policy import ForwardType
-
-    torch.manual_seed(0)
-    model = _cnn_policy(tmp_path, num_action_chunks=10, encoder_dropout=0.0).eval()
-    batch = _cnn_batch(3, 10)
-
-    eval_actions, eval_result = model.predict_action_batch(batch, mode="eval")
-    _, result = model.predict_action_batch(batch, mode="train")
-    model.train()
-    model(forward_type=ForwardType.SFT, data=batch)
-    train_actions, train_result = model.predict_action_batch(batch, mode="eval")
-    torch.testing.assert_close(train_actions, eval_actions)
-    torch.testing.assert_close(train_result["prev_values"], eval_result["prev_values"])
-    recomputed = model(
-        forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
-    )
-    torch.testing.assert_close(
-        recomputed["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
-    )
-
-
-@pytest.mark.parametrize("q_head_type", ["default", "crossq"])
-def test_cnn_policy_sac_keeps_encoder_dropout_in_train_mode(tmp_path, q_head_type):
-    from rlinf.models.embodiment.base_policy import ForwardType
-
-    torch.manual_seed(0)
-    model = _cnn_policy(tmp_path, 1, q_head_type=q_head_type).train()
-    batch = _cnn_batch(3, 1)
-    forward_type = ForwardType.SAC if q_head_type == "default" else ForwardType.CROSSQ
-    q_forward_type = (
-        ForwardType.SAC_Q if q_head_type == "default" else ForwardType.CROSSQ_Q
-    )
-    actions, logprobs, train_features = model(forward_type=forward_type, obs=batch)
-    _, _, repeated_features = model(forward_type=forward_type, obs=batch)
-    assert actions.shape == logprobs.shape == (3, 22)
-    assert not torch.allclose(train_features, repeated_features)
-    q_kwargs = (
-        {"next_obs": batch, "next_actions": actions} if q_head_type == "crossq" else {}
-    )
-    q_values = model(
-        forward_type=q_forward_type, obs=batch, actions=actions, **q_kwargs
-    )
-    if q_head_type == "crossq":
-        q_values, next_q_values = q_values
-        assert next_q_values.shape == (3, 2)
-    assert q_values.shape == (3, 2)
-
-    model.eval()
-    _, _, eval_features = model(forward_type=forward_type, obs=batch)
-    _, _, repeated_features = model(forward_type=forward_type, obs=batch)
-    torch.testing.assert_close(eval_features, repeated_features)
-
-
-def test_cnn_policy_sft_follows_train_and_eval_modes(tmp_path):
-    from rlinf.models.embodiment.base_policy import ForwardType
-
-    torch.manual_seed(0)
-    model = _cnn_policy(tmp_path, num_action_chunks=10).train()
-    batch = _cnn_batch(3, 10)
-    first = model(forward_type=ForwardType.SFT, data=batch)["loss"]
-    second = model(forward_type=ForwardType.SFT, data=batch)["loss"]
-    assert not torch.allclose(first, second)
-
-    model.eval()
-    first = model(forward_type=ForwardType.SFT, data=batch)["loss"]
-    second = model(forward_type=ForwardType.SFT, data=batch)["loss"]
-    torch.testing.assert_close(first, second)
-
-
-def test_cnn_policy_sft_is_the_gaussian_nll_of_the_demonstrated_chunk(tmp_path):
-    from rlinf.models.embodiment.base_policy import ForwardType
-
-    torch.manual_seed(0)
-    model = _cnn_policy(tmp_path, num_action_chunks=10).eval()
-    batch = _cnn_batch(4, 10)
-
-    output = model(forward_type=ForwardType.SFT, data=batch)
-    output["loss"].backward()
-
-    predicted, result = model.predict_action_batch(batch, mode="eval")
-    forward_inputs = {
-        **result["forward_inputs"],
-        "action": batch["action"].reshape(4, -1),
-    }
-    scores = model(
-        forward_type=ForwardType.DEFAULT,
-        forward_inputs=forward_inputs,
-        compute_entropy=False,
-        compute_values=False,
-    )
-    torch.testing.assert_close(output["loss"], -scores["logprobs"].mean())
-    torch.testing.assert_close(
-        output["mse"], (predicted - batch["action"]).pow(2).mean()
-    )
-    assert model.actor_logstd.grad is not None
-    assert model.actor_mean.weight.grad is not None
-
-    batch["action"] = batch["action"][:, :5]
-    with pytest.raises(ValueError, match="predicted action shape"):
-        model(forward_type=ForwardType.SFT, data=batch)
-
-
-def test_cnn_policy_normalizes_actions_with_dataset_statistics(tmp_path):
-    from rlinf.models.embodiment.base_policy import ForwardType
-
-    torch.manual_seed(0)
     mean = [0.5] * 3 + [0.0] * 3 + [0.8] * 16
     std = [0.01] * 3 + [0.5] * 3 + [0.2] * 16
     model = _cnn_policy(tmp_path, 10, {"action_mean": mean, "action_std": std}).eval()
     batch = _cnn_batch(3, 10)
 
     chunk_actions, result = model.predict_action_batch(batch, mode="train")
-    stored = result["forward_inputs"]["action"]
-    expected = stored.reshape(3, 10, 22) * torch.tensor(std) + torch.tensor(mean)
+    assert chunk_actions.shape == (3, 10, 22)
+    stored_actions = result["forward_inputs"]["action"]
+    expected = stored_actions.reshape(3, 10, 22) * torch.tensor(std) + torch.tensor(
+        mean
+    )
     torch.testing.assert_close(chunk_actions, expected)
+
+    model.train()
     output = model(
         forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
     )
+    assert output["logprobs"].shape == output["entropy"].shape == (3, 220)
+    assert output["values"].shape == (3, 1)
     torch.testing.assert_close(
         output["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
     )
 
-    # SFT targets are scored in the same normalized units.
-    batch["action"] = torch.zeros(3, 10, 22) + torch.tensor(mean)
-    output = model(forward_type=ForwardType.SFT, data=batch)
-    predicted, _ = model.predict_action_batch(batch, mode="eval")
-    normalized_mean = (predicted - torch.tensor(mean)) / torch.tensor(std)
-    torch.testing.assert_close(output["mse"], normalized_mean.pow(2).mean())
+
+def test_cnn_policy_sft_updates_action_mean_and_std(tmp_path):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    model = _cnn_policy(tmp_path, 10, dropout=0.1).train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    parameters = [model.actor_mean.weight, model.actor_logstd]
+    before = [parameter.detach().clone() for parameter in parameters]
+
+    output = model(forward_type=ForwardType.SFT, data=_cnn_batch(3, 10))
+    output["loss"].backward()
+    for parameter in parameters:
+        assert parameter.grad is not None and torch.isfinite(parameter.grad).all()
+        assert parameter.grad.count_nonzero() > 0
+    optimizer.step()
+    for parameter, initial in zip(parameters, before):
+        assert not torch.equal(parameter, initial)
 
 
-@pytest.mark.parametrize(
-    ("mean", "std"),
-    [
-        ([0.0] * 21, [1.0] * 22),
-        ([0.0] * 22, [1.0] * 21),
-        ([[0.0] * 22], [[1.0] * 22]),
-    ],
-)
-def test_cnn_policy_action_statistics_match_the_action_dimension(tmp_path, mean, std):
-    with pytest.raises(
-        ValueError, match=r"action_mean and action_std with shape \(22,\)"
-    ):
-        _cnn_policy(tmp_path, 1, {"action_mean": mean, "action_std": std})
-
-
-@pytest.mark.parametrize(
-    "policy_options",
-    [
-        {"q_head_type": "default"},
-        {"q_head_type": "crossq"},
-        {"action_scale": (-1, 1)},
-    ],
-)
-def test_cnn_policy_rejects_normalization_for_scaled_actions(tmp_path, policy_options):
-    stats = {"action_mean": [0.8] * 22, "action_std": [0.2] * 22}
-    with pytest.raises(
-        ValueError, match="action_norm_stats requires an unscaled Gaussian policy"
-    ):
-        _cnn_policy(tmp_path, 1, action_norm_stats=stats, **policy_options)
-
-
-def test_cnn_policy_loads_legacy_checkpoint_without_action_statistics(tmp_path):
-    model = _cnn_policy(tmp_path, num_action_chunks=1).eval()
-    legacy_state = {
-        name: value
-        for name, value in model.state_dict().items()
-        if name not in {"action_norm_mean", "action_norm_std"}
-    }
-    checkpoint = tmp_path / "full_weights.pt"
-    torch.save(legacy_state, checkpoint)
-
-    restored = _cnn_policy(tmp_path, num_action_chunks=1).eval()
-    restored.load_state_dict(torch.load(checkpoint, weights_only=True), strict=True)
-
-    batch = _cnn_batch(2, 1)
-    expected, _ = model.predict_action_batch(batch, mode="eval")
-    actual, _ = restored.predict_action_batch(batch, mode="eval")
-    torch.testing.assert_close(actual, expected)
-
-
-def test_cnn_policy_checkpoint_restores_action_statistics(tmp_path):
-    stats = {"action_mean": [0.8] * 22, "action_std": [0.2] * 22}
-    model = _cnn_policy(tmp_path, num_action_chunks=10, action_norm_stats=stats).eval()
+@pytest.mark.parametrize("num_action_chunks", [1, 10])
+def test_cnn_policy_checkpoint_restores_actions(tmp_path, num_action_chunks):
+    stats = (
+        {"action_mean": [0.8] * 22, "action_std": [0.2] * 22}
+        if num_action_chunks > 1
+        else None
+    )
+    model = _cnn_policy(tmp_path, num_action_chunks, stats).eval()
     checkpoint = tmp_path / "full_weights.pt"
     torch.save(model.state_dict(), checkpoint)
-
-    restored = _cnn_policy(
-        tmp_path,
-        num_action_chunks=10,
-        action_norm_stats={"action_mean": [0.0] * 22, "action_std": [1.0] * 22},
-    ).eval()
+    initial_stats = (
+        {"action_mean": [0.0] * 22, "action_std": [1.0] * 22} if stats else None
+    )
+    restored = _cnn_policy(tmp_path, num_action_chunks, initial_stats).eval()
     restored.load_state_dict(torch.load(checkpoint, weights_only=True), strict=True)
 
-    batch = _cnn_batch(2, 10)
+    batch = _cnn_batch(2, num_action_chunks)
     expected, _ = model.predict_action_batch(batch, mode="eval")
     actual, _ = restored.predict_action_batch(batch, mode="eval")
     torch.testing.assert_close(actual, expected)

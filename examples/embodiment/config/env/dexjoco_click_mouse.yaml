@@ -1,9 +1,0 @@
-defaults:
-  - dexjoco
-  - _self_
-
-task_name: click_mouse
-task_description: "Move the mouse to the purple mouse pad and click the left mouse button."
-camera_names: [ego_right, wrist]
-max_episode_steps: 1200
-max_steps_per_rollout_epoch: 1200

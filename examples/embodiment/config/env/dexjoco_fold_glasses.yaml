@@ -1,9 +1,0 @@
-defaults:
-  - dexjoco
-  - _self_
-
-task_name: fold_glasses
-task_description: "Fold the glasses and place them into the case."
-camera_names: [front, wrist]
-max_episode_steps: 1200
-max_steps_per_rollout_epoch: 1200

@@ -1,9 +1,0 @@
-defaults:
-  - dexjoco
-  - _self_
-
-task_name: pinch_tongs
-task_description: "Grasp the tongs and perform three consecutive open-close motions."
-camera_names: [front, wrist]
-max_episode_steps: 1000
-max_steps_per_rollout_epoch: 1000

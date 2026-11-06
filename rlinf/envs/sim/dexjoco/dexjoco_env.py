@@ -29,6 +29,7 @@ from rlinf.envs.utils import (
     valid_action_mask_from_counts,
 )
 from rlinf.envs.venv import SubprocVectorEnv
+from rlinf.utils.logging import get_logger
 
 
 class DexJoCoTaskEnv(gym.Wrapper):
@@ -159,6 +160,13 @@ class DexJoCoEnv(gym.Env):
             raise ValueError(
                 f"Unknown DexJoCo task {cfg.task_name!r}; expected one of "
                 f"{list(CONFIG_MAPPING)}."
+            )
+        task_step_limit = TASK_STEP_LIMITS[cfg.task_name]
+        if cfg.max_episode_steps != task_step_limit:
+            get_logger().warning(
+                f"DexJoCo {cfg.task_name}: max_episode_steps={cfg.max_episode_steps} "
+                f"differs from the task limit {task_step_limit}; "
+                f"the effective limit is {min(cfg.max_episode_steps, task_step_limit)}."
             )
         self.dual_arm = cfg.task_name.startswith("bimanual_")
         self.task_description = cfg.task_description

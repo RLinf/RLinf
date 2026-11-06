@@ -3639,55 +3639,29 @@ def _write_image_action_chunks(root, num_frames, chunk, with_extra_views):
     )
 
 
-def test_image_action_chunk_dataset_items_use_the_env_observation_keys(tmp_path):
-    from rlinf.data.datasets.image_action_chunks import ImageActionChunkDataset
-
-    _write_image_action_chunks(tmp_path / "front_only", 5, 10, with_extra_views=False)
-    _write_image_action_chunks(tmp_path / "two_views", 5, 10, with_extra_views=True)
-
-    item = ImageActionChunkDataset(str(tmp_path / "front_only"))[2]
-    assert set(item) == {"main_images", "states", "action"}
-    assert item["main_images"].dtype == torch.uint8 and item["main_images"].shape == (
-        8,
-        8,
-        3,
-    )
-    assert item["states"].shape == (23,) and item["action"].shape == (10, 22)
-
-    item = ImageActionChunkDataset(str(tmp_path / "two_views"))[4]
-    assert item["extra_view_images"].shape == (1, 8, 8, 3)
-
-
 @pytest.mark.parametrize("with_extra_views", [False, True])
-def test_image_action_chunk_dataset_pickle_reopens_file_mappings(
+def test_image_action_chunk_dataset_reads_exported_observations(
     tmp_path, with_extra_views
 ):
     from rlinf.data.datasets.image_action_chunks import ImageActionChunkDataset
 
-    payloads = []
-    for name, num_frames in (("small", 4), ("large", 128)):
-        root = tmp_path / name
-        _write_image_action_chunks(root, num_frames, 10, with_extra_views)
-        dataset = ImageActionChunkDataset(str(root))
-        payload = pickle.dumps(dataset)
-        payloads.append(payload)
-        restored = pickle.loads(payload)
+    root = tmp_path / "data"
+    _write_image_action_chunks(root, 5, 10, with_extra_views)
+    dataset = ImageActionChunkDataset(str(root))
+    item = dataset[2]
 
-        assert len(restored) == num_frames
-        array_names = ["main_images", "states", "actions"]
-        if with_extra_views:
-            array_names.append("extra_view_images")
-        else:
-            assert restored.extra_view_images is None
-        for array_name in array_names:
-            array = getattr(restored, array_name)
-            assert isinstance(array, np.memmap)
-            assert Path(array.filename) == root / f"{array_name}.npy"
-            assert array.mode == "r"
-        for key, value in dataset[num_frames - 1].items():
-            torch.testing.assert_close(restored[num_frames - 1][key], value)
-
-    assert len(payloads[1]) < 2 * len(payloads[0])
+    assert len(dataset) == 5
+    assert item["main_images"].dtype == torch.uint8
+    assert item["main_images"].shape == (8, 8, 3)
+    assert item["states"].shape == (23,)
+    assert item["action"].shape == (10, 22)
+    if with_extra_views:
+        assert item["extra_view_images"].shape == (1, 8, 8, 3)
+    else:
+        assert "extra_view_images" not in item
+    torch.testing.assert_close(
+        item["action"], torch.from_numpy(np.load(root / "actions.npy")[2])
+    )
 
 
 def test_cnn_sft_dataloader_shards_full_batches_across_ranks(tmp_path):

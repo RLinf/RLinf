@@ -1,9 +1,0 @@
-defaults:
-  - dexjoco
-  - _self_
-
-task_name: hammer_nail
-task_description: "Use the hammer to drive the nail into the wooden board."
-camera_names: [front, wrist]
-max_episode_steps: 1000
-max_steps_per_rollout_epoch: 1000
