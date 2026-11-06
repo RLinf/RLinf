@@ -1,0 +1,46 @@
+env_type: real
+total_num_envs: null
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 100
+max_episode_steps: null
+no_gripper: False
+main_image_key: main
+use_relative_frame: True
+
+teleop: spacemouse
+keyboard_reward_wrapper: start_end
+keyboard_device: null
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "URCollectionEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: False
+  task_description: "UR5e teleoperation"
+  step_frequency: 10.0
+  # Franka Cartesian-delta convention: metres/radians per normalized step.
+  action_scale: [0.02, 0.1, 1.0]
+  # Base-frame poses: [x, y, z, rx, ry, rz], in metres and xyz Euler radians.
+  # Fill the measured reset pose and limits before opening hardware.
+  reset_ee_pose: null
+  ee_pose_limit_min: null
+  ee_pose_limit_max: null
+  reset_duration: 3.0
+  reset_timeout: 5.0
+  reset_position_tolerance: 0.005
+  reset_orientation_tolerance: 0.02
+  open_gripper_on_reset: False
+  image_size: [224, 224]
+  enable_camera_player: False
