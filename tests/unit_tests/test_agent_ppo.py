@@ -32,6 +32,15 @@ from rlinf.scheduler import Channel, Cluster
 from rlinf.scheduler.channel.channel_worker import LocalChannel
 
 
+@pytest.fixture
+def searchr1_cluster(monkeypatch):
+    from test_placement import create_fake_cluster
+
+    cluster = create_fake_cluster(1, 8)
+    monkeypatch.setattr("rlinf.config.Cluster", lambda: cluster)
+    return cluster
+
+
 def _local_channel():
     channel = Channel()
     channel._initialize("ppo-targets", None, None, None, local_channel=LocalChannel())
@@ -101,7 +110,9 @@ def test_searchr1_response_processing_preserves_behavior_tokens(
 
 @pytest.mark.parametrize("truncate", [None, True, False])
 @pytest.mark.parametrize("recompute", [True, False])
-def test_searchr1_response_config_defaults_and_raw_logprobs(truncate, recompute):
+def test_searchr1_response_config_defaults_and_raw_logprobs(
+    truncate, recompute, searchr1_cluster
+):
     from omegaconf import OmegaConf
 
     from rlinf.config import validate_searchr1_cfg
@@ -146,6 +157,7 @@ def _prepare_targets(results, gamma, gae_lambda, normalize_advantages):
                 "rewards": torch.as_tensor(result.rewards),
                 "response_mask": mask,
                 "idx_to_traj": result.idx_to_traj,
+                "prompt_lengths": torch.tensor(result.prompt_lengths),
             }
         )
     batch = DynamicRolloutResult.merge_batches(batches, results[0].group_size)
@@ -367,7 +379,10 @@ def make_result():
 
 @pytest.mark.parametrize("synchronous", [False, True])
 @pytest.mark.parametrize("role", ["actor", "critic"])
-def test_megatron_batch_input_uses_default_queue(monkeypatch, role, synchronous):
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_megatron_batch_input_uses_default_queue(
+    monkeypatch, role, synchronous, dynamic
+):
     pytest.importorskip("megatron.training")
     from omegaconf import OmegaConf
 
@@ -381,6 +396,7 @@ def test_megatron_batch_input_uses_default_queue(monkeypatch, role, synchronous)
     worker.cfg = OmegaConf.create(
         {
             "runner": {"synchronous": synchronous},
+            "data": {"max_prompt_length": 2},
             "actor": {"model": {"encoder_seq_length": 6}},
         }
     )
@@ -390,7 +406,20 @@ def test_megatron_batch_input_uses_default_queue(monkeypatch, role, synchronous)
     worker.tokenizer = SimpleNamespace(eos_token_id=0)
     channel = Channel()
     channel._initialize("batch-input", None, None, None, local_channel=LocalChannel())
-    result = make_result()
+    if dynamic:
+        result = make_result()
+    else:
+        from rlinf.data.schema.reasoning_results import RolloutResult
+
+        result = RolloutResult(
+            num_sequence=2,
+            group_size=1,
+            prompt_lengths=[1, 2],
+            prompt_ids=[[1], [2, 3]],
+            response_lengths=[1, 1],
+            response_ids=[[4], [5]],
+            is_end=[True, True],
+        )
     channel.put(result)
     # A wrong key must fail immediately instead of hanging this regression test.
     for key in (None, f"{role}:0", f"{role}:1"):
@@ -552,9 +581,16 @@ def test_agent_advantage_normalization_is_global_over_actions():
     )
 
 
-def test_agent_targets_reject_an_episode_without_generated_turns():
+def test_agent_targets_reject_incomplete_prompt_groups():
     result = make_result()
     result.group_size = 3
+    with pytest.raises(ValueError, match="trajectory count.*positive group_size"):
+        _prepare_targets([result], 1.0, 1.0, True)
+
+
+def test_agent_targets_reject_an_empty_generated_turn():
+    result = make_result()
+    result.response_lengths[1] = 0
     with pytest.raises(ValueError, match="nonempty generated turns"):
         _prepare_targets([result], 1.0, 1.0, True)
 
@@ -644,11 +680,22 @@ def test_trajectory_packing_keeps_one_token_overlap_as_separate_rows(monkeypatch
     result.input_ids[1] = result.input_ids[0]
     result.prompt_lengths[1] = 2
     result.response_lengths[1] = 1
-    result.values = None
+    result.advantages = torch.arange(18, dtype=torch.float32).reshape(3, 6)
+    result.returns = result.advantages + 1
+    result.rollout_logprobs = [[-0.2, -0.3], [-0.4], [-0.5, -0.6]]
     batch = result.to_actor_batch(6, 0)
+    batch["loss_scales"] = batch["response_mask"].float()
     packed = DynamicRolloutResult.pack_traj_batch({}, batch)
     assert packed["idx_to_traj"] == batch["idx_to_traj"]
-    torch.testing.assert_close(packed["response_mask"], batch["response_mask"])
+    for key in (
+        "response_mask",
+        "advantages",
+        "values",
+        "returns",
+        "rollout_logprobs",
+        "loss_scales",
+    ):
+        torch.testing.assert_close(packed[key], batch[key])
 
 
 @pytest.mark.parametrize("role", ["actor", "critic"])
@@ -797,7 +844,6 @@ def test_searchr1_ppo_rejects_incompatible_algorithm_options(option, value):
             },
         }
     )
-    validate_searchr1_cfg(cfg)
     cfg.algorithm[option] = value
     with pytest.raises(ValueError, match="SearchR1 (PPO )?requires"):
         validate_searchr1_cfg(cfg)
@@ -830,26 +876,24 @@ def test_rollout_config_needs_only_the_selected_backend(backend):
         {"actor": 0, "critic": 1, "rollout": 2, "reward": 3},
     ],
 )
-def test_agent_ppo_requires_shared_gpus(hardware):
-    pytest.importorskip("megatron.training")
+def test_searchr1_ppo_validation_requires_shared_gpus(hardware, searchr1_cluster):
     from omegaconf import OmegaConf
-    from test_placement import create_fake_cluster
 
-    from rlinf.runners.agent_ppo_runner import AgentPPORunner
-    from rlinf.utils.placement import ModelParallelComponentPlacement
+    from rlinf.config import validate_searchr1_cfg
 
     cfg = OmegaConf.load(
         Path(__file__).resolve().parents[2]
         / "examples/agent/searchr1/config/train_qwen2.5_ppo.yaml"
     )
     cfg.cluster.component_placement = hardware
-    placement = ModelParallelComponentPlacement(cfg, create_fake_cluster(1, 4))
     with pytest.raises(ValueError, match="share the same GPUs"):
-        AgentPPORunner(placement=placement)
+        validate_searchr1_cfg(cfg)
 
 
 @pytest.mark.parametrize("backend_type", [None, "server", "engine"])
-def test_searchr1_ppo_recipe_uses_server_without_overriding_backend(backend_type):
+def test_searchr1_ppo_recipe_uses_server_without_overriding_backend(
+    backend_type, searchr1_cluster
+):
     from omegaconf import OmegaConf
 
     from rlinf.config import validate_searchr1_cfg
@@ -898,6 +942,7 @@ def test_multiturn_gae_registry_matches_complete_episode_targets(
         values=values,
         loss_mask=mask,
         idx_to_traj=[0, 1, 0],
+        prompt_lengths=torch.tensor([1, 1, 2]),
         gamma=gamma,
         gae_lambda=gae_lambda,
         normalize_advantages=normalize,
@@ -984,3 +1029,60 @@ def test_critic_advantages_normalize_across_unequal_dp_action_counts(tmp_path):
     normalized = torch.cat([out["advantages"] for out in outputs])
     expected = ((raw - raw.mean()) / (raw.var(unbiased=False) + 1e-5).sqrt()).float()
     torch.testing.assert_close(normalized, expected)
+
+
+@pytest.mark.parametrize("order", [[2, 0, 1], [1, 2, 0]])
+def test_multiturn_gae_preserves_discounting_when_turns_arrive_out_of_order(order):
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    values = torch.zeros(3, 8)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    mask[torch.arange(3), torch.tensor([1, 4, 7])] = True
+    values[mask] = torch.tensor([0.1, 0.2, 0.3])
+    prompts = torch.tensor([1, 4, 7])
+
+    def targets(indices):
+        return calculate_adv_and_returns(
+            task_type="reasoning",
+            adv_type="gae_dynamic",
+            rewards=torch.ones(3),
+            values=values[indices],
+            loss_mask=mask[indices],
+            idx_to_traj=[0, 0, 0],
+            prompt_lengths=prompts[indices],
+            gamma=0.9,
+            gae_lambda=0.8,
+            normalize_advantages=False,
+        )
+
+    expected = targets([0, 1, 2])
+    shuffled = targets(order)
+    restore = torch.argsort(torch.tensor(order))
+    for original, actual in zip(expected, shuffled, strict=True):
+        torch.testing.assert_close(actual[restore], original)
+
+
+def test_multiturn_gae_rejects_ambiguous_turn_order():
+    result = make_result()
+    result.prompt_lengths[1] = result.prompt_lengths[0]
+    with pytest.raises(ValueError, match="distinct prompt lengths"):
+        _prepare_targets([result], 0.9, 0.8, False)
+
+
+@pytest.mark.parametrize("has_advantages", [False, True])
+def test_actor_requires_only_critic_owned_advantages(has_advantages):
+    from omegaconf import OmegaConf
+
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = object.__new__(MAMegatronActor)
+    actor.cfg = OmegaConf.create({"critic": {"use_critic_model": True}})
+    batch = {"advantages": torch.ones(2, 3)} if has_advantages else {}
+    if has_advantages:
+        assert actor.compute_advantages_and_returns(batch) is batch
+        assert "returns" not in batch and "values" not in batch
+    else:
+        with pytest.raises(
+            AssertionError, match="Critic-owned PPO advantages are missing"
+        ):
+            actor.compute_advantages_and_returns(batch)

@@ -1990,9 +1990,17 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             raise ValueError(
                 "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
             )
-        return cfg
 
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if cfg.critic.get("use_critic_model", False) and (
+        not component_placement.is_collocated
+        or component_placement.get_hardware_ranks("critic")
+        != component_placement.get_hardware_ranks("actor")
+    ):
+        raise ValueError(
+            "Synchronous SearchR1 PPO requires actor, critic, and rollout "
+            "to share the same GPUs."
+        )
     if not component_placement.is_collocated:
         raise ValueError(
             "SearchR1 multi-agent actors support only collocated component placement."

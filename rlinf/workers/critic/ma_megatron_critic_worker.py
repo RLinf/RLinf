@@ -48,25 +48,10 @@ class MAMegatronCritic(MegatronCritic):
         assert cfg.agentloop.is_dynamic_rollout_batch and not self.is_pipeline, (
             "Multi-agent critic requires dynamic rollout batches and synchronous execution."
         )
-        self.pack_traj = cfg.actor.get("pack_traj", True)
-
-    def get_batch(
-        self, channel: Channel
-    ) -> tuple[dict[str, torch.Tensor], DynamicRolloutResult]:
-        """Receive one episode group and broadcast it across model parallel ranks."""
-        if channel.is_local:
-            result = channel.get()
-        else:
-            result = channel.get() if self.is_data_io_rank else None
-            for ranks in (
-                parallel_state._MODEL_PARALLEL_GLOBAL_RANKS,
-                parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS,
-            ):
-                result = self.broadcast(result, groups=[(self._group_name, ranks)])
-        batch = result.to_actor_batch(
-            self.role_cfg.model.encoder_seq_length, self.tokenizer.eos_token_id
+        assert self.enable_dp_load_balance, (
+            "Multi-agent critic requires enable_dp_load_balance=True."
         )
-        return batch, result
+        self.pack_traj = cfg.actor.get("pack_traj", True)
 
     def get_forward_step_func(self):
         """Align full-sequence state values with generated action tokens."""
@@ -154,6 +139,7 @@ class MAMegatronCritic(MegatronCritic):
             values=batch["values"],
             loss_mask=batch["response_mask"],
             idx_to_traj=batch["idx_to_traj"],
+            prompt_lengths=batch["prompt_lengths"],
             group_size=self.cfg.algorithm.group_size,
             gamma=self.cfg.algorithm.gamma,
             gae_lambda=self.cfg.algorithm.gae_lambda,
@@ -199,14 +185,12 @@ class MAMegatronCritic(MegatronCritic):
         batch = self.compute_advantages_and_returns(batch)
         if output_channel is not None:
             sizes = [result.num_sequence for result in results]
-            for result, advantages, returns in zip(
-                results,
-                batch["advantages"].cpu().split(sizes),
-                batch["returns"].cpu().split(sizes),
-                strict=True,
+            for result, advantages in zip(
+                results, batch["advantages"].cpu().split(sizes), strict=True
             ):
                 result.advantages = advantages.clone()
-                result.returns = returns.clone()
+                # Values and returns belong to the critic's training batch.
+                result.values = result.returns = None
         rollout_metrics = (
             self._compute_rollout_metrics(batch) if compute_rollout_metrics else None
         )
@@ -235,6 +219,9 @@ class MAMegatronCritic(MegatronCritic):
             for global_batch in global_batches:
                 if self.cfg.algorithm.use_valid_token_scale:
                     self._setup_valid_token_scale(global_batch)
+                assert global_batch["input_ids"].shape[0] > 0, (
+                    "Dynamic DP load balancing must produce nonempty critic minibatches."
+                )
                 dp_size = parallel_state.get_data_parallel_world_size()
                 configure_batch_sizes(
                     rank=torch.distributed.get_rank(),

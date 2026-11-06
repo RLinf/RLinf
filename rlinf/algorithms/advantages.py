@@ -87,26 +87,37 @@ def compute_gae_advantages_and_returns(
 
 
 def _episode_action_indices(
-    loss_mask: torch.Tensor, idx_to_traj: list[int]
+    loss_mask: torch.Tensor, idx_to_traj: list[int], prompt_lengths: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Map each generated token to its time and trajectory in a complete batch."""
     if len(idx_to_traj) != loss_mask.shape[1] or not idx_to_traj:
         raise ValueError("Agent GAE requires one trajectory index per generated turn.")
+    if min(idx_to_traj) < 0:
+        raise ValueError("Agent GAE requires nonnegative trajectory indices.")
+    if prompt_lengths.shape != (len(idx_to_traj),):
+        raise ValueError("Agent GAE requires one prompt length per generated turn.")
+    prompts = prompt_lengths.tolist()
     num_trajectories = max(idx_to_traj) + 1
     lengths = [0] * num_trajectories
     last_turns = [-1] * num_trajectories
-    offsets = []
-    for turn, trajectory in enumerate(idx_to_traj):
+    offsets = [0] * len(idx_to_traj)
+    for turn in sorted(range(len(idx_to_traj)), key=lambda i: prompts[i]):
+        trajectory = idx_to_traj[turn]
         length = int(loss_mask[:, turn].sum())
-        if trajectory < 0 or length == 0:
+        if length == 0:
+            raise ValueError("Agent GAE requires nonempty generated turns.")
+        previous = last_turns[trajectory]
+        if previous >= 0 and prompts[previous] == prompts[turn]:
             raise ValueError(
-                "Each agent episode must contain nonempty generated turns."
+                "Agent GAE requires distinct prompt lengths within an episode."
             )
-        offsets.append(lengths[trajectory])
+        offsets[turn] = lengths[trajectory]
         lengths[trajectory] += length
         last_turns[trajectory] = turn
     if any(length == 0 for length in lengths):
-        raise ValueError("Each agent episode must contain nonempty generated turns.")
+        raise ValueError(
+            "Agent GAE requires contiguous trajectory indices starting at zero."
+        )
 
     device = loss_mask.device
     times = loss_mask.long().cumsum(dim=0) - 1 + torch.tensor(offsets, device=device)
@@ -125,6 +136,7 @@ def compute_gae_dynamic_advantages_and_returns(
     values: torch.Tensor,
     loss_mask: torch.Tensor,
     idx_to_traj: list[int],
+    prompt_lengths: torch.Tensor,
     group_size: int = 1,
     gamma: float = 1.0,
     gae_lambda: float = 1.0,
@@ -137,7 +149,8 @@ def compute_gae_dynamic_advantages_and_returns(
         rewards: Episode rewards repeated on each turn, shaped [num_turns].
         values: Fixed old action values, shaped [seq_len, num_turns].
         loss_mask: Generated action positions, with the same shape as values.
-        idx_to_traj: Trajectory owning each turn, in conversation order.
+        idx_to_traj: Trajectory owning each turn; rows may arrive out of order.
+        prompt_lengths: Growing conversation lengths used to order each episode.
         group_size: Number of complete trajectories per prompt.
         gamma: Discount per generated action.
         gae_lambda: GAE decay per generated action.
@@ -150,10 +163,13 @@ def compute_gae_dynamic_advantages_and_returns(
     if values.shape != loss_mask.shape:
         raise ValueError("Agent GAE requires matching values and action masks.")
     times, trajectories, lengths, last_turns = _episode_action_indices(
-        loss_mask, idx_to_traj
+        loss_mask, idx_to_traj, prompt_lengths
     )
-    if len(lengths) % group_size != 0:
-        raise ValueError("Each agent episode must contain nonempty generated turns.")
+    if group_size <= 0 or len(lengths) % group_size != 0:
+        raise ValueError(
+            f"Agent GAE requires the trajectory count ({len(lengths)}) to be "
+            f"divisible by a positive group_size ({group_size})."
+        )
     episode_values = values.new_zeros(
         (int(lengths.max()), len(lengths)), dtype=torch.float32
     )
