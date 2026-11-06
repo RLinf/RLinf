@@ -25,7 +25,6 @@ jobs:
       sft_filter: ${{ steps.filter.outputs.sft_filter }}
       offline_rl_filter: ${{ steps.filter.outputs.offline_rl_filter }}
       unit_test_filter: ${{ steps.filter.outputs.unit_test_filter }}
-      supermimic_filter: ${{ steps.filter.outputs.supermimic_filter }}
       scheduler_test_filter: ${{ steps.filter.outputs.scheduler_test_filter }}
 
       checked_files_filter: ${{ steps.filter.outputs.checked_files_filter }}
@@ -95,16 +94,20 @@ jobs:
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/embodied_fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/fsdp_supermimic_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
               - 'rlinf/models/embodiment/**'
               - 'rlinf/models/diffusion/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
+              - 'rlinf/runners/supermimic*.py'
               - 'rlinf/runners/async_weight_sync_mixin.py'
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
               - 'examples/embodiment/config/*/**'
+              # The SuperMimic CI configs build on this recipe.
+              - 'examples/embodiment/config/supermimic*.yaml'
               - 'examples/diffusion/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
@@ -121,6 +124,7 @@ jobs:
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
+              - 'toolkits/supermimic/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared
@@ -176,26 +180,6 @@ jobs:
               - 'examples/sft/**'
               - 'tests/e2e_tests/offline_rl/**'
               - '.github/workflows/offline_rl-e2e-tests.yml'
-            supermimic_filter: &supermimic
-              - *shared
-              - 'rlinf/envs/sim/g1_mimic/**'
-              - 'rlinf/algorithms/supermimic/**'
-              - 'rlinf/models/embodiment/supermimic/**'
-              - 'rlinf/workers/actor/fsdp_supermimic_policy_worker.py'
-              - 'rlinf/workers/env/supermimic_env_worker.py'
-              - 'rlinf/workers/rollout/hf/supermimic_rollout_worker.py'
-              - 'rlinf/runners/supermimic_runner.py'
-              - 'rlinf/runners/supermimic_eval_runner.py'
-              - 'examples/embodiment/train_embodied_agent.py'
-              - 'examples/embodiment/config/supermimic*.yaml'
-              - 'examples/embodiment/config/env/g1_mimic.yaml'
-              - 'examples/embodiment/config/model/supermimic.yaml'
-              - 'evaluations/eval_embodied_agent.py'
-              - 'evaluations/supermimic/**'
-              - 'toolkits/supermimic/**'
-              - 'requirements/embodied/envs/supermimic*.txt'
-              - 'tests/e2e_tests/embodied/test_supermimic.py'
-              - '.github/workflows/supermimic-tests.yml'
             unit_test_filter: &unit
               - *shared
               - 'rlinf/robotics/**'
@@ -203,8 +187,6 @@ jobs:
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
-              # Keep shared SuperMimic changes covered by the unit-test job.
-              - *supermimic
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
@@ -227,7 +209,6 @@ jobs:
               - *sft
               - *offline_rl
               - *unit
-              - *supermimic
               - *scheduler
               - *toolkits_no_ci
               - 'tests/parity_tests/**'
@@ -300,11 +281,6 @@ jobs:
     if: needs.check-changes.outputs.unit_test_filter == 'true'
     uses: ./.github/workflows/unit-tests.yml
 
-  supermimic-tests:
-    needs: [check-changes]
-    if: needs.check-changes.outputs.supermimic_filter == 'true'
-    uses: ./.github/workflows/supermimic-tests.yml
-
   # =============================================== agent e2e tests ====================================================
 
   agent-reason-e2e-tests:
@@ -348,7 +324,6 @@ jobs:
       filter-coverage-test,
       docker-tests,
       unit-tests,
-      supermimic-tests,
       agent-reason-e2e-tests,
       embodied-e2e-tests,
       sft-e2e-tests,

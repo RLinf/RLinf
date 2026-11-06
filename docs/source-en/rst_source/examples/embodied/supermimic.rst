@@ -665,8 +665,8 @@ above change some of them. Each can be passed as a Hydra override.
        nothing.
    * - ``runner.log_interval``
      - 100
-     - Print one timestamped line of the latest metrics every N updates and
-       after the last one. The logger backends record every update.
+     - Print RLinf's metrics table every N updates and after the last one.
+       The logger backends record every update.
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf logger backends: TensorBoard, WandB or SwanLab.
@@ -1063,9 +1063,10 @@ Training metrics are averaged over the actor ranks;
   absorb kernels queued by the one before it.
 
 The logger backends record these metrics after every update. The console gets
-one timestamped line of the latest values every ``runner.log_interval``
-updates (100 by default) and after the last one, plus a line with the
-evaluation results whenever an evaluation runs.
+RLinf's metrics table (progress, elapsed time, ETA and the latest values)
+every ``runner.log_interval`` updates (100 by default), after the last one
+and after every evaluation; the same table is appended to
+``<log_path>/metrics.log``.
 
 .. _supermimic-reported-results:
 
@@ -1233,9 +1234,11 @@ checkpoint round trip, the update schedule and the evaluation summaries have
 been checked in small CPU tests. On one GPU, the fused-Adam step matched the
 host-checked step on identical gradients, skipped non-finite steps without
 moving the weights or the Adam state, and survived a checkpoint round trip.
-The GPU smoke runs in
-``tests/e2e_tests/embodied/test_supermimic.py`` exercise training, resume
-and evaluation through the RLinf entries.
+The CI configs ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` and
+``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` exercise
+training, resume, two-GPU velocity tracking and evaluation through the RLinf
+entries on a generated standing clip; ``tests/unit_tests/test_supermimic.py``
+holds the numerical checks.
 Full training with the current structure, the paper overrides, the paper's
 two-GPU recipe, multiple nodes, Slurm, real BONES-SEED data and paper §4.3
 T-pose recovery remain unvalidated.

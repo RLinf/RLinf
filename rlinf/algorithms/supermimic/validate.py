@@ -216,6 +216,12 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
     if cfg.rollout.pipeline_stage_num != 1:
         raise ValueError("SuperMimic needs rollout.pipeline_stage_num=1")
     if not only_eval:
+        # serve, ingest and run_updates assume the networks stay on the device.
+        for group in ("actor", "rollout"):
+            if cfg[group].get("enable_offload", False):
+                raise ValueError(
+                    f"SuperMimic training needs {group}.enable_offload=False, got True"
+                )
         _check_training(cfg)
         _sync_env(cfg.env.train, model, cfg.algorithm, "env.train")
         _check_env(cfg.env.train, "env.train", needs_motion=True)

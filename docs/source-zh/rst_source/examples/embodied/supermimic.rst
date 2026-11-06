@@ -445,7 +445,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 每隔 N 次更新以及最后一次更新后保存检查点；设为 -1 时不保存。
    * - ``runner.log_interval``
      - 100
-     - 每隔 N 次更新以及最后一次更新后，在终端打印一行带时间戳的最新指标。日志后端每次更新都记录。
+     - 每隔 N 次更新以及最后一次更新后，打印 RLinf 的指标表。日志后端每次更新都记录。
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf 的日志后端：TensorBoard、WandB 或 SwanLab。
@@ -663,7 +663,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 * ``train/wm_only``、``train/*_optimizer_steps``、``train/nonfinite_skips``。
 * ``time/*``：runner 的 RLinf 计时（``time/generate_rollouts``、``time/actor_training``、``time/sync_weights``、``time/eval``）和各 worker 的计时（``time/env/collect``、``time/rollout/serve``、``time/actor/ingest``、``time/actor/run_updates`` 及其各阶段）。worker 计时是主机时间；GPU 异步执行，某一阶段的耗时可能包含前一阶段排队的 kernel。
 
-日志后端每次更新后都记录这些指标。控制台每隔 ``runner.log_interval`` 次更新（默认 100）以及最后一次更新后打印一行带时间戳的最新值；每次评测后另打印一行评测结果。
+日志后端每次更新后都记录这些指标。控制台每隔 ``runner.log_interval`` 次更新（默认 100）、最后一次更新后以及每次评测后打印 RLinf 的指标表（进度、已用时间、预计剩余时间和最新值），同一张表也追加到 ``<log_path>/metrics.log``。
 
 .. _supermimic-reported-results:
 
@@ -756,7 +756,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 验证范围
 --------
 
-上文报告的训练、恢复和评测运行使用此前的单进程实现。对当前的 env、rollout 和 actor worker，FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总已在小规模 CPU 测试中检查；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；``tests/e2e_tests/embodied/test_supermimic.py`` 中的 GPU 冒烟测试通过 RLinf 入口覆盖训练、恢复和评测。当前结构下的完整训练、论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
+上文报告的训练、恢复和评测运行使用此前的单进程实现。对当前的 env、rollout 和 actor worker，FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总已在小规模 CPU 测试中检查；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` 与 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 在生成的站立片段上，通过 RLinf 入口覆盖训练、恢复、双卡速度跟踪和评测；数值检查位于 ``tests/unit_tests/test_supermimic.py``。当前结构下的完整训练、论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
 
 致谢
 --------
