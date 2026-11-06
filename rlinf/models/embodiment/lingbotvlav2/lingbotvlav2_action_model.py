@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import torch
+from torch.utils._pytree import tree_map
 import torch.nn as nn
 import yaml
 from lingbotvla.checkpoint_metadata import (
@@ -176,6 +177,22 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         # No-grad inference kernels can have different numerical reductions.
         # The source package exposes a common differentiable MoE backend.
         self.vla_model.set_moe_forward_backend("differentiable")
+        # SFT 只用视觉-语言-动作主干：关闭上游预训练配置里的深度/未来视频辅助损失
+        # （我们的 LeRobot 数据没有 depth/video target，开启会在 _emb_loss 里报 None）。
+        self.vla_model.config.align_params = {}
+        for _attr in (
+            "use_depth_align",
+            "use_future_video",
+            "use_future_video_patch",
+            "use_current_video_patch",
+            "use_current_shared_task_proj",
+            "use_future_video_cls",
+            "use_shared_future_task_proj",
+            "future_video_share_future_depth_query",
+        ):
+            if hasattr(self.vla_model.model, _attr):
+                setattr(self.vla_model.model, _attr, False)
+
         for name, param in self.vla_model.named_parameters():
             trainable = is_rl_trainable(name)
             param.requires_grad_(trainable)
@@ -246,7 +263,8 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             raise ValueError("RoboTwin states must be [batch, 14]")
         if wrists.shape[1] != 2:
             raise ValueError("V2 RoboTwin requires both wrist cameras")
-        resize = Resize((self.image_size, self.image_size))
+        # 与训练数据保持相同的长宽比：训练侧每路相机是 (img_size, 2*img_size)
+        resize = Resize((self.image_size, self.image_size * 2))
         prepared = []
         for index in range(len(states)):
             raw = {
@@ -351,6 +369,23 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         parts = [
             self._sample_actions(batch, mode) for batch in self._micro_batches(prepared)
         ]
+        # 只读诊断：对比评测输入/输出与训练分布
+        try:
+            import os as _os, numpy as _np
+            if _os.environ.get("LOG_STATS"):
+                _st = prepared.get("state")
+                _ac = parts[0][0]
+                _s0 = _np.asarray(_st.detach().float().cpu())[0]
+                _a0 = _np.asarray(_ac.detach().float().cpu())[0]
+                print(
+                    f"[STATS] state first3={_np.round(_s0[:3],3).tolist()} "
+                    f"state range=[{_s0.min():.2f},{_s0.max():.2f}] | "
+                    f"action first3={_np.round(_a0[:3],3).tolist()} "
+                    f"action range=[{_a0.min():.2f},{_a0.max():.2f}]",
+                    flush=True,
+                )
+        except Exception:
+            pass
         return torch.cat([part[0] for part in parts]), {
             "prev_logprobs": torch.cat([part[1]["prev_logprobs"] for part in parts]),
             "prev_values": torch.cat([part[1]["prev_values"] for part in parts]),
@@ -370,6 +405,26 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             }
 
     def _sample_actions(self, prepared: dict, mode: str):
+        # 可选：用上游官方 sample_actions 做推理（与 lingbot 官方 deploy 脚本一致），
+        # 避免 RLinf 适配器自实现的 ODE 与官方实现不一致。
+        if mode == "eval" and bool(getattr(self.config, "eval_sampling_upstream", False)):
+            device = next(self.vla_model.model.parameters()).device
+            dtype = next(self.vla_model.model.parameters()).dtype
+            b = {k: v.to(device) for k, v in prepared.items() if hasattr(v, "to")}
+            with torch.no_grad():
+                norm_actions = self.vla_model.sample_actions(
+                    images=b["images"].to(dtype),
+                    img_masks=b["img_masks"],
+                    lang_tokens=b["lang_tokens"],
+                    lang_masks=b["lang_masks"],
+                    state=b["state"].to(dtype),
+                    image_grid_thw=b.get("image_grid_thw"),
+                )
+            return self._unapply_norm_actions(prepared, norm_actions), {
+                "prev_logprobs": None,
+                "prev_values": None,
+                "forward_inputs": {},
+            }
         inputs = self._device_inputs(prepared)
         context = self._prefix(inputs)
         device = inputs["state"].device
@@ -477,7 +532,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             ),
             data,
         )
-        dtype = self.torch_dtype
+        dtype = next(self.vla_model.model.parameters()).dtype
         outputs = self.vla_model(
             images=data["images"].to(dtype),
             img_masks=data["img_masks"],
@@ -514,3 +569,10 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             **loss_dict,
         }
 
+    def _unapply_norm_actions(self, prepared: dict, norm_actions: torch.Tensor) -> torch.Tensor:
+        out = []
+        for index in range(len(norm_actions)):
+            item = {key: value[index].cpu() for key, value in prepared.items()}
+            item["actions"] = norm_actions[index].float().cpu()
+            out.append(self.transform.unapply(item)["action"])
+        return torch.stack(out).float()

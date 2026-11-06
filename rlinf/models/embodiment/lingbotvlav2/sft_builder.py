@@ -216,12 +216,33 @@ def build_lingbot_v2_sft_dataloader(
             processor=processor,
             use_depth_align=use_auxiliary_alignment,
         )
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=global_rank,
-        shuffle=True,
-    )
+    # 按压段过采样：每条 episode 最后 press_frames 帧权重提高，缓解"极端姿态被平均"
+    press_w = float(cfg.data.get("press_oversample", 0.0))
+    if press_w > 1.0:
+        import numpy as _np, glob as _glob, pandas as _pd
+        from torch.utils.data import WeightedRandomSampler as _WRS
+        ep_parquet = _glob.glob(f"{data_paths}/meta/episodes/chunk-*/file-*.parquet")
+        n = len(dataset)
+        weights = _np.ones(n, dtype=_np.float64)
+        if ep_parquet:
+            eps = _pd.read_parquet(ep_parquet[0])
+            lens = [int(x) for x in eps["length"].tolist()]
+            starts = _np.cumsum([0] + lens[:-1]).tolist()
+            pf = int(cfg.data.get("press_frames", 20))
+            for st, L in zip(starts, lens):
+                for i in range(max(0, L - pf), L):
+                    if st + i < n:
+                        weights[st + i] = press_w
+        sampler = _WRS(weights=weights.tolist(), num_samples=n // world_size,
+                       replacement=True, generator=__import__("torch").Generator().manual_seed(1234 + global_rank))
+        print(f"[SFT] 按压段过采样已启用: weight={press_w}, press_frames={pf}")
+    else:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=global_rank,
+            shuffle=True,
+        )
     num_workers = int(cfg.data.get("num_workers", data_config.get("num_workers", 4)))
     data_loader = DataLoader(
         dataset,
