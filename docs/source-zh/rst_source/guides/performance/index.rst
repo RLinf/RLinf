@@ -25,8 +25,6 @@
      - 对 Ray worker 进程进行系统级 profiling。
    * - :doc:`5D 并行 <../5D>`
      - 为大模型配置 5D 并行。
-   * - :doc:`智能体变长批次 <ragged_batches>`
-     - 在广播前按完整题组负载均衡，延迟到损失计算的小批次再补齐。
 
 .. toctree::
    :hidden:
@@ -39,4 +37,3 @@
    动态调度 <../dynamic_scheduling>
    Profiling <../profile>
    5D 并行 <../5D>
-   智能体变长批次 <ragged_batches>

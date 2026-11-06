@@ -1893,8 +1893,8 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
 
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
-    if not cfg.actor.get("enable_dp_load_balance", False) and not cfg.actor.get(
-        "enable_ragged_batch", False
+    if cfg.actor.training_backend == "fsdp" and not cfg.actor.get(
+        "enable_dp_load_balance", False
     ):
         raise ValueError("SearchR1 requires actor.enable_dp_load_balance=True.")
     if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(

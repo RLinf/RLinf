@@ -3729,6 +3729,58 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
     assert restored["response_mask"][0, 5:7].sum() == 0
 
 
+@pytest.mark.parametrize(
+    ("adv_type", "advantage_mode"),
+    [
+        ("grpo_dynamic", "turn"),
+        ("grpo_dynamic", "trajectory"),
+        ("grpo", "trajectory"),
+        ("reinpp", "trajectory"),
+        ("raw", "trajectory"),
+    ],
+)
+def test_ragged_advantage_dispatch_matches_dense(adv_type, advantage_mode):
+    """Keep the configured advantage algorithm when inputs have real lengths."""
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    lengths = [5, 9, 6, 8]
+    masks = [torch.arange(n) >= 3 for n in lengths]
+    logprobs = [torch.linspace(-0.8, -0.2, n) for n in lengths]
+    reference = [row - 0.1 for row in logprobs]
+    common = {
+        "task_type": "reasoning",
+        "adv_type": adv_type,
+        "advantage_mode": advantage_mode,
+        "rewards": torch.tensor([0.25, 0.5, 1.0, 0.0]),
+        "group_size": 2,
+        "num_sequence": 4,
+        "idx_to_traj": [0, 0, 1, 1],
+        "sequence_length": 32,
+        "kl_beta": 0.1,
+        "kl_penalty_type": "low_var_kl",
+        "use_reinpp_baseline": False,
+    }
+    ragged, ragged_returns = calculate_adv_and_returns(
+        **common, loss_mask=masks, logprob=logprobs, ref_logprob=reference
+    )
+
+    def pad(rows):
+        return torch.stack(
+            [torch.nn.functional.pad(row, (0, 32 - len(row))) for row in rows]
+        )
+
+    dense, dense_returns = calculate_adv_and_returns(
+        **common,
+        loss_mask=pad(masks),
+        logprob=pad(logprobs),
+        ref_logprob=pad(reference),
+    )
+    assert ragged_returns is dense_returns is None
+    for actual, expected, length in zip(ragged, dense, lengths):
+        assert actual.shape == (length,)
+        torch.testing.assert_close(actual, expected[:length])
+
+
 def test_ragged_loss_materialization_preserves_gradients():
     from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 
