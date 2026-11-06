@@ -153,6 +153,8 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             prompt_ids=copy.deepcopy(turn_prompt_ids),
             response_ids=llm_response_ids,
             response_logprobs=llm_response_logprobs,
+            version_start=generate_result.get("version_start"),
+            version_end=generate_result.get("version_end"),
         )
         generate_context["all_llm_response_ids"] += llm_response_ids
 
