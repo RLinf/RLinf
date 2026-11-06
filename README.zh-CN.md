@@ -52,7 +52,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/08] 🔥 RLinf 支持 Moonlight-16B-A3B（DeepSeek-V3 MLA + MoE）的 GRPO 训练。文档：[Moonlight-16B GRPO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/agentic/math_reasoning/moonlight.html)。
 - [2026/08] 🔥 RLinf 支持在 LIBERO 上评测 MolmoAct2。文档：[MolmoAct2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html)。
 - [2026/08] 🎉 两篇论文被 **OSDI 2026** 接收：[RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) 与 [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing)。DynaRL 在异构 RL 组件之间动态重分配计算、内存与通信资源，提升端到端训练吞吐。文档：[DynaRL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/dynarl.html)。
-- [2026/08] 🎉 两篇论文被 **RSS 2026** 接收：[RLinf-VLA](https://roboticsconference.org/program/papers/89/) 与 [RLinf-USER](https://roboticsconference.org/program/papers/37/)。RLinf-VLA 是面向 VLA 模型的统一高效强化学习训练框架，可对接多样架构、算法与仿真器。文档：[RLinf-VLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_vla.html)。RLinf-USER 是面向真机在线策略学习的统一可扩展系统，将机器人与 GPU 一并作为一等硬件资源管理。文档：[RLinf-USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
+- [2026/08] 🎉 两篇论文被 **RSS 2026** 接收：[RLinf-VLA](https://roboticsproceedings.org/rss22/p089.html) 与 [USER](https://roboticsproceedings.org/rss22/p037.html)。RLinf-VLA 是面向 VLA 模型的统一高效强化学习训练框架，可对接多样架构、算法与仿真器。文档：[RLinf-VLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_vla.html)。USER 是面向真机在线策略学习的统一可扩展系统，将机器人与 GPU 一并作为一等硬件资源管理。文档：[USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
 - [2026/08] 🎉 一篇论文被 **NSDI 2027** 接收：[FUSCO](https://arxiv.org/abs/2512.22036)。FUSCO 通过融合数据变换与通信加速 MoE All-to-All，实现高性能分布式数据 shuffle。文档：[FUSCO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/system/fusco.html)。
 - [2026/07] 🔥 RLinf 支持 RTC，覆盖仿真（LIBERO）和真机（Franka）场景。文档：[RTC](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rtc.html)。
 - [2026/07] 🔥 RLinf 支持在 LIBERO 模拟器上对 Evo-1 进行全参数 SFT 和 GRPO 微调。文档：[Evo-1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html)。
@@ -100,7 +100,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/02] 🔥 RLinf 正式支持基于世界模型对 VLA 进行强化学习微调，文档：[WoVR](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/wovr.html)， 论文：[WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL](https://arxiv.org/abs/2602.13977)。
 - [2026/02] 🔥 RLinf 支持基于 [Wan World Model](https://github.com/RLinf/diffsynth-studio) 对 VLA 进行强化学习微调，文档：[RL on Wan World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/wan.html)。
 - [2026/02] 🔥 RLinf 现已上线 [PyPI](https://pypi.org/project/rlinf/) ，可以通过pip作为库安装。文档：[作为库安装](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html#install-as-library)。
-- [2026/02] 🔥 RLinf真机在线学习系统的论文 [RLinf-USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI](https://arxiv.org/abs/2602.07837) 发布了！文档：[RLinf-USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
+- [2026/02] 🔥 RLinf真机在线学习系统的论文 [USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI](https://arxiv.org/abs/2602.07837) 发布了！文档：[USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
 - [2026/02] 🔥 RLinf 支持 [Dexbotic](https://github.com/dexmal/dexbotic) 强化学习微调。文档：[RL on Dexbotic Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexbotic.html)。
 - [2026/02] 🔥 RLinf 支持基于 [GSEnv](https://github.com/chenkang455/ManiSkill-GS) 的 Real2Sim2Real 强化学习。文档：[RL with GSEnv](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gsenv.html)。
 - [2026/01] 🔥 基于[OpenSora World Model](https://github.com/hpcaitech/Open-Sora)的强化学习微调已经上线！文档：[RL on OpenSora World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opensora.html)。
@@ -461,11 +461,14 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 如果你在 RLinf 中使用了 RL+VLA，欢迎引用我们的算法技术报告和实证研究论文：
 
 ```bibtex
-@article{zang2025rlinf,
-  title={RLinf-VLA: A Unified and Efficient Framework for VLA+ RL Training},
-  author={Zang, Hongzhi and Wei, Mingjie and Xu, Si and Wu, Yongji and Guo, Zhen and Wang, Yuanqing and Lin, Hao and Shi, Liangzhi and Xie, Yuqing and Xu, Zhexuan and others},
-  journal={arXiv preprint arXiv:2510.06710},
-  year={2025}
+@INPROCEEDINGS{ZangH2-RSS-26,
+    AUTHOR    = {Hongzhi Zang AND Mingjie Wei AND Si Xu AND Yongji Wu AND Zhen Guo AND Yuanqing Wang AND Hao Lin AND Peihong Wang AND Hua Yuan AND Yixian Zhang AND Liangzhi Shi AND Yuqing Xie AND Zhexuan Xu AND Zhihao Liu AND Kang Chen AND Wenhao Tang AND Quanlu Zhang AND Weinan Zhang AND Chao Yu AND Yu Wang},
+    TITLE     = {{RLinf-VLA: A Unified and Efficient Framework for Reinforcement Learning of Vision-Language-Action Models}},
+    BOOKTITLE = {Proceedings of Robotics: Science and Systems},
+    YEAR      = {2026},
+    ADDRESS   = {Sydney, Australia},
+    MONTH     = {July},
+    DOI       = {10.15607/RSS.2026.XXII.089}
 }
 ```
 
@@ -482,13 +485,12 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
  volume = {38, Main Conference},
  year = {2025}
 }
-
 ```
 
 ```bibtex
 @article{chen2025pi_,
-  title={$$\backslash$pi\_$\backslash$texttt $\{$RL$\}$ $: Online RL Fine-tuning for Flow-based Vision-Language-Action Models},
-  author={Chen, Kang and Liu, Zhihao and Zhang, Tonghe and Guo, Zhen and Xu, Si and Lin, Hao and Zang, Hongzhi and Zhang, Quanlu and Yu, Zhaofei and Fan, Guoliang and others},
+  title={$\pi_{\texttt{RL}}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models},
+  author={Chen, Kang and Liu, Zhihao and Zhang, Tonghe and Guo, Zhen and Xu, Si and Lin, Hao and Zang, Hongzhi and Li, Xiang and Zhang, Quanlu and Yu, Zhaofei and Fan, Guoliang and Huang, Tiejun and Wang, Yu and Yu, Chao},
   journal={arXiv preprint arXiv:2510.25889},
   year={2025}
 }
@@ -496,16 +498,15 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 
 如果您使用了RLinf的真机在线学习系统，欢迎引用我们的文章：
 ```bibtex
-@INPROCEEDINGS{ZangH1-RSS-26, 
-    AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang}, 
-    TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}}, 
-    BOOKTITLE = {Proceedings of Robotics: Science and Systems}, 
-    YEAR      = {2026}, 
-    ADDRESS   = {Sydney, Australia}, 
-    MONTH     = {July}, 
-    DOI       = {10.15607/RSS.2026.XXII.037} 
-} 
-  
+@INPROCEEDINGS{ZangH1-RSS-26,
+    AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang},
+    TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}},
+    BOOKTITLE = {Proceedings of Robotics: Science and Systems},
+    YEAR      = {2026},
+    ADDRESS   = {Sydney, Australia},
+    MONTH     = {July},
+    DOI       = {10.15607/RSS.2026.XXII.037}
+}
 ```
 如果您在 RLinf 中使用了 World Model + VLA + RL，欢迎引用我们的文章：
 ```bibtex
@@ -522,7 +523,7 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 ```bibtex
 @article{shi2026rlinf,
   title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models},
-  author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zhang, Hongzhi and Zhang, Weinan and Yu, Chao and Wang, Yu},
+  author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zang, Hongzhi and Zhou, Jiakai and Zhang, Weinan and Yu, Chao and Wang, Yu},
   journal={arXiv preprint arXiv:2602.12628},
   year={2026},
   url={https://arxiv.org/abs/2602.12628},
