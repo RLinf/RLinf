@@ -46,6 +46,7 @@ class SupportedEnvType(Enum):
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
     SIMPLE = "simple"
+    LADDER = "ladder"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -200,5 +201,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.simple.simple_env import SimpleEnv
 
         return SimpleEnv
+    elif env_type == SupportedEnvType.LADDER:
+        from rlinf.envs.sim.ladder.ladder_env import LadderEnv
+
+        return LadderEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

@@ -38,6 +38,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
+   * - LADDER
+     - ``ladder_simpler``, ``ladder_robot_arena``, ``ladder_robolab``
+     - ``ladder/ladder_simpler_starvla_eval.yaml``, ``ladder/ladder_robot_arena_starvla_eval.yaml``, ``ladder/ladder_robolab_openpi_pi05_eval.yaml``
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 
@@ -84,6 +87,8 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - RoboTwin bimanual manipulation.
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 whole-body humanoid evaluation.
+   * - :doc:`LADDER <guides/ladder>`
+     - Long-horizon manipulation across SimplerEnv-Long, RobotArena-∞-Long, and RoboLab-Long.
 
 Reference
 ---------
