@@ -3613,3 +3613,397 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+class _RandomTrainingDataset(torch.utils.data.Dataset):
+    """Exercise process RNG, a private generator and epoch-dependent samples."""
+
+    def __init__(self, length=32, offset=0):
+        self.length = length
+        self.offset = offset
+        self.epoch = 0
+        self.rng = np.random.default_rng(123 + offset)
+
+    def __len__(self):
+        return self.length
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
+    def __getitem__(self, index):
+        return {
+            "id": self.offset + self.epoch * 1000 + index,
+            "noise": torch.tensor(
+                [
+                    random.random(),
+                    np.random.rand(),
+                    torch.rand(()).item(),
+                    self.rng.random(),
+                ]
+            ),
+        }
+
+    def state_dict(self):
+        return {"epoch": self.epoch, "rng": copy.deepcopy(self.rng.bit_generator.state)}
+
+    def load_state_dict(self, state):
+        self.epoch = state["epoch"]
+        self.rng.bit_generator.state = state["rng"]
+
+
+def _resumable_training_loader(workers, persistent=False, spawn=False):
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+    from rlinf.data.datasets.recap.common import ReCapMixtureDataset
+
+    dataset = ReCapMixtureDataset(
+        [(_RandomTrainingDataset(), 1.0), (_RandomTrainingDataset(16, 100), 0.5)],
+        seed=77,
+    )
+    kwargs = {"num_workers": workers, "persistent_workers": persistent}
+    if workers:
+        kwargs["prefetch_factor"] = 4
+        if spawn:
+            kwargs["multiprocessing_context"] = "spawn"
+    return TrainingDataLoader(
+        dataset, batch_size=4, seed=17, shuffle=True, drop_last=True, **kwargs
+    )
+
+
+@pytest.mark.parametrize(
+    "workers,persistent,spawn",
+    [(0, False, False), (2, False, False), (2, True, False), (2, True, True)],
+)
+@pytest.mark.parametrize("consumed", [1, 5, pytest.param(-1, id="last-batch")])
+def test_training_loader_restores_prefetched_random_batches(
+    workers, persistent, spawn, consumed
+):
+    loader = _resumable_training_loader(workers, persistent, spawn)
+    iterator = iter(loader)
+    for _ in range(len(loader) if consumed == -1 else consumed):
+        next(iterator)
+    state = copy.deepcopy(loader.state_dict())
+    expected = list(iterator)
+    loader.set_epoch(1)
+    expected += list(iter(loader))
+
+    resumed = _resumable_training_loader(workers, persistent, spawn)
+    resumed.load_state_dict(state)
+    restored_iterator = iter(resumed)
+    actual = list(restored_iterator)
+    resumed.set_epoch(1)
+    actual += list(iter(resumed))
+    assert len(actual) == len(expected)
+    for reference, restored in zip(expected, actual):
+        assert torch.equal(reference["id"], restored["id"])
+        assert torch.equal(reference["noise"], restored["noise"])
+
+
+@pytest.mark.parametrize(
+    "change", [{"batch_size": 2}, {"num_workers": 1}, {"seed": 99}]
+)
+def test_training_loader_rejects_changed_layout(change):
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+
+    kwargs = {"batch_size": 4, "num_workers": 0, "seed": 17}
+    original = TrainingDataLoader(_RandomTrainingDataset(), **kwargs)
+    next(iter(original))
+    state = original.state_dict()
+    changed = TrainingDataLoader(_RandomTrainingDataset(), **(kwargs | change))
+    with pytest.raises(ValueError, match="configuration differs"):
+        changed.load_state_dict(state)
+
+
+@pytest.fixture(scope="module")
+def sft_pair_dataset_path(tmp_path_factory):
+    module = pytest.importorskip("lerobot.datasets.lerobot_dataset")
+    root = tmp_path_factory.mktemp("sft-pairs") / "dataset"
+    dataset = module.LeRobotDataset.create(
+        "local/resume",
+        fps=10,
+        root=root,
+        use_videos=False,
+        features={
+            "observation.images.base_0_rgb": {
+                "dtype": "image",
+                "shape": (8, 8, 3),
+                "names": ["height", "width", "channels"],
+            },
+            "observation.state": {
+                "dtype": "float32",
+                "shape": (2,),
+                "names": ["state"],
+            },
+            "action": {"dtype": "float32", "shape": (2,), "names": ["actions"]},
+        },
+    )
+    for episode in range(2):
+        for frame in range(12):
+            values = {
+                "observation.images.base_0_rgb": np.full(
+                    (8, 8, 3), episode * 20 + frame, dtype=np.uint8
+                ),
+                "observation.state": np.array([episode, frame], dtype=np.float32),
+                "action": np.array([frame, episode], dtype=np.float32),
+            }
+            if "task" in inspect.signature(dataset.add_frame).parameters:
+                dataset.add_frame(values, task="move the block")
+            else:
+                dataset.add_frame(values | {"task": "move the block"})
+        dataset.save_episode()
+    return root
+
+
+def _collate_pair_resume_batch(samples):
+    pairs = torch.tensor(
+        [
+            [s["episode"], s["frame_idx_t"], s["frame_idx_tk"], s["label"]]
+            for s in samples
+        ]
+    )
+    noise = torch.tensor([random.random(), np.random.rand(), torch.rand(()).item()])
+    return {"pairs": pairs, "noise": noise}
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+@pytest.mark.parametrize("num_bins", [2, 4])
+def test_steam_pair_loader_restores_private_rng(
+    sft_pair_dataset_path, workers, num_bins
+):
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+    from rlinf.data.datasets.steam.pair_dataset import PairDataset
+    from rlinf.workers.sft.fsdp_steam_sft_worker import _PairDataLoaderImpl
+
+    def build():
+        dataset = PairDataset(
+            str(sft_pair_dataset_path),
+            k=4,
+            num_bins=num_bins,
+            dataset_type="sft",
+            only_success=True,
+            camera_keys=("base_0_rgb",),
+        )
+        loader = TrainingDataLoader(
+            dataset,
+            seed=31,
+            batch_size=4,
+            shuffle=True,
+            num_workers=workers,
+            persistent_workers=workers > 0,
+            collate_fn=_collate_pair_resume_batch,
+        )
+        return _PairDataLoaderImpl(loader)
+
+    original = build()
+    iterator = iter(original)
+    for _ in range(3):
+        next(iterator)
+    state = copy.deepcopy(original.state_dict())
+    expected = [next(iterator) for _ in range(5)]
+    restored = build()
+    restored.load_state_dict(state)
+    iterator = iter(restored)
+    actual = [next(iterator) for _ in range(5)]
+    for reference, resumed in zip(expected, actual):
+        assert torch.equal(reference["pairs"], resumed["pairs"])
+        assert torch.equal(reference["noise"], resumed["noise"])
+
+
+class _CFGResumeDataset(_RandomTrainingDataset):
+    def __getitem__(self, index):
+        sample = super().__getitem__(index)
+        return {
+            "image": {"base_0_rgb": torch.zeros(8, 8, 3, dtype=torch.uint8)},
+            "image_mask": {"base_0_rgb": True},
+            "state": torch.cat([torch.tensor([sample["id"]]), sample["noise"]]),
+            "actions": sample["noise"][:2],
+            "advantage": bool(index % 2),
+        }
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_cfg_loader_restores_converted_observations(workers):
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+    from rlinf.data.datasets.recap.cfg_model import CFGDataLoaderImpl
+
+    def build():
+        loader = TrainingDataLoader(
+            _CFGResumeDataset(),
+            seed=19,
+            batch_size=4,
+            shuffle=True,
+            num_workers=workers,
+        )
+        return CFGDataLoaderImpl(None, loader)
+
+    original = build()
+    iterator = iter(original)
+    next(iterator)
+    state = copy.deepcopy(original.state_dict())
+    expected = next(iterator)
+    restored = build()
+    restored.load_state_dict(state)
+    actual = next(iter(restored))
+    assert torch.equal(expected[0].state, actual[0].state)
+    assert torch.equal(expected[0].images["base_0_rgb"], actual[0].images["base_0_rgb"])
+    assert torch.equal(expected[1], actual[1])
+    assert torch.equal(expected[2], actual[2])
+
+
+def _pair_resume_with_worker_seed(samples):
+    worker = torch.utils.data.get_worker_info()
+    return {
+        "stride": abs(samples[0]["frame_idx_tk"] - samples[0]["frame_idx_t"]),
+        "worker": worker.id,
+        "seed": worker.seed,
+    }
+
+
+def test_steam_pair_workers_do_not_inherit_shape_probe_rng(sft_pair_dataset_path):
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+    from rlinf.data.datasets.steam.pair_dataset import PairDataset
+
+    dataset = PairDataset(
+        str(sft_pair_dataset_path),
+        k=4,
+        num_bins=4,
+        dataset_type="sft",
+        only_success=True,
+        camera_keys=("base_0_rgb",),
+    )
+    dataset[0]
+    loader = TrainingDataLoader(
+        dataset,
+        seed=31,
+        batch_size=1,
+        sampler=[0] * 16,
+        num_workers=2,
+        collate_fn=_pair_resume_with_worker_seed,
+    )
+    generators = {}
+    for sample in loader:
+        worker = sample["worker"]
+        if worker not in generators:
+            generators[worker] = np.random.default_rng([sample["seed"], 31])
+        expected = int(generators[worker].integers(1, 5))
+        assert sample["stride"] == expected
+    assert set(generators) == {0, 1}
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_training_loader_restores_after_discarding_epoch_tail(workers):
+    original = _resumable_training_loader(workers, persistent=workers > 0)
+    iterator = iter(original)
+    next(iterator)
+    original.set_epoch(1)
+    iterator = iter(original)
+    next(iterator)
+    state = copy.deepcopy(original.state_dict())
+    expected = list(iterator)
+    original.set_epoch(2)
+    expected += list(iter(original))
+    restored = _resumable_training_loader(workers, persistent=workers > 0)
+    restored.load_state_dict(state)
+    actual = list(iter(restored))
+    restored.set_epoch(2)
+    actual += list(iter(restored))
+    for a, b in zip(expected, actual):
+        assert torch.equal(a["id"], b["id"])
+        assert torch.equal(a["noise"], b["noise"])
+    assert len(expected) == len(actual)
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_training_loader_keeps_inflight_samples_in_their_epoch(workers):
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+
+    loader = TrainingDataLoader(
+        _RandomTrainingDataset(),
+        seed=17,
+        batch_size=2,
+        num_workers=workers,
+        persistent_workers=workers > 0,
+    )
+    old_iterator = iter(loader)
+    next(old_iterator)
+    loader.set_epoch(1)
+    for batch in old_iterator:
+        assert (batch["id"] < 1000).all()
+    new_batch = next(iter(loader))
+    assert (new_batch["id"] >= 1000).all()
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_training_loader_snapshots_before_first_iteration(workers):
+    original = _resumable_training_loader(workers)
+    state = copy.deepcopy(original.state_dict())
+    expected = list(iter(original))
+    original.set_epoch(1)
+    expected += list(iter(original))
+    restored = _resumable_training_loader(workers)
+    restored.load_state_dict(state)
+    actual = list(iter(restored))
+    restored.set_epoch(1)
+    actual += list(iter(restored))
+    assert len(expected) == len(actual)
+    for a, b in zip(expected, actual):
+        assert torch.equal(a["id"], b["id"])
+        assert torch.equal(a["noise"], b["noise"])
+
+
+def _collate_pair_seed_domains(samples):
+    sample = samples[0]
+    worker = torch.utils.data.get_worker_info()
+    return {
+        "source": sample["source_name"],
+        "worker": worker.id if worker is not None else -1,
+        "worker_seed": worker.seed if worker is not None else None,
+        "stride": abs(sample["frame_idx_tk"] - sample["frame_idx_t"]),
+        "max_stride": min(4, 11 - min(sample["frame_idx_tk"], sample["frame_idx_t"])),
+    }
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_steam_mixture_seed_domains_do_not_collide(
+    sft_pair_dataset_path, tmp_path, workers
+):
+    from rlinf.data.datasets.common import safe_hash
+    from rlinf.data.datasets.common.stateful import TrainingDataLoader
+    from rlinf.data.datasets.steam.mixture import PairMixtureDataset
+    from rlinf.data.datasets.steam.pair_dataset import PairDataset
+
+    second = tmp_path / "second-dataset"
+    shutil.copytree(sft_pair_dataset_path, second)
+    paths = [sft_pair_dataset_path, second]
+    datasets = [
+        PairDataset(
+            str(path),
+            k=4,
+            num_bins=4,
+            dataset_type="sft",
+            only_success=True,
+            camera_keys=("base_0_rgb",),
+        )
+        for path in paths
+    ]
+    for dataset in datasets:
+        dataset[0]
+    mixture = PairMixtureDataset([(dataset, 1.0) for dataset in datasets])
+    loader = TrainingDataLoader(
+        mixture,
+        seed=31,
+        batch_size=1,
+        num_workers=workers,
+        collate_fn=_collate_pair_seed_domains,
+    )
+    generators = {}
+    for sample in loader:
+        source = paths.index(Path(sample["source"]))
+        key = sample["worker"], source
+        if key not in generators:
+            seed = safe_hash((31, source))
+            entropy = [sample["worker_seed"], seed] if workers else seed
+            generators[key] = np.random.default_rng(entropy)
+        assert sample["stride"] == int(
+            generators[key].integers(1, sample["max_stride"] + 1)
+        )
+    assert len(generators) == max(workers, 1) * 2
