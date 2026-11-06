@@ -1264,6 +1264,53 @@ def test_trajectory_step_owns_intervention_and_transition_conversion():
     assert torch.equal(step.final_prev_values, torch.full((1, 1), 5.0))
 
 
+@pytest.mark.parametrize("collect_prev_infos", [False, True])
+def test_trajectory_step_preserves_gate_features_with_executed_action_mask(
+    collect_prev_infos,
+):
+    sources = [TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 2)]
+    actions = torch.ones(2, 3, 4)
+    logprobs = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+    executed_mask = torch.tensor([[True, False, False], [True, True, False]])
+    phase_features = torch.ones(2, 1, 6)
+    policy = PolicyPart(
+        sources=sources,
+        obs={"states": torch.zeros(2, 4)},
+        output=PolicyOutput(forward_inputs={"action": actions}, prev_logprobs=logprobs),
+    )
+    env = EnvPart(
+        sources=sources,
+        transition=EnvTransition(
+            rewards=torch.ones(2, 3),
+            executed_mask=executed_mask,
+            trajectory_infos={"rlt_gate_phase_features": phase_features},
+        ),
+    )
+
+    step = TrajectoryStep.from_parts(
+        policy,
+        env,
+        rewards=env.transition.rewards,
+        collect_prev_infos=collect_prev_infos,
+        collect_transitions=False,
+        enable_rlt=False,
+        include_final_value=False,
+    )
+
+    torch.testing.assert_close(step.forward_inputs["action"], actions)
+    torch.testing.assert_close(
+        step.forward_inputs["rlt_gate_phase_features"], phase_features
+    )
+    torch.testing.assert_close(step.forward_inputs["executed_mask"], executed_mask)
+    if collect_prev_infos:
+        torch.testing.assert_close(
+            step.prev_logprobs, logprobs.masked_fill(~executed_mask.unsqueeze(-1), 0)
+        )
+    else:
+        assert step.prev_logprobs is None
+    torch.testing.assert_close(policy.output.prev_logprobs, logprobs)
+
+
 def test_trajectory_owns_step_materialization_splitting_and_batching():
     steps = [
         TrajectoryStep(
@@ -1782,9 +1829,13 @@ def test_history_reward_assignment_matches_main_across_chunks():
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
 
 
-@pytest.mark.parametrize("loss_type", ["rlt_ac", "rlt_td3"])
-def test_rlt_output_matches_main_transition_and_intervention_behavior(loss_type):
-    collector = _make(_config(algorithm={"loss_type": loss_type}))
+@pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
+def test_prefix_output_matches_main_transition_and_intervention_behavior(
+    algorithm_name,
+):
+    collector = _make(
+        _config(algorithm={"loss_type": "prefix_off_policy", "name": algorithm_name})
+    )
     key = TrajectoryKey(3, 0, 0, 0, 0)
     current_ref_chunk = torch.tensor([[1.0, 2.0]])
     intervened_chunk = torch.tensor([[9.0, 8.0]])
@@ -2574,6 +2625,7 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.routing_gate = None
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -2861,6 +2913,7 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = OmegaConf.create({"env": {"train": {"auto_reset": True}}})
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -2967,6 +3020,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = OmegaConf.create({"env": {"train": {"auto_reset": True}}})
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3176,6 +3230,30 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
+@pytest.mark.parametrize("early_stop", [False, True])
+def test_rollout_merges_episode_boundaries_and_eval_early_stop(early_stop):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    dones = torch.tensor([[False, True]])
+    batches = [
+        {"obs": {"states": torch.zeros(1, 4)}, "dones": dones},
+        {
+            "obs": {"states": torch.ones(1, 4)},
+            "eval_epoch_done": early_stop,
+        },
+    ]
+
+    merged = rollout._merge_obs_batches(batches)
+
+    torch.testing.assert_close(
+        merged["obs"]["states"],
+        torch.cat([batch["obs"]["states"] for batch in batches]),
+    )
+    torch.testing.assert_close(
+        merged["dones"], torch.cat([dones, torch.zeros_like(dones)])
+    )
+    assert merged["eval_epoch_done"] is early_stop
+
+
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
@@ -3200,7 +3278,9 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
     rollout._publish_env_part(completion, None, None, actor_channel)
 
-    rollout._predict_rollout_actions.assert_called_once_with(completion.next_obs)
+    rollout._predict_rollout_actions.assert_called_once_with(
+        completion.next_obs, update_history=False, stage_id=0, update_gate=False
+    )
     part = actor_channel.put.call_args.args[0]
     assert torch.equal(part.bootstrap_values, torch.zeros(1, 1))
     assert torch.equal(part.final_prev_values, torch.zeros(1, 1))

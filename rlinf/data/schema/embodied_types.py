@@ -159,6 +159,8 @@ class EnvTransition:
     reward_assign_lengths: list[int] | None = None
     # Online LeRobot frame data for this chunk; batched entries start with [B, ...].
     episode_data: dict[str, Any] | None = None
+    # Environment-owned tensors joined into trajectory diagnostics; leaves [B, ...].
+    trajectory_infos: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -175,6 +177,8 @@ class EnvTransition:
             value = getattr(self, field_name)
             if value is not None:
                 setattr(self, field_name, value.cpu().contiguous())
+        if self.trajectory_infos is not None:
+            self.trajectory_infos = put_tensor_device(self.trajectory_infos, "cpu")
 
         if self.executed_mask is not None and (
             self.executed_mask.ndim != 2 or self.executed_mask.dtype != torch.bool
@@ -187,6 +191,7 @@ class EnvTransition:
         reward_model_output: torch.Tensor | None = None,
         reward_assign_lengths: list[int] | None = None,
         episode_data: dict[str, Any] | None = None,
+        trajectory_infos: dict[str, Any] | None = None,
     ) -> "EnvTransition":
         """Return a copy enriched with collector-facing metadata."""
         return replace(
@@ -194,6 +199,7 @@ class EnvTransition:
             reward_model_output=reward_model_output,
             reward_assign_lengths=reward_assign_lengths,
             episode_data=episode_data,
+            trajectory_infos=trajectory_infos,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,13 +222,15 @@ class EnvTransition:
         fields = {
             name: split_batch_value(getattr(self, name), split_sizes)
             for name in self.__dataclass_fields__
-            if name != "episode_data"
+            if name not in {"episode_data", "trajectory_infos"}
         }
         episodes = split_episode_data(self.episode_data, split_sizes)
+        trajectory_infos = split_batch_value(self.trajectory_infos, split_sizes)
         return [
             type(self)(
                 **{name: values[index] for name, values in fields.items()},
                 episode_data=episodes[index],
+                trajectory_infos=trajectory_infos[index],
             )
             for index in range(len(split_sizes))
         ]
@@ -243,12 +251,15 @@ class EnvTransition:
                     [getattr(transition, name) for transition in transitions]
                 )
                 for name in transitions[0].__dataclass_fields__
-                if name != "episode_data"
+                if name not in {"episode_data", "trajectory_infos"}
             },
             episode_data=(
                 merge_episode_data(episode_data)
                 if all(value is not None for value in episode_data)
                 else None
+            ),
+            trajectory_infos=merge_batch_values(
+                [transition.trajectory_infos for transition in transitions]
             ),
         )
 
@@ -720,6 +731,8 @@ class TrajectoryStep:
                 else None
             ),
         )
+        if env.transition.trajectory_infos:
+            step.forward_inputs.update(env.transition.trajectory_infos)
         if env.transition.executed_mask is not None:
             mask = env.transition.executed_mask
             if step.prev_logprobs is not None:
@@ -1754,6 +1767,8 @@ class PolicyInput:
     rlt_switch_flags: torch.Tensor | None = None
     # Requested expert-intervention slots, bool [B, C].
     intervene_flags: torch.Tensor | None = None
+    # Previous chunk termination mask used by stateful policy components.
+    dones: torch.Tensor | None = None
     # Logical source shards spanning this request; sizes sum to B.
     sources: list[TrajectorySource] = field(default_factory=list)
     # Previous environment parts awaiting rollout-side completion; one per source
@@ -1769,7 +1784,7 @@ class PolicyInput:
 
     def __post_init__(self) -> None:
         self.obs = put_tensor_device(self.obs, "cpu")
-        for name in ("rlt_switch_flags", "intervene_flags"):
+        for name in ("rlt_switch_flags", "intervene_flags", "dones"):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, value.cpu().contiguous())
@@ -1791,6 +1806,7 @@ class PolicyInput:
         source_shards = TrajectorySource.split(self.sources, split_sizes)
         rlt_shards = split_batch_value(self.rlt_switch_flags, split_sizes)
         intervene_shards = split_batch_value(self.intervene_flags, split_sizes)
+        done_shards = split_batch_value(self.dones, split_sizes)
         env_part = self.env_parts[0] if self.env_parts else None
         env_part_shards = (
             env_part.split(split_sizes)
@@ -1803,6 +1819,7 @@ class PolicyInput:
                 obs=obs,
                 rlt_switch_flags=rlt_shards[index],
                 intervene_flags=intervene_shards[index],
+                dones=done_shards[index],
                 sources=source_shards[index],
                 env_parts=[env_part_shards[index]],
                 request_sizes=[split_sizes[index]],
@@ -1844,6 +1861,7 @@ class PolicyInput:
             obs=merge_batch_values(observations),
             rlt_switch_flags=merge_optional_tensor("rlt_switch_flags"),
             intervene_flags=merge_optional_tensor("intervene_flags"),
+            dones=merge_optional_tensor("dones"),
             sources=TrajectorySource.merge(
                 [policy_input.sources for policy_input in policy_inputs]
             ),

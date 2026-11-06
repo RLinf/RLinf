@@ -367,7 +367,19 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     if hasattr(module, "q_head"):
         from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
 
-        if isinstance(module.q_head, MultiCrossQHead):
+        if getattr(module.q_head, "_fsdp_wrap_role", None) == "prefix_critic_head":
+            from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+
+            def is_prefix_critic(candidate):
+                return (
+                    getattr(candidate, "_fsdp_wrap_role", None) == "prefix_critic_head"
+                )
+
+            q_head_policy = functools.partial(
+                lambda_auto_wrap_policy,
+                lambda_fn=is_prefix_critic,
+            )
+        elif isinstance(module.q_head, MultiCrossQHead):
             q_head_policy = functools.partial(
                 _module_wrap_policy, module_classes={MultiCrossQHead}
             )

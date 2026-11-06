@@ -90,8 +90,7 @@ jobs:
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
-              - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
-              - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/embodied_fsdp_actor_worker.py'
               - 'rlinf/workers/env/**'
@@ -177,12 +176,14 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              - 'examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam*.yaml'
               - 'rlinf/robotics/**'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
