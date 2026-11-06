@@ -9,6 +9,8 @@ OpenPI 监督微调
 
 在 RLinf 里对 π₀ / π₀.₅ 做 **全量 SFT** 或 **LoRA**。策略统一为 ``model_type: openpi``：这是与 JAX 参考对齐的 PyTorch 实现（官方 openpi 仓库自带的 PyTorch 代码并未对齐）。SFT 通常是强化学习前的冷启动：先模仿示范，再在较好先验上做 RL。
 
+在 LIBERO-Mem 上使用视觉历史时，参阅 :doc:`OpenPI Short Memory 评测与训练 </rst_source/guides/data-checkpoints/openpi_short_memory>`，了解历史帧采样配置与 FSDP1 / FSDP2 SFT 配方。
+
 配方一览
 ----------------------------------------
 

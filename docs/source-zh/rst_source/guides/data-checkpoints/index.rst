@@ -15,6 +15,8 @@
      - 在不同格式之间转换 checkpoint。
    * - :doc:`恢复训练 <../resume>`
      - Checkpoint 频率与断点续训。
+   * - :doc:`OpenPI Short Memory <openpi_short_memory>`
+     - 配置视觉历史，运行 OpenPI 评测与微调。
 
 .. toctree::
    :hidden:
@@ -22,3 +24,4 @@
    数据采集 <../data_collection>
    Checkpoint 转换 <../convertor>
    恢复训练 <../resume>
+   OpenPI Short Memory <openpi_short_memory>

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FSDP1 wrapper configuration and precision policy schema."""
+"""FSDP wrapper configuration and precision policy schema."""
 
 from dataclasses import dataclass, fields
 from enum import Enum
@@ -80,8 +80,8 @@ def _parse_wrapper_config(config: DictConfig) -> tuple[_WrapperSpec, ...]:
     )
     if not wrappers and not policies and not rules:
         return ()
-    if config.get("strategy", "fsdp") != "fsdp":
-        raise ValueError("Named wrappers require strategy='fsdp' (FSDP1)")
+    if config.get("strategy", "fsdp") not in {"fsdp", "fsdp2"}:
+        raise ValueError("Named wrappers require strategy='fsdp' or 'fsdp2'")
     if config.get("disable", False):
         raise ValueError("Named wrappers conflict with disable=true")
     if rules and config.get("amp_autocast", {}).get("enabled", False):

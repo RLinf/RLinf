@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Named FSDP1 wrapper boundaries and mixed precision policies."""
+"""Named FSDP wrapper boundaries and mixed precision policies."""
 
 from collections import defaultdict
 from fnmatch import fnmatchcase
@@ -134,7 +134,7 @@ def _validate_group_scope(
         raise ValueError(f"Wrapper {spec.name!r}: group has no parameters")
     if len({param.dtype for param in params}) != 1:
         raise ValueError(
-            f"Wrapper {spec.name!r}: FSDP1 groups require uniform original parameter dtype"
+            f"Wrapper {spec.name!r}: groups require uniform original parameter dtype"
         )
     if not use_orig_params and len({param.requires_grad for param in params}) != 1:
         raise ValueError(
@@ -309,3 +309,43 @@ def get_mixed_precision_wrap_policy(
         return module in wrapped
 
     return CustomPolicy(policy)
+
+
+def get_fsdp2_wrap_plan(
+    model: nn.Module,
+    config: DictConfig,
+    automatic_modules: set[nn.Module],
+) -> dict[nn.Module, MixedPrecision | None]:
+    """Resolve FSDP2 boundaries before fully_shard mutates module classes."""
+    specs = _parse_wrapper_config(config)
+    if not specs:
+        return dict.fromkeys(automatic_modules)
+    index = _ModuleIndex(model)
+    boundaries = _resolve_boundaries(
+        index,
+        specs,
+        use_orig_params=True,
+        ignored_classes=(),
+    )
+
+    def base_policy(module: nn.Module, recurse: bool, nonwrapped_numel: int) -> bool:
+        return recurse or module in automatic_modules
+
+    wrapped = _collect_wrapped_modules(model, boundaries, base_policy)
+    _validate_parameter_owners(
+        model,
+        wrapped,
+        boundaries,
+        ignored_classes=(),
+        use_orig_params=True,
+    )
+    for module in wrapped:
+        index.require_unique_path(module)
+    for module, spec in boundaries.items():
+        get_logger().info(
+            f"[FSDP2] Wrapper {spec.name}: scope={index.require_unique_path(module)}, wrap_mode={spec.wrap_mode.value}, policy={spec.policy_name or 'default'}"
+        )
+    return {
+        module: boundaries[module].mixed_precision if module in boundaries else None
+        for module in wrapped
+    }

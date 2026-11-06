@@ -19,6 +19,7 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -115,6 +116,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()
+            state["_rlinf_data_epoch"] = self._data_epoch
 
             all_states = [None] * self._world_size
             torch.distributed.all_gather_object(all_states, state)
@@ -140,6 +142,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 os.path.join(load_path, "data.pt"), weights_only=False
             )
             state = all_states[self._rank]
+            self._data_epoch = state.pop("_rlinf_data_epoch", 0)
+            forward_set_epoch(self.data_loader, self._data_epoch)
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)
 

@@ -70,6 +70,18 @@ def build_openpi_sft_dataloader(
     eval_dataset: bool = False,
 ) -> tuple[Any, Any]:
     """Build the environment-specific openpi SFT dataloader."""
+    if (
+        bool(cfg.actor.model.openpi.get("short_memory", False))
+        or cfg.data.get("short_memory") is not None
+    ):
+        from rlinf.data.datasets.openpi.short_memory_sft_data_loader import (
+            build_short_memory_sft_dataloader,
+        )
+
+        return build_short_memory_sft_dataloader(
+            cfg, world_size, rank, data_paths, eval_dataset
+        )
+
     if bool(cfg.actor.model.openpi.get("use_rlt", False)):
         return _load_official_openpi_sft_dataloader()(
             cfg, world_size, rank, data_paths, eval_dataset

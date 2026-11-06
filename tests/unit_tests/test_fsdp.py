@@ -36,6 +36,7 @@ from rlinf.config import validate_fsdp_cfg
 from rlinf.hybrid_engines.fsdp.compat import apply_buffer_dtype_compatibility
 from rlinf.hybrid_engines.fsdp.mixed_precision import (
     build_mixed_precision,
+    get_fsdp2_wrap_plan,
     get_mixed_precision_wrap_policy,
 )
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -422,15 +423,22 @@ def config(selector="module_names", targets=None, wrap_mode="individual", **kwar
 
 
 @pytest.mark.parametrize("sharding", ["shard_grad_op", "full_shard"])
-def test_openpi_sharded_training_requires_fsdp1(sharding):
+def test_openpi_sharded_training_accepts_fsdp2(sharding):
     actor = OmegaConf.create(
         {
             "model": {"model_type": "openpi"},
-            "fsdp_config": {"strategy": "fsdp2", "sharding_strategy": sharding},
+            "fsdp_config": {
+                "strategy": "fsdp2",
+                "sharding_strategy": sharding,
+                "mixed_precision": {
+                    "param_dtype": None,
+                    "reduce_dtype": None,
+                    "buffer_dtype": None,
+                },
+            },
         }
     )
-    with pytest.raises(AssertionError, match="openpi sharded training requires"):
-        validate_fsdp_cfg(actor)
+    validate_fsdp_cfg(actor)
 
 
 @pytest.mark.parametrize(
@@ -492,7 +500,7 @@ def test_no_rules_preserves_original_policy():
             {"mixed_precision_rules": {"sensitive": "typo"}},
             "unknown policy",
         ),
-        ({"strategy": "fsdp2"}, "FSDP1"),
+        ({"strategy": "unknown"}, "strategy="),
         ({"disable": True}, "disable=true"),
         ({"amp_autocast": {"enabled": True}}, "amp_autocast"),
     ],
@@ -544,10 +552,74 @@ def test_unknown_runtime_options_are_rejected():
         build_mixed_precision(OmegaConf.create({"output_dtype": "fp32"}))
 
 
-def test_yaml_validation_rejects_fsdp2_overrides():
+def test_yaml_validation_accepts_fsdp2_overrides():
     cfg = config(strategy="fsdp2", mixed_precision={})
-    with pytest.raises(ValueError, match="FSDP1"):
-        validate_fsdp_cfg(OmegaConf.create({"fsdp_config": cfg}))
+    validate_fsdp_cfg(OmegaConf.create({"fsdp_config": cfg}))
+
+
+@pytest.mark.parametrize("wrap_mode", ["individual", "subtree", "combined"])
+def test_fsdp2_named_boundaries_preserve_group_ownership(wrap_mode):
+    model = nn.Sequential(nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2)))
+    targets = ["0.0", "0.1"] if wrap_mode == "combined" else ["0"]
+    plan = get_fsdp2_wrap_plan(
+        model,
+        config(strategy="fsdp2", targets=targets, wrap_mode=wrap_mode),
+        {model[0][0], model[0][1]},
+    )
+    assert plan[model[0]].param_dtype == torch.float32
+    if wrap_mode == "individual":
+        assert plan[model[0][0]] is None
+        assert plan[model[0][1]] is None
+    else:
+        assert set(plan) == {model[0]}
+
+
+@pytest.mark.parametrize("wrap_mode", ["individual", "subtree", "combined"])
+def test_fsdp2_rejects_mixed_original_dtypes_in_one_owner(wrap_mode):
+    model = nn.Sequential(nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2)))
+    model[0][1].to(dtype=torch.bfloat16)
+    targets = ["0.0", "0.1"] if wrap_mode == "combined" else ["0"]
+    with pytest.raises(ValueError, match="uniform original parameter dtype"):
+        get_fsdp2_wrap_plan(
+            model,
+            config(strategy="fsdp2", targets=targets, wrap_mode=wrap_mode),
+            set(),
+        )
+
+
+def test_fsdp2_allows_different_original_dtypes_in_separate_owners():
+    model = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2, dtype=torch.bfloat16))
+    plan = get_fsdp2_wrap_plan(model, config(strategy="fsdp2"), {model[0]})
+    assert plan[model[0]] is None
+    assert plan[model[1]].param_dtype == torch.float32
+
+
+def test_fsdp2_rejects_shared_parameter_crossing_precision_boundaries():
+    model = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
+    model[1].weight = model[0].weight
+    with pytest.raises(ValueError, match="Shared parameter crosses"):
+        get_fsdp2_wrap_plan(model, config(strategy="fsdp2"), {model[0]})
+
+
+def test_fsdp2_buffers_follow_the_owning_precision_boundary(single_rank_env):
+    model = nn.Sequential(nn.Linear(2, 2), nn.Linear(2, 2))
+    model.register_buffer("floating", torch.ones(2))
+    model.register_buffer("integer", torch.ones(2, dtype=torch.int64))
+    for child in model:
+        child.register_buffer("offset", torch.ones(2))
+    wrapped = apply_fsdp2_to_model(
+        model,
+        config(strategy="fsdp2", mixed_precision={"buffer_dtype": "bf16"}),
+        create_device_mesh(1),
+        MixedPrecisionPolicy(param_dtype=torch.bfloat16),
+        OffloadPolicy(),
+        reshard_after_forward=True,
+    )
+    assert wrapped.floating.dtype == torch.bfloat16
+    assert wrapped.integer.dtype == torch.int64
+    assert wrapped[0].offset.dtype == torch.bfloat16
+    assert wrapped[1].offset.dtype == torch.float32
+    assert all(parameter.dtype == torch.float32 for parameter in wrapped.parameters())
 
 
 @pytest.mark.parametrize(

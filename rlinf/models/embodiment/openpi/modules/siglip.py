@@ -19,10 +19,14 @@ Implements the So400m/14 ViT variant with pool_type="none" used by Pi0.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .short_memory import factorized_space_time_attention, fixed_relative_time_encoding
 from .utils import _str_to_dtype
 
 
@@ -99,11 +103,31 @@ class Encoder1DBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        frame_mask: torch.Tensor | None = None,
+        time_offsets: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        shape = x.shape
+        if time_offsets is not None:
+            x = (
+                x
+                + fixed_relative_time_encoding(time_offsets.to(x.dtype), shape[-1])[
+                    :, :, None, :
+                ]
+            )
+        x = x.reshape(-1, shape[-2], shape[-1])
         # Cast only the LayerNorm input. Keep residual dtype (OpenPI mixed precision).
         norm_dtype = self.norm1.weight.dtype
         y = self.norm1(x.to(norm_dtype))
-        y, _ = self.attn(y, y, y)
+        if time_offsets is None:
+            y, _ = self.attn(y, y, y)
+        else:
+            y = factorized_space_time_attention(
+                self.attn, y.reshape(shape), frame_mask
+            ).reshape_as(x)
         y = self.dropout1(y)
         x = x + y
 
@@ -111,7 +135,7 @@ class Encoder1DBlock(nn.Module):
         y = self.mlp(y)
         y = self.dropout2(y)
         x = x + y
-        return x
+        return x.reshape(shape)
 
 
 class Encoder(nn.Module):
@@ -144,14 +168,42 @@ class Encoder(nn.Module):
         # via Pi0.gradient_checkpointing_enable(gradient_checkpointing_kwargs=...).
         self.gradient_checkpointing_use_reentrant = False
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for layer in self.layers:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        frame_mask: torch.Tensor | None = None,
+        time_offsets: torch.Tensor | None = None,
+        temporal_layers: Sequence[int] = (),
+        drop_history_layer: int | None = None,
+    ) -> torch.Tensor:
+        if frame_mask is not None:
+            if not 0 <= drop_history_layer < len(self.layers):
+                raise ValueError(
+                    f"History-drop layer {drop_history_layer} must be within "
+                    f"the {len(self.layers)} SigLIP layers."
+                )
+            x = x * frame_mask[:, :, None, None]
+        for index, layer in enumerate(self.layers):
+            layer_forward = (
+                partial(layer, frame_mask=frame_mask, time_offsets=time_offsets)
+                if index in temporal_layers
+                else layer
+            )
             if self.gradient_checkpointing and self.training:
                 x = torch.utils.checkpoint.checkpoint(
-                    layer, x, use_reentrant=self.gradient_checkpointing_use_reentrant
+                    layer_forward,
+                    x,
+                    use_reentrant=self.gradient_checkpointing_use_reentrant,
                 )
             else:
-                x = layer(x)
+                x = layer_forward(x)
+            if frame_mask is not None:
+                x = x * frame_mask[:, :, None, None]
+                if index == drop_history_layer:
+                    x = x[:, -1]
+                    frame_mask = None
+                    time_offsets = None
         x = self.norm(x.to(self.norm.weight.dtype))
         return x
 
@@ -245,11 +297,23 @@ class SigLIPViT(nn.Module):
             self._pos_emb_cache[key] = pe
         return self._pos_emb_cache[key].to(dtype=dtype, device=device)
 
-    def forward(self, image: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        image: torch.Tensor,
+        *,
+        frame_mask: torch.Tensor | None = None,
+        time_offsets: torch.Tensor | None = None,
+        temporal_layers: Sequence[int] = (),
+        drop_history_layer: int | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass.
 
         Args:
-            image: (B, H, W, 3) in [-1, 1] float32
+            image: [B, H, W, 3] or [B, K, H, W, 3] in [-1, 1] float32.
+            frame_mask: Valid frames [B, K] for video inputs.
+            time_offsets: Relative frame times [B, K] in seconds.
+            temporal_layers: Encoder layers that mix matching patches over time.
+            drop_history_layer: Last layer that processes historical frames.
 
         Returns:
             tokens: (B, num_patches, width) - all patch tokens when pool_type="none"
@@ -257,7 +321,8 @@ class SigLIPViT(nn.Module):
         """
         # --- Stem + pos_embed in float32 (matching JAX) ---
         # image is (B, H, W, C) -> (B, C, H, W)
-        x = image.permute(0, 3, 1, 2)
+        history_shape = image.shape[:2] if image.ndim == 5 else None
+        x = image.reshape(-1, *image.shape[-3:]).permute(0, 3, 1, 2)
         x = self.stem(x)
         B, C, h, w = x.shape
         x = x.reshape(B, C, h * w).permute(0, 2, 1)  # (B, h*w, width)
@@ -271,9 +336,17 @@ class SigLIPViT(nn.Module):
 
         # --- Cast to model dtype for encoder (matching JAX x.astype(self.dtype_mm)) ---
         x = x.to(self.dtype_mm)
+        if history_shape is not None:
+            x = x.reshape(*history_shape, *x.shape[1:])
 
         # Encoder
-        x = self.encoder(x)
+        x = self.encoder(
+            x,
+            frame_mask=frame_mask,
+            time_offsets=time_offsets,
+            temporal_layers=temporal_layers,
+            drop_history_layer=drop_history_layer,
+        )
 
         if self.pool_type == "map":
             x = self.map_head(x)
