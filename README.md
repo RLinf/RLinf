@@ -35,6 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 ## What's NEW!
 
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
+- [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
 - [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization. Doc: [PhyAI rollout backend](docs/source-en/rst_source/guides/rollout-engines/phyai.rst).
 - [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
 - [2026/10] 🎉 RLinf introducing **CEL** (Collective Experience Learning): robot fleets improve a shared policy from their own deployment experience without additional expert demonstrations or corrective actions, validated on up to 96 real robots across 5 real-world tasks. Project page: [CEL](https://cel-robot-learning.github.io/), paper: [arXiv:2610.25736](https://arxiv.org/abs/2610.25736). Code will release soon.
@@ -131,10 +132,41 @@ RLinf has high flexibility to support diverse RL training workflows (PPO, GRPO, 
 
 The high flexibility allows RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves up to **2.434×** throughput compared to existing frameworks.
 
-Multiple Backend Integrations
+### Training and Inference Engines
 
-- FSDP + HuggingFace/SGLang/vLLM: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
-- Megatron + SGLang/vLLM: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
+RLinf updates models with a training engine and runs rollout and evaluation with an inference engine. FSDP adapts quickly to new models and algorithms, and Megatron-LM and Megatron-Bridge are built for large-scale training. Agentic AI includes reasoning tasks such as math and VQA. PhyAI and ApxInf currently support π₀.₅ only.
+
+<table>
+  <thead align="center">
+    <tr>
+      <th rowspan="2"></th>
+      <th colspan="3">Training</th>
+      <th colspan="5">Inference</th>
+    </tr>
+    <tr>
+      <th>FSDP</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/5D.html">Megatron-LM</a></th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/mbridge.html">Megatron-Bridge</a></th>
+      <th>HuggingFace</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
+      <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
+    </tr>
+  </thead>
+  <tbody align="center">
+    <tr>
+      <td align="left"><b>Embodied AI</b></td>
+      <td>✅</td><td>—</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+    </tr>
+    <tr>
+      <td align="left"><b>Agentic AI</b></td>
+      <td>✅</td><td>✅</td><td>✅</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+    </tr>
+  </tbody>
+</table>
 
 ## Examples
 
@@ -170,6 +202,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/genesis.html">Genesis</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/polaris.html">Polaris</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -189,6 +222,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html">Psi0</a> ✅</li>
           </ul>
           <li><b>VLM</b></li>
           <ul>
