@@ -45,6 +45,7 @@ env:
     group_size: 1
     use_fixed_reset_state_ids: false
     is_eval: true
+    use_custom_reward: false
     assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     center_crop: false

@@ -40,11 +40,12 @@ env:
     auto_reset: true
     ignore_terminations: true
     max_episode_steps: 400
-    max_steps_per_rollout_epoch: 800
+    max_steps_per_rollout_epoch: 16000
     reward_coef: 1.0
     group_size: 1
     use_fixed_reset_state_ids: false
     is_eval: true
+    use_custom_reward: false
     assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
     seeds_path: /mnt/public/zhangyuzhuo/seeds_paired.json
     center_crop: false

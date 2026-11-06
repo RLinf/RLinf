@@ -14,6 +14,7 @@
 
 """LingBot-VLA 2.0 flow-SDE PPO with an explicit latent trajectory likelihood."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
