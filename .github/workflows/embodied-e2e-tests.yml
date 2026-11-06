@@ -1421,6 +1421,104 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/.venv"
           uv cache prune
 
+  embodied-libero-phyai-http-test:
+    # Maintainers stage compatible LeRobot checkpoint/tokenizer assets on the runner.
+    if: ${{ vars.PHYAI_HTTP_CHECKPOINT != '' && vars.PHYAI_HTTP_TOKENIZER != '' }}
+    runs-on: embodied
+    timeout-minutes: 150
+    env:
+      PHYAI_VERSION: 0.2.0rc1
+      PHYAI_HTTP_CHECKPOINT: ${{ vars.PHYAI_HTTP_CHECKPOINT }}
+      PHYAI_HTTP_TOKENIZER: ${{ vars.PHYAI_HTTP_TOKENIZER }}
+      SERVER_GPU_ID: '0'
+      GPU_ID: '1'
+      NUM_ENVS: '8'
+      MAX_STEPS: '480'
+      MIN_SUCCESS_ONCE: '0'
+      UV_PATH: /workspace/dataset/.uv
+      UV_LINK_MODE: symlink
+      UV_CACHE_DIR: /workspace/dataset/.uv_cache
+      UV_PYTHON_INSTALL_DIR: /workspace/dataset/.uv_python
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Prepare isolated environment paths
+        run: |
+          environment_root=$(mktemp -d "$RUNNER_TEMP/phyai-http-envs.XXXXXX")
+          echo "PHYAI_HTTP_ENV_ROOT=$environment_root" >> "$GITHUB_ENV"
+          echo "RLINF_VENV=$environment_root/client" >> "$GITHUB_ENV"
+          echo "PHYAI_PYTHON=$environment_root/serving/bin/python" >> "$GITHUB_ENV"
+
+      - name: Create LIBERO HTTP client environment
+        timeout-minutes: 45
+        run: |
+          unset UV_DEFAULT_INDEX PYTHONPATH VIRTUAL_ENV
+          test -d "$PHYAI_HTTP_CHECKPOINT"
+          test -d "$PHYAI_HTTP_TOKENIZER"
+          bash requirements/install.sh \
+            --python 3.12 \
+            --venv "$RLINF_VENV" \
+            --install-rlinf \
+            embodied --model sglang --sglang 0.5.19 --env libero
+          "$RLINF_VENV/bin/python" -c 'from sglang.multimodal_gen.runtime.entrypoints.action.protocol import pack_msgpack, unpack_msgpack; assert unpack_msgpack(pack_msgpack({"codec": "ok"})) == {"codec": "ok"}'
+
+      - name: Create serving environment with the shared PhyAI installer
+        timeout-minutes: 45
+        run: |
+          unset UV_DEFAULT_INDEX UV_TORCH_BACKEND PYTHONPATH VIRTUAL_ENV
+          bash requirements/install.sh \
+            --python 3.12 \
+            --torch 2.11.0 \
+            --venv "$PHYAI_HTTP_ENV_ROOT/serving" \
+            --install-rlinf \
+            embodied --model openpi --env libero --engine phyai
+          source "$PHYAI_HTTP_ENV_ROOT/serving/bin/activate"
+          versions_before=$(python -c 'import torch, transformers; print(torch.__version__, transformers.__version__)')
+          env -u UV_TORCH_BACKEND uv pip install --python "$PHYAI_PYTHON" \
+            -r "requirements/agentic/phyai_${PHYAI_VERSION}_http.txt"
+          env -u UV_TORCH_BACKEND uv pip install --python "$PHYAI_PYTHON" --no-deps \
+            "phyai-gateway==${PHYAI_VERSION}" \
+            "phyai-utils-tools==${PHYAI_VERSION}" \
+            --index https://mingti-org.github.io/phyai/simple/
+          versions_after=$(python -c 'import torch, transformers; print(torch.__version__, transformers.__version__)')
+          test "$versions_before" = "$versions_after"
+          "$PHYAI_PYTHON" -c 'from importlib.metadata import version; names = ("phyai", "phyai-kernel", "phyai-ext", "phyai-gateway", "phyai-utils-tools"); print({name: version(name) for name in names})'
+          "$PHYAI_PYTHON" -m phyai server \
+            tests/e2e_tests/evaluations/phyai_gateway_server.yaml --check
+
+      - name: PhyAI HTTP worker regression tests
+        timeout-minutes: 10
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/tests/unit_tests"
+          source "$RLINF_VENV/bin/activate"
+          pytest tests/unit_tests/test_models.py -k phyai_http
+
+      - name: Libero-Spatial PhyAI Gateway evaluation
+        timeout-minutes: 35
+        run: |
+          unset PYTHONPATH
+          source "$PHYAI_HTTP_ENV_ROOT/serving/bin/activate"
+          if [[ -n "${CUDNN_FRONTEND_CUDART_LIB_NAME:-}" ]]; then
+            export PHYAI_CUDART_LIB_NAME="$CUDNN_FRONTEND_CUDART_LIB_NAME"
+          fi
+          bash tests/e2e_tests/evaluations/run_phyai_gateway.sh
+
+      - name: Upload PhyAI HTTP evaluation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phyai-http-evaluation-logs
+          path: logs/ci/phyai-gateway.*/
+          if-no-files-found: warn
+
+      - name: Remove this job's Python environments
+        if: always()
+        run: |
+          if [[ -n "${PHYAI_HTTP_ENV_ROOT:-}" && "$PHYAI_HTTP_ENV_ROOT" == "$RUNNER_TEMP"/phyai-http-envs.* ]]; then
+            rm -rf -- "$PHYAI_HTTP_ENV_ROOT"
+          fi
+
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
     steps:
