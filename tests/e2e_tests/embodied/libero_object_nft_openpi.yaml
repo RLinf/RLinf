@@ -26,7 +26,7 @@ runner:
     experiment_name: "test_openpi_nft_object"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1
+  max_epochs: 2
   max_steps: -1
 
   only_eval: False
@@ -56,7 +56,7 @@ algorithm:
   nft_weight_scale: [1.0, 0.0]
   nft_target_space: "x0"
   nft_xcur_source: "resample"
-  nft_tau: 1.0
+  nft_tau: [1.0, 0.9, 0, 1]
   recompute_v: False
 env:
   group_name: "EnvGroup"

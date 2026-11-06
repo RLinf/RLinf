@@ -60,6 +60,8 @@ DISABLE_FLASH_ATTN=0
 DISABLE_APEX=0
 # User-level opt-out for natten, set by --no-natten.
 DISABLE_NATTEN=0
+# Install the larger CUDA-enabled PaddlePaddle wheel for diffusion OCR rewards.
+INSTALL_PADDLE_GPU=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
 PLATFORM_TORCHCODEC_SPEC=""
@@ -139,6 +141,7 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+    --paddle-gpu           Install CUDA-enabled PaddlePaddle for diffusion OCR rewards.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -299,6 +302,10 @@ parse_args() {
                 ;;
             --use-mirror)
                 USE_MIRRORS=1
+                shift
+                ;;
+            --paddle-gpu)
+                INSTALL_PADDLE_GPU=1
                 shift
                 ;;
             --no-root)
@@ -1982,7 +1989,12 @@ EOF
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
-    uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    # Diffusion installs Paddle outside the project dependency set.
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -2349,7 +2361,11 @@ EOF
 }
 
 install_common_embodied_deps() {
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --extra embodied --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
         { grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" || [ $? -eq 1 ]; } \
             | uv pip install -r -
@@ -3210,6 +3226,63 @@ install_dreamzero_model() {
     esac
 }
 
+install_paddle_gpu() {
+    local paddle_gpu_ver=""
+    local paddle_gpu_index=""
+    local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/packages/stable/cu120/paddlepaddle-gpu/"
+    local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/"
+
+    local cuda_mm cuda_major
+    if cuda_mm=$(detect_cuda_major_minor) 2>/dev/null; then
+        cuda_major="${cuda_mm%% *}"
+    else
+        cuda_major=""
+    fi
+
+    if [ "$cuda_major" = "12" ]; then
+        paddle_gpu_ver="2.6.2.post120"
+        paddle_gpu_index="$paddle_gpu_index_cuda12"
+    elif [ "$cuda_major" = "11" ]; then
+        paddle_gpu_ver="2.6.2"
+        paddle_gpu_index="$paddle_gpu_index_cuda11"
+    else
+        echo "[install.sh] --paddle-gpu supports only CUDA 11.x and 12.x; detected CUDA ${cuda_major:-<none>}." >&2
+        return 1
+    fi
+
+    if PADDLE_GPU_VERSION="$paddle_gpu_ver" python - <<'EOF'
+import os
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    gpu_version = version("paddlepaddle-gpu")
+    version("paddlepaddle")
+except PackageNotFoundError as error:
+    if error.name == "paddlepaddle":
+        import paddle
+
+        if gpu_version == os.environ["PADDLE_GPU_VERSION"] and paddle.device.is_compiled_with_cuda():
+            raise SystemExit(0)
+raise SystemExit(1)
+EOF
+    then
+        echo "[install.sh] paddlepaddle-gpu==${paddle_gpu_ver} is already installed; skipping."
+        return 0
+    fi
+
+    uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
+    echo "[install.sh] Installing paddlepaddle-gpu==${paddle_gpu_ver} for CUDA ${cuda_major}.x"
+    # The exact CUDA 12 build only exists on PaddlePaddle's index. Dependencies
+    # continue to use UV_DEFAULT_INDEX, including the --use-mirror setting.
+    uv pip install --find-links "$paddle_gpu_index" \
+        "paddlepaddle-gpu==${paddle_gpu_ver}"
+    if ! python -c 'import paddle; raise SystemExit(not paddle.device.is_compiled_with_cuda())'; then
+        uv pip uninstall paddlepaddle-gpu 2>/dev/null || true
+        echo "[install.sh] Installed PaddlePaddle package is not CUDA-enabled." >&2
+        return 1
+    fi
+}
+
 install_fastwam_deps() {
     local fastwam_path
     local fastwam_ref="${FASTWAM_GIT_REF:-45d8e1458921d83f8ad6cf9ce993d371208dabd0}"
@@ -3325,11 +3398,20 @@ install_cosmos3_model() {
 
 install_diffusion_model() {
     # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
-    # Python 3.10 in the generation examples.
+    # Python 3.10 in the diffusion (generation) examples.
     PYTHON_VERSION="3.10"
     create_and_sync_venv
     install_common_embodied_deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    if [ "$INSTALL_PADDLE_GPU" -eq 1 ]; then
+        sed '/^paddlepaddle==/d' "$SCRIPT_DIR/embodied/models/diffusion.txt" \
+            | uv pip install -r -
+        install_paddle_gpu
+    else
+        if python -c 'from importlib.metadata import version; version("paddlepaddle-gpu")' 2>/dev/null; then
+            uv pip uninstall paddlepaddle-gpu
+        fi
+        uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    fi
     uv pip uninstall pynvml || true
 }
 
@@ -4564,6 +4646,11 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    if [ "$INSTALL_PADDLE_GPU" -eq 1 ] \
+        && { [ "$TARGET" != "embodied" ] || [ "$MODEL" != "diffusion" ]; }; then
+        echo "--paddle-gpu is only supported with 'embodied --model diffusion'." >&2
+        exit 1
+    fi
     validate_python_version
     validate_engine
     apply_model_default_torch
@@ -4692,4 +4779,6 @@ main() {
     uv pip install "${RAY_COMPAT_DEPS[@]}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
