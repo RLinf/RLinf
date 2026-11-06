@@ -22,7 +22,7 @@ subclasses (eval / RL / DAgger / DSRL) inherit this module.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import einops
 import torch
@@ -34,6 +34,9 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, sigli
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -325,14 +328,11 @@ class Pi0(model.BaseModel):
         tokens = torch.cat(tokens, dim=1)
         input_mask = torch.cat(input_mask, dim=1)
 
-        # Build ar_mask with correct length matching input_mask.shape[1]
-        ar_mask = torch.zeros(
-            input_mask.shape[1], dtype=torch.bool, device=tokens.device
+        # Built on device: a host scalar write into a CUDA tensor breaks graph capture.
+        num_ar_tokens = 1 if self.pi05 else 2
+        ar_mask = (
+            torch.arange(input_mask.shape[1], device=tokens.device) < num_ar_tokens
         )
-        if not self.pi05:
-            ar_mask[:2] = True
-        else:
-            ar_mask[0] = True
 
         return tokens, input_mask, ar_mask, adarms_cond
 
@@ -473,6 +473,123 @@ class Pi0(model.BaseModel):
         """Project action-expert hidden states to a velocity prediction v_t."""
         return self.action_out_proj(suffix_out_act.to(dtype=torch.float32))
 
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int) -> None:
+        """Enable CUDA graphs for no-grad pi0.5 denoise steps.
+
+        The rollout worker calls this when ``rollout.enable_cuda_graph`` is set.
+        A graph per batch size is captured on the first denoise step at that
+        size and holds its own copy of the prefix KV cache. Other batch sizes or
+        prefix shapes, pi0, grad mode, and non-CUDA devices run eager. Weights
+        must keep their storage (in-place ``load_state_dict``); call
+        :meth:`release_cuda_graph` before moving or replacing them.
+
+        Args:
+            train_batch_size: Batch size of train rollouts.
+            eval_batch_size: Batch size of eval rollouts.
+        """
+        from rlinf.utils.cuda_graph import CUDAGraphManager
+
+        if not self.pi05 or self.device.type != "cuda":
+            logger.warning(
+                "OpenPI denoise CUDA graphs need pi0.5 on CUDA; got "
+                f"pi05={self.pi05} on {self.device}. Denoising runs eager."
+            )
+            return
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager(device=self.device)
+        self._denoise_graph_batch_sizes = {
+            size for size in (train_batch_size, eval_batch_size) if size > 0
+        }
+
+    def release_cuda_graph(self) -> None:
+        """Destroy captured denoise graphs and their static buffers."""
+        if self.cuda_graph_manager is not None:
+            self.cuda_graph_manager.destroy()
+            self.cuda_graph_manager = None
+        self._denoise_graph_bindings = {}
+
+    def bind_suffix_step(
+        self,
+        observation: model.Observation,
+        kv_cache: tuple,
+        prefix_mask: torch.Tensor,
+    ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+        """Return ``step(x_t, t)`` that runs :meth:`run_suffix` on one prefix cache.
+
+        With graphs enabled by :meth:`capture_cuda_graph`, the step replays a
+        CUDA graph whose output is bitwise equal to eager; otherwise it is
+        :meth:`run_suffix`. The returned tensor is owned by the caller.
+        """
+
+        def eager_step(x_t: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+            return self.run_suffix(observation, x_t, timestep, kv_cache, prefix_mask)
+
+        name = f"denoise_step_bs{prefix_mask.shape[0]}"
+        if (
+            self.cuda_graph_manager is None
+            or prefix_mask.shape[0] not in self._denoise_graph_batch_sizes
+            or torch.is_grad_enabled()
+            or self.training
+        ):
+            return eager_step
+
+        binding = object()
+
+        def graph_step(x_t: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+            inputs = {"x_t": x_t, "timestep": timestep}
+            if self._denoise_graph_bindings.get(name) is not binding:
+                inputs.update(kv_cache=kv_cache, prefix_mask=prefix_mask)
+            out = self._replay_denoise_graph(name, inputs)
+            if out is None:
+                return eager_step(x_t, timestep)
+            self._denoise_graph_bindings[name] = binding
+            return out
+
+        return graph_step
+
+    def _replay_denoise_graph(
+        self, name: str, inputs: dict[str, Any]
+    ) -> torch.Tensor | None:
+        """Copy ``inputs`` into the graph's static buffers and replay it.
+
+        Captures the graph on first use. Returns None, leaving the buffers
+        untouched, when any input differs in shape, dtype or device from the
+        captured ones.
+        """
+        from rlinf.utils.cuda_graph import GraphCaptureSpec
+
+        manager = self.cuda_graph_manager
+        if name not in manager:
+
+            def step(graph_inputs: dict[str, Any]) -> dict[str, torch.Tensor]:
+                # pi0.5 embed_suffix never reads the observation, so the graph
+                # holds no observation tensors.
+                suffix_out = self.run_suffix(
+                    None,
+                    graph_inputs["x_t"],
+                    graph_inputs["timestep"],
+                    graph_inputs["kv_cache"],
+                    graph_inputs["prefix_mask"],
+                )
+                return {"suffix_out": suffix_out}
+
+            static_inputs = _clone_tensors(inputs)
+            manager.capture(
+                GraphCaptureSpec(
+                    name=name,
+                    func=step,
+                    inputs=static_inputs,
+                    external_inputs=set(static_inputs),
+                    warmup_iters=2,
+                )
+            )
+            logger.info(f"Captured OpenPI denoise CUDA graph {name}.")
+        static_inputs = manager[name].inputs
+        for key, value in inputs.items():
+            if _tensor_layout(value) != _tensor_layout(static_inputs[key]):
+                return None
+        return manager.replay(name, inputs)["suffix_out"].clone()
+
     def to_bfloat16_for_selected_params(self, precision: str = "bfloat16") -> None:
         """OpenPI ``PaliGemmaWithExpertModel.to_bfloat16_for_selected_params``.
 
@@ -550,6 +667,7 @@ class Pi0(model.BaseModel):
             )
 
         _, prefix_mask, kv_cache = self.build_prefix_cache(observation)
+        suffix_step = self.bind_suffix_step(observation, kv_cache, prefix_mask)
 
         x_t = noise
         t = 1.0
@@ -557,9 +675,7 @@ class Pi0(model.BaseModel):
         # Euler integration
         while t >= -dt / 2:
             t_tensor = torch.full((B,), t, device=device, dtype=torch.float32)
-            suffix_out_act = self.run_suffix(
-                observation, x_t, t_tensor, kv_cache, prefix_mask
-            )
+            suffix_out_act = suffix_step(x_t, t_tensor)
             v_t = self.velocity_from_suffix(suffix_out_act)
             x_t = x_t + dt * v_t
             t = t + dt
@@ -593,6 +709,11 @@ class Pi0(model.BaseModel):
             action_env_dim=self.action_env_dim,
             config_name=config_name,
         )
+        self.cuda_graph_manager = None
+        self._denoise_graph_batch_sizes: set[int] = set()
+        # Graph name -> token of the bind_suffix_step call whose prefix cache
+        # is in that graph's static buffers.
+        self._denoise_graph_bindings: dict[str, object] = {}
         self.rlt_cfg = rlt_cfg or OpenPiPytorchRLTConfig()
         if self.rlt_cfg.use_rlt:
             from rlinf.models.embodiment.modules.rlt_token_transformer import (
@@ -937,3 +1058,23 @@ class Pi0(model.BaseModel):
         """Disable gradient checkpointing (used by the eval / no-recompute path)."""
         self.llm.gradient_checkpointing = False
         self.img.encoder.gradient_checkpointing = False
+
+
+def _clone_tensors(tree: Any) -> Any:
+    """Clone the tensors of a nested dict/tuple/list into fresh buffers."""
+    if torch.is_tensor(tree):
+        return tree.detach().clone()
+    if isinstance(tree, dict):
+        return {key: _clone_tensors(value) for key, value in tree.items()}
+    if isinstance(tree, (tuple, list)):
+        return type(tree)(_clone_tensors(value) for value in tree)
+    return tree
+
+
+def _tensor_layout(tree: Any) -> Any:
+    """Shape, dtype and device of every tensor in a nested tuple/list."""
+    if torch.is_tensor(tree):
+        return (tuple(tree.shape), tree.dtype, tree.device)
+    if isinstance(tree, (tuple, list)):
+        return tuple(_tensor_layout(value) for value in tree)
+    return type(tree)
