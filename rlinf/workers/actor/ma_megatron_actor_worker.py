@@ -25,6 +25,7 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
 import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.advantages import compute_grpo_turn_advantages
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
     get_loss_scales,
@@ -33,6 +34,10 @@ from rlinf.algorithms.registry import (
 from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.schema.reasoning_requests import get_seq_length
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.hybrid_engines.megatron.utils import (
+    postprocess_ragged_seqs,
+    preprocess_ragged_seqs,
+)
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -41,6 +46,7 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     RolloutDataBalance,
+    balance_rollout_groups,
     compute_rollout_metrics_dynamic,
     masked_normalization,
     vocab_parallel_entropy_and_log_probs,
@@ -70,9 +76,10 @@ class MAMegatronActor(MegatronActor):
     ):
         super().__init__(cfg, placement)
         self._init_auto_scheduler(role)
+        self.enable_ragged_batch = self.cfg.actor.get("enable_ragged_batch", False)
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
-        assert self.enable_dp_load_balance, (
+        assert self.enable_dp_load_balance or self.enable_ragged_batch, (
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
         self.placement = placement
@@ -83,6 +90,94 @@ class MAMegatronActor(MegatronActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+
+    def get_ragged_batches(
+        self, channel: Channel
+    ) -> tuple[dict, list[DynamicRolloutResult]]:
+        """Balance raw groups once, then broadcast them to model-parallel peers."""
+        count = (
+            self.cfg.data.rollout_batch_size
+            // parallel_state.get_data_parallel_world_size()
+        )
+        results = None
+        if channel.is_local or self.is_data_io_rank:
+            results = [channel.get() for _ in range(count)]
+            if not channel.is_local:
+                for result in results:
+                    result.extra_fields_train["ragged_source_dp"] = [
+                        parallel_state.get_data_parallel_rank()
+                    ] * result.num_sequence
+            if not channel.is_local and self.enable_dp_load_balance:
+                with self.worker_timer("ragged_dp_balance"):
+                    results = balance_rollout_groups(
+                        results, parallel_state.get_data_parallel_group()
+                    )
+                for result in results:
+                    result.dp_balanced = True
+        if not channel.is_local:
+            with self.worker_timer("ragged_model_broadcast"):
+                results = self.broadcast(
+                    results,
+                    groups=[
+                        (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                    ],
+                )
+                results = self.broadcast(
+                    results,
+                    groups=[
+                        (
+                            self._group_name,
+                            parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS,
+                        )
+                    ],
+                )
+        batch = DynamicRolloutResult.merge_batches(
+            [result.to_ragged_actor_batch() for result in results],
+            self.cfg.algorithm.group_size,
+        )
+        return batch, results
+
+    def _restore_source_normalization(self, batch: dict, scale_context: dict) -> None:
+        """Retain the original source-DP loss weights after early redistribution."""
+        if "group_level" not in scale_context["folding_scale"]:
+            return
+        sources = batch["extra:ragged_source_dp"].long()
+        counts = torch.bincount(
+            sources, minlength=parallel_state.get_data_parallel_world_size()
+        ).to(self.torch_platform.current_device())
+        torch.distributed.all_reduce(
+            counts, group=parallel_state.get_data_parallel_group()
+        )
+        ratios = counts.cpu()[sources].float() / len(sources)
+        batch["advantages"] = [
+            row * ratio for row, ratio in zip(batch["advantages"], ratios)
+        ]
+
+    def _pad_ragged_rows(self, batch: dict) -> dict:
+        """Equalize row counts for the existing minibatch/gradient schedule."""
+        count = torch.tensor(
+            len(batch["input_ids"]), device=self.torch_platform.current_device()
+        )
+        torch.distributed.all_reduce(
+            count,
+            op=torch.distributed.ReduceOp.MAX,
+            group=parallel_state.get_data_parallel_group(),
+        )
+        divisor = self.num_train_steps * self.cfg.actor.micro_batch_size
+        target = (count.item() + divisor - 1) // divisor * divisor
+        missing = target - len(batch["input_ids"])
+        for key, value in batch.items():
+            if isinstance(value, list):
+                for _ in range(missing):
+                    row = value[0].new_zeros((1, *value[0].shape[1:]))
+                    if key == "attention_mask":
+                        row.fill_(True)
+                    value.append(row)
+            else:
+                batch[key] = torch.cat(
+                    (value, value.new_zeros((missing, *value.shape[1:])))
+                )
+        return batch
 
     def get_batch(
         self, channel: Channel
@@ -126,21 +221,42 @@ class MAMegatronActor(MegatronActor):
                 for key, val in batch.items()
             }
 
-            input_ids = batch["input_ids"]
-            attention_mask = batch["attention_mask"]
-            position_ids = batch["position_ids"]
+            ragged = isinstance(batch["input_ids"], list)
+            packed_params = None
+            if ragged:
+                rows = [
+                    row.to(self.torch_platform.current_device())
+                    for row in batch["input_ids"]
+                ]
+                lengths = [len(row) for row in rows]
+                input_ids, packed_params = preprocess_ragged_seqs(rows)
+                position_ids, _ = preprocess_ragged_seqs(
+                    [torch.arange(n, device=input_ids.device) for n in lengths]
+                )
+                labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
+                label, _ = preprocess_ragged_seqs(labels)
+                label_mask, _ = preprocess_ragged_seqs(
+                    [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
+                )
+                attention_mask = None
+            else:
+                input_ids = batch["input_ids"]
+                attention_mask = batch["attention_mask"]
+                position_ids = batch["position_ids"]
 
             # In DynamicRolloutResult, we need to shift the labels to align with model outputs
             # Create labels by shifting input_ids to the left (next token prediction)
-            label = copy.deepcopy(position_ids)
-            label[:, :-1] = input_ids[:, 1:]
+            if not ragged:
+                label = copy.deepcopy(position_ids)
+                label[:, :-1] = input_ids[:, 1:]
 
             # response_mask needs to be shifted left by 1 to align with the shifted labels
             # because response_mask[i] indicates whether position i is a response token in input_ids
             # but label[i] = input_ids[i+1], so we need to shift response_mask left to align
-            label_mask = copy.deepcopy(batch["attention_mask"])
-            label_mask[:, :-1] = label_mask[:, 1:].clone()  # Shift left by 1
-            label_mask[:, -1] = False
+            if not ragged:
+                label_mask = copy.deepcopy(batch["attention_mask"])
+                label_mask[:, :-1] = label_mask[:, 1:].clone()  # Shift left by 1
+                label_mask[:, -1] = False
 
             def logits_processor(logits, label, label_mask):
                 assert logits.shape[:2] == label.shape[:2]
@@ -172,7 +288,51 @@ class MAMegatronActor(MegatronActor):
                 logits_processor=logits_processor,
                 logits_processor_args=logits_processor_args,
                 temperature=self.cfg.algorithm.sampling_params.temperature,
+                packed_seq_params=packed_params,
             )
+
+            if ragged and unwrap_model(model).post_process:
+                output_rows = {
+                    key: postprocess_ragged_seqs(value, packed_params, lengths)
+                    for key, value in output.items()
+                }
+                if not self.return_loss:
+                    logprob_rows = [
+                        torch.cat((row.new_zeros(1), row[:-1])).detach().cpu()
+                        for row in output_rows["log_probs"]
+                    ]
+                    # Megatron inspects the tensor device before collecting non-loss data.
+                    return (
+                        output["log_probs"],
+                        lambda output, non_loss_data=True: logprob_rows,
+                    )
+                width = self.cfg.actor.model.encoder_seq_length
+                output = {
+                    key: torch.stack(
+                        [
+                            torch.nn.functional.pad(row, (0, width - len(row)))
+                            for row in values
+                        ]
+                    )
+                    for key, values in output_rows.items()
+                }
+                batch = DynamicRolloutResult.materialize_ragged_batch(
+                    {
+                        key: batch[key]
+                        for key in (
+                            "advantages",
+                            "loss_scales",
+                            "response_mask",
+                            "rollout_logprobs",
+                            "recomputed_logprobs",
+                            "ref_logprobs",
+                        )
+                        if key in batch
+                    },
+                    width,
+                    self.tokenizer.eos_token_id,
+                    input_ids.device,
+                )
 
             if not self.return_loss:
 
@@ -234,7 +394,8 @@ class MAMegatronActor(MegatronActor):
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
                     ),
-                    fast_path_zero_loss_mask=True,
+                    # Ragged microbatches can start with a masked placeholder row.
+                    fast_path_zero_loss_mask=not ragged,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -316,6 +477,16 @@ class MAMegatronActor(MegatronActor):
                     vpp_world_size=parallel_state.get_virtual_pipeline_model_parallel_world_size(),
                     max_tokens_per_mbs=self.max_tokens_per_mbs,
                     microbatch_group_size_per_vp_stage=self.transformer_config.microbatch_group_size_per_vp_stage,
+                    length_alignment=(
+                        parallel_state.get_tensor_model_parallel_world_size()
+                        * (
+                            2 * parallel_state.get_context_parallel_world_size()
+                            if parallel_state.get_context_parallel_world_size() > 1
+                            else 1
+                        )
+                        if self.enable_ragged_batch
+                        else 1
+                    ),
                 )
             )
         else:
@@ -357,6 +528,16 @@ class MAMegatronActor(MegatronActor):
 
         return outputs
 
+    def _process_fwd_bwd_outputs(self, forward_outputs, forward_only):
+        if not self.enable_ragged_batch or not forward_only:
+            return super()._process_fwd_bwd_outputs(forward_outputs, forward_only)
+        rows = [row for microbatch in forward_outputs for row in microbatch]
+        indices = sum(self.dbs_indices, [])
+        restored = [None] * len(rows)
+        for index, row in zip(indices, rows):
+            restored[index] = row
+        return restored
+
     def _setup_valid_token_scale(self, batch: Optional[dict[str, torch.Tensor]] = None):
         if batch is None:
             self.global_valid_token = (
@@ -366,7 +547,11 @@ class MAMegatronActor(MegatronActor):
             )
         else:
             loss_mask = batch["response_mask"]
-            global_valid_token = loss_mask.to(dtype=torch.float32).sum().cuda()
+            global_valid_token = (
+                torch.stack([row.sum() for row in loss_mask]).sum()
+                if isinstance(loss_mask, list)
+                else loss_mask.to(dtype=torch.float32).sum()
+            ).to(self.torch_platform.current_device(), dtype=torch.float32)
             torch.distributed.all_reduce(
                 global_valid_token, group=parallel_state.get_data_parallel_group()
             )
@@ -391,24 +576,32 @@ class MAMegatronActor(MegatronActor):
         """Run the training loop for the actor."""
         assert not self.is_pipeline
 
-        # Get all batches for this DP
-        batches = []
-        total_result_size_per_dp: int = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
-        )
-        for _ in range(total_result_size_per_dp):
-            batch, rollout_result = self.get_batch(input_channel)
-            batches.append(batch)
-        batch = DynamicRolloutResult.merge_batches(
-            batches, self.cfg.algorithm.group_size
-        )
+        if self.enable_ragged_batch:
+            batch, _ = self.get_ragged_batches(input_channel)
+        else:
+            # Get all batches for this DP
+            batches = []
+            total_result_size_per_dp: int = (
+                self.cfg.data.rollout_batch_size
+                // parallel_state.get_data_parallel_world_size()
+            )
+            for _ in range(total_result_size_per_dp):
+                batch, rollout_result = self.get_batch(input_channel)
+                batches.append(batch)
+            batch = DynamicRolloutResult.merge_batches(
+                batches, self.cfg.algorithm.group_size
+            )
         assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         # Compute advantages and returns
         batch = self.compute_advantages_and_returns(batch)
-        batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(
-            ~batch["response_mask"], 0
-        )
+        if self.enable_ragged_batch:
+            batch["loss_scales"] = [
+                mask.to(dtype=torch.float32) for mask in batch["response_mask"]
+            ]
+        else:
+            batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(
+                ~batch["response_mask"], 0
+            )
         # Advantage normalization
         if self.cfg.algorithm.normalize_advantages:
             assert False, "not implemented in multi-agent"
@@ -437,6 +630,8 @@ class MAMegatronActor(MegatronActor):
             batch = loss_scale_fn(scale_context, batch)
         if self.pack_traj:
             batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
+        if self.enable_ragged_batch:
+            self._restore_source_normalization(batch, scale_context)
         for key in list(batch.keys()):
             if key == "idx_to_traj" or key.startswith("extra:"):
                 batch.pop(key, None)
@@ -447,7 +642,9 @@ class MAMegatronActor(MegatronActor):
         self._training_setup()
 
         # DP batch load balance
-        if self.cfg.actor.get("enable_dp_load_balance", False):
+        if self.enable_ragged_batch:
+            batch = self._pad_ragged_rows(batch)
+        elif self.cfg.actor.get("enable_dp_load_balance", False):
             batch_pad = DynamicRolloutResult.get_batch_pad(
                 self.cfg.actor.model.encoder_seq_length, batch.keys()
             )
@@ -469,9 +666,9 @@ class MAMegatronActor(MegatronActor):
         with self.worker_timer("run_training"):
             training_metrics_list = []
             for idx, global_batch in enumerate(global_batches):
-                if global_batch["input_ids"].shape == torch.Size([0]):
+                global_batch_size_per_dp = len(global_batch["input_ids"])
+                if global_batch_size_per_dp == 0:
                     continue
-                global_batch_size_per_dp = global_batch["input_ids"].shape[0]
                 dp_size = parallel_state.get_data_parallel_world_size()
                 configure_batch_sizes(
                     rank=torch.distributed.get_rank(),
@@ -538,6 +735,26 @@ class MAMegatronActor(MegatronActor):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
+        if self.enable_ragged_batch:
+            batch, results = self.get_ragged_batches(input_channel)
+            self._load_weight_and_optimizer()
+            with self.worker_timer():
+                probabilities = self.inference_step(batch)
+                reference = None
+                if compute_ref_logprobs:
+                    with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
+                        reference = self.inference_step(batch)
+            offset = 0
+            for result in results:
+                end = offset + result.num_sequence
+                result.recomputed_logprobs = probabilities[offset:end]
+                if reference is not None:
+                    result.ref_logprobs = reference[offset:end]
+                self.put_result(result, output_channel)
+                offset = end
+            self.scheduler_offload_sync()
+            return
+
         batches = []
         rollout_results = []
         total_batch_size_per_dp: int = (
@@ -586,6 +803,19 @@ class MAMegatronActor(MegatronActor):
         Args:
             batch (Dict[str, torch.Tensor]): The rollout batch.
         """
+        if self.enable_ragged_batch:
+            if "advantages" not in batch:
+                values = compute_grpo_turn_advantages(
+                    batch["rewards"].to(self.torch_platform.current_device()),
+                    self.cfg.algorithm.group_size,
+                    batch["idx_to_traj"],
+                    self.cfg.algorithm.advantage_mode,
+                ).cpu()
+                batch["advantages"] = [
+                    mask.to(torch.float32) * value
+                    for mask, value in zip(batch["response_mask"], values)
+                ]
+            return batch
         with self.worker_timer():
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"]  # [num_sequence, seq_len]

@@ -56,6 +56,7 @@ try:
         get_gpt_layer_with_transformer_engine_spec,
     )
     from megatron.core.optimizer import ChainedOptimizer
+    from megatron.core.packed_seq_params import PackedSeqParams
     from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
 
     HAVE_MEGATRON_CORE = True
@@ -662,11 +663,24 @@ class MegatronModelManager:
         max_batch_seqlen: int = 4096,
         padding_seqlen: Optional[int] = None,
         keep_left_padding: bool = False,
+        packed_seq_params: Optional[PackedSeqParams] = None,
         **model_forward_kwargs,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
         pre_process = unwrap_model(model).pre_process
         post_process = unwrap_model(model).post_process
+        if packed_seq_params is not None:
+            output = model(
+                input_ids=input_ids.contiguous(),
+                attention_mask=None,
+                position_ids=position_ids,
+                packed_seq_params=packed_seq_params,
+                **model_forward_kwargs,
+            )
+            output /= temperature
+            if post_process and logits_processor is not None:
+                return logits_processor(output, **logits_processor_args)
+            return output
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
             input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(

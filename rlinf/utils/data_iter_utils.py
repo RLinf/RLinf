@@ -509,6 +509,7 @@ def get_iterator_dynamic(
     num_batches_divided_by=None,
     same_micro_num_in_dp=True,
     min_num_micro_batch=None,
+    length_alignment: int = 1,
 ):
     """
     Split a batch into microbatches based on max token length or fixed number
@@ -524,8 +525,16 @@ def get_iterator_dynamic(
     assert dist.is_initialized()
     if isinstance(batch, (dict, UserDict)):
         # Get effective sequence length of each sample
-        seq_len_effective = batch["attention_mask"].sum(dim=1)
-        max_seq_len = batch["attention_mask"].shape[-1]
+        ragged = isinstance(batch["attention_mask"], list)
+        if ragged:
+            seq_len_effective = torch.tensor([len(row) for row in batch["input_ids"]])
+            seq_len_effective = (
+                (seq_len_effective + length_alignment - 1) // length_alignment
+            ) * length_alignment
+            max_seq_len = seq_len_effective.max().item()
+        else:
+            seq_len_effective = batch["attention_mask"].sum(dim=1)
+            max_seq_len = batch["attention_mask"].shape[-1]
 
         # Validate max_tokens_per_mbs
         assert max_tokens_per_mbs >= max_seq_len, (
@@ -572,11 +581,13 @@ def get_iterator_dynamic(
                     else:
                         continue
                 microbatches.append(curr_batch)
-                if (
-                    sum(curr_batch["prompt_lengths"])
+                token_count = (
+                    sum(seq_len_list[idx] for idx in partition)
+                    if ragged
+                    else sum(curr_batch["prompt_lengths"])
                     + sum(curr_batch["response_lengths"])
-                    > max_tokens_per_mbs
-                ):
+                )
+                if token_count > max_tokens_per_mbs:
                     valid_max_token = 0
                     # print(
                     #     "[Warning] get_iterator_dynamic: "
@@ -678,6 +689,7 @@ def split_dynamic_batch_size(
     vpp_world_size: int,
     max_tokens_per_mbs: int,
     microbatch_group_size_per_vp_stage: int,
+    length_alignment: int = 1,
 ):
     """Split a global batch using dynamic batch sizing."""
     max_tokens_per_mbs = max_tokens_per_mbs * cp_world_size
@@ -688,13 +700,16 @@ def split_dynamic_batch_size(
             batch,
             num_batches_divided_by=microbatch_group_size_per_vp_stage,
             max_tokens_per_mbs=max_tokens_per_mbs,
+            length_alignment=length_alignment,
         )
         assert n_micro_batch % microbatch_group_size_per_vp_stage == 0, (
             f"micro_batches {data_iter} must be divisible by microbatch_group_size_per_vp_stage {microbatch_group_size_per_vp_stage} for megatron backend"
         )
     else:
         data_iter, indices, n_micro_batch = get_iterator_dynamic(
-            batch, max_tokens_per_mbs=max_tokens_per_mbs
+            batch,
+            max_tokens_per_mbs=max_tokens_per_mbs,
+            length_alignment=length_alignment,
         )
     total_seqlen = max_tokens_per_mbs
     return data_iter, total_seqlen, n_micro_batch, indices
