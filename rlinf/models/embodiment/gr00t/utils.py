@@ -125,3 +125,73 @@ def squeeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
         else:
             squeezed_data[k] = v
     return squeezed_data
+
+
+def capture_backbone_graph(model: Any, key: Any, backbone_inputs: Any) -> Any | None:
+    """Capture a rollout backbone graph for ``key`` on ``model``."""
+    from rlinf.utils.cuda_graph import GraphCaptureSpec, clone_tensor_tree
+    from rlinf.utils.logging import get_logger
+
+    name = f"backbone_{len(model._rl_graph_specs)}"
+    inputs = clone_tensor_tree(backbone_inputs)
+
+    def _fn(spec_inputs):
+        return model.backbone(spec_inputs)
+
+    try:
+        graph_spec = model.cuda_graph_manager.capture(
+            GraphCaptureSpec(
+                name=name,
+                func=_fn,
+                inputs=inputs,
+                warmup_iters=1,
+            )
+        )
+        model._rl_graph_specs[key] = {
+            "graph": graph_spec.graph,
+            "inputs": graph_spec.inputs,
+            "outputs": graph_spec.outputs,
+        }
+        return clone_tensor_tree(graph_spec.outputs)
+    except Exception as error:  # noqa: BLE001
+        model._rl_graph_state[key] = -1
+        get_logger().warning(f"rollout graph capture failed ({error}); staying eager")
+        return None
+
+
+def backbone_graph_call(model: Any, backbone_inputs: Any) -> Any:
+    """Graph-routed GR00T backbone forward with eager warmup and fallback."""
+    from rlinf.utils.cuda_graph import (
+        clone_tensor_tree,
+        copy_tensor_tree,
+        graph_signature,
+    )
+    from rlinf.utils.logging import get_logger
+
+    key = graph_signature(backbone_inputs, "b")
+    if key is None:
+        return model.backbone(backbone_inputs)
+    state = model._rl_graph_state.get(key, 0)
+    if state < 2:
+        if state >= 0:
+            model._rl_graph_state[key] = state + 1
+        return model.backbone(backbone_inputs)
+    if key not in model._rl_graph_specs:
+        captured = model._capture_backbone_graph(key, backbone_inputs)
+        if captured is not None:
+            return captured
+        if key not in model._rl_graph_specs:
+            return model.backbone(backbone_inputs)
+    spec = model._rl_graph_specs[key]
+    try:
+        copy_tensor_tree(spec["inputs"], backbone_inputs)
+        spec["graph"].replay()
+        # Outputs are static buffers; async channel sends may outlive the
+        # next replay, so hand out clones.
+        return clone_tensor_tree(spec["outputs"])
+    except Exception as error:  # noqa: BLE001
+        model._rl_graph_state[key] = -1
+        get_logger().warning(
+            f"rollout graph replay failed ({error}); falling back to eager"
+        )
+        return model.backbone(backbone_inputs)

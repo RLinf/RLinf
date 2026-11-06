@@ -42,6 +42,12 @@ from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.evo1 import evo1_rl_head as rlh
 from rlinf.models.embodiment.evo1.utils.data_pipeline import build_evo1_inputs
 from rlinf.models.embodiment.evo1.utils.normalizer import Normalizer
+from rlinf.utils.cuda_graph import (
+    CUDAGraphManager,
+    GraphCaptureSpec,
+    clone_tensor_tree,
+    graph_signature,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -77,11 +83,29 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         rl_head_config: Any = None,
         rl_denoising_steps: int | None = None,
         valid_action_dim: int | None = None,
+        vision_attention_batch_size: int = 0,
         prompt_max_len: int = 512,
     ):
         super().__init__()
         self.evo1 = evo1_model
+        embedder_model = getattr(getattr(self.evo1, "embedder", None), "model", None)
+        language_model = getattr(embedder_model, "language_model", None)
+        if language_model is not None:
+            from rlinf.models.embodiment.evo1.npu_patches import (
+                mask_padded_language_attention,
+            )
+
+            mask_padded_language_attention(language_model)
+        if vision_attention_batch_size:
+            from rlinf.models.embodiment.evo1.npu_patches import (
+                set_vision_attention_batch_size,
+            )
+
+            set_vision_attention_batch_size(
+                self.evo1.embedder.model.vision_model, vision_attention_batch_size
+            )
         self.normalizer = normalizer
+        self.cuda_graph_manager: CUDAGraphManager | None = None
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -124,6 +148,56 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
             f"Evo-1 does not support forward_type={forward_type}."
         )
 
+    def capture_cuda_graph(self, train_batch_size: int, eval_batch_size: int):
+        """Enable lazy deterministic-head graphs for training rollouts.
+
+        Each observed input shape and dtype gets its own graph. Sampling and
+        time/action embedding preparation run eagerly. Release graphs before
+        moving model weights to another device.
+        """
+        if self.cuda_graph_manager is None:
+            self.cuda_graph_manager = CUDAGraphManager(
+                device=next(self.parameters()).device
+            )
+
+    def _action_head_forward(
+        self,
+        action_head: nn.Module,
+        context_tokens: torch.Tensor,
+        action_tokens: torch.Tensor,
+        time_emb: torch.Tensor,
+        embodiment_id: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.cuda_graph_manager is None or torch.is_grad_enabled():
+            return rlh.flow_velocity_from_embeddings(
+                action_head, context_tokens, action_tokens, time_emb, embodiment_id
+            )
+        inputs = {
+            "context_tokens": context_tokens,
+            "action_tokens": action_tokens,
+            "time_emb": time_emb,
+            "embodiment_id": embodiment_id,
+        }
+        name = f"velocity_{graph_signature(inputs)}"
+        if name not in self.cuda_graph_manager.graphs:
+
+            def head_call(data):
+                return {
+                    "velocity": rlh.flow_velocity_from_embeddings(action_head, **data)
+                }
+
+            graph_spec = self.cuda_graph_manager.capture(
+                GraphCaptureSpec(
+                    name=name,
+                    func=head_call,
+                    inputs=clone_tensor_tree(inputs),
+                    external_inputs=set(inputs),
+                )
+            )
+            return graph_spec.outputs["velocity"].clone()
+        # The next denoising step overwrites the graph's output buffer.
+        return self.cuda_graph_manager.replay(name, inputs)["velocity"].clone()
+
     def _encode_env_obs(self, env_obs: dict[str, Any]):
         """Turn ``env_obs`` into Evo-1 inference tensors.
 
@@ -136,6 +210,7 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
             env_obs,
             image_size=self.image_size,
             num_view_slots=self.num_view_slots,
+            device=device,
         )
         images = [
             [v.to(device) if torch.is_tensor(v) else v for v in view_list]
@@ -207,9 +282,9 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         )
         action_mask[:, : self.action_dim] = 1.0
 
-        autocast_enabled = device.type == "cuda"
+        autocast_enabled = device.type != "cpu"
         with torch.autocast(
-            device_type="cuda", dtype=torch.bfloat16, enabled=autocast_enabled
+            device_type=device.type, dtype=torch.bfloat16, enabled=autocast_enabled
         ):
             fused = self.evo1.get_vl_embeddings(
                 images=images,
@@ -244,9 +319,9 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         action_mask_3d = self._action_mask_3d(batch_size, device)
         embodiment_id = torch.zeros(batch_size, dtype=torch.long, device=device)
 
-        autocast_enabled = device.type == "cuda"
+        autocast_enabled = device.type != "cpu"
         with torch.autocast(
-            device_type="cuda", dtype=torch.bfloat16, enabled=autocast_enabled
+            device_type=device.type, dtype=torch.bfloat16, enabled=autocast_enabled
         ):
             fused = self.evo1.get_vl_embeddings(
                 images=images,
@@ -264,6 +339,7 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
                 denoise_steps=self.rl_denoising_steps,
                 rl_cfg=self.rl_head_config,
                 mode="train",
+                head_forward=self._action_head_forward,
             )
 
         # Reduce per-step log-probs to the executed-chunk / valid-dim form,
@@ -453,9 +529,9 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         ]
         embodiment_id = forward_inputs["embodiment_id"].to(device)
 
-        autocast_enabled = device.type == "cuda"
+        autocast_enabled = device.type != "cpu"
         with torch.autocast(
-            device_type="cuda", dtype=torch.bfloat16, enabled=autocast_enabled
+            device_type=device.type, dtype=torch.bfloat16, enabled=autocast_enabled
         ):
             fused = self.evo1.get_vl_embeddings(
                 images=images,

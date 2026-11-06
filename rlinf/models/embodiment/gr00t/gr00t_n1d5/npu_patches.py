@@ -12,77 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
 import torch
 
-try:
-    import torch_npu
-except ImportError:
-    # Only the fused kernels below use torch_npu, and only on Ascend. Keep the
-    # module importable elsewhere so apply_npu_patches can no-op.
-    torch_npu = None
+from rlinf.models.embodiment.gr00t.npu_common import (
+    hide_unimportable_torchcodec as _hide_unimportable_torchcodec,
+)
 
-
-def npu_rmsnorm_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-    """``Qwen3RMSNorm.forward`` via the fused ``npu_rms_norm`` kernel."""
-    return torch_npu.npu_rms_norm(
-        hidden_states, self.weight, epsilon=self.variance_epsilon
-    )[0]
-
-
-def npu_apply_rotary_pos_emb(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-    position_ids=None,
-    unsqueeze_dim: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Qwen3 ``apply_rotary_pos_emb`` via the fused ``npu_rotary_mul`` kernel.
-
-    ``position_ids`` is accepted for signature compatibility but unused, matching
-    upstream where cos/sin are already gathered by position.
-    """
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = torch_npu.npu_rotary_mul(q, cos, sin)
-    k_embed = torch_npu.npu_rotary_mul(k, cos, sin)
-    return q_embed, k_embed
-
-
-class _TorchcodecUnavailableFinder:
-    """Raise ``ImportError`` for ``torchcodec`` so GR00T treats it as optional.
-
-    Isaac-GR00T N1.5's ``gr00t.utils.video`` does ``import torchcodec`` at
-    module level and only catches ``ImportError`` / ``RuntimeError``. PyPI
-    torchcodec 0.16.0 is a CUDA wheel that ``dlopen``s ``libnvrtc.so.13``;
-    on Ascend that raises ``OSError``, which is not caught. Intercepting the
-    import converts that failure into the exception GR00T already handles.
-    """
-
-    def find_spec(self, fullname, _path, _target=None):
-        if fullname == "torchcodec" or fullname.startswith("torchcodec."):
-            raise ImportError(
-                "torchcodec is unavailable on this platform (CUDA wheel "
-                "cannot load without NVIDIA libraries)."
-            )
-        return None
-
-
-def _hide_unimportable_torchcodec() -> None:
-    """If torchcodec is installed but cannot load, make later imports ImportError."""
-    if "torchcodec" in sys.modules:
-        return
-    try:
-        import torchcodec  # noqa: F401
-    except OSError:
-        for name in list(sys.modules):
-            if name == "torchcodec" or name.startswith("torchcodec."):
-                sys.modules.pop(name, None)
-        sys.meta_path.insert(0, _TorchcodecUnavailableFinder())
-    except (ImportError, RuntimeError):
-        pass
+# Re-exported so the Patcher entries below, which name their replacements by
+# string path, keep resolving against this module.
+from rlinf.models.embodiment.gr00t.npu_common import (  # noqa: F401
+    install_npu_flash_attention_cache,
+    npu_apply_rotary_pos_emb,
+    npu_rmsnorm_forward,
+)
+from rlinf.models.embodiment.gr00t.npu_common import (
+    is_npu as _is_npu,
+)
 
 
 def get_radio_compatible_cuda_capability_on_npu(*_args, **_kwargs) -> tuple[int, int]:
@@ -100,13 +45,6 @@ def get_radio_compatible_cuda_capability_on_npu(*_args, **_kwargs) -> tuple[int,
 _MODULE = "rlinf.models.embodiment.gr00t.gr00t_n1d5.npu_patches"
 
 
-def _is_npu() -> bool:
-    """Whether this worker runs on an Ascend NPU, per the Worker device API."""
-    from rlinf.scheduler import AcceleratorType, Worker
-
-    return Worker.accelerator_type == AcceleratorType.NPU
-
-
 def apply_npu_patches(patcher) -> dict | None:
     """Register the Ascend patches for building GR00T N1.5; return restore state.
 
@@ -115,6 +53,7 @@ def apply_npu_patches(patcher) -> dict | None:
 
     * fused NPU kernels for Qwen3 RMSNorm / rotary embedding (kept for the
       model's lifetime, not restored);
+    * padding metadata and causal-mask reuse in legacy NPU FlashAttention;
     * a ``get_device_capability`` sentinel so RADIO's import-time check passes;
     * a ``flash_attn`` stub so import sites succeed, cleared once the
       eagle_2_5_vl config loads so the absent package reads as unavailable;
@@ -131,6 +70,7 @@ def apply_npu_patches(patcher) -> dict | None:
         return None
 
     _hide_unimportable_torchcodec()
+    install_npu_flash_attention_cache()
 
     patcher.add_patch(
         "transformers.models.qwen3.modeling_qwen3.apply_rotary_pos_emb",

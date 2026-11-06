@@ -492,7 +492,6 @@ def run_default_forward_flowmatching(
     # QwenGR00T.predict_action. On backends whose autocast rejects float32
     # (Ascend: get_amp_supported_dtype() is [fp16, bf16]) it falls through
     # to the backbone dtype, so the Euler steps do accumulate truncation.
-    # TODO(agent): integrate in float32 independently of autocast.
     fp32_ctx = accelerator_autocast(torch.float32)
 
     step_logprobs: list[torch.Tensor] = []
@@ -661,7 +660,6 @@ def run_rollout_flowmatching(
     # QwenGR00T.predict_action. On backends whose autocast rejects float32
     # (Ascend: get_amp_supported_dtype() is [fp16, bf16]) it falls through
     # to the backbone dtype, so the Euler steps do accumulate truncation.
-    # TODO(agent): integrate in float32 independently of autocast.
     fp32_ctx = accelerator_autocast(torch.float32)
 
     with fp32_ctx:

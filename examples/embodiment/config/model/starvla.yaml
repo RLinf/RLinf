@@ -40,6 +40,8 @@ low_cpu_mem_usage: True
 # Optional explicit namespace used by rlinf.models.embodiment.starvla.get_model
 starvla:
   ckpt_path: ${..model_path}
+  # Qwen2.5-VL grouped text inference and packed vision attention on Ascend.
+  enable_npu_attention: False
   # Unified starVLA wrapper switch for feeding proprio/state into action heads.
   # Applies to Adapter / PI / GR00T / Dual paths. OFT remains state-free.
   enable_state_input: True

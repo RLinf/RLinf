@@ -375,6 +375,7 @@ class Worker(metaclass=WorkerMeta):
         self.accelerator_type = Worker.accelerator_type
         self.torch_device_type = Worker.torch_device_type
         self.torch_platform = Worker.torch_platform
+        AcceleratorUtil.setup_worker_torch(self._accelerator_type)
 
         self._actor = None
         self._has_initialized = False

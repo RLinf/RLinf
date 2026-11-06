@@ -257,16 +257,17 @@ for further RL training.
    qwenvl:
      base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-ABot currently initializes VGGT with
-``VGGT.from_pretrained("facebook/VGGT-1B")``. If the runtime cannot access
-Hugging Face or a mirror, place ``VGGT-1B`` in your local Hugging Face cache or
-explicitly set VGGT loading to a local directory in your ABot installation.
+The installer makes ABot's VGGT loader accept ``VGGT_MODEL_PATH``. For offline
+runs, export the directory downloaded above before starting evaluation or
+training:
 
-Example local override:
+.. code-block:: bash
 
-.. code-block:: python
+   export VGGT_MODEL_PATH=/path/to/VGGT-1B
 
-   self.spatial_model = spatial_model = VGGT.from_pretrained('/workspace/models/VGGT-1B')
+Without this variable, ABot keeps the default ``facebook/VGGT-1B`` Hub ID.
+``VGGT_PATH`` selects the source checkout during installation;
+``VGGT_MODEL_PATH`` selects the weights at runtime.
 
 Configure Further
 -----------------

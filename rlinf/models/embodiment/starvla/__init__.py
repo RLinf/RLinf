@@ -92,6 +92,12 @@ def get_model(
 
     # 'framework_name' is optional but helps infer the expected wiring for some checkpoints.
     starvla_cfg = getattr(cfg, "starvla", None)
+    if getattr(starvla_cfg, "enable_npu_attention", False):
+        from rlinf.models.embodiment.qwen_vl_npu_attention import (
+            enable_qwen_vl_npu_attention,
+        )
+
+        enable_qwen_vl_npu_attention(resolve_vlm_interface(starvla_model).model)
     framework_name = getattr(starvla_cfg, "framework_name", None)
     if framework_name is not None:
         framework_name = str(framework_name).strip()

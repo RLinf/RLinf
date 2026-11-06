@@ -14,12 +14,33 @@
 
 from __future__ import annotations
 
+import functools
+import importlib.util
+
 import torch
 import torch.nn.functional as F
 
-# Kernels stay compiled unless a caller turns this off before the first forward.
-# Isaac Sim jobs do that: their bundled torch cannot import the venv's triton.
-_torch_compile_enabled = True
+from rlinf.scheduler import AcceleratorType, Worker
+
+
+@functools.cache
+def inductor_available() -> bool:
+    """Whether Inductor can compile these kernels in this interpreter.
+
+    Inductor generates its device code through Triton, which ships only for
+    CUDA and ROCm: Ascend and MUSA venvs have no ``triton``, and Isaac Sim's
+    bundled torch cannot import the one in the venv. Compiling there fails at
+    the first forward pass, so this decides the default for
+    :func:`set_torch_compile`. A configuration that names ``torch_compile``
+    explicitly still wins.
+    """
+    return importlib.util.find_spec("triton") is not None
+
+
+# Kernels stay compiled wherever Inductor works, unless a caller turns this off
+# before the first forward.
+_torch_compile_enabled = inductor_available()
+_sdpa_attention_enabled: bool | None = None
 
 
 def set_torch_compile(enabled: bool) -> None:
@@ -30,6 +51,23 @@ def set_torch_compile(enabled: bool) -> None:
 
 def torch_compile_enabled() -> bool:
     return _torch_compile_enabled
+
+
+def set_sdpa_attention(enabled: bool | None) -> None:
+    """Enable, disable, or reset OpenPI fused SDPA attention for this process."""
+    global _sdpa_attention_enabled
+    _sdpa_attention_enabled = enabled if enabled is None else bool(enabled)
+
+
+def sdpa_attention_enabled() -> bool:
+    """Whether OpenPI Gemma attention dispatches to fused SDPA.
+
+    Defaults to the active accelerator via ``Worker.accelerator_type`` so
+    rollout and training use the same attention backend on each platform.
+    """
+    if _sdpa_attention_enabled is not None:
+        return _sdpa_attention_enabled
+    return Worker.accelerator_type == AcceleratorType.NPU
 
 
 def _gelu_glu_eager(
