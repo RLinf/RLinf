@@ -31,11 +31,8 @@ from tqdm import tqdm
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.embodied_types import (
-    EnvPart,
     PolicyInput,
     PolicyOutput,
-    PolicyPart,
-    split_batch_value,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import BucketWeightSyncer
@@ -59,6 +56,10 @@ from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
 )
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.rollout.embodied_protocol import (
+    publish_env_parts,
+    publish_policy_part,
+)
 
 if TYPE_CHECKING:
     from phyai.engine import Engine
@@ -838,31 +839,13 @@ class PhyAIRolloutWorker(Worker):
             else None,
         )
 
-    def _publish_env_part(
+    def _infer_terminal(
         self,
-        env_part: EnvPart,
-        policy_obs: dict[str, Any] | None,
-        actor_channel: Channel,
-    ) -> None:
-        next_obs = env_part.next_obs if env_part.next_obs is not None else policy_obs
-        final_prev_values = None
-        if env_part.requires_inference:
-            if next_obs is None:
-                raise ValueError(
-                    "Terminal inference requires a post-action observation."
-                )
-            _, result = self.predict(next_obs, mode="train")
-            values = result.get("prev_values")
-            if values is not None:
-                final_prev_values = values.cpu().contiguous()
-        actor_channel.put(
-            env_part.complete(
-                next_obs=(next_obs if self.collect_raw_transition_obs else None),
-                next_rlt_obs=None,
-                final_prev_values=final_prev_values,
-            ),
-            async_op=True,
-        )
+        next_obs: dict[str, Any],
+        next_rlt_obs: dict[str, Any] | None,
+    ) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
+        _, result = self.predict(next_obs, mode="train")
+        return result.get("prev_values"), None
 
     def _publish_env_parts(
         self,
@@ -871,28 +854,12 @@ class PhyAIRolloutWorker(Worker):
     ) -> None:
         if not policy_input.env_parts:
             return
-        if len(policy_input.env_parts) != len(policy_input.request_sizes):
-            raise ValueError("Environment parts and request sizes must align.")
-
-        needs_policy_obs = any(
-            part is not None
-            and (
-                self.collect_raw_transition_obs
-                or (part.requires_inference and part.next_obs is None)
-            )
-            for part in policy_input.env_parts
+        publish_env_parts(
+            policy_input,
+            actor_channel,
+            collect_raw_transition_obs=self.collect_raw_transition_obs,
+            infer_terminal=self._infer_terminal,
         )
-        policy_observations = (
-            split_batch_value(policy_input.obs, policy_input.request_sizes)
-            if needs_policy_obs
-            else [None] * len(policy_input.env_parts)
-        )
-        for env_part, policy_obs in zip(
-            policy_input.env_parts,
-            policy_observations,
-        ):
-            if env_part is not None:
-                self._publish_env_part(env_part, policy_obs, actor_channel)
 
     @staticmethod
     def _split_actions(actions: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
@@ -943,22 +910,13 @@ class PhyAIRolloutWorker(Worker):
                     actions, result = self.predict(policy_input.obs, mode="train")
                     policy_output = self._build_policy_output(result)
                 self._send_actions(output_channel, actions.contiguous(), stage_id)
-                transition_obs = (
-                    policy_input.obs if self.collect_raw_transition_obs else {}
+                publish_policy_part(
+                    policy_input,
+                    actions,
+                    policy_output,
+                    actor_channel,
+                    collect_raw_transition_obs=self.collect_raw_transition_obs,
                 )
-                if policy_input.requires_inference:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        output=policy_output,
-                    )
-                else:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        external_actions=actions,
-                    )
-                actor_channel.put(trajectory_part, async_op=True)
                 self._publish_env_parts(policy_input, actor_channel)
 
         for stage_id in range(self.num_pipeline_stages):

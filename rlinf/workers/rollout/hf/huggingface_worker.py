@@ -31,11 +31,8 @@ from rlinf.algorithms.rlt import (
 from rlinf.algorithms.rlt.transition import extract_rlt_obs_from_forward_inputs
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import (
-    EnvPart,
     PolicyInput,
     PolicyOutput,
-    PolicyPart,
-    split_batch_value,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
@@ -43,6 +40,10 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.rollout.embodied_protocol import (
+    publish_env_parts,
+    publish_policy_part,
+)
 
 
 class MultiStepRolloutWorker(Worker):
@@ -745,41 +746,19 @@ class MultiStepRolloutWorker(Worker):
         ).async_wait()
         return policy_input, None
 
-    def _publish_env_part(
+    def _infer_terminal(
         self,
-        env_part: EnvPart,
-        policy_obs: dict[str, Any] | None,
+        next_obs: dict[str, Any],
         next_rlt_obs: dict[str, Any] | None,
-        actor_channel: Channel,
-    ) -> None:
-        next_obs = env_part.next_obs if env_part.next_obs is not None else policy_obs
-        final_prev_values = None
-        # Terminal inference contributes values or transition features only.
-        if env_part.requires_inference:
-            if next_obs is None:
-                raise ValueError(
-                    "Terminal inference requires a post-action observation."
-                )
-            if self.model_cfg.model_type == SupportedModel.PSI0.value:
-                values = self.hf_model.predict_value_batch(next_obs)
-            else:
-                _, result = self._predict_rollout_actions(next_obs)
-                values = result.get("prev_values")
-                if self.enable_rlt:
-                    next_rlt_obs = extract_rlt_obs_from_forward_inputs(
-                        result.get("forward_inputs"), transition=True
-                    )
-            if values is not None:
-                final_prev_values = values.cpu().contiguous()
-        # Republish environment-owned data here to keep one Actor-channel writer.
-        actor_channel.put(
-            env_part.complete(
-                next_obs=(next_obs if self.collect_raw_transition_obs else None),
-                next_rlt_obs=next_rlt_obs if self.enable_rlt else None,
-                final_prev_values=final_prev_values,
-            ),
-            async_op=True,
-        )
+    ) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
+        if self.model_cfg.model_type == SupportedModel.PSI0.value:
+            return self.hf_model.predict_value_batch(next_obs), next_rlt_obs
+        _, result = self._predict_rollout_actions(next_obs)
+        if self.enable_rlt:
+            next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                result.get("forward_inputs"), transition=True
+            )
+        return result.get("prev_values"), next_rlt_obs
 
     def _publish_env_parts(
         self,
@@ -787,48 +766,19 @@ class MultiStepRolloutWorker(Worker):
         forward_inputs: dict[str, Any] | None,
         actor_channel: Channel,
     ) -> None:
-        """Complete attached environment parts without duplicating request data."""
         if not policy_input.env_parts:
             return
-        if len(policy_input.env_parts) != len(policy_input.request_sizes):
-            raise ValueError("Environment parts and request sizes must align.")
-
-        part_count = len(policy_input.env_parts)
-        next_rlt_obs = (
-            extract_rlt_obs_from_forward_inputs(forward_inputs, transition=True)
-            if self.enable_rlt and forward_inputs is not None
-            else None
+        publish_env_parts(
+            policy_input,
+            actor_channel,
+            collect_raw_transition_obs=self.collect_raw_transition_obs,
+            infer_terminal=self._infer_terminal,
+            get_next_rlt_obs=lambda: (
+                extract_rlt_obs_from_forward_inputs(forward_inputs, transition=True)
+                if self.enable_rlt and forward_inputs is not None
+                else None
+            ),
         )
-        next_rlt_observations = (
-            split_batch_value(next_rlt_obs, policy_input.request_sizes)
-            if next_rlt_obs is not None
-            else [None] * part_count
-        )
-        needs_policy_obs = any(
-            part is not None
-            and (
-                self.collect_raw_transition_obs
-                or (part.requires_inference and part.next_obs is None)
-            )
-            for part in policy_input.env_parts
-        )
-        policy_observations = (
-            split_batch_value(policy_input.obs, policy_input.request_sizes)
-            if needs_policy_obs
-            else [None] * part_count
-        )
-        for env_part, policy_obs, next_features in zip(
-            policy_input.env_parts,
-            policy_observations,
-            next_rlt_observations,
-        ):
-            if env_part is not None:
-                self._publish_env_part(
-                    env_part,
-                    policy_obs,
-                    next_features,
-                    actor_channel,
-                )
 
     def _send_actions(
         self,
@@ -896,26 +846,13 @@ class MultiStepRolloutWorker(Worker):
                     stage_id,
                     split_sizes,
                 )
-                # Omit raw observations when the collector does not consume them.
-                transition_obs = (
-                    policy_input.obs if self.collect_raw_transition_obs else {}
+                publish_policy_part(
+                    policy_input,
+                    actions,
+                    policy_output,
+                    actor_channel,
+                    collect_raw_transition_obs=self.collect_raw_transition_obs,
                 )
-                if not policy_input.requires_inference:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        external_actions=actions,
-                    )
-                else:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        output=policy_output,
-                    )
-                # Publish model-owned data immediately; its environment half
-                # arrives later through an EnvPart with the same key.
-                actor_channel.put(trajectory_part, async_op=True)
-                # Attached parts close previously executed chunks.
                 self._publish_env_parts(policy_input, forward_inputs, actor_channel)
 
         if self.env_decoupled_mode:
