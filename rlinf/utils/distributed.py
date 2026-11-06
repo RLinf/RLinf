@@ -76,7 +76,7 @@ def compute_rollout_metrics_dynamic(
     Returns:
         Tuple of (rollout_metrics dict, total_prompt_lengths tensor, total_decode_lengths tensor)
     """
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = Worker.torch_device_type
 
     # Extract basic tensors
     advantages = rollout_batch["advantages"].to(device=device)
@@ -197,6 +197,7 @@ def compute_rollout_metrics_dynamic(
     # Build final metrics dict
     rollout_metrics = {
         "total_num_sequence": num_seq,
+        "valid_response_tokens": n_valid_token,
         "prompt_length": sum_plen / num_seq,
         "response_length": sum_rlen / num_seq,
         "total_length": (sum_plen + sum_rlen) / num_seq,

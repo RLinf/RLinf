@@ -16,19 +16,17 @@ import json
 
 import hydra
 import torch.multiprocessing as mp
+from omegaconf import DictConfig
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
-from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.scheduler import Cluster, NodePlacementStrategy
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
-from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
@@ -37,11 +35,13 @@ from rlinf.workers.rollout.utils import get_rollout_backend_worker
 mp.set_start_method("spawn", force=True)
 
 
-def get_ma_actor_worker(cfg):
-    """Select the multi-agent actor worker based on training backend."""
+def get_ma_actor_worker(cfg: DictConfig) -> type[Worker]:
+    """Return the Search-R1 actor class for the configured training backend."""
     if cfg.actor.training_backend == "fsdp":
         return MAFSDPActor
     if cfg.actor.training_backend == "megatron":
+        from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
         return MAMegatronActor
     raise ValueError(
         f"Unsupported training backend for Search-R1 actor: {cfg.actor.training_backend}"
@@ -51,11 +51,17 @@ def get_ma_actor_worker(cfg):
 @hydra.main(version_base="1.1")
 @output_redirector
 def main(cfg) -> None:
+    from rlinf.agents.searchr1.search_tool_worker import SearchToolWorker
+    from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
+
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    actor_worker_cls = get_ma_actor_worker(cfg)
+    if cfg.actor.training_backend == "fsdp":
+        MAFSDPActor.validate_placement(cfg, component_placement)
 
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
@@ -88,7 +94,7 @@ def main(cfg) -> None:
     # Inference group
     inference_group = None
     if (
-        component_placement.placement_mode == PlacementMode.DISAGGREGATED
+        component_placement.has_dedicated_actor_inference
         and cfg.algorithm.recompute_logprobs
     ):
         inference_placement_strategy = component_placement.get_strategy("inference")
@@ -103,7 +109,6 @@ def main(cfg) -> None:
 
     # GRPO Actor group
     actor_placement_strategy = component_placement.get_strategy("actor")
-    actor_worker_cls = get_ma_actor_worker(cfg)
     actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )

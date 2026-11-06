@@ -1,0 +1,19 @@
+defaults:
+  - qwen2.5-1.5b-fsdp
+  - _self_
+
+cluster:
+  component_placement:
+    actor: 0-1
+    rollout: 2
+    reward: 2
+
+runner:
+  experiment_name: searchr1-qwen2.5-1.5b-fsdp2-disaggregated
+  resume_dir: null
+  max_steps: 3
+
+actor:
+  enable_offload: False
+  fsdp_config:
+    strategy: fsdp2

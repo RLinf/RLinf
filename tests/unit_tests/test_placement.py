@@ -14,9 +14,11 @@
 
 import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.scheduler import (
@@ -1491,6 +1493,35 @@ class TestHeteroMultiNodeGroupPlacement:
         )
         with pytest.raises(AssertionError):
             strategy.get_placement(cluster, isolate_accelerator=True)
+
+
+@pytest.mark.parametrize(
+    "relative_dir, config_name, collocated, actor_world_size",
+    [
+        ("examples/agent/searchr1/config", "train_qwen2.5_fsdp", True, 3),
+        (
+            "examples/agent/searchr1/config",
+            "train_qwen2.5_fsdp_disaggregated",
+            False,
+            2,
+        ),
+        ("tests/e2e_tests/agent/searchr1", "qwen2.5-1.5b-fsdp", True, 3),
+        ("tests/e2e_tests/agent/searchr1", "qwen2.5-1.5b-fsdp-disaggregated", False, 2),
+    ],
+)
+def test_searchr1_fsdp_example_placement(
+    relative_dir, config_name, collocated, actor_world_size
+):
+    config_dir = Path(__file__).resolve().parents[2] / relative_dir
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name=config_name)
+    placement = ModelParallelComponentPlacement(cfg, create_fake_cluster(1, 3))
+    assert placement.is_collocated == collocated
+    assert placement.is_disaggregated == (not collocated)
+    assert placement.actor_world_size == actor_world_size
+    assert not placement.has_dedicated_actor_inference
+    assert cfg.algorithm.recompute_logprobs
+    assert cfg.actor.enable_dp_load_balance
 
 
 if __name__ == "__main__":

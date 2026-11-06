@@ -14,6 +14,7 @@
 
 import itertools
 import logging
+import threading
 import typing
 from typing import Optional, Union
 
@@ -26,13 +27,15 @@ from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
-from rlinf.workers.actor.megatron_actor_worker import MegatronActor
 from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolChannelInfo, ToolWorker, ToolWorkerInfo
-from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-from rlinf.workers.reward.reward_worker import RewardWorker
 
 if typing.TYPE_CHECKING:
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+    from rlinf.workers.actor.megatron_actor_worker import MegatronActor
+    from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
+    from rlinf.workers.inference.megatron_inference_worker import MegatronInference
+    from rlinf.workers.reward.reward_worker import RewardWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
     from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
@@ -49,9 +52,9 @@ class AgentRunner(ReasoningRunner):
         train_dataset: Dataset,
         val_dataset: Optional[Dataset],
         rollout: Union["SGLangWorker", "VLLMWorker"],
-        inference: Optional[MegatronInference],
-        actor: MegatronActor,
-        reward: Optional[RewardWorker],
+        inference: Optional[Union["FSDPInference", "MegatronInference"]],
+        actor: Union["FSDPActor", "MegatronActor"],
+        reward: Optional["RewardWorker"],
         agent_loop: AgentLoopWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
@@ -108,7 +111,9 @@ class AgentRunner(ReasoningRunner):
 
         self.tool_output_channel = Channel.create("ToolOutput")
         if self.recompute_logprobs:
-            self.inference_channel = Channel.create("Inference", local=True)
+            self.inference_channel = Channel.create(
+                "Inference", local=not self.has_dedicated_actor_inference
+            )
 
     def _stop_rollouts(self):
         """Stop the main and solid rollout engines after training finishes."""
@@ -178,6 +183,7 @@ class AgentRunner(ReasoningRunner):
             self._stop_rollouts()
             return
 
+        tqdm.set_lock(threading.RLock())
         global_pbar = tqdm(
             initial=self.global_steps,
             total=self.max_steps,
@@ -245,6 +251,11 @@ class AgentRunner(ReasoningRunner):
                         # Actor training, Advantages and returns
                         if self.is_pipeline:
                             agent_metrics = rollout_handle.wait()[0]
+                        if (
+                            infer_handle is not None
+                            and not self.has_dedicated_actor_inference
+                        ):
+                            infer_handle.wait()
                         actor_handle: Handle = self.actor.run_training(
                             input_channel=inference_channel,
                         )
