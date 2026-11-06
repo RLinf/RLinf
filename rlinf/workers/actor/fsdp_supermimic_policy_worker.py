@@ -55,6 +55,7 @@ from rlinf.models.embodiment.supermimic.interface import (
     interface_record,
     write_interface,
 )
+from rlinf.models.embodiment.supermimic.supermimic_policy import goal_width
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.utils.utils import (
@@ -583,12 +584,16 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             dim=1,
         )
         rows = from_ref.nonzero(as_tuple=True)[0]
-        offsets = torch.arange(self.horizon, device=time0.device, dtype=time0.dtype)
-        flat_id = motion_id[rows].unsqueeze(1).expand(-1, self.horizon).reshape(-1)
-        flat_time = (time0[rows].unsqueeze(1) + offsets).reshape(-1)
-        ref_goals = make_goal(
-            self.motion, self.goal_encoding, False, flat_id, flat_time, None
-        ).view(rows.numel(), self.horizon, -1)
+        if rows.numel() == 0:
+            width = goal_width(self.goal_encoding, False)
+            ref_goals = torch.zeros(0, self.horizon, width, device=self.device)
+        else:
+            offsets = torch.arange(self.horizon, device=time0.device, dtype=time0.dtype)
+            flat_id = motion_id[rows].unsqueeze(1).expand(-1, self.horizon).reshape(-1)
+            flat_time = (time0[rows].unsqueeze(1) + offsets).reshape(-1)
+            ref_goals = make_goal(
+                self.motion, self.goal_encoding, False, flat_id, flat_time, None
+            ).view(rows.numel(), self.horizon, -1)
         return {
             "state": starts["state"],
             "prev_action": starts["prev_action"],
