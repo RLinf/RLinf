@@ -605,6 +605,13 @@ above change some of them. Each can be passed as a Hydra override.
      - 20
      - An optimizer step with a non-finite gradient norm is skipped; more
        than this many in a row stops the run.
+   * - ``actor.optim.fused``
+     - ``True``
+     - Fused Adam on CUDA for every phase. A step with a non-finite gradient
+       norm is skipped inside the kernel, so the actor reads the GPU once per
+       update instead of after every step; skips are counted at the end of
+       the update. ``False`` uses PyTorch's default Adam and checks each step
+       on the host.
    * - ``algorithm.wm_batches``
      - 10
      - World-model minibatches per update.
@@ -629,6 +636,17 @@ above change some of them. Each can be passed as a Hydra override.
      - ``True``
      - Compile the training scans, the env's reward and feature pieces and FK
        on large CUDA batches. ``False`` keeps them eager.
+   * - ``rollout.gc_after_weight_sync``
+     - ``False``
+     - ``True`` runs ``gc.collect()`` and empties the device cache after each
+       weight sync, as the RLinf rollout does by default. SuperMimic syncs
+       after every update, where a full collection each time is a large
+       share of the step.
+   * - ``actor.torch_profile_update``
+     - ``null``
+     - A global update index. The actor's work in that update is traced with
+       ``torch.profiler``; operator tables (``.txt``) and a Chrome trace
+       (``.json``) go to ``<log_path>/<experiment_name>/torch_profile``.
    * - ``env.train.total_num_envs``
      - 4096
      - Parallel simulator environments, global. Collection throughput and
@@ -1212,7 +1230,10 @@ The training, resume and evaluation runs reported above used the earlier
 single-process implementation. For the current env, rollout and actor
 workers, the FSDP2 phase freezing, the actor's training phases, its
 checkpoint round trip, the update schedule and the evaluation summaries have
-been checked in small CPU tests. The GPU smoke runs in
+been checked in small CPU tests. On one GPU, the fused-Adam step matched the
+host-checked step on identical gradients, skipped non-finite steps without
+moving the weights or the Adam state, and survived a checkpoint round trip.
+The GPU smoke runs in
 ``tests/e2e_tests/embodied/test_supermimic.py`` exercise training, resume
 and evaluation through the RLinf entries.
 Full training with the current structure, the paper overrides, the paper's

@@ -401,6 +401,9 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
    * - ``algorithm.max_nonfinite_skips``
      - 20
      - 梯度范数非有限的优化器步会被跳过；连续超过这个次数就停止训练。
+   * - ``actor.optim.fused``
+     - ``True``
+     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，actor 每次更新只读一次 GPU，而不是每步都读；跳过的步在本次更新结束时计数。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查。
    * - ``algorithm.wm_batches``
      - 10
      - 每次更新拟合世界模型的小批次数。
@@ -422,6 +425,12 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
    * - ``actor.model.torch_compile``
      - ``True``
      - 在大批量 CUDA 数据上编译训练扫描、环境中的奖励和特征片段以及 FK；设为 ``False`` 时都以 eager 方式运行。
+   * - ``rollout.gc_after_weight_sync``
+     - ``False``
+     - 设为 ``True`` 时，每次权重同步后执行 ``gc.collect()`` 并清空设备缓存，这是 RLinf rollout 的默认行为。SuperMimic 每次更新后都同步，每次都做完整回收会占去每步相当一部分时间。
+   * - ``actor.torch_profile_update``
+     - ``null``
+     - 一个全局更新序号。用 ``torch.profiler`` 采集 actor 在这次更新中的工作，算子统计表（``.txt``）和 Chrome trace（``.json``）写到 ``<log_path>/<experiment_name>/torch_profile``。
    * - ``env.train.total_num_envs``
      - 4096
      - 并行仿真环境数，全局量。采集吞吐和显存都随它增长。
@@ -747,7 +756,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 验证范围
 --------
 
-上文报告的训练、恢复和评测运行使用此前的单进程实现。对当前的 env、rollout 和 actor worker，FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总已在小规模 CPU 测试中检查；``tests/e2e_tests/embodied/test_supermimic.py`` 中的 GPU 冒烟测试通过 RLinf 入口覆盖训练、恢复和评测。当前结构下的完整训练、论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
+上文报告的训练、恢复和评测运行使用此前的单进程实现。对当前的 env、rollout 和 actor worker，FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总已在小规模 CPU 测试中检查；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；``tests/e2e_tests/embodied/test_supermimic.py`` 中的 GPU 冒烟测试通过 RLinf 入口覆盖训练、恢复和评测。当前结构下的完整训练、论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
 
 致谢
 --------

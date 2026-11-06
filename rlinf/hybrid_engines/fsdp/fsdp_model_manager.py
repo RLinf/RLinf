@@ -646,6 +646,12 @@ class FSDPModelManager:
         param_filters: dict[str, list[str]],
         filtered_optim_config: dict[str, DictConfig],
     ):
+        """Build the main Adam and one Adam per entry of ``param_filters``.
+
+        An optimizer config may set ``fused: True`` to use PyTorch's fused Adam
+        kernel; it applies on CUDA when no parameter is a scalar, and otherwise
+        PyTorch picks the implementation as before.
+        """
         validate_adam_mixed_precision(model, optimizer_name="Adam")
         main_betas = (
             main_optim_config.get("adam_beta1", 0.9),
@@ -700,7 +706,8 @@ class FSDPModelManager:
                     "betas": main_betas,
                     "eps": main_adam_eps,
                 },
-            ]
+            ],
+            fused=self._fused_adam(main_optim_config, main_optim_params),
         )
         optimizers = [main_optimizer]
 
@@ -718,10 +725,23 @@ class FSDPModelManager:
                             "betas": filtered_optim_batas_map[key],
                             "eps": filtered_optim_adam_eps_map[key],
                         },
-                    ]
+                    ],
+                    fused=self._fused_adam(filtered_optim_config[key], params),
                 )
             )
         return optimizers
+
+    @staticmethod
+    def _fused_adam(optim_config: DictConfig, params: list[torch.Tensor]):
+        """``True`` when the config asks for fused Adam and it applies, else ``None``."""
+        if (
+            optim_config.get("fused", False)
+            and Worker.torch_device_type == "cuda"
+            and Worker.torch_platform.is_available()
+            and not any(p.dim() == 0 for p in params)
+        ):
+            return True
+        return None
 
     def build_grad_scaler(self, enabled: bool, **kwargs) -> ShardedGradScaler:
         """

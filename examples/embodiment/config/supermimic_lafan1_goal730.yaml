@@ -88,6 +88,7 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
   amp_autocast: ${actor.fsdp_config.amp_autocast}
+  gc_after_weight_sync: False  # weights sync after every update
   model:
     model_path: ""
     precision: ${actor.model.precision}
@@ -99,6 +100,7 @@ actor:
   global_batch_size: ${algorithm.wm_window_batch}
   seed: 0
   enable_offload: False
+  torch_profile_update: null # a global update index to trace with torch.profiler
 
   model:
     goal_encoding: goal730
@@ -115,6 +117,7 @@ actor:
     adam_eps: 1.0e-8
     clip_grad: 1.0
     clip_grad_value: 0.1
+    fused: True                # fused Adam on CUDA; skips non-finite steps on the device
     lr_scheduler: ref_warmup_cosine
     lr_warmup_steps: 0
     total_training_steps: 250000
@@ -125,6 +128,7 @@ actor:
     adam_beta2: 0.999
     adam_eps: 1.0e-8
     clip_grad: 1.0
+    fused: ${actor.optim.fused}
     lr_scheduler: ${actor.optim.lr_scheduler}
     lr_warmup_steps: 0
     total_training_steps: ${actor.optim.total_training_steps}

@@ -29,6 +29,7 @@ and backward with a zero loss.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -75,6 +76,13 @@ VELOCITY_CRITIC = ForwardType.SUPERMIMIC_VELOCITY_CRITIC
 # and the input norms; it never reads these networks.
 _ACTOR_ONLY_PREFIXES = ("dynamics.", "termination.", "velocity_critic.")
 _COUNTERS_FILE = "supermimic_counters.json"
+# Optimizer-step counter of each phase; the velocity actor has none.
+_STEP_COUNTERS = {
+    "world_model": "wm_optimizer_steps",
+    "actor": "actor_optimizer_steps",
+    "critic": "critic_optimizer_steps",
+    "velocity_critic": "critic_optimizer_steps",
+}
 
 
 class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
@@ -108,6 +116,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.critic_optimizer_steps = 0
         self.nonfinite_skips = 0
         self.consecutive_nonfinite = 0
+        self._pending_skips: list[tuple[str, torch.Tensor]] = []
+        self.torch_profile_update = cfg.actor.get("torch_profile_update", None)
 
     # ------------------------------------------------------------------ setup
 
@@ -236,26 +246,38 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("run_updates")
     def run_updates(self, num_updates: int, global_step: int) -> dict[str, float]:
-        """Run ``num_updates`` global updates; ``global_step`` counts finished ones."""
-        metrics: dict[str, float] = {}
-        for index in range(num_updates):
-            with self.worker_timer("world_model"):
-                metrics.update(self._fit_world_model())
-            actor_updated = global_step + index >= self.wm_only_updates
-            if actor_updated:
-                with self.worker_timer("motion_actor"):
-                    actor_metrics, critic_batch = self._train_motion_actor()
-                with self.worker_timer("motion_critic"):
-                    metrics.update(self._train_motion_critic(*critic_batch))
-                metrics.update(actor_metrics)
-                if self.velocity:
-                    with self.worker_timer("velocity_actor"):
-                        velocity_metrics, critic_batch = self._train_velocity_actor()
-                    with self.worker_timer("velocity_critic"):
-                        self._train_velocity_critic(*critic_batch)
-                    metrics.update(velocity_metrics)
-            self._finish_update(actor_updated)
-        self.model.reshard()
+        """Run ``num_updates`` global updates; ``global_step`` counts finished ones.
+
+        Metrics stay on the device until the last update; one read then brings
+        them to the host and settles the steps fused Adam skipped.
+        """
+        target = self.torch_profile_update
+        traced = (
+            target is not None and global_step <= target < global_step + num_updates
+        )
+        with self._torch_profile(target) if traced else contextlib.nullcontext():
+            metrics: dict[str, float | torch.Tensor] = {}
+            for index in range(num_updates):
+                with self._phase("world_model"):
+                    metrics.update(self._fit_world_model())
+                actor_updated = global_step + index >= self.wm_only_updates
+                if actor_updated:
+                    with self._phase("motion_actor"):
+                        actor_metrics, critic_batch = self._train_motion_actor()
+                    with self._phase("motion_critic"):
+                        metrics.update(self._train_motion_critic(*critic_batch))
+                    metrics.update(actor_metrics)
+                    if self.velocity:
+                        with self._phase("velocity_actor"):
+                            velocity_metrics, critic_batch = (
+                                self._train_velocity_actor()
+                            )
+                        with self._phase("velocity_critic"):
+                            self._train_velocity_critic(*critic_batch)
+                        metrics.update(velocity_metrics)
+                self._finish_update(actor_updated)
+            self.model.reshard()
+            metrics = self._read_metrics(metrics)
         metrics.update(
             {
                 "wm_only": float(global_step + num_updates <= self.wm_only_updates),
@@ -266,6 +288,75 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             }
         )
         return metrics
+
+    @contextlib.contextmanager
+    def _phase(self, name: str):
+        """Time one training phase and label it in ``torch.profiler`` traces."""
+        with self.worker_timer(name), torch.profiler.record_function(name):
+            yield
+
+    @contextlib.contextmanager
+    def _torch_profile(self, update: int):
+        """Trace the enclosed updates with ``torch.profiler``.
+
+        Operator tables (``.txt``) and a Chrome trace (``.json``) go to
+        ``<log_path>/<experiment_name>/torch_profile``.
+        """
+        on_cuda = Worker.torch_device_type == "cuda"
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if on_cuda:
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
+        with torch.profiler.profile(activities=activities) as profiler:
+            yield
+        logger_cfg = self.cfg.runner.logger
+        out_dir = os.path.join(
+            logger_cfg.log_path, logger_cfg.experiment_name, "torch_profile"
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        stem = os.path.join(out_dir, f"update_{update}_rank_{self._rank}")
+        averages = profiler.key_averages()
+        sort_keys = ["cpu_time_total", "self_cpu_time_total"]
+        if on_cuda:
+            sort_keys.append("self_device_time_total")
+        with open(stem + ".txt", "w") as file:
+            for key in sort_keys:
+                table = averages.table(sort_by=key, row_limit=50)
+                file.write(f"sorted by {key}\n{table}\n\n")
+        profiler.export_chrome_trace(stem + ".json")
+        self.log_info(f"torch.profiler output of update {update}: {stem}.txt, .json")
+
+    def _read_metrics(
+        self, metrics: dict[str, float | torch.Tensor]
+    ) -> dict[str, float]:
+        """Read the device metrics and skip flags with one host synchronization.
+
+        A flagged step was left undone by fused Adam; it leaves the phase's
+        step counter and counts as a non-finite skip, in step order.
+        """
+        names = [name for name, value in metrics.items() if torch.is_tensor(value)]
+        skips, self._pending_skips = self._pending_skips, []
+        device_values = [metrics[name] for name in names]
+        device_values += [flag for _, flag in skips]
+        hosted = []
+        if device_values:
+            hosted = torch.stack(
+                [value.detach().float().reshape(()) for value in device_values]
+            ).tolist()
+        out = {
+            name: float(value)
+            for name, value in metrics.items()
+            if not torch.is_tensor(value)
+        }
+        out.update(zip(names, hosted[: len(names)], strict=True))
+        for (phase, _), flag in zip(skips, hosted[len(names) :], strict=True):
+            if not flag:
+                self.consecutive_nonfinite = 0
+                continue
+            counter = _STEP_COUNTERS.get(phase)
+            if counter is not None:
+                setattr(self, counter, getattr(self, counter) - 1)
+            self._note_nonfinite(phase)
+        return out
 
     def _enter_phase(self, forward_type: ForwardType) -> None:
         """Freeze every parameter outside one phase and clear stale gradients.
@@ -300,17 +391,20 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
 
     def _optimizer_step(
         self, phase: str, forward_type: ForwardType, total: float
-    ) -> tuple[bool, float]:
+    ) -> tuple[bool, float | torch.Tensor]:
         """Clip and step one phase's optimizer on every rank alike.
 
         ``total`` is the global row count behind the gradient; with no rows
-        the step is skipped. A non-finite gradient norm skips the step too.
+        the step is skipped. A non-finite gradient norm skips the step too,
+        right here or, with fused Adam, inside the kernel (:meth:`_fused_step`).
         """
         optimizer = self.phase_optimizers[phase]
         if total <= 0:
             optimizer.zero_grad(set_to_none=True)
             return False, 0.0
         params = self.model.phase_parameters(forward_type)
+        if optimizer.param_groups[0].get("fused"):
+            return True, self._fused_step(phase, optimizer, params)
         norm = get_grad_norm(params, self._dp_group)
         if not math.isfinite(norm):
             optimizer.zero_grad(set_to_none=True)
@@ -330,6 +424,49 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         optimizer.zero_grad(set_to_none=True)
         return True, norm
 
+    def _fused_step(
+        self, phase: str, optimizer: torch.optim.Optimizer, params: list
+    ) -> torch.Tensor:
+        """Clip and step fused Adam without waiting for the device.
+
+        A non-finite norm becomes the kernel's ``found_inf``, which leaves the
+        parameters, moments and step count unchanged; :meth:`_read_metrics`
+        counts such steps after the update. Returns the pre-clip norm.
+        """
+        grads = self._local_grads(params)
+        norm = self._grad_norm(grads)
+        optim_cfg = self.phase_optim_cfgs[phase]
+        scale = (float(optim_cfg.clip_grad) / (norm + 1.0e-6)).clamp(max=1.0)
+        torch._foreach_mul_(grads, scale)
+        value_clip = optim_cfg.get("clip_grad_value", None)
+        if value_clip is not None:
+            torch._foreach_clamp_min_(grads, -float(value_clip))
+            torch._foreach_clamp_max_(grads, float(value_clip))
+        found_inf = (~torch.isfinite(norm)).float()
+        optimizer.found_inf = found_inf
+        try:
+            optimizer.step()
+        finally:
+            optimizer.found_inf = None
+        optimizer.zero_grad(set_to_none=True)
+        self._pending_skips.append((phase, found_inf))
+        return norm
+
+    @staticmethod
+    def _local_grads(params) -> list[torch.Tensor]:
+        return [to_local_if_dtensor(p.grad) for p in params if p.grad is not None]
+
+    def _grad_norm(self, grads: list[torch.Tensor]) -> torch.Tensor:
+        """L2 norm of the local gradient shards over the actor ranks, on the device."""
+        squared = (
+            torch.nn.utils.get_total_norm(grads).square()
+            if grads
+            else torch.zeros((), device=self.device)
+        )
+        if self._world_size > 1:
+            dist.all_reduce(squared, group=self._dp_group)
+        return squared.sqrt()
+
     def _critic_chunk_totals(self, batch: int) -> list[float]:
         """Global row count of each critic minibatch slot.
 
@@ -344,10 +481,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         ]
         return self._global_sum(sizes)
 
-    def _fit_world_model(self) -> dict[str, float]:
+    def _fit_world_model(self) -> dict[str, float | torch.Tensor]:
         self._enter_phase(WORLD_MODEL)
         held: torch.Tensor | None = None
-        norm = 0.0
+        norm: float | torch.Tensor = 0.0
         for _ in range(self.wm_batches):
             batch = self.replay.sample_world_model_windows(self.k, self.wm_window_batch)
             weight = 0 if batch is None else int(batch["state"].shape[0])
@@ -384,12 +521,11 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 norm = step_norm
         if held is None:
             return {"wm/grad_norm": norm}
-        loss, one_step, k_step = held.tolist()
         return {
-            "wm/state_loss": loss,
+            "wm/state_loss": held[0],
             "wm/grad_norm": norm,
-            "wm/one_step_loss": one_step,
-            "wm/k_step_loss": k_step,
+            "wm/one_step_loss": held[1],
+            "wm/k_step_loss": held[2],
         }
 
     def _world_model_inputs(self, batch: dict[str, torch.Tensor]) -> dict:
@@ -457,7 +593,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             inputs["goals"] = goals.view(batch, steps, -1)
         return inputs
 
-    def _train_motion_actor(self) -> tuple[dict[str, float], tuple]:
+    def _train_motion_actor(self) -> tuple[dict[str, float | torch.Tensor], tuple]:
         """Backpropagate the H-step imagination into the encoder and decoder.
 
         Returns the metrics and the detached critic features, rewards and
@@ -480,11 +616,11 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             (loss * self._loss_scale(weight, total)).backward()
         # The decoder's last layer has gain 0.01, so the encoder sees a much
         # smaller gradient than the decoder itself; both are logged.
-        encoder_norm = get_grad_norm(
-            list(self.model.encoder.parameters()), self._dp_group
+        encoder_norm = self._grad_norm(
+            self._local_grads(self.model.encoder.parameters())
         )
-        decoder_norm = get_grad_norm(
-            list(self.model.decoder.parameters()), self._dp_group
+        decoder_norm = self._grad_norm(
+            self._local_grads(self.model.decoder.parameters())
         )
         stepped, grad_norm = self._optimizer_step("actor", ACTOR, total)
         if stepped:
@@ -498,28 +634,20 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 empty,
             )
         d_hat = out["d"]
-        objective, survival, termination, reward = torch.stack(
-            (
-                out["objective"],
-                (1.0 - d_hat).prod(dim=1).mean(),
-                d_hat.mean(),
-                out["rewards"].mean(),
-            )
-        ).tolist()
         metrics = {
-            "actor/objective": objective,
+            "actor/objective": out["objective"],
             "actor/grad_norm": grad_norm,
             "actor/encoder_grad_norm": encoder_norm,
             "actor/decoder_grad_norm": decoder_norm,
-            "imagination/survival": survival,
-            "imagination/termination_prob": termination,
-            "imagination/reward": reward,
+            "imagination/survival": (1.0 - d_hat).prod(dim=1).mean(),
+            "imagination/termination_prob": d_hat.mean(),
+            "imagination/reward": out["rewards"].mean(),
         }
         return metrics, (out["features"], out["rewards"], d_hat)
 
     def _train_motion_critic(
         self, features: torch.Tensor, rewards: torch.Tensor, d_hat: torch.Tensor
-    ) -> dict[str, float]:
+    ) -> dict[str, torch.Tensor]:
         """Regress V onto the lambda-returns of the actor phase's trajectory.
 
         ``features`` is ``[B, H+1, F]``. The running norm folds them once, and
@@ -563,13 +691,12 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                     self.critic_optimizer_steps += 1
         if batch == 0:
             return {}
-        stats = [values[:, : self.horizon].mean(), targets.mean()]
+        metrics = {
+            "critic/value_mean": values[:, : self.horizon].mean(),
+            "critic/target_mean": targets.mean(),
+        }
         if held is not None:
-            stats.append(held)
-        hosted = torch.stack(stats).tolist()
-        metrics = {"critic/value_mean": hosted[0], "critic/target_mean": hosted[1]}
-        if held is not None:
-            metrics["critic/loss"] = hosted[2]
+            metrics["critic/loss"] = held
         return metrics
 
     def _velocity_inputs(self, starts: dict[str, torch.Tensor]) -> dict:
@@ -608,7 +735,9 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             "joint_high": self.joint_high,
         }
 
-    def _train_velocity_actor(self) -> tuple[dict[str, float], tuple]:
+    def _train_velocity_actor(
+        self,
+    ) -> tuple[dict[str, float | torch.Tensor], tuple]:
         """Update the velocity encoder through imagination plus latent alignment.
 
         The RL term averages over every start and the alignment term over the
@@ -656,26 +785,19 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         rewards, d_hat = out["rewards"], out["d"]
         planar, yaw_rate = heading_velocity(states[:, 1:])
         commands_next = commands[:, 1:]
-        hosted = torch.stack(
-            (
-                out["objective"],
-                out["align"],
-                (1.0 - d_hat).prod(dim=1).mean(),
-                d_hat.mean(),
-                rewards.mean(),
-                (planar - commands_next[..., :2]).norm(dim=-1).mean(),
-                (yaw_rate - commands_next[..., 2]).abs().mean(),
-            )
-        ).tolist()
         metrics = {
-            "velocity/objective": hosted[0],
+            "velocity/objective": out["objective"],
             "velocity/grad_norm": grad_norm,
-            "velocity/align": hosted[1],
-            "velocity/survival": hosted[2],
-            "velocity/fall_prob": hosted[3],
-            "velocity/reward": hosted[4],
-            "velocity/imagined_lin_err": hosted[5],
-            "velocity/imagined_yaw_err": hosted[6],
+            "velocity/align": out["align"],
+            "velocity/survival": (1.0 - d_hat).prod(dim=1).mean(),
+            "velocity/fall_prob": d_hat.mean(),
+            "velocity/reward": rewards.mean(),
+            "velocity/imagined_lin_err": (planar - commands_next[..., :2])
+            .norm(dim=-1)
+            .mean(),
+            "velocity/imagined_yaw_err": (yaw_rate - commands_next[..., 2])
+            .abs()
+            .mean(),
         }
         return metrics, (states, commands, starts["xi"], rewards, d_hat)
 
