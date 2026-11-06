@@ -416,9 +416,11 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return latent[..., mask]
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs: Any):
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         if forward_type != ForwardType.DEFAULT:
             raise NotImplementedError(
-                "The V2 adapter currently implements PPO/GRPO only"
+                "The V2 adapter implements PPO/GRPO/SFT only"
             )
         return self.default_forward(**kwargs)
 
@@ -464,3 +466,51 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             # is a constant; None makes an entropy bonus fail instead of no-op.
             "entropy": None,
         }
+
+    def sft_forward(self, data, **kwargs):
+        device = next(iter(self.vla_model.model.parameters())).device
+        data = tree_map(
+            lambda x: (
+                torch.as_tensor(x, device=device).contiguous()
+                if isinstance(x, torch.Tensor)
+                else x
+            ),
+            data,
+        )
+        dtype = self.torch_dtype
+        outputs = self.vla_model(
+            images=data["images"].to(dtype),
+            img_masks=data["img_masks"],
+            state=data["state"].to(dtype),
+            lang_tokens=data["lang_tokens"],
+            lang_masks=data["lang_masks"],
+            actions=data["actions"].to(dtype),
+            joint_mask=data.get("joint_mask"),
+            action_is_pad=data.get("action_is_pad"),
+            image_grid_thw=data.get("image_grid_thw"),
+            depth_targets=data.get("depth_targets"),
+            future_depth_targets=data.get("future_depth_targets"),
+            future_video_targets=data.get("future_video_targets"),
+            future_video_cls_targets=data.get("future_video_cls_targets"),
+            future_video_current_patch=data.get("future_video_current_patch"),
+        )
+        (
+            total_loss,
+            loss_vla,
+            loss_depth,
+            loss_future_depth,
+            loss_future_video,
+            seq_wise_loss,
+            loss_dict,
+            *_,
+        ) = outputs
+        return {
+            "loss": total_loss,
+            "l1_loss": loss_vla,
+            "depth_loss": loss_depth,
+            "future_depth_loss": loss_future_depth,
+            "future_video_loss": loss_future_video,
+            "seq_wise_loss": seq_wise_loss,
+            **loss_dict,
+        }
+
