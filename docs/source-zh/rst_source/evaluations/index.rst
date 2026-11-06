@@ -37,7 +37,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``robocasa365/robocasa365_eval_openpi.yaml``
    * - SuperMimic（G1 动作 / 速度跟踪）
      - LAFAN1、BONES-SEED 参考动作；附录 G.2 速度阶跃测试
-     - ``supermimic/supermimic_lafan1_zita_eval.yaml``、``supermimic/supermimic_push_recovery.yaml`` 等
+     - ``supermimic/supermimic_lafan1_goal730_eval.yaml``、``supermimic/supermimic_push_recovery.yaml``
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``

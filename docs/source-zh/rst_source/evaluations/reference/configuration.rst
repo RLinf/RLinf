@@ -3,7 +3,7 @@
 
 .. note::
 
-   本页描述通用具身评测入口 ``eval_embodied_agent.py`` 的配置。SuperMimic 的 ``supermimic_lafan1_zita_eval.yaml`` 由 ``eval_supermimic.py`` 读取，用于动作评测，并通过显式覆盖项启用速度跟踪；``supermimic_push_recovery.yaml`` 由 ``eval_supermimic_push.py`` 读取。它们继承完整的主训练配置并覆盖评测设置，用 ``eval.checkpoint`` 指定检查点、``eval.output_dir`` 指定结果目录，没有 ``rollout``、``env.eval`` 段，也不需要 ``runner.task_type: embodied_eval``。下面“必须修改的字段”和“从训练配置派生”对它不适用，见 :doc:`../../examples/embodied/supermimic` 的“评测”一节。
+   ``evaluations/supermimic/`` 下的 SuperMimic 配置同样使用 ``eval_embodied_agent.py``、``runner.task_type: embodied_eval`` 和 ``env.eval``，但它们继承完整的训练配方，而不是删掉训练段：``rollout.model`` 指向 ``actor.model``，``algorithm`` 段保留，因为检查点的 ``supermimic_interface.json`` 要与这两部分核对。权重来自 ``runner.ckpt_path``\ （一个 ``full_weights.pt``），而不是 ``rollout.model.model_path``；``env.eval.eval_tasks`` 选择评测任务，``runner.eval_export`` 控制结果文件。见 :doc:`../../examples/embodied/supermimic` 的“评测”一节。
 
 评测配置为 Hydra YAML，默认放在 ``evaluations/<benchmark>/`` 下。以 ``libero_spatial_openpi_pi05_eval.yaml`` 为例，核心结构如下：
 

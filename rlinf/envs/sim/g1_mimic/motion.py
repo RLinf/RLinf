@@ -41,11 +41,11 @@ from rlinf.envs.sim.g1_mimic.features import (
     projected_gravity,
     quat_mul,
     quat_to_rotmat,
-    quat_to_rotvec,
     rot_apply,
     rot_apply_t,
     rot_mul_t,
     rotmat_to_6d,
+    rotvec_from_quat,
     yaw_rotation,
 )
 
@@ -233,14 +233,12 @@ class MotionLibrary:
     def goal730(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
         """730-d goal: 10 future frames, 73 numbers each.
 
-        This follows ``MotionLib.goal`` in zita-ch/supermimic_vibed, not the
-        68-d paper frame. Frames are ``t+1`` through ``t+10``, and a request
-        past the clip repeats the last frame. Position and yaw-removed
-        rotation are expressed in the current reference heading. Linear
-        velocity is in that future root frame; angular velocity is already
-        stored in the root frame. Joint velocity is scaled by 0.1, as in
-        that implementation. Joint angles are the raw reference, not
-        ``q - q0``.
+        This is not the 68-d paper frame. Frames are ``t+1`` through ``t+10``,
+        and a request past the clip repeats the last frame. Position and
+        yaw-removed rotation are expressed in the current reference heading.
+        Linear velocity is in that future root frame; angular velocity is
+        already stored in the root frame. Joint velocity is scaled by 0.1.
+        Joint angles are the raw reference, not ``q - q0``.
         """
         squeezed = motion_id.dim() == 0
         if squeezed:
@@ -397,9 +395,11 @@ def _central_difference(values: torch.Tensor, dt: float) -> torch.Tensor:
 def _root_angular_velocity(quat: torch.Tensor, dt: float) -> torch.Tensor:
     """Root-frame angular velocity from a world-frame central SO(3) difference."""
     world = torch.empty(quat.shape[0], 3, dtype=quat.dtype)
-    world[1:-1] = quat_to_rotvec(quat_mul(quat[2:], _quat_inv(quat[:-2]))) / (2.0 * dt)
-    world[0] = quat_to_rotvec(quat_mul(quat[1], _quat_inv(quat[0]))) / dt
-    world[-1] = quat_to_rotvec(quat_mul(quat[-1], _quat_inv(quat[-2]))) / dt
+    world[1:-1] = rotvec_from_quat(quat_mul(quat[2:], _quat_inv(quat[:-2]))) / (
+        2.0 * dt
+    )
+    world[0] = rotvec_from_quat(quat_mul(quat[1], _quat_inv(quat[0]))) / dt
+    world[-1] = rotvec_from_quat(quat_mul(quat[-1], _quat_inv(quat[-2]))) / dt
     return torch.einsum("tji,tj->ti", quat_to_rotmat(quat), world)
 
 

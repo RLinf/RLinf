@@ -47,8 +47,9 @@ def main(cfg) -> None:
     # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
-    # Default env worker; RTC on the huggingface path overrides it below.
+    # Default env worker and runner; the huggingface path may override them.
     env_worker_cls = EnvWorker
+    runner_cls = EmbodiedEvalRunner
     if rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
@@ -70,7 +71,17 @@ def main(cfg) -> None:
             )
         )
     elif rollout_backend == "huggingface":
-        if cfg.runner.get("rtc", {}).get("enabled", False):
+        if cfg.algorithm.get("loss_type", None) == "supermimic":
+            from rlinf.runners.supermimic_eval_runner import SuperMimicEvalRunner
+            from rlinf.workers.env.supermimic_env_worker import SuperMimicEnvWorker
+            from rlinf.workers.rollout.hf.supermimic_rollout_worker import (
+                SuperMimicRolloutWorker,
+            )
+
+            env_worker_cls = SuperMimicEnvWorker
+            rollout_worker_cls = SuperMimicRolloutWorker
+            runner_cls = SuperMimicEvalRunner
+        elif cfg.runner.get("rtc", {}).get("enabled", False):
             from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
             from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
                 RTCMultiStepRolloutWorker,
@@ -120,7 +131,7 @@ def main(cfg) -> None:
         )
         rollout_group.set_sglang_server_urls(_server_urls).wait()
 
-    runner = EmbodiedEvalRunner(
+    runner = runner_cls(
         cfg=cfg,
         rollout=rollout_group,
         env=env_group,

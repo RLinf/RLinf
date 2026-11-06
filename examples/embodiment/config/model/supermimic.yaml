@@ -1,0 +1,18 @@
+model_type: "supermimic"
+
+model_path: ""
+precision: "32"
+is_lora: False
+
+num_action_chunks: 1
+action_dim: 29
+
+# Policy interface. A checkpoint only loads into the same values.
+goal_encoding: paper        # paper: 680-d reference goal; goal730: 730-d goal
+goal_anchor: False          # paper encoding only: append the 9-d anchor term
+obs_dim: 93                 # 93, or 99 with the reference torso orientation
+velocity_tracking: False    # add the velocity-command encoder and its critic
+critic_features: root4      # root4 or body_error
+input_norm: none            # none or running (per-feature running statistics)
+wm_state_loss: paper        # paper, scaled or running
+termination_bias_init: null

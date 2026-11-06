@@ -12,251 +12,266 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Control plane of SuperMimic training.
+
+The env, rollout and actor workers of one rank exchange every control step
+point to point (see :class:`SuperMimicEnvWorker`). This runner decides how
+many steps to collect before the next update, launches the three workers
+for those steps, runs the owed updates on the actor, syncs the policy to
+the rollout workers, and handles logging, evaluation and checkpoints.
+"""
+
 from __future__ import annotations
 
-import math
+import json
 import os
-from typing import Any
+import re
+import time
+from typing import TYPE_CHECKING
 
 from omegaconf import DictConfig
 
+from rlinf.envs.sim.g1_mimic.eval_metrics import summarize_rows
+from rlinf.runners.embodied_runner import EmbodiedRunner
+from rlinf.runners.supermimic_eval_runner import (
+    eval_export_dir,
+    export_eval_results,
+    merge_rank_rows,
+)
+from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
-from rlinf.utils.logging import get_logger
-from rlinf.utils.metric_logger import MetricLogger
-from rlinf.workers.supermimic.checkpoint import find_latest_checkpoint
 
-# Per-rank counts that add up to a global count.
-_SUM_KEYS = {"env_transitions", "buffer/valid_windows", "sim/episodes_finished"}
-# Counters every rank advances in lockstep; rank 0's value is the global one.
-_SHARED_KEYS = {
-    "train/global_update",
-    "sim_vector_steps",
-    "wm_optimizer_steps",
-    "actor_optimizer_steps",
-    "critic_optimizer_steps",
-    "train/nonfinite_skips",
-    "train/param_divergence",
-}
-_LOG_EVERY = 100
+if TYPE_CHECKING:
+    from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
+        EmbodiedSuperMimicFSDPPolicy,
+    )
+    from rlinf.workers.env.supermimic_env_worker import SuperMimicEnvWorker
+    from rlinf.workers.rollout.hf.supermimic_rollout_worker import (
+        SuperMimicRolloutWorker,
+    )
+
+_RUNNER_STATE = "runner_state.json"
 
 
-def report_training_step(step: int, total: int, every: int = _LOG_EVERY) -> bool:
-    """Whether this update is printed. Every ``every`` updates, and the last one.
+class SuperMimicRunner(EmbodiedRunner):
+    """Collect, update and sync at ``algorithm.updates_per_env_step``.
 
-    A run of 278 updates prints 100, 200 and 278. Update 0 stays in TensorBoard
-    only.
+    Every control step adds ``updates_per_env_step`` owed updates. Collection
+    stops at the first step that makes an update due, the due updates run,
+    and the new policy goes to the rollout workers before collection resumes.
     """
-    if step <= 0:
-        return False
-    if step >= total:
-        return True
-    return every > 0 and step % every == 0
 
+    def __init__(
+        self,
+        cfg: DictConfig,
+        actor: EmbodiedSuperMimicFSDPPolicy,
+        rollout: SuperMimicRolloutWorker,
+        env: SuperMimicEnvWorker,
+        reward=None,
+    ):
+        if reward is not None:
+            raise ValueError("SuperMimic computes its rewards in the env worker.")
+        super().__init__(cfg, actor=actor, rollout=rollout, env=env)
+        self.updates_per_env_step = float(cfg.algorithm.updates_per_env_step)
+        self.warmup_steps = int(cfg.algorithm.warmup_sim_steps)
+        self.owed_updates = 0.0
+        self.env_steps = 0
 
-def aggregate_rank_metrics(
-    per_rank: list[dict[str, float]], per_rank_detail: bool = False
-) -> dict[str, float]:
-    """Merge one metrics dict per rank into global metrics.
+    # ----------------------------------------------------------- checkpoints
 
-    Counts are summed, lockstep counters taken from rank 0, times and
-    memory reported as the slowest or largest rank, and losses and rates
-    averaged over the ranks that produced a finite value. Each rank holds
-    the same number of envs, so the mean of rates is the global rate.
-    """
-    if len(per_rank) == 1:
-        return dict(per_rank[0])
-    keys: list[str] = []
-    for metrics in per_rank:
-        keys.extend(key for key in metrics if key not in keys)
-    merged: dict[str, float] = {}
-    for key in keys:
-        values = [float(m[key]) for m in per_rank if key in m]
-        if key in _SHARED_KEYS:
-            merged[key] = float(per_rank[0].get(key, values[0]))
-        elif key in _SUM_KEYS:
-            merged[key] = sum(values)
-        elif key.startswith(("time/", "memory/")):
-            merged[key] = max(values)
-        else:
-            finite = [v for v in values if math.isfinite(v)]
-            merged[key] = sum(finite) / len(finite) if finite else float("nan")
-    if "memory/host_rss" in keys:
-        merged["memory/host_rss_total"] = sum(
-            float(m.get("memory/host_rss", 0.0)) for m in per_rank
-        )
-    merged["train/world_size"] = float(len(per_rank))
-    if per_rank_detail:
-        for rank, metrics in enumerate(per_rank):
-            for key, value in metrics.items():
-                merged[f"rank_{rank}/{key}"] = float(value)
-    return merged
-
-
-class SuperMimicRunner:
-    """Sequence worker training phases, logging, checkpoints and evaluation."""
-
-    def __init__(self, cfg: DictConfig, worker: Any):
-        self.cfg = cfg
-        self.worker = worker
-        self.logger = None
-        self.metric_logger = MetricLogger(cfg)
-        self.global_step = 0
-        self.max_steps = int(cfg.algorithm.total_updates)
-
-    def _logger(self):
-        if self.logger is None:
-            self.logger = get_logger()
-        return self.logger
-
-    def checkpoint_root(self) -> str:
-        """Directory that holds this run's ``global_step_<N>`` checkpoints."""
+    def _checkpoint_root(self) -> str:
         return os.path.join(
-            self.cfg.runner.logger.log_path, self.cfg.runner.logger.experiment_name
+            self.cfg.runner.logger.log_path,
+            self.cfg.runner.logger.experiment_name,
+            "checkpoints",
         )
+
+    def _latest_checkpoint(self) -> str | None:
+        """Newest ``global_step_<N>`` whose runner state was written last."""
+        root = self._checkpoint_root()
+        if not os.path.isdir(root):
+            return None
+        steps = [
+            int(match.group(1))
+            for name in os.listdir(root)
+            if (match := re.fullmatch(r"global_step_(\d+)", name))
+            and os.path.isfile(os.path.join(root, name, _RUNNER_STATE))
+        ]
+        return os.path.join(root, f"global_step_{max(steps)}") if steps else None
 
     def init_workers(self) -> None:
-        """Initialize every rank and resume from ``runner.resume_dir`` when set."""
-        self.worker.init_worker().wait()
+        rollout_handle = self.rollout.init_worker()
+        env_handle = self.env.init_worker()
+        rollout_handle.wait()
+        env_handle.wait()
+        self.actor.init_worker().wait()
+
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir == "auto":
-            resume_dir = find_latest_checkpoint(self.checkpoint_root())
+            resume_dir = self._latest_checkpoint()
             if resume_dir is None:
-                self._logger().info(
-                    f"resume_dir=auto: no complete checkpoint under "
-                    f"{self.checkpoint_root()}, starting from scratch"
+                self.logger.info(
+                    "resume_dir=auto found no complete checkpoint under "
+                    f"{self._checkpoint_root()}; starting from scratch."
                 )
-        if resume_dir:
-            self._logger().info(
-                "Resuming SuperMimic networks, optimizers, reset bins and RNG from "
-                f"{resume_dir}. Replay and simulator state are not saved; the run "
-                "warms a new replay first, so this is not an exact restore."
-            )
-            self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
-            self.worker.load_checkpoint(resume_dir).wait()
+        if not resume_dir:
+            return
+        self.logger.info(
+            f"Resuming from {resume_dir}. Networks, optimizers, reset bins and RNG "
+            "are restored; the replay and simulator state are not saved, so the "
+            "run refills the replay before its next update."
+        )
+        self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
+        self.actor.load_checkpoint(os.path.join(resume_dir, "actor")).wait()
+        self.env.load_checkpoint(os.path.join(resume_dir, "env")).wait()
+        with open(os.path.join(resume_dir, _RUNNER_STATE)) as file:
+            state = json.load(file)
+        self.owed_updates = float(state["owed_updates"])
+        self.env_steps = int(state["env_steps"])
 
-    def evaluate(self) -> dict:
-        # Ranks hold identical weights; rank 0 covers every clip and the
-        # other ranks return nothing.
-        """Evaluate on rank 0 and return its metrics."""
-        metrics = self.worker.evaluate().wait()[0]
+    def _save_checkpoint(self) -> None:
+        self.logger.info(f"Saving checkpoint at step {self.global_step}.")
+        base = os.path.join(self._checkpoint_root(), f"global_step_{self.global_step}")
+        actor_path = os.path.join(base, "actor")
+        os.makedirs(actor_path, exist_ok=True)
+        actor_handle = self.actor.save_checkpoint(actor_path, self.global_step)
+        env_handle = self.env.save_checkpoint(os.path.join(base, "env"))
+        actor_handle.wait()
+        env_handle.wait()
+        state = {"owed_updates": self.owed_updates, "env_steps": self.env_steps}
+        with open(os.path.join(base, _RUNNER_STATE), "w") as file:
+            json.dump(state, file, indent=2)
+
+    # -------------------------------------------------------------- training
+
+    def _collect(self, num_steps: int) -> tuple[float, Handle, Handle, Handle]:
+        """Run ``num_steps`` control steps on every rank.
+
+        Returns the replay windows summed over ranks and the three handles.
+        """
+        env_handle = self.env.collect(num_steps)
+        rollout_handle = self.rollout.serve(num_steps)
+        actor_handle = self.actor.ingest(num_steps)
+        windows = sum(result["buffer/valid_windows"] for result in actor_handle.wait())
+        env_handle.wait()
+        rollout_handle.wait()
+        self.env_steps += num_steps
+        return windows, env_handle, rollout_handle, actor_handle
+
+    def _steps_until_update(self) -> tuple[int, float]:
+        """Control steps until an update is due, and the owed count by then."""
+        steps, owed = 0, self.owed_updates
+        while True:
+            steps += 1
+            owed += self.updates_per_env_step
+            if owed >= 1.0:
+                return steps, owed
+
+    def evaluate(self) -> dict[str, float]:
+        meta = self.env.eval_metadata().wait()[0]
+        env_handle = self.env.evaluate(
+            input_channel=self.env_channel, rollout_channel=self.rollout_channel
+        )
+        rollout_handle = self.rollout.evaluate(
+            input_channel=self.rollout_channel, output_channel=self.env_channel
+        )
+        rows = merge_rank_rows(env_handle.wait())
+        rollout_handle.wait()
+        metrics, tables, nested = summarize_rows(rows, meta)
+        out_dir = eval_export_dir(self.cfg, self.global_step)
+        if out_dir is not None:
+            export_eval_results(out_dir, self.cfg, meta, metrics, tables, nested)
         return metrics
 
-    def _iteration(self) -> dict:
-        collected = self.worker.collect().wait()
-        per_rank = [metrics for metrics, _ in collected]
-        ready = {int(count) for _, count in collected}
-        if len(ready) != 1:
-            raise RuntimeError(f"ranks disagree on ready update count: {sorted(ready)}")
-        updates = min(ready.pop(), self.max_steps - self.global_step)
+    def run(self) -> None:
+        start_step = self.global_step
+        start_time = time.time()
+        self.update_rollout_weights()
+        if self.global_step < self.max_steps and self.warmup_steps > 0:
+            # Warmup only fills the replay: it owes no updates and is not logged.
+            self._collect(self.warmup_steps)
+            self.env.consume_metrics().wait()
+            for group in (self.env, self.rollout, self.actor):
+                group.pop_execution_times().wait()
 
-        def merge(result):
-            for metrics, phase_metrics in zip(per_rank, result.wait(), strict=True):
-                if phase_metrics:
-                    metrics.update(phase_metrics)
-
-        for index in range(updates):
-            merge(self.worker.fit_world_model())
-            actor_updated = self.global_step + index >= int(
-                self.cfg.algorithm.get("wm_only_updates", 0)
-            )
-            for metrics in per_rank:
-                metrics["train/wm_only"] = 0.0 if actor_updated else 1.0
-            if actor_updated:
-                self.worker.imagine_motion().wait()
-                merge(self.worker.train_motion_actor())
-                merge(self.worker.train_motion_critic())
-                if bool(self.cfg.algorithm.get("velocity_tracking", False)):
-                    self.worker.imagine_velocity().wait()
-                    merge(self.worker.train_velocity_actor())
-                    self.worker.train_velocity_critic().wait()
-            self.worker.finish_update(actor_updated).wait()
-        merge(self.worker.training_metrics(updated=updates > 0))
-        return aggregate_rank_metrics(
-            per_rank, bool(self.cfg.runner.get("log_per_rank_metrics", False))
-        )
-
-    def shutdown(self) -> None:
-        """Release every rank's resources; a failure is logged, not raised."""
-        try:
-            self.worker.shutdown().wait()
-        except Exception as error:  # a failed rank must not hide the first error
-            self._logger().warning(f"SuperMimic worker shutdown failed: {error}")
-
-    def save(self, *, force: bool = False) -> None:
-        """Write one checkpoint. ``force`` is the final update.
-
-        ``save_interval <= 0`` skips periodic checkpoints. The last update
-        is still written, so a finished run has a model to resume from.
-        """
-        interval = int(self.cfg.runner.get("save_interval", -1))
-        if interval <= 0 and not force:
-            return
-        directory = os.path.join(
-            self.checkpoint_root(), f"global_step_{self.global_step}"
-        )
-        self.worker.save_checkpoint(directory).wait()
-
-    def run(self) -> dict:
-        """Train (or only evaluate) to the end, then shut down and close the logger.
-
-        Returns:
-            The metrics of the last iteration or of the evaluation.
-        """
-        try:
-            return self._run()
-        finally:
-            self.shutdown()
-            self.metric_logger.finish()
-
-    def _run(self) -> dict:
-        if self.cfg.runner.get("only_eval", False):
-            metrics = self.evaluate()
-            self.metric_logger.log(metrics, step=self.global_step)
-            self._logger().info(f"supermimic eval {metrics}")
-            return metrics
-        # Imported here so only_eval does not load the Ray worker.
-        from rlinf.utils.runner_utils import check_progress
-
-        if self.global_step < self.max_steps:
-            self.worker.warmup().wait()
-        last = {}
-        first = True
         while self.global_step < self.max_steps:
-            last = self._iteration()
-            updated = int(last.get("train/global_update", self.global_step))
-            # UTD can collect several times before global_update moves.
-            # Save and eval run once, on the iteration that advances it.
-            # Update 0 is not a completed training update. TensorBoard records
-            # it; the terminal line waits for the 100-update marks and the end.
-            advanced = updated != self.global_step
-            # TensorBoard still records every update. The terminal line is
-            # every 100 updates, and also the last update when it is not a
-            # multiple of 100.
-            show = report_training_step(updated, self.max_steps)
-            if (advanced or (first and self.global_step == 0)) and show:
-                self._logger().info(f"supermimic metrics {last}")
-            if advanced or (first and self.global_step == 0):
-                self.metric_logger.log(last, step=updated)
-            first = False
-            self.global_step = updated
-            if not advanced or updated <= 0:
-                continue
-            # Like the embodied runner: evaluate every val_check_interval
-            # updates and on the last one, when evaluation is enabled.
-            run_val, save_model, train_end = check_progress(
-                min(self.global_step, self.max_steps),
-                self.max_steps,
-                int(self.cfg.runner.get("val_check_interval", -1)),
-                int(self.cfg.runner.get("save_interval", -1)),
-                1.0,
+            step = self.global_step
+            with self.timer("step"):
+                with self.timer("generate_rollouts"):
+                    ready = 0
+                    while ready == 0:
+                        steps, self.owed_updates = self._steps_until_update()
+                        windows, env_handle, rollout_handle, _ = self._collect(steps)
+                        if windows > 0:
+                            ready = min(int(self.owed_updates), self.max_steps - step)
+                    env_metrics = self.env.consume_metrics().wait()[0]
+                with self.timer("actor_training"):
+                    actor_handle = self.actor.run_updates(ready, step)
+                    training_metrics = actor_handle.wait()
+                self.owed_updates -= ready
+                self.global_step += ready
+                with self.timer("sync_weights"):
+                    self.update_rollout_weights()
+                last_step = self.global_step - 1
+                eval_metrics = self._maybe_eval_and_checkpoint(last_step)
+            self._log_iteration(
+                last_step,
+                start_time,
+                start_step,
+                (env_handle, rollout_handle, actor_handle),
+                env_metrics,
+                training_metrics,
+                eval_metrics,
             )
-            # One save on an update that is both periodic and final.
-            if train_end:
-                self.save(force=True)
-            elif save_model:
-                self.save()
-            if run_val:
-                eval_metrics = self.evaluate()
-                self._logger().info(f"supermimic eval {eval_metrics}")
-                self.metric_logger.log(eval_metrics, step=self.global_step)
-        return last
+        self._finish_run()
+
+    def _log_iteration(
+        self,
+        step: int,
+        start_time: float,
+        start_step: int,
+        handles: tuple[Handle, Handle, Handle],
+        env_metrics: dict[str, float],
+        training_metrics: list[dict],
+        eval_metrics: dict[str, float],
+    ) -> None:
+        time_metrics = {
+            f"time/{key}": value
+            for key, value in self.timer.consume_durations().items()
+        }
+        for name, handle, group in zip(
+            ("env", "rollout", "actor"),
+            handles,
+            (self.env, self.rollout, self.actor),
+            strict=True,
+        ):
+            durations, per_rank = handle.consume_durations(return_per_rank=True)
+            time_metrics.update({f"time/{name}/{k}": v for k, v in durations.items()})
+            self._log_ranked_metrics(
+                metrics_list=per_rank,
+                step=step,
+                prefix=f"time/{name}",
+                worker_group_name=group.worker_group_name,
+            )
+        env_metrics = {f"env/{key}": value for key, value in env_metrics.items()}
+        env_metrics["env/env_steps"] = float(self.env_steps)
+        self._log_ranked_metrics(
+            metrics_list=training_metrics,
+            step=step,
+            prefix="train",
+            worker_group_name=self.actor.worker_group_name,
+        )
+        training_metrics = {
+            f"train/{key}": value
+            for key, value in self._aggregate_numeric_metrics(training_metrics).items()
+        }
+        self.metric_logger.log(env_metrics, step)
+        self.metric_logger.log(time_metrics, step)
+        self.metric_logger.log(training_metrics, step)
+        self.print_metrics_table_async(
+            step,
+            self.max_steps,
+            start_time,
+            {**time_metrics, **eval_metrics, **env_metrics, **training_metrics},
+            start_step,
+        )

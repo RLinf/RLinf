@@ -27,7 +27,6 @@ from omegaconf.dictconfig import DictConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
 import rlinf.robotics.robots  # noqa: F401
-from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
@@ -136,6 +135,7 @@ SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+SupportedModel.SUPERMIMIC = SupportedModel.register("supermimic", force=True)
 
 DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
@@ -169,6 +169,7 @@ EMBODIED_MODEL = set(
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
         SupportedModel.EVO1,
+        SupportedModel.SUPERMIMIC,
     }
 )
 
@@ -182,7 +183,6 @@ SUPPORTED_TASK_TYPE = [
     "coding_online_rl",
     "sft",
     "offline",
-    "supermimic",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -1673,6 +1673,10 @@ def validate_embodied_cfg(cfg):
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
 
+    if model_type == SupportedModel.SUPERMIMIC:
+        from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
+
+        validate_supermimic_cfg(cfg, only_eval=only_eval)
     validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
@@ -2107,12 +2111,6 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_sft_cfg(cfg)
     elif cfg.runner.task_type == "offline":
         cfg = validate_offline_cfg(cfg)
-    elif cfg.runner.task_type == "supermimic":
-        # No actor/rollout backends to check. Batch sizes split over ranks.
-        world_size = HybridComponentPlacement(cfg, Cluster()).get_world_size(
-            "supermimic"
-        )
-        return validate_supermimic_cfg(cfg, world_size=world_size)
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
         if adv_requires_group_baseline(

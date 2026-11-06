@@ -55,15 +55,15 @@ CLI 参考
 SuperMimic 评测
 ---------------
 
-SuperMimic 的独立单卡评测入口使用 ``eval.checkpoint`` 和 ``eval.output_dir``。动作与速度用 ``eval_supermimic.py``，``supermimic_push_recovery`` 用 ``eval_supermimic_push.py``。评测主训练配置时运行：
+SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运行。用 ``runner.ckpt_path`` 指定检查点中的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果表格的目录。评测主训练配置时运行：
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
-       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1_zita \
-       eval.output_dir=/data/runs/lafan1/eval
+   bash evaluations/run_eval.sh supermimic_lafan1_goal730_eval \
+       runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=/data/runs/lafan1/eval
 
-该命令评测指定目录中的最新完整检查点。模型覆盖项和协议定义见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节。
+权重旁边的 ``supermimic_interface.json`` 必须与配置一致。其他变体的覆盖项和协议定义见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节。
 
 配置回退
 --------

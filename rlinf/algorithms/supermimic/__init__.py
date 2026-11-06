@@ -16,5 +16,6 @@
 
 Networks live in ``rlinf.models.embodiment.supermimic``. The G1 simulator,
 reference motion, and reward live in ``rlinf.envs.sim.g1_mimic``; the
-training loop in ``rlinf.workers.supermimic``.
+training phases in
+:class:`~rlinf.workers.actor.fsdp_supermimic_policy_worker.EmbodiedSuperMimicFSDPPolicy`.
 """

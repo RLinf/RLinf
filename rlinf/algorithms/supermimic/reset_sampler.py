@@ -31,17 +31,12 @@ the command, not on the reference point, so they start from ``sample_uniform``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import torch
+import torch.distributed as dist
 
 from rlinf.envs.sim.g1_mimic.constants import EPISODE_TIMEOUT
 
-if TYPE_CHECKING:
-    from rlinf.workers.supermimic.distributed import DataParallel
-
-
-BIN_FRAMES = 50
+RESET_BIN_FRAMES = 50
 UNIFORM_PROB = 0.5
 ADAPTIVE_PROB = 0.4
 MEMORY_PROB = 0.1
@@ -65,17 +60,17 @@ class BinResetSampler:
         self.device = device
         self.g_max = float(g_max)
         self.gamma = float(gamma)
-        self.bin_frames = BIN_FRAMES
+        self.bin_frames = RESET_BIN_FRAMES
         clips: list[int] = []
         starts: list[int] = []
         ends: list[int] = []
         bins_per_clip: list[int] = []
         for clip, length in enumerate(lengths.tolist()):
-            n_bins = max(1, (int(length) + BIN_FRAMES - 1) // BIN_FRAMES)
+            n_bins = max(1, (int(length) + RESET_BIN_FRAMES - 1) // RESET_BIN_FRAMES)
             bins_per_clip.append(n_bins)
             for bin_id in range(n_bins):
-                start = bin_id * BIN_FRAMES
-                end = min(int(length), start + BIN_FRAMES)
+                start = bin_id * RESET_BIN_FRAMES
+                end = min(int(length), start + RESET_BIN_FRAMES)
                 clips.append(clip)
                 starts.append(start)
                 ends.append(max(end, start + 1))
@@ -89,7 +84,7 @@ class BinResetSampler:
         flat = torch.full(
             (len(bins_per_clip), max_local), -1, dtype=torch.long, device=device
         )
-        local = self.bin_start // BIN_FRAMES
+        local = self.bin_start // RESET_BIN_FRAMES
         flat[self.bin_clip, local] = torch.arange(n, device=device)
         self._flat = flat
         self._bins_per_clip = torch.tensor(
@@ -246,19 +241,20 @@ class BinResetSampler:
             self.bin_return,
         )
 
-    def sync(self, dp: DataParallel) -> None:
-        """Pool this vector step's bin returns over ranks, then apply the EMA.
+    def sync(self, group: dist.ProcessGroup | None) -> None:
+        """Pool this vector step's bin returns over ``group``, then apply the EMA.
 
         The memory distribution is averaged over ranks, since each rank
-        advances it only when it draws a start.
+        advances it only when it draws a start. Every rank of ``group`` calls
+        this once per vector step.
         """
         if not self.deferred:
             return
         n = self.num_bins
         buf = torch.cat((self._pending_sum, self._pending_count, self.bin_memory))
-        dp.all_reduce_tensor(buf, op="sum")
+        dist.all_reduce(buf, op=dist.ReduceOp.SUM, group=group)
         self._apply_returns(buf[:n], buf[n : 2 * n])
-        self.bin_memory = buf[2 * n :] / float(dp.world_size)
+        self.bin_memory = buf[2 * n :] / float(dist.get_world_size(group))
         self._pending_sum.zero_()
         self._pending_count.zero_()
 

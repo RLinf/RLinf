@@ -1,65 +1,51 @@
-# Standing-pose push evaluation for the original 680-d goal / 93-d observation.
-# Policy overrides preserve its existing checkpoint interface.
+# Standing push recovery (Section 4.3) of a policy with the paper interface:
+# 680-d goal, 93-d observation, root4 critic and no input normalization.
+# Set runner.ckpt_path to the policy's full_weights.pt.
 defaults:
-- supermimic_lafan1_zita
-- _self_
+  - supermimic_lafan1_goal730
+  - _self_
+
 hydra:
   run:
     dir: .
   output_subdir: null
   searchpath:
-  - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:EMBODIED_PATH}/config/
+
 runner:
+  task_type: embodied_eval
+  only_eval: True
+  ckpt_path: null
   logger:
-    log_path: ../results/eval/${runner.logger.experiment_name}
+    log_path: ../results/eval
     experiment_name: supermimic_push_recovery
-  only_eval: true
-  save_interval: -1
+  eval_export:
+    enabled: True
+    output_dir: null         # default: <log_path>/<experiment_name>/eval_results
+
 algorithm:
-  total_updates: 320000
-  warmup_sim_steps: 40
-  wm_only_updates: 0
   reward_anchor: torso
-  input_norm: none
   residual_frame: heading
-  wm_state_loss: paper
-  critic_features: root4
-  matmul: tf32
-  goal_encoding: paper
-  obs_dim: 93
-  goal_frame_dim: 68
   termination_head: learned
+
+rollout:
+  model: ${actor.model}
+
+actor:
+  model:
+    goal_encoding: paper
+    obs_dim: 93
+    critic_features: root4
+    input_norm: none
+    wm_state_loss: paper
+  fsdp_config:
+    amp_autocast:
+      enabled: False
+
 env:
-  num_envs: 1
-  motion_path: static_standing
-  com_sampling: per_reset
-eval:
-  checkpoint: null
-  seed: 0
-  motion: false
-  velocity: none
-  velocity_smoke_seconds: 10.0
-  velocity_smoke_start_clip: 0
-  velocity_smoke_commands: null
-  g2_trials: 4
-  g2_seconds: 5.0
-  g2_steady_seconds: 2.0
-  g2_batch: 448
-  output_dir: null
-  speeds:
-  - 0.5
-  - 1.0
-  - 2.0
-  - 4.0
-  direction: random
-  frame: world
-  push_mode: add
-  trials: 4
-  settle_seconds: 1.0
-  max_seconds: 5.0
-  speed_threshold: 0.15
-  tilt_threshold: 0.35
-  torso_ori_threshold: 0.5
-  stable_seconds: 0.5
-  max_xy_drift: null
-  save_trajectory: false
+  eval:
+    # 4 speeds x 4 trials, one trial per env.
+    total_num_envs: 16
+    eval_tasks: [push_recovery]
+    # 1 s settle + 5 s after the push.
+    max_steps_per_rollout_epoch: 300

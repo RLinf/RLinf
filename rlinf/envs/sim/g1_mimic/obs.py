@@ -39,8 +39,8 @@ def relative_root_ori_6d(
 ) -> torch.Tensor:
     """``Rot6D(R_robot^T R_reference)`` at the same time index.
 
-    zita-ch appends this 6-d heading to the 93-d proprioception. It is a
-    function of the robot root, so imagination can differentiate it.
+    The 99-d observation appends this 6-d term to the 93-d proprioception. It
+    is a function of the robot root, so imagination can differentiate it.
     """
     robot = quat_to_rotmat(robot_quat)
     ref = quat_to_rotmat(ref_quat)
@@ -108,6 +108,40 @@ def add_sensor_noise(obs: torch.Tensor, enabled: bool) -> torch.Tensor:
     # and is left at zero: Table A.1 does not define noise for it.
     unit = torch.rand_like(obs) * 2.0 - 1.0
     return obs + unit * span
+
+
+class RollingHistory:
+    """Last ``HISTORY_LEN`` observation frames per env, ``[N, 10, D]``.
+
+    ``fill`` repeats one frame over the window, so a reset shares a single
+    noise sample. ``push`` drops the oldest frame and keeps the stored ones
+    as they were. ``push`` builds a new tensor, so a frame handed out by
+    ``flat`` or ``last`` is not changed by later pushes.
+    """
+
+    def __init__(self, first: torch.Tensor):
+        self.frames = first.unsqueeze(1).expand(-1, HISTORY_LEN, -1).clone()
+
+    @property
+    def length(self) -> int:
+        """Number of frames kept (10)."""
+        return int(self.frames.shape[1])
+
+    def flat(self) -> torch.Tensor:
+        """History flattened to ``[num_envs, 10 * obs_dim]``."""
+        return self.frames.reshape(self.frames.shape[0], -1)
+
+    def last(self) -> torch.Tensor:
+        """Newest frame of every env, ``[num_envs, obs_dim]``."""
+        return self.frames[:, -1]
+
+    def push(self, frame: torch.Tensor) -> None:
+        """Append one frame per env and drop the oldest."""
+        self.frames = torch.cat((self.frames[:, 1:], frame.unsqueeze(1)), dim=1)
+
+    def fill(self, env_ids: torch.Tensor, frame: torch.Tensor) -> None:
+        """Fill the whole history of ``env_ids`` with one frame, as after a reset."""
+        self.frames[env_ids] = frame.unsqueeze(1).expand(-1, self.length, -1)
 
 
 def pad_history(frames: list[torch.Tensor]) -> torch.Tensor:

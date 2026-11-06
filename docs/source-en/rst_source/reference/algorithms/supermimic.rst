@@ -41,12 +41,13 @@ centre-of-mass offset):
    \hat s_{t+1} = \hat s_t \oplus f_\omega(\phi(\hat s_t), a_t, \xi)
 
 where :math:`\oplus` adds the position residual in the heading frame and
-composes the rotation residual as a rotation vector. ``residual_frame:
-heading`` also adds linear velocity in that yaw frame and adds the angular
-residual to the stored body rate. ``body`` adds linear velocity in the full
-body frame and applies the angular increment to the world rate before
-storing the body rate again. The paper yaml sets ``heading``. Omitting the
-key selects ``body``. The last layer is zero, so the initial model predicts
+composes the rotation residual as a rotation vector.
+``algorithm.residual_frame: heading`` also adds linear velocity in that yaw
+frame and adds the angular residual to the stored body rate. ``body`` adds
+linear velocity in the full body frame and applies the angular increment to
+the world rate before storing the body rate again. The paper overrides select
+``heading``; the goal730 recipe sets ``body``. The last layer is zero, so the
+initial model predicts
 no change. It is fit on autoregressive
 windows seeded at a logged state and rolled forward on logged actions
 (Eq. 1):
@@ -56,12 +57,13 @@ windows seeded at a logged state and rolled forward on logged actions
    \mathcal{L}_{WM}(\omega) = \mathbb{E}_{\mathcal{B}} \sum_{j=1}^{k}
    \Big[ \| \hat s_j - s_j \|^2 + \mathrm{BCE}(\hat d_j, d_j) \Big]
 
-``algorithm.wm_state_loss: paper`` leaves the state error unweighted.
+``actor.model.wm_state_loss: paper`` leaves the state error unweighted.
 ``scaled`` divides each block by a fixed scale. ``running`` writes the 70-d
 error in the true next state's frame, divides by the running standard
 deviation of one-step residual targets (with a per-component floor), and
-averages over the 70 components. The paper yaml sets ``paper``. Omitting
-the key selects ``running``. For ``paper`` and ``scaled``, rotation is
+averages over the 70 components. ``paper`` is the model default and the paper
+overrides' choice; the goal730 recipe sets ``running``. For ``paper`` and
+``scaled``, rotation is
 still :math:`\log(R_{pred} R_{target}^\top)`, because the stored root
 orientation is a quaternion. ``running`` uses
 :math:`\log(R_{true}^\top R_{pred})` in that same 70-d error. Reward and
@@ -75,9 +77,10 @@ is 1 only for a tracking failure.
 
 With velocity tracking and a learned termination head, state loss is
 averaged over all sampled motion and velocity rows, while termination BCE
-is averaged over motion rows only. Distributed training uses the respective
-global row counts for these two means. A batch with no motion rows
-contributes no BCE; ranks with no local samples still join the reductions.
+is averaged over motion rows only. With several actor ranks, each rank weights
+these two means by its share of the global row counts before FSDP reduces the
+gradients. A batch with no motion rows contributes no BCE; ranks with no
+local samples still join the reductions.
 
 Actor objective
 ---------------
@@ -103,7 +106,7 @@ Critic and GAE
 The critic defaults to :math:`V_\psi(s, g, \xi)` plus a 4-d root error. It is
 fit to GAE returns computed backward over the same imagined trajectory
 (Eq. 3), starting from :math:`\hat R_H = V_H`.
-``algorithm.critic_features: zita`` uses zita-ch's features instead:
+``actor.model.critic_features: body_error`` uses zita-ch's feature set instead:
 the heading-invariant state, joint error, 14 body-position errors, a 3-d
 root position error, a 6-d relative orientation, :math:`\xi`, and the goal.
 
@@ -153,7 +156,8 @@ error against :math:`m_{t+1}`. Starting the 680-d window at the current frame
 is this implementation's choice; both conventions are self-consistent, but
 the policy sees one frame less of the future. The 730-d goal keeps zita-ch's
 :math:`m_{t+1} .. m_{t+10}`. Checkpoints record the window in
-``checkpoint_meta.json`` and refuse to load into a config with another one.
+``supermimic_interface.json`` and refuse to load into a config with another
+one.
 
 Reward
 ------
@@ -166,8 +170,8 @@ smoothness, and joint limits. The root terms stay in the world frame, and
 the body pose terms move the reference onto the anchor body's xy position
 and yaw, so global drift stays in the root terms. Body velocities are
 compared in the world frame. ``algorithm.reward_anchor: torso`` anchors on
-``torso_link``; ``pelvis`` anchors on the pelvis. The paper yaml writes
-``torso``. Omitting the key selects ``pelvis``. ``termination_body`` still
+``torso_link``; ``pelvis`` anchors on the pelvis. The paper overrides select
+``torso``; the goal730 recipe sets ``pelvis``. ``termination_body`` still
 chooses the failure body.
 
 Return-based reset sampling
@@ -218,12 +222,12 @@ Paper, community, and implementation choices
      - not specified
      - 71-d state, scaled residual, explicit integration
      - 71-d, other frames
-     - 71-d; ``heading`` or ``body``. The paper config writes ``heading``
+     - 71-d; ``heading`` or ``body``. The paper overrides select ``heading``
    * - World-model state loss
      - :math:`\|\hat s - s\|^2`
      - per-block scales
      - divided by a running std
-     - ``paper`` / ``scaled`` / ``running``. The paper config writes ``paper``
+     - ``paper`` / ``scaled`` / ``running``. The paper overrides select ``paper``
    * - 680-d goal window
      - ten future frames
      - :math:`m_{t+1}..m_{t+10}`
@@ -243,7 +247,7 @@ Paper, community, and implementation choices
      - BeyondMimic
      - torso
      - pelvis
-     - ``torso`` or ``pelvis``. The paper config writes ``torso``
+     - ``torso`` or ``pelvis``. The paper overrides select ``torso``
    * - Termination head
      - learned or analytic
      - learned
@@ -253,7 +257,7 @@ Paper, community, and implementation choices
      - not specified
      - fixed scales
      - running normalization
-     - ``none`` or ``running``. The paper config writes ``none``
+     - ``none`` or ``running``. The paper overrides select ``none``
    * - Reference velocity
      - not specified
      - central difference
@@ -275,28 +279,41 @@ and zita-ch (`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vi
 are community reproductions used as design references; no code was copied
 from them. The table describes their ``main`` branches as consulted during
 development; no commit was recorded, so later changes in those repositories
-take precedence over this table. ``supermimic_lafan1_zita`` trains with the
-730-d goal, the 99-d observation, the analytic termination head, 500
-world-model-only updates, the pelvis reward anchor, running input
+take precedence over this table. The ``supermimic_lafan1_goal730`` recipe
+trains with the 730-d goal, the 99-d observation, the analytic termination
+head, 500 world-model-only updates, the pelvis reward anchor, running input
 normalization, the body-frame residual, and a state loss divided by the
-running residual standard deviation. Its critic uses zita-ch's extra
-features. The simulator is mjlab. Omitting those four keys also selects
-zita-ch. The paper overrides in the usage guide select ``torso``, ``none``, ``heading`` and ``paper``.
+running residual standard deviation. Its critic uses the ``body_error``
+features. The simulator is mjlab. The paper overrides in the usage guide
+select ``torso``, ``none``, ``heading`` and ``paper`` for those four keys.
 
 Implementation Entry Points
 ---------------------------
 
-The training entry is ``examples/embodiment/train_supermimic.py``. Its
-core components are:
+Training starts from ``examples/embodiment/train_embodied_agent.py`` and
+evaluation from ``evaluations/eval_embodied_agent.py``; both pick the
+SuperMimic runners when ``algorithm.loss_type`` is ``supermimic``.
 
-* Models: ``rlinf/models/embodiment/supermimic.py``.
-* Runner: ``rlinf/runners/supermimic_runner.py``.
-* Worker: ``rlinf/workers/supermimic/worker.py``.
-* Objectives, replay and reset sampling: ``rlinf/algorithms/supermimic/``.
-* Simulation, motion and rewards: ``rlinf/envs/sim/g1_mimic/``.
+* Runners: ``rlinf/runners/supermimic_runner.py`` (training control plane)
+  and ``rlinf/runners/supermimic_eval_runner.py`` (evaluation and result
+  export).
+* Env worker: ``rlinf/workers/env/supermimic_env_worker.py`` steps the
+  simulator and streams transitions to the actor.
+* Rollout worker: ``rlinf/workers/rollout/hf/supermimic_rollout_worker.py``
+  serves actions and bootstrap values from the synced policy.
+* Actor worker: ``rlinf/workers/actor/fsdp_supermimic_policy_worker.py``
+  holds the replay and runs the world-model, actor and critic phases under
+  FSDP2.
+* Policy and networks: ``rlinf/models/embodiment/supermimic/``.
+* Objectives, replay, reset sampling and training scans:
+  ``rlinf/algorithms/supermimic/``.
+* Simulation, motion, rewards and evaluation tasks:
+  ``rlinf/envs/sim/g1_mimic/`` (``g1_mimic_env.py`` for training,
+  ``g1_mimic_eval_env.py`` and ``eval_metrics.py`` for evaluation).
 
-The runner sequences training phases across workers. Each GPU has one
-worker holding its simulator, replay, models and optimizers.
+The runner owns the update budget and orders collection, updates, weight
+sync, evaluation and checkpoints. Rank :math:`r` of the env, rollout and
+actor groups exchange data only with each other.
 
 Known limitations
 -----------------
@@ -307,7 +324,7 @@ Known limitations
   few imagined steps until the head has seen a few hundred world-model steps.
   Failures are about 0.3% of the logged transitions; in short runs the head
   learned the base rate first and gave lower probabilities to large errors
-  than to small ones. ``algorithm.termination_bias_init`` (for example -4.6,
+  than to small ones. ``actor.model.termination_bias_init`` (for example -4.6,
   a 1% prior) and ``algorithm.termination_head: analytic`` remove the cold
   start and, in short local runs, gave a correctly ordered head. Both are experimental; the retained main recipe selects the analytic head.
 * **The paper config has no input normalization.** Joint velocities reach
@@ -324,7 +341,9 @@ Known limitations
   against the §4.3 recovery times of a converged policy. A converter for the
   official BONES-SEED G1 CSV exists, and it has not been checked on a real
   release.
-* **Validation scope:** full training with the paper overrides, the paper's
-  two-GPU recipe and multi-node execution remain unvalidated. Historical
-  LAFAN1 results and hardware measurements are in the user guide's
-  :ref:`reported results <supermimic-reported-results>`.
+* **Validation scope:** the historical LAFAN1 results and hardware
+  measurements in the user guide's
+  :ref:`reported results <supermimic-reported-results>` come from the earlier
+  single-process implementation and have not been rerun on the current
+  workers. Full training with the paper overrides, the paper's two-GPU recipe
+  and multi-node execution remain unvalidated.

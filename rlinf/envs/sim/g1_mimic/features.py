@@ -135,7 +135,7 @@ def rotvec_to_quat(rotvec: torch.Tensor) -> torch.Tensor:
     return torch.cat((torch.cos(half), axis * torch.sin(half)), dim=-1)
 
 
-def quat_to_rotvec(q: torch.Tensor) -> torch.Tensor:
+def rotvec_from_quat(q: torch.Tensor) -> torch.Tensor:
     """Rotation vector of the shortest rotation a wxyz quaternion represents."""
     q = quat_normalize(q)
     # Shortest rotation: q and -q are the same attitude.
@@ -163,7 +163,7 @@ def so3_relative_rotvec(q_pred: torch.Tensor, q_target: torch.Tensor) -> torch.T
     ``atan2`` stays finite at a relative rotation of π (``w = 0``).
     """
     relative = quat_mul(quat_normalize(q_pred), quat_inv(q_target))
-    return quat_to_rotvec(relative)
+    return rotvec_from_quat(relative)
 
 
 def heading_yaw(quat: torch.Tensor) -> torch.Tensor:
@@ -218,12 +218,12 @@ def heading_invariant_features(state: torch.Tensor) -> torch.Tensor:
     return feat.squeeze(0) if squeezed else feat
 
 
-def normalize_xi(xi: torch.Tensor) -> torch.Tensor:
-    """zita-ch's fixed ξ scale: friction, joint offsets, then the torso CoM offset.
+def scale_context(xi: torch.Tensor) -> torch.Tensor:
+    """Bring each randomized context term to roughly unit range.
 
-    Running normalization sees this vector, not the raw context. Friction is
-    centered at 0.75 and divided by 0.45. Joint offsets are divided by 0.01.
-    The three CoM components are divided by 0.05.
+    The running input norms see this vector, not the raw context ξ. Friction
+    is centered at 0.75 and divided by 0.45, encoder offsets are divided by
+    0.01, and the three torso CoM offsets by 0.05.
     """
     return torch.cat(
         (
@@ -237,7 +237,7 @@ def normalize_xi(xi: torch.Tensor) -> torch.Tensor:
 
 def _body_rotvec(q_from: torch.Tensor, q_to: torch.Tensor) -> torch.Tensor:
     """``Log(R_from^T R_to)``, the body-frame rotation from ``q_from`` to ``q_to``."""
-    return quat_to_rotvec(quat_mul(quat_inv(q_from), q_to))
+    return rotvec_from_quat(quat_mul(quat_inv(q_from), q_to))
 
 
 def integrate_residual(
@@ -245,12 +245,11 @@ def integrate_residual(
 ) -> torch.Tensor:
     """Apply a 70-d residual. A zero residual leaves the state unchanged.
 
-    ``heading`` is this repository's integrator: position and linear velocity
-    live in the yaw frame, and the stored body-frame angular velocity is
-    incremented directly. ``body`` is zita-ch's integrator: position stays in
-    the yaw frame, while linear velocity and the world angular velocity are
-    incremented in the full body frame. Stored angular velocity remains the
-    body-frame value ``R^T ω_world``.
+    ``heading``: position and linear velocity live in the yaw frame, and the
+    stored body-frame angular velocity is incremented directly. ``body``:
+    position stays in the yaw frame, while linear velocity and the world
+    angular velocity are incremented in the full body frame. Stored angular
+    velocity remains the body-frame value ``R^T ω_world``.
     """
     if frame not in {"heading", "body"}:
         raise ValueError(f"residual frame must be heading or body, got {frame!r}")
@@ -334,8 +333,8 @@ def frame_local_error(
 ) -> torch.Tensor:
     """70-d error of ``pred`` against ``true``, in ``true``'s frame.
 
-    The layout matches :func:`residual_target`. zita-ch divides this vector by
-    the running standard deviation of those one-step targets.
+    The layout matches :func:`residual_target`. The ``running`` state loss
+    divides this vector by the running standard deviation of those targets.
     """
     if frame not in {"heading", "body"}:
         raise ValueError(f"residual frame must be heading or body, got {frame!r}")
@@ -372,7 +371,7 @@ def frame_local_error(
 
 
 def error_floor(like: torch.Tensor) -> torch.Tensor:
-    """Per-component floor on zita-ch's residual standard deviation, shape ``[70]``."""
+    """Per-component floor on the running residual std, shape ``[70]``."""
     floor = like.new_empty(RESIDUAL_DIM)
     floor[RES_POS] = 3e-3
     floor[RES_ROT] = 5e-3

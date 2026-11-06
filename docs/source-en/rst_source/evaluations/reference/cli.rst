@@ -55,20 +55,20 @@ Supported Benchmark Prefixes
 SuperMimic Evaluation
 ---------------------
 
-Use ``eval.checkpoint`` and ``eval.output_dir`` for SuperMimic's dedicated
-single-GPU evaluation entry. Motion and velocity use ``eval_supermimic.py``;
-``supermimic_push_recovery`` uses ``eval_supermimic_push.py``. For the main
-training recipe, run:
+SuperMimic configs run through ``eval_embodied_agent.py`` like the other
+benchmarks. Pass the checkpoint's ``full_weights.pt`` as ``runner.ckpt_path``;
+``runner.eval_export.output_dir`` chooses where the result tables go. For the
+main training recipe, run:
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh supermimic_lafan1_zita_eval \
-       eval.checkpoint=/data/runs/lafan1/supermimic_lafan1_zita \
-       eval.output_dir=/data/runs/lafan1/eval
+   bash evaluations/run_eval.sh supermimic_lafan1_goal730_eval \
+       runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=/data/runs/lafan1/eval
 
-The command evaluates the latest complete checkpoint in that directory.
-For matching model overrides and protocol definitions, see the Evaluate
-section of :doc:`SuperMimic <../../examples/embodied/supermimic>`.
+The ``supermimic_interface.json`` beside the weights must match the config.
+For the overrides of other variants and the protocol definitions, see the
+Evaluate section of :doc:`SuperMimic <../../examples/embodied/supermimic>`.
 
 Config Fallback
 ---------------

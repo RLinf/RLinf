@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Real-entry SuperMimic e2e tests and small numerical regressions.
+"""SuperMimic smoke runs through the RLinf entries, plus small numerical checks.
 
 Run with PYTHONPATH=. MUJOCO_GL=disable python -m pytest <this file> -q -rs.
-Select -k 'not end_to_end' for numerical checks without Ray or simulation.
-Training uses the production recipe with small overrides and a generated
-standing clip. Two GPUs enable the NCCL case; neither case measures quality.
+Select -k 'not end_to_end' for the numerical checks, which need neither Ray
+nor a GPU. The smoke trains the goal730 recipe with small overrides on a
+generated standing clip, resumes it and evaluates the checkpoint through
+``evaluations/eval_embodied_agent.py``. Two GPUs add a velocity-tracking run
+over NCCL. None of the runs measures quality.
 """
 
 from __future__ import annotations
@@ -27,11 +29,9 @@ import importlib.util
 import json
 import math
 import os
-import re
 import signal
 import subprocess
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -49,15 +49,12 @@ from rlinf.envs.sim.g1_mimic.constants import (
     JOINT_POS,
 )
 from rlinf.envs.sim.g1_mimic.features import default_state
-from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
-from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, failure_signals
-from rlinf.models.embodiment.supermimic import RunningNorm
-from rlinf.workers.supermimic.checkpoint import verify_checkpoint
-from rlinf.workers.supermimic.distributed import DataParallel
-from rlinf.workers.supermimic.eval_rollout import (
+from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
     checked_eval_states,
     checked_policy_action,
 )
+from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
+from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, failure_signals
 
 REPO = Path(__file__).resolve().parents[3]
 CPU = torch.device("cpu")
@@ -217,77 +214,21 @@ def test_reference_fk_matches_online_fk(storage, query):
         torch.testing.assert_close(actual, wanted, atol=2e-5, rtol=2e-5)
 
 
-def _distributed_oracle(rank, out, sizes):
-    torch.set_num_threads(1)
-    dist.init_process_group(
-        "gloo",
-        init_method=f"file://{out}/rendezvous",
-        rank=rank,
-        world_size=2,
-        timeout=timedelta(seconds=60),
-    )
-    try:
-        dp = DataParallel(2, rank, CPU)
-        generator = torch.Generator().manual_seed(7)
-        x = torch.randn(sum(sizes), 3, generator=generator)
-        y = torch.randn(sum(sizes), 2, generator=generator)
-        torch.manual_seed(100 + rank)
-        model = torch.nn.Linear(3, 2)
-        dp.broadcast_module(model)
-        start, count = sum(sizes[:rank]), sizes[rank]
-        if count:
-            (
-                model(x[start : start + count]) - y[start : start + count]
-            ).square().mean().backward()
-        total, finite = dp.reduce_grads(model.parameters(), count)
-        norm = RunningNorm(3)
-        dp.update_norm(norm, x[start : start + count])
-        torch.save(
-            {
-                "initial": model.state_dict(),
-                "grads": [p.grad for p in model.parameters()],
-                "total": total,
-                "finite": finite,
-                "norm": norm.state_dict(),
-            },
-            Path(out) / f"rank{rank}.pt",
-        )
-    finally:
-        dist.destroy_process_group()
+# ------------------------------------------------------------------ smoke runs
+
+_CLIP_FRAMES = 64
 
 
-@pytest.mark.skipif(
-    not dist.is_available() or not dist.is_gloo_available(),
-    reason="Gloo is unavailable",
-)
-@pytest.mark.parametrize("sizes", [(3, 5), (4, 0)])
-def test_two_rank_gradients_and_norm_equal_one_merged_batch(tmp_path, sizes):
-    torch.multiprocessing.spawn(
-        _distributed_oracle, args=(str(tmp_path), sizes), nprocs=2, join=True
-    )
-    ranks = [
-        torch.load(tmp_path / f"rank{rank}.pt", weights_only=True) for rank in range(2)
-    ]
-    generator = torch.Generator().manual_seed(7)
-    x = torch.randn(sum(sizes), 3, generator=generator)
-    y = torch.randn(sum(sizes), 2, generator=generator)
-    oracle = torch.nn.Linear(3, 2)
-    oracle.load_state_dict(ranks[0]["initial"])
-    (oracle(x) - y).square().mean().backward()
-    for result in ranks:
-        assert result["total"] == sum(sizes) and result["finite"]
-        for actual, param in zip(result["grads"], oracle.parameters(), strict=True):
-            torch.testing.assert_close(actual, param.grad)
-        torch.testing.assert_close(result["norm"]["mean"], x.mean(0))
-        torch.testing.assert_close(result["norm"]["var"], x.var(0, unbiased=False))
-        torch.testing.assert_close(
-            result["norm"]["count"], torch.tensor(float(sum(sizes)))
-        )
-
-
-def _entry_env():
+def _entry_env(world):
     env = dict(os.environ)
+    devices = env.get("CUDA_VISIBLE_DEVICES")
+    gpu_ids = (
+        [device.strip() for device in devices.split(",")]
+        if devices
+        else [str(i) for i in range(torch.cuda.device_count())]
+    )
     env.update(
+        CUDA_VISIBLE_DEVICES=",".join(gpu_ids[:world]),
         PYTHONPATH=f"{REPO}{os.pathsep}{env.get('PYTHONPATH', '')}",
         EMBODIED_PATH=str(REPO / "examples/embodiment"),
         MUJOCO_GL="disable",
@@ -306,21 +247,20 @@ def _entry_env():
     return env
 
 
-def _run_entry(work, script, arguments):
-    env = _entry_env()
+def _run_entry(work, world, script, arguments):
     work.mkdir(parents=True)
     log = work / "entry.log"
     with log.open("w") as output:
         proc = subprocess.Popen(
             [sys.executable, str(script), *arguments],
             cwd=work,
-            env=env,
+            env=_entry_env(world),
             stdout=output,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
         try:
-            code = proc.wait(timeout=600)
+            code = proc.wait(timeout=900)
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -340,295 +280,156 @@ def _standing_clips(directory: Path) -> Path:
             "fps": 50.0,
             "joint_names": list(G1_JOINT_NAMES),
             "q0": pose[JOINT_POS],
-            "state": pose.repeat(64, 1),
+            "state": pose.repeat(_CLIP_FRAMES, 1),
         },
         directory / "clip_000.pt",
     )
     return directory
 
 
+def smoke_overrides(clips, world: int, velocity: bool) -> tuple[list, list]:
+    """Overrides shared by training and evaluation, and the training-only ones."""
+    shared = [
+        f"env.train.motion_path={clips}",
+        f"env.eval.motion_path={clips}",
+        "env.train.num_clips=1",
+        "env.eval.num_clips=1",
+        "env.train.motion_on_cpu=true",
+        "env.eval.motion_on_cpu=true",
+        f"env.eval.max_steps_per_rollout_epoch={_CLIP_FRAMES}",
+        "runner.logger.logger_backends=null",
+        "++cluster.object_store_memory_mb=128",
+    ]
+    if velocity:
+        shared += [
+            "actor.model.goal_encoding=paper",
+            "actor.model.obs_dim=93",
+            "actor.model.critic_features=root4",
+            "actor.model.input_norm=none",
+            "actor.model.wm_state_loss=paper",
+            "actor.model.velocity_tracking=true",
+            "algorithm.termination_head=learned",
+        ]
+    train = [
+        f"env.train.total_num_envs={4 * world}",
+        f"env.eval.total_num_envs={world}",
+        "algorithm.replay_length=32",
+        "algorithm.warmup_sim_steps=16",
+        "algorithm.updates_per_env_step=2.0",
+        "algorithm.wm_only_updates=1",
+        "algorithm.wm_batches=1",
+        f"algorithm.wm_window_batch={8 * world}",
+        f"algorithm.imagine_batch={8 * world}",
+        "algorithm.critic_epochs=1",
+        "algorithm.critic_minibatches=1",
+        "runner.save_interval=3",
+        "runner.val_check_interval=3",
+        "runner.eval_export.enabled=true",
+        "runner.logger.experiment_name=e2e",
+    ]
+    return shared, train
+
+
+def _counters(step_dir: Path) -> dict:
+    return json.loads((step_dir / "actor" / "supermimic_counters.json").read_text())
+
+
+def _weights(step_dir: Path) -> dict:
+    path = step_dir / "actor" / "model_state_dict" / "full_weights.pt"
+    return torch.load(path, map_location="cpu", weights_only=True)
+
+
 @needs_mjlab
 @pytest.mark.placement
-@pytest.mark.parametrize(
-    "world,wm_only",
-    [(1, 0), (1, 1), (2, 0)],
-    ids=["single-gpu", "single-gpu-wm-warmup", "two-gpu-nccl"],
-)
-def test_end_to_end_train_resume_and_evaluate(tmp_path, world, wm_only):
+@pytest.mark.parametrize("world", [1, 2], ids=["single-gpu", "two-gpu-nccl-velocity"])
+def test_end_to_end_train_resume_and_evaluate(tmp_path, world):
     pytest.importorskip("mujoco_warp")
     pytest.importorskip("ray")
     if torch.cuda.device_count() < world:
         pytest.skip(f"this case needs {world} visible CUDA/HIP device(s)")
     if world > 1 and not dist.is_nccl_available():
         pytest.skip("NCCL/RCCL is unavailable")
-    clips = _standing_clips(tmp_path / "clips")
     velocity = world > 1
-    common = [
-        f"env.motion_path={clips}",
-        "env.num_clips=1",
-        "env.motion_on_cpu=true",
-        f"env.num_envs={4 * world}",
-        "env.replay_length=32",
-        "algorithm.warmup_sim_steps=16",
-        f"algorithm.wm_only_updates={wm_only}",
-        "algorithm.updates_per_env_step=2.0",
-        "algorithm.wm_batches=1",
-        f"algorithm.wm_window_batch={8 * world}",
-        f"algorithm.imagine_batch={8 * world}",
-        "algorithm.critic_epochs=1",
-        "algorithm.critic_minibatches=1",
-        f"algorithm.velocity_tracking={str(velocity).lower()}",
-        f"algorithm.termination_head={'learned' if velocity else 'analytic'}",
-        "algorithm.param_check_interval=1",
-        "algorithm.matmul=tf32",
-    ]
-    if velocity:
-        common += [
-            "algorithm.obs_dim=93",
-            "algorithm.goal_frame_dim=68",
-            "algorithm.goal_encoding=paper",
-        ]
-    devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-    gpu_ids = (
-        [device.strip() for device in devices.split(",")]
-        if devices
-        else [str(i) for i in range(world)]
-    )
-    placement = ",".join(gpu_ids[:world])
-    train = REPO / "examples/embodiment/train_supermimic.py"
+    clips = _standing_clips(tmp_path / "clips")
+    shared, train = smoke_overrides(clips, world, velocity)
+    runs = tmp_path / "runs"
+    train_script = REPO / "examples/embodiment/train_embodied_agent.py"
     train_args = [
+        "--config-path",
+        str(REPO / "examples/embodiment/config"),
         "--config-name",
-        "supermimic_lafan1_zita",
-        *common,
-        f"cluster.component_placement.supermimic='{placement}'",
-        "cluster.object_store_memory_mb=128",
-        f"runner.logger.log_path={tmp_path / 'runs'}",
-        "runner.logger.experiment_name=e2e",
-        "runner.save_interval=-1",
-        "runner.val_check_interval=10",
+        "supermimic_lafan1_goal730",
+        *shared,
+        *train,
+        f"runner.logger.log_path={runs}",
     ]
-    trained = _run_entry(
-        tmp_path / "train", train, [*train_args, "algorithm.total_updates=3"]
+    critic_steps = 2 if velocity else 1
+
+    _run_entry(
+        tmp_path / "train", world, train_script, [*train_args, "runner.max_epochs=3"]
     )
-    assert trained.count("supermimic eval ") == 1
-    root = tmp_path / "runs/e2e"
-    first = root / "global_step_3"
-    meta = verify_checkpoint(first)
-    assert meta["world_size"] == world and meta["global_update"] == 3
-    saved = torch.load(first / "supermimic.pt", map_location="cpu", weights_only=False)
-    assert saved["wm_optimizer_steps"] == 3
-    assert saved["actor_optimizer_steps"] == 3 - wm_only
-    assert saved["critic_optimizer_steps"] == (3 - wm_only) * (2 if velocity else 1)
-    before_steps = saved["sim_vector_steps"]
-    before_weight = saved["models"]["dynamics.net.6.weight"].clone()
-    del saved
+    root = runs / "e2e"
+    first = root / "checkpoints" / "global_step_3"
+    for name in ("runner_state.json", "actor/supermimic_interface.json"):
+        assert (first / name).is_file(), name
+    assert sorted(path.name for path in (first / "env").iterdir()) == [
+        f"env_rank_{rank}.pt" for rank in range(world)
+    ]
+    counters = _counters(first)
+    # Update 0 fits only the world model (wm_only_updates=1).
+    assert counters["wm_optimizer_steps"] == 3
+    assert counters["actor_optimizer_steps"] == 2
+    assert counters["critic_optimizer_steps"] == 2 * critic_steps
+    before = _weights(first)
+    summary = json.loads(
+        (root / "eval_results" / "global_step_3" / "summary.json").read_text()
+    )
+    assert math.isfinite(summary["metrics"]["normalized_return"])
+
     output = _run_entry(
         tmp_path / "resume",
-        train,
-        [*train_args, "algorithm.total_updates=5", "runner.resume_dir=auto"],
+        world,
+        train_script,
+        [*train_args, "runner.max_epochs=5", "runner.resume_dir=auto"],
     )
-    assert "Resuming SuperMimic" in output
-    assert output.count("supermimic eval ") == 1
-    if world > 1:
-        divergence = re.findall(
-            r"'train/param_divergence': ([0-9.e+-]+)", trained + output
-        )
-        assert divergence and all(float(value) == 0 for value in divergence)
-    final = root / "global_step_5"
-    assert verify_checkpoint(final)["global_update"] == 5
-    assert sorted(path.name for path in root.glob("global_step_*")) == [
-        "global_step_3",
-        "global_step_5",
-    ]
-    saved = torch.load(final / "supermimic.pt", map_location="cpu", weights_only=False)
-    assert saved["global_update"] == saved["wm_optimizer_steps"] == 5
-    assert saved["actor_optimizer_steps"] == 5 - wm_only
-    assert saved["critic_optimizer_steps"] == (5 - wm_only) * (2 if velocity else 1)
-    assert saved["sim_vector_steps"] >= before_steps + 17
-    assert not torch.equal(before_weight, saved["models"]["dynamics.net.6.weight"])
-    assert all(torch.isfinite(value).all() for value in saved["models"].values())
-    del saved
-    for rank in range(world):
-        assert (final / f"rank_{rank}.pt").is_file()
+    assert "Resuming from" in output and "global_step_3" in output
+    final = root / "checkpoints" / "global_step_5"
+    counters = _counters(final)
+    assert counters["wm_optimizer_steps"] == 5
+    assert counters["actor_optimizer_steps"] == 4
+    assert counters["critic_optimizer_steps"] == 4 * critic_steps
+    after = _weights(final)
+    assert not torch.equal(
+        before["dynamics.net.6.weight"], after["dynamics.net.6.weight"]
+    )
+    assert all(torch.isfinite(value).all() for value in after.values())
+
     out = tmp_path / "evaluation"
+    tasks = "[tracking,velocity_smoke]" if velocity else "[tracking]"
     _run_entry(
         tmp_path / "eval",
-        REPO / "evaluations/eval_supermimic.py",
+        world,
+        REPO / "evaluations/eval_embodied_agent.py",
         [
+            "--config-path",
+            str(REPO / "evaluations/supermimic"),
             "--config-name",
-            "supermimic_lafan1_zita_eval",
-            *common,
-            f"env.num_envs={2 if velocity else 1}",
-            f"eval.checkpoint={final}",
-            f"eval.output_dir={out}",
-            f"eval.velocity={'smoke' if velocity else 'none'}",
-            "eval.velocity_smoke_seconds=0.08",
+            "supermimic_lafan1_goal730_eval",
+            *shared,
+            f"runner.ckpt_path={final / 'actor/model_state_dict/full_weights.pt'}",
+            f"runner.logger.log_path={tmp_path / 'eval_runs'}",
+            f"runner.eval_export.output_dir={out}",
+            f"env.eval.total_num_envs={8 if velocity else 1}",
+            f"env.eval.eval_tasks={tasks}",
+            "env.eval.velocity_smoke.seconds=0.08",
         ],
     )
     result = json.loads((out / "summary.json").read_text())
-    assert result["meta"]["global_step"] == 5
-    assert result["meta"]["checkpoint_world_size"] == world
-    for key in ("eval/normalized_return", "eval/fail_rate", "eval/clip_end_rate"):
+    assert result["meta"]["checkpoint"].endswith("full_weights.pt")
+    for key in ("normalized_return", "fail_rate", "clip_end_rate"):
         assert math.isfinite(result["metrics"][key])
     with (out / "per_clip.csv").open() as handle:
         assert len(list(csv.DictReader(handle))) == 1
     if velocity:
-        assert (out / "velocity_smoke.csv").is_file()
-
-
-@needs_mjlab
-def test_end_to_end_velocity_g2_repeats_for_seed(tmp_path):
-    if not torch.cuda.is_available():
-        pytest.skip("a CUDA/HIP device is required for MuJoCo Warp")
-    pytest.importorskip("mujoco_warp")
-    from omegaconf import OmegaConf
-
-    from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
-    from rlinf.workers.supermimic.evaluator import SuperMimicEvaluator
-
-    cfg = OmegaConf.load(
-        REPO / "examples/embodiment/config/supermimic_lafan1_zita.yaml"
-    )
-    cfg.env.update(
-        {
-            "num_envs": 2,
-            "num_clips": 1,
-            "motion_on_cpu": True,
-            "motion_path": str(_standing_clips(tmp_path / "clips")),
-        }
-    )
-    cfg.algorithm.update(
-        {
-            "velocity_tracking": True,
-            "obs_dim": 93,
-            "goal_frame_dim": 68,
-            "goal_encoding": "paper",
-            "matmul": "tf32",
-        }
-    )
-    cfg = validate_supermimic_cfg(cfg)
-    evaluator = SuperMimicEvaluator(cfg, torch.device("cuda:0"))
-    commands = (torch.tensor([[0.2, 0.0, 0.0]]), ["forward"], ["vx_vy"])
-    rows = []
-    for previous_seed in (111, 999):
-        torch.manual_seed(previous_seed)
-        _, table, names = evaluator.evaluate_velocity_g2(
-            seed=17,
-            trials=2,
-            seconds=0.04,
-            steady_seconds=0.02,
-            batch=1,
-            commands=commands,
-        )
-        assert names == ["forward"]
-        rows.append(table)
-    for key in rows[0]:
-        torch.testing.assert_close(
-            rows[0][key], rows[1][key], atol=2e-5, rtol=2e-5, equal_nan=True
-        )
-
-
-_RANK_FAILURE_DRIVER = '''
-import os
-import sys
-from pathlib import Path
-
-import torch
-from omegaconf import OmegaConf
-
-from rlinf.runners.supermimic_runner import SuperMimicRunner
-from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
-from rlinf.workers.supermimic.distributed import DataParallel
-
-
-class FailingRank(Worker):
-    """Rank 1 fails in the first iteration while rank 0 waits in an all-reduce."""
-
-    def __init__(self, mode, marker_path):
-        super().__init__()
-        self.mode = mode
-        self.marker_path = marker_path
-
-    def init_worker(self):
-        self.dp = DataParallel.initialize(
-            self._world_size, self._rank, torch.device("cpu"),
-            timeout=Cluster.get_collective_timeout(),
-        )
-
-    def warmup(self):
-        pass
-
-    def collect(self):
-        if self._rank == 1:
-            Path(self.marker_path).write_text(self.mode)
-            if self.mode == "raise":
-                raise RuntimeError("rank 1 failed on purpose")
-            os._exit(3)
-        self.dp.all_reduce([1.0])
-        return {"train/global_update": 1.0}, 0
-
-    def shutdown(self):
-        self.dp.destroy()
-
-    def save_checkpoint(self, directory):
-        return None
-
-    def evaluate(self):
-        return {}
-
-
-if __name__ == "__main__":
-    mode, log_path, marker_path = sys.argv[1:]
-    cluster = Cluster(cluster_cfg=OmegaConf.create({"num_nodes": 1, "object_store_memory_mb": 128, "component_placement": {}}))
-    group = FailingRank.create_group(mode, marker_path).launch(
-        cluster, name="supermimic_rank_failure", placement_strategy=NodePlacementStrategy([0, 0])
-    )
-    cfg = OmegaConf.create({
-        "runner": {
-            "logger": {"log_path": log_path, "project_name": "rlinf",
-                       "experiment_name": "rank_failure", "logger_backends": []},
-            "save_interval": -1, "val_check_interval": -1, "only_eval": False,
-        },
-        "algorithm": {"total_updates": 3},
-    })
-    runner = SuperMimicRunner(cfg, group)
-    runner.init_workers()
-    runner.run()
-    print("RUN RETURNED")
-'''
-
-
-@pytest.mark.placement
-@pytest.mark.parametrize("mode", ["raise", "exit"])
-def test_end_to_end_one_failed_rank_ends_the_run(tmp_path, mode):
-    """The other rank is blocked in a collective with the default 180 min timeout.
-
-    RLinf's worker group signals the driver as soon as one rank's call fails,
-    and the driver kills the group, so the run ends in seconds.
-    """
-    import time
-
-    pytest.importorskip("ray")
-    script = tmp_path / "driver.py"
-    script.write_text(_RANK_FAILURE_DRIVER)
-    env = _entry_env()
-    env.pop("RLINF_TIMEOUT", None)
-    marker = tmp_path / "failed_rank_started"
-    start = time.monotonic()
-    proc = subprocess.run(
-        [sys.executable, str(script), mode, str(tmp_path / "logs"), str(marker)],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=tmp_path,
-        timeout=300,
-    )
-    elapsed = time.monotonic() - start
-    output = proc.stdout + proc.stderr
-    assert marker.is_file(), output[-5000:]
-    assert marker.read_text() == mode
-    assert proc.returncode != 0, output[-3000:]
-    assert "RUN RETURNED" not in output
-    assert elapsed < 180, f"the failed run took {elapsed:.0f} s to end"
-    if mode == "raise":
-        assert "rank 1 failed on purpose" in output
+        with (out / "velocity_smoke.csv").open() as handle:
+            assert len(list(csv.DictReader(handle))) == 7

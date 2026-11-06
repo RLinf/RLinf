@@ -23,7 +23,7 @@ A step-sized graph compiles in minutes; an unrolled horizon took over an
 hour.
 
 On a CUDA batch of at least 256 rows each piece is compiled once. A
-network's ``bf16_matmul`` flag autocasts that network's linear stack only;
+network's ``autocast_dtype`` autocasts that network's linear stack only;
 the scans do not cast the state, the kinematics or the loss.
 ``SUPERMIMIC_SCAN_EAGER=1`` keeps every piece eager.
 """
@@ -51,7 +51,7 @@ from rlinf.envs.sim.g1_mimic.reward import (
     rollout_critic_feature,
     termination_head_input,
 )
-from rlinf.models.embodiment.supermimic import running_state_loss
+from rlinf.models.embodiment.supermimic.networks import running_state_loss
 
 
 class CompileCache:

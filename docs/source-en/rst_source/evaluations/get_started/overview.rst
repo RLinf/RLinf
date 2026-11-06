@@ -11,33 +11,32 @@ All evaluation code and configs live under ``evaluations/`` at the repository ro
 .. code-block:: text
 
    evaluations/
-   ├── eval_embodied_agent.py   # Generic embodied evaluation
-   ├── eval_supermimic.py       # G1 motion / velocity evaluation
-   ├── eval_supermimic_push.py  # G1 standing-pose push recovery
-   ├── supermimic/             # SuperMimic eval configs
+   ├── eval_embodied_agent.py   # Main evaluation program
    ├── run_eval.sh              # One-click launcher
    ├── libero/                  # LIBERO eval configs
    ├── robotwin/                # RoboTwin eval configs
    ├── behavior/                # BEHAVIOR-1K eval configs
    ├── maniskill/               # ManiSkill OOD eval configs
    ├── realworld/               # Real-robot eval configs
-   └── polaris/                 # PolaRiS eval configs
+   ├── polaris/                 # PolaRiS eval configs
+   └── supermimic/              # SuperMimic eval configs
 
 Evaluation Architecture
 -----------------------
 
 Evaluation is driven by ``EmbodiedEvalRunner``: the environment worker and rollout worker communicate through Channels and run parallel evaluation under ``env.eval``. Metrics such as ``eval/success_once`` and ``eval/return`` are printed to the terminal and written to log files.
 
-Typical data flow for this worker-based entry:
+Typical data flow:
 
 1. **Config loading** — Hydra reads YAML from ``evaluations/<benchmark>/`` and references environment and model presets from ``examples/embodiment/config/`` via ``defaults``.
 2. **Worker launch** — Env and Rollout workers start on GPUs according to ``cluster.component_placement``.
 3. **Parallel rollout** — Env workers reset environments and return observations; Rollout workers generate actions from the model; loop until episodes finish.
 4. **Metric aggregation** — Task-level metrics such as ``success_once`` and ``return`` are computed and logged.
 
-SuperMimic uses dedicated single-GPU entries for motion/velocity tracking
-and standing-pose push recovery. Follow the Evaluate section of
-:doc:`../../examples/embodied/supermimic` for its workflow.
+SuperMimic uses the same entry with its own ``SuperMimicEvalRunner``, which
+evaluates motion tracking, velocity tracking and standing-pose push recovery
+and writes result tables; see the Evaluate section of
+:doc:`../../examples/embodied/supermimic`.
 
 Next Steps
 ----------

@@ -33,6 +33,10 @@ import torch
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     DT,
+    EPISODE_CLIP_END,
+    EPISODE_CONT,
+    EPISODE_FAILURE,
+    EPISODE_TIMEOUT,
     G1_JOINT_NAMES,
     JOINT_POS,
     JOINT_VEL,
@@ -40,8 +44,8 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_LIN_VEL,
     ROOT_POS,
     ROOT_QUAT,
+    XI_DIM,
 )
-from rlinf.envs.sim.g1_mimic.env import compose_end_kind
 from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat, rot_apply, rot_apply_t
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 from rlinf.envs.sim.g1_mimic.reward import failure_signals
@@ -49,6 +53,37 @@ from rlinf.envs.sim.g1_mimic.reward import failure_signals
 PHYSICS_DT = 0.005
 DECIMATION = 4
 FOOT_GEOM = re.compile(r"^(left|right)_foot[1-7]_collision$")
+
+
+def sample_xi(num: int, device: torch.device | str, dtype: torch.dtype) -> torch.Tensor:
+    """Draw the 33-d sim context: foot friction, joint offsets, torso CoM offset."""
+    xi = torch.zeros(num, XI_DIM, device=device, dtype=dtype)
+    xi[:, 0] = torch.empty(num, device=device, dtype=dtype).uniform_(0.3, 1.2)
+    xi[:, 1:30] = torch.empty(num, 29, device=device, dtype=dtype).uniform_(-0.01, 0.01)
+    xi[:, 30] = torch.empty(num, device=device, dtype=dtype).uniform_(-0.025, 0.025)
+    xi[:, 31:33] = torch.empty(num, 2, device=device, dtype=dtype).uniform_(-0.05, 0.05)
+    return xi
+
+
+def compose_end_kind(
+    failure: torch.Tensor,
+    timeout: torch.Tensor,
+    clip_end: torch.Tensor,
+) -> torch.Tensor:
+    """Merge one task's failure with the episode limits.
+
+    Failure outranks timeout, and timeout outranks clip end. ``failure`` is
+    the active task's own condition: motion tracking, or a velocity fall.
+    Timeout and clip end remain when that condition is false, so a velocity
+    episode cannot turn an ended episode back into CONT.
+    """
+    end = torch.full(
+        failure.shape, EPISODE_CONT, dtype=torch.long, device=failure.device
+    )
+    end = torch.where(clip_end, torch.full_like(end, EPISODE_CLIP_END), end)
+    end = torch.where(timeout, torch.full_like(end, EPISODE_TIMEOUT), end)
+    end = torch.where(failure, torch.full_like(end, EPISODE_FAILURE), end)
+    return end
 
 
 def _rotate(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
@@ -104,10 +139,10 @@ class MjlabG1Env:
         com_sampling: str = "per_reset",
     ):
         """``com_sampling`` is ``per_reset`` (a new torso CoM offset in every
-        reset) or ``per_env`` (zita-ch: one offset per env, drawn at
-        construction). A new offset recomputes MuJoCo Warp's model constants
-        for every world, so ``per_env`` keeps resets cheap. Friction and joint
-        offsets are drawn on every reset either way.
+        reset) or ``per_env`` (one offset per env, drawn at construction and
+        kept). A new offset recomputes MuJoCo Warp's model constants for every
+        world, so ``per_env`` keeps resets cheap. Friction and joint offsets
+        are drawn on every reset either way.
         """
         import mujoco
         import mujoco_warp as mjwarp
@@ -275,8 +310,6 @@ class MjlabG1Env:
 
         Eval keeps the asset's CoM, so it never moves after construction.
         """
-        from rlinf.envs.sim.g1_mimic.env import sample_xi
-
         self.xi[env_ids] = sample_xi(n, self.device, self.dtype)
         if self.eval_mode:
             self.xi[env_ids, 0] = 1.0
@@ -372,7 +405,7 @@ class MjlabG1Env:
             dim=-1,
         )
 
-    def ref_state(self) -> torch.Tensor:
+    def reference_state(self) -> torch.Tensor:
         """Reference state at each env's current motion frame."""
         return self.motion.state_at(self.motion_id, self.motion_time)
 

@@ -409,7 +409,9 @@ class SuperMimicReplay:
         env_i, logical_i = ok.nonzero(as_tuple=True)
         return env_i, phys[env_i, logical_i]
 
-    def sample_windows(self, k: int, batch: int) -> dict[str, torch.Tensor] | None:
+    def sample_world_model_windows(
+        self, k: int, batch: int
+    ) -> dict[str, torch.Tensor] | None:
         """Up to ``batch`` random ``k``-step windows, or ``None`` before any exist."""
         drawn = self._window_mask(k).draw(batch)
         if drawn is None:
@@ -439,7 +441,7 @@ class SuperMimicReplay:
             "valid_windows": torch.full((), total, device=self.device),
         }
 
-    def sample_starts(
+    def sample_imagination_starts(
         self, batch: int, task: int | None = None
     ) -> dict[str, torch.Tensor] | None:
         """Up to ``batch`` imagination starts with their history, or ``None``.

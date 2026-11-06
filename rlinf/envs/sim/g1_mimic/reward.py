@@ -39,7 +39,6 @@ from rlinf.envs.sim.g1_mimic.constants import (
 from rlinf.envs.sim.g1_mimic.features import (
     heading_invariant_features,
     heading_yaw,
-    normalize_xi,
     projected_gravity,
     quat_to_rotmat,
     root_error_4d,
@@ -49,6 +48,7 @@ from rlinf.envs.sim.g1_mimic.features import (
     rot_mul_nt,
     rot_mul_t,
     rotmat_to_6d,
+    scale_context,
     yaw_rotation,
 )
 from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY, TORSO_BODY, g1_kinematics
@@ -105,8 +105,8 @@ def reanchor_bodies(
     """Reference body poses moved onto one robot body's xy and yaw.
 
     BeyondMimic's ``update_relative_body_poses``. ``torso`` uses
-    ``torso_link``. ``pelvis`` is zita-ch's anchor: the robot pelvis xy, the
-    reference pelvis height, and the yaw of ``R_pelvis R_ref_pelvis^T``.
+    ``torso_link``. ``pelvis`` takes the robot pelvis xy, the reference
+    pelvis height, and the yaw of ``R_pelvis R_ref_pelvis^T``.
     Inputs are ``[B, bodies, 3]`` positions and ``[B, bodies, 3, 3]``
     rotations from ``differentiable_fk``.
     """
@@ -126,7 +126,7 @@ def heading_yaw_of_matrix(rot: torch.Tensor) -> torch.Tensor:
     return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
 
 
-def zita_critic_features(
+def body_error_critic_features(
     state: torch.Tensor,
     ref_state: torch.Tensor,
     xi: torch.Tensor,
@@ -134,13 +134,13 @@ def zita_critic_features(
     | None = None,
     ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
 ) -> torch.Tensor:
-    """zita-ch critic features except the goal, which is appended separately.
+    """Per-body tracking-error critic features, without the goal.
 
     Layout: heading-invariant state (71), ``q_ref - q`` (29), 14 body-position
     errors, root position error (3), relative root Rot6D (6), then ``xi``.
-    Reference bodies are shifted onto the robot pelvis xy and the reference
-    pelvis height, and yawed by ``R R_ref^T``. The error is then written in
-    the robot heading frame. ``xi`` is not normalized.
+    The reference bodies are moved to the robot pelvis xy at the reference
+    pelvis height and turned by the yaw of ``R R_ref^T``; the errors are
+    written in the robot heading frame. ``xi`` is used as given.
     """
     invariant = heading_invariant_features(state)
     joint_err = ref_state[..., JOINT_POS] - state[..., JOINT_POS]
@@ -177,9 +177,9 @@ def motion_critic_input(
 ) -> torch.Tensor:
     """Feature vector consumed by ``CriticNet``.
 
-    ``root4`` keeps the historical order: invariant state, goal, ``xi``, 4-d
-    root error. ``zita`` appends the goal after :func:`zita_critic_features`.
-    ``scale_xi`` applies zita-ch's fixed context scale before either layout.
+    ``root4`` is the invariant state, goal, ``xi`` and the 4-d root error.
+    ``body_error`` appends the goal to :func:`body_error_critic_features`.
+    ``scale_xi`` applies :func:`scale_context` before either layout.
     """
     squeezed = state.dim() == 1
     if squeezed:
@@ -188,7 +188,7 @@ def motion_critic_input(
         xi = xi.unsqueeze(0)
         ref_state = ref_state.unsqueeze(0)
     if scale_xi:
-        xi = normalize_xi(xi)
+        xi = scale_context(xi)
     if critic_features == "root4":
         out = torch.cat(
             (
@@ -199,14 +199,14 @@ def motion_critic_input(
             ),
             dim=-1,
         )
-    elif critic_features == "zita":
+    elif critic_features == "body_error":
         out = torch.cat(
-            (zita_critic_features(state, ref_state, xi, state_fk, ref_fk), goal),
+            (body_error_critic_features(state, ref_state, xi, state_fk, ref_fk), goal),
             dim=-1,
         )
     else:
         raise ValueError(
-            f"critic_features must be root4 or zita, got {critic_features!r}"
+            f"critic_features must be root4 or body_error, got {critic_features!r}"
         )
     return out.squeeze(0) if squeezed else out
 
@@ -320,8 +320,7 @@ def analytic_reward(
 
     ``reward_anchor`` selects the body whose xy and yaw snap the reference
     for the four body terms, and whose world pose is the root position and
-    orientation error. ``torso`` is this repository's reward. ``pelvis`` is
-    zita-ch's.
+    orientation error: ``torso`` or ``pelvis``.
     """
     squeezed = state.dim() == 1
     if squeezed:

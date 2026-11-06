@@ -239,7 +239,7 @@ def _compiled_levels(state, table, tracked, nbody, levels):
         raise
 
 
-class G1Kinematics:
+class G1BodyKinematics:
     """Batched kinematics. Constants follow ``state`` to its device."""
 
     def __init__(self, model: mujoco.MjModel) -> None:
@@ -569,16 +569,16 @@ class G1Kinematics:
         return out
 
 
-_KINEMATICS: G1Kinematics | None = None
+_KINEMATICS: G1BodyKinematics | None = None
 
 
-def g1_kinematics() -> G1Kinematics:
+def g1_kinematics() -> G1BodyKinematics:
     """Compile the mjlab G1 spec once and reuse the tree."""
     global _KINEMATICS
     if _KINEMATICS is None:
         from mjlab.asset_zoo.robots.unitree_g1.g1_constants import get_spec
 
-        _KINEMATICS = G1Kinematics(get_spec().compile())
+        _KINEMATICS = G1BodyKinematics(get_spec().compile())
     return _KINEMATICS
 
 

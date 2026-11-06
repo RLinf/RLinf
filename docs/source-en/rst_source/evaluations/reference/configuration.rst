@@ -3,17 +3,15 @@ Configuration Reference
 
 .. note::
 
-   This page describes configs for the generic embodied eval entry,
-   ``eval_embodied_agent.py``. SuperMimic's
-   ``supermimic_lafan1_zita_eval.yaml`` runs motion evaluation and, with
-   explicit overrides, velocity tracking through ``eval_supermimic.py``.
-   Push recovery uses ``supermimic_push_recovery.yaml`` with
-   ``eval_supermimic_push.py``. These configs inherit the complete training
-   recipe and override evaluation settings. They take the checkpoint from
-   ``eval.checkpoint`` and the results folder from ``eval.output_dir``;
-   they have no ``rollout`` or ``env.eval`` section and do not need
-   ``runner.task_type: embodied_eval``. The required-field and
-   derive-from-training sections below do not apply to it; see the Evaluate
+   SuperMimic's configs under ``evaluations/supermimic/`` also use
+   ``eval_embodied_agent.py``, ``runner.task_type: embodied_eval`` and
+   ``env.eval``, but they inherit the complete training recipe instead of
+   stripping it: ``rollout.model`` points at ``actor.model`` and the
+   ``algorithm`` section stays, because the checkpoint's
+   ``supermimic_interface.json`` is checked against both. The weights come
+   from ``runner.ckpt_path`` (a ``full_weights.pt``) rather than
+   ``rollout.model.model_path``, ``env.eval.eval_tasks`` selects the tasks,
+   and ``runner.eval_export`` controls the result files. See the Evaluate
    section of :doc:`../../examples/embodied/supermimic`.
 
 Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core structure (using ``libero_spatial_openpi_pi05_eval.yaml`` as an example):

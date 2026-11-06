@@ -36,20 +36,13 @@ against that static reference.
 
 from __future__ import annotations
 
-import csv
-import json
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 import torch
 
 from rlinf.envs.sim.g1_mimic.constants import (
-    ACTION_DIM,
     DT,
-    EPISODE_CLIP_END,
-    EPISODE_FAILURE,
     JOINT_POS,
     JOINT_VEL,
     ROOT_ANG_VEL,
@@ -71,6 +64,15 @@ DEFAULT_SPEEDS = (0.5, 1.0, 2.0, 4.0)
 REFERENCE_POSE = "mjlab_knees_bent_keyframe"
 PROTOCOL_NAME = "stationary_standing_pose"
 OUTCOMES = ("recovered", "fallen", "timeout", "initialization_failed")
+# Why a trial ended; ``initialization_failed`` carries one of the last three.
+REASONS = (
+    "recovered",
+    "fallen",
+    "timeout",
+    "nonfinite",
+    "joint_limit",
+    "fallen_before_push",
+)
 
 PAPER_PROTOCOL = {
     "section": "4.3",
@@ -335,95 +337,72 @@ def is_stable(
     return stable
 
 
-def judge_post_push(
-    stable: torch.Tensor,
-    failed: torch.Tensor,
-    criteria: RecoveryCriteria,
-) -> dict:
-    """Classify the steps after the push.
+class RecoveryTracker:
+    """Post-push verdicts of many trials, one control step at a time.
 
-    ``stable[k]`` and ``failed[k]`` describe the state after control step
-    ``k + 1``. A fall on that step wins over stability. Recovery time is the
-    timestamp of the step that completes the stable window, not the first
-    stable step and not zero when the trial fails.
+    Step ``k`` describes the state after post-push control step ``k + 1``.
+    A fall on a step wins over stability on that step. A trial recovers on
+    the step that completes ``stable_frames`` consecutive stable steps; its
+    recovery time is that step's time from the push, and the first step of
+    the window is its stable onset. A trial that does neither within the
+    budget times out.
     """
-    required = criteria.stable_frames()
-    run = 0
-    onset = 0
-    for index in range(int(stable.shape[0])):
-        if bool(failed[index]):
-            return {
-                "outcome": "fallen",
-                "reason": "fallen",
-                "recovery_time_s": None,
-                "stable_onset_time_s": None,
-            }
-        if bool(stable[index]):
-            if run == 0:
-                onset = index
-            run += 1
-            if run >= required:
-                return {
-                    "outcome": "recovered",
-                    "reason": "recovered",
-                    "recovery_time_s": (index + 1) * float(criteria.dt),
-                    "stable_onset_time_s": (onset + 1) * float(criteria.dt),
-                }
-        else:
-            run = 0
-    return {
-        "outcome": "timeout",
-        "reason": "timeout",
-        "recovery_time_s": None,
-        "stable_onset_time_s": None,
-    }
+
+    def __init__(self, num: int, criteria: RecoveryCriteria, device):
+        self.required = criteria.stable_frames()
+        self.dt = float(criteria.dt)
+        self.run = torch.zeros(num, dtype=torch.long, device=device)
+        self.onset = torch.zeros(num, dtype=torch.long, device=device)
+
+    def reset(self, rows: torch.Tensor) -> None:
+        self.run[rows] = 0
+        self.onset[rows] = 0
+
+    def step(
+        self,
+        index: int,
+        rows: torch.Tensor,
+        stable: torch.Tensor,
+        failed: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Rows that fell and rows that recovered on post-push step ``index``."""
+        fallen = rows & failed
+        judged = rows & ~failed
+        stable_now = judged & stable
+        self.onset = torch.where(
+            stable_now & (self.run == 0), torch.full_like(self.onset, index), self.onset
+        )
+        self.run = torch.where(
+            stable_now,
+            self.run + 1,
+            torch.where(judged, torch.zeros_like(self.run), self.run),
+        )
+        recovered = stable_now & (self.run >= self.required)
+        return fallen, recovered
+
+    def onset_time(self) -> torch.Tensor:
+        """Stable-onset time of every row, in seconds from the push."""
+        return (self.onset + 1).float() * self.dt
 
 
-def initialization_failure(
-    finite: bool, joints_inside: bool, failed: bool
-) -> str | None:
-    """Why the robot never received a push, or ``None`` when the push may run."""
-    if not finite:
-        return "nonfinite"
-    if not joints_inside:
-        return "joint_limit"
-    if failed:
-        return "fallen_before_push"
-    return None
+def initialization_reason(
+    state: torch.Tensor,
+    joint_low: torch.Tensor,
+    joint_high: torch.Tensor,
+    failed: torch.Tensor,
+) -> torch.Tensor:
+    """``REASONS`` index that stops each trial before its push, or -1.
 
-
-def _blank_trial(plan: dict, frame: str, push_mode: str) -> dict:
-    return {
-        "trial": int(plan["trial"]),
-        "speed_m_s": float(plan["speed_m_s"]),
-        "direction_x": float(plan["direction_x"]),
-        "direction_y": float(plan["direction_y"]),
-        "frame": frame,
-        "push_mode": push_mode,
-        "seed": int(plan["seed"]),
-        "outcome": "initialization_failed",
-        "reason": "",
-        "recovered": 0,
-        "fallen": 0,
-        "timeout": 0,
-        "initialization_failed": 1,
-        "recovery_time_s": None,
-        "stable_onset_time_s": None,
-        "world_push_x": None,
-        "world_push_y": None,
-        "measured_dvx": None,
-        "measured_dvy": None,
-    }
-
-
-def _mark(row: dict, outcome: str, reason: str) -> dict:
-    row["outcome"] = outcome
-    row["reason"] = reason
-    row["recovered"] = int(outcome == "recovered")
-    row["fallen"] = int(outcome == "fallen")
-    row["timeout"] = int(outcome == "timeout")
-    row["initialization_failed"] = int(outcome == "initialization_failed")
-    return row
+    A non-finite state wins over a joint outside its limits, which wins over
+    a fall.
+    """
+    finite = torch.isfinite(state).all(dim=-1)
+    joints = state[:, JOINT_POS]
+    inside = ((joints >= joint_low - 1e-3) & (joints <= joint_high + 1e-3)).all(dim=-1)
+    code = torch.full_like(failed, -1, dtype=torch.long)
+    code = torch.where(failed, REASONS.index("fallen_before_push"), code)
+    code = torch.where(~inside, REASONS.index("joint_limit"), code)
+    return torch.where(~finite, REASONS.index("nonfinite"), code)
 
 
 def torso_orientation_error(state: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
@@ -435,176 +414,6 @@ def torso_orientation_error(state: torch.Tensor, ref: torch.Tensor) -> torch.Ten
     trace = (ref_rot[:, TORSO] * rot[:, TORSO]).sum(dim=(-2, -1))
     cosine = ((trace - 1.0) * 0.5).clamp(-1.0, 1.0)
     return torch.acos(cosine)
-
-
-def _joints_inside(state: torch.Tensor, low: torch.Tensor, high: torch.Tensor) -> bool:
-    joints = state[:, JOINT_POS]
-    return bool(torch.all((joints >= low - 1e-3) & (joints <= high + 1e-3)))
-
-
-def run_one_trial(
-    env,
-    policy: Callable,
-    goal_fn: Callable,
-    q0: torch.Tensor,
-    plan: dict,
-    criteria: RecoveryCriteria,
-    frame: str,
-    push_mode: str,
-    settle_steps: int,
-    max_steps: int,
-    include_ref_ori: bool,
-    joint_low: torch.Tensor,
-    joint_high: torch.Tensor,
-    record_trajectory: bool = False,
-) -> tuple[dict, list[dict]]:
-    """Settle, push once, then classify. One environment, already built."""
-    if int(env.num_envs) != 1:
-        raise ValueError(
-            f"push recovery runs one environment at a time, got {env.num_envs}"
-        )
-    from rlinf.envs.sim.g1_mimic.obs import analytic_obs
-    from rlinf.envs.sim.g1_mimic.reward import failure_signals
-    from rlinf.workers.supermimic.eval_rollout import (
-        RollingHistory,
-        checked_policy_action,
-    )
-
-    device = env.state.device
-    env_ids = torch.zeros(1, dtype=torch.long, device=device)
-    env.reset(env_ids, env_ids, env_ids)
-    row = _blank_trial(plan, frame, push_mode)
-    trajectory: list[dict] = []
-    prev = torch.zeros(1, ACTION_DIM, device=device, dtype=torch.float32)
-    q0 = q0.to(device=device, dtype=torch.float32)
-    low = joint_low.to(device=device)
-    high = joint_high.to(device=device)
-
-    def observe(action):
-        ref_quat = env.ref_state()[:, ROOT_QUAT] if include_ref_ori else None
-        return analytic_obs(env.state, action, env.xi, q0, ref_quat=ref_quat)
-
-    def failed_now() -> bool:
-        _height, _tilt, failed = failure_signals(
-            env.state, env.ref_state(), termination_body=env.termination_body
-        )
-        return bool(failed.reshape(-1)[0])
-
-    history = RollingHistory(observe(prev))
-    reason = initialization_failure(
-        bool(torch.isfinite(env.state).all()),
-        _joints_inside(env.state, low, high),
-        failed_now(),
-    )
-    if reason is not None:
-        return _mark(row, "initialization_failed", reason), trajectory
-
-    for _step in range(int(settle_steps)):
-        goal = goal_fn(env.motion_id, env.motion_time, env.state)
-        action = checked_policy_action(policy(history.flat(), goal))
-        result = env.step(action)
-        if bool((result["end_kind"] == EPISODE_CLIP_END).any()):
-            raise RuntimeError("static reference clip ended during the pre-push settle")
-        prev = action
-        fresh = observe(prev)
-        history.push(torch.where(torch.isfinite(fresh), fresh, history.frames[:, -1]))
-        if record_trajectory:
-            trajectory.append(
-                _trace(plan["trial"], "settle", env.state, env.ref_state())
-            )
-        step_reason = initialization_failure(
-            bool(torch.isfinite(env.state).all()),
-            _joints_inside(env.state, low, high),
-            bool(result["motion_failure"].reshape(-1)[0])
-            or int(result["end_kind"].reshape(-1)[0]) == EPISODE_FAILURE,
-        )
-        if step_reason is not None:
-            return _mark(row, "initialization_failed", step_reason), trajectory
-
-    before = env.state.clone()
-    direction = torch.tensor(
-        [plan["direction_x"], plan["direction_y"]], dtype=torch.float32, device=device
-    )
-    delta = world_push_xy(
-        direction, float(plan["speed_m_s"]), frame, before[:, ROOT_QUAT]
-    )
-    env.apply_horizontal_velocity_push(env_ids, delta.reshape(1, 2), mode=push_mode)
-    after = env.state
-    measured = after[:, ROOT_LIN_VEL] - before[:, ROOT_LIN_VEL]
-    row["world_push_x"] = float(delta.reshape(-1)[0])
-    row["world_push_y"] = float(delta.reshape(-1)[1])
-    row["measured_dvx"] = float(measured[0, 0])
-    row["measured_dvy"] = float(measured[0, 1])
-    if record_trajectory:
-        trajectory.append(_trace(plan["trial"], "push", after, env.ref_state()))
-    if not bool(torch.isfinite(after).all()):
-        return _mark(row, "initialization_failed", "nonfinite"), trajectory
-
-    origin = before[:, ROOT_POS][:, :2].clone()
-    stable_flags = []
-    failed_flags = []
-    for _step in range(int(max_steps)):
-        goal = goal_fn(env.motion_id, env.motion_time, env.state)
-        action = checked_policy_action(policy(history.flat(), goal))
-        result = env.step(action)
-        if bool((result["end_kind"] == EPISODE_CLIP_END).any()):
-            raise RuntimeError("static reference clip ended after the push")
-        state = result["next_state"]
-        prev = action
-        fresh = observe(prev)
-        history.push(torch.where(torch.isfinite(fresh), fresh, history.frames[:, -1]))
-        nonfinite = not bool(torch.isfinite(state).all())
-        fell = nonfinite or bool(result["motion_failure"].reshape(-1)[0])
-        if record_trajectory:
-            trajectory.append(
-                _trace(plan["trial"], "after", state, result["ref_state"])
-            )
-        if nonfinite:
-            failed_flags.append(True)
-            stable_flags.append(False)
-            break
-        torso = torso_orientation_error(state[:1], result["ref_state"][:1])
-        stable_flags.append(
-            bool(
-                is_stable(
-                    state[:1],
-                    result["ref_state"][:1],
-                    origin,
-                    criteria,
-                    torso_ori_err=torso,
-                )[0]
-            )
-        )
-        failed_flags.append(fell)
-        if fell:
-            break
-    if not stable_flags:
-        return _mark(row, "timeout", "timeout"), trajectory
-    verdict = judge_post_push(
-        torch.tensor(stable_flags),
-        torch.tensor(failed_flags),
-        criteria,
-    )
-    row["recovery_time_s"] = verdict["recovery_time_s"]
-    row["stable_onset_time_s"] = verdict["stable_onset_time_s"]
-    if verdict["outcome"] == "fallen" and not bool(torch.isfinite(env.state).all()):
-        verdict = {**verdict, "reason": "nonfinite"}
-    return _mark(row, verdict["outcome"], verdict["reason"]), trajectory
-
-
-def _trace(trial: int, phase: str, state: torch.Tensor, ref: torch.Tensor) -> dict:
-    root = state[0].detach()
-    return {
-        "trial": int(trial),
-        "phase": phase,
-        "root_x": float(root[0]),
-        "root_y": float(root[1]),
-        "root_z": float(root[2]),
-        "root_vx": float(root[ROOT_LIN_VEL][0]),
-        "root_vy": float(root[ROOT_LIN_VEL][1]),
-        "root_vz": float(root[ROOT_LIN_VEL][2]),
-        "tilt": float(root_tilt(root.unsqueeze(0), ref[:1])[0]),
-    }
 
 
 def _rate(count: int, total: int) -> float | None:
@@ -679,7 +488,7 @@ def criteria_dict(criteria: RecoveryCriteria) -> dict:
     }
 
 
-_TRIAL_FIELDS = (
+TRIAL_FIELDS = (
     "trial",
     "speed_m_s",
     "direction_x",
@@ -700,46 +509,3 @@ _TRIAL_FIELDS = (
     "measured_dvx",
     "measured_dvy",
 )
-
-
-def _cell(value) -> str:
-    if value is None:
-        return ""
-    return str(value)
-
-
-def write_push_outputs(
-    out_dir: Path,
-    summary: dict,
-    rows: list[dict],
-    trajectory: list[dict] | None = None,
-) -> None:
-    """Write ``summary.json``, ``per_trial.csv``, and an optional trajectory."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, allow_nan=False) + "\n", encoding="utf-8"
-    )
-    with (out_dir / "per_trial.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=_TRIAL_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: _cell(row.get(key)) for key in _TRIAL_FIELDS})
-    if trajectory is not None:
-        fields = (
-            "trial",
-            "phase",
-            "root_x",
-            "root_y",
-            "root_z",
-            "root_vx",
-            "root_vy",
-            "root_vz",
-            "tilt",
-        )
-        with (out_dir / "trajectory.csv").open(
-            "w", encoding="utf-8", newline=""
-        ) as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            writer.writeheader()
-            for row in trajectory:
-                writer.writerow({key: _cell(row.get(key)) for key in fields})
