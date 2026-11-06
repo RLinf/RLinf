@@ -133,18 +133,39 @@ The high flexibility allows RLinf to explore more efficient scheduling and execu
 
 ### Training and Inference Engines
 
-RLinf updates models with a training engine and runs rollout and evaluation with an inference engine. FSDP adapts quickly to new models and algorithms, and Megatron-LM and Megatron-Bridge are built for large-scale training. The matrix shows the workloads each engine supports; PhyAI and ApxInf currently support π₀.₅ only.
+RLinf updates models with a training engine and runs rollout and evaluation with an inference engine. FSDP adapts quickly to new models and algorithms, and Megatron-LM and Megatron-Bridge are built for large-scale training. Agentic AI includes reasoning tasks such as math and VQA. PhyAI and ApxInf currently support π₀.₅ only.
 
-| Engine | Role | Embodied RL | Reasoning RL | Agentic RL | SFT | Evaluation |
-|---|---|:---:|:---:|:---:|:---:|:---:|
-| FSDP | Training | ✅ | ✅ | ✅ | ✅ | — |
-| [Megatron-LM](https://rlinf.readthedocs.io/en/latest/rst_source/guides/5D.html) | Training | — | ✅ | ✅ | — | — |
-| [Megatron-Bridge](https://rlinf.readthedocs.io/en/latest/rst_source/extending/mbridge.html) | Training | — | ✅ | ✅ | ✅ | — |
-| HuggingFace | Inference | ✅ | — | — | — | ✅ |
-| [SGLang](https://rlinf.readthedocs.io/en/latest/rst_source/guides/sglang_server.html) | Inference | — | ✅ | ✅ | — | ✅ |
-| vLLM | Inference | — | ✅ | — | — | — |
-| [PhyAI](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html) | Inference | ✅ | — | — | — | — |
-| [ApxInf](https://rlinf.readthedocs.io/en/latest/rst_source/guides/apxinf.html) | Inference | — | — | — | — | ✅ |
+<table>
+  <thead align="center">
+    <tr>
+      <th rowspan="2"></th>
+      <th colspan="3">Training</th>
+      <th colspan="5">Inference</th>
+    </tr>
+    <tr>
+      <th>FSDP</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/5D.html">Megatron-LM</a></th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/mbridge.html">Megatron-Bridge</a></th>
+      <th>HuggingFace</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
+      <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
+      <th><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
+    </tr>
+  </thead>
+  <tbody align="center">
+    <tr>
+      <td align="left"><b>Embodied AI</b></td>
+      <td>✅</td><td>—</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+    </tr>
+    <tr>
+      <td align="left"><b>Agentic AI</b></td>
+      <td>✅</td><td>✅</td><td>✅</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+    </tr>
+  </tbody>
+</table>
 
 ## Examples
 

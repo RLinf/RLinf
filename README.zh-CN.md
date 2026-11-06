@@ -133,18 +133,39 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 
 ### 训练与 Rollout 引擎
 
-RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。下表列出各引擎支持的任务，其中 PhyAI 和 ApxInf 目前仅支持 π₀.₅。
+RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。智能体一栏也涵盖数学、VQA 等推理任务。PhyAI 和 ApxInf 目前仅支持 π₀.₅。
 
-| 引擎 | 类型 | 具身 RL | 推理 RL | 智能体 RL | SFT | 评测 |
-|---|---|:---:|:---:|:---:|:---:|:---:|
-| FSDP | 训练 | ✅ | ✅ | ✅ | ✅ | — |
-| [Megatron-LM](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/5D.html) | 训练 | — | ✅ | ✅ | — | — |
-| [Megatron-Bridge](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/mbridge.html) | 训练 | — | ✅ | ✅ | ✅ | — |
-| HuggingFace | Rollout | ✅ | — | — | — | ✅ |
-| [SGLang](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/sglang_server.html) | Rollout | — | ✅ | ✅ | — | ✅ |
-| vLLM | Rollout | — | ✅ | — | — | — |
-| [PhyAI](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html) | Rollout | ✅ | — | — | — | — |
-| [ApxInf](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/apxinf.html) | Rollout | — | — | — | — | ✅ |
+<table>
+  <thead align="center">
+    <tr>
+      <th rowspan="2"></th>
+      <th colspan="3">训练</th>
+      <th colspan="5">Rollout</th>
+    </tr>
+    <tr>
+      <th>FSDP</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/5D.html">Megatron-LM</a></th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/mbridge.html">Megatron-Bridge</a></th>
+      <th>HuggingFace</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
+      <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
+    </tr>
+  </thead>
+  <tbody align="center">
+    <tr>
+      <td align="left"><b>具身智能</b></td>
+      <td>✅</td><td>—</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+    </tr>
+    <tr>
+      <td align="left"><b>智能体</b></td>
+      <td>✅</td><td>✅</td><td>✅</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+    </tr>
+  </tbody>
+</table>
 
 
 ## 示例
