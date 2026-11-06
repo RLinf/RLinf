@@ -77,10 +77,9 @@ class MAMegatronActor(MegatronActor):
         )
         self.placement = placement
 
-        assert self.placement_mode == PlacementMode.COLLOCATED or (
-            self.cfg.runner.get("synchronous", False)
-            and self.cfg.critic.use_critic_model
-        ), "Multi-agent actor requires collocated placement or synchronous PPO."
+        assert self.placement_mode == PlacementMode.COLLOCATED, (
+            "Only collocated placement is supported for multi-agent actor"
+        )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
@@ -235,7 +234,6 @@ class MAMegatronActor(MegatronActor):
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
                     ),
-                    fast_path_zero_loss_mask=not self.cfg.algorithm.use_valid_token_scale,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)

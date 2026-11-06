@@ -304,6 +304,7 @@ def test_megatron_valid_token_scale_matches_unsplit_gradient(
         input_ids = torch.arange(128).reshape(32, 4) % 7 + 1
         positions = torch.arange(4).expand_as(input_ids).clone()
         mask = (positions > 0) & (positions <= (torch.arange(32) % 3 + 1)[:, None])
+        mask[0] = False
         mask[-1] = False
         batch = {
             "input_ids": input_ids,
@@ -822,8 +823,33 @@ def test_rollout_config_needs_only_the_selected_backend(backend):
     assert unused_backend not in validated
 
 
+@pytest.mark.parametrize(
+    "hardware",
+    [
+        {"actor": "0-1", "critic": "2-3", "rollout": "0-1", "reward": "0-1"},
+        {"actor": 0, "critic": 1, "rollout": 2, "reward": 3},
+    ],
+)
+def test_agent_ppo_requires_shared_gpus(hardware):
+    pytest.importorskip("megatron.training")
+    from omegaconf import OmegaConf
+    from test_placement import create_fake_cluster
+
+    from rlinf.runners.agent_ppo_runner import AgentPPORunner
+    from rlinf.utils.placement import ModelParallelComponentPlacement
+
+    cfg = OmegaConf.load(
+        Path(__file__).resolve().parents[2]
+        / "examples/agent/searchr1/config/train_qwen2.5_ppo.yaml"
+    )
+    cfg.cluster.component_placement = hardware
+    placement = ModelParallelComponentPlacement(cfg, create_fake_cluster(1, 4))
+    with pytest.raises(ValueError, match="share the same GPUs"):
+        AgentPPORunner(placement=placement)
+
+
 @pytest.mark.parametrize("backend_type", [None, "server", "engine"])
-def test_searchr1_ppo_recipe_uses_server_by_default(backend_type):
+def test_searchr1_ppo_recipe_uses_server_without_overriding_backend(backend_type):
     from omegaconf import OmegaConf
 
     from rlinf.config import validate_searchr1_cfg

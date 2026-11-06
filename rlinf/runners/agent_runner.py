@@ -165,9 +165,9 @@ class AgentRunner(ReasoningRunner):
             self.solid_generate_input_channels,
         ).wait()
 
-    def _sync_weights(self, do_offload: bool = True) -> None:
-        super()._sync_weights(do_offload=do_offload)
-        if do_offload and not self.is_pipeline:
+    def _sync_weights(self):
+        super()._sync_weights()
+        if not self.is_pipeline:
             onload_handles = []
             for solid_rollout in self.solid_rollouts.values():
                 onload_handles.append(solid_rollout.onload_engine())

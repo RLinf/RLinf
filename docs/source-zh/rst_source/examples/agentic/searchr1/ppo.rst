@@ -77,7 +77,7 @@ PPO 复用已有的多轮 agent 和搜索工具接口。每个训练 step 先完
    bash requirements/install.sh agentic --engine sglang
    source .venv/bin/activate
 
-PPO 当前要求 Megatron TP=PP=CP=1，提供的配置使用 SGLang HTTP server backend，TP=PP=1。检索服务的资源与八张训练 GPU 分开管理，配置步骤见 :doc:`index`。
+PPO 当前要求 Megatron TP=PP=CP=1，actor、critic 和 rollout 完全共享 GPU。提供的配置使用 SGLang HTTP server backend，TP=PP=1。检索服务的资源与八张训练 GPU 分开管理，配置步骤见 :doc:`index`。
 
 下载模型
 ------------
@@ -94,23 +94,22 @@ PPO 当前要求 Megatron TP=PP=CP=1，提供的配置使用 SGLang HTTP server 
 运行
 --------
 
-向启动脚本传入不带 ``.yaml`` 的配置名，后续参数作为 Hydra 覆盖项。
+在配置中设置 ``runner.max_steps: 200`` 和 ``runner.max_epochs: 200``，最多训练 200 个 batch。足够的 epoch 数让 dataloader 能提供所需 batch。该配置让 rollout、actor 和 critic 共用 GPU 0–7，使用 ``rollout.sglang.backend_type: server``。
 
-该配置让 rollout、actor 和 critic 共用 GPU 0–7，并设置 ``rollout.sglang.backend_type: server``。Runner 在角色切换时 offload 模型状态。运行以下命令，最多训练 200 个 batch：
+向启动脚本传入不带 ``.yaml`` 的配置名：
 
 .. code-block:: bash
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo \
-     runner.max_steps=200 runner.max_epochs=200
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
-覆盖 epoch 数使 dataloader 能提供足够的 batch。不使用这些覆盖项时，配置默认训练一个数据集 epoch，每 25 个 batch 及最后一个 batch 保存 checkpoint。
+配置默认训练一个数据集 epoch，每 25 个 batch 及最后一个 batch 保存 checkpoint。
 
 Rollout 与训练顺序
 ~~~~~~~~~~~~~~~~~~~~~~
 
-每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。Rollout 与训练共享 GPU 时，在 critic inference 前 offload rollout 引擎。Critic 预测 old values，注册在算法接口中的 ``gae_dynamic`` 沿 episode 的 action token 计算固定 returns，并在整个 rollout batch 的 action token 上归一化 advantages。Critic worker 在更新模型前计算这些目标，通过 DP 归约汇总 action 统计量完成归一化，再将固定目标传给 actor。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。
+每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。随后在 critic inference 前 offload rollout 引擎。Critic 预测 old values，注册在算法接口中的 ``gae_dynamic`` 沿 episode 的 action token 计算固定 returns，并在整个 rollout batch 的 action token 上归一化 advantages。Critic worker 在更新模型前计算这些目标，通过 DP 归约汇总 action 统计量完成归一化，再将固定目标传给 actor。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。
 
-Runner 先训练 critic，将其状态 offload 后，再执行 actor inference 和训练。配置对两个角色都开启 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer``，分别控制角色切换时哪些状态移到 CPU。训练结束时，runner 停止 SGLang server 进程。
+Runner 先训练 critic，将其状态 offload 后，再执行 actor inference 和训练。配置对两个角色都开启 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer``，分别控制角色切换时哪些状态移到 CPU。训练结束时，runner 停止 rollout 引擎。
 
 Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``algorithm.n_minibatches=1`` 时，每个 rollout batch 分别产生一次 actor 和 critic optimizer update，Megatron microbatch 在每次更新内部累积梯度。Actor 学习率为 ``1e-6``；critic 学习率为 ``5e-6``，使用 10 次更新的 warmup。``critic.value_head_init`` 支持独立 value head 的 ``normal`` 或 ``zero`` 初始化。
 

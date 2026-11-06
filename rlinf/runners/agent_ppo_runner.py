@@ -30,14 +30,16 @@ class AgentPPORunner(AgentRunner):
     """Complete both model updates and weight installation before each rollout."""
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        placement = self.component_placement
-        training_gpus = set(placement.get_hardware_ranks("actor")) | set(
+        placement = kwargs["placement"]
+        if not placement.is_collocated or (
             placement.get_hardware_ranks("critic")
-        )
-        self.release_rollout = bool(
-            training_gpus & set(placement.get_hardware_ranks("rollout"))
-        )
+            != placement.get_hardware_ranks("actor")
+        ):
+            raise ValueError(
+                "Synchronous SearchR1 PPO requires actor, critic, and rollout "
+                "to share the same GPUs."
+            )
+        super().__init__(**kwargs)
 
     def init_rollout_workers(self) -> None:
         """Reuse agent initialization and convert the independent critic checkpoint."""
@@ -51,22 +53,6 @@ class AgentPPORunner(AgentRunner):
                 self.cfg.critic.megatron.ckpt_convertor.hf_model_path,
                 self.cfg.critic.megatron.ckpt_convertor,
             )
-
-    def _sync_weights(self, do_offload: bool = True) -> None:
-        if self.component_placement.is_collocated:
-            super()._sync_weights(do_offload=do_offload)
-            return
-
-        super()._sync_weights(do_offload=False)
-        if not do_offload:
-            return
-        if self.cfg.actor.offload_weight or self.cfg.actor.offload_grad:
-            self.actor.offload_model_weights_and_grad(
-                offload_weight=self.cfg.actor.offload_weight,
-                offload_grad=self.cfg.actor.offload_grad,
-            ).wait()
-        if self.cfg.actor.offload_optimizer:
-            self.actor.offload_megatron_optimizer().wait()
 
     def run(self) -> None:
         """Run complete rollout, prediction, update, and synchronization stages."""
@@ -104,8 +90,7 @@ class AgentPPORunner(AgentRunner):
                             output_channel=self.rollout_channel,
                         )
                         agent_metrics = rollout_handle.wait()[0]
-                        if self.release_rollout:
-                            self.rollout.offload_engine().wait()
+                        self.rollout.offload_engine().wait()
 
                         critic_infer_handle: Handle = self.critic.run_inference(
                             input_channel=self.rollout_channel,

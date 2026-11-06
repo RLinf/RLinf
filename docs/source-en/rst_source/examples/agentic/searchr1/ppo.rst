@@ -84,8 +84,8 @@ Install the Megatron training stack with SGLang following
    bash requirements/install.sh agentic --engine sglang
    source .venv/bin/activate
 
-PPO currently requires Megatron TP=PP=CP=1. The configuration uses SGLang's HTTP
-server backend with TP=PP=1.
+PPO currently requires Megatron TP=PP=CP=1 and fully shared actor, critic, and
+rollout GPUs. The configuration uses SGLang's HTTP server backend with TP=PP=1.
 Manage retrieval resources separately from the eight training GPUs; see
 :doc:`index` for retrieval setup.
 
@@ -107,28 +107,25 @@ training JSONL file. Set
 Run It
 ----------
 
-Pass a configuration name without ``.yaml`` to the launcher. Additional arguments
-are Hydra overrides.
+Set ``runner.max_steps: 200`` and ``runner.max_epochs: 200`` in the configuration
+to train for up to 200 batches. The epoch setting allows the dataloader to provide
+enough batches. The configuration shares GPUs 0–7 between rollout, actor, and
+critic and uses ``rollout.sglang.backend_type: server``.
 
-The configuration shares GPUs 0–7 between rollout, actor, and critic. Rollout uses
-``rollout.sglang.backend_type: server``; the runner offloads model state between
-roles. Run up to 200 training batches:
+Pass the configuration name without ``.yaml`` to the launcher:
 
 .. code-block:: bash
 
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo \
-     runner.max_steps=200 runner.max_epochs=200
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
-The epoch override allows the dataloader to provide enough batches. Without these
-overrides, the configuration trains for one dataset epoch. It saves checkpoints
+The default configuration trains for one dataset epoch. It saves checkpoints
 every 25 batches and at the final batch.
 
 Rollout and Training Order
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 At each step, the runner publishes actor weights and waits for all episodes in the
-batch to finish. With shared rollout/training GPUs, it offloads the rollout engine
-before critic inference. The critic predicts old values; the registered ``gae_dynamic`` algorithm computes fixed
+batch to finish, then offloads the rollout engine before critic inference. The critic predicts old values; the registered ``gae_dynamic`` algorithm computes fixed
 returns and normalizes advantages over all action tokens in the rollout batch.
 The critic worker computes these targets before updating its model and passes them
 to the actor. Normalization reduces action statistics across critic DP ranks.
@@ -138,7 +135,7 @@ Turn and token limits also terminate the episode with zero future value.
 The runner trains the critic first and offloads its state before actor inference
 and training. The configuration enables ``offload_weight``, ``offload_grad``, and
 ``offload_optimizer`` on both roles. These flags control which state moves to CPU
-between roles. The runner stops the SGLang server processes when training ends.
+between roles. The runner stops the rollout engines when training ends.
 
 The actor uses PPO clipping and the critic uses clipped Huber loss. With
 ``algorithm.n_minibatches=1``, each rollout batch produces one actor optimizer
