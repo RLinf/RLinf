@@ -1,0 +1,29 @@
+env_type: "diffusion"
+seed: 42
+total_num_envs: 128
+group_size: 1
+auto_reset: False
+ignore_terminations: False
+max_episode_steps: 1
+max_steps_per_rollout_epoch: 1
+is_eval: False
+
+video_cfg:
+  save_video: False
+  info_on_video: False
+  video_base_dir: ${runner.logger.log_path}/video/image_reward
+
+dataset:
+  type: "visual.prompt_dataset"
+  # data/refl_data.json from https://github.com/zai-org/ImageReward.
+  path: /path/to/ImageReward/data/refl_data.json
+
+reward:
+  type: "single"
+  model: "visual.image_reward"
+  key: "avg"
+  use_gpu: True
+  batch_size: 32
+  # ImageReward.pt and med_config.json from https://huggingface.co/THUDM/ImageReward.
+  model_path: /path/to/ImageReward/ImageReward.pt
+  med_config: /path/to/ImageReward/med_config.json

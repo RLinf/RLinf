@@ -8,3 +8,5 @@ opencv-python==4.11.0.86
 paddlepaddle==2.6.2
 paddleocr==2.9.1
 Levenshtein==0.27.3
+image-reward==1.5
+clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6

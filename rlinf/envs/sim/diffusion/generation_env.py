@@ -55,6 +55,7 @@ class GenerationEnv(gym.Env):
         self.group_size = int(cfg_get(cfg, "group_size", 1))
         self.num_group = max(1, int(np.ceil(self.num_envs / max(1, self.group_size))))
         self.is_eval = bool(cfg_get(cfg, "is_eval", False))
+        self.sequential_eval = bool(cfg_get(cfg, "sequential_eval", False))
         self._generator = np.random.default_rng(seed=self.seed)
         self._cursor = 0
         # dataset and reward backend
@@ -76,12 +77,11 @@ class GenerationEnv(gym.Env):
         return
 
     def _next_group_indices(self) -> np.ndarray:
-        # TODO: comment for eval visual
-        # if self.is_eval:
-        #     start = self._cursor + self.seed_offset * self.num_group
-        #     self._cursor += self.num_group * self.total_num_processes
-        #     indices = np.arange(start, start + self.num_group)
-        #     return indices % len(self.dataset)
+        if self.sequential_eval:
+            start = self._cursor + self.seed_offset * self.num_group
+            self._cursor += self.num_group * self.total_num_processes
+            indices = np.arange(start, start + self.num_group)
+            return indices % len(self.dataset)
         return self._generator.integers(
             0,
             len(self.dataset),

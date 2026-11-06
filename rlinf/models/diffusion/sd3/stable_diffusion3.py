@@ -14,14 +14,18 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from functools import cached_property
 from typing import Any, Literal
 
 import torch
+import torch.nn.functional as F
 from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import (
     retrieve_timesteps,
 )
+from transformers import BertTokenizer
 
 from rlinf.models.diffusion.sd3.sampler import sde_step_with_logprob
 from rlinf.models.diffusion.sd3.utils import (
@@ -49,7 +53,10 @@ class StableDiffusion3Config:
     eval_sampler: Literal["sde", "ode", "dpm1", "dpm2"] = "ode"
     max_sequence_length: int = 128
     output_type: str = "pt"
-    rl_mode: Literal["flow-grpo", "nft"] = "flow-grpo"
+    rl_mode: Literal["flow-grpo", "nft", "refl"] = "flow-grpo"
+    refl_late_fraction: float = 0.25
+    reward_tokenizer_path: str = "bert-base-uncased"
+    reward_max_tokens: int = 35
     use_lora: bool = True
     lora_rank: int = 32
     lora_alpha: int = 64
@@ -109,6 +116,10 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             return self.default_forward(**kwargs)
         if forward_type == ForwardType.NFT:
             return self.nft_forward(**kwargs)
+        if forward_type == ForwardType.REFL:
+            return self.refl_forward(**kwargs)
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         raise NotImplementedError
 
     def default_forward(
@@ -216,6 +227,115 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
 
         return {"v_theta": v_theta}
 
+    def _conditional_velocity(
+        self,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor,
+    ) -> torch.Tensor:
+        """Predict the text-conditional velocity for ``t`` in [0, 1].
+
+        ReFL and its pre-training loss both target this branch, so CFG never
+        applies here regardless of ``config.cfg``.
+        """
+        model_dtype = next(self.transformer.parameters()).dtype
+        return self.transformer(
+            hidden_states=x_t.to(dtype=model_dtype),
+            timestep=t.to(dtype=torch.float32) * 1000.0,
+            encoder_hidden_states=prompt_embeds,
+            pooled_projections=pooled_prompt_embeds,
+            return_dict=False,
+        )[0]
+
+    def refl_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        refl_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:
+        """Decode the one-step x0 prediction, keeping gradients to the velocity.
+
+        Returns images in [0, 1] with shape [B, 3, H, W].
+        """
+        x_t = refl_inputs["x_t"]
+        t = refl_inputs["timesteps"]
+        velocity = self._conditional_velocity(
+            x_t,
+            t,
+            forward_inputs["prompt_embeds"],
+            forward_inputs["pooled_prompt_embeds"],
+        )
+        x0 = x_t - t.view(-1, 1, 1, 1) * velocity
+
+        vae = self.pipeline.vae
+        vae.to(device=x0.device)
+        latents = x0 / vae.config.scaling_factor + vae.config.shift_factor
+        images = vae.decode(latents.to(dtype=vae.dtype), return_dict=False)[0]
+        return {"images": (images / 2 + 0.5).clamp(0, 1)}
+
+    def sft_forward(self, data: dict[str, Any], **kwargs) -> torch.Tensor:
+        """Return the flow-matching pre-training loss on text-image pairs.
+
+        ``data`` holds ``images`` in [-1, 1] and their ``prompts``.
+        """
+        device = next(self.transformer.parameters()).device
+        prompt_embeds, pooled_prompt_embeds = self.encode_prompts(data["prompts"])
+
+        vae = self.pipeline.vae
+        vae.to(device=device)
+        with torch.no_grad():
+            latents = vae.encode(
+                data["images"].to(device=device, dtype=vae.dtype)
+            ).latent_dist.sample()
+        latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+
+        # Logit-normal t with the scheduler shift, as SD3 pre-training samples it.
+        shift = self.pipeline.scheduler.config.shift
+        u = torch.sigmoid(torch.randn(latents.shape[0], device=device))
+        t = shift * u / (1 + (shift - 1) * u)
+        t_bc = t.view(-1, 1, 1, 1)
+        noise = torch.randn_like(latents)
+        velocity = self._conditional_velocity(
+            (1 - t_bc) * latents + t_bc * noise,
+            t,
+            prompt_embeds,
+            pooled_prompt_embeds,
+        )
+        return F.mse_loss(velocity.float(), (noise - latents).float())
+
+    @cached_property
+    def reward_tokenizer(self) -> BertTokenizer:
+        return BertTokenizer.from_pretrained(self.config.reward_tokenizer_path)
+
+    def _refl_forward_inputs(
+        self,
+        prompts: list[str],
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor,
+        full_latents: torch.Tensor,
+        timesteps: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Keep only the late denoising window ReFL samples its states from."""
+        num_steps = timesteps.shape[1]
+        start = num_steps - math.ceil(num_steps * self.config.refl_late_fraction)
+        tokens = self.reward_tokenizer(
+            prompts,
+            padding="max_length",
+            truncation=True,
+            max_length=self.config.reward_max_tokens,
+            return_tensors="pt",
+        ).to(full_latents.device)
+        return {
+            "latents": full_latents[:, start:num_steps].detach(),
+            "timesteps": timesteps[:, start:].detach(),
+            "x0": full_latents[:, -1].detach(),
+            "prompt_embeds": prompt_embeds.detach(),
+            "pooled_prompt_embeds": pooled_prompt_embeds.detach(),
+            "reward_input_ids": tokens.input_ids,
+            "reward_attention_mask": tokens.attention_mask,
+        }
+
     def obs_processor(self, env_obs: Any) -> list[str]:
         if isinstance(env_obs, Mapping):
             for key in ("prompts", "prompt", "texts", "text", "task_descriptions"):
@@ -310,6 +430,19 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             max(1, int(self.config.num_steps * self.config.timestep_fraction)),
             old_logprobs.shape[1],
         )
+
+        if self.config.rl_mode == "refl":
+            return images, {
+                "prev_logprobs": old_logprobs[:, :num_train_timesteps].detach(),
+                "prev_values": None,
+                "forward_inputs": self._refl_forward_inputs(
+                    prompts,
+                    prompt_embeds,
+                    pooled_prompt_embeds,
+                    full_latents,
+                    timesteps,
+                ),
+            }
 
         forward_inputs = {
             "latents": full_latents[:, :num_train_timesteps].detach(),
