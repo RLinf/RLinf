@@ -14,13 +14,11 @@
 
 """LingBot-VLA 2.0 flow-SDE PPO with an explicit latent trajectory likelihood."""
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import torch
-from torch.utils._pytree import tree_map
 import torch.nn as nn
 import yaml
 from lingbotvla.checkpoint_metadata import (
@@ -44,6 +42,7 @@ from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
 )
 from omegaconf import DictConfig, OmegaConf
 from safetensors.torch import load_model
+from torch.utils._pytree import tree_map
 from transformers.modeling_utils import load_sharded_checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -174,30 +173,18 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             load_model(self.vla_model, str(weights / "model.safetensors"), strict=True)
         else:
             raise FileNotFoundError(f"No safetensors checkpoint in {weights}")
-        eval_compute_dtype = str(config.get("eval_compute_dtype", "bf16")).lower()
-        if eval_compute_dtype not in {"bf16", "fp32"}:
-            raise ValueError("eval_compute_dtype must be bf16 or fp32")
-        self.compute_dtype = (
-            torch.float32 if eval_compute_dtype == "fp32" else _COMPUTE_DTYPE
-        )
-        self.vla_model.to(dtype=self.compute_dtype)
+        self.vla_model.to(dtype=_COMPUTE_DTYPE)
         # No-grad inference kernels can have different numerical reductions.
         # The source package exposes a common differentiable MoE backend.
         self.vla_model.set_moe_forward_backend("differentiable")
-        # Disable auxiliary losses for SFT data without depth/video targets, but
-        # preserve checkpoint-defined query modules: embed_prefix uses their flags
-        # to append the trained depth/future-video tokens during inference.
         self.vla_model.config.align_params = {}
-        parameter_dtype = (
-            torch.float32 if eval_compute_dtype == "fp32" else torch_dtype
-        )
         for name, param in self.vla_model.named_parameters():
             trainable = is_rl_trainable(name)
             param.requires_grad_(trainable)
             if trainable:
                 # Cast parameters only: buffers such as MoE routing biases must
                 # stay bf16 so actor and rollout route tokens identically.
-                param.data = param.data.to(parameter_dtype)
+                param.data = param.data.to(torch_dtype)
         self.value_head = None
         if config.add_value_head:
             self.value_head = ValueHead(
@@ -261,14 +248,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             raise ValueError("RoboTwin states must be [batch, 14]")
         if wrists.shape[1] != 2:
             raise ValueError("V2 RoboTwin requires both wrist cameras")
-        # 评测侧 resize 必须与训练一致：训练用 Resize(int)（短边缩放，保持长宽比）
-        _mode = os.environ.get("EVAL_RESIZE", "legacy")
-        if _mode == "square":
-            resize = Resize((self.image_size, self.image_size))
-        elif _mode == "legacy":
-            resize = Resize((self.image_size, self.image_size * 2))
-        else:  # train: 短边缩放到 img_size，保持长宽比
-            resize = Resize(self.image_size)
+        resize = Resize((self.image_size, self.image_size))
         prepared = []
         for index in range(len(states)):
             raw = {
@@ -302,7 +282,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return {
             key: value.to(
                 device=device,
-                dtype=self.compute_dtype if key in {"images", "state"} else value.dtype,
+                dtype=_COMPUTE_DTYPE if key in {"images", "state"} else value.dtype,
             )
             for key, value in inputs.items()
         }
@@ -349,7 +329,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             inputs["state"],
             padding,
             cache,
-            x.to(self.compute_dtype),
+            x.to(_COMPUTE_DTYPE),
             time.expand(len(x)),
             prefix_position_ids=positions,
         ).float()
@@ -357,7 +337,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
     def _values(self, features: torch.Tensor) -> torch.Tensor:
         if self.value_head is None:
             return features.new_zeros((len(features), 1), dtype=torch.float32)
-        return self.value_head(features.to(self.compute_dtype)).float()
+        return self.value_head(features.to(_COMPUTE_DTYPE)).float()
 
     def _times(self, device: torch.device) -> torch.Tensor:
         return torch.linspace(
@@ -373,23 +353,6 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         parts = [
             self._sample_actions(batch, mode) for batch in self._micro_batches(prepared)
         ]
-        # 只读诊断：对比评测输入/输出与训练分布
-        try:
-            import os as _os, numpy as _np
-            if _os.environ.get("LOG_STATS"):
-                _st = prepared.get("state")
-                _ac = parts[0][0]
-                _s0 = _np.asarray(_st.detach().float().cpu())[0]
-                _a0 = _np.asarray(_ac.detach().float().cpu())[0]
-                print(
-                    f"[STATS] state first3={_np.round(_s0[:3],3).tolist()} "
-                    f"state range=[{_s0.min():.2f},{_s0.max():.2f}] | "
-                    f"action first3={_np.round(_a0[:3],3).tolist()} "
-                    f"action range=[{_a0.min():.2f},{_a0.max():.2f}]",
-                    flush=True,
-                )
-        except Exception:
-            pass
         return torch.cat([part[0] for part in parts]), {
             "prev_logprobs": torch.cat([part[1]["prev_logprobs"] for part in parts]),
             "prev_values": torch.cat([part[1]["prev_values"] for part in parts]),
@@ -409,31 +372,6 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             }
 
     def _sample_actions(self, prepared: dict, mode: str):
-        # 可选：用上游官方 sample_actions 做推理（与 lingbot 官方 deploy 脚本一致），
-        # 避免 RLinf 适配器自实现的 ODE 与官方实现不一致。
-        if mode == "eval" and bool(getattr(self.config, "eval_sampling_upstream", False)):
-            device = next(self.vla_model.model.parameters()).device
-            dtype = next(self.vla_model.model.parameters()).dtype
-            b = {k: v.to(device) for k, v in prepared.items() if hasattr(v, "to")}
-            with torch.no_grad():
-                norm_actions = self.vla_model.sample_actions(
-                    images=b["images"].to(dtype),
-                    img_masks=b["img_masks"],
-                    lang_tokens=b["lang_tokens"],
-                    lang_masks=b["lang_masks"],
-                    state=b["state"].to(dtype),
-                    image_grid_thw=b.get("image_grid_thw"),
-                )
-            physical_actions = self._unapply_norm_actions(prepared, norm_actions)
-            # Eval-only upstream sampling has no RL transition statistics.
-            # Return shape-compatible placeholders for the rollout worker.
-            return physical_actions, {
-                "prev_logprobs": physical_actions.new_zeros(
-                    (len(physical_actions), self.horizon * self.config.action_dim)
-                ),
-                "prev_values": physical_actions.new_zeros((len(physical_actions), 1)),
-                "forward_inputs": {},
-            }
         inputs = self._device_inputs(prepared)
         context = self._prefix(inputs)
         device = inputs["state"].device
@@ -483,53 +421,8 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
         if forward_type != ForwardType.DEFAULT:
-            raise NotImplementedError(
-                "The V2 adapter implements PPO/GRPO/SFT only"
-            )
+            raise NotImplementedError("The V2 adapter implements PPO/GRPO/SFT only")
         return self.default_forward(**kwargs)
-
-    def default_forward(
-        self, forward_inputs: dict, compute_values: bool = True, **kwargs: Any
-    ):
-        """Re-score recorded transitions; never draw noise during actor training."""
-        if forward_inputs["sde_states"].dtype != torch.float32:
-            raise ValueError(
-                "V2 SDE samples must stay FP32; set FSDP cast_forward_inputs=false"
-            )
-        parts = [
-            self._score_actions(batch, compute_values)
-            for batch in self._micro_batches(forward_inputs)
-        ]
-        return {
-            key: torch.cat([part[key] for part in parts])
-            if parts[0][key] is not None
-            else None
-            for key in parts[0]
-        }
-
-    def _score_actions(self, forward_inputs: dict, compute_values: bool):
-        inputs = self._device_inputs(forward_inputs)
-        states = inputs["sde_states"].detach()
-        expected = (len(inputs["state"]), 2, self.horizon, self.latent_dim)
-        if tuple(states.shape) != expected:
-            raise ValueError(
-                f"Expected SDE states {expected}, got {tuple(states.shape)}"
-            )
-        context = self._prefix(inputs)
-        logprobs = score_sde_step(
-            states,
-            lambda latent, time: self._velocity(latent, time, inputs, context),
-            self._times(states.device),
-            inputs["sde_steps"],
-            self.noise_level,
-        )
-        return {
-            "logprobs": self._decoded_coordinates(logprobs, inputs).flatten(1),
-            "values": self._values(context[-1]) if compute_values else None,
-            # The transition std depends only on the noise schedule, so entropy
-            # is a constant; None makes an entropy bonus fail instead of no-op.
-            "entropy": None,
-        }
 
     def sft_forward(self, data, **kwargs):
         device = next(iter(self.vla_model.model.parameters())).device
@@ -578,10 +471,45 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             **loss_dict,
         }
 
-    def _unapply_norm_actions(self, prepared: dict, norm_actions: torch.Tensor) -> torch.Tensor:
-        out = []
-        for index in range(len(norm_actions)):
-            item = {key: value[index].cpu() for key, value in prepared.items()}
-            item["actions"] = norm_actions[index].float().cpu()
-            out.append(self.transform.unapply(item)["action"])
-        return torch.stack(out).float()
+    def default_forward(
+        self, forward_inputs: dict, compute_values: bool = True, **kwargs: Any
+    ):
+        """Re-score recorded transitions; never draw noise during actor training."""
+        if forward_inputs["sde_states"].dtype != torch.float32:
+            raise ValueError(
+                "V2 SDE samples must stay FP32; set FSDP cast_forward_inputs=false"
+            )
+        parts = [
+            self._score_actions(batch, compute_values)
+            for batch in self._micro_batches(forward_inputs)
+        ]
+        return {
+            key: torch.cat([part[key] for part in parts])
+            if parts[0][key] is not None
+            else None
+            for key in parts[0]
+        }
+
+    def _score_actions(self, forward_inputs: dict, compute_values: bool):
+        inputs = self._device_inputs(forward_inputs)
+        states = inputs["sde_states"].detach()
+        expected = (len(inputs["state"]), 2, self.horizon, self.latent_dim)
+        if tuple(states.shape) != expected:
+            raise ValueError(
+                f"Expected SDE states {expected}, got {tuple(states.shape)}"
+            )
+        context = self._prefix(inputs)
+        logprobs = score_sde_step(
+            states,
+            lambda latent, time: self._velocity(latent, time, inputs, context),
+            self._times(states.device),
+            inputs["sde_steps"],
+            self.noise_level,
+        )
+        return {
+            "logprobs": self._decoded_coordinates(logprobs, inputs).flatten(1),
+            "values": self._values(context[-1]) if compute_values else None,
+            # The transition std depends only on the noise schedule, so entropy
+            # is a constant; None makes an entropy bonus fail instead of no-op.
+            "entropy": None,
+        }

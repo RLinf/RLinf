@@ -146,69 +146,19 @@ class RoboTwinEnv(gym.Env):
     def _record_metrics(self, step_reward, infos):
         episode_info = {}
         self.returns += step_reward
-        # 修复：RoboTwin 的 take_action 路径不写 infos["success"]，
-        # 但 task.eval_success / stage_success_tag 会置位，这里补上
-        try:
-            _flags = []
-            for _e in self.venv.envs:
-                _t = getattr(_e, "task", None)
-                _ok = bool(getattr(_t, "eval_success", False)) or bool(
-                    getattr(_t, "stage_success_tag", False)
-                )
-                _flags.append(_ok)
-            if _flags and any(_flags):
-                infos["success"] = torch.as_tensor(_flags, device=self.device)
-        except Exception:
-            pass
-        # 允许用固定指令覆盖环境生成的指令（校准评测口径用）
-        try:
-            _fi = os.environ.get("FIXED_INSTRUCTION", "")
-            if _fi and isinstance(obs, dict) and "task_descriptions" in obs:
-                obs["task_descriptions"] = [_fi] * len(obs["task_descriptions"])
-        except Exception:
-            pass
+        success = [
+            bool(getattr(getattr(env, "task", None), "eval_success", False))
+            or bool(getattr(getattr(env, "task", None), "stage_success_tag", False))
+            for env in self.venv.envs
+        ]
+        if any(success):
+            infos["success"] = torch.as_tensor(success, device=self.device)
         if "success" in infos:
             if isinstance(infos["success"], list):
                 infos["success"] = torch.as_tensor(
                     np.array(infos["success"]).reshape(-1), device=self.device
                 )
             self.success_once = self.success_once | infos["success"]
-            # 只读诊断：每 env 记录"到铃铛顶部的最小几何距离"与接触帧数
-            try:
-                if os.environ.get("LOG_EPISODE"):
-                    if not hasattr(self, "_min_geom"):
-                        self._min_geom = {}; self._n_contact = {}
-                    import numpy as _np
-                    for _i, _e in enumerate(self.venv.envs):
-                        _t = getattr(_e, "task", None)
-                        if _t is None: continue
-                        _b = _np.asarray(_t.bell.get_contact_point(0)[:3], dtype=float)
-                        _ds = []
-                        for _fn in ("get_left_ee_pose", "get_right_ee_pose"):
-                            try: _ds.append(float(_np.linalg.norm(_np.asarray(getattr(_t.robot, _fn)()[:3]) - _b)))
-                            except Exception: pass
-                        if _ds:
-                            self._min_geom[_i] = min(self._min_geom.get(_i, 9.9), min(_ds))
-                        try:
-                            if _t.get_gripper_actor_contact_position("050_bell"):
-                                self._n_contact[_i] = self._n_contact.get(_i, 0) + 1
-                        except Exception: pass
-                        _sd = int(self.reset_state_ids[_i]) if hasattr(self, "reset_state_ids") else -1
-                        print(f"[EPM] seed={_sd} min_geom={self._min_geom.get(_i,9.9):.3f}m n_contact={self._n_contact.get(_i,0)} success={bool(self.success_once[_i])}", flush=True)
-            except Exception:
-                pass
-            # 只读诊断：记录每个 seed 是否成功过（用于配对实验）
-            try:
-                if os.environ.get("LOG_EPISODE") and hasattr(self, "reset_state_ids"):
-                    _seeds = self.reset_state_ids.tolist()
-                    if not hasattr(self, "_logged_success_seeds"):
-                        self._logged_success_seeds = set()
-                    for _i, _s in enumerate(_seeds):
-                        if bool(self.success_once[_i]) and int(_s) not in self._logged_success_seeds:
-                            self._logged_success_seeds.add(int(_s))
-                            print(f"[EP] seed={int(_s)} success_once=True", flush=True)
-            except Exception:
-                pass
             episode_info["success_once"] = self.success_once.clone()
         episode_info["return"] = self.returns.clone()
         episode_info["episode_len"] = self.elapsed_steps.clone()
@@ -384,19 +334,6 @@ class RoboTwinEnv(gym.Env):
         return extracted_obs, step_reward, terminations, truncations, infos
 
     def chunk_step(self, chunk_actions):
-        try:
-            import numpy as _np, os as _os
-            if _os.environ.get("DEBUG_ACTIONS"):
-                a = chunk_actions
-                if hasattr(a, "cpu"): a = a.cpu().numpy()
-                a = _np.asarray(a, dtype=_np.float32)
-                with open("/mnt/public/zhangyuzhuo/logs/env_actions.log", "a") as f:
-                    f.write("chunk shape=%s min=%.3f max=%.3f mean=%.3f\n" % (a.shape, a.min(), a.max(), a.mean()))
-                    f.write("  first step: %s\n" % _np.round(a[0,0],3).tolist())
-        except Exception as e:
-            pass
-        """debug echo of received actions"""
-
         if isinstance(chunk_actions, torch.Tensor):
             chunk_actions = chunk_actions.cpu().numpy()
 

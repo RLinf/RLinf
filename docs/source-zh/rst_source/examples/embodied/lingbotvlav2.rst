@@ -231,6 +231,15 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+监督微调
+----------------------------------------
+
+RLinf 提供了同一适配器的 RoboTwin SFT 入口。先使用
+``toolkits/lerobot/convert_robotwin_to_lerobot.py`` 转换示范数据，设置
+``LINGBOT_VLA_SFT_DATASET``，再用 ``examples/sft/run_vla_sft.sh`` 启动
+``robotwin_sft_lingbotvlav2``。发布的 checkpoint 仍作为评测基线；评测 RLinf
+SFT checkpoint 时，在现有 RoboTwin 评测配置中传入 ``runner.ckpt_path``。
+
 可视化与结果
 ----------------------------------------
 

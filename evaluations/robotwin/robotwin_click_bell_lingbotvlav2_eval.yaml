@@ -1,6 +1,6 @@
 defaults:
   - env/robotwin_click_bell@env.eval
-  - model/lingbotvlav2_sft@rollout.model
+  - model/lingbotvlav2@rollout.model
   - override hydra/job_logging: stdout
   - _self_
 
@@ -14,7 +14,8 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env, rollout: 0-7
+    rollout: 0
+    env: 1
 
 runner:
   task_type: embodied_eval
@@ -36,23 +37,20 @@ env:
   group_name: EnvGroup
   eval:
     rollout_epoch: 1
-    total_num_envs: 8
+    total_num_envs: 2
     auto_reset: true
     ignore_terminations: true
     max_episode_steps: 400
-    max_steps_per_rollout_epoch: 800
+    max_steps_per_rollout_epoch: 400
     reward_coef: 1.0
     group_size: 1
-    use_fixed_reset_state_ids: false
+    use_fixed_reset_state_ids: true
     is_eval: true
-    use_custom_reward: false
     assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/sim/robotwin/seeds/eval_seeds.json
     center_crop: false
-    skip_intermediate_renders: false   # 逐帧渲染，录像更流畅
     video_cfg:
       save_video: true
-      fps: 30
       video_base_dir: ${runner.logger.log_path}/video/eval
     task_config:
       embodiment: [aloha-agilex]

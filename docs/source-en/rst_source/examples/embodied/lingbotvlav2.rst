@@ -265,6 +265,16 @@ instead of the released weights, pass its full weights file:
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+Supervised Fine-Tuning
+----------------------
+
+RLinf provides a RoboTwin SFT entry point for the same adapter. Convert the
+demonstrations with ``toolkits/lerobot/convert_robotwin_to_lerobot.py``, set
+``LINGBOT_VLA_SFT_DATASET``, and run ``examples/sft/run_vla_sft.sh`` with
+``robotwin_sft_lingbotvlav2``. The released checkpoint remains the evaluation
+base; pass an RLinf SFT checkpoint through ``runner.ckpt_path`` in the existing
+RoboTwin evaluation config.
+
 Visualization and Results
 -------------------------
 
