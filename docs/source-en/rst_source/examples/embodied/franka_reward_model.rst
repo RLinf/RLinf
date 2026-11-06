@@ -380,7 +380,7 @@ Preprocess into VLM Trend Dataset
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The collected ``.pkl`` episodes must be converted to VLM trend SFT format using
-``preprocess_vlm_trend_reward_dataset.py``. Activate the virtual environment and
+``examples/reward/vlm_trend/preprocess_reward_dataset.py``. Activate the virtual environment and
 set ``PYTHONPATH`` before running:
 
 .. code-block:: bash
@@ -393,7 +393,7 @@ and auto-labels based on GAE, reward, or TCP-distance changes:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
        --raw-data-path /path/to/run/pickle_episode \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -404,7 +404,7 @@ TCP-to-target distance instead of rewards as the trend signal:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
        --raw-data-path /path/to/run/pickle_episode \
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \

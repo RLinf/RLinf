@@ -163,6 +163,7 @@ def franky() -> types.ModuleType:
         CartesianImpedanceTracker=_Tracker,
         JointMotion=lambda *a, **k: ("joint", a, k),
         CartesianMotion=lambda *a, **k: ("cartesian", a, k),
+        RelativeDynamicsFactor=lambda *a, **k: ("rdf", a, k),
         # A joint waypoint, which a reset motion is built from.
         JointState=lambda position=None, **_k: types.SimpleNamespace(
             position=np.asarray(
@@ -500,13 +501,31 @@ def lerobot() -> dict[str, types.ModuleType]:
             self.id = id
             self.use_degrees = use_degrees
 
+    class FakeSO101LeaderBus:
+        """Small bus surface used by the leader reset trajectory."""
+
+        def __init__(self, owner: Any) -> None:
+            self.owner = owner
+
+        def sync_write(self, register: str, values: dict[str, float]) -> None:
+            assert register == "Goal_Position"
+            self.owner.positions.update(values)
+
+        def enable_torque(self) -> None:
+            self.owner.torque_enabled = True
+
+        def disable_torque(self) -> None:
+            self.owner.torque_enabled = False
+
     class FakeSO101Leader:
         #: Set false to model a leader whose calibration file is missing.
         calibrated = True
 
         def __init__(self, config: Any) -> None:
             self.config = config
+            self.bus = FakeSO101LeaderBus(self)
             self.is_connected = False
+            self.torque_enabled = False
             self.is_calibrated = type(self).calibrated
             self.calibrate_calls = 0
             # lerobot's base class always sets this, from the arm's id.

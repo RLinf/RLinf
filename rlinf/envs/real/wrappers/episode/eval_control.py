@@ -11,31 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Foot-pedal-gated wrapper for autonomous policy eval.
+"""Evdev-gated wrapper for autonomous policy eval.
 
-Pedal: ``a`` starts a rollout from idle; ``c`` ends with reward=1
-("success"); ``b`` ends with reward=0 ("failure"). On end, returns
-``terminated=True`` so the outer ``auto_reset`` can return the robot home.
+The device is the USB keyboard or pedal named by ``keyboard_device``.
+``a`` starts a rollout from idle; ``c`` ends with reward=1 ("success");
+``b`` ends with reward=0 ("failure"). On end, returns ``terminated=True``
+so the outer ``auto_reset`` can return the robot home.
 """
 
 import time
 from typing import Any, Optional, SupportsFloat
 
-from gymnasium.core import ActType, Env, ObsType
+from gymnasium.core import ActType, ObsType
 
 from .session import KeyboardSession
 
 
 class KeyboardEvalControlWrapper(KeyboardSession):
-    """Foot-pedal-gated start/stop for autonomous policy eval rollouts."""
+    """Evdev start/stop for autonomous policy eval rollouts."""
 
     IDLE_POLL_S = 0.05
     WAIT_HEARTBEAT_S = 10.0
-
-    def __init__(self, env: Env) -> None:
-        super().__init__(env)
-        self._running = False
-        self._last_obs: Any = None
+    _running = False
+    _last_obs: Any = None
 
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None
@@ -45,31 +43,42 @@ class KeyboardEvalControlWrapper(KeyboardSession):
         obs, info = self.env.reset(seed=seed, options=options)
         self._last_obs = obs
         # Emit a heartbeat while the homed robot waits for the start signal.
-        self.log(
-            "Arms homed and idle. Arrange the scene, then press pedal 'a' "
-            "to start the next rollout (Ctrl-C to abort)."
-        )
+        if self._hold_fn() is not None:
+            self.log(
+                "Arms homed and idle. Hold Pico grip to move an arm. "
+                "Press USB-keyboard 'a' to start the policy rollout."
+            )
+        else:
+            self.log(
+                "Arms homed and idle. "
+                "Press USB-keyboard 'a' to start the policy rollout."
+            )
         last_heartbeat = time.monotonic()
         while True:
-            time.sleep(self.IDLE_POLL_S)
+            # The wait used to only sleep, so Pico (applied inside step)
+            # could not move the arms until 'a'. Step a hold pose each poll;
+            # an active grip replaces it.
+            obs, info = self._idle_env_step(obs, info)
             now = time.monotonic()
             if now - last_heartbeat >= self.WAIT_HEARTBEAT_S:
                 last_heartbeat = now
-                self.log("Still waiting for pedal 'a' to start the rollout...")
+                self.log("Still waiting for USB-keyboard 'a' to start the rollout...")
             for key in self.listener.pop_pressed_keys():
                 if key == "a":
+                    self._reset_inner_counters()
                     self._running = True
-                    self.log("Pedal 'a' pressed; starting rollout.")
+                    self.log("Key 'a' pressed; starting rollout.")
                     return obs, info
 
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         if not self._running:
-            # Keep the robot idle while polling for the start signal.
-            time.sleep(self.IDLE_POLL_S)
+            # Same as the reset wait: keep Pico live until 'a'.
+            self._idle_env_step(self._last_obs, {})
             for key in self.presses():
                 if key == "a":
+                    self._reset_inner_counters()
                     self._running = True
                     return self._idle_response(event="start")
             return self._idle_response(event=None)
@@ -87,18 +96,65 @@ class KeyboardEvalControlWrapper(KeyboardSession):
                 terminated = True
                 reward = 1.0
                 result = "success"
+                # CollectEpisode(only_success=True) keys off info["success"].
+                info["success"] = True
                 self._running = False
+                self.log("Key 'c': success.")
                 break
             if key == "b":
                 terminated = True
                 reward = 0.0
                 result = "failure"
+                info["success"] = False
                 self._running = False
+                self.log("Key 'b': failure.")
                 break
 
         info["eval_phase"] = "rec" if self._running else "pre"
         info["eval_result"] = result
         return obs, reward, terminated, truncated, info
+
+    def _hold_fn(self) -> Any:
+        env = self.env
+        try:
+            hold = env.get_wrapper_attr("get_hold_action")
+        except AttributeError:
+            hold = getattr(env, "get_hold_action", None)
+        return hold if callable(hold) else None
+
+    def _reset_inner_counters(self) -> None:
+        """Clear step and reward counters advanced during pre-rollout jogging."""
+        unwrapped = getattr(self.env, "unwrapped", self.env)
+        if hasattr(unwrapped, "_num_steps"):
+            unwrapped._num_steps = 0
+        if hasattr(unwrapped, "_success_hold_counter"):
+            unwrapped._success_hold_counter = 0
+
+    def _idle_env_step(
+        self, obs: Any, info: dict[str, Any]
+    ) -> tuple[Any, dict[str, Any]]:
+        """Step a hold pose when the inner env can produce one.
+
+        Absolute TCP treats a zero action as the origin. A missing
+        ``get_hold_action``, or one that raises ``AttributeError`` because the
+        device commands deltas, sleeps so the robot stays at the reset pose.
+        """
+        hold = self._hold_fn()
+        if hold is None:
+            time.sleep(self.IDLE_POLL_S)
+            return obs, info
+        try:
+            hold_action = hold()
+        except AttributeError:
+            time.sleep(self.IDLE_POLL_S)
+            return obs, info
+        started = time.monotonic()
+        obs, _, _, _, stepped_info = self.env.step(hold_action)
+        self._last_obs = obs
+        elapsed = time.monotonic() - started
+        if elapsed < self.IDLE_POLL_S:
+            time.sleep(self.IDLE_POLL_S - elapsed)
+        return obs, stepped_info if isinstance(stepped_info, dict) else {}
 
     def _idle_response(
         self, event: str | None

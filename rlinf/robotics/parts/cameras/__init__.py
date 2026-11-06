@@ -22,7 +22,9 @@ from .base import BaseCamera, Camera, CameraInfo
 
 # Import built-in drivers to populate the camera registry.
 from .lumos import LumosCamera
+from .orbbec import OrbbecCamera
 from .realsense import RealSenseCamera
+from .uvc import UVCCamera
 from .zed import ZEDCamera
 
 __all__ = [
@@ -30,6 +32,8 @@ __all__ = [
     "Camera",
     "CameraInfo",
     "LumosCamera",
+    "OrbbecCamera",
     "RealSenseCamera",
+    "UVCCamera",
     "ZEDCamera",
 ]

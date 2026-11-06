@@ -87,7 +87,7 @@
 .. include:: _setup_common.rst
 
 **选项 1：Docker 镜像** — BEHAVIOR 提供 **两个独立镜像**，每个对应一个模型：
-``agentic-rlinf0.4-behavior``（OpenVLA-OFT）和 ``agentic-rlinf0.4-behavior-openpi``
+``agentic-rlinf0.4-behavior``\ （OpenVLA-OFT）和 ``agentic-rlinf0.4-behavior-openpi``
 （OpenPI）。每个镜像只内置各自的虚拟环境，因此请根据要训练的模型拉取对应镜像
 （两者之间无法通过 ``switch_env`` 互相切换）：
 
@@ -314,21 +314,21 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - 显式保留 ``BehaviorTask`` / ``InteractiveTraversableScene``，以确保覆盖后选中预期的上游
        OmniGibson 类。
    * - ``task_idx``
-     - 当前任务 id（0–49）。RLinf 将其映射到 ``task.activity_name``（见 ``behavior_env.py``）。
+     - 当前任务 id（0–49）。RLinf 将其映射到 ``task.activity_name``\ （见 ``behavior_env.py``）。
    * - ``omni_config.task.instance_resample_mode``
-     - reset 时的实例切换：``disabled``（加载固定的 ``activity_instance_id``）、``offline``
+     - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``
        （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——
        ``*_template.json`` 走较重的场景重载路径，``*_template-tro_state.json`` 走较轻的原地路径）、
-       或 ``online``（需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
+       或 ``online``\ （需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
    * - ``omni_config.task.activity_instance_dir``
      - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline``
        模式以及 ``disabled`` 模式下的固定 id 加载使用。
    * - ``omni_config.task.instance_file_format``
-     - 缓存实例格式：``template``（完整重载）或 ``tro_state``（仅任务相关、轻量）。RLinf 接受不含
+     - 缓存实例格式：``template``\ （完整重载）或 ``tro_state``\ （仅任务相关、轻量）。RLinf 接受不含
        ``robot_poses`` 的 ``tro_state`` 文件，此时会清除过期的缓存机器人位姿元数据，reset 回退到
        任务默认机器人位姿。
    * - ``omni_config.scene.partial_scene_load``
-     - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``（减少启动时间与内存），
+     - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``\ （减少启动时间与内存），
        需要 ``activity_name`` 与 ``scene_model``。为 ``false``/省略时需显式设置 ``load_room_types``。
    * - ``camera.head_resolution`` / ``camera.wrist_resolution``
      - 头部 / 腕部相机分辨率（默认 720×720 / 480×480，应用到 R1Pro 传感器）。

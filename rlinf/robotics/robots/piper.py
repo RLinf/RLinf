@@ -161,7 +161,7 @@ class PiperConfig(RobotConfig):
     """Camera identifiers. ``None`` or ``[]`` runs without cameras."""
 
     camera_type: str = "realsense"
-    """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
+    """Camera backend: ``"realsense"``, ``"zed"``, ``"lumos"``, or ``"orbbec"``."""
 
     controller_node_rank: Optional[int] = None
     """Node rank where the arm part should run.

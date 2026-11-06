@@ -156,7 +156,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 - LIBERO： `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``，配置见 ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
 - DROID： `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``，配置见 ``droid_sft_dreamzero_14b.yaml``
-- Franka PnP：`RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``（继承 ``libero_sim`` 双视角布局）
+- Franka PnP：`RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``\ （继承 ``libero_sim`` 双视角布局）
 - 混合训练：``libero_franka_mix_sft_dreamzero_5b.yaml`` 中 ``data.train_data_paths`` 为列表，每项可指定不同的 ``dataset_path`` / ``embodiment_tag`` / ``metadata_json_path`` / ``weight``
 
 下载示例：
@@ -215,7 +215,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - 字段
      - 含义与作用
    * - ``train_data_paths``
-     - 单数据集：LeRobot 根路径或 HF ``repo_id``。**混合训练**：YAML 列表，每项含 ``dataset_path``（或路径列表）、``weight``、``embodiment_tag``、``metadata_json_path`` 等；由 ``build_dreamzero_mixture_dataset_from_spec`` 按权重采样。可选 ``distribute_weights: true`` 在单条 spec 含多路径时按 episode 长度分配权重。
+     - 单数据集：LeRobot 根路径或 HF ``repo_id``。**混合训练**：YAML 列表，每项含 ``dataset_path``\ （或路径列表）、``weight``、``embodiment_tag``、``metadata_json_path`` 等；由 ``build_dreamzero_mixture_dataset_from_spec`` 按权重采样。可选 ``distribute_weights: true`` 在单条 spec 含多路径时按 episode 长度分配权重。
    * - ``lazy_load``
      - 是否懒加载 mp4 视频。 ``multi_anchor`` 采样模式下必须将 ``lazy_load`` 设为 ``True`` （否则无法按锚点随机取帧）。
    * - ``sampling_mode``
@@ -264,7 +264,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - ``metadata_json_path``
      - 数据集 ``metadata.json``；未设置则回退到 ``model_path/experiment_cfg/metadata.json``。
    * - ``embodiment_tag``
-     - 选择数据变换与 collate 模板：``libero_sim``、``oxe_droid``、``franka_pnp``（定义于 ``data_transforms/embodiment_tag.py``）。单数据集训练时须与数据一致；混合训练时各子项在 ``train_data_paths`` 里单独指定， ``actor.model.embodiment_tag`` 仍须设置（通常与主数据来源一致，供 ``get_model`` 加载 policy 侧 metadata）。
+     - 选择数据变换与 collate 模板：``libero_sim``、``oxe_droid``、``franka_pnp``\ （定义于 ``data_transforms/embodiment_tag.py``）。单数据集训练时须与数据一致；混合训练时各子项在 ``train_data_paths`` 里单独指定， ``actor.model.embodiment_tag`` 仍须设置（通常与主数据来源一致，供 ``get_model`` 加载 policy 侧 metadata）。
 
 **时序与动作形状（需与数据、WAN 容量一致）**
 
