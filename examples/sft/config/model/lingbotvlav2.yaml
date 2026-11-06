@@ -18,7 +18,7 @@ lingbotvlav2:
   robot_config_path: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs/robotwin.yaml
   robot_config_root: ${oc.env:LINGBOT_VLA_V2_PATH}/configs/robot_configs
   stats_path: ${oc.env:LINGBOT_VLA_V2_PATH}/assets/norm_stats/robotwin.json
-  attention_implementation: flex
+  attention_implementation: flex_cached
   data_name: robotwin
   chunk_size: ${..num_action_chunks}
   use_auxiliary_alignment: false
