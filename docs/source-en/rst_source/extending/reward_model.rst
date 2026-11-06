@@ -383,7 +383,7 @@ Where:
 
 - ``reward_mode`` accepts ``"per_step"``, ``"terminal"``, or ``"history_buffer"``: run inference every step, only on terminal frames, or on history windows.
 - ``reward_weight`` and ``env_reward_weight`` control how learned reward and environment reward are combined.
-- ``reward_threshold`` applies only to ``model_type: resnet``: sigmoid probabilities below the threshold are set to ``0``.
+- ``reward_threshold`` applies only to ``model_type: resnet``: a non-negative threshold makes the Worker return ``1`` at or above it, otherwise ``0``. If omitted, ``null``, or negative, the Worker returns raw probabilities.
   For ``buffered_vlm`` / VLM Trend reward, scalar rewards come from ``reward_parser_params``.
   For ``shaped_vlm``, they come from potential differences and the one-shot success bonus.
   The top-level ``reward_threshold`` is not read by either VLM path today.
@@ -944,8 +944,8 @@ After completing the above steps, continue with Section 2
 After training, you can use the trained reward model in two real-world ways:
 
 - **Real-world teleoperation with live inference** (see below) — teleoperate the robot with
-  SpaceMouse while the reward model runs on a GPU node, streaming real-time success
-  probabilities to the terminal. No RL training loop is needed.
+  SpaceMouse while the reward model runs on a GPU node and reports binary
+  success rewards to the terminal. No RL training loop is needed.
 - **Real-world RL training** (see :doc:`../examples/embodied/franka_reward_model`) —
   integrate the reward model into the full RL training loop on the physical Franka.
 
@@ -954,7 +954,7 @@ Real-World Teleoperation with Live Reward Inference
 
 Once a reward model checkpoint is available, ``examples/reward/eval_realworld_teleop.py``
 provides a teleoperation mode where SpaceMouse drives the robot while the reward model
-runs on a GPU node, printing per-step success probabilities in real time.
+runs on a GPU node, reporting per-step binary rewards in real time.
 
 This is useful for:
 
@@ -1038,7 +1038,6 @@ which inherits environment parameters from ``env/realworld_bin_relocation.yaml``
 
    reward:
      use_reward_model: True
-     use_reward_prob: True    # log raw sigmoid probs to terminal
      standalone_realworld: True
      reward_mode: "per_step"
      reward_threshold: 0.2
@@ -1051,9 +1050,8 @@ which inherits environment parameters from ``env/realworld_bin_relocation.yaml``
 Key fields for the reward model in teleop mode:
 
 - ``reward.use_reward_model: True`` — enable reward model inference.
-- ``reward.use_reward_prob: True`` — print raw sigmoid probabilities to the terminal each step.
 - ``reward.standalone_realworld: True`` — use the reward model to directly drive success/failure and resets.
-- ``reward.reward_threshold`` — probability below which success is suppressed. Adjust based on model calibration.
+- ``reward.reward_threshold`` — a non-negative threshold converts probabilities to binary rewards (``1`` at or above it, otherwise ``0``); omitted, ``null``, or negative values leave probabilities unchanged. Raw probabilities do not guarantee the existing exact-``1.0`` success condition.
 - ``reward.model.model_path`` — path to the trained reward model checkpoint.
 
 Launching
@@ -1102,7 +1100,7 @@ Inside ``TeleopWorker``:
    ``EmbodiedRewardWorker.launch_for_realworld(...)`` and initialized once at startup.
 3. Each teleop step, the wrist camera image (``obs["main_images"]``) is extracted and sent
    to the reward worker for inference.
-4. The raw sigmoid probability is printed to the terminal. When ``standalone_realworld=True``,
+4. The thresholded reward is logged as ``rm_reward``. When ``standalone_realworld=True``,
    the reward model also directly drives success/failure and triggers environment resets.
 
 Compared with the full RL pipeline in :doc:`../examples/embodied/franka_reward_model`,
