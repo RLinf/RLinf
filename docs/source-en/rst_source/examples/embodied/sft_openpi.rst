@@ -117,11 +117,11 @@ and vision embeddings in FP32. The profile preserves FP32 action/time inputs
 and adaptive-norm conditioning while the backbone computes in BF16.
 RLT Stage 1 recipes also keep ``rlt_module`` in FP32.
 
-OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
-``use_orig_params: true``. ``no_shard`` replicates all training state;
-``shard_grad_op`` shards gradients and optimizer state; ``full_shard`` also
-shards parameters between module executions. Select either sharded mode to
-reduce per-rank memory. Enable ``gradient_checkpointing: true`` with
+OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, ``full_shard``, and
+``hybrid_shard`` with ``use_orig_params: true``. ``no_shard`` replicates all
+training state; ``shard_grad_op`` shards gradients and optimizer state;
+``full_shard`` also shards parameters between module executions. Select a
+sharded mode to reduce per-rank memory. Enable ``gradient_checkpointing: true`` with
 ``gradient_checkpointing_use_reentrant: false`` to reduce activation memory.
 BEHAVIOR / RoboTwin recipes use the ``openpi_cosine`` learning rate schedule.
 
@@ -145,6 +145,30 @@ BEHAVIOR / RoboTwin recipes use the ``openpi_cosine`` learning rate schedule.
          param_dtype: bf16
          reduce_dtype: fp32
          buffer_dtype: fp32
+
+To shard training state within each node and replicate it across nodes, select
+``hybrid_shard``. Set ``hybrid_shard_size`` to the number of actor ranks in each
+sharding group: it must be a positive integer that divides the actor world size.
+For two nodes with four actor ranks each, keep the precision settings above and
+override:
+
+.. code:: yaml
+
+   actor:
+     fsdp_config:
+       strategy: fsdp
+       sharding_strategy: hybrid_shard
+       hybrid_shard_size: 4
+       use_orig_params: true
+
+This creates two replicas, each sharded over four consecutive actor ranks.
+The same configuration applies to OpenPI RL and DAgger actor training.
+
+.. warning::
+
+   Place each consecutive group of ``hybrid_shard_size`` actor ranks on one node
+   to keep parameter all-gathers and reduce-scatters within that node. Size the
+   group from the actor placement, which may use only part of a node's GPUs.
 
 The tokenizer is loaded by OpenPI's ``ModelTransformFactory`` from the base
 model; the SFT YAML does not need a SentencePiece path.

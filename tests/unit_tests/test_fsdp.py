@@ -17,6 +17,7 @@
 import logging
 import os
 import socket
+from copy import deepcopy
 from datetime import timedelta
 
 import pytest
@@ -254,6 +255,124 @@ def test_gradients_reduce_over_the_sharding_dimension(single_rank_env):
         gradient_reduction_group(replicated_only)
 
 
+def _hybrid_shard_worker(rank, rendezvous):
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import ShardingStrategy
+
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp import FSDPStrategy
+    from rlinf.hybrid_engines.fsdp.utils import gradient_reduction_group
+    from rlinf.hybrid_engines.weight_syncer.bucket_syncer import (
+        iter_named_tensor_buckets,
+    )
+
+    torch.set_num_threads(1)
+    Worker.torch_device_type = "cpu"
+    Worker.torch_platform = None
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["RLINF_TIMEOUT"] = str(int(CONFIGURED_TIMEOUT.total_seconds() // 60))
+    dist.init_process_group(
+        "gloo",
+        init_method=rendezvous,
+        rank=rank,
+        world_size=4,
+        timeout=timedelta(seconds=60),
+    )
+    try:
+        mesh = create_device_mesh(4, "hybrid_shard", hybrid_shard_size=2)
+        assert mesh.mesh_dim_names == ("ddp", "fsdp")
+        assert tuple(mesh.mesh.shape) == (2, 2)
+        shard_group = gradient_reduction_group(mesh)
+        assert dist.get_process_group_ranks(shard_group) == [
+            rank // 2 * 2,
+            rank // 2 * 2 + 1,
+        ]
+        assert dist.get_process_group_ranks(mesh["ddp"].get_group()) == [
+            rank % 2,
+            rank % 2 + 2,
+        ]
+        assert group_timeout(shard_group) == CONFIGURED_TIMEOUT
+        assert group_timeout(mesh["ddp"].get_group()) == CONFIGURED_TIMEOUT
+
+        torch.manual_seed(7)
+        module = nn.Sequential(nn.Linear(4, 4), nn.Tanh(), nn.Linear(4, 2))
+        module[0].requires_grad_(False)
+        reference = deepcopy(module)
+        model = FSDP(
+            module,
+            sharding_strategy=ShardingStrategy.HYBRID_SHARD,
+            device_mesh=mesh,
+            device_id=torch.device("cpu"),
+            use_orig_params=True,
+        )
+        actor = OmegaConf.create(
+            {
+                "fsdp_config": {"enable_gradient_accumulation": True},
+                "optim": {"clip_grad": 0.2},
+            }
+        )
+        strategy = FSDPStrategy(actor, 4, shard_group)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        reference_optimizer = torch.optim.SGD(reference.parameters(), lr=0.1)
+        for _ in range(2):
+            inputs = torch.randn(16, 4)
+            targets = torch.randn(16, 2)
+            reference_optimizer.zero_grad(set_to_none=True)
+            nn.functional.mse_loss(reference(inputs), targets).backward()
+            reference_norm = nn.utils.clip_grad_norm_(reference.parameters(), 0.2)
+            reference_optimizer.step()
+
+            optimizer.zero_grad(set_to_none=True)
+            local_inputs = inputs.chunk(4)[rank].chunk(2)
+            local_targets = targets.chunk(4)[rank].chunk(2)
+            for micro_batch in range(2):
+                with strategy.before_micro_batch(model, micro_batch == 1):
+                    loss = nn.functional.mse_loss(
+                        model(local_inputs[micro_batch]), local_targets[micro_batch]
+                    )
+                    (loss / 2).backward()
+            norm = strategy.clip_grad_norm_(model)
+            assert norm == pytest.approx(reference_norm.item(), rel=1e-5)
+            optimizer.step()
+            with FSDP.summon_full_params(model):
+                for actual, expected in zip(
+                    model.module.parameters(), reference.parameters(), strict=True
+                ):
+                    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+        state = strategy.get_model_state_dict(model, False, False)
+        buckets = iter_named_tensor_buckets(
+            state.items(), version=2, bucket_size=32, bucket_device="cpu"
+        )
+        materialized = {
+            key: value for bucket in buckets for key, value in bucket.items()
+        }
+        for key, expected in reference.state_dict().items():
+            torch.testing.assert_close(
+                materialized[key], expected, rtol=1e-5, atol=1e-6
+            )
+
+    finally:
+        dist.destroy_process_group()
+
+
+def test_hybrid_mesh_accumulated_updates_match_unsharded_reference(tmp_path):
+    """A 2x2 mesh preserves global updates and counts gradient shards once."""
+    torch.multiprocessing.spawn(
+        _hybrid_shard_worker,
+        args=(f"file://{tmp_path / 'hybrid-init'}",),
+        nprocs=4,
+        join=True,
+    )
+
+
+@pytest.mark.parametrize("shard_size", [3, 8])
+def test_hybrid_mesh_rejects_invalid_shard_sizes_before_distributed_init(shard_size):
+    assert not dist.is_initialized()
+    with pytest.raises(ValueError, match="hybrid_shard_size"):
+        create_device_mesh(4, "hybrid_shard", hybrid_shard_size=shard_size)
+    assert not dist.is_initialized()
+
+
 @pytest.mark.parametrize("grad_dtype", [torch.bfloat16, torch.float32])
 def test_clip_grad_scales_gradients_in_place_in_their_own_dtype(grad_dtype):
     """The clip scales ``p.grad`` itself, not a cast of it.
@@ -357,7 +476,9 @@ def test_a_model_can_keep_its_embeddings_in_the_enclosing_unit(single_rank_env):
 
 @pytest.mark.parametrize("model_type", ["qwen2.5", "openpi"])
 @pytest.mark.parametrize("root_cast", [True, False])
-@pytest.mark.parametrize("sharding", ["no_shard", "shard_grad_op", "full_shard"])
+@pytest.mark.parametrize(
+    "sharding", ["no_shard", "shard_grad_op", "full_shard", "hybrid_shard"]
+)
 def test_strategy_passes_wrapper_overrides_and_root_cast_options(
     monkeypatch, root_cast, model_type, sharding
 ):
@@ -372,6 +493,7 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
         },
         wrap_policy={"module_classes_to_wrap": ["Linear"]},
         sharding_strategy=sharding,
+        **({"hybrid_shard_size": 2} if sharding == "hybrid_shard" else {}),
         use_orig_params=True,
     )
     actor = validate_fsdp_cfg(
@@ -421,15 +543,50 @@ def config(selector="module_names", targets=None, wrap_mode="individual", **kwar
     )
 
 
-@pytest.mark.parametrize("sharding", ["shard_grad_op", "full_shard"])
+@pytest.mark.parametrize("sharding", ["shard_grad_op", "full_shard", "hybrid_shard"])
 def test_openpi_sharded_training_requires_fsdp1(sharding):
     actor = OmegaConf.create(
         {
             "model": {"model_type": "openpi"},
-            "fsdp_config": {"strategy": "fsdp2", "sharding_strategy": sharding},
+            "fsdp_config": {
+                "strategy": "fsdp2",
+                "sharding_strategy": sharding,
+                **({"hybrid_shard_size": 2} if sharding == "hybrid_shard" else {}),
+            },
         }
     )
     with pytest.raises(AssertionError, match="openpi sharded training requires"):
+        validate_fsdp_cfg(actor)
+
+
+@pytest.mark.parametrize("shard_size", [None, 0, True, 1.5])
+def test_hybrid_config_rejects_invalid_shard_sizes(shard_size):
+    actor = OmegaConf.create(
+        {
+            "model": {"model_type": "openpi"},
+            "fsdp_config": {
+                "strategy": "fsdp",
+                "sharding_strategy": "hybrid_shard",
+                "hybrid_shard_size": shard_size,
+                "mixed_precision": {},
+            },
+        }
+    )
+    with pytest.raises(ValueError, match="hybrid_shard_size"):
+        validate_fsdp_cfg(actor)
+
+
+def test_non_hybrid_config_rejects_hybrid_shard_size():
+    actor = OmegaConf.create(
+        {
+            "fsdp_config": {
+                "sharding_strategy": "full_shard",
+                "hybrid_shard_size": 2,
+                "mixed_precision": {},
+            }
+        }
+    )
+    with pytest.raises(ValueError, match="hybrid_shard_size"):
         validate_fsdp_cfg(actor)
 
 
