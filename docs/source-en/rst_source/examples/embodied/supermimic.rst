@@ -641,6 +641,10 @@ above change some of them. Each can be passed as a Hydra override.
      - 2000
      - Save a checkpoint every N updates and after the last one; -1 saves
        nothing.
+   * - ``runner.log_interval``
+     - 100
+     - Print one timestamped line of the latest metrics every N updates and
+       after the last one. The logger backends record every update.
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf logger backends: TensorBoard, WandB or SwanLab.
@@ -1027,7 +1031,10 @@ Training metrics are averaged over the actor ranks;
   timers measure host time; the GPU runs asynchronously, so a phase can
   absorb kernels queued by the one before it.
 
-RLinf prints its metric table on the console after every training iteration.
+The logger backends record these metrics after every update. The console gets
+one timestamped line of the latest values every ``runner.log_interval``
+updates (100 by default) and after the last one, plus a line with the
+evaluation results whenever an evaluation runs.
 
 .. _supermimic-reported-results:
 

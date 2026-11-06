@@ -33,6 +33,7 @@ runner:
   only_eval: False
   val_check_interval: -1
   save_interval: 2000
+  log_interval: 100          # terminal line; the logger backends get every update
   resume_dir: null           # a global_step_<N> directory, or auto for the latest
   ckpt_path: null
   eval_export:

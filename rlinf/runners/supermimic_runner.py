@@ -23,6 +23,7 @@ the rollout workers, and handles logging, evaluation and checkpoints.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -53,6 +54,17 @@ if TYPE_CHECKING:
 _RUNNER_STATE = "runner_state.json"
 
 
+def _rounded(metrics: dict) -> dict:
+    return {
+        key: float(f"{value:.4g}") if isinstance(value, (int, float)) else value
+        for key, value in metrics.items()
+    }
+
+
+def _clock(seconds: float) -> str:
+    return str(datetime.timedelta(seconds=round(seconds)))
+
+
 class SuperMimicRunner(EmbodiedRunner):
     """Collect, update and sync at ``algorithm.updates_per_env_step``.
 
@@ -76,6 +88,12 @@ class SuperMimicRunner(EmbodiedRunner):
         self.warmup_steps = int(cfg.algorithm.warmup_sim_steps)
         self.owed_updates = 0.0
         self.env_steps = 0
+        self.log_interval = int(cfg.runner.get("log_interval", 100))
+        if self.log_interval < 1:
+            raise ValueError(
+                f"runner.log_interval must be >= 1, got {self.log_interval}."
+            )
+        self._printed_step = 0
 
     # ----------------------------------------------------------- checkpoints
 
@@ -186,6 +204,7 @@ class SuperMimicRunner(EmbodiedRunner):
     def run(self) -> None:
         start_step = self.global_step
         start_time = time.time()
+        self._printed_step = start_step
         self.update_rollout_weights()
         if self.global_step < self.max_steps and self.warmup_steps > 0:
             # Warmup only fills the replay: it owes no updates and is not logged.
@@ -268,10 +287,39 @@ class SuperMimicRunner(EmbodiedRunner):
         self.metric_logger.log(env_metrics, step)
         self.metric_logger.log(time_metrics, step)
         self.metric_logger.log(training_metrics, step)
-        self.print_metrics_table_async(
-            step,
-            self.max_steps,
+        self._print_progress(
+            step + 1,
             start_time,
-            {**time_metrics, **eval_metrics, **env_metrics, **training_metrics},
             start_step,
+            {**time_metrics, **env_metrics, **training_metrics},
+            eval_metrics,
+        )
+
+    def _print_progress(
+        self,
+        done: int,
+        start_time: float,
+        start_step: int,
+        metrics: dict[str, float],
+        eval_metrics: dict[str, float],
+    ) -> None:
+        """Log the latest metrics every ``runner.log_interval`` updates and at the end.
+
+        Evaluation results get their own line when they arrive. One iteration
+        can run several updates, so a line is due whenever ``done`` passes a
+        multiple of the interval.
+        """
+        if eval_metrics:
+            self.logger.info(
+                f"step {done}/{self.max_steps} eval {_rounded(eval_metrics)}"
+            )
+        interval = self.log_interval
+        if done < self.max_steps and done // interval == self._printed_step // interval:
+            return
+        self._printed_step = done
+        elapsed = time.time() - start_time
+        eta = elapsed / max(done - start_step, 1) * (self.max_steps - done)
+        self.logger.info(
+            f"step {done}/{self.max_steps} elapsed {_clock(elapsed)} "
+            f"eta {_clock(eta)} metrics {_rounded(metrics)}"
         )

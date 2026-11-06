@@ -431,6 +431,9 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
    * - ``runner.save_interval``
      - 2000
      - 每隔 N 次更新以及最后一次更新后保存检查点；设为 -1 时不保存。
+   * - ``runner.log_interval``
+     - 100
+     - 每隔 N 次更新以及最后一次更新后，在终端打印一行带时间戳的最新指标。日志后端每次更新都记录。
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf 的日志后端：TensorBoard、WandB 或 SwanLab。
@@ -641,7 +644,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 * ``train/wm_only``、``train/*_optimizer_steps``、``train/nonfinite_skips``。
 * ``time/*``：runner 的 RLinf 计时（``time/generate_rollouts``、``time/actor_training``、``time/sync_weights``、``time/eval``）和各 worker 的计时（``time/env/collect``、``time/rollout/serve``、``time/actor/ingest``、``time/actor/run_updates`` 及其各阶段）。worker 计时是主机时间；GPU 异步执行，某一阶段的耗时可能包含前一阶段排队的 kernel。
 
-每轮训练结束后，RLinf 在控制台打印指标表。
+日志后端每次更新后都记录这些指标。控制台每隔 ``runner.log_interval`` 次更新（默认 100）以及最后一次更新后打印一行带时间戳的最新值；每次评测后另打印一行评测结果。
 
 .. _supermimic-reported-results:
 
