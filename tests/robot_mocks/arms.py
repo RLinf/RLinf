@@ -1020,6 +1020,360 @@ class FreeToolKinematics:
         return YamIKResult(reason is None, joints, 0.0, 0.0, 0.0, reason)
 
 
+def ur_rtde() -> dict[str, types.ModuleType]:
+    """Fake ``ur_rtde`` exposing the UR5 control and receive interfaces.
+
+    The real SDK ships two top-level modules, ``rtde_control`` and
+    ``rtde_receive``. Both report radians and metres, so a test can assert that
+    RLinf carries the tool pose as a quaternion. The receive side reports a
+    fixed reachable configuration; the control side records commands.
+    """
+
+    #: A reachable UR5 configuration, in radians.
+    HOME_Q = (0.0, -1.57, 1.57, -1.57, -1.57, 0.0)
+    #: Tool pose as the SDK reports it: ``[x, y, z]`` metres then an axis-angle
+    #: rotation vector in radians.
+    HOME_TCP_POSE = (0.4, 0.0, 0.3, 0.0, 0.0, 0.0)
+
+    class RTDEReceiveInterface:
+        def __init__(self, host, *_args, **_kwargs):
+            self.host = host
+            self._connected = True
+
+        def getActualQ(self):
+            return list(HOME_Q)
+
+        def getActualTCPPose(self):
+            return list(HOME_TCP_POSE)
+
+        def isConnected(self):
+            return self._connected
+
+        def disconnect(self):
+            self._connected = False
+
+        def reconnect(self):
+            self._connected = True
+            return True
+
+    class RTDEControlInterface:
+        def __init__(self, host, *_args, **_kwargs):
+            self.host = host
+            self._connected = True
+            #: Joint targets received, for assertions.
+            self.sent: list[list[float]] = []
+            #: Speeds moveJ was called with, parallel to ``sent``.
+            self.speeds: list[float] = []
+            #: Test hook: moveJ returns this instead of True, simulating the
+            #: controller refusing the motion.
+            self.moveJ_ok = True
+
+        def moveJ(self, q, speed=None, *_args, **_kwargs):
+            self.sent.append(list(q))
+            self.speeds.append(speed)
+            return self.moveJ_ok
+
+        def servoJ(self, q, *_args, **_kwargs):
+            self.sent.append(list(q))
+            return True
+
+        def isConnected(self):
+            return self._connected
+
+        def disconnect(self):
+            self._connected = False
+
+        def reconnect(self):
+            self._connected = True
+            return True
+
+        def stopScript(self):
+            pass
+
+    return {
+        "rtde_control": module(
+            "rtde_control", RTDEControlInterface=RTDEControlInterface
+        ),
+        "rtde_receive": module(
+            "rtde_receive", RTDEReceiveInterface=RTDEReceiveInterface
+        ),
+    }
+
+
+def ur_ros2() -> dict[str, types.ModuleType]:
+    """Fake ``rclpy`` and ROS2 message/action modules for the UR5 ROS2 driver.
+
+    The ``ur_ros2`` backend subscribes to ``joint_states``, sends
+    ``FollowJointTrajectory`` goals, and calls the ``resend_robot_program``
+    service. This fake delivers one fixed joint reading at subscribe time -- so
+    no executor spin is needed -- and records the goals sent, for assertions.
+
+    The reading is published in a deliberately non-canonical joint order with
+    distinct values per joint, so a test can prove the backend reorders it into
+    the canonical base-to-wrist order.
+    """
+    #: joint_states as a driver might publish it: names out of canonical order,
+    #: each position distinct so reordering is observable.
+    REPORTED_NAMES = (
+        "elbow_joint",
+        "shoulder_lift_joint",
+        "shoulder_pan_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    )
+    REPORTED_POSITIONS = (0.3, 0.2, 0.1, 0.4, 0.5, 0.6)
+
+    #: Goals the action client received, exposed on the fake ``rclpy`` module.
+    sent_goals: list[Any] = []
+    #: Goal handles that had ``cancel_goal_async`` called on them.
+    canceled_handles: list[Any] = []
+    #: Test hook: while on, ``send_goal_async`` returns an unresolved
+    #: ``_PendingFuture`` (collected in ``pending_sends``) instead of
+    #: resolving immediately -- simulating an accept that arrives only after
+    #: the caller has moved on (e.g. into teardown).
+    hold_sends = {"on": False}
+    pending_sends: list[Any] = []
+    #: Test hook: the resend_robot_program service's Trigger response.
+    #: ``stuck`` simulates a call that never completes, for the timeout case.
+    resend_response = {"success": True, "message": "", "stuck": False}
+
+    class GoalStatus:
+        STATUS_UNKNOWN = 0
+        STATUS_ACCEPTED = 1
+        STATUS_EXECUTING = 2
+        STATUS_CANCELING = 3
+        STATUS_SUCCEEDED = 4
+        STATUS_CANCELED = 5
+        STATUS_ABORTED = 6
+
+    class _Future:
+        def __init__(self, result: Any = None) -> None:
+            self._result = result
+
+        def done(self) -> bool:
+            return True
+
+        def result(self) -> Any:
+            return self._result
+
+        def add_done_callback(self, callback: Any) -> None:
+            # Already done by construction, so rclpy would invoke this
+            # synchronously from the calling thread in that case too.
+            callback(self)
+
+    class _PendingFuture:
+        """A send future a test resolves explicitly, via ``resolve()``."""
+
+        def __init__(self) -> None:
+            self._done = False
+            self._result: Any = None
+            self._callbacks: list[Any] = []
+
+        def done(self) -> bool:
+            return self._done
+
+        def result(self) -> Any:
+            return self._result
+
+        def add_done_callback(self, callback: Any) -> None:
+            if self._done:
+                callback(self)
+            else:
+                self._callbacks.append(callback)
+
+        def resolve(self, result: Any) -> None:
+            self._result = result
+            self._done = True
+            for callback in self._callbacks:
+                callback(self)
+
+    class _ResultWrap:
+        def __init__(
+            self, status: int = GoalStatus.STATUS_SUCCEEDED, error_code: int = 0
+        ) -> None:
+            self.status = status
+            self.result = types.SimpleNamespace(error_code=error_code)
+
+    class _NeverFuture:
+        """A future that never completes, simulating a terminal result or
+        cancellation acknowledgement the controller never sends."""
+
+        def done(self) -> bool:
+            return False
+
+        def result(self) -> Any:
+            return None
+
+        def add_done_callback(self, callback: Any) -> None:
+            pass  # Never resolves, so the callback is never invoked.
+
+    class _GoalHandle:
+        accepted = True
+
+        def __init__(self) -> None:
+            self.canceled = False
+            #: Test hook: the ``return_code`` a cancel response carries.
+            #: Nonzero simulates the controller rejecting the cancellation.
+            self.cancel_return_code = 0
+            #: Test hook: when set, get_result_async() never completes,
+            #: simulating a goal that never reaches a terminal state.
+            self.stuck_canceling = False
+
+        def get_result_async(self) -> "_Future":
+            if self.stuck_canceling:
+                return _NeverFuture()
+            status = (
+                GoalStatus.STATUS_CANCELED
+                if self.canceled
+                else GoalStatus.STATUS_SUCCEEDED
+            )
+            return _Future(_ResultWrap(status=status))
+
+        def cancel_goal_async(self) -> "_Future":
+            self.canceled = True
+            canceled_handles.append(self)
+            return _Future(types.SimpleNamespace(return_code=self.cancel_return_code))
+
+        def __eq__(self, other: Any) -> bool:
+            # Real rclpy ClientGoalHandle compares by goal ID and does not
+            # define __hash__, making it unhashable; mirror that here so a
+            # regression that puts handles into a set or dict key is caught.
+            return self is other
+
+        __hash__ = None
+
+    class ActionClient:
+        def __init__(self, node: Any, action_type: Any, name: str) -> None:
+            self.name = name
+
+        def wait_for_server(self, timeout_sec: float = 0.0) -> bool:
+            return True
+
+        def send_goal_async(self, goal: Any) -> "_Future":
+            sent_goals.append(goal)
+            if hold_sends["on"]:
+                future = _PendingFuture()
+                pending_sends.append(future)
+                return future
+            return _Future(_GoalHandle())
+
+    class _ServiceClient:
+        def wait_for_service(self, timeout_sec: float = 0.0) -> bool:
+            return True
+
+        def call_async(self, request: Any) -> "_Future":
+            if resend_response["stuck"]:
+                return _NeverFuture()
+            return _Future(
+                types.SimpleNamespace(
+                    success=resend_response["success"],
+                    message=resend_response["message"],
+                )
+            )
+
+    class JointState:
+        def __init__(self) -> None:
+            self.name: list[str] = []
+            self.position: list[float] = []
+
+    class Node:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def create_subscription(self, msg_type, topic, callback, qos):
+            # Deliver one reading synchronously; the backend needs no spin.
+            message = JointState()
+            message.name = list(REPORTED_NAMES)
+            message.position = list(REPORTED_POSITIONS)
+            callback(message)
+            return object()
+
+        def create_client(self, srv_type, name):
+            return _ServiceClient()
+
+        def destroy_node(self) -> None:
+            pass
+
+    class SingleThreadedExecutor:
+        def add_node(self, node: Any) -> None:
+            pass
+
+        def spin(self) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            pass
+
+    class _Trajectory:
+        def __init__(self) -> None:
+            self.joint_names: list[str] = []
+            self.points: list[Any] = []
+
+    class _Goal:
+        def __init__(self) -> None:
+            self.trajectory = _Trajectory()
+
+    class FollowJointTrajectory:
+        Goal = _Goal
+
+    class JointTrajectoryPoint:
+        def __init__(self) -> None:
+            self.positions: list[float] = []
+            self.time_from_start: Any = None
+
+    class Duration:
+        def __init__(self, sec: int = 0, nanosec: int = 0) -> None:
+            self.sec = sec
+            self.nanosec = nanosec
+
+    class Trigger:
+        class Request:
+            pass
+
+    rclpy_module = module(
+        "rclpy",
+        ok=lambda: True,
+        init=lambda *a, **k: None,
+        shutdown=lambda *a, **k: None,
+    )
+    #: Test hook: the goals the fake action client received.
+    rclpy_module.sent_goals = sent_goals
+    #: Test hook: goal handles that were canceled.
+    rclpy_module.canceled_handles = canceled_handles
+    #: Test hook: hold/inspect sends that a test resolves itself.
+    rclpy_module.hold_sends = hold_sends
+    rclpy_module.pending_sends = pending_sends
+    rclpy_module.new_goal_handle = _GoalHandle
+    #: Test hook: controls the fake resend_robot_program service's response.
+    rclpy_module.resend_response = resend_response
+
+    return {
+        "rclpy": rclpy_module,
+        "rclpy.node": module("rclpy.node", Node=Node),
+        "rclpy.action": module("rclpy.action", ActionClient=ActionClient),
+        "rclpy.executors": module(
+            "rclpy.executors", SingleThreadedExecutor=SingleThreadedExecutor
+        ),
+        "sensor_msgs": module("sensor_msgs"),
+        "sensor_msgs.msg": module("sensor_msgs.msg", JointState=JointState),
+        "control_msgs": module("control_msgs"),
+        "control_msgs.action": module(
+            "control_msgs.action", FollowJointTrajectory=FollowJointTrajectory
+        ),
+        "action_msgs": module("action_msgs"),
+        "action_msgs.msg": module("action_msgs.msg", GoalStatus=GoalStatus),
+        "std_srvs": module("std_srvs"),
+        "std_srvs.srv": module("std_srvs.srv", Trigger=Trigger),
+        "trajectory_msgs": module("trajectory_msgs"),
+        "trajectory_msgs.msg": module(
+            "trajectory_msgs.msg", JointTrajectoryPoint=JointTrajectoryPoint
+        ),
+        "builtin_interfaces": module("builtin_interfaces"),
+        "builtin_interfaces.msg": module("builtin_interfaces.msg", Duration=Duration),
+    }
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return fake arm SDKs keyed by import name."""
     made = {"franky": franky()}
@@ -1027,4 +1381,6 @@ def modules(**_: Any) -> dict[str, types.ModuleType]:
     made.update(lerobot())
     made.update(pyagxarm())
     made.update(i2rt())
+    made.update(ur_rtde())
+    made.update(ur_ros2())
     return made
