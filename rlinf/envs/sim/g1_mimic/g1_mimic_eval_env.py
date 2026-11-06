@@ -17,7 +17,9 @@
 Evaluation is a table of jobs: one per reference clip (motion tracking), per
 smoke-test command, per Appendix G.2 trial and command, or per push trial.
 The jobs are dealt round-robin to the env ranks, and every rollout epoch
-starts the next ``num_envs`` jobs of this rank together. Rows run without
+starts the next ``num_envs`` jobs of this rank together; after
+``rollout_epoch`` epochs the next evaluation starts from the first jobs
+again. Rows run without
 sensor or action noise until their job ends. The vector reports done only
 when every row has ended, and then returns one result row per env in
 ``infos["episode"]``. Rows past this rank's last job are padding with
@@ -199,8 +201,7 @@ class G1MimicEvalEnv:
         self.goal_anchor = bool(cfg.goal_anchor)
         self.reward_anchor = str(cfg.reward_anchor)
         self.termination_body = str(cfg.termination_body)
-        self.is_start = True
-        self._epoch = 0
+        self._chunk = 0
         self._t = 0
 
         on_accelerator = self.device.type != "cpu"
@@ -360,6 +361,7 @@ class G1MimicEvalEnv:
             )
             self.save_trajectory = bool(push.get("save_trajectory", False))
 
+        self.num_jobs = len(task_ids)
         local = slice(self.seed_offset, None, self.total_num_processes)
         self.job_task = torch.tensor(task_ids[local], dtype=torch.long)
         self.job_id = torch.arange(len(task_ids))[local]
@@ -439,13 +441,18 @@ class G1MimicEvalEnv:
     # ------------------------------------------------------------- interface
 
     def reset(self, *args, **kwargs):
-        """Start this rank's next ``num_envs`` jobs."""
+        """Start the ``num_envs`` jobs of the current chunk of this rank."""
         with self._own_rng():
             self._start_jobs()
         return self._observe(), {}
 
     def update_reset_state_ids(self) -> None:
-        """Jobs advance on every :meth:`reset`; nothing to draw here."""
+        """Move to the next chunk of jobs, and back to the first after the last.
+
+        The eval loop calls this once after every rollout epoch, so every
+        evaluation in the process covers all of this rank's jobs.
+        """
+        self._chunk = (self._chunk + 1) % int(self.cfg.rollout_epoch)
 
     def chunk_step(self, chunk_actions):
         """One control step of every row. Chunks hold a single action."""
@@ -470,6 +477,7 @@ class G1MimicEvalEnv:
         """Names and settings the summaries and exported tables need."""
         meta = {
             "tasks": list(self.tasks),
+            "num_jobs": self.num_jobs,
             "num_clips": int(self.motion.num_clips),
             "clip_names": list(self.motion.clip_names),
         }
@@ -503,8 +511,7 @@ class G1MimicEvalEnv:
 
     def _start_jobs(self) -> None:
         n = self.num_envs
-        first = self._epoch * n
-        self._epoch += 1
+        first = self._chunk * n
         self._t = 0
         count = max(0, min(n, int(self.job_task.numel()) - first))
         take = slice(first, first + count)
@@ -530,9 +537,7 @@ class G1MimicEvalEnv:
             # The step test reseeds once per vector of trials; with one rank
             # the seeds follow the job chunks.
             torch.manual_seed(
-                self.seed
-                + (self._epoch - 1) * self.total_num_processes
-                + self.seed_offset
+                self.seed + self._chunk * self.total_num_processes + self.seed_offset
             )
             self.sim.reset_standing(ids)
             g2 = self._is(VELOCITY_G2)

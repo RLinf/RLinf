@@ -32,6 +32,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     G1_JOINT_NAMES,
     JOINT_POS,
 )
+from rlinf.envs.sim.g1_mimic.eval_metrics import check_job_coverage
 from rlinf.envs.sim.g1_mimic.features import default_state
 from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
     checked_eval_states,
@@ -148,6 +149,24 @@ def test_evaluation_rejects_active_nonfinite_rows_and_masks_finished_rows(value)
         (state if field == "next_state" else reference)[0, 0] = value
         with pytest.raises(RuntimeError, match=r"active rows \[0\]"):
             checked_eval_states(state, reference, active)
+
+
+@pytest.mark.parametrize(
+    "jobs,valid,complete",
+    [
+        ([2, 0, 1, -1], [1, 1, 1, 0], True),
+        ([0, 2, -1, -1], [1, 1, 0, 0], False),
+        ([0, 1, 1, 2], [1, 1, 1, 1], False),
+        ([-1, -1, -1, -1], [0, 0, 0, 0], False),
+    ],
+)
+def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
+    rows = {"job": torch.tensor(jobs), "valid": torch.tensor(valid)}
+    if complete:
+        check_job_coverage(rows, 3)
+        return
+    with pytest.raises(RuntimeError, match="each of the 3 evaluation jobs"):
+        check_job_coverage(rows, 3)
 
 
 @needs_mjlab

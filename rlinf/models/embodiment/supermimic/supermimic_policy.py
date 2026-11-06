@@ -85,9 +85,6 @@ PHASE_MODULES = {
     ForwardType.SUPERMIMIC_VELOCITY_CRITIC: ("velocity_critic",),
 }
 
-# Updated by the world-model loss only; the rollout worker never reads them.
-WORLD_MODEL_PREFIXES = ("dynamics.", "termination.")
-
 
 def goal_width(goal_encoding: str, goal_anchor: bool) -> int:
     """Width of the policy goal for one encoding."""

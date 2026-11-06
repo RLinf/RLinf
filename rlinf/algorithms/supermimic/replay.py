@@ -26,7 +26,6 @@ from rlinf.envs.sim.g1_mimic.constants import (
     STATE_DIM,
     XI_DIM,
 )
-from rlinf.envs.sim.g1_mimic.obs import analytic_obs
 
 
 class _SlotMask:
@@ -44,10 +43,6 @@ class _SlotMask:
         """Replace the mask with one full scan."""
         self.ok.zero_()
         self.ok[env_i.to(self.device), phys_i.to(self.device)] = True
-
-    def entries(self) -> tuple[torch.Tensor, torch.Tensor]:
-        """Env ids and physical slots of the set slots."""
-        return self.ok.nonzero(as_tuple=True)
 
     def draw(
         self, batch: int, keep: torch.Tensor | None = None
@@ -155,41 +150,22 @@ class SuperMimicReplay:
         motion_id: torch.Tensor,
         motion_time: torch.Tensor,
         time_in_episode: torch.Tensor,
-        prev_action: torch.Tensor | None = None,
-        obs_noisy: torch.Tensor | None = None,
-        task_id: torch.Tensor | None = None,
-        command: torch.Tensor | None = None,
-        command_from_ref: torch.Tensor | None = None,
+        *,
+        prev_action: torch.Tensor,
+        obs_noisy: torch.Tensor,
+        task_id: torch.Tensor,
+        command: torch.Tensor,
+        command_from_ref: torch.Tensor,
     ) -> None:
-        """Append one vector step for ``env_ids`` at each env's cursor.
-
-        ``prev_action`` defaults to zeros and ``obs_noisy`` to the noiseless
-        observation; the remaining optional fields default to the motion task.
-        """
+        """Append one vector step for ``env_ids`` at each env's cursor."""
         idx = self.cursor[env_ids]
         count_before = self.count[env_ids].clone()
-        if prev_action is None:
-            prev_action = torch.zeros_like(action_policy)
-        if obs_noisy is None:
-            obs_noisy = analytic_obs(state, prev_action, xi)
         self.state[env_ids, idx] = state
         self.next_state[env_ids, idx] = next_state
         self.action_policy[env_ids, idx] = action_policy
         self.action_executed[env_ids, idx] = action_executed
         self.prev_action[env_ids, idx] = prev_action
         self.obs_noisy[env_ids, idx] = obs_noisy
-        if task_id is None:
-            task_id = torch.zeros(
-                env_ids.shape[0], dtype=torch.long, device=self.device
-            )
-        if command is None:
-            command = torch.zeros(
-                env_ids.shape[0], 3, device=self.device, dtype=self.dtype
-            )
-        if command_from_ref is None:
-            command_from_ref = torch.zeros(
-                env_ids.shape[0], dtype=torch.bool, device=self.device
-            )
         self.task_id[env_ids, idx] = task_id
         self.command[env_ids, idx] = command
         self.command_from_ref[env_ids, idx] = command_from_ref
@@ -249,12 +225,6 @@ class SuperMimicReplay:
             self._starts = _SlotMask(self.num_envs, self.capacity, self.device)
             self._starts.fill(env_i, phys_i)
         return self._starts
-
-    def _cached_windows(self, k: int) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._window_mask(k).entries()
-
-    def _cached_starts(self) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._start_mask().entries()
 
     def _revise_indexes(
         self, env_ids: torch.Tensor, written: torch.Tensor, count_before: torch.Tensor
@@ -334,28 +304,6 @@ class SuperMimicReplay:
         """Number of ``k``-step windows that stay inside one episode."""
         return int(self._window_mask(k).ok.sum())
 
-    def valid_window_starts(self, k: int) -> list[tuple[int, int]]:
-        """``(env, slot)`` of every valid ``k``-step window start."""
-        env_i, phys_i = self._cached_windows(k)
-        return list(zip(env_i.tolist(), phys_i.tolist(), strict=True))
-
-    def _predecessor_ok(self, env: int, physical: int) -> bool:
-        t = int(self.time_in_episode[env, physical])
-        if t == 0:
-            return False
-        prev = (physical - 1) % self.capacity
-        return (
-            int(self.episode_id[env, prev]) == int(self.episode_id[env, physical])
-            and int(self.time_in_episode[env, prev]) == t - 1
-        )
-
-    def prev_action_at(self, env: int, physical: int) -> torch.Tensor:
-        """Clean previous action. Overwritten ring slots are not predecessors."""
-        if not self._predecessor_ok(env, physical):
-            return torch.zeros(ACTION_DIM, device=self.device, dtype=self.dtype)
-        prev = (physical - 1) % self.capacity
-        return self.action_policy[env, prev]
-
     def _history_index(self, env: torch.Tensor, physical: torch.Tensor) -> torch.Tensor:
         """Physical slots of the 10-frame window, oldest first.
 
@@ -377,19 +325,6 @@ class SuperMimicReplay:
         cols = torch.arange(HISTORY_LEN, device=self.device).view(1, -1)
         use = torch.maximum(cols, first.unsqueeze(1))
         return pos.gather(1, use)
-
-    def history_at(self, env: int, physical: int) -> torch.Tensor:
-        """Ten stored observations ending at this slot.
-
-        The frame was written with the previous action and the noise sample
-        from that control step. Rebuilding it would redraw noise and would
-        lose ``a_{t-10}`` after the ring overwrites that slot.
-        """
-        env_t = torch.tensor([env], dtype=torch.long, device=self.device)
-        phys_t = torch.tensor([physical], dtype=torch.long, device=self.device)
-        index = self._history_index(env_t, phys_t)
-        frames = self.obs_noisy[env, index[0]]
-        return frames.reshape(-1)
 
     def _consistent_starts(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Live slots whose in-buffer prefix still has consecutive times."""

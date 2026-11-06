@@ -59,8 +59,6 @@ from rlinf.envs.sim.g1_mimic.features import (
 )
 from rlinf.envs.sim.g1_mimic.motion import GOAL_FRAMES, MotionLibrary
 
-# Paper §4.3 names the range. It does not name this grid or a trial count.
-DEFAULT_SPEEDS = (0.5, 1.0, 2.0, 4.0)
 REFERENCE_POSE = "mjlab_knees_bent_keyframe"
 PROTOCOL_NAME = "stationary_standing_pose"
 OUTCOMES = ("recovered", "fallen", "timeout", "initialization_failed")
@@ -486,26 +484,3 @@ def criteria_dict(criteria: RecoveryCriteria) -> dict:
         "fall": "training failure_signals against the static reference",
         "reference_pose": REFERENCE_POSE,
     }
-
-
-TRIAL_FIELDS = (
-    "trial",
-    "speed_m_s",
-    "direction_x",
-    "direction_y",
-    "frame",
-    "push_mode",
-    "seed",
-    "outcome",
-    "reason",
-    "recovered",
-    "fallen",
-    "timeout",
-    "initialization_failed",
-    "recovery_time_s",
-    "stable_onset_time_s",
-    "world_push_x",
-    "world_push_y",
-    "measured_dvx",
-    "measured_dvy",
-)

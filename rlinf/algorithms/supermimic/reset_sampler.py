@@ -274,11 +274,3 @@ class BinResetSampler:
             )
         self.bin_return.copy_(state["bin_return"].to(self.device))
         self.bin_memory = state["bin_memory"].to(self.device).clone()
-
-    def reset_statistics(self) -> None:
-        """Drop learned bin weights. Used on resume, which refills the replay."""
-        self.bin_return.fill_(self.g_max)
-        self.bin_memory.fill_(1.0 / max(self.num_bins, 1))
-        self.ep_len.zero_()
-        self._pending_sum.zero_()
-        self._pending_count.zero_()

@@ -20,9 +20,7 @@ import torch
 import torch.nn.functional as F
 
 from rlinf.envs.sim.g1_mimic.constants import (
-    EPISODE_CONT,
     EPISODE_FAILURE,
-    EPISODE_TIMEOUT,
     JOINT_POS,
     JOINT_VEL,
     ROOT_ANG_VEL,
@@ -77,16 +75,6 @@ def gae_targets(
 def wm_termination_target(end_kind: torch.Tensor) -> torch.Tensor:
     """BCE label: only failure termination is a positive dynamics event."""
     return (end_kind == EPISODE_FAILURE).to(dtype=torch.float32)
-
-
-def collect_bootstrap_mask(end_kind: torch.Tensor) -> torch.Tensor:
-    """Real-collect return: timeout bootstraps, clip-end and failure do not."""
-    return end_kind == EPISODE_TIMEOUT
-
-
-def is_episode_boundary(end_kind: torch.Tensor) -> torch.Tensor:
-    """True where an episode ended for any reason."""
-    return end_kind != EPISODE_CONT
 
 
 def state_prediction_loss(

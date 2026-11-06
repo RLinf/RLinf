@@ -50,6 +50,17 @@ DEFAULT_SMOKE_COMMANDS = {
 }
 
 
+def check_job_coverage(rows: dict[str, torch.Tensor], num_jobs: int) -> None:
+    """Every job of the evaluation table must come back in exactly one valid row."""
+    jobs = rows["job"][rows["valid"] > 0].long()
+    if not torch.equal(torch.sort(jobs).values, torch.arange(num_jobs)):
+        missing = sorted(set(range(num_jobs)) - set(jobs.tolist()))
+        raise RuntimeError(
+            f"expected one valid row for each of the {num_jobs} evaluation jobs, "
+            f"found {jobs.numel()} valid rows; missing jobs {missing[:10]}"
+        )
+
+
 def task_rows(rows: dict[str, torch.Tensor], task: str) -> dict[str, torch.Tensor]:
     """Valid rows of one task, with the ``<task>.`` prefix removed."""
     keep = (rows["task"] == EVAL_TASKS.index(task)) & (rows["valid"] > 0)
@@ -105,17 +116,10 @@ def step_test_table(
     """``relative_error`` and ``fell`` as ``[trials, commands]`` tables."""
     errors = torch.full((trials, num_commands), float("nan"))
     fell = torch.zeros((trials, num_commands), dtype=torch.long)
-    seen = torch.zeros((trials, num_commands), dtype=torch.bool)
     trial = rows["trial"].long()
     index = rows["command_index"].long()
     errors[trial, index] = rows["relative_error"].float()
     fell[trial, index] = rows["fell"].long()
-    seen[trial, index] = True
-    if not bool(seen.all()):
-        raise RuntimeError(
-            f"the step test covered {int(seen.sum())} of {trials * num_commands} "
-            "trial-command pairs"
-        )
     return errors, fell
 
 
@@ -262,6 +266,7 @@ def summarize_rows(
     ``rows`` holds the rows of all env ranks on CPU and ``meta`` is
     ``G1MimicEvalEnv.metadata()``. Tables are keyed by their file stem.
     """
+    check_job_coverage(rows, int(meta["num_jobs"]))
     metrics: dict[str, float] = {}
     tables: dict[str, list[dict]] = {}
     nested: dict = {}

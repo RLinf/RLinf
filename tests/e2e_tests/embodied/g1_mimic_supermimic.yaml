@@ -1,5 +1,6 @@
 # Three updates of the goal730 recipe on the standing clip in
-# SUPERMIMIC_MOTION_PATH; the last update evaluates and saves a checkpoint.
+# SUPERMIMIC_MOTION_PATH. Updates 2 and 3 evaluate, so the eval env runs twice
+# in one process; the last update saves a checkpoint.
 defaults:
   - supermimic_lafan1_goal730
   - _self_
@@ -21,7 +22,7 @@ runner:
     experiment_name: ci-test
   max_epochs: 3
   save_interval: 3
-  val_check_interval: 3
+  val_check_interval: 1
   eval_export:
     enabled: True
 

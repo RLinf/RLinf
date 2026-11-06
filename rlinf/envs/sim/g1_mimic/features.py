@@ -188,11 +188,6 @@ def projected_gravity(quat: torch.Tensor) -> torch.Tensor:
     return -quat_to_rotmat(quat)[..., 2, :]
 
 
-def tilt_error(quat: torch.Tensor) -> torch.Tensor:
-    """``1 + g_z`` in the body frame: 0 upright, 2 upside down."""
-    return 1.0 + projected_gravity(quat)[..., 2]
-
-
 def heading_invariant_features(state: torch.Tensor) -> torch.Tensor:
     """Map the 71-d raw state to 71-d heading-invariant dynamics features."""
     squeezed = state.dim() == 1
@@ -395,13 +390,6 @@ def root_error_4d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:
     yaw_err = torch.atan2(torch.sin(yaw_err), torch.cos(yaw_err)).unsqueeze(-1)
     out = torch.cat((pos_err_h, yaw_err), dim=-1)
     return out.squeeze(0) if squeezed else out
-
-
-def identity_residual(
-    batch: int, device: torch.device | str, dtype: torch.dtype
-) -> torch.Tensor:
-    """Zero dynamics residual ``[batch, 70]``."""
-    return torch.zeros(batch, RESIDUAL_DIM, device=device, dtype=dtype)
 
 
 def zero_action(

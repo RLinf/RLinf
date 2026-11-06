@@ -142,21 +142,3 @@ class RollingHistory:
     def fill(self, env_ids: torch.Tensor, frame: torch.Tensor) -> None:
         """Fill the whole history of ``env_ids`` with one frame, as after a reset."""
         self.frames[env_ids] = frame.unsqueeze(1).expand(-1, self.length, -1)
-
-
-def pad_history(frames: list[torch.Tensor]) -> torch.Tensor:
-    """Repeat the oldest available frame until the stack has ``HISTORY_LEN``.
-
-    Reset uses this with one freshly noised frame, so the repeated prefix
-    shares that single noise sample. Later steps append a new noised frame
-    and do not redraw noise on the frames already stored.
-    """
-    if not frames:
-        raise ValueError("history needs at least one observation, got an empty list")
-    first = frames[0]
-    missing = HISTORY_LEN - len(frames)
-    if missing > 0:
-        frames = [first] * missing + list(frames)
-    stacked = torch.stack(frames[-HISTORY_LEN:], dim=-2)
-    width = int(stacked.shape[-1])
-    return stacked.reshape(*stacked.shape[:-2], HISTORY_LEN * width)
