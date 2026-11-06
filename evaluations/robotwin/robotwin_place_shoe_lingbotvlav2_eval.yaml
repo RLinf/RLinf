@@ -40,7 +40,7 @@ env:
     auto_reset: true
     ignore_terminations: true
     max_episode_steps: 400
-    max_steps_per_rollout_epoch: 400
+    max_steps_per_rollout_epoch: 800
     reward_coef: 1.0
     group_size: 1
     use_fixed_reset_state_ids: false
@@ -48,9 +48,9 @@ env:
     assets_path: ${oc.env:ROBOTWIN_ASSETS_PATH}
     seeds_path: /mnt/public/zhangyuzhuo/seeds_paired.json
     center_crop: false
-    skip_intermediate_renders: false
+    skip_intermediate_renders: true
     video_cfg:
-      save_video: true
+      save_video: false
       video_base_dir: ${runner.logger.log_path}/video/eval
     task_config:
       embodiment: [aloha-agilex]
