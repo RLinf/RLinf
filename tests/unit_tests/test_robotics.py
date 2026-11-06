@@ -1419,7 +1419,7 @@ def test_declaring_cameras_needs_no_config_class():
     assert not declared["scene"].is_connected, "declaring a camera must not open it"
     assert Camera.declare(None) == {}
     # Backend resolution uses the category registry.
-    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos"}
+    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos", "uvc"}
     with pytest.raises(ValueError, match="Unsupported BaseCamera backend"):
         BaseCamera.backend("no-such-camera")
 
@@ -5689,6 +5689,187 @@ def test_so101_commands_are_converted_back_to_degrees():
         assert wire["shoulder_pan.pos"] == pytest.approx(90.0)
         # send_action reports what actually reached the arm, in radians.
         assert sent["joint_position"][0] == pytest.approx(np.pi / 2)
+
+        arm.disconnect()
+
+
+def test_so101_pose_waits_until_joints_are_still(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        waited = []
+        monkeypatch.setattr(arm, "wait_until_still", lambda: waited.append(True))
+        try:
+            arm.move_to_pose(np.r_[np.zeros(5), 0.0], duration=0.01, max_velocity=100.0)
+            assert waited == [True]
+        finally:
+            arm.disconnect()
+
+
+def test_so101_pose_monitors_the_commanded_gripper_position(monkeypatch, caplog):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        SO101Follower.jaw_step = 5.0
+        SO101Follower.jaw_lag = 0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        device.positions["gripper.pos"] = 100.0
+        original_read = device.get_observation
+        reads = 0
+
+        def read_after_startup_lag():
+            nonlocal reads
+            reads += 1
+            return dict(device.positions) if reads <= 5 else original_read()
+
+        monkeypatch.setattr(device, "get_observation", read_after_startup_lag)
+        try:
+            arm.move_to_pose(np.zeros(6), duration=0.8, max_velocity=100.0)
+            assert arm.get_state().gripper_position[0] == pytest.approx(0.0)
+            assert all(len(command) == 6 for command in device.sent)
+            assert "SO-101 gripper stall relief" not in caplog.text
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_step = None
+            SO101Follower.jaw_lag = 1
+
+
+def test_so101_pose_relieves_a_blocked_gripper_during_trajectory(caplog):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        SO101Follower.jaw_limit = 30.0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        device.positions["gripper.pos"] = 100.0
+        try:
+            arm.move_to_pose(
+                np.r_[np.ones(5) * 0.1, 0.0], duration=0.8, max_velocity=100.0
+            )
+            hold_indices = [
+                index
+                for index, command in enumerate(device.sent)
+                if set(command) == {"gripper.pos"}
+            ]
+            assert hold_indices
+            assert hold_indices[0] < len(device.sent) - 1
+            assert device.sent[-1]["gripper.pos"] == pytest.approx(30.0)
+            assert device.sent[-1]["shoulder_pan.pos"] == pytest.approx(np.rad2deg(0.1))
+            assert "SO-101 gripper stall relief" in caplog.text
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_limit = None
+
+
+def test_so101_leader_ignores_follower_gripper_mismatch_when_idle():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    reading = {"joint_position": np.zeros(5), "grip": np.array([1.0])}
+    action = leader.action(
+        reading,
+        {
+            "joint_positions": np.zeros((1, 5)),
+            "gripper_open": np.array([0.4]),
+        },
+    )
+
+    assert not action.driving
+    np.testing.assert_allclose(action.parts["arm"], np.zeros(5))
+    np.testing.assert_allclose(action.parts["end_effector"], [0.4])
+    np.testing.assert_allclose(action.info["so101_idle_hold_action"], [0.0] * 5 + [0.4])
+
+
+def test_so101_leader_detects_gripper_only_motion():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_open": np.array([0.4]),
+    }
+    leader.action({"joint_position": np.zeros(5), "grip": np.array([0.0])}, context)
+    action = leader.action(
+        {"joint_position": np.zeros(5), "grip": np.array([0.2])}, context
+    )
+
+    assert action.driving
+    np.testing.assert_allclose(action.parts["end_effector"], [0.2])
+
+
+def test_so101_leader_disconnects_after_torque_release_failure():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    leader._torque_enabled = True
+    disconnected = []
+
+    class Device:
+        def disconnect(self):
+            disconnected.append(True)
+
+    def fail_to_disable(_enabled):
+        raise RuntimeError("torque release failed")
+
+    leader._set_torque = fail_to_disable
+    with pytest.raises(RuntimeError, match="torque release failed"):
+        leader._release(Device())
+    assert disconnected == [True]
+
+
+def test_so101_leader_anchors_motion_after_manual_release():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    leader._manual_release_pending = True
+    context = {"joint_positions": np.zeros((1, 5)), "gripper_open": np.array([0.0])}
+    first = {"joint_position": np.full(5, 0.2), "grip": np.array([0.5])}
+    same = leader.action(first, context)
+    assert not same.driving
+
+    assert not leader.action(first, context).driving
+    moved = {
+        "joint_position": np.full(5, 0.2 + leader.MOVEMENT_EPSILON * 2),
+        "grip": np.array([0.5]),
+    }
+    assert leader.action(moved, context).driving
+
+    grip_moved = {
+        "joint_position": np.full(5, 0.2),
+        "grip": np.array([0.5 + 2 * leader.MOVEMENT_EPSILON]),
+    }
+    leader._manual_release_reference = np.concatenate(
+        (first["joint_position"], first["grip"])
+    )
+    assert leader.action(grip_moved, context).driving
+
+
+def test_so101_clips_out_of_range_gripper_feedback_to_the_public_contract():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        arm._robot.positions["gripper.pos"] = 125.0
+
+        assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
 
         arm.disconnect()
 
