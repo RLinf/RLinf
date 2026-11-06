@@ -835,8 +835,8 @@ class DynamicRolloutResult:
     # size of belows are num_sequence
     input_ids: list[list[int]]
     rollout_logprobs: Optional[list[list[float]]] = None
-    recomputed_logprobs: Optional[torch.Tensor] = None
-    ref_logprobs: Optional[torch.Tensor] = None
+    recomputed_logprobs: Optional[torch.Tensor | list[torch.Tensor]] = None
+    ref_logprobs: Optional[torch.Tensor | list[torch.Tensor]] = None
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
@@ -850,6 +850,66 @@ class DynamicRolloutResult:
     extra_fields_turn: Optional[dict] = None  # [num_sequence]
     extra_fields_traj: Optional[dict] = None  # [group_size]
     extra_fields_group: Optional[dict] = None  # [1]
+
+    dp_balanced: bool = False
+
+    def to_ragged_actor_batch(self) -> dict:
+        """Build CPU rows with token fields indexed by absolute token position."""
+        lengths = [p + r for p, r in zip(self.prompt_lengths, self.response_lengths)]
+        batch = {
+            "idx_to_traj": list(self.idx_to_traj),
+            "input_ids": [
+                torch.as_tensor(ids, dtype=torch.long) for ids in self.input_ids
+            ],
+            "attention_mask": [torch.ones(n, dtype=torch.bool) for n in lengths],
+            "response_mask": [
+                torch.arange(n) >= p for n, p in zip(lengths, self.prompt_lengths)
+            ],
+            "position_ids": [torch.arange(n) for n in lengths],
+            "prompt_lengths": torch.tensor(self.prompt_lengths, dtype=torch.int32),
+            "response_lengths": torch.tensor(self.response_lengths, dtype=torch.int32),
+            "is_end": torch.tensor(self.is_end, dtype=torch.bool),
+            **{
+                f"extra:{k}": torch.as_tensor(v).cpu()
+                for k, v in self.extra_fields_train.items()
+            },
+        }
+        if self.rewards is not None:
+            batch["rewards"] = (
+                self.rewards.detach().cpu()
+                if torch.is_tensor(self.rewards)
+                else torch.as_tensor(self.rewards, dtype=torch.float32)
+            ).flatten()
+        if self.rollout_logprobs is not None:
+            batch["rollout_logprobs"] = [
+                torch.cat((torch.zeros(p), torch.as_tensor(row, dtype=torch.float32)))
+                for p, row in zip(self.prompt_lengths, self.rollout_logprobs)
+            ]
+        for key in ("recomputed_logprobs", "ref_logprobs", "advantages"):
+            values = getattr(self, key)
+            if values is not None:
+                batch[key] = [
+                    row[:n].detach().cpu().clone() for row, n in zip(values, lengths)
+                ]
+        return batch
+
+    @staticmethod
+    def materialize_ragged_batch(
+        batch: dict, seq_length: int, pad_token: int, device: torch.device | str = "cpu"
+    ) -> dict:
+        """Pad one microbatch for the existing loss contract."""
+        result = {}
+        for key, value in batch.items():
+            if isinstance(value, list) and value and torch.is_tensor(value[0]):
+                padded = batch_pad_to_fixed_len(
+                    value, seq_length, pad_token if key == "input_ids" else 0
+                )
+                result[key] = padded.to(device)
+            elif torch.is_tensor(value):
+                result[key] = value.to(device)
+            else:
+                result[key] = value
+        return result
 
     @staticmethod
     def _get_attention_masks_and_position_ids(
@@ -1133,6 +1193,8 @@ class DynamicRolloutResult:
         Returns:
             Packed batch with updated tensors and `idx_to_traj` mapping.
         """
+        ragged = isinstance(batch["input_ids"], list)
+
         # calculate pack map
         traj_to_idx = {}
         for idx, traj in enumerate(batch["idx_to_traj"]):
@@ -1151,9 +1213,11 @@ class DynamicRolloutResult:
                     if right in passed_as_suffix:
                         continue
                     # Skip overlapping response spans to avoid mixing turns.
+                    left_mask = batch["response_mask"][left]
+                    right_mask = batch["response_mask"][right]
+                    common_length = min(left_mask.numel(), right_mask.numel())
                     mask_overlap = torch.logical_and(
-                        batch["response_mask"][left],
-                        batch["response_mask"][right],
+                        left_mask[:common_length], right_mask[:common_length]
                     )
                     if mask_overlap.sum().item() > 1:
                         continue
@@ -1192,7 +1256,11 @@ class DynamicRolloutResult:
         ]
         for k, v in batch.items():
             if k in tensor_keys:
-                split_params[k] = list(torch.chunk(v.clone(), num_sequence, dim=0))
+                split_params[k] = (
+                    [row.clone().unsqueeze(0) for row in v]
+                    if isinstance(v, list)
+                    else list(torch.chunk(v.clone(), num_sequence, dim=0))
+                )
             else:
                 assert k in custom_keys, f"bad key {k}"
 
@@ -1201,6 +1269,22 @@ class DynamicRolloutResult:
             idxes = [*prefixes, suffix]
             assert len(idxes) >= 2
             assert len({split_params["rewards"][idx].item() for idx in idxes}) == 1
+
+            if ragged:
+                target_length = split_params["input_ids"][suffix].shape[1]
+                for key in (
+                    "response_mask",
+                    "recomputed_logprobs",
+                    "rollout_logprobs",
+                    "advantages",
+                    "loss_scales",
+                ):
+                    if key in split_params:
+                        for idx in idxes:
+                            row = split_params[key][idx]
+                            split_params[key][idx] = torch.nn.functional.pad(
+                                row, (0, target_length - row.shape[1])
+                            )
 
             # Merge additive token-level stats over response tokens only.
             for key in ["recomputed_logprobs", "rollout_logprobs", "advantages"]:
@@ -1256,12 +1340,22 @@ class DynamicRolloutResult:
         packed_batch = {}
         for k, v in pack_params.items():
             assert k in tensor_keys, k
-            packed_batch[k] = torch.cat(v, dim=0)
+            packed_batch[k] = (
+                [row.squeeze(0) for row in v]
+                if isinstance(batch[k], list)
+                else torch.cat(v, dim=0)
+            )
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context["folding_scale"]
         if "group_level" in folding_scale:
-            packed_batch["loss_scales"] *= num_sequence_after / num_sequence
+            ratio = num_sequence_after / num_sequence
+            if ragged:
+                packed_batch["loss_scales"] = [
+                    row * ratio for row in packed_batch["loss_scales"]
+                ]
+            else:
+                packed_batch["loss_scales"] *= ratio
 
         return packed_batch
 
@@ -1285,6 +1379,7 @@ class DynamicRolloutResult:
 
         merged_result = DynamicRolloutResult(
             num_sequence=sum(res.num_sequence for res in rollout_results),
+            dp_balanced=all(res.dp_balanced for res in rollout_results),
             group_size=rollout_results[0].group_size,
             idx_to_traj=[],
             input_ids=[],
@@ -1310,14 +1405,15 @@ class DynamicRolloutResult:
                 ) + list(res.rollout_logprobs)
 
             # Merge tensor fields (size: num_sequence)
-            if res.recomputed_logprobs is not None:
-                merged_result.recomputed_logprobs = merge_tensor(
-                    merged_result.recomputed_logprobs, res.recomputed_logprobs
-                )
-            if res.ref_logprobs is not None:
-                merged_result.ref_logprobs = merge_tensor(
-                    merged_result.ref_logprobs, res.ref_logprobs
-                )
+            for key in ("recomputed_logprobs", "ref_logprobs"):
+                value = getattr(res, key)
+                if value is None:
+                    continue
+                previous = getattr(merged_result, key)
+                if isinstance(value, list):
+                    setattr(merged_result, key, (previous or []) + value)
+                else:
+                    setattr(merged_result, key, merge_tensor(previous, value))
 
             if res.rewards is not None:
                 if isinstance(res.rewards, list):
@@ -1404,6 +1500,10 @@ class DynamicRolloutResult:
             split_result = DynamicRolloutResult(
                 num_sequence=split_size,
                 group_size=rollout_result.group_size,
+                dp_balanced=rollout_result.dp_balanced,
+                advantages=rollout_result.advantages[start_idx:end_idx]
+                if rollout_result.advantages is not None
+                else None,
                 idx_to_traj=split_idx_to_traj,
                 input_ids=split_input_ids,
                 rollout_logprobs=split_rollout_logprobs,

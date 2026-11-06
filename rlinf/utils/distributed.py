@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
 from collections import UserDict
 from contextlib import contextmanager
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import torch
@@ -24,6 +25,9 @@ from typing_extensions import Self
 
 from rlinf.scheduler import Tracer, Worker
 from rlinf.utils.timers import NamedTimer
+
+if TYPE_CHECKING:
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 
 
 class _LazyParallelState:
@@ -49,6 +53,77 @@ class _LazyParallelState:
 
 
 parallel_state = _LazyParallelState()
+
+
+def balance_rollout_groups(
+    results: list["DynamicRolloutResult"], dp_group: ProcessGroup
+) -> list["DynamicRolloutResult"]:
+    """Redistribute complete, real-length question groups before model broadcast.
+
+    Only group costs and byte counts are gathered. Local groups stay on their
+    owner; remote groups travel once in variable-sized all-to-all byte buffers.
+
+    Args:
+        results: Complete CPU question groups received by this DP data-I/O rank.
+        dp_group: Process group connecting the DP data-I/O ranks.
+
+    Returns:
+        The complete groups assigned to this rank, in partition order.
+    """
+    from rlinf.utils.data_iter_utils import get_seqlen_balanced_partitions
+
+    world_size = torch.distributed.get_world_size(dp_group)
+    rank = torch.distributed.get_rank(dp_group)
+    if world_size == 1:
+        return results
+    local_costs = [sum(map(len, result.input_ids)) for result in results]
+    costs = [None] * world_size
+    torch.distributed.all_gather_object(costs, local_costs, group=dp_group)
+    partitions = get_seqlen_balanced_partitions(
+        sum(costs, []), k_partitions=world_size, equal_size=True
+    )
+    count = len(results)
+    destination = {
+        idx: target for target, part in enumerate(partitions) for idx in part
+    }
+    outgoing = [[] for _ in range(world_size)]
+    owned = {}
+    for i, result in enumerate(results):
+        idx = rank * count + i
+        target = destination[idx]
+        if target == rank:
+            owned[idx] = result
+        else:
+            outgoing[target].append((idx, result))
+    payloads = [pickle.dumps(rows, protocol=5) if rows else b"" for rows in outgoing]
+    device = (
+        "cpu"
+        if torch.distributed.get_backend(dp_group) == "gloo"
+        else Worker.torch_platform.current_device()
+    )
+    send_sizes = torch.tensor(
+        [len(data) for data in payloads], dtype=torch.int64, device=device
+    )
+    recv_sizes = torch.empty_like(send_sizes)
+    torch.distributed.all_to_all_single(recv_sizes, send_sizes, group=dp_group)
+    send_counts, recv_counts = send_sizes.cpu().tolist(), recv_sizes.cpu().tolist()
+    data = bytearray(b"".join(payloads))
+    send = (
+        torch.frombuffer(data, dtype=torch.uint8).to(device)
+        if data
+        else torch.empty(0, dtype=torch.uint8, device=device)
+    )
+    recv = torch.empty(sum(recv_counts), dtype=torch.uint8, device=device)
+    torch.distributed.all_to_all_single(
+        recv, send, recv_counts, send_counts, group=dp_group
+    )
+    received = recv.cpu().numpy().tobytes()
+    offset = 0
+    for size in recv_counts:
+        if size:
+            owned.update(pickle.loads(received[offset : offset + size]))
+        offset += size
+    return [owned[idx] for idx in partitions[rank]]
 
 
 def compute_rollout_metrics_dynamic(
@@ -79,8 +154,17 @@ def compute_rollout_metrics_dynamic(
     device = torch.device(f"cuda:{torch.cuda.current_device()}")
 
     # Extract basic tensors
-    advantages = rollout_batch["advantages"].to(device=device)
-    mask = rollout_batch["response_mask"].to(device=device)
+    ragged = isinstance(rollout_batch["advantages"], list)
+    advantages = (
+        torch.cat(rollout_batch["advantages"])
+        if ragged
+        else rollout_batch["advantages"]
+    ).to(device=device)
+    mask = (
+        torch.cat(rollout_batch["response_mask"])
+        if ragged
+        else rollout_batch["response_mask"]
+    ).to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)
