@@ -131,10 +131,41 @@ RLinf具有高度灵活性，可支持多种强化学习训练工作流（PPO、
 
 这种高灵活性使 RLinf 能够探索更高效的调度与执行模式。在具身强化学习中，混合执行模式的吞吐量可达现有框架的 **2.434** 倍。
 
-多后端集成支持
+### 训练与 Rollout 引擎
 
-- FSDP + HuggingFace/SGLang/vLLM: 快速适配新模型与新算法，非常适合初学者和快速原型验证。
-- Megatron + SGLang/vLLM: 针对大规模训练进行了优化，为专家用户提供最大化效率。
+RLinf 用训练引擎更新模型，用 Rollout 引擎执行 rollout 和评测。FSDP 能快速适配新模型和新算法，Megatron-LM 和 Megatron-Bridge 面向大规模训练。智能体一栏也涵盖数学、VQA 等推理任务。PhyAI 和 ApxInf 目前仅支持 π₀.₅。
+
+<table>
+  <thead align="center">
+    <tr>
+      <th rowspan="2"></th>
+      <th colspan="3">训练</th>
+      <th colspan="5">Rollout</th>
+    </tr>
+    <tr>
+      <th>FSDP</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/5D.html">Megatron-LM</a></th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/mbridge.html">Megatron-Bridge</a></th>
+      <th>HuggingFace</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/sglang_server.html">SGLang</a></th>
+      <th>vLLM</th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html">PhyAI</a></th>
+      <th><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/apxinf.html">ApxInf</a></th>
+    </tr>
+  </thead>
+  <tbody align="center">
+    <tr>
+      <td align="left"><b>具身智能</b></td>
+      <td>✅</td><td>—</td><td>✅</td>
+      <td>✅</td><td>✅</td><td>—</td><td>✅</td><td>✅</td>
+    </tr>
+    <tr>
+      <td align="left"><b>智能体</b></td>
+      <td>✅</td><td>✅</td><td>✅</td>
+      <td>—</td><td>✅</td><td>✅</td><td>—</td><td>—</td>
+    </tr>
+  </tbody>
+</table>
 
 
 ## 示例
