@@ -573,7 +573,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 
 其他变体须传入训练时相同的 ``actor.model.*`` 和 ``algorithm.*`` 覆盖项，例如 ``"${PAPER_ARGS[@]}"`` 和 ``actor.model.velocity_tracking=true``。
 
-``env.eval.eval_tasks`` 选择 ``tracking`` 和/或 ``velocity_smoke``、单独的 ``velocity_g2``，或单独的 ``push_recovery``。评测任务（片段、命令或试次）平均分给各 env rank，每个环境每个 rollout epoch 跑一个任务，所以 ``env.eval.rollout_epoch`` 乘以每个 rank 的环境数必须覆盖该 rank 的任务数。``env.eval.max_steps_per_rollout_epoch`` 必须覆盖最长的任务；配方里的 8200 覆盖最长的 LAFAN1 片段。任务结束的环境会等到这个 epoch 结束。
+``env.eval.eval_tasks`` 选择 ``tracking`` 和/或 ``velocity_smoke``、单独的 ``velocity_g2``，或单独的 ``push_recovery``。评测任务（片段、命令或试次）平均分给各 env rank，每个环境每个 rollout epoch 跑一个任务，所以 ``env.eval.rollout_epoch`` 乘以每个 rank 的环境数必须覆盖该 rank 的任务数。``env.eval.max_steps_per_rollout_epoch`` 必须覆盖最长的任务；配方里的 13656 覆盖最长的 LAFAN1 片段（30 fps 下 8194 帧）。任务结束的环境会等到这个 epoch 结束。
 
 **输出位置。** 设置 ``runner.eval_export.enabled`` 时（评测配置里默认打开），runner 把结果写到 ``runner.eval_export.output_dir``，不设置时写到 ``<log_path>/<experiment_name>/eval_results/``；``run_eval.sh`` 把 ``log_path`` 设为仓库下的 ``logs/<时间>-<配置名>``。结果目录里有：
 

@@ -76,8 +76,8 @@ env:
     num_clips: 40
     is_eval: True
     eval_tasks: [tracking]
-    # The longest LAFAN1 clip runs 8194 frames.
-    max_steps_per_rollout_epoch: 8200
+    # The longest LAFAN1 clip has 8194 frames at 30 fps, 13656 control steps.
+    max_steps_per_rollout_epoch: 13656
     video_cfg:
       video_base_dir: ${runner.logger.log_path}/video/eval
 

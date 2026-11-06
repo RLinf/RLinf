@@ -876,8 +876,8 @@ overrides used in training, such as ``"${PAPER_ARGS[@]}"`` and
 or trials) are split evenly over the env ranks, and each environment runs
 one job per rollout epoch, so ``env.eval.rollout_epoch`` times a rank's
 environments must cover that rank's jobs. ``env.eval.max_steps_per_rollout_epoch``
-must cover the longest job; the recipe's 8200 covers the longest LAFAN1 clip.
-An environment whose job has ended waits for the end of the epoch.
+must cover the longest job; the recipe's 13656 covers the longest LAFAN1
+clip, which has 8194 frames at 30 fps. An environment whose job has ended waits for the end of the epoch.
 
 **Where results go.** With ``runner.eval_export.enabled`` (on in the
 evaluation configs), the runner writes to ``runner.eval_export.output_dir``,

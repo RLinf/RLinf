@@ -19,7 +19,8 @@ Select -k 'not end_to_end' for the numerical checks, which need neither Ray
 nor a GPU. The smoke trains the goal730 recipe with small overrides on a
 generated standing clip, resumes it and evaluates the checkpoint through
 ``evaluations/eval_embodied_agent.py``. Two GPUs add a velocity-tracking run
-over NCCL. None of the runs measures quality.
+over NCCL. The runs use the first GPUs in CUDA_VISIBLE_DEVICES, or GPUs 0 and
+1 when it is unset. None of the runs measures quality.
 """
 
 from __future__ import annotations
@@ -219,16 +220,20 @@ def test_reference_fk_matches_online_fk(storage, query):
 _CLIP_FRAMES = 64
 
 
-def _entry_env(world):
-    env = dict(os.environ)
-    devices = env.get("CUDA_VISIBLE_DEVICES")
+def _gpu_ids(world):
+    devices = os.environ.get("CUDA_VISIBLE_DEVICES")
     gpu_ids = (
         [device.strip() for device in devices.split(",")]
         if devices
         else [str(i) for i in range(torch.cuda.device_count())]
     )
+    return sorted(gpu_ids[:world], key=int)
+
+
+def _entry_env(world):
+    env = dict(os.environ)
     env.update(
-        CUDA_VISIBLE_DEVICES=",".join(gpu_ids[:world]),
+        CUDA_VISIBLE_DEVICES=",".join(_gpu_ids(world)),
         PYTHONPATH=f"{REPO}{os.pathsep}{env.get('PYTHONPATH', '')}",
         EMBODIED_PATH=str(REPO / "examples/embodiment"),
         MUJOCO_GL="disable",
@@ -289,7 +294,13 @@ def _standing_clips(directory: Path) -> Path:
 
 def smoke_overrides(clips, world: int, velocity: bool) -> tuple[list, list]:
     """Overrides shared by training and evaluation, and the training-only ones."""
+    # RLinf places workers on node-wide GPU indices and ignores the driver's
+    # CUDA_VISIBLE_DEVICES, so the placement names the selected GPUs.
+    gpus = ",".join(_gpu_ids(world))
     shared = [
+        "~cluster.component_placement",
+        f"+cluster.component_placement={{actor: '{gpus}', env: '{gpus}', "
+        f"rollout: '{gpus}'}}",
         f"env.train.motion_path={clips}",
         f"env.eval.motion_path={clips}",
         "env.train.num_clips=1",
