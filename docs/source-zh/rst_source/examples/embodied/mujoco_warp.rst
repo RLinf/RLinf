@@ -7,7 +7,7 @@
 
    MuJoCo Warp 批量仿真的三个 humanoid（图片来源：`MuJoCo Warp <https://github.com/google-deepmind/mujoco_warp>`__）。
 
-本页介绍如何用 PPO 在五个经典 MuJoCo 运动控制任务上训练 MLP policy，并给出任务维度、安装方法、启动命令和验证结果。`MuJoCo Warp (MJWarp) <https://github.com/google-deepmind/mujoco_warp>`__ 会在 NVIDIA GPU 上以一次批量物理调用推进 RLinf env worker 中的所有 world。
+本页介绍如何用 PPO 在五个经典 MuJoCo 运动控制任务上训练 MLP policy，并说明这些任务如何定义、维度、安装方法、启动命令和验证结果。`MuJoCo Warp (MJWarp) <https://github.com/google-deepmind/mujoco_warp>`__ 在 NVIDIA GPU 上把一个 RLinf env worker 里的全部 world 一起推进。每个物理子步是一次批量调用，一个控制步会按该任务的 frame skip 重复这次调用：half_cheetah、ant、humanoid 为 5，hopper、walker2d 为 4。
 
 概述
 ----
@@ -74,10 +74,12 @@
      - 17
      - 躯干高度异常或状态包含非有限值。
 
+上表五个名字是本配方自带的任务。一个 env worker 里的全部 world 共用一份批量物理状态 ``MjWarpWorld``\ ：它可以加载 MJCF，也可以加载已经编译好的 ``MjModel``\ ，每个物理子步把所有 world 一起推进。奖励、终止和初始状态来自任务 wrapper ``TaskWrapper``\ 。内置任务共用同一个运动控制 wrapper ``LocomotionTask``\ ，``task_name`` 选择其中一份 ``TaskSpec``\ 。奖励形式相同的新任务，是再注册一份 ``TaskSpec`` 及其 MJCF。观测或奖励不同时，为该 ``task_name`` 实现新的 ``TaskWrapper``\ ，并由环境构造它。
+
 观测与动作
 ~~~~~~~~~~
 
-观测和奖励遵循 Gymnasium MuJoCo v4 约定。每个回合到达 ``max_episode_steps`` 后截断。
+每个回合在 ``max_episode_steps`` 处截断。下表是 policy 读到的观测，以及环境返回的奖励。
 
 .. list-table::
    :header-rows: 1
@@ -90,13 +92,19 @@
    * - 动作
      - 连续执行器控制量，限制在各模型的控制范围内。
    * - 奖励
-     - 前进速度加任务对应的存活奖励，再减去控制量平方代价，最后乘以 ``reward_scale``\ （默认 ``1.0``）。
+     - 根部 x 轴速度，加上该任务的存活奖励，再减去 ``ctrl_cost_weight * ||ctrl||^2``\ ，最后乘以 ``reward_scale``\ （默认 ``1.0``）。
    * - 提示词
      - 不使用；这是低维 policy 控制配方。
 
+half_cheetah、hopper、walker2d 的奖励项与 Gymnasium MuJoCo v4 相同。本配方在躯干高度或角度异常、或状态含非有限值时终止 hopper 和 walker2d。Gymnasium v4 还会把关节速度裁到 ``[-10, 10]``\ ，并在其余状态离开 ``(-100, 100)`` 时终止。
+
+ant 的控制代价权重是 ``5e-4``\ ，前向速度取根部 x 轴。Gymnasium Ant-v4 的权重是 ``0.5``\ ，速度取躯干质心。
+
+humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``reward_scale`` 之前，奖励为 ``1.25 + root_x_velocity - 0.1 * ||ctrl||^2``\ 。Gymnasium Humanoid-v4 的观测是 376 维，奖励为 ``5.0 + 1.25 * 质心速度 - 0.1 * ||ctrl||^2``\ 。
+
 .. note::
 
-   MJWarp 不支持 PGS solver。接入层会将 hopper 和 walker2d 切换为 CG，因此它们的接触动力学与 Gymnasium 的 MuJoCo CPU 后端并不完全一致。
+   MJWarp 没有 PGS solver。加载时，solver 已经是 PGS 的模型会改成 CG。随包资源里只有 humanoid 写了 ``solver="PGS"``\ ，因此它的接触动力学与 Gymnasium 的 MuJoCo CPU 后端不同。
 
 安装
 ----
@@ -182,6 +190,6 @@
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true
 
-评估视频保存在 ``<log_path>/video/eval`` 下。物理仿真仍由 MJWarp 执行，录像 wrapper 会将每个 world 的状态复制到原生 MuJoCo 进行 RGB 渲染。录像会增加设备到主机的同步和逐 world 渲染开销，因此测试吞吐量时应保持关闭。可通过 ``render_width`` 和 ``render_height`` 调整单个 world 的分辨率，通过 ``video_cfg.fps`` 覆盖默认控制频率。
+评估视频保存在 ``<log_path>/video/eval``\ 。物理仿真仍由 MJWarp 执行。环境把每个 world 的 ``qpos``\ 、``qvel`` 和 ``ctrl`` 复制到原生 MuJoCo 并渲染 RGB 帧，录像 wrapper 再把这些帧写成 MP4。录像会增加设备到主机的同步和逐 world 渲染开销，因此测试吞吐量时应保持关闭。可通过 ``render_width`` 和 ``render_height`` 调整单个 world 的分辨率，通过 ``video_cfg.fps`` 覆盖默认控制频率。
 
 首次仿真步需要 JIT 编译 MJWarp kernel，耗时会高于后续步骤。

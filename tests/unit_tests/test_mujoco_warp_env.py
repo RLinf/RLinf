@@ -24,7 +24,8 @@ pytest.importorskip("warp", reason="warp-lang is not installed")
 import mujoco
 
 from rlinf.envs import SupportedEnvType, get_env_cls
-from rlinf.envs.sim.mujoco_warp.mujoco_warp_env import TASK_SPECS, MujocoWarpEnv
+from rlinf.envs.sim.mujoco_warp.mujoco_warp_env import MujocoWarpEnv
+from rlinf.envs.sim.mujoco_warp.tasks.locomotion import TASK_SPECS
 from rlinf.envs.wrappers.record_video import RecordVideo
 
 

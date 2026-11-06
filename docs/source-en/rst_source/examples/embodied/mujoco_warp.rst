@@ -7,7 +7,7 @@ RL with MuJoCo Warp
 
    Three humanoids simulated by MuJoCo Warp (image: `MuJoCo Warp <https://github.com/google-deepmind/mujoco_warp>`__).
 
-Use this recipe to train an MLP policy with PPO on five classic MuJoCo locomotion tasks. `MuJoCo Warp (MJWarp) <https://github.com/google-deepmind/mujoco_warp>`__ steps all worlds in an RLinf env worker together in one batched physics call on an NVIDIA GPU. This page covers task dimensions, installation, launch commands, and validation results.
+Use this recipe to train an MLP policy with PPO on five classic MuJoCo locomotion tasks. `MuJoCo Warp (MJWarp) <https://github.com/google-deepmind/mujoco_warp>`__ runs the worlds in one RLinf env worker together on an NVIDIA GPU. Each physics substep is one batched call, and a control step repeats that call for the task's frame skip: 5 for half_cheetah, ant, and humanoid, and 4 for hopper and walker2d. This page covers how those tasks are defined, their dimensions, installation, launch commands, and validation results.
 
 Overview
 --------
@@ -43,7 +43,7 @@ Choose a task and train a low-dimensional policy through RLinf's actor, rollout,
 Tasks
 ~~~~~
 
-Select a task with ``env.train.task_name`` and ``env.eval.task_name``. Match the policy dimensions to the task.
+Select a task with ``env.train.task_name`` and ``env.eval.task_name``, and match the policy dimensions to the task.
 
 .. list-table::
    :header-rows: 1
@@ -74,10 +74,12 @@ Select a task with ``env.train.task_name`` and ``env.eval.task_name``. Match the
      - 17
      - Unhealthy torso height or non-finite state.
 
+These five names are the tasks this recipe ships. Every world in an env worker shares one batched physics state, ``MjWarpWorld``. It loads an MJCF file or an already compiled ``MjModel``, and each physics substep advances every world together. Reward, termination, and the initial state come from a task wrapper, ``TaskWrapper``. The built-in tasks share one locomotion wrapper, ``LocomotionTask``, and ``task_name`` selects its ``TaskSpec``. A new task with this same reward form is another ``TaskSpec`` plus its MJCF, registered with the five above. A different observation or reward is a new ``TaskWrapper`` that the env constructs for that ``task_name``.
+
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Observations and rewards follow the Gymnasium MuJoCo v4 conventions. Every episode is truncated at ``max_episode_steps``.
+Every episode truncates at ``max_episode_steps``. The table is the observation the policy reads and the reward the env returns.
 
 .. list-table::
    :header-rows: 1
@@ -90,13 +92,19 @@ Observations and rewards follow the Gymnasium MuJoCo v4 conventions. Every episo
    * - Action
      - Continuous actuator controls, clamped to each model's control range.
    * - Reward
-     - Forward velocity plus a task-specific alive bonus, minus the squared-control cost, multiplied by ``reward_scale`` (default ``1.0``).
+     - Root-x velocity plus a task-specific alive bonus, minus ``ctrl_cost_weight * ||ctrl||^2``, multiplied by ``reward_scale`` (default ``1.0``).
    * - Prompt
      - Not used; this is a low-dimensional policy-control recipe.
 
+half_cheetah, hopper, and walker2d use the same reward terms as Gymnasium MuJoCo v4. This recipe terminates hopper and walker2d on torso height, torso angle, or a non-finite state. Gymnasium v4 also clips joint velocities to ``[-10, 10]`` and terminates when the remaining state leaves ``(-100, 100)``.
+
+Ant's control-cost weight is ``5e-4``, and its forward velocity is the root x speed. Gymnasium Ant-v4 uses weight ``0.5`` and the torso center-of-mass speed.
+
+Humanoid's observation is the 45-dimensional ``qpos`` and ``qvel`` vector in the task table. Before ``reward_scale``, its reward is ``1.25 + root_x_velocity - 0.1 * ||ctrl||^2``. Gymnasium Humanoid-v4 observes 376 values, and its reward is ``5.0 + 1.25 * center-of-mass velocity - 0.1 * ||ctrl||^2``.
+
 .. note::
 
-   MJWarp does not support the PGS solver. The integration switches hopper and walker2d to CG, so their contact dynamics are not identical to Gymnasium's MuJoCo CPU backend.
+   MJWarp has no PGS solver. On load, a model whose solver is already PGS is switched to CG. Among the shipped assets, only humanoid sets ``solver="PGS"``, so its contact dynamics differ from Gymnasium's MuJoCo CPU backend.
 
 Installation
 ------------
@@ -182,6 +190,6 @@ Video recording is disabled by default. Enable it for evaluation with:
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
        env.eval.video_cfg.save_video=true
 
-Evaluation videos are written under ``<log_path>/video/eval``. The wrapper copies each world's state to native MuJoCo for RGB rendering while MJWarp continues to perform the physics. This adds device-to-host synchronization and per-world rendering work, so disable video for throughput benchmarks. Use ``render_width`` and ``render_height`` to change the per-world resolution, and ``video_cfg.fps`` to override the default control frequency.
+Evaluation videos are written under ``<log_path>/video/eval``. MJWarp still runs the physics. The environment copies each world's ``qpos``, ``qvel``, and ``ctrl`` into native MuJoCo and renders RGB frames; the video wrapper writes those frames to MP4. Recording adds device-to-host synchronization and per-world rendering, so leave it off for throughput runs. Use ``render_width`` and ``render_height`` for the per-world resolution, and ``video_cfg.fps`` to override the default control frequency.
 
 The first simulation step JIT-compiles MJWarp kernels and can take longer than later steps.

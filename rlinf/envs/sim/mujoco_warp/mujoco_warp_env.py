@@ -20,6 +20,9 @@ import gymnasium as gym
 import numpy as np
 import torch
 
+from rlinf.envs.sim.mujoco_warp.tasks.locomotion import TASK_SPECS, LocomotionTask
+from rlinf.envs.sim.mujoco_warp.world import MjWarpWorld
+
 __all__ = ["MujocoWarpEnv"]
 
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
@@ -33,104 +36,12 @@ def _cfg_get(cfg: Any, key: str, default: Any) -> Any:
     return default
 
 
-class _TaskSpec:
-    """Static description of one locomotion task.
-
-    Reward and termination follow the Gymnasium MuJoCo v4 task semantics:
-    ``reward = healthy_reward + forward_velocity - ctrl_cost_weight * ||ctrl||^2``,
-    and (for terminating tasks) an episode ends when the body leaves the
-    healthy height/angle ranges or the observation becomes non-finite.
-    """
-
-    def __init__(
-        self,
-        xml_file: str,
-        obs_qpos_skip: int,
-        frame_skip: int,
-        ctrl_cost_weight: float,
-        healthy_reward: float,
-        healthy_z_range: Optional[tuple[float, float]],
-        healthy_angle_range: Optional[tuple[float, float]],
-        reset_noise_scale: float,
-        reset_noise_type: str,
-    ) -> None:
-        self.xml_file = xml_file
-        self.obs_qpos_skip = obs_qpos_skip
-        self.frame_skip = frame_skip
-        self.ctrl_cost_weight = ctrl_cost_weight
-        self.healthy_reward = healthy_reward
-        self.healthy_z_range = healthy_z_range
-        self.healthy_angle_range = healthy_angle_range
-        self.reset_noise_scale = reset_noise_scale
-        self.reset_noise_type = reset_noise_type
-
-
-TASK_SPECS: dict[str, _TaskSpec] = {
-    "half_cheetah": _TaskSpec(
-        xml_file="half_cheetah.xml",
-        obs_qpos_skip=1,
-        frame_skip=5,
-        ctrl_cost_weight=0.1,
-        healthy_reward=0.0,
-        healthy_z_range=None,
-        healthy_angle_range=None,
-        reset_noise_scale=0.1,
-        reset_noise_type="uniform",
-    ),
-    "hopper": _TaskSpec(
-        xml_file="hopper.xml",
-        obs_qpos_skip=1,
-        frame_skip=4,
-        ctrl_cost_weight=1e-3,
-        healthy_reward=1.0,
-        healthy_z_range=(0.7, float("inf")),
-        healthy_angle_range=(-0.2, 0.2),
-        reset_noise_scale=5e-3,
-        reset_noise_type="uniform",
-    ),
-    "walker2d": _TaskSpec(
-        xml_file="walker2d.xml",
-        obs_qpos_skip=1,
-        frame_skip=4,
-        ctrl_cost_weight=1e-3,
-        healthy_reward=1.0,
-        healthy_z_range=(0.8, 2.0),
-        healthy_angle_range=(-1.0, 1.0),
-        reset_noise_scale=5e-3,
-        reset_noise_type="uniform",
-    ),
-    "ant": _TaskSpec(
-        xml_file="ant.xml",
-        obs_qpos_skip=2,
-        frame_skip=5,
-        ctrl_cost_weight=5e-4,
-        healthy_reward=1.0,
-        healthy_z_range=(0.2, 1.0),
-        healthy_angle_range=None,
-        reset_noise_scale=0.1,
-        reset_noise_type="uniform",
-    ),
-    "humanoid": _TaskSpec(
-        xml_file="humanoid.xml",
-        obs_qpos_skip=2,
-        frame_skip=5,
-        ctrl_cost_weight=0.1,
-        healthy_reward=1.25,
-        healthy_z_range=(1.0, 2.0),
-        healthy_angle_range=None,
-        reset_noise_scale=1e-2,
-        reset_noise_type="uniform",
-    ),
-}
-
-
 class MujocoWarpEnv(gym.Env):
     """Batched MuJoCo Warp locomotion env compatible with the EnvWorker chunk API.
 
-    All ``num_envs`` worlds are stepped together on device with one
-    ``mujoco_warp.step`` call per frame, so there is no per-env Python loop
-    in the physics path. Observations contain ``states`` and, when video is
-    enabled, an ``images`` batch.
+    Physics lives on ``MjWarpWorld``. Reward, termination, and the initial
+    state come from ``LocomotionTask``. Observations contain ``states`` and,
+    when video is enabled, an ``images`` batch.
 
     Args:
         cfg: Task, simulation, reset, reward, and video configuration.
@@ -159,11 +70,12 @@ class MujocoWarpEnv(gym.Env):
             raise ValueError(f"num_envs must be positive, got {self.num_envs}.")
 
         self.task_name = str(_cfg_get(cfg, "task_name", "half_cheetah"))
-        assert self.task_name in TASK_SPECS, (
-            f"Unknown mujoco_warp task {self.task_name!r}. "
-            f"Available tasks: {list(TASK_SPECS.keys())}"
-        )
-        self.spec = TASK_SPECS[self.task_name]
+        if self.task_name not in TASK_SPECS:
+            raise ValueError(
+                f"Unknown mujoco_warp task {self.task_name!r}. "
+                f"Available tasks: {list(TASK_SPECS.keys())}"
+            )
+        spec = TASK_SPECS[self.task_name]
 
         env_seed = int(_cfg_get(cfg, "seed", 0))
         self.seed = env_seed + int(seed_offset)
@@ -208,9 +120,25 @@ class MujocoWarpEnv(gym.Env):
             raise ValueError(
                 f"MujocoWarpEnv supports only CPU and CUDA devices, got {self.device}."
             )
-        self._wp_device = str(self.device)
 
-        self._build_simulation()
+        xml_path = os.path.join(_ASSETS_DIR, spec.xml_file)
+        self.world = MjWarpWorld.from_xml(xml_path, self.num_envs, self.device)
+        self.task = LocomotionTask(spec, seed=self.seed)
+        self.obs_dim = self.task.obs_dim(self.world)
+        self.action_dim = self.world.nu
+        self.frame_dt = self.world.timestep * self.task.frame_skip()
+        self.metadata = {
+            "render_modes": ["rgb_array"],
+            "render_fps": int(round(1.0 / self.frame_dt)),
+        }
+        ctrl_low = self.world.ctrl_low.detach().cpu().numpy()
+        ctrl_high = self.world.ctrl_high.detach().cpu().numpy()
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
+        )
+        self.action_space = gym.spaces.Box(
+            low=ctrl_low, high=ctrl_high, dtype=np.float32
+        )
 
         self._np_generator = np.random.default_rng(seed=self.seed)
         self.start_idx = 0
@@ -223,52 +151,6 @@ class MujocoWarpEnv(gym.Env):
         self._reward_sum = torch.zeros(self.num_envs, device=self.device)
         self._episode_length = torch.zeros(self.num_envs, device=self.device)
         self._init_reset_state_ids()
-
-    def _build_simulation(self) -> None:
-        import mujoco
-        import mujoco_warp as mjw
-        import warp as wp
-
-        wp.init()
-        self._wp = wp
-        self._mjw = mjw
-
-        xml_path = os.path.join(_ASSETS_DIR, self.spec.xml_file)
-        self.mjm = mujoco.MjModel.from_xml_path(xml_path)
-        if self.mjm.opt.solver == mujoco.mjtSolver.mjSOL_PGS:
-            # MJWarp does not implement the PGS solver; CG is the closest
-            # supported option.
-            self.mjm.opt.solver = mujoco.mjtSolver.mjSOL_CG
-        self.frame_dt = float(self.mjm.opt.timestep) * self.spec.frame_skip
-        self.metadata = {
-            "render_modes": ["rgb_array"],
-            "render_fps": int(round(1.0 / self.frame_dt)),
-        }
-
-        with wp.ScopedDevice(self._wp_device):
-            self.m = mjw.put_model(self.mjm)
-            self.d = mjw.make_data(self.mjm, nworld=self.num_envs)
-
-        self._qpos = wp.to_torch(self.d.qpos)
-        self._qvel = wp.to_torch(self.d.qvel)
-        self._ctrl = wp.to_torch(self.d.ctrl)
-        self._init_qpos = torch.as_tensor(
-            np.array(self.mjm.qpos0), dtype=torch.float32, device=self.device
-        )
-        self._init_qvel = torch.zeros(self.mjm.nv, device=self.device)
-
-        self.obs_dim = (self.mjm.nq - self.spec.obs_qpos_skip) + self.mjm.nv
-        self.action_dim = int(self.mjm.nu)
-        ctrl_range = np.asarray(self.mjm.actuator_ctrlrange, dtype=np.float32)
-        self._ctrl_low = torch.as_tensor(ctrl_range[:, 0], device=self.device)
-        self._ctrl_high = torch.as_tensor(ctrl_range[:, 1], device=self.device)
-
-        self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
-        )
-        self.action_space = gym.spaces.Box(
-            low=ctrl_range[:, 0], high=ctrl_range[:, 1], dtype=np.float32
-        )
 
     @property
     def is_start(self) -> bool:
@@ -343,13 +225,6 @@ class MujocoWarpEnv(gym.Env):
             return self._get_ordered_reset_state_ids(len(env_idx))
         return self._get_random_reset_state_ids(len(env_idx))
 
-    # ------------------------------------------------------------------
-    # Simulation core
-    # ------------------------------------------------------------------
-    def _obs_from_state(self) -> torch.Tensor:
-        skip = self.spec.obs_qpos_skip
-        return torch.cat([self._qpos[:, skip:], self._qvel], dim=1)
-
     def _wrap_obs(self, states: torch.Tensor) -> dict[str, Any]:
         obs = {"states": states}
         if self._save_video:
@@ -359,15 +234,16 @@ class MujocoWarpEnv(gym.Env):
     def _init_renderer(self) -> None:
         import mujoco
 
-        self.mjm.vis.global_.offwidth = max(
-            self.mjm.vis.global_.offwidth, self._render_width
+        mj_model = self.world.mj_model
+        mj_model.vis.global_.offwidth = max(
+            mj_model.vis.global_.offwidth, self._render_width
         )
-        self.mjm.vis.global_.offheight = max(
-            self.mjm.vis.global_.offheight, self._render_height
+        mj_model.vis.global_.offheight = max(
+            mj_model.vis.global_.offheight, self._render_height
         )
-        self._render_data = mujoco.MjData(self.mjm)
+        self._render_data = mujoco.MjData(mj_model)
         self._renderer = mujoco.Renderer(
-            self.mjm, height=self._render_height, width=self._render_width
+            mj_model, height=self._render_height, width=self._render_width
         )
         self._render_camera = mujoco.MjvCamera()
         self._render_camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
@@ -387,103 +263,18 @@ class MujocoWarpEnv(gym.Env):
 
         if self._renderer is None:
             self._init_renderer()
-        qpos = self._qpos.detach().cpu().numpy()
-        qvel = self._qvel.detach().cpu().numpy()
-        ctrl = self._ctrl.detach().cpu().numpy()
+        qpos = self.world.qpos.detach().cpu().numpy()
+        qvel = self.world.qvel.detach().cpu().numpy()
+        ctrl = self.world.ctrl.detach().cpu().numpy()
         frames = []
         for world_idx in range(self.num_envs):
             self._render_data.qpos[:] = qpos[world_idx]
             self._render_data.qvel[:] = qvel[world_idx]
             self._render_data.ctrl[:] = ctrl[world_idx]
-            mujoco.mj_forward(self.mjm, self._render_data)
+            mujoco.mj_forward(self.world.mj_model, self._render_data)
             self._renderer.update_scene(self._render_data, camera=self._render_camera)
             frames.append(self._renderer.render())
         return np.stack(frames).astype(np.uint8, copy=False)
-
-    def _vector_reset(
-        self,
-        env_idx: np.ndarray,
-        reset_state_ids: np.ndarray,
-    ) -> torch.Tensor:
-        """Reset the given worlds to ``qpos0`` plus task-specific noise."""
-        reset_state_ids = np.asarray(reset_state_ids, dtype=np.int64)
-        if reset_state_ids.shape != (len(env_idx),):
-            raise ValueError(
-                "reset_state_ids must have one ID per selected world; "
-                f"expected {(len(env_idx),)}, got {reset_state_ids.shape}."
-            )
-        idx_t = torch.as_tensor(env_idx, dtype=torch.long, device=self.device)
-        qpos_noise = torch.empty((len(env_idx), self.mjm.nq), dtype=torch.float32)
-        qvel_noise = torch.empty((len(env_idx), self.mjm.nv), dtype=torch.float32)
-        for row, state_id in enumerate(reset_state_ids):
-            noise_gen = torch.Generator(device="cpu")
-            noise_gen.manual_seed(self.seed + int(state_id))
-            if self.spec.reset_noise_type == "normal":
-                qpos_noise[row] = torch.randn(self.mjm.nq, generator=noise_gen)
-                qvel_noise[row] = torch.randn(self.mjm.nv, generator=noise_gen)
-            else:
-                qpos_noise[row] = torch.rand(self.mjm.nq, generator=noise_gen) * 2 - 1
-                qvel_noise[row] = torch.rand(self.mjm.nv, generator=noise_gen) * 2 - 1
-
-        reset_mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        reset_mask[idx_t] = True
-        with self._wp.ScopedDevice(self._wp_device):
-            self._mjw.reset_data(
-                self.m,
-                self.d,
-                reset=self._wp.from_torch(reset_mask, dtype=self._wp.bool),
-            )
-        self._qpos[idx_t] = self._init_qpos + (
-            qpos_noise * self.spec.reset_noise_scale
-        ).to(self.device)
-        self._qvel[idx_t] = self._init_qvel + (
-            qvel_noise * self.spec.reset_noise_scale
-        ).to(self.device)
-        self._ctrl[idx_t] = 0.0
-        # Rebuild contacts and derived quantities after selective resets.
-        with self._wp.ScopedDevice(self._wp_device):
-            self._mjw.forward(self.m, self.d)
-
-        return self._obs_from_state()[idx_t].clone()
-
-    def _vector_step(
-        self, actions: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        expected_shape = (self.num_envs, self.action_dim)
-        if actions.shape != expected_shape:
-            raise ValueError(
-                f"actions must have shape {expected_shape}, got {tuple(actions.shape)}."
-            )
-        actions = actions.detach().to(device=self.device, dtype=torch.float32)
-        ctrl = torch.clamp(actions, self._ctrl_low, self._ctrl_high)
-        x_before = self._qpos[:, 0].clone()
-        self._ctrl.copy_(ctrl)
-        with self._wp.ScopedDevice(self._wp_device):
-            for _ in range(self.spec.frame_skip):
-                self._mjw.step(self.m, self.d)
-        x_after = self._qpos[:, 0]
-
-        forward_vel = (x_after - x_before) / self.frame_dt
-        ctrl_cost = self.spec.ctrl_cost_weight * (self._ctrl**2).sum(dim=1)
-        rewards = self.spec.healthy_reward + forward_vel - ctrl_cost
-
-        obs = self._obs_from_state()
-        terminations = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        if self.spec.healthy_z_range is not None:
-            # qpos layout is [rootx, rootz, rooty(angle), ...] for planar tasks
-            # (skip=1) and [rootx, rooty, rootz, quat, ...] for 3D tasks
-            # (skip=2).
-            z = self._qpos[:, 2] if self.spec.obs_qpos_skip == 2 else self._qpos[:, 1]
-            min_z, max_z = self.spec.healthy_z_range
-            terminations |= (z < min_z) | (z > max_z)
-        if self.spec.healthy_angle_range is not None:
-            angle = self._qpos[:, 2]
-            min_a, max_a = self.spec.healthy_angle_range
-            terminations |= (angle < min_a) | (angle > max_a)
-        if self.spec.healthy_z_range is not None:
-            terminations |= ~torch.isfinite(obs).all(dim=1)
-
-        return obs, rewards, terminations
 
     # ------------------------------------------------------------------
     # EnvWorker contract
@@ -535,9 +326,10 @@ class MujocoWarpEnv(gym.Env):
             env_idx_arr = full_env_idx
             reset_state_ids = full_reset_state_ids
 
-        partial_obs = self._vector_reset(env_idx_arr, reset_state_ids)
+        world_ids = torch.as_tensor(env_idx_arr, dtype=torch.long, device=self.device)
+        partial_obs = self.task.reset(self.world, world_ids, reset_state_ids)
         if len(env_idx_arr) == self.num_envs:
-            full_obs = self._obs_from_state().clone()
+            full_obs = self.task.observe(self.world).clone()
         else:
             full_obs = self._last_obs.clone()
             full_obs[env_idx_arr] = partial_obs
@@ -574,7 +366,7 @@ class MujocoWarpEnv(gym.Env):
         """
         if isinstance(actions, np.ndarray):
             actions = torch.as_tensor(actions, dtype=torch.float32)
-        obs, rewards, terminations = self._vector_step(actions)
+        obs, rewards, terminations = self.task.step(self.world, actions)
 
         self._elapsed_steps += 1
         truncations = self._elapsed_steps >= self.max_episode_steps
