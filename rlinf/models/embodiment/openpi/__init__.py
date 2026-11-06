@@ -184,6 +184,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
                 OmegaConf.select(model_cfg, "train_expert_only", default=False)
             ),
             is_nft=bool(OmegaConf.select(model_cfg, "is_nft", default=False)),
+            rl_mode=str(OmegaConf.select(model_cfg, "rl_mode", default="default")),
             config_name=config_name,
         )
         model = Pi0RL(

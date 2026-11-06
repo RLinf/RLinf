@@ -1727,6 +1727,9 @@ class EnvOutput:
             "states": states,
             "task_descriptions": task_descriptions,
         }
+        for key in ("art_sim_state_error", "art_state_id"):
+            if key in obs:
+                prepared[key] = obs[key]
         if "reset_mask" in obs:
             prepared["reset_mask"] = obs["reset_mask"]
         return prepared

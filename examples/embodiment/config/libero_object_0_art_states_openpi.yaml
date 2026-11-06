@@ -1,0 +1,11 @@
+defaults:
+  - libero_object_0_art_openpi
+  - _self_
+
+algorithm:
+  art_state_sampling: True
+  art_branch_chunk_index: null
+
+runner:
+  logger:
+    experiment_name: libero_object_0_art_states_openpi

@@ -57,6 +57,7 @@ class EnvWorker(Worker):
         Worker.__init__(self)
 
         self.cfg = cfg
+        self.art_state_sampling = cfg.algorithm.get("art_state_sampling", False)
         self.train_video_cnt = 0
         self.eval_video_cnt = 0
         self.should_stop = False
@@ -121,7 +122,9 @@ class EnvWorker(Worker):
         eval_env_cfg = self.cfg.env.get("eval", None)
         self.enable_train = not self.only_eval and train_env_cfg is not None
         self.enable_eval = (
-            self.cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
+            self.cfg.runner.get("val_check_interval", -1) > 0
+            or self.only_eval
+            or self.cfg.runner.get("eval_at_start", False)
         )
         self.rollout_epoch = (
             train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
@@ -1064,6 +1067,38 @@ class EnvWorker(Worker):
         )
         return env_outputs
 
+    def _collect_art_states(
+        self,
+        input_channel: Channel,
+        rollout_channel: Channel,
+        env_outputs: list[EnvOutput],
+    ) -> list[EnvOutput]:
+        """Collect states before opening any candidate trajectory in the collector."""
+        initial_transitions = [output.transition for output in env_outputs]
+        for _ in range(self.n_train_chunk_steps):
+            for stage_id, env in enumerate(self.env_list):
+                get_env_attr(env, "capture_art_states")()
+                policy_input = self._build_policy_input(env_outputs[stage_id])
+                self.send_to(
+                    group_name=self.cfg.rollout.group_name,
+                    channel=rollout_channel,
+                    data=policy_input,
+                    mode="train",
+                    tag="art_collect",
+                    route_key=stage_id,
+                    batch_size=self.train_batch_size,
+                    split_fn=self._policy_input_split_fn or PolicyInput.split,
+                )
+                actions = self._recv_actions(input_channel, stage_id)
+                env_outputs[stage_id], _, _ = self.env_interact_step(actions, stage_id)
+        for stage_id, env in enumerate(self.env_list):
+            obs = get_env_attr(env, "restore_art_states")()
+            env_outputs[stage_id] = EnvOutput(
+                obs=obs,
+                transition=initial_transitions[stage_id],
+            )
+        return env_outputs
+
     def prefetch_train_bootstrap(
         self,
         rollout_channel: Channel,
@@ -1125,7 +1160,21 @@ class EnvWorker(Worker):
         final_env_parts: dict[int, EnvPart] = {}
 
         for epoch in range(self.rollout_epoch):
-            if epoch == 0 and self._prefetched_train_bootstrap is not None:
+            if self.art_state_sampling:
+                env_outputs = self._collect_art_states(
+                    input_channel, rollout_channel, self.bootstrap_step()
+                )
+                self._send_train_bootstrap(
+                    rollout_channel,
+                    env_outputs,
+                    self._trajectory_step,
+                    epoch,
+                    final_env_parts,
+                )
+                env_metrics["art_state_steps"].append(
+                    env_outputs[0].obs["art_state_steps"].clone()
+                )
+            elif epoch == 0 and self._prefetched_train_bootstrap is not None:
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
             else:

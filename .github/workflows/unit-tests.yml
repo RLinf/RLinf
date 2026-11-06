@@ -24,10 +24,17 @@ jobs:
           source .venv/bin/activate
           for file in tests/unit_tests/test_*.py; do
               code=0
-              pytest "$file" || code=$?
+              pytest "$file" -o junit_family=xunit1 --junitxml="test-results/$(basename "$file" .py).xml" || code=$?
               ray stop
               [ $code -eq 0 ] || exit $code
           done
+
+      - name: Upload CUDA test results and host-memory peaks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuda-unit-test-results
+          path: test-results/
 
       - name: Run doctest
         timeout-minutes: 20

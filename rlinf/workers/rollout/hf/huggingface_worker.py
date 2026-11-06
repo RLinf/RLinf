@@ -42,7 +42,69 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
+
+
+def _repeat_art_group_leaders(value: Any, group_size: int) -> Any:
+    if isinstance(value, (torch.Tensor, np.ndarray)):
+        if value.shape[0] % group_size:
+            raise ValueError("ART prefix batches must contain complete groups.")
+        if isinstance(value, torch.Tensor):
+            return value[::group_size].repeat_interleave(group_size, dim=0)
+        return np.repeat(value[::group_size], group_size, axis=0)
+    if isinstance(value, dict):
+        return {
+            key: _repeat_art_group_leaders(item, group_size)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _art_branch_observation_stats(
+    obs: dict[str, Any], group_size: int, state_atol: float, image_atol: float
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Check group conditioning at each shared-prefix decision."""
+    states = torch.as_tensor(obs["states"], dtype=torch.float64, device="cpu")
+    batch_size = states.shape[0]
+    if batch_size % group_size:
+        raise ValueError("ART branch observations must contain complete groups.")
+
+    def errors(value, *, mean=False):
+        value = torch.as_tensor(value, device="cpu").to(torch.float64)
+        grouped = value.reshape(batch_size // group_size, group_size, -1)
+        difference = (grouped - grouped[:, :1]).abs()
+        error = difference.mean(-1).amax(-1) if mean else difference.amax((1, 2))
+        return torch.nan_to_num(error, nan=float("inf"), posinf=float("inf"))
+
+    state_error = errors(states)
+    if "art_sim_state_error" not in obs:
+        raise ValueError("ART branching requires LIBERO simulator state diagnostics.")
+    sim_error = (
+        torch.as_tensor(obs["art_sim_state_error"], device="cpu")
+        .reshape(-1, group_size)
+        .amax(1)
+    )
+    state_error = torch.maximum(state_error, sim_error)
+    image_error = torch.maximum(
+        errors(obs["main_images"], mean=True),
+        errors(obs["wrist_images"], mean=True),
+    )
+    descriptions = obs["task_descriptions"]
+    same_task = torch.tensor(
+        [
+            all(
+                text == descriptions[start]
+                for text in descriptions[start : start + group_size]
+            )
+            for start in range(0, batch_size, group_size)
+        ]
+    )
+    valid = same_task & (state_error <= state_atol) & (image_error <= image_atol)
+    return tuple(
+        value.repeat_interleave(group_size)
+        for value in (valid, state_error, image_error)
+    )
 
 
 class MultiStepRolloutWorker(Worker):
@@ -75,7 +137,9 @@ class MultiStepRolloutWorker(Worker):
         eval_env_cfg = cfg.env.get("eval", None)
         self.enable_train = not self.only_eval and train_env_cfg is not None
         self.enable_eval = (
-            cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
+            cfg.runner.get("val_check_interval", -1) > 0
+            or self.only_eval
+            or cfg.runner.get("eval_at_start", False)
         )
         self.rollout_epoch = (
             train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
@@ -85,6 +149,16 @@ class MultiStepRolloutWorker(Worker):
         self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
         self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self.art_branch_chunk_index = (
+            self.algorithm_cfg.get("art_branch_chunk_index", None)
+            if self.enable_train
+            and self.algorithm_cfg.get("loss_type") == "embodied_art"
+            and self.model_cfg.model_type == SupportedModel.OPENPI.value
+            else None
+        )
+        self.art_state_sampling = self.algorithm_cfg.get("art_state_sampling", False)
+        if self.art_state_sampling:
+            self.art_branch_chunk_index = 0
         self.expert_model = None
         self.rlt_feature_model = None
         self.rlt_route = None
@@ -158,6 +232,8 @@ class MultiStepRolloutWorker(Worker):
         # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
+        if self.cfg.rollout.get("seed", None) is not None:
+            torch.manual_seed(int(self.cfg.rollout.seed) + self._rank)
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
@@ -643,6 +719,44 @@ class MultiStepRolloutWorker(Worker):
             else None,
         )
 
+    def _predict_art_branch_actions(
+        self, env_obs: dict[str, Any], chunk_index: int
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Execute a shared group prefix, then sample independent continuations."""
+        group_size = int(self.algorithm_cfg.group_size)
+        if chunk_index <= self.art_branch_chunk_index:
+            valid, state_error, image_error = _art_branch_observation_stats(
+                env_obs,
+                group_size,
+                float(self.algorithm_cfg.get("art_branch_state_atol", 1e-5)),
+                float(self.algorithm_cfg.get("art_branch_image_atol", 1.0)),
+            )
+            self._art_prefix_valid = (
+                valid if chunk_index == 0 else self._art_prefix_valid & valid
+            )
+            self._art_branch_state_error = (
+                state_error
+                if chunk_index == 0
+                else torch.maximum(self._art_branch_state_error, state_error)
+            )
+            self._art_branch_image_error = (
+                image_error
+                if chunk_index == 0
+                else torch.maximum(self._art_branch_image_error, image_error)
+            )
+        actions, result = self.predict(env_obs, mode="train")
+        if chunk_index < self.art_branch_chunk_index:
+            actions = _repeat_art_group_leaders(actions, group_size)
+            result = _repeat_art_group_leaders(result, group_size)
+        result["forward_inputs"].update(
+            art_branch_valid=self._art_prefix_valid.clone(),
+            art_branch_state_error=self._art_branch_state_error.clone(),
+            art_branch_image_error=self._art_branch_image_error.clone(),
+        )
+        if self.art_state_sampling:
+            result["forward_inputs"]["art_state_id"] = env_obs["art_state_id"]
+        return actions, result
+
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
@@ -871,7 +985,15 @@ class MultiStepRolloutWorker(Worker):
         actor_channel: Channel,
     ) -> None:
         self.update_dagger_beta()
-        for _ in range(self.n_train_chunk_steps):
+        if self.art_state_sampling:
+            for _ in range(self.n_train_chunk_steps):
+                for stage_id in range(self.num_pipeline_stages):
+                    policy_input, split_sizes = await self._receive_policy_input(
+                        input_channel, "art_collect", stage_id
+                    )
+                    actions, _ = self.predict(policy_input.obs, mode="train")
+                    self._send_actions(output_channel, actions, stage_id, split_sizes)
+        for chunk_index in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
                 policy_input, split_sizes = await self._receive_policy_input(
                     input_channel, "policy", stage_id
@@ -879,15 +1001,22 @@ class MultiStepRolloutWorker(Worker):
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
                 if not policy_input.requires_inference:
+                    if self.art_branch_chunk_index is not None:
+                        raise ValueError("ART branching requires policy-owned actions.")
                     actions = policy_input.external_actions
                     forward_inputs = None
                     policy_output = None
                 else:
-                    actions, result = self._predict_rollout_actions(
-                        policy_input.obs,
-                        rlt_switch_flags=policy_input.rlt_switch_flags,
-                        intervene_requested=policy_input.intervene_flags,
-                    )
+                    if self.art_branch_chunk_index is not None:
+                        actions, result = self._predict_art_branch_actions(
+                            policy_input.obs, chunk_index
+                        )
+                    else:
+                        actions, result = self._predict_rollout_actions(
+                            policy_input.obs,
+                            rlt_switch_flags=policy_input.rlt_switch_flags,
+                            intervene_requested=policy_input.intervene_flags,
+                        )
                     forward_inputs = result.get("forward_inputs")
                     policy_output = self._build_policy_output(actions, result)
                 self._send_actions(
@@ -1038,11 +1167,12 @@ class MultiStepRolloutWorker(Worker):
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
-        self.hf_model.to("cpu")
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to("cpu")
-        if self.expert_model is not None:
-            self.expert_model.to("cpu")
+        with pinned_offload_context():
+            self.hf_model.to("cpu")
+            if self.rlt_feature_model is not None:
+                self.rlt_feature_model.to("cpu")
+            if self.expert_model is not None:
+                self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):

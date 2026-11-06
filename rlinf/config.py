@@ -1341,13 +1341,18 @@ def validate_embodied_cfg(cfg):
             )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
-    enable_eval = cfg.runner.val_check_interval > 0 or only_eval
+    enable_eval = (
+        cfg.runner.val_check_interval > 0
+        or only_eval
+        or cfg.runner.get("eval_at_start", False)
+    )
 
     with open_dict(cfg):
         if enable_eval:
             assert cfg.env.get("eval", None) is not None, (
                 "env.eval config is required when runner.val_check_interval > 0, "
-                "runner.only_eval=True, or runner.task_type=embodied_eval."
+                "runner.eval_at_start=True, runner.only_eval=True, or "
+                "runner.task_type=embodied_eval."
             )
             cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
             cfg.env.eval.early_stop_on_done = bool(
@@ -1495,6 +1500,169 @@ def validate_embodied_cfg(cfg):
             f"got {psi0_env_cfg.total_num_envs}."
         )
 
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert model_type in DIFFUSION_MODELS or model_type == SupportedModel.OPENPI, (
+            "algorithm.loss_type='embodied_art' requires SD3, Wan, or OpenPi."
+        )
+        action_art = model_type == SupportedModel.OPENPI
+        if action_art:
+            validate_openpi_art_cfg(cfg)
+        assert cfg.actor.training_backend == "fsdp", (
+            "algorithm.loss_type='embodied_art' currently requires actor.training_backend='fsdp'."
+        )
+        assert stage_num == 1, (
+            "algorithm.loss_type='embodied_art' requires rollout.pipeline_stage_num=1."
+        )
+        art_updates = int(algorithm_cfg.get("art_updates_per_rollout", 2))
+        assert art_updates in {1, 2} and algorithm_cfg.group_size % art_updates == 0, (
+            "DiffusionART art_updates_per_rollout must be 1 or 2 and divide "
+            "algorithm.group_size."
+        )
+        assert int(algorithm_cfg.get("update_epoch", 1)) == 1, (
+            "DiffusionART requires algorithm.update_epoch=1."
+        )
+        assert cfg.runner.get("weight_sync_interval", 1) == 1, (
+            "DiffusionART requires runner.weight_sync_interval=1."
+        )
+        assert cfg.env.train.group_size == algorithm_cfg.group_size, (
+            "DiffusionART requires env.train.group_size to match algorithm.group_size."
+        )
+        decisions = 1
+        branch_index = algorithm_cfg.get("art_branch_chunk_index", None)
+        state_sampling = algorithm_cfg.get("art_state_sampling", False)
+        assert not state_sampling or action_art, (
+            "algorithm.art_state_sampling requires OpenPi ART."
+        )
+        assert branch_index is None or action_art, (
+            "algorithm.art_branch_chunk_index requires OpenPi ART."
+        )
+        if action_art:
+            if (
+                not algorithm_cfg.get("art_first_chunk_only", False)
+                and branch_index is None
+                and not state_sampling
+            ):
+                decisions = (
+                    cfg.env.train.max_steps_per_rollout_epoch
+                    // model_cfg.num_action_chunks
+                )
+        else:
+            assert (
+                cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
+            ), (
+                "Image/video DiffusionART requires one generated sample per rollout epoch."
+            )
+            assert not algorithm_cfg.get("art_first_chunk_only", False), (
+                "algorithm.art_first_chunk_only requires OpenPi."
+            )
+        expected_global_batch_size = (
+            cfg.env.train.total_num_envs
+            * cfg.env.train.rollout_epoch
+            * decisions
+            // art_updates
+        )
+        assert cfg.actor.global_batch_size == expected_global_batch_size, (
+            "DiffusionART actor.global_batch_size must equal one disjoint update "
+            f"window ({expected_global_batch_size})."
+        )
+        actor_world_size = component_placement.get_world_size("actor")
+        shard_count = math.lcm(env_world_size, actor_world_size)
+        if branch_index is not None or state_sampling:
+            shard_count = math.lcm(
+                shard_count, component_placement.get_world_size("rollout")
+            )
+        assert (
+            cfg.env.train.total_num_envs % (shard_count * algorithm_cfg.group_size) == 0
+        ), (
+            "DiffusionART requires every actor trajectory shard to contain complete "
+            "prompt groups."
+        )
+        timestep_fraction = float(algorithm_cfg.get("art_timestep_fraction", 1.0))
+        assert 0 < timestep_fraction <= 1, (
+            "algorithm.art_timestep_fraction must be in (0, 1]."
+        )
+        assert algorithm_cfg.get("art_loss_space", "velocity_linear_sigma") in {
+            "velocity_linear_sigma",
+            "velocity_uniform",
+        }, "Unsupported algorithm.art_loss_space."
+        assert algorithm_cfg.get("art_covariance_reduction", "unbiased") in {
+            "unbiased",
+            "population",
+        }, "Unsupported algorithm.art_covariance_reduction."
+        assert algorithm_cfg.get("art_direction_mode", "historical") in {
+            "historical",
+            "normalized_aggregate",
+        }, "Unsupported algorithm.art_direction_mode."
+        assert algorithm_cfg.get("art_scale_mode", "unit_normalized_covariance") in {
+            "reward_mad",
+            "raw_covariance",
+            "reward_std_normalized_covariance",
+            "unit_normalized_covariance",
+        }, "Unsupported algorithm.art_scale_mode."
+        assert algorithm_cfg.get("art_zero_signal_mode", "exact") == "exact", (
+            "Scalar DiffusionART requires algorithm.art_zero_signal_mode='exact'."
+        )
+        supported_art_options = {
+            "art_updates_per_rollout",
+            "art_covariance_reduction",
+            "art_direction_mode",
+            "art_scale_mode",
+            "art_guidance_gain",
+            "art_zero_signal_mode",
+            "art_zero_signal_atol",
+            "art_loss_space",
+            "art_mask_metric",
+            "art_mask_threshold",
+            "art_reference_noise_level",
+            "art_corrective_mask_enabled",
+            "art_exclude_final_step",
+            "art_timestep_fraction",
+            "art_reward_reduction",
+            "art_eps",
+            "art_first_chunk_only",
+            "art_state_sampling",
+            "art_branch_chunk_index",
+            "art_branch_state_atol",
+            "art_branch_image_atol",
+            "art_replay_diagnostics",
+            "art_reference_source",
+        }
+        unsupported_art_options = sorted(
+            option
+            for option in algorithm_cfg
+            if option.startswith("art_") and option not in supported_art_options
+        )
+        assert not unsupported_art_options, (
+            f"Unsupported DiffusionART options: {unsupported_art_options}."
+        )
+        assert algorithm_cfg.get("art_mask_metric", "sde_kl") in {
+            "fixed_mse",
+            "sde_kl",
+        }, "Unsupported algorithm.art_mask_metric."
+        for option, default in (
+            ("art_mask_threshold", 1e-5),
+            ("art_reference_noise_level", 0.8),
+        ):
+            value = algorithm_cfg.get(option, default)
+            assert type(value) in (int, float) and math.isfinite(value) and value > 0, (
+                f"algorithm.{option} must be a positive finite number."
+            )
+        assert type(algorithm_cfg.get("art_corrective_mask_enabled", True)) is bool, (
+            "algorithm.art_corrective_mask_enabled must be boolean."
+        )
+        assert algorithm_cfg.get("art_reward_reduction", "mean") in {"mean", "sum"}, (
+            "algorithm.art_reward_reduction must be 'mean' or 'sum'."
+        )
+        model_options = model_cfg.get(model_type.value)
+        assert model_options.get("rl_mode") == "art", (
+            f"actor.model.{model_type.value}.rl_mode must be 'art'."
+        )
+        if model_type == SupportedModel.SD3:
+            assert (
+                model_options.get("train_sampler") == "ode"
+                and float(model_options.get("noise_level", 0.0)) == 0.0
+            ), "SD3 DiffusionART requires deterministic ODE rollout."
+
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
     if use_reward_model and not standalone_realworld:
@@ -1534,7 +1702,8 @@ def validate_embodied_cfg(cfg):
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (
             "env.eval config is required when runner.val_check_interval > 0, "
-            "runner.only_eval=True, or runner.task_type=embodied_eval."
+            "runner.eval_at_start=True, runner.only_eval=True, or "
+            "runner.task_type=embodied_eval."
         )
         assert cfg.env.eval.total_num_envs > 0, (
             "Total number of parallel environments for evaluation must be greater than 0"
@@ -1674,6 +1843,117 @@ def validate_embodied_cfg(cfg):
     validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
+
+
+def validate_openpi_art_cfg(cfg: DictConfig) -> None:
+    """Validate grouped, finite-horizon LIBERO rollouts for OpenPi ART."""
+    train = cfg.env.train
+    model = cfg.actor.model
+    options = model.openpi
+    assert train.env_type == "libero", (
+        "OpenPi ART currently requires env.train.env_type='libero'."
+    )
+    assert options.get("task", "rl") == "rl", "OpenPi ART requires openpi.task='rl'."
+    assert options.get("rl_mode") == "art", "OpenPi ART requires openpi.rl_mode='art'."
+    assert not options.get("is_nft", False), "OpenPi ART requires openpi.is_nft=False."
+    assert (
+        options.get("noise_method") == "flow_ode"
+        and float(options.get("noise_level", 0)) == 0
+    ), "OpenPi ART requires noise_method='flow_ode' and noise_level=0.0."
+    assert not train.auto_reset and not train.ignore_terminations, (
+        "OpenPi ART requires auto_reset=False and ignore_terminations=False for training."
+    )
+    assert train.get("use_fixed_reset_state_ids", False), (
+        "OpenPi ART requires use_fixed_reset_state_ids=True to group identical initial states."
+    )
+    assert cfg.algorithm.group_size >= 2, (
+        "OpenPi ART requires algorithm.group_size >= 2."
+    )
+    assert cfg.algorithm.get("art_reward_reduction", "sum") == "sum", (
+        "OpenPi ART uses episode returns and requires art_reward_reduction='sum'."
+    )
+    for key in (
+        "art_first_chunk_only",
+        "art_replay_diagnostics",
+    ):
+        value = cfg.algorithm.get(key, False)
+        assert type(value) is bool, f"algorithm.{key} must be boolean, got {value!r}."
+    branch_index = cfg.algorithm.get("art_branch_chunk_index", None)
+    state_sampling = cfg.algorithm.get("art_state_sampling", False)
+    assert cfg.algorithm.get("art_reference_source", "rollout") in {
+        "rollout",
+        "actor",
+    }, "algorithm.art_reference_source must be rollout or actor."
+    if state_sampling:
+        assert branch_index is None and not cfg.algorithm.get(
+            "art_first_chunk_only", False
+        ), "ART state sampling replaces fixed-branch and first-chunk sampling."
+        assert train.rollout_epoch == 1, (
+            "ART state sampling requires one state bank per rollout: rollout_epoch=1."
+        )
+        assert not cfg.runner.get("enable_decoupled_mode", False), (
+            "ART state sampling requires synchronous environment batches."
+        )
+        assert not cfg.runner.get("overlap_env_bootstrap", False), (
+            "ART state sampling requires collection after the policy weight sync."
+        )
+        assert not cfg.env.get("delay_sampler", None), (
+            "ART state sampling requires environment actions without delay sampling."
+        )
+    if branch_index is not None:
+        assert type(branch_index) is int and (
+            0 <= branch_index * model.num_action_chunks < train.max_episode_steps
+        ), (
+            "algorithm.art_branch_chunk_index must index a chunk before the episode limit."
+        )
+        assert not cfg.algorithm.get("art_first_chunk_only", False), (
+            "art_branch_chunk_index and art_first_chunk_only are mutually exclusive."
+        )
+        assert not cfg.runner.get("enable_decoupled_mode", False), (
+            "OpenPi ART branching requires synchronous environment batches."
+        )
+        assert not cfg.env.get("delay_sampler", None), (
+            "OpenPi ART branching requires environment actions without delay sampling."
+        )
+        for key in ("art_branch_state_atol", "art_branch_image_atol"):
+            tolerance = float(cfg.algorithm.get(key, 1e-5 if "state" in key else 1.0))
+            assert math.isfinite(tolerance) and tolerance >= 0, (
+                f"algorithm.{key} must be finite and nonnegative."
+            )
+    assert model.num_action_chunks > 0 and model.num_steps > 0, (
+        "OpenPi ART requires positive num_action_chunks and num_steps."
+    )
+    action_chunk = options.get("action_chunk", model.num_action_chunks)
+    assert action_chunk is None or int(action_chunk) == model.num_action_chunks, (
+        "OpenPi ART requires openpi.action_chunk to match num_action_chunks."
+    )
+    action_dim = int(options.get("action_env_dim", model.action_dim))
+    assert action_dim == model.action_dim and action_dim <= int(
+        options.model_action_dim
+    ), "OpenPi ART requires action_env_dim=action_dim <= model_action_dim."
+    assert (
+        train.max_steps_per_rollout_epoch > 0
+        and train.max_steps_per_rollout_epoch % model.num_action_chunks == 0
+    ), (
+        "OpenPi ART requires max_steps_per_rollout_epoch to be a positive multiple of num_action_chunks."
+    )
+    assert train.max_steps_per_rollout_epoch >= train.max_episode_steps, (
+        "OpenPi ART requires complete episodes: max_steps_per_rollout_epoch >= max_episode_steps."
+    )
+    assert not cfg.actor.get("enable_sft_co_train", False), (
+        "OpenPi ART currently requires actor.enable_sft_co_train=False."
+    )
+    # LiberoEnv only sees env.train, so it receives the sampling mode from here.
+    with open_dict(cfg):
+        for key, value in (
+            ("art_branch_chunk_index", branch_index),
+            ("art_state_sampling", state_sampling),
+        ):
+            assert train.get(key, value) == value, (
+                f"env.train.{key} is derived from algorithm.{key}; expected "
+                f"{value!r}, got {train.get(key)!r}."
+            )
+            train[key] = value
 
 
 def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
