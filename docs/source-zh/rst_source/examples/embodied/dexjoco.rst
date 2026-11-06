@@ -77,7 +77,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
 ----------------------------------------
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
+   :end-before: 然后，使用下列两种方式之一准备依赖
 
 按所选 policy 安装依赖，后续命令均在 RLinf 仓库根目录执行：
 
