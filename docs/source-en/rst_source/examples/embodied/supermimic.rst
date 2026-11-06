@@ -666,8 +666,8 @@ above change some of them. Each can be passed as a Hydra override.
        nothing.
    * - ``runner.log_interval``
      - 100
-     - Print RLinf's metrics table every N updates and after the last one.
-       The logger backends record every update.
+     - Record the metrics to the logger backends and print RLinf's metrics
+       table every N updates, after the last one and after every evaluation.
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf logger backends: TensorBoard, WandB or SwanLab.
@@ -1063,11 +1063,15 @@ Training metrics are averaged over the actor ranks;
   timers measure host time; the GPU runs asynchronously, so a phase can
   absorb kernels queued by the one before it.
 
-The logger backends record these metrics after every update. The console gets
-RLinf's metrics table (progress, elapsed time, ETA and the latest values)
-every ``runner.log_interval`` updates (100 by default), after the last one
-and after every evaluation; the same table is appended to
-``<log_path>/metrics.log``.
+The metrics are recorded every ``runner.log_interval`` updates (100 by
+default), after the last update and after every evaluation. A record holds the
+``train/*`` and ``time/*`` values of the iteration that made it due, while the
+``env/sim/*`` statistics cover every control step since the previous record.
+Recording every update would slow training: TensorBoard blocks the training
+loop once ten events wait to be written, which on network storage costs tens
+of milliseconds per update. Each record also prints RLinf's metrics table
+(progress, elapsed time, ETA and the latest values) to the console and appends
+it to ``<log_path>/metrics.log``.
 
 .. _supermimic-reported-results:
 

@@ -30,6 +30,7 @@ and backward with a zero loss.
 from __future__ import annotations
 
 import contextlib
+import gc
 import json
 import math
 import os
@@ -117,6 +118,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.nonfinite_skips = 0
         self.consecutive_nonfinite = 0
         self._pending_skips: list[tuple[str, torch.Tensor]] = []
+        self._phase_runs = {"world_model": 0, "actor": 0}
+        self._frozen_phases: set[str] = set()
         self.torch_profile_update = cfg.actor.get("torch_profile_update", None)
 
     # ------------------------------------------------------------------ setup
@@ -257,6 +260,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             with self._torch_profile(step) if traced else contextlib.nullcontext():
                 self._run_update(step, metrics)
         self.model.reshard()
+        self._freeze_compiled_objects()
         metrics = self._read_metrics(metrics)
         metrics.update(
             {
@@ -287,6 +291,22 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                     self._train_velocity_critic(*critic_batch)
                 metrics.update(velocity_metrics)
         self._finish_update(actor_updated)
+        self._phase_runs["world_model"] += 1
+        self._phase_runs["actor"] += int(actor_updated)
+
+    def _freeze_compiled_objects(self) -> None:
+        """Keep the objects compilation leaves behind out of garbage collection.
+
+        Compiled graphs and guards hold over a million long-lived objects, and
+        a full collection over them stalls an update for about 0.6 s. A phase
+        has settled once it ran twice: its second call recompiles once.
+        """
+        settled = {name for name, runs in self._phase_runs.items() if runs >= 2}
+        if settled <= self._frozen_phases:
+            return
+        gc.collect()
+        gc.freeze()
+        self._frozen_phases = settled
 
     @contextlib.contextmanager
     def _phase(self, name: str):

@@ -81,7 +81,7 @@ class SuperMimicRunner(EmbodiedRunner):
             raise ValueError(
                 f"runner.log_interval must be >= 1, got {self.log_interval}."
             )
-        self._printed_step = 0
+        self._logged_step = 0
 
     # ----------------------------------------------------------- checkpoints
 
@@ -204,7 +204,7 @@ class SuperMimicRunner(EmbodiedRunner):
     def run(self) -> None:
         start_step = self.global_step
         start_time = time.time()
-        self._printed_step = start_step
+        self._logged_step = start_step
         self._set_global_step()
         self.update_rollout_weights()
         if self.global_step < self.max_steps and self.warmup_steps > 0:
@@ -227,7 +227,6 @@ class SuperMimicRunner(EmbodiedRunner):
                         windows, env_handle, rollout_handle, _ = self._collect(steps)
                         if windows > 0:
                             ready = min(int(self.owed_updates), self.max_steps - step)
-                    env_metrics = self.env.consume_metrics().wait()[0]
                 with self.timer("actor_training"):
                     actor_handle = self.actor.run_updates(ready, step)
                     training_metrics = actor_handle.wait()
@@ -245,7 +244,6 @@ class SuperMimicRunner(EmbodiedRunner):
                 start_time,
                 start_step,
                 (env_handle, rollout_handle, actor_handle),
-                env_metrics,
                 training_metrics,
                 eval_metrics,
             )
@@ -257,21 +255,39 @@ class SuperMimicRunner(EmbodiedRunner):
         start_time: float,
         start_step: int,
         handles: tuple[Handle, Handle, Handle],
-        env_metrics: dict[str, float],
         training_metrics: list[dict],
         eval_metrics: dict[str, float],
     ) -> None:
-        time_metrics = {
-            f"time/{key}": value
-            for key, value in self.timer.consume_durations().items()
-        }
-        for name, handle, group in zip(
+        """Record the iteration that finished update ``step`` when a record is due.
+
+        TensorBoard blocks the caller once ten events wait in its queue, so
+        recording every scalar costs tens of milliseconds on network storage.
+        Records therefore follow ``runner.log_interval``, and the env
+        statistics of a record cover every step since the previous one.
+        """
+        driver_durations = self.timer.consume_durations()
+        worker_durations = [
+            handle.consume_durations(return_per_rank=True) for handle in handles
+        ]
+        # One iteration can run several updates, so a record is due whenever
+        # the finished count passes a multiple of the interval.
+        done = step + 1
+        due = (
+            bool(eval_metrics)
+            or done >= self.max_steps
+            or done // self.log_interval != self._logged_step // self.log_interval
+        )
+        if not due:
+            return
+        self._logged_step = done
+
+        time_metrics = {f"time/{key}": value for key, value in driver_durations.items()}
+        for name, (durations, per_rank), group in zip(
             ("env", "rollout", "actor"),
-            handles,
+            worker_durations,
             (self.env, self.rollout, self.actor),
             strict=True,
         ):
-            durations, per_rank = handle.consume_durations(return_per_rank=True)
             time_metrics.update({f"time/{name}/{k}": v for k, v in durations.items()})
             self._log_ranked_metrics(
                 metrics_list=per_rank,
@@ -279,7 +295,10 @@ class SuperMimicRunner(EmbodiedRunner):
                 prefix=f"time/{name}",
                 worker_group_name=group.worker_group_name,
             )
-        env_metrics = {f"env/{key}": value for key, value in env_metrics.items()}
+        env_metrics = {
+            f"env/{key}": value
+            for key, value in self.env.consume_metrics().wait()[0].items()
+        }
         env_metrics["env/env_steps"] = float(self.env_steps)
         self._log_ranked_metrics(
             metrics_list=training_metrics,
@@ -294,21 +313,10 @@ class SuperMimicRunner(EmbodiedRunner):
         self.metric_logger.log(env_metrics, step)
         self.metric_logger.log(time_metrics, step)
         self.metric_logger.log(training_metrics, step)
-
-        # One iteration can run several updates, so the table is due whenever
-        # the finished count passes a multiple of the interval.
-        done = step + 1
-        due = (
-            bool(eval_metrics)
-            or done >= self.max_steps
-            or done // self.log_interval != self._printed_step // self.log_interval
+        self.print_metrics_table_async(
+            step,
+            self.max_steps,
+            start_time,
+            {**time_metrics, **eval_metrics, **env_metrics, **training_metrics},
+            start_step,
         )
-        if due:
-            self._printed_step = done
-            self.print_metrics_table_async(
-                step,
-                self.max_steps,
-                start_time,
-                {**time_metrics, **eval_metrics, **env_metrics, **training_metrics},
-                start_step,
-            )

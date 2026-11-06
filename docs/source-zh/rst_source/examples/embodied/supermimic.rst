@@ -445,7 +445,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 每隔 N 次更新以及最后一次更新后保存检查点；设为 -1 时不保存。
    * - ``runner.log_interval``
      - 100
-     - 每隔 N 次更新以及最后一次更新后，打印 RLinf 的指标表。日志后端每次更新都记录。
+     - 每隔 N 次更新、最后一次更新后以及每次评测后，把指标记录到日志后端并打印 RLinf 的指标表。
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf 的日志后端：TensorBoard、WandB 或 SwanLab。
@@ -663,7 +663,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 * ``train/wm_only``、``train/*_optimizer_steps``、``train/nonfinite_skips``。
 * ``time/*``：runner 的 RLinf 计时（``time/generate_rollouts``、``time/actor_training``、``time/sync_weights``、``time/eval``）和各 worker 的计时（``time/env/collect``、``time/rollout/serve``、``time/actor/ingest``、``time/actor/run_updates`` 及其各阶段）。worker 计时是主机时间；GPU 异步执行，某一阶段的耗时可能包含前一阶段排队的 kernel。
 
-日志后端每次更新后都记录这些指标。控制台每隔 ``runner.log_interval`` 次更新（默认 100）、最后一次更新后以及每次评测后打印 RLinf 的指标表（进度、已用时间、预计剩余时间和最新值），同一张表也追加到 ``<log_path>/metrics.log``。
+每隔 ``runner.log_interval`` 次更新（默认 100）、最后一次更新后以及每次评测后记录一次指标。一次记录里的 ``train/*`` 和 ``time/*`` 是触发这次记录的那次迭代的值，``env/sim/*`` 统计则覆盖上一次记录以来的全部控制步。不每次更新都记录，是因为 TensorBoard 待写的事件超过十条时会阻塞训练循环，在网络存储上每次更新要多花几十毫秒。每次记录还会在控制台打印 RLinf 的指标表（进度、已用时间、预计剩余时间和最新值），并把同一张表追加到 ``<log_path>/metrics.log``。
 
 .. _supermimic-reported-results:
 
