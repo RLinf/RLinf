@@ -1,17 +1,17 @@
-RLinf-USER: Unified System for Real-world Online Policy Learning
-=================================================================
+USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI
+==========================================================================================
 
-**Paper:** `RSS 2026 <https://roboticsconference.org/program/papers/37/>`__ | `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ 
+**Paper:** `RSS 2026 <https://roboticsproceedings.org/rss22/p037.html>`__ | `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__
 
 Overview
 --------
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-HEAD.png
-   :alt: RLinf-USER overview
+   :alt: USER overview
    :width: 800px
    :align: center
 
-RLinf-USER is a unified and extensible system for real-world online policy learning. It provides extensible abstractions for rewards, algorithms, and policies, supporting online imitation or reinforcement learning of CNN/MLP, generative (flow) policies, and large vision–language–action (VLA) models within a unified pipeline.
+USER is a unified and extensible system for real-world online policy learning. It provides extensible abstractions for rewards, algorithms, and policies, supporting online imitation or reinforcement learning of CNN/MLP, generative (flow) policies, and large vision–language–action (VLA) models within a unified pipeline.
 
 Tasks
 -----
@@ -57,7 +57,7 @@ Results
 Robust real-world performance
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf-USER supports diverse learning paradigms. Below are training curves for RL algorithms (RLPD, SAC, SAC-Flow) on several tasks, and the gain for VLA (π₀) after online fine-tuning.
+USER supports diverse learning paradigms. Below are training curves for RL algorithms (RLPD, SAC, SAC-Flow) on several tasks, and the gain for VLA (π₀) after online fine-tuning.
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-main_rl.jpg
    :alt: RL training curves
@@ -66,7 +66,7 @@ RLinf-USER supports diverse learning paradigms. Below are training curves for RL
 
 **RL Training Curves of Diverse Tasks & Algorithms**
 
-**VLA (π₀) with HG-DAgger:** RLinf-USER significantly improves success rate of foundation VLA models in real-world settings with minimal interventions.
+**VLA (π₀) with HG-DAgger:** USER significantly improves success rate of foundation VLA models in real-world settings with minimal interventions.
 
 .. list-table:: Online training improvement for π₀
    :header-rows: 1
@@ -86,7 +86,7 @@ RLinf-USER supports diverse learning paradigms. Below are training curves for RL
 System efficiency: asynchronous vs synchronous
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf-USER uses a fully asynchronous pipeline that decouples data generation, training, and weight synchronization, outperforming synchronous pipelines especially for large models.
+USER uses a fully asynchronous pipeline that decouples data generation, training, and weight synchronization, outperforming synchronous pipelines especially for large models.
 
 .. list-table:: Profiling: generation & training throughput
    :header-rows: 1
@@ -102,7 +102,7 @@ RLinf-USER uses a fully asynchronous pipeline that decouples data generation, tr
      - 45.07
      - 45.01
    * - π₀ + HG-DAgger
-     - **Asynchronous (RLinf-USER)**
+     - **Asynchronous (USER)**
      - **37.54**
      - **7.90**
    * - π₀ + HG-DAgger
@@ -114,7 +114,7 @@ RLinf-USER uses a fully asynchronous pipeline that decouples data generation, tr
      - 20.29
      - 0.64
    * - CNN + SAC
-     - **Asynchronous (RLinf-USER)**
+     - **Asynchronous (USER)**
      - **13.11**
      - **0.14**
    * - CNN + SAC
@@ -125,7 +125,7 @@ RLinf-USER uses a fully asynchronous pipeline that decouples data generation, tr
 Multi-robot and heterogeneous support
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-With the unified hardware abstraction, RLinf-USER treats robots as first-class resources:
+With the unified hardware abstraction, USER treats robots as first-class resources:
 
 - **Parallel training:** Train on multiple robots at once (e.g. 2× Franka) in a multi-task setting to scale data collection.
 - **Heterogeneous training:** Train a unified policy across different embodiments (e.g. Franka 7-DoF + ARX 6-DoF).
@@ -147,7 +147,7 @@ With the unified hardware abstraction, RLinf-USER treats robots as first-class r
    </table>
    </div>
 
-Under multi-robot and heterogeneous settings, RLinf-USER achieves full policy convergence within comparable time.
+Under multi-robot and heterogeneous settings, USER achieves full policy convergence within comparable time.
 
 Quick Start
 -----------
@@ -166,19 +166,16 @@ Launch TensorBoard to monitor training:
 Citation
 --------
 
-For RLinf-USER and real-world RL with RLinf, cite the main RLinf paper:
+For USER and real-world RL with RLinf, cite the RSS 2026 paper:
 
 .. code-block:: bibtex
 
-   @inproceedings{yu2026rlinf,
-     author = {Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Jiakun Du and Xiangyuan Wang and Xu Fu and Letong Shi and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
-     title = {{RLinf}: Flexible and Efficient {Large-Scale} Reinforcement Learning via {Macro-to-Micro} Flow Transformation},
-     booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
-     year = {2026},
-     isbn = {978-1-939133-55-7},
-     address = {Seattle, WA},
-     pages = {829--846},
-     url = {https://www.usenix.org/conference/osdi26/presentation/yu-chao},
-     publisher = {USENIX Association},
-     month = jul
+   @INPROCEEDINGS{ZangH1-RSS-26,
+       AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang},
+       TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}},
+       BOOKTITLE = {Proceedings of Robotics: Science and Systems},
+       YEAR      = {2026},
+       ADDRESS   = {Sydney, Australia},
+       MONTH     = {July},
+       DOI       = {10.15607/RSS.2026.XXII.037}
    }
