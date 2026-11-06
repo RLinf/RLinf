@@ -263,8 +263,14 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             raise ValueError("RoboTwin states must be [batch, 14]")
         if wrists.shape[1] != 2:
             raise ValueError("V2 RoboTwin requires both wrist cameras")
-        # 与训练数据保持相同的长宽比：训练侧每路相机是 (img_size, 2*img_size)
-        resize = Resize((self.image_size, self.image_size * 2))
+        # 评测侧 resize 必须与训练一致：训练用 Resize(int)（短边缩放，保持长宽比）
+        _mode = os.environ.get("EVAL_RESIZE", "legacy")
+        if _mode == "square":
+            resize = Resize((self.image_size, self.image_size))
+        elif _mode == "legacy":
+            resize = Resize((self.image_size, self.image_size * 2))
+        else:  # train: 短边缩放到 img_size，保持长宽比
+            resize = Resize(self.image_size)
         prepared = []
         for index in range(len(states)):
             raw = {
