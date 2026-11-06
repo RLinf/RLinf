@@ -251,33 +251,13 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         Metrics stay on the device until the last update; one read then brings
         them to the host and settles the steps fused Adam skipped.
         """
-        target = self.torch_profile_update
-        traced = (
-            target is not None and global_step <= target < global_step + num_updates
-        )
-        with self._torch_profile(target) if traced else contextlib.nullcontext():
-            metrics: dict[str, float | torch.Tensor] = {}
-            for index in range(num_updates):
-                with self._phase("world_model"):
-                    metrics.update(self._fit_world_model())
-                actor_updated = global_step + index >= self.wm_only_updates
-                if actor_updated:
-                    with self._phase("motion_actor"):
-                        actor_metrics, critic_batch = self._train_motion_actor()
-                    with self._phase("motion_critic"):
-                        metrics.update(self._train_motion_critic(*critic_batch))
-                    metrics.update(actor_metrics)
-                    if self.velocity:
-                        with self._phase("velocity_actor"):
-                            velocity_metrics, critic_batch = (
-                                self._train_velocity_actor()
-                            )
-                        with self._phase("velocity_critic"):
-                            self._train_velocity_critic(*critic_batch)
-                        metrics.update(velocity_metrics)
-                self._finish_update(actor_updated)
-            self.model.reshard()
-            metrics = self._read_metrics(metrics)
+        metrics: dict[str, float | torch.Tensor] = {}
+        for step in range(global_step, global_step + num_updates):
+            traced = step == self.torch_profile_update
+            with self._torch_profile(step) if traced else contextlib.nullcontext():
+                self._run_update(step, metrics)
+        self.model.reshard()
+        metrics = self._read_metrics(metrics)
         metrics.update(
             {
                 "wm_only": float(global_step + num_updates <= self.wm_only_updates),
@@ -289,6 +269,25 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         )
         return metrics
 
+    def _run_update(self, step: int, metrics: dict) -> None:
+        """Run global update ``step`` and add its metrics to ``metrics``."""
+        with self._phase("world_model"):
+            metrics.update(self._fit_world_model())
+        actor_updated = step >= self.wm_only_updates
+        if actor_updated:
+            with self._phase("motion_actor"):
+                actor_metrics, critic_batch = self._train_motion_actor()
+            with self._phase("motion_critic"):
+                metrics.update(self._train_motion_critic(*critic_batch))
+            metrics.update(actor_metrics)
+            if self.velocity:
+                with self._phase("velocity_actor"):
+                    velocity_metrics, critic_batch = self._train_velocity_actor()
+                with self._phase("velocity_critic"):
+                    self._train_velocity_critic(*critic_batch)
+                metrics.update(velocity_metrics)
+        self._finish_update(actor_updated)
+
     @contextlib.contextmanager
     def _phase(self, name: str):
         """Time one training phase and label it in ``torch.profiler`` traces."""
@@ -297,7 +296,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
 
     @contextlib.contextmanager
     def _torch_profile(self, update: int):
-        """Trace the enclosed updates with ``torch.profiler``.
+        """Trace one update with ``torch.profiler``.
 
         Operator tables (``.txt``) and a Chrome trace (``.json``) go to
         ``<log_path>/<experiment_name>/torch_profile``.
@@ -348,7 +347,24 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             if not torch.is_tensor(value)
         }
         out.update(zip(names, hosted[: len(names)], strict=True))
-        for (phase, _), flag in zip(skips, hosted[len(names) :], strict=True):
+        self._replay_skips(skips, hosted[len(names) :])
+        return out
+
+    def _settle_skips(self) -> None:
+        """Count the pending fused steps now, ahead of a host-checked step.
+
+        The consecutive-skip count follows step order, so the fused flags are
+        replayed before a host-checked step resets or extends it.
+        """
+        skips, self._pending_skips = self._pending_skips, []
+        if skips:
+            self._replay_skips(skips, torch.stack([flag for _, flag in skips]).tolist())
+
+    def _replay_skips(
+        self, skips: list[tuple[str, torch.Tensor]], flags: list[float]
+    ) -> None:
+        """Apply fused Adam's skip flags in step order."""
+        for (phase, _), flag in zip(skips, flags, strict=True):
             if not flag:
                 self.consecutive_nonfinite = 0
                 continue
@@ -356,7 +372,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             if counter is not None:
                 setattr(self, counter, getattr(self, counter) - 1)
             self._note_nonfinite(phase)
-        return out
 
     def _enter_phase(self, forward_type: ForwardType) -> None:
         """Freeze every parameter outside one phase and clear stale gradients.
@@ -405,6 +420,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         params = self.model.phase_parameters(forward_type)
         if optimizer.param_groups[0].get("fused"):
             return True, self._fused_step(phase, optimizer, params)
+        self._settle_skips()
         norm = get_grad_norm(params, self._dp_group)
         if not math.isfinite(norm):
             optimizer.zero_grad(set_to_none=True)
@@ -430,8 +446,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """Clip and step fused Adam without waiting for the device.
 
         A non-finite norm becomes the kernel's ``found_inf``, which leaves the
-        parameters, moments and step count unchanged; :meth:`_read_metrics`
-        counts such steps after the update. Returns the pre-clip norm.
+        parameters, moments and step count unchanged; :meth:`_replay_skips`
+        counts such steps later, in step order. Returns the pre-clip norm.
         """
         grads = self._local_grads(params)
         norm = self._grad_norm(grads)

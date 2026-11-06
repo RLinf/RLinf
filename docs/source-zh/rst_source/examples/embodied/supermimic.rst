@@ -403,7 +403,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 梯度范数非有限的优化器步会被跳过；连续超过这个次数就停止训练。
    * - ``actor.optim.fused``
      - ``True``
-     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，actor 每次更新只读一次 GPU，而不是每步都读；跳过的步在本次更新结束时计数。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查。
+     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，优化器步不再等待主机；训练指标和跳步标记在一轮的更新全部结束后一起读回，跳过的步在那时计数。多卡时各 rank 的行数仍在主机端求和。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查。
    * - ``algorithm.wm_batches``
      - 10
      - 每次更新拟合世界模型的小批次数。

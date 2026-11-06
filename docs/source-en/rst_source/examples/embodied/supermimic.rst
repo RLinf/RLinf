@@ -608,10 +608,11 @@ above change some of them. Each can be passed as a Hydra override.
    * - ``actor.optim.fused``
      - ``True``
      - Fused Adam on CUDA for every phase. A step with a non-finite gradient
-       norm is skipped inside the kernel, so the actor reads the GPU once per
-       update instead of after every step; skips are counted at the end of
-       the update. ``False`` uses PyTorch's default Adam and checks each step
-       on the host.
+       norm is skipped inside the kernel, so the optimizer steps do not wait
+       for the host; the training metrics and skip flags come back together
+       after the iteration's updates, and the skips are counted then.
+       Multi-GPU runs still sum row counts on the host. ``False`` uses
+       PyTorch's default Adam and checks each step on the host.
    * - ``algorithm.wm_batches``
      - 10
      - World-model minibatches per update.
