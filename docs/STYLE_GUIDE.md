@@ -34,11 +34,19 @@ These apply to every page:
   a decision the reader is making now, such as "the controller computer needs no
   GPU". Record removals and migrations in release notes and PR descriptions.
 - **Annotate commands.** After any non-trivial command, say what it does ("What this does: 1… 2…") and point to where to configure it further.
-- **Name what you mean.** Prefer `Robot.connect`, `PartGroup`, `Placement` to "the
-  common layer", "the robotics machinery", "the rest of the system".
+- **Name what you mean.** When a sentence refers to something the reader works with, name it: prefer `Robot.connect`, `PartGroup`, `Placement` to "the common layer", "the robotics machinery", "the rest of the system". Name only what the reader uses; see [Write for a first-time reader](#write-for-a-first-time-reader).
 - **Avoid the usual tells:** "it is worth noting", "simply", "seamlessly",
   "powerful", "leverage", "robust", "in order to", "a wide range of", and
   paragraphs that all open the same way.
+
+### Write for a first-time reader
+
+Write every page for an engineer who is new to RLinf and has not read its code. That reader wants to know what a feature does, how it works, what to prepare, and how to run it. Answer those questions in plain technical language, rather than by pointing the reader into the source tree.
+
+- **Explain the behavior, not the code layout.** Describe how a feature works through what the reader can observe: the parts of a run, the data that passes between them, the settings that change the behavior, and the result. Do not explain a mechanism by touring the repository or by listing modules, classes, functions, and file paths.
+- **Show code where the reader uses it.** Code and paths belong on the page when the reader types, runs, opens, or edits them: config examples, the config keys they set, the commands they run, the paths they pass, and, on Extending pages, the files and APIs a contributor changes or calls. Everything else is an implementation detail the reader does not need to finish the task.
+- **Cover what the reader needs to act.** A page that teaches a task says what to prepare (hardware, installation, models, datasets, other assets), how to run it, and what result to expect.
+- **Write as a native speaker would.** Each language reads as if an engineer in the field wrote it in that language: natural word order and idiom, the field's established terms, and no clause-by-clause translation from the other language. In English, avoid calques from Chinese such as "video memory" for GPU memory, "realize the function" for implement, and "carry out training" for train. In Chinese, avoid structures carried over from English, such as 「它允许你……」 for "it allows you to", 「当……时」 for every "when", and 「被」 passives; [Writing the Chinese pages](#writing-the-chinese-pages) lists the common patterns.
 
 ### Explain before naming
 
@@ -159,6 +167,7 @@ clear lead and a deliberate order.
   example, interpret the result, then carry that result into the next concern.
   Reordering the paragraphs should change the explanation; if it does not, the
   section is probably a fact list.
+- **Connect sentences within a paragraph.** Each sentence follows from the one before it, as a cause, a consequence, a contrast, or an example. A sentence that could be dropped or moved without the reader noticing is filler or belongs elsewhere.
 - **Explain an interface in call order.** When a section teaches a workflow,
   account for each public operation the example relies on, in the order a caller
   uses it. State what the operation accepts or returns, why it is needed at that
@@ -541,10 +550,11 @@ Conventions, on every page:
 - 全角标点：，。、；：（）「」。中文句子里不要混用半角逗号句号。
 - 中文与英文、数字之间空一格，例如「在 node_rank 指定的节点上」。
 - 中文正文不要按列宽手动换行。每个段落或列表项的正文在 RST 源文件中保持一行；reStructuredText 会把段内换行渲染成空格，在两个汉字之间留下不自然的间隔。标题、directive、表格和代码块所需的结构换行不受此规则影响。
-- 英文技术名词保留原文，不要硬译；术语前后统一。强化学习中的 policy 统一写作 policy，不译成“策略”；描述通用决策方法时仍可使用“策略”，例如“placement 策略”。
+- 英文技术名词保留原文，不要硬译；已有通行中文说法的用通行说法；术语前后统一。强化学习中的 policy 统一写作 policy，不译成“策略”；描述通用决策方法时仍可使用“策略”，例如“placement 策略”。rollout 保留原文，不译成“展开”；GPU memory 写作“显存”。
 - 自然不等于口语化。正文应采用清晰、克制的书面技术表达，避免“看看长什么样”“等需要时再看”“不用跟着改”等聊天式说法；同时避免“本文旨在”“进行相关操作”等公文腔。
 - 不要滥用「的」；少用「进行/实现/提供/负责/使得」这类空动词。
 - 被动改主动；长定语从句拆成短句：中文靠短句和动词推进，不靠从句堆叠。
+- 不要把英文句式直译成中文。按中文母语者的表达习惯和技术圈的通行说法来写，常见的翻译腔有：为英文冠词、代词和物主代词补出的「一个」「它」「你的」；把每个 when、for、through、based on 都译成「当……时」「对于……来说」「通过……的方式」「基于……」；照搬英文动词结构的「允许你……」「使……能够……」「为……提供支持」；以及英文语序的整句搬运。例如「该脚本被用来启动训练」写成「这个脚本用来启动训练」，「它允许你在多个节点上运行」写成「可以在多个节点上运行」，「对于每一个环境来说」写成「每个环境」，「这就是全部的接入工作」写成「接入到此完成」，「配置文件由 env worker 负责读取」写成「env worker 读取配置文件」。
 - 开发者日常使用的英文词不必硬译，例如 policy、key、value、mapping、endpoint、worker、binding、
   wrapper、mock SDK、contract、shape、schema 和 API。先用中文解释它在当前场景中的作用，
   再保留代码里能搜索到的名称。
@@ -558,7 +568,6 @@ On Concepts and Guides pages, where the English follows the explanatory rules
 above, the Chinese needs the same treatment in its own idiom:
 
 - 用「我们」「先……再……」「不妨」「接下来」把读者带着走，段落之间要有过渡。
-- 去掉翻译腔和英文语序，例如「这就是全部的接入工作」「它由 X 负责读取」。
 - 破折号「——」少用，多用分句、冒号或直接断句。
 
 ## Review gate
@@ -589,6 +598,8 @@ merging, and rewrite if any of these are true:
   needed.
 - The primary example calls public methods that the surrounding prose never
   explains, or explains them in an order unrelated to the workflow.
+- A reader new to RLinf cannot tell what the feature does, what to prepare, and how to run it, or the page explains a mechanism by listing modules, classes, functions, or file paths.
+- A sentence reads as translated from the other language rather than written in its own.
 
 Cadence is the hardest thing to hear in your own prose, so a second pass by a
 different writer — human or model — catches what a self-review will not. Give

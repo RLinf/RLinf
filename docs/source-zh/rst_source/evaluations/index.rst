@@ -38,6 +38,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - DexJoCo
      - ``dexjoco`` 单臂与双臂任务
      - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
+   * - SIMPLE
+     - ``G1WholebodyOpenOvenTeleop-v0``
+     - ``simple/simple_psi0_eval.yaml``
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 
@@ -82,6 +85,8 @@ Benchmark 指南
      - PolaRiS 桌面操作。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
+   * - :doc:`SIMPLE <guides/simple>`
+     - Psi0 人形机器人全身评测。
 
 参考
 ----

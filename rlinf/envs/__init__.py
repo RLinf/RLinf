@@ -27,6 +27,7 @@ class SupportedEnvType(Enum):
     MANISKILL_RLT = "maniskill_rlt"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
+    ROBODOJO = "robodojo"
     ISAACLAB = "isaaclab"
     METAWORLD = "metaworld"
     BEHAVIOR = "behavior"
@@ -40,10 +41,12 @@ class SupportedEnvType(Enum):
     GENESIS = "genesis"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
+    GENIESIM = "geniesim"
     D4RL = "d4rl"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
     DEXJOCO = "dexjoco"
+    SIMPLE = "simple"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -111,6 +114,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.robotwin.robotwin_env import RoboTwinEnv
 
         return RoboTwinEnv
+    elif env_type == SupportedEnvType.ROBODOJO:
+        from rlinf.envs.sim.robodojo.robodojo_env import RoboDojoEnv
+
+        return RoboDojoEnv
     elif env_type == SupportedEnvType.ISAACLAB:
         from rlinf.envs.sim.isaaclab import REGISTER_ISAACLAB_ENVS
 
@@ -174,6 +181,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.roboverse.roboverse_env import RoboVerseEnv
 
         return RoboVerseEnv
+    elif env_type == SupportedEnvType.GENIESIM:
+        from rlinf.envs.sim.geniesim.geniesim_env import GenieSimEnv
+
+        return GenieSimEnv
     elif env_type == SupportedEnvType.D4RL:
         from rlinf.envs.sim.d4rl.d4rl_env import D4RLEnv
 
@@ -190,5 +201,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.sim.dexjoco.dexjoco_env import DexJoCoEnv
 
         return DexJoCoEnv
+    elif env_type == SupportedEnvType.SIMPLE:
+        from rlinf.envs.sim.simple.simple_env import SimpleEnv
+
+        return SimpleEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

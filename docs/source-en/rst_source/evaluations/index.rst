@@ -38,6 +38,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - DexJoCo
      - ``dexjoco`` single-arm and dual-arm tasks
      - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
+   * - SIMPLE
+     - ``G1WholebodyOpenOvenTeleop-v0``
+     - ``simple/simple_psi0_eval.yaml``
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 
@@ -82,6 +85,8 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - PolaRiS tabletop manipulation.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
+   * - :doc:`SIMPLE <guides/simple>`
+     - Psi0 whole-body humanoid evaluation.
 
 Reference
 ---------
