@@ -123,7 +123,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -3414,6 +3414,9 @@ install_env_only() {
         d4rl)
             install_d4rl_env
             ;;
+        mujoco_warp)
+            install_mujoco_warp_env
+            ;;
         dummy)
             install_dummy_env
             ;;
@@ -3620,6 +3623,13 @@ EOF
 install_maniskill_libero_env() {
     install_libero_env
     install_maniskill_libero_extras
+}
+
+install_mujoco_warp_env() {
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    # Pin the verified CUDA 12-compatible stack so driverless Docker builds do
+    # not resolve warp-lang>=1.17, whose wheels require a CUDA 13 driver.
+    uv pip install "mujoco-warp==3.17.0" "warp-lang==1.16.0"
 }
 
 install_d4rl_env() {
