@@ -131,10 +131,20 @@ RLinf has high flexibility to support diverse RL training workflows (PPO, GRPO, 
 
 The high flexibility allows RLinf to explore more efficient scheduling and execution. The hybrid execution mode for embodied RL achieves up to **2.434×** throughput compared to existing frameworks.
 
-Multiple Backend Integrations
+### Training and Inference Engines
 
-- FSDP + HuggingFace/SGLang/vLLM: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
-- Megatron + SGLang/vLLM: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
+RLinf updates models with a training engine and runs rollout and evaluation with an inference engine. FSDP adapts quickly to new models and algorithms, and Megatron-LM and Megatron-Bridge are built for large-scale training. The matrix shows the workloads each engine supports; PhyAI and ApxInf currently support π₀.₅ only.
+
+| Engine | Role | Embodied RL | Reasoning RL | Agentic RL | SFT | Evaluation |
+|---|---|:---:|:---:|:---:|:---:|:---:|
+| FSDP | Training | ✅ | ✅ | ✅ | ✅ | — |
+| [Megatron-LM](https://rlinf.readthedocs.io/en/latest/rst_source/guides/5D.html) | Training | — | ✅ | ✅ | — | — |
+| [Megatron-Bridge](https://rlinf.readthedocs.io/en/latest/rst_source/extending/mbridge.html) | Training | — | ✅ | ✅ | ✅ | — |
+| HuggingFace | Inference | ✅ | — | — | — | ✅ |
+| [SGLang](https://rlinf.readthedocs.io/en/latest/rst_source/guides/sglang_server.html) | Inference | — | ✅ | ✅ | — | ✅ |
+| vLLM | Inference | — | ✅ | — | — | — |
+| [PhyAI](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rollout-engines/phyai.html) | Inference | ✅ | — | — | — | — |
+| [ApxInf](https://rlinf.readthedocs.io/en/latest/rst_source/guides/apxinf.html) | Inference | — | — | — | — | ✅ |
 
 ## Examples
 
