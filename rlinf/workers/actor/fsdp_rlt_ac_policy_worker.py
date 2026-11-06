@@ -26,7 +26,6 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
     append_to_dict,
     collect_trajectory_replay_metrics,
-    compute_split_num,
     trajectory_has_bool_tensor,
 )
 from rlinf.utils.utils import clear_memory
@@ -694,9 +693,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
     async def recv_rollout_trajectories(self, input_channel):
         clear_memory(sync=False)
 
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        split_num = self._rollout_geometry.shards_per_actor()
 
         recv_list = []
         for _ in range(split_num):

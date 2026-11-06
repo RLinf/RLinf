@@ -30,6 +30,8 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.layout import EnvAssignment, EnvLayout
+from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
@@ -51,6 +53,9 @@ class EnvWorker(Worker):
     # ``split_fn`` (see ``_split_and_compress_obs``).
     _obs_split_fn = None
     _policy_input_split_fn = None
+    # Same reason; ``__init__`` installs the specs ``env.<mode>.policy_obs`` gives.
+    _train_policy_obs_spec = PolicyObsSpec()
+    _eval_policy_obs_spec = PolicyObsSpec()
     collect_final_values = True
 
     def __init__(self, cfg: DictConfig):
@@ -123,19 +128,33 @@ class EnvWorker(Worker):
         self.enable_eval = (
             self.cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
         )
-        self.rollout_epoch = (
-            train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
+        # The assignment holds the env this rank runs, including its loop.
+        self.train_assignment: EnvAssignment | None = (
+            EnvLayout(train_env_cfg, self._world_size, "env.train").assign(self._rank)
+            if self.enable_train
+            else None
         )
-        self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
-
+        self.eval_assignment: EnvAssignment | None = (
+            EnvLayout(eval_env_cfg, self._world_size, "env.eval").assign(self._rank)
+            if self.enable_eval
+            else None
+        )
+        self.rollout_epoch = (
+            self.train_assignment.cfg.rollout_epoch if self.enable_train else 1
+        )
+        self.eval_rollout_epoch = (
+            self.eval_assignment.cfg.rollout_epoch if self.enable_eval else 1
+        )
+        self._train_policy_obs_spec = PolicyObsSpec.from_cfg(train_env_cfg)
+        self._eval_policy_obs_spec = PolicyObsSpec.from_cfg(eval_env_cfg)
         self.train_enable_offload = (
-            train_env_cfg.get("enable_offload", False)
-            if train_env_cfg is not None
+            self.train_assignment.cfg.get("enable_offload", False)
+            if self.train_assignment is not None
             else False
         )
         self.eval_enable_offload = (
-            eval_env_cfg.get("enable_offload", False)
-            if eval_env_cfg is not None
+            self.eval_assignment.cfg.get("enable_offload", False)
+            if self.eval_assignment is not None
             else False
         )
         if self.enable_train:
@@ -157,21 +176,16 @@ class EnvWorker(Worker):
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
             self.eval_batch_size = self.cfg.env.eval.total_num_envs // self.stage_num
-            self.eval_early_stop_on_done = bool(
-                eval_env_cfg.get("early_stop_on_done", False)
-            )
-        else:
-            self.eval_early_stop_on_done = False
         self.n_train_chunk_steps = 0
         if self.enable_train:
             self.n_train_chunk_steps = (
-                self.cfg.env.train.max_steps_per_rollout_epoch
+                self.train_assignment.cfg.max_steps_per_rollout_epoch
                 // self.model_cfg.num_action_chunks
             )
         self.n_eval_chunk_steps = 0
         if self.enable_eval:
             self.n_eval_chunk_steps = (
-                self.cfg.env.eval.max_steps_per_rollout_epoch
+                self.eval_assignment.cfg.max_steps_per_rollout_epoch
                 // self.model_cfg.num_action_chunks
             )
         if self.enable_train:
@@ -222,11 +236,10 @@ class EnvWorker(Worker):
         self.update_env_cfg()
 
         if self.enable_train:
-            train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
             self.env_list = self._setup_env_and_wrappers(
-                env_cls=train_env_cls,
-                env_cfg=self.cfg.env.train,
+                self.train_assignment,
                 num_envs_per_stage=self.train_num_envs_per_stage,
+                insert_delay=True,
             )
             if self.train_enable_offload:
                 assert all(
@@ -234,11 +247,10 @@ class EnvWorker(Worker):
                 ), "train envs must have an offload method to enable offload!"
 
         if self.enable_eval:
-            eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
-                env_cls=eval_env_cls,
-                env_cfg=self.cfg.env.eval,
+                self.eval_assignment,
                 num_envs_per_stage=self.eval_num_envs_per_stage,
+                insert_delay=False,
             )
             if self.eval_enable_offload:
                 assert all(
@@ -256,48 +268,40 @@ class EnvWorker(Worker):
         self._init_env()
 
     def update_env_cfg(self):
-        if self.enable_train:
-            # train env
-            train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
-            if train_override_cfgs is not None:
-                assert len(train_override_cfgs) > self._rank, (
-                    f"{len(train_override_cfgs)=} > {self._rank=}"
-                )
+        for assignment in (self.train_assignment, self.eval_assignment):
+            if assignment is None:
+                continue
+            self._apply_rank_override_cfg(assignment)
+            self._inject_realworld_reward_cfg(assignment.cfg)
 
-                general_train_override_cfg = OmegaConf.to_container(
-                    self.cfg.env.train.get("override_cfg", {}), resolve=True
-                )
-                override_cfg = OmegaConf.to_container(
-                    train_override_cfgs[self._rank], resolve=True
-                ).copy()
+    @staticmethod
+    def _apply_rank_override_cfg(assignment: EnvAssignment) -> None:
+        """Merge this rank's ``override_cfgs`` entry into the env's ``override_cfg``.
 
-                base_cfg = {}
-                base_cfg = update_nested_cfg(base_cfg, general_train_override_cfg)
-                base_cfg = update_nested_cfg(base_cfg, override_cfg)
-                setattr(self.cfg.env.train, "override_cfg", OmegaConf.create(base_cfg))
-            self._inject_realworld_reward_cfg(self.cfg.env.train)
-        if self.enable_eval:
-            eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
-            if eval_override_cfgs is not None:
-                assert len(eval_override_cfgs) > self._rank, (
-                    f"{len(eval_override_cfgs)=} > {self._rank=}"
-                )
-
-                general_eval_override_cfg = OmegaConf.to_container(
-                    self.cfg.env.eval.get("override_cfg", {}), resolve=True
-                )
-                eval_override_cfg = OmegaConf.to_container(
-                    eval_override_cfgs[self._rank], resolve=True
-                ).copy()
-                base_eval_cfg = {}
-                base_eval_cfg = update_nested_cfg(
-                    base_eval_cfg, general_eval_override_cfg
-                )
-                base_eval_cfg = update_nested_cfg(base_eval_cfg, eval_override_cfg)
-                setattr(
-                    self.cfg.env.eval, "override_cfg", OmegaConf.create(base_eval_cfg)
-                )
-            self._inject_realworld_reward_cfg(self.cfg.env.eval)
+        ``override_cfgs`` lists one entry per worker hosting the env, indexed by
+        the worker's rank among those hosts.
+        """
+        env_cfg = assignment.cfg
+        override_cfgs = env_cfg.get("override_cfgs", None)
+        if override_cfgs is None:
+            return
+        assert len(override_cfgs) > assignment.rank, (
+            f"override_cfgs lists {len(override_cfgs)} entries, but the env is "
+            f"hosted by {assignment.world_size} workers and this is worker "
+            f"{assignment.rank}."
+        )
+        shared_override_cfg = env_cfg.get("override_cfg", None)
+        base_cfg = update_nested_cfg(
+            {},
+            OmegaConf.to_container(shared_override_cfg, resolve=True)
+            if shared_override_cfg is not None
+            else {},
+        )
+        base_cfg = update_nested_cfg(
+            base_cfg,
+            OmegaConf.to_container(override_cfgs[assignment.rank], resolve=True).copy(),
+        )
+        setattr(env_cfg, "override_cfg", OmegaConf.create(base_cfg))
 
     def _inject_realworld_reward_cfg(self, env_cfg: DictConfig):
         if not (self.use_reward_model and self.use_realworld_reward):
@@ -330,21 +334,27 @@ class EnvWorker(Worker):
         override_cfg["reward_image_key"] = env_cfg.main_image_key
         setattr(env_cfg, "override_cfg", OmegaConf.create(override_cfg))
 
-    def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
+    def _setup_env_and_wrappers(
+        self,
+        assignment: EnvAssignment,
+        num_envs_per_stage: int,
+        insert_delay: bool,
+    ):
+        env_cfg = assignment.cfg
+        env_cls = get_env_cls(env_cfg.env_type, env_cfg)
         env_list = []
 
         for stage_id in range(self.stage_num):
+            # Seeds and reset-state shards are split among the workers hosting
+            # this env, so it behaves as it would running alone on them.
             env = env_cls(
                 cfg=env_cfg,
                 num_envs=num_envs_per_stage,
-                seed_offset=self._rank * self.stage_num + stage_id,
-                total_num_processes=self._world_size * self.stage_num,
+                seed_offset=assignment.rank * self.stage_num + stage_id,
+                total_num_processes=assignment.world_size * self.stage_num,
                 worker_info=self.worker_info,
             )
-            if (
-                self.cfg.env.get("delay_sampler", None)
-                and env_cfg is not self.cfg.env.eval
-            ):
+            if insert_delay and self.cfg.env.get("delay_sampler", None):
                 env = InsertDelay(env, self.cfg.env.delay_sampler)
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
@@ -378,11 +388,11 @@ class EnvWorker(Worker):
     def _init_env(self):
         for i in range(self.stage_num):
             if self.enable_train:
-                if self.cfg.env.train.auto_reset:
+                if self.train_assignment.cfg.auto_reset:
                     extracted_obs, _ = self.env_list[i].reset()
                     self.last_obs_list.append(extracted_obs)
                     self.last_intervened_info_list.append((None, None))
-                if self.train_enable_offload and self.cfg.env.train.get(
+                if self.train_enable_offload and self.train_assignment.cfg.get(
                     "enable_init_offload", True
                 ):
                     get_env_attr(self.env_list[i], "offload")()
@@ -414,13 +424,13 @@ class EnvWorker(Worker):
             raw_chunk_actions=chunk_actions["raw_actions"]
             if isinstance(chunk_actions, dict)
             else chunk_actions,
-            env_type=self.cfg.env.train.env_type,
+            env_type=self.train_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
             action_dim=self.model_cfg.action_dim,
             policy=self.model_cfg.get("policy_setup", None),
-            wm_env_type=self.cfg.env.train.get("wm_env_type", None),
-            env_cfg=self.cfg.env.train,
+            wm_env_type=self.train_assignment.cfg.get("wm_env_type", None),
+            env_cfg=self.train_assignment.cfg,
         )
         if isinstance(chunk_actions, dict):
             chunk_actions["actions"] = exec_actions
@@ -453,8 +463,8 @@ class EnvWorker(Worker):
                 else None
             )
         )
-        if not self.cfg.env.train.auto_reset:
-            if self.cfg.env.train.ignore_terminations:
+        if not self.train_assignment.cfg.auto_reset:
+            if self.train_assignment.cfg.ignore_terminations:
                 if chunk_truncations[:, -1].any():
                     assert chunk_truncations[:, -1].all()
                     if "episode" in infos:
@@ -477,7 +487,7 @@ class EnvWorker(Worker):
         rlt_switch_flags = (
             infos["rlt_switch_flags"] if "rlt_switch_flags" in infos else None
         )
-        if self.cfg.env.train.auto_reset and chunk_dones.any():
+        if self.train_assignment.cfg.auto_reset and chunk_dones.any():
             if "intervene_action" in infos["final_info"]:
                 intervene_actions = infos["final_info"]["intervene_action"]
                 intervene_flags = infos["final_info"]["intervene_flag"]
@@ -494,10 +504,7 @@ class EnvWorker(Worker):
                 intervene_actions=intervene_actions,
                 intervene_flags=intervene_flags,
                 rlt_switch_flags=rlt_switch_flags,
-                executed_mask=infos["executed_mask"]
-                if SupportedEnvType(self.cfg.env.train.env_type)
-                is SupportedEnvType.SIMPLE
-                else None,
+                executed_mask=infos.get("executed_mask"),
             ),
         )
         chunk_step_payload = {
@@ -518,13 +525,13 @@ class EnvWorker(Worker):
         """
         chunk_actions = prepare_actions(
             raw_chunk_actions=raw_actions,
-            env_type=self.cfg.env.eval.env_type,
+            env_type=self.eval_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
             action_dim=self.model_cfg.action_dim,
             policy=self.model_cfg.get("policy_setup", None),
-            wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
-            env_cfg=self.cfg.env.eval,
+            wm_env_type=self.eval_assignment.cfg.get("wm_env_type", None),
+            env_cfg=self.eval_assignment.cfg,
         )
         env_info = {}
 
@@ -547,7 +554,7 @@ class EnvWorker(Worker):
         )
 
         current_dones = chunk_dones.any(dim=1)  # [num_envs] bool
-        if self.cfg.env.eval.auto_reset:
+        if self.eval_assignment.cfg.auto_reset:
             newly_done = current_dones
         else:
             prev = self.eval_prev_done[stage_id].to(current_dones.device)
@@ -655,21 +662,22 @@ class EnvWorker(Worker):
         return infer_batch_size(data)
 
     def finish_rollout(self, mode="train"):
-        # reset
+        # Seeds restart at zero for every env of a heterogeneous mode, so each env
+        # writes its videos under its own name.
         if mode == "train":
             for i in range(self.stage_num):
-                if self.cfg.env.train.video_cfg.save_video:
+                if self.train_assignment.cfg.video_cfg.save_video:
                     flush_video = get_env_attr(self.env_list[i], "flush_video")
                     if callable(flush_video):
-                        flush_video()
+                        flush_video(self.train_assignment.name)
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
-                if self.cfg.env.eval.video_cfg.save_video:
+                if self.eval_assignment.cfg.video_cfg.save_video:
                     flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
                     if callable(flush_video):
-                        flush_video()
-                if not self.cfg.env.eval.auto_reset:
+                        flush_video(self.eval_assignment.name)
+                if not self.eval_assignment.cfg.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
     @Worker.timer("get_reward_model_output")
@@ -779,7 +787,7 @@ class EnvWorker(Worker):
             )
 
         env_outputs: list[EnvOutput] = []
-        if not self.cfg.env.train.auto_reset:
+        if not self.train_assignment.cfg.auto_reset:
             for stage_id in range(self.stage_num):
                 self.env_list[stage_id].is_start = True
                 extracted_obs, infos = self.env_list[stage_id].reset()
@@ -823,9 +831,14 @@ class EnvWorker(Worker):
         return env_outputs
 
     def _build_rollout_input_data(self, env_batch: dict[str, Any]) -> dict[str, Any]:
+        final_obs = env_batch["final_obs"]
         data = {
-            "obs": env_batch["obs"],
-            "final_obs": env_batch["final_obs"],
+            "obs": self._eval_policy_obs_spec.apply(env_batch["obs"]),
+            "final_obs": (
+                self._eval_policy_obs_spec.apply(final_obs)
+                if final_obs is not None
+                else None
+            ),
         }
         if self.enable_rlt:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
@@ -861,13 +874,19 @@ class EnvWorker(Worker):
             episode_data=chunk_step_data if self.enable_online_lerobot else None,
         )
 
+    def _train_policy_obs(
+        self, env_output: EnvOutput, obs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return the copy of a train observation that goes to the policy."""
+        return self._train_policy_obs_spec.apply(env_output.prepare_observations(obs))
+
     def _build_policy_input(
         self,
         env_output: EnvOutput,
     ) -> PolicyInput:
         """Build the model input without trajectory-owned environment data."""
         return PolicyInput(
-            obs=env_output.prepare_observations(env_output.obs),
+            obs=self._train_policy_obs(env_output, env_output.obs),
             rlt_switch_flags=env_output.rlt_switch_flags,
             intervene_flags=env_output.intervene_flags,
         )
@@ -888,7 +907,7 @@ class EnvWorker(Worker):
             channel=rollout_channel,
             data=policy_input,
             mode="train",
-            tag="policy_final" if policy_input.is_last else "policy",
+            tag="policy",
             route_key=stage_id if not self.env_decoupled_mode else None,
             batch_size=self.train_batch_size,
             split_fn=self._policy_input_split_fn or PolicyInput.split,
@@ -946,7 +965,7 @@ class EnvWorker(Worker):
             policy_input = self.smooth_intervene.build_external_policy_input(
                 stage_id,
                 env=self.env_list[stage_id],
-                obs=env_output.prepare_observations(env_output.obs),
+                obs=self._train_policy_obs(env_output, env_output.obs),
             )
         else:
             policy_input = self._build_policy_input(env_output)
@@ -961,7 +980,7 @@ class EnvWorker(Worker):
                 chunk_step_data=chunk_step_data,
             ),
             next_obs=(
-                env_output.prepare_observations(next_obs_override)
+                self._train_policy_obs(env_output, next_obs_override)
                 if next_obs_override is not None
                 else None
             ),
@@ -1029,8 +1048,8 @@ class EnvWorker(Worker):
                 policy_input = self.smooth_intervene.build_external_policy_input(
                     stage_id,
                     env=self.env_list[stage_id],
-                    obs=env_outputs[stage_id].prepare_observations(
-                        env_outputs[stage_id].obs
+                    obs=self._train_policy_obs(
+                        env_outputs[stage_id], env_outputs[stage_id].obs
                     ),
                 )
             else:
@@ -1213,8 +1232,8 @@ class EnvWorker(Worker):
                         )
                     env_outputs[stage_id] = env_output
                     should_record = (
-                        self.cfg.env.train.auto_reset
-                        or self.cfg.env.train.ignore_terminations
+                        self.train_assignment.cfg.auto_reset
+                        or self.train_assignment.cfg.ignore_terminations
                         or chunk_step_idx == self.n_train_chunk_steps - 1
                     )
                     if should_record:
@@ -1234,7 +1253,7 @@ class EnvWorker(Worker):
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
-        return env_metrics
+        return self.train_assignment.scope_metrics(env_metrics)
 
     @Worker.timer("interact")
     async def interact(
@@ -1259,8 +1278,9 @@ class EnvWorker(Worker):
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
+        early_stop_on_done = self.eval_assignment.cfg.get("early_stop_on_done", False)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
-            if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
+            if not self.eval_assignment.cfg.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
                     self.eval_env_list[stage_id].is_start = True
                     self.eval_prev_done[stage_id] = torch.zeros(
@@ -1319,7 +1339,7 @@ class EnvWorker(Worker):
                         eval_metrics[key].append(value)
 
                     if (
-                        self.eval_early_stop_on_done
+                        early_stop_on_done
                         and env_output.dones is not None
                         and env_output.dones.any()
                         and eval_step < self.n_eval_chunk_steps - 1
@@ -1339,7 +1359,7 @@ class EnvWorker(Worker):
                         eval_epoch_done = True
                         break
 
-                    if self.cfg.env.eval.auto_reset:
+                    if self.eval_assignment.cfg.auto_reset:
                         if (
                             eval_rollout_epoch == self.eval_rollout_epoch - 1
                             and eval_step == self.n_eval_chunk_steps - 1
@@ -1371,4 +1391,4 @@ class EnvWorker(Worker):
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
-        return eval_metrics
+        return self.eval_assignment.scope_metrics(eval_metrics)

@@ -1223,3 +1223,166 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert output.dtype == torch.bfloat16
     assert after.dtype == torch.float32
     assert (after != before).all()
+
+
+def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1):
+    """An embodied FSDP actor holding only the state its batch planning reads."""
+    from rlinf.data.schema.embodied_trajectory import RolloutGeometry
+    from rlinf.envs.layout import EnvLayout
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 3,
+                "global_batch_size": 4 * world_size,
+                "micro_batch_size": 2,
+            },
+            "algorithm": {"loss_type": "actor_critic", "reward_type": "action_level"},
+            "env": {"train": mode_cfg},
+        }
+    )
+    cfg.actor.mix_envs = mix_envs
+    layout = EnvLayout(cfg.env.train, len(mode_cfg.get("envs", {})) or 1, "p")
+    actor = object.__new__(EmbodiedFSDPActor)
+    actor.cfg = cfg
+    actor._rank, actor._world_size = rank, world_size
+    actor._rollout_geometry = RolloutGeometry(
+        layout=layout, stage_num=1, num_action_chunks=1, actor_world_size=world_size
+    )
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(cfg.algorithm) for spec in layout.specs
+    }
+    return actor
+
+
+def _embodied_env(steps, **fields):
+    return {
+        "env_type": "maniskill",
+        "total_num_envs": 2,
+        "rollout_epoch": 1,
+        "max_steps_per_rollout_epoch": steps,
+        "max_episode_steps": steps,
+        "auto_reset": False,
+        "ignore_terminations": False,
+        **fields,
+    }
+
+
+def _embodied_batch(steps, trajectories, marker=0.0, done_at=None):
+    dones = torch.zeros(steps + 1, trajectories, 1, dtype=torch.bool)
+    if done_at is not None:
+        dones[done_at, 0] = True
+    return {
+        "prev_logprobs": torch.randn(steps, trajectories, 1),
+        "advantages": torch.full((steps, trajectories, 1), marker),
+        "rewards": torch.ones(steps, trajectories, 1),
+        "dones": dones,
+    }
+
+
+def test_one_env_trains_on_the_same_batch_and_loss_weights_as_before():
+    from rlinf.utils.nested_dict_process import process_nested_dict_for_train
+    from rlinf.utils.utils import compute_trajectory_loss_mask
+
+    actor = _embodied_actor(OmegaConf.create(_embodied_env(4)), rank=1)
+    batch = _embodied_batch(4, 2, done_at=2)
+    batch["loss_mask"], batch["loss_mask_sum"] = compute_trajectory_loss_mask(
+        batch["dones"], "action_level"
+    )
+    expected = dict(batch)
+    expected["loss_mask_ratio"] = batch["loss_mask_sum"] * 1.0 / 4
+    shuffle_id = torch.randperm(8, generator=torch.Generator().manual_seed(3 + 1))
+    expected = process_nested_dict_for_train(expected, shuffle_id)
+
+    actor.env_batches = {None: dict(batch)}
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+
+    [pool] = actor.rollout_batches
+    assert pool.keys() == expected.keys()
+    for key, value in expected.items():
+        assert torch.equal(pool[key], value), key
+    assert actor._global_batch_plan == [[4], [4]]
+
+
+def test_every_trajectory_weighs_the_same_whatever_its_env_horizon():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "short": _embodied_env(2, ignore_terminations=True),
+                    "long": _embodied_env(4, ignore_terminations=True),
+                }
+            }
+        )
+    )
+    actor.env_batches = {
+        "short": _embodied_batch(2, 2, marker=1.0),
+        "long": _embodied_batch(4, 2, marker=2.0),
+    }
+
+    [merged] = actor._merge_env_batches()
+
+    weights = 1.0 / merged["loss_mask_ratio"].squeeze(-1)
+    short = weights[merged["advantages"].squeeze(-1) == 1.0]
+    long = weights[merged["advantages"].squeeze(-1) == 2.0]
+    # Each env holds 2 trajectories, so one trajectory's steps sum to half.
+    assert torch.allclose(short.sum() / 2, long.sum() / 2)
+    assert merged["loss_mask"].all()
+
+
+def test_unmixed_global_batches_hold_one_env_in_an_order_all_ranks_share():
+    mode_cfg = OmegaConf.create(
+        {"envs": {"short": _embodied_env(2), "long": _embodied_env(4)}}
+    )
+    env_orders = []
+    for rank in (0, 1):
+        actor = _embodied_actor(mode_cfg, mix_envs=False, rank=rank, world_size=2)
+        actor.env_batches = {
+            "short": _embodied_batch(2, 2, marker=1.0),
+            "long": _embodied_batch(4, 2, marker=2.0),
+        }
+        actor.rollout_batches = actor._merge_env_batches()
+        actor._order_training_batch()
+
+        markers = [
+            torch.cat([batch["advantages"] for batch in micro_batches]).unique()
+            for micro_batches in actor._global_batches()
+        ]
+        assert all(len(marker) == 1 for marker in markers)
+        env_orders.append([marker.item() for marker in markers])
+
+    assert env_orders[0] == env_orders[1]
+    assert sorted(env_orders[0]) == [1.0, 2.0, 2.0]
+
+
+def test_envs_with_different_policy_inputs_train_in_separate_micro_batches():
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"one_view": _embodied_env(2), "two_views": _embodied_env(2)}}
+        )
+    )
+    one_view = _embodied_batch(2, 2, marker=1.0)
+    one_view["forward_inputs"] = {"pixel_values": torch.zeros(2, 2, 1, 8)}
+    two_views = _embodied_batch(2, 2, marker=2.0)
+    two_views["forward_inputs"] = {"pixel_values": torch.zeros(2, 2, 2, 8)}
+    actor.env_batches = {"one_view": one_view, "two_views": two_views}
+
+    actor.rollout_batches = actor._merge_env_batches()
+    actor._order_training_batch()
+    global_batches = list(actor._global_batches())
+
+    assert len(actor.rollout_batches) == 2
+    # 8 samples make 2 global batches of 4, each taking 2 samples of each format.
+    assert actor._global_batch_plan == [[2, 2], [2, 2]]
+    for micro_batches in global_batches:
+        assert sorted(
+            batch["advantages"].unique().item() for batch in micro_batches
+        ) == [
+            1.0,
+            2.0,
+        ]
+        for batch in micro_batches:
+            views = batch["forward_inputs"]["pixel_values"].shape[1]
+            assert views == batch["advantages"].unique().item()

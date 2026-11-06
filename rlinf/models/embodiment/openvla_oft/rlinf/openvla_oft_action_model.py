@@ -32,6 +32,7 @@ from transformers.generation import TopKLogitsWarper
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.models.embodiment.openvla_oft.openvla_utils import resolve_unnorm_key
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
@@ -52,15 +53,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
 
-        self.unnorm_key = config.unnorm_key
-        if (
-            self.unnorm_key not in self.norm_stats
-            and f"{self.unnorm_key}_no_noops" in self.norm_stats
-        ):
-            self.unnorm_key = f"{self.unnorm_key}_no_noops"
-        assert self.unnorm_key in self.norm_stats, (
-            f"Action un-norm key {self.unnorm_key} not found in VLA `norm_stats`!"
-        )
+        self.unnorm_key = resolve_unnorm_key(self.norm_stats, config.unnorm_key)
 
         if add_value_head:
             self.hidden_size = self.config.hidden_size
@@ -211,9 +204,34 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         env_obs=None,
         calculate_logprobs=True,
         calculate_values=True,
+        unnorm_key: str | None = None,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Sample action chunks for a batch of observations.
+
+        Args:
+            input_ids: Prompt token ids, built from ``env_obs`` when it is given.
+            attention_mask: Mask of ``input_ids``.
+            pixel_values: Images, built from ``env_obs`` when it is given.
+            env_obs: Env observations with ``main_images`` and ``task_descriptions``.
+            calculate_logprobs: Whether to return the chunk log-probabilities.
+            calculate_values: Whether to return value-head predictions.
+            unnorm_key: Dataset whose action statistics unnormalize the actions
+                sent to the env; ``None`` uses the model's ``unnorm_key``. Log
+                probabilities are over normalized action tokens and do not
+                depend on it.
+            **kwargs: Sampling parameters such as ``do_sample``,
+                ``temperature``, and ``top_k``.
+
+        Returns:
+            The unnormalized actions and a dict of rollout results.
+        """
         do_sample = kwargs.pop("do_sample")
+        unnorm_key = (
+            self.unnorm_key
+            if unnorm_key is None
+            else resolve_unnorm_key(self.norm_stats, unnorm_key)
+        )
 
         if env_obs is not None:
             task_descriptions = [
@@ -400,7 +418,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         normalized_actions = normalized_actions.reshape(-1, self.action_dim)
 
         # Unnormalize predicted actions
-        actions = self._unnormalize_actions(normalized_actions, self.unnorm_key)
+        actions = self._unnormalize_actions(normalized_actions, unnorm_key)
         actions = actions.reshape(idxs.shape)
 
         action_logits = processed_logits_tensor

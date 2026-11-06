@@ -258,14 +258,17 @@ class EnvTransition:
         bootstrap_values: torch.Tensor | None,
         env_reward_weight: float,
         reward_weight: float,
+        reward_scale: float,
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
     ) -> torch.Tensor | None:
         """Build the reward tensor consumed by trajectory training.
 
-        Reward-model scores are weighted into environment rewards first.
-        Auto-reset truncations then receive the configured bootstrap value.
+        Reward-model scores are weighted into environment rewards first, and the
+        sum is multiplied by the env's ``reward_scale``. Auto-reset truncations
+        then receive the configured bootstrap value, which the critic already
+        predicts in scaled units.
 
         The result has independent storage for later in-place reward updates.
         """
@@ -279,6 +282,8 @@ class EnvTransition:
             )
         else:
             rewards = rewards.clone()
+        if reward_scale != 1.0:
+            rewards = rewards * reward_scale
         if bootstrap_values is None or not auto_reset or self.dones is None:
             return rewards
 
@@ -590,6 +595,7 @@ class EnvPart:
         *,
         env_reward_weight: float,
         reward_weight: float,
+        reward_scale: float,
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
@@ -599,6 +605,7 @@ class EnvPart:
             bootstrap_values=self.bootstrap_values,
             env_reward_weight=env_reward_weight,
             reward_weight=reward_weight,
+            reward_scale=reward_scale,
             auto_reset=auto_reset,
             bootstrap_type=bootstrap_type,
             gamma=gamma,
@@ -847,6 +854,9 @@ class Trajectory:
 
     max_episode_length: int = 0
     model_weights_id: str = ""
+    # Env config under ``env.train.envs`` the trajectory came from; ``None`` in a
+    # homogeneous run.
+    env_name: str | None = None
     actions: torch.Tensor | None = None
     intervene_flags: torch.Tensor | None = None
     rewards: torch.Tensor | None = None
@@ -933,6 +943,11 @@ class Trajectory:
             else torch.zeros(1, dtype=torch.float32)
         )
         return trajectory
+
+    @property
+    def dispatch_group(self) -> str | None:
+        """Group the channel dispatcher balances this trajectory within."""
+        return self.env_name
 
     def split(self, split_sizes: int | list[int]) -> list["Trajectory"]:
         """Split the batch dimension into actor-consumable shards.
@@ -1063,6 +1078,7 @@ class Trajectory:
                 Trajectory(
                     max_episode_length=self.max_episode_length,
                     model_weights_id=self.model_weights_id,
+                    env_name=self.env_name,
                     actions=actions,
                     intervene_flags=intervene_flags,
                     rewards=rewards,
@@ -1949,6 +1965,22 @@ def split_batch_value(value: Any, split_sizes: list[int]) -> list[Any]:
     raise TypeError(f"Unsupported batch value: {type(value)}")
 
 
+def batch_format(value: Any) -> Any:
+    """Return what batch values must share to merge on their leading dimension.
+
+    Dict keys and the trailing shape and dtype of tensors and arrays count;
+    other values count by type, so two values merge exactly when their formats
+    are equal.
+    """
+    if isinstance(value, torch.Tensor):
+        return ("tensor", tuple(value.shape[1:]), value.dtype)
+    if isinstance(value, np.ndarray):
+        return ("array", value.shape[1:], value.dtype.str)
+    if isinstance(value, dict):
+        return tuple((key, batch_format(value[key])) for key in sorted(value))
+    return type(value).__name__
+
+
 def merge_batch_values(values: list[Any]) -> Any:
     """Merge recursively nested batches on their leading dimension."""
     if not values:
@@ -2063,6 +2095,7 @@ __all__ = [
     "PolicyInput",
     "RTCRequest",
     "RTCActionResponse",
+    "batch_format",
     "get_model_weights_id",
     "merge_batch_values",
     "merge_episode_data",

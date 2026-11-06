@@ -21,7 +21,7 @@ from typing import Any, Optional
 import numpy as np
 import torch
 
-from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.registry import policy_loss
 from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory
@@ -32,7 +32,6 @@ from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_KEY,
     append_to_dict,
     compute_critic_explained_variance_from_stats,
-    compute_rollout_metrics,
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
@@ -80,7 +79,23 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         self.rollout_store_size = self.cfg.algorithm.get(
             "rollout_store_size_per_rank", 1
         )
-        self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
+        # Each env gets the share of the store that it sends this actor per step,
+        # so the training mix follows the env counts whatever each env's speed.
+        env_shards = self._rollout_geometry.env_shards_per_actor()
+        total_shards = sum(env_shards.values())
+        self.rollout_store_quotas = {}
+        for name, shards in env_shards.items():
+            assert self.rollout_store_size * shards % total_shards == 0, (
+                "algorithm.rollout_store_size_per_rank must split into the envs' "
+                f"shares {env_shards}, got {self.rollout_store_size}."
+            )
+            self.rollout_store_quotas[name] = (
+                self.rollout_store_size * shards // total_shards
+            )
+        self.rollout_stores = {
+            name: PriorityStore(maxsize=quota)
+            for name, quota in self.rollout_store_quotas.items()
+        }
 
     async def recv_rollout_trajectories(self, input_channel):
         # drain channel
@@ -126,8 +141,11 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     continue
                 min_v = float(traj.versions.min().item())
                 mean_v = float(traj.versions.float().mean().item())
-                self.rollout_store.add((min_v, mean_v), traj)
-                self.log_info(f"rollout_store size={len(self.rollout_store)}")
+                self.rollout_stores[traj.env_name].add((min_v, mean_v), traj)
+                self.log_info(
+                    "rollout_store sizes="
+                    f"{ {name: len(store) for name, store in self.rollout_stores.items()} }"
+                )
             except queue.Empty:
                 break
 
@@ -140,77 +158,70 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         while True:
             self._drain_received_trajectories()
             with self.worker_timer("remove_below"):
-                self.rollout_store.remove_below(
-                    self.version - self.cfg.algorithm.get("staleness_threshold", None)
-                )
-            if len(self.rollout_store) >= self.rollout_store_size:
+                for store in self.rollout_stores.values():
+                    store.remove_below(
+                        self.version
+                        - self.cfg.algorithm.get("staleness_threshold", None)
+                    )
+            if all(
+                len(self.rollout_stores[name]) >= quota
+                for name, quota in self.rollout_store_quotas.items()
+            ):
                 if on_policy_min_ratio <= 0.0:
                     break
-                metrics_data = self.rollout_store.get_metric()
-                on_policy_ratio = metrics_data.get(int(self.version), {}).get(
-                    "ratio", 0.0
-                )
+                on_policy_ratios = {
+                    name: store.get_metric()
+                    .get(int(self.version), {})
+                    .get("ratio", 0.0)
+                    for name, store in self.rollout_stores.items()
+                }
                 self.log_info(
-                    f"rollout store metrics={metrics_data} "
-                    f"on_policy_ratio={on_policy_ratio:.4f} "
+                    f"rollout store on_policy_ratios={on_policy_ratios} "
                     f"on_policy_min_ratio={on_policy_min_ratio}"
                 )
-                if on_policy_ratio >= on_policy_min_ratio:
+                if min(on_policy_ratios.values()) >= on_policy_min_ratio:
                     break
             await asyncio.sleep(1)
 
     @Worker.timer("construct_rollout_batch")
     async def construct_rollout_batch(self, max_trajectories: int | None = None):
-        # from _recv_queue to rollout_batch
+        """Take each env's quota of the freshest trajectories as its batch.
+
+        Returns:
+            Staleness metrics, under ``<name>/`` for each env of a heterogeneous
+            run.
+        """
         await self._wait_for_rollout_store_ready()
         torch.distributed.barrier()
 
-        rollout_batch = self.rollout_store.topn(self.rollout_store_size)
-        version_metrics = self.rollout_store.get_metric()
-        self.log_info(f"rollout store version metrics={version_metrics}")
-
         staleness_metrics: dict = {}
-        for version_val, stats in version_metrics.items():
-            if version_val == "discarded_unused":
-                staleness_metrics["discarded_unused_trajs"] = stats
-                continue
-            diff = int(self.version) - int(version_val)
-            staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
+        self.env_batches = {}
+        self._group_success_metrics = {}
+        for spec in self._rollout_geometry.layout.specs:
+            store = self.rollout_stores[spec.name]
+            trajectories = store.topn(self.rollout_store_quotas[spec.name])
+            version_metrics = store.get_metric()
+            self.log_info(
+                f"rollout store {spec.name} version metrics={version_metrics}"
+            )
+            env_metrics = {}
+            for version_val, stats in version_metrics.items():
+                if version_val == "discarded_unused":
+                    env_metrics["discarded_unused_trajs"] = stats
+                    continue
+                diff = int(self.version) - int(version_val)
+                env_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
+            staleness_metrics.update(spec.scoped(env_metrics) or env_metrics)
 
-        self.rollout_batch = Trajectory.to_batch(rollout_batch)
-        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+            batch, group_metrics = self._process_received_rollout_batch(
+                Trajectory.to_batch(trajectories), spec
+            )
+            self.env_batches[spec.name] = batch
+            self._group_success_metrics.update(
+                spec.scoped(group_metrics) or group_metrics
+            )
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
-
-    @torch.inference_mode()
-    def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
-        proximal_values = self.rollout_batch.get("proximal_values", None)
-        prev_values = self.rollout_batch.get("prev_values", None)
-
-        kwargs = {
-            "task_type": self.cfg.runner.task_type,
-            "adv_type": self.cfg.algorithm.adv_type,
-            "rewards": self.rollout_batch["rewards"],
-            "dones": self.rollout_batch["dones"],
-            "values": proximal_values if proximal_values is not None else prev_values,
-            "gamma": self.cfg.algorithm.get("gamma", 1),
-            "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
-            "group_size": self.cfg.algorithm.get("group_size", 8),
-            "reward_type": self.cfg.algorithm.reward_type,
-            "loss_mask": self.rollout_batch.get("loss_mask", None),
-            "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
-        }
-
-        adv_and_ret = calculate_adv_and_returns(**kwargs)
-        self.rollout_batch.update(adv_and_ret)
-
-        if kwargs["loss_mask"] is not None:
-            self.rollout_batch["loss_mask"] = kwargs["loss_mask"]
-        if kwargs["loss_mask_sum"] is not None:
-            self.rollout_batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
-
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
-        return rollout_metrics
 
     @torch.inference_mode()
     def compute_proximal_logprobs(self) -> None:
@@ -278,81 +289,34 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
-        t_dim = int(self.rollout_batch["prev_logprobs"].shape[0])
-        b_dim = int(self.rollout_batch["prev_logprobs"].shape[1])
-        total_samples = t_dim * b_dim
-
-        generator = torch.Generator(device="cpu")
-        generator.manual_seed(int(self.cfg.actor.seed) + int(self._rank))
-        shuffle_id = torch.randperm(total_samples, generator=generator)
-
-        with torch.no_grad():
-            self.rollout_batch = flatten_rollout_batch_for_train(
-                self.rollout_batch, shuffle_id
-            )
-
+        self._order_training_batch()
         if self.cfg.algorithm.normalize_advantages:
-            self.rollout_batch["advantages"] = masked_normalization(
-                self.rollout_batch["advantages"],
-                self.rollout_batch.get("loss_mask", None),
-            )
+            for pool in self.rollout_batches:
+                pool["advantages"] = masked_normalization(
+                    pool["advantages"], pool.get("loss_mask", None)
+                )
 
         self.model.train()
-
-        world_size = int(self._world_size)
-        global_batch_size = int(self.cfg.actor.global_batch_size)
-        micro_batch_size = int(self.cfg.actor.micro_batch_size)
-
-        assert global_batch_size % (micro_batch_size * world_size) == 0, (
-            f"global_batch_size {global_batch_size} must be divisible by "
-            f"micro_batch_size {micro_batch_size} * world_size {world_size}"
-        )
-
-        per_rank_batch_size = global_batch_size // world_size
-        micro_per_rank = per_rank_batch_size // micro_batch_size
-        self.gradient_accumulation = micro_per_rank
-
-        flattened_rollout_size = int(self.rollout_batch["prev_logprobs"].shape[0])
-        assert flattened_rollout_size % per_rank_batch_size == 0, (
-            f"Flattened rollout size {flattened_rollout_size} must be divisible by "
-            f"per-rank batch size {per_rank_batch_size}"
-        )
-        num_global_batches = flattened_rollout_size // per_rank_batch_size
 
         metrics: dict[str, list] = {}
         update_epoch = int(self.cfg.algorithm.get("update_epoch", 1))
 
         for _ in range(update_epoch):
-            global_batch_iter = split_dict_to_chunk(
-                self.rollout_batch,
-                num_global_batches,
-            )
-
-            for train_global_batch in global_batch_iter:
-                train_global_batch_size = int(
-                    train_global_batch["prev_logprobs"].shape[0]
+            for micro_batch_iter in self._global_batches():
+                global_batch_rows = sum(
+                    batch["prev_logprobs"].shape[0] for batch in micro_batch_iter
                 )
-                assert train_global_batch_size == per_rank_batch_size, (
-                    f"Expected per-rank global batch size {per_rank_batch_size}, "
-                    f"got {train_global_batch_size}"
-                )
-                assert train_global_batch_size % micro_batch_size == 0
-
-                micro_batch_iter = split_dict_to_chunk(
-                    train_global_batch,
-                    micro_per_rank,
-                )
-
                 self.optimizer.zero_grad()
 
                 for mb_idx, data in enumerate(micro_batch_iter):
+                    micro_batch_rows = data["prev_logprobs"].shape[0]
                     data = put_tensor_device(
                         data,
                         f"cuda:{int(os.environ['LOCAL_RANK'])}",
                     )
                     backward_ctx = self.before_micro_batch(
                         self.model,
-                        is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
+                        is_last_micro_batch=(mb_idx + 1) == len(micro_batch_iter),
                     )
 
                     advantages = data["advantages"]
@@ -360,7 +324,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     returns = data.get("returns", None)
                     prev_values = data.get("prev_values", None)
                     loss_mask = data.get("loss_mask", None)
-                    loss_mask_sum = data.get("loss_mask_sum", None)
+                    loss_mask_ratio = data.get("loss_mask_ratio", None)
 
                     versions = data.get("versions", None)
                     proximal_logprobs = data.get("proximal_logprobs", None)
@@ -432,8 +396,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         "value_clip": self.cfg.algorithm.get("value_clip", None),
                         "huber_delta": self.cfg.algorithm.get("huber_delta", None),
                         "loss_mask": loss_mask,
-                        "loss_mask_sum": loss_mask_sum,
-                        "max_episode_steps": self.cfg.env.train.max_episode_steps,
+                        "loss_mask_ratio": loss_mask_ratio,
                         "task_type": self.cfg.runner.task_type,
                         "critic_warmup": self.optimizer_steps
                         < self.critic_warmup_steps,
@@ -455,7 +418,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         )
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-                    loss = loss / self.gradient_accumulation
+                    loss = loss / (global_batch_rows / micro_batch_rows)
                     with backward_ctx:
                         self.grad_scaler.scale(loss).backward()
 
