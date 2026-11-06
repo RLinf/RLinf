@@ -110,7 +110,8 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_CACHE_DIR="/workspace/dataset/.uv_cache-uid-$(id -u)"
+          printf 'UV_CACHE_DIR=%s\n' "$UV_CACHE_DIR" >> "$GITHUB_ENV"
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform ascend --no-flash-attn embodied --env dummy
           source .venv/bin/activate
