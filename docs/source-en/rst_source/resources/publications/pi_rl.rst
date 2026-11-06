@@ -113,9 +113,9 @@ Citation
 
 .. code-block:: bibtex
 
-   @article{chen2025pi_rl,
-     title={$$\backslash$pi\_$\backslash$texttt $\{$RL$\}$ $: Online RL Fine-tuning for Flow-based Vision-Language-Action Models},
-     author={Chen, Kang and Liu, Zhihao and Zhang, Tonghe and Guo, Zhen and Xu, Si and Lin, Hao and Zang, Hongzhi and Li, Xiang and Zhang, Quanlu and Yu, Zhaofei and others},
+   @article{chen2025pi_,
+     title={$\pi_{\texttt{RL}}$: Online RL Fine-tuning for Flow-based Vision-Language-Action Models},
+     author={Chen, Kang and Liu, Zhihao and Zhang, Tonghe and Guo, Zhen and Xu, Si and Lin, Hao and Zang, Hongzhi and Li, Xiang and Zhang, Quanlu and Yu, Zhaofei and Fan, Guoliang and Huang, Tiejun and Wang, Yu and Yu, Chao},
      journal={arXiv preprint arXiv:2510.25889},
      year={2025}
    }
