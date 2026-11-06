@@ -45,6 +45,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
+from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
 
 # The timeout a bare init_process_group() installs is backend-specific -- 30
 # minutes for NCCL and Gloo, 3636 seconds for HCCL on Ascend -- so no test here
@@ -1223,3 +1224,282 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert output.dtype == torch.bfloat16
     assert after.dtype == torch.float32
     assert (after != before).all()
+
+
+class _NFTCheckpointPolicy(EmbodiedNFTFSDPPolicy):
+    """Exercise the NFT checkpoint API with a small real FSDP model."""
+
+    def __init__(
+        self, tau=0.5, save_full_model_weights=False, device="cpu", strategy="fsdp"
+    ):
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+        from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+
+        self.cfg = OmegaConf.create({"algorithm": {"nft_tau": tau}})
+        self._cfg = OmegaConf.create(
+            {
+                "fsdp_config": {
+                    "strategy": strategy,
+                    "save_full_model_weights": save_full_model_weights,
+                },
+            }
+        )
+        self._rank = dist.get_rank()
+        self._logger = logging.getLogger("nft-checkpoint-test")
+        self._stacklevel = 1
+        self.device = torch.device("cuda:0" if device == "cuda" else device)
+        self.is_weight_offloaded = False
+        self.is_optimizer_offloaded = False
+        self.version = 0
+        linear = nn.Linear(2, 2)
+        linear.register_buffer("counter", torch.tensor(0, dtype=torch.int64))
+        if strategy == "fsdp":
+            self.model = FSDP(linear, device_id=self.device, use_orig_params=True)
+        else:
+            from torch.distributed.device_mesh import init_device_mesh
+            from torch.distributed.fsdp import fully_shard
+
+            self.model = fully_shard(
+                linear.to(self.device),
+                mesh=init_device_mesh(self.device.type, (dist.get_world_size(),)),
+            )
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.1)
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1)
+        self._strategy = FSDPStrategyBase.create(
+            self._cfg, dist.get_world_size(), dist.group.WORLD, self._logger
+        )
+        self.model(torch.ones(1, 2, device=self.device)).sum().backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.init_rollout_model()
+
+
+def _advance_nft_checkpoint_policy(policy, step):
+    policy.set_global_step(step)
+    policy.model(torch.ones(1, 2, device=policy.device)).square().sum().backward()
+    policy.optimizer.step()
+    policy.optimizer.zero_grad()
+    policy.lr_scheduler.step()
+    policy.model.counter.add_(1)
+    policy.soft_update_rollout_model()
+
+
+@pytest.fixture(params=[("cpu", "fsdp"), ("cuda", "fsdp"), ("cuda", "fsdp2")])
+def nft_checkpoint_policy(tmp_path, monkeypatch, request):
+    from functools import partial
+    from unittest.mock import MagicMock
+
+    device, strategy = request.param
+    if device == "cpu":
+        platform = MagicMock()
+        platform.is_available.return_value = False
+        monkeypatch.setattr(Worker, "torch_platform", platform)
+        monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    elif not torch.cuda.is_available():
+        pytest.skip("Requires a CUDA device")
+    else:
+        Worker.torch_platform.set_device(0)
+    if dist.is_initialized():
+        pytest.skip("Test requires its own single-rank process group")
+    dist.init_process_group(
+        "gloo" if device == "cpu" else "nccl",
+        init_method=f"file://{tmp_path / 'init'}",
+        rank=0,
+        world_size=1,
+    )
+    try:
+        yield partial(_NFTCheckpointPolicy, device=device, strategy=strategy)
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("save_full_model_weights", [False, True])
+@pytest.mark.parametrize("tau", [0.5, [1.0, 0.5, 0, 2]])
+def test_nft_checkpoint_restores_ema_and_next_update(
+    tmp_path, nft_checkpoint_policy, save_full_model_weights, tau
+):
+    policy = nft_checkpoint_policy(tau, save_full_model_weights)
+    for step in range(2):
+        _advance_nft_checkpoint_policy(policy, step)
+    actor_state = policy.get_model_state_dict(False, True)
+    assert any(
+        not torch.equal(actor_state[key], value)
+        for key, value in policy.rollout_model_state_dict.items()
+    )
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_checkpoint(str(checkpoint), step=2)
+    assert (checkpoint / "nft_rollout_state.pt").is_file()
+    assert (
+        checkpoint / "model_state_dict/full_weights.pt"
+    ).is_file() == save_full_model_weights
+
+    resumed = nft_checkpoint_policy(tau, save_full_model_weights)
+    resumed.load_checkpoint(str(checkpoint))
+    policy.set_global_step(2)
+    resumed.set_global_step(2)
+    assert resumed._get_current_nft_tau() == policy._get_current_nft_tau()
+    for key, value in policy.get_rollout_state_dict().items():
+        torch.testing.assert_close(
+            resumed.get_rollout_state_dict()[key], value, rtol=0, atol=0
+        )
+    for key, value in actor_state.items():
+        torch.testing.assert_close(
+            resumed.get_model_state_dict(False, True)[key], value, rtol=0, atol=0
+        )
+
+    _advance_nft_checkpoint_policy(policy, 2)
+    _advance_nft_checkpoint_policy(resumed, 2)
+    for key, value in policy.get_model_state_dict(False, True).items():
+        torch.testing.assert_close(
+            resumed.get_model_state_dict(False, True)[key], value, rtol=0, atol=0
+        )
+    for key, value in policy.rollout_model_state_dict.items():
+        torch.testing.assert_close(
+            resumed.rollout_model_state_dict[key], value, rtol=0, atol=0
+        )
+
+
+def test_nft_checkpoint_without_ema_reinitializes_from_restored_actor(
+    tmp_path, nft_checkpoint_policy, caplog
+):
+    policy = nft_checkpoint_policy()
+    _advance_nft_checkpoint_policy(policy, 0)
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_checkpoint(str(checkpoint))
+    (checkpoint / "nft_rollout_state.pt").unlink()
+
+    resumed = nft_checkpoint_policy()
+    with caplog.at_level(logging.WARNING, logger="nft-checkpoint-test"):
+        resumed.load_checkpoint(str(checkpoint))
+    assert "not an exact training resume" in caplog.text
+    for key, value in policy.get_model_state_dict(False, True).items():
+        torch.testing.assert_close(
+            resumed.rollout_model_state_dict[key], value, rtol=0, atol=0
+        )
+
+
+def test_nft_checkpoint_on_policy_uses_actor_state_only(
+    tmp_path, nft_checkpoint_policy
+):
+    policy = nft_checkpoint_policy(tau=1.0)
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_checkpoint(str(checkpoint))
+    assert not (checkpoint / "nft_rollout_state.pt").exists()
+    resumed = nft_checkpoint_policy(tau=1.0)
+    resumed.load_checkpoint(str(checkpoint))
+    assert resumed.rollout_model_state_dict == {}
+    for key, value in policy.get_rollout_state_dict().items():
+        torch.testing.assert_close(
+            resumed.get_rollout_state_dict()[key], value, rtol=0, atol=0
+        )
+
+
+@pytest.mark.parametrize("mismatch", ["keys", "shape", "dtype"])
+def test_nft_checkpoint_rejects_incompatible_ema(
+    tmp_path, nft_checkpoint_policy, mismatch
+):
+    policy = nft_checkpoint_policy()
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_checkpoint(str(checkpoint))
+    path = checkpoint / "nft_rollout_state.pt"
+    state = torch.load(path, weights_only=True)
+    key = next(key for key, value in state.items() if value.is_floating_point())
+    if mismatch == "keys":
+        del state[key]
+    elif mismatch == "shape":
+        state[key] = state[key].flatten()[:1]
+    else:
+        state[key] = state[key].double()
+    torch.save(state, path)
+    resumed = nft_checkpoint_policy()
+    with pytest.raises(ValueError, match="NFT EMA checkpoint"):
+        resumed.load_checkpoint(str(checkpoint))
+
+
+def test_nft_checkpoint_reports_ema_write_failure(tmp_path, nft_checkpoint_policy):
+    policy = nft_checkpoint_policy()
+    checkpoint = tmp_path / "checkpoint"
+    (checkpoint / "nft_rollout_state.pt").mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="Failed to save NFT EMA weights"):
+        policy.save_checkpoint(str(checkpoint))
+
+
+def test_nft_checkpoint_preserves_offloaded_state(tmp_path, nft_checkpoint_policy):
+    policy = nft_checkpoint_policy()
+    if policy.device.type == "cpu":
+        pytest.skip("Requires accelerator offload")
+    _advance_nft_checkpoint_policy(policy, 0)
+    policy.offload_param_and_grad()
+    policy.offload_optimizer()
+    checkpoint = tmp_path / "checkpoint"
+    policy.save_checkpoint(str(checkpoint))
+    assert policy.is_weight_offloaded
+    assert policy.is_optimizer_offloaded
+    assert all(
+        value.device.type == "cpu" for value in policy.rollout_model_state_dict.values()
+    )
+
+    resumed = nft_checkpoint_policy()
+    resumed.offload_param_and_grad()
+    resumed.offload_optimizer()
+    resumed.load_checkpoint(str(checkpoint))
+    assert not resumed.is_weight_offloaded
+    assert not resumed.is_optimizer_offloaded
+    for key, value in policy.rollout_model_state_dict.items():
+        restored = resumed.rollout_model_state_dict[key]
+        assert restored.device.type == policy.device.type
+        torch.testing.assert_close(restored.cpu(), value, rtol=0, atol=0)
+
+
+def _check_distributed_nft_checkpoint(rank, root, fail_save):
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    Worker.torch_platform = MagicMock()
+    Worker.torch_platform.is_available.return_value = False
+    Worker.torch_device_type = "cpu"
+    root = Path(root)
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{root / 'init'}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=90),
+    )
+    try:
+        policy = _NFTCheckpointPolicy()
+        _advance_nft_checkpoint_policy(policy, 0)
+        checkpoint = root / "checkpoint"
+        if fail_save:
+            if rank == 0:
+                (checkpoint / "nft_rollout_state.pt").mkdir(parents=True)
+            dist.barrier()
+            with pytest.raises(RuntimeError, match="Failed to save NFT EMA weights"):
+                policy.save_checkpoint(str(checkpoint))
+            return
+        policy.save_checkpoint(str(checkpoint))
+        resumed = _NFTCheckpointPolicy()
+        resumed.load_checkpoint(str(checkpoint))
+        for key, value in policy.rollout_model_state_dict.items():
+            torch.testing.assert_close(
+                resumed.rollout_model_state_dict[key], value, rtol=0, atol=0
+            )
+        _advance_nft_checkpoint_policy(policy, 1)
+        _advance_nft_checkpoint_policy(resumed, 1)
+        for key, value in policy.rollout_model_state_dict.items():
+            torch.testing.assert_close(
+                resumed.rollout_model_state_dict[key], value, rtol=0, atol=0
+            )
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("fail_save", [False, True])
+def test_nft_checkpoint_synchronizes_multiple_ranks(tmp_path, fail_save):
+    torch.multiprocessing.spawn(
+        _check_distributed_nft_checkpoint,
+        args=(str(tmp_path), fail_save),
+        nprocs=2,
+        join=True,
+    )

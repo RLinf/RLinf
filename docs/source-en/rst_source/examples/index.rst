@@ -65,6 +65,12 @@ Beyond embodiment:
 
       Fine-tune SD3 and Wan2.2 image/video generation models with Diffusion-NFT.
 
+   .. grid-item-card:: DiffusionART
+      :link: diffusion_art
+      :link-type: doc
+
+      Grouped reward guidance fine-tunes SD3.5 and Wan2.2 image/video models.
+
    .. grid-item-card:: Agents
       :link: agentic/index
       :link-type: doc
@@ -89,5 +95,6 @@ Beyond embodiment:
    SFT <sft_index>
    RL <methods_index>
    Video Generation Models <video_models>
+   DiffusionART <diffusion_art>
    Agents <agentic/index>
    Systems <system/index>
