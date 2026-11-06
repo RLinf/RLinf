@@ -657,10 +657,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         with torch.no_grad():
             self.rollout_batch = process_nested_dict_for_train(
-                self.rollout_batch,
-                shuffle_id,
-                pin_memory=self.prefetch_micro_batches
-                and self.torch_platform is not None,
+                self.rollout_batch, shuffle_id
             )
 
         # Split to make minibatch iterator for updating the actor

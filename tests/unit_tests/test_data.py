@@ -79,6 +79,7 @@ from rlinf.scheduler.cluster.utils import (
 )
 from rlinf.utils.env_helpers import SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
+    _PinnedStage,
     iter_dict_chunks,
     prefetch_to_device,
     process_nested_dict_for_train,
@@ -592,6 +593,42 @@ def test_prefetch_without_accelerator_yields_every_batch_in_order():
     _assert_same_batches(actual, expected)
 
 
+def test_process_nested_dict_for_train_flattens_and_reorders():
+    shuffle_id = torch.randperm(20)
+    rollout = {
+        "values": torch.randn(4, 5, 3),
+        "ids": {"step": torch.arange(20).reshape(4, 5)},
+    }
+
+    batch = process_nested_dict_for_train(rollout, shuffle_id)
+
+    assert torch.equal(batch["values"], rollout["values"].reshape(20, 3)[shuffle_id])
+    assert torch.equal(batch["ids"]["step"], torch.arange(20)[shuffle_id])
+
+
+@pytest.mark.skipif(
+    Worker.torch_platform is None or not Worker.torch_platform.is_available(),
+    reason="Requires an accelerator",
+)
+def test_pinned_stage_reuses_one_buffer_per_tensor_of_a_shape():
+    stage = _PinnedStage()
+    first, second = torch.ones(2, 3), torch.full((2, 3), 2.0)
+
+    stage.acquire()
+    a, b = stage.stage(first), stage.stage(second)
+    stage.acquire()
+    c = stage.stage(second)
+
+    # Two tensors of one shape in a batch need two buffers, ...
+    assert a.data_ptr() != b.data_ptr()
+    # ... but the next batch refills the buffers instead of allocating more.
+    assert c.data_ptr() == a.data_ptr()
+    assert a.is_pinned() and b.is_pinned()
+    assert torch.equal(c, second)
+    # A differing shape gets its own buffer rather than a resized one.
+    assert stage.stage(torch.ones(4, 3)).shape == (4, 3)
+
+
 @pytest.mark.skipif(
     Worker.torch_platform is None or not Worker.torch_platform.is_available(),
     reason="Requires an accelerator",
@@ -601,12 +638,25 @@ def test_prefetch_copies_pinned_and_pageable_batches_to_the_accelerator():
     device = torch.device(Worker.torch_device_type, platform.current_device())
     expected = _micro_batches(5)
     shuffle_id = torch.randperm(20)
-    rollout = {"values": torch.randn(4, 5, 3), "ids": {"step": torch.arange(20)}}
-    rollout["ids"]["step"] = rollout["ids"]["step"].reshape(4, 5)
-
-    pinned = process_nested_dict_for_train(rollout, shuffle_id, pin_memory=True)
+    rollout = {
+        "values": torch.randn(4, 5, 3),
+        "ids": {"step": torch.arange(20).reshape(4, 5)},
+    }
     pageable = process_nested_dict_for_train(rollout, shuffle_id)
+    # The shuffled rollout batch is as large as the rollout, so pinning it
+    # would hold pinned host memory proportional to the rollout. Only the
+    # micro-batches in flight are pinned, by prefetch_to_device. See #1788.
+    assert not pageable["values"].is_pinned()
+    assert not pageable["ids"]["step"].is_pinned()
+    pinned = {
+        "values": pageable["values"].pin_memory(),
+        "ids": {"step": pageable["ids"]["step"].pin_memory()},
+    }
+
     actual = list(prefetch_to_device(iter(_micro_batches(5)), device, platform))
+    from_pageable = list(
+        prefetch_to_device(iter_dict_chunks(pageable, 4), device, platform)
+    )
     from_pinned = list(
         prefetch_to_device(iter_dict_chunks(pinned, 4), device, platform)
     )
@@ -618,12 +668,16 @@ def test_prefetch_copies_pinned_and_pageable_batches_to_the_accelerator():
     _assert_same_batches(actual, expected)
     _assert_same_batches([first], expected[:1])
     assert all(batch["advantages"].device == device for batch in actual)
-    assert pinned["values"].is_pinned() and not pageable["values"].is_pinned()
-    assert torch.equal(pinned["values"], pageable["values"])
-    assert torch.equal(pinned["ids"]["step"], pageable["ids"]["step"])
-    for got, want in zip(from_pinned, iter_dict_chunks(pageable, 4)):
-        assert torch.equal(got["values"].cpu(), want["values"])
-        assert torch.equal(got["ids"]["step"].cpu(), want["ids"]["step"])
+    # A pageable source is staged through the pinned buffers, an already
+    # pinned one is copied straight from; both land on the same values.
+    assert len(from_pageable) == 4 and len(from_pinned) == 4
+    for staged, direct, want in zip(
+        from_pageable, from_pinned, iter_dict_chunks(pageable, 4)
+    ):
+        assert torch.equal(staged["values"].cpu(), want["values"])
+        assert torch.equal(direct["values"].cpu(), want["values"])
+        assert torch.equal(staged["ids"]["step"].cpu(), want["ids"]["step"])
+        assert torch.equal(direct["ids"]["step"].cpu(), want["ids"]["step"])
 
 
 class _LegacyDataset:

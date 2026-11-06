@@ -152,23 +152,79 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
     return list(iter_dict_chunks(data, split_size, dim))
 
 
-def _alloc_on_device(data, device, copies: list):
+class _PinnedStage:
+    """Reusable pinned host buffers for one in-flight batch.
+
+    Pinned host memory is a scarce process-wide resource, and PyTorch's host
+    allocator rounds every block up to a power of two and keeps it for the life
+    of the process. Staging buffers are therefore reused rather than allocated
+    per batch, so the pinned footprint follows the size of a batch instead of
+    the size of the whole dataset the batches come from.
+
+    One stage holds the buffers for one batch. :func:`prefetch_to_device`
+    alternates between two stages, which is all it can have in flight.
+    """
+
+    def __init__(self):
+        # (shape, dtype) -> buffers, one per tensor of that shape in a batch.
+        self._buffers: dict[tuple, list[torch.Tensor]] = {}
+        self._taken: dict[tuple, int] = {}
+        self._event = None
+
+    def acquire(self) -> None:
+        """Wait for the last copy out of these buffers, then reuse them."""
+        if self._event is not None:
+            # A device-side wait would not help: the refill below is a host
+            # copy, so the host itself must not overwrite a buffer the device
+            # is still reading.
+            self._event.synchronize()
+            self._event = None
+        self._taken.clear()
+
+    def stage(self, src: torch.Tensor) -> torch.Tensor:
+        """Copy ``src`` into a reusable pinned buffer and return the buffer."""
+        key = (tuple(src.shape), src.dtype)
+        buffers = self._buffers.setdefault(key, [])
+        index = self._taken.get(key, 0)
+        self._taken[key] = index + 1
+        if index == len(buffers):
+            # A batch may hold several tensors of one shape, so a stage keeps
+            # one buffer per tensor of that shape rather than one per shape.
+            buffers.append(torch.empty(src.shape, dtype=src.dtype, pin_memory=True))
+        buffer = buffers[index]
+        buffer.copy_(src)
+        return buffer
+
+    def record(self, event) -> None:
+        """Note the copy that reads these buffers, for the next ``acquire``."""
+        self._event = event
+
+    def release(self) -> None:
+        """Drop the buffers once the device has finished reading them."""
+        self.acquire()
+        self._buffers.clear()
+
+
+def _alloc_on_device(data, device, copies: list, stage: _PinnedStage | None = None):
     """Mirror ``data`` with empty device tensors and queue the pinned sources."""
     if isinstance(data, torch.Tensor):
         if data.device.type != "cpu":
             return data.to(device=device).contiguous()
         src = data.contiguous()
         if not src.is_pinned():
-            src = src.pin_memory()
+            src = stage.stage(src) if stage is not None else src.pin_memory()
         dst = torch.empty_like(src, device=device)
         copies.append((dst, src))
         return dst
     if isinstance(data, dict):
         return {
-            key: _alloc_on_device(value, device, copies) for key, value in data.items()
+            key: _alloc_on_device(value, device, copies, stage)
+            for key, value in data.items()
         }
     if isinstance(data, (list, tuple)):
-        return type(data)(_alloc_on_device(value, device, copies) for value in data)
+        return type(data)(
+            _alloc_on_device(value, device, copies, stage) for value in data
+        )
     return data
 
 
@@ -182,11 +238,13 @@ def prefetch_to_device(
     With an accelerator ``torch_platform`` (``Worker.torch_platform``), the copy
     of the next batch is issued on a side stream before the current batch is
     yielded, so it overlaps the caller's work on the current batch. CPU tensors
-    that are not pinned are pinned first, because only pinned copies run
-    asynchronously. Destination memory is allocated on the current stream, which
-    waits for a batch's copy before the batch is yielded, so the tensors need no
-    ``record_stream`` and can be used on the current stream like any other.
-    Without a platform or for a CPU device, batches are moved one at a time.
+    that are not already pinned are staged through two reusable pinned buffer
+    sets, because only pinned copies run asynchronously; the pinned footprint is
+    therefore two batches, whatever the size of the sequence. Destination memory
+    is allocated on the current stream, which waits for a batch's copy before
+    the batch is yielded, so the tensors need no ``record_stream`` and can be
+    used on the current stream like any other. Without a platform or for a CPU
+    device, batches are moved one at a time.
 
     Args:
         batches: Nested tensor containers, as accepted by ``put_tensor_device``.
@@ -204,10 +262,14 @@ def prefetch_to_device(
 
     copy_stream = torch_platform.Stream(device=device)
     current_stream = torch_platform.current_stream(device)
+    # Only one copy is ever in flight, so two stages are enough: one being
+    # filled, one still being read by the device.
+    stages = (_PinnedStage(), _PinnedStage())
 
-    def start_copy(batch):
+    def start_copy(batch, stage):
+        stage.acquire()
         copies = []
-        staged = _alloc_on_device(batch, device, copies)
+        staged = _alloc_on_device(batch, device, copies, stage)
         # Destination blocks may have been freed by work still queued on the
         # current stream.
         copy_stream.wait_stream(current_stream)
@@ -221,13 +283,16 @@ def prefetch_to_device(
             # Queued copies must finish before their destinations are freed.
             copy_stream.synchronize()
             raise
+        stage.record(done)
         return staged, done
 
     batch_iter = iter(batches)
     pending = None
+    started = 0
     try:
         for batch in batch_iter:
-            pending = start_copy(batch)
+            pending = start_copy(batch, stages[started % 2])
+            started += 1
             del batch
             break
         while pending is not None:
@@ -235,7 +300,8 @@ def prefetch_to_device(
             current_stream.wait_event(pending[1])
             pending = None
             for batch in batch_iter:
-                pending = start_copy(batch)
+                pending = start_copy(batch, stages[started % 2])
+                started += 1
                 del batch
                 break
             # Yield without keeping a reference, so the caller can free the batch.
@@ -244,6 +310,9 @@ def prefetch_to_device(
         # A batch dropped mid-copy must not hand its memory back early.
         if pending is not None:
             current_stream.wait_event(pending[1])
+        # The staging buffers outlive the copies that read them.
+        for stage in stages:
+            stage.release()
 
 
 def concat_batch(data1, data2):
@@ -397,12 +466,8 @@ def process_nested_dict_for_adv(nested_dict, rollout_epoch):
     return ret_dict
 
 
-def process_nested_dict_for_train(nested_dict, shuffle_id, pin_memory=False):
-    """Flatten ``[T, B, ...]`` tensors to ``[T * B, ...]`` and reorder by ``shuffle_id``.
-
-    With ``pin_memory``, CPU results are gathered straight into pinned host
-    memory, so later host-to-device copies can run asynchronously.
-    """
+def process_nested_dict_for_train(nested_dict, shuffle_id):
+    """Flatten ``[T, B, ...]`` tensors to ``[T * B, ...]`` and reorder by ``shuffle_id``."""
     ret_dict = {}
     for key, value in nested_dict.items():
         if key in ["dones", "terminations", "truncations", "prev_values"]:
@@ -413,17 +478,9 @@ def process_nested_dict_for_train(nested_dict, shuffle_id, pin_memory=False):
             ret_dict[key] = None
         if isinstance(value, torch.Tensor):
             value = value.reshape(-1, *value.shape[2:])
-            if pin_memory and value.device.type == "cpu":
-                out = torch.empty(
-                    (shuffle_id.numel(), *value.shape[1:]),
-                    dtype=value.dtype,
-                    pin_memory=True,
-                )
-                ret_dict[key] = torch.index_select(value, 0, shuffle_id, out=out)
-            else:
-                ret_dict[key] = value[shuffle_id]
+            ret_dict[key] = value[shuffle_id]
         elif isinstance(value, dict):
-            ret_dict[key] = process_nested_dict_for_train(value, shuffle_id, pin_memory)
+            ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
 
 
