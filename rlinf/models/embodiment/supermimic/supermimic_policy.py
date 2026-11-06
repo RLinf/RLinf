@@ -45,6 +45,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     critic_input_dim,
 )
 from rlinf.envs.sim.g1_mimic.features import integrate_residual
+from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
 from rlinf.envs.sim.g1_mimic.reward import (
     analytic_failure_prob,
@@ -111,6 +112,8 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
             also keeps the running mean and std of the world-model residual.
         termination_bias_init: Initial termination-head bias; ``None`` keeps
             the default initialization.
+        torch_compile: Compile the training scans and the G1 kinematics on
+            large CUDA batches. The kinematics switch is process-wide.
     """
 
     def __init__(
@@ -123,6 +126,7 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         input_norm: bool = False,
         wm_state_loss: str = "paper",
         termination_bias_init: float | None = None,
+        torch_compile: bool = True,
     ):
         super().__init__()
         self.goal_encoding = str(goal_encoding)
@@ -153,7 +157,8 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         )
         self.autocast_dtype: torch.dtype | None = None
         self._training: DictConfig | None = None
-        self._compile_cache = CompileCache()
+        self._compile_cache = CompileCache(enabled=torch_compile)
+        set_kinematics_compile(torch_compile)
         self._wm_window = None
         self._imagination = None
 
@@ -668,4 +673,5 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
             input_norm=str(cfg.input_norm) == "running",
             wm_state_loss=str(cfg.wm_state_loss),
             termination_bias_init=None if bias is None else float(bias),
+            torch_compile=bool(cfg.torch_compile),
         )

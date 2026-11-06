@@ -32,6 +32,7 @@ from rlinf.envs.sim.g1_mimic.push_recovery import (
     REFERENCE_POSE,
 )
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
+from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 
 
 def merge_rank_rows(results: list[dict | None]) -> dict[str, torch.Tensor]:
@@ -39,7 +40,7 @@ def merge_rank_rows(results: list[dict | None]) -> dict[str, torch.Tensor]:
     parts = [rows for rows in results if rows]
     if not parts:
         raise RuntimeError("no env rank returned evaluation rows")
-    return {key: torch.cat([rows[key] for rows in parts]) for key in parts[0]}
+    return cat_list_of_dict_tensor(parts)
 
 
 def _json_ready(metrics: dict[str, float]) -> dict[str, float | None]:

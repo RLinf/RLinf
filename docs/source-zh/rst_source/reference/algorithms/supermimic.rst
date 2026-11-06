@@ -163,7 +163,7 @@ Critic 默认在 :math:`V_\psi(s, g, \xi)` 上再拼一个 4 维根误差，拟�
      - --
      - G.2；试验之间仿真上下文和关节噪声不同
 
-CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_）和 zita-ch（`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_）是社区复现，本实现只把它们作为设计参考，没有复制它们的代码。上表描述的是开发时查阅的 ``main`` 分支，当时没有记录具体 commit；这两个仓库之后若有改动，以仓库当前代码为准。``supermimic_lafan1_goal730`` 配方把 730 维 Goal、99 维观测、解析终止头、前 500 次只更新世界模型、骨盆奖励锚、滑动输入归一化、机体系残差，以及除以滑动标准差的世界模型误差放在同一次训练里，critic 用 ``body_error`` 特征。仿真器是 mjlab。使用指南中的论文覆盖项把这四项设为 ``torso``、``none``、``heading``、``paper``。
+CuboiLeo（`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_）和 zita-ch（`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_）是社区复现，均以 MIT 许可证发布。上表中标为与其中某个复现相同的选择，本实现沿用了该复现的算法流程和参数；``supermimic_lafan1_goal730`` 配方的设置取自 zita-ch 的实现。代码按 RLinf 的 env、rollout、actor worker 组织，没有沿用这两个仓库的结构。上表描述的是开发时查阅的 ``main`` 分支，当时没有记录具体 commit；这两个仓库之后若有改动，以仓库当前代码为准。``supermimic_lafan1_goal730`` 配方把 730 维 Goal、99 维观测、解析终止头、前 500 次只更新世界模型、骨盆奖励锚、滑动输入归一化、机体系残差，以及除以滑动标准差的世界模型误差放在同一次训练里，critic 用 ``body_error`` 特征。仿真器是 mjlab。使用指南中的论文覆盖项把这四项设为 ``torso``、``none``、``heading``、``paper``。
 
 实现入口
 --------

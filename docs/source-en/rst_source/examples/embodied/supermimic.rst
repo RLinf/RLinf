@@ -625,6 +625,10 @@ above change some of them. Each can be passed as a Hydra override.
    * - ``actor.fsdp_config.amp_autocast.enabled``
      - ``true`` (bf16)
      - bfloat16 autocast of the network forwards; see above.
+   * - ``actor.model.torch_compile``
+     - ``True``
+     - Compile the training scans, the env's reward and feature pieces and FK
+       on large CUDA batches. ``False`` keeps them eager.
    * - ``env.train.total_num_envs``
      - 4096
      - Parallel simulator environments, global. Collection throughput and
@@ -691,6 +695,17 @@ RLinf sees (``cluster.component_placement`` maps ``actor,env,rollout`` to
        runner.logger.log_path=/data/runs/lafan1 \
        runner.save_interval=1000
 
+RLinf's shared launcher starts the recipe with its defaults. It writes each
+launch to a new ``logs/<time>-<config>`` folder in the repository and passes
+no Hydra overrides, so call ``train_embodied_agent.py`` directly to change
+keys or to resume. Training does not render; ``MUJOCO_GL=disabled`` replaces
+the launcher's EGL default on machines without EGL:
+
+.. code-block:: bash
+
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+   MUJOCO_GL=disabled bash examples/embodiment/run_embodiment.sh supermimic_lafan1_goal730
+
 To train on one GPU of a larger machine, replace the placement with one
 entry per worker group. Hydra cannot override the recipe's combined
 ``actor,env,rollout`` key in place, so the first override removes it:
@@ -710,13 +725,11 @@ numbered ``cuda:0`` inside the process: a worker assigned node GPU 2 can
 still report ``cuda:0``. Check the placement together with node-level GPU
 monitoring to identify the actual device in use.
 
-The commands set two keys explicitly:
+The ``train_embodied_agent.py`` commands set two keys explicitly:
 
 * ``runner.logger.log_path``: the recipe's ``../results`` is relative to the
   launch directory. With a fixed folder, resume and evaluation find the
-  checkpoints directly. Avoid ``examples/embodiment/run_embodiment.sh`` for
-  SuperMimic: it puts every launch in a new ``logs/<time>-<config>`` folder
-  and does not forward Hydra overrides.
+  checkpoints directly.
 * ``runner.save_interval``: the recipe saves every 2000 updates. Choose an
   interval from the measured seconds per update (see
   `Performance and Hardware`_).
@@ -1182,7 +1195,8 @@ environments and bfloat16 autocast, warm compile cache:
 **Compilation.** A first large run compiles training scans and FK. The
 PyTorch kernel cache is under ``/tmp/torchinductor_<user>``; starting on a
 new machine or after clearing that cache takes longer. Keep
-``SUPERMIMIC_SCAN_EAGER`` and ``SUPERMIMIC_FK_EAGER`` unset for training.
+``actor.model.torch_compile`` at ``True`` for training; ``False`` keeps the
+scans, the env pieces and FK eager, which suits small smoke runs.
 
 On an 8 GB laptop GPU under WSL2, 1024 environments collected about 3,900
 environment transitions per second, one update with a quarter of the paper
@@ -1204,3 +1218,11 @@ and evaluation through the RLinf entries.
 Full training with the current structure, the paper overrides, the paper's
 two-GPU recipe, multiple nodes, Slurm, real BONES-SEED data and paper §4.3
 T-pose recovery remain unvalidated.
+
+Acknowledgements
+----------------
+
+Thanks to `CuboiLeo <https://github.com/CuboiLeo>`__ and
+`zita-ch <https://github.com/zita-ch>`__ for publishing their SuperMimic
+reproductions. The :doc:`algorithm page <../../reference/algorithms/supermimic>`
+lists the choices this implementation takes from each.

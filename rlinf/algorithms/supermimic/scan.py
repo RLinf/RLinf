@@ -24,13 +24,12 @@ hour.
 
 On a CUDA batch of at least 256 rows each piece is compiled once. A
 network's ``autocast_dtype`` autocasts that network's linear stack only;
-the scans do not cast the state, the kinematics or the loss.
-``SUPERMIMIC_SCAN_EAGER=1`` keeps every piece eager.
+the scans do not cast the state, the kinematics or the loss. A cache built
+with ``enabled=False`` keeps every piece eager.
 """
 
 from __future__ import annotations
 
-import os
 import warnings
 
 import torch
@@ -57,7 +56,8 @@ from rlinf.models.embodiment.supermimic.networks import running_state_loss
 class CompileCache:
     """Compiled functions and fallback state owned by one worker or scan."""
 
-    def __init__(self):
+    def __init__(self, enabled: bool = True):
+        self.enabled = bool(enabled)
         self.compiled: dict = {}
         self.failed: set[str] = set()
         self.announced: set[str] = set()
@@ -74,7 +74,7 @@ def run_compiled(name: str, fn, *args, cache: CompileCache):
     """Run ``fn`` eagerly, or reuse its owner's compiled large-CUDA scan."""
     probe = _leading_batch(args)
     eager = (
-        os.environ.get("SUPERMIMIC_SCAN_EAGER") == "1"
+        not cache.enabled
         or name in cache.failed
         or probe is None
         or (not probe.is_cuda)

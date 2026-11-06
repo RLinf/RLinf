@@ -18,9 +18,6 @@ Where Configs Live
    * - Embodied RL
      - ``examples/embodiment/config/*.yaml``
      - ``bash examples/embodiment/run_embodiment.sh <config_name>``
-   * - SuperMimic (G1 motion tracking)
-     - ``examples/embodiment/config/supermimic_lafan1_goal730.yaml``
-     - ``python examples/embodiment/train_embodied_agent.py --config-name supermimic_lafan1_goal730``; see :doc:`../examples/embodied/supermimic`
    * - Reasoning RL
      - ``examples/reasoning/config/**.yaml``
      - ``bash examples/reasoning/run_main_grpo_math.sh <config_name>``

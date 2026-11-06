@@ -35,7 +35,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     EPISODE_CONT,
     EPISODE_FAILURE,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
+from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits, set_kinematics_compile
 from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env, compose_end_kind
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary, load_motion_library
 from rlinf.envs.sim.g1_mimic.obs import RollingHistory, add_sensor_noise, analytic_obs
@@ -53,6 +53,8 @@ from rlinf.envs.sim.g1_mimic.velocity import (
     velocity_reward,
 )
 from rlinf.models.embodiment.supermimic.normalization import merged_batch_stats
+from rlinf.scheduler import Worker
+from rlinf.utils.utils import seed_everything
 
 
 def env_device() -> torch.device:
@@ -61,10 +63,13 @@ def env_device() -> torch.device:
     Float32 matmuls in the kinematics and rewards use TF32 tensor cores, as in
     the policy workers; the switch is process-wide.
     """
-    if torch.cuda.is_available():
+    device_type = Worker.torch_device_type
+    platform = Worker.torch_platform
+    if device_type is None or platform is None or not platform.is_available():
+        return torch.device("cpu")
+    if device_type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
-        return torch.device("cuda", torch.cuda.current_device())
-    return torch.device("cpu")
+    return torch.device(device_type, platform.current_device())
 
 
 def build_motion_library(env_cfg: DictConfig, device: torch.device) -> MotionLibrary:
@@ -164,9 +169,8 @@ class G1MimicEnv:
         self.total_num_processes = int(total_num_processes)
         self.worker_info = worker_info
         self.device = env_device()
-        torch.manual_seed(self.seed)
-        if self.device.type == "cuda":
-            torch.cuda.manual_seed(self.seed)
+        seed_everything(self.seed)
+        set_kinematics_compile(bool(cfg.torch_compile))
 
         self.obs_dim = int(cfg.obs_dim)
         self.include_ref_ori = self.obs_dim == 99
@@ -191,7 +195,7 @@ class G1MimicEnv:
         joint_low, joint_high = asset_joint_limits()
         self.joint_low = joint_low.to(self.device)
         self.joint_high = joint_high.to(self.device)
-        self._compile_cache = CompileCache()
+        self._compile_cache = CompileCache(enabled=bool(cfg.torch_compile))
         self.group: dist.ProcessGroup | None = None
 
         self.num_motion_envs = self.num_envs // 2 if self.velocity else self.num_envs

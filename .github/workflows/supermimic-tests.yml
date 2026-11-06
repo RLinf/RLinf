@@ -23,7 +23,6 @@ jobs:
           export PYTHONPATH=$(pwd)
           export MUJOCO_GL=disable
           export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
-          export SUPERMIMIC_SCAN_EAGER=1 SUPERMIMIC_FK_EAGER=1
           source .venv/bin/activate
           python -c 'import torch, mjlab, mujoco_warp; assert torch.cuda.is_available(), "GPU unavailable"'
           python -m pytest tests/e2e_tests/embodied/test_supermimic.py -q -rs

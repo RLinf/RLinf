@@ -55,7 +55,7 @@ from rlinf.envs.sim.g1_mimic.eval_metrics import (
     VELOCITY_G2,
     VELOCITY_SMOKE,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
+from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits, set_kinematics_compile
 from rlinf.envs.sim.g1_mimic.g1_mimic_env import (
     build_motion_library,
     env_device,
@@ -94,6 +94,7 @@ from rlinf.envs.sim.g1_mimic.velocity import (
     step_test_commands,
     velocity_fall,
 )
+from rlinf.scheduler import Worker
 
 _TASK_SETS = (
     {TRACKING},
@@ -178,6 +179,7 @@ class G1MimicEvalEnv:
         self.total_num_processes = int(total_num_processes)
         self.worker_info = worker_info
         self.device = env_device()
+        set_kinematics_compile(bool(cfg.torch_compile))
         self.tasks = [str(task) for task in cfg.eval_tasks]
         if set(self.tasks) not in _TASK_SETS or len(set(self.tasks)) != len(self.tasks):
             raise ValueError(
@@ -201,9 +203,10 @@ class G1MimicEvalEnv:
         self._epoch = 0
         self._t = 0
 
-        cuda = self.device.type == "cuda"
-        self._rng_devices = [self.device] if cuda else []
-        with torch.random.fork_rng(devices=self._rng_devices):
+        on_accelerator = self.device.type != "cpu"
+        self._rng_devices = [self.device] if on_accelerator else []
+        self._rng_device_type = self.device.type if on_accelerator else None
+        with self._fork_rng():
             torch.manual_seed(self.seed + self.seed_offset)
             self._save_rng()
         with self._own_rng():
@@ -217,10 +220,17 @@ class G1MimicEvalEnv:
 
     # ----------------------------------------------------------------- setup
 
+    def _fork_rng(self):
+        return torch.random.fork_rng(
+            devices=self._rng_devices, device_type=self._rng_device_type
+        )
+
     def _save_rng(self) -> None:
         self._cpu_rng = torch.get_rng_state()
-        self._cuda_rng = (
-            torch.cuda.get_rng_state(self.device) if self._rng_devices else None
+        self._device_rng = (
+            Worker.torch_platform.get_rng_state(self.device)
+            if self._rng_devices
+            else None
         )
 
     @contextlib.contextmanager
@@ -230,10 +240,10 @@ class G1MimicEvalEnv:
         The training env shares the process; evaluation must not shift its
         random stream.
         """
-        with torch.random.fork_rng(devices=self._rng_devices):
+        with self._fork_rng():
             torch.set_rng_state(self._cpu_rng)
-            if self._cuda_rng is not None:
-                torch.cuda.set_rng_state(self._cuda_rng, self.device)
+            if self._device_rng is not None:
+                Worker.torch_platform.set_rng_state(self._device_rng, self.device)
             yield
             self._save_rng()
 

@@ -16,3 +16,7 @@ critic_features: root4      # root4 or body_error
 input_norm: none            # none or running (per-feature running statistics)
 wm_state_loss: paper        # paper, scaled or running
 termination_bias_init: null
+
+# Compile the training scans, the env's reward and feature pieces and the G1
+# kinematics on large CUDA batches; False keeps them eager.
+torch_compile: True

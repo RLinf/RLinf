@@ -421,12 +421,15 @@ def default_state(
     return state
 
 
-assert (
-    heading_invariant_features(default_state(1, "cpu", torch.float32)).shape[-1] == 71
+_HEADING_WIDTH = heading_invariant_features(
+    default_state(1, "cpu", torch.float32)
+).shape[-1]
+assert _HEADING_WIDTH == 71, (
+    f"expected 71 heading-invariant features, got {_HEADING_WIDTH}"
 )
-assert (
-    root_error_4d(
-        default_state(1, "cpu", torch.float32), default_state(1, "cpu", torch.float32)
-    ).shape[-1]
-    == CRITIC_ROOT_ERR_DIM
+_ROOT_ERROR_WIDTH = root_error_4d(
+    default_state(1, "cpu", torch.float32), default_state(1, "cpu", torch.float32)
+).shape[-1]
+assert _ROOT_ERROR_WIDTH == CRITIC_ROOT_ERR_DIM, (
+    f"expected a {CRITIC_ROOT_ERR_DIM}-d root error, got {_ROOT_ERROR_WIDTH}"
 )

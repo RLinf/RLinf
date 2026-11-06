@@ -36,6 +36,7 @@ from rlinf.envs.sim.g1_mimic.features import (
     residual_target,
     scale_context,
 )
+from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.supermimic.normalization import RunningMeanStd
 
 
@@ -56,16 +57,10 @@ def _mlp_forward(
 
 
 def _mlp(sizes: list[int], last_gain: float | None = None) -> nn.Sequential:
-    layers: list[nn.Module] = []
-    for i in range(len(sizes) - 1):
-        linear = nn.Linear(sizes[i], sizes[i + 1])
-        if i < len(sizes) - 2:
-            layers.extend((linear, nn.SiLU()))
-        else:
-            if last_gain is not None:
-                nn.init.xavier_uniform_(linear.weight, gain=last_gain)
-                nn.init.zeros_(linear.bias)
-            layers.append(linear)
+    layers = make_mlp(sizes[0], sizes[1:], act_builder=nn.SiLU, last_act=False)
+    if last_gain is not None:
+        nn.init.xavier_uniform_(layers[-1].weight, gain=last_gain)
+        nn.init.zeros_(layers[-1].bias)
     return nn.Sequential(*layers)
 
 

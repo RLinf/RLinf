@@ -278,7 +278,7 @@ class SuperMimicReplay:
         # there. Every later window keeps its physical start. The new frame
         # adds at most one window, ending on the slot just written.
         full = count_before == self.capacity
-        assert self._windows is not None
+        assert self._windows is not None, "expected a built window mask, got None"
         mask = self._windows.ok
         mask[env_ids, written] = mask[env_ids, written] & ~full
         start = torch.remainder(written - (k - 1), self.capacity)
@@ -299,7 +299,7 @@ class SuperMimicReplay:
         if HISTORY_LEN > self.capacity:
             self._starts = None
             return
-        assert self._starts is not None
+        assert self._starts is not None, "expected a built history-start mask, got None"
         # A fresh slot only checks itself. Dropping the oldest frame changes
         # the history check of the next HISTORY_LEN slots, including the slot
         # that now holds the new frame.

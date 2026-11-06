@@ -247,8 +247,6 @@ def _entry_env(world):
         RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES=str(128 * 1024**2),
         RAY_OVERRIDE_RESOURCES=json.dumps({"CPU": 4}),
     )
-    env.setdefault("SUPERMIMIC_SCAN_EAGER", "1")
-    env.setdefault("SUPERMIMIC_FK_EAGER", "1")
     return env
 
 
@@ -308,6 +306,7 @@ def smoke_overrides(clips, world: int, velocity: bool) -> tuple[list, list]:
         "env.train.motion_on_cpu=true",
         "env.eval.motion_on_cpu=true",
         f"env.eval.max_steps_per_rollout_epoch={_CLIP_FRAMES}",
+        "actor.model.torch_compile=false",
         "runner.logger.logger_backends=null",
         "++cluster.object_store_memory_mb=128",
     ]

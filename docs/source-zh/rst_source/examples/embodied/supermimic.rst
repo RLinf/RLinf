@@ -419,6 +419,9 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
    * - ``actor.fsdp_config.amp_autocast.enabled``
      - ``true``\ （bf16）
      - 网络前向使用 bfloat16 autocast，见上文。
+   * - ``actor.model.torch_compile``
+     - ``True``
+     - 在大批量 CUDA 数据上编译训练扫描、环境中的奖励和特征片段以及 FK；设为 ``False`` 时都以 eager 方式运行。
    * - ``env.train.total_num_envs``
      - 4096
      - 并行仿真环境数，全局量。采集吞吐和显存都随它增长。
@@ -462,6 +465,13 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
        runner.logger.log_path=/data/runs/lafan1 \
        runner.save_interval=1000
 
+RLinf 的通用启动脚本按配方默认值启动训练。它每次启动都在仓库里新建一个 ``logs/<时间>-<配置名>`` 目录，也不转发 Hydra 覆盖项；要改配置项或恢复训练，请直接调用 ``train_embodied_agent.py``。训练不需要渲染；在没有 EGL 的机器上，用 ``MUJOCO_GL=disabled`` 替换脚本默认的 EGL：
+
+.. code-block:: bash
+
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
+   MUJOCO_GL=disabled bash examples/embodiment/run_embodiment.sh supermimic_lafan1_goal730
+
 要在多卡机器上只用其中一张，就按 worker 组分别写放置。Hydra 不能原地覆盖配方里合写的 ``actor,env,rollout`` 键，所以第一个覆盖项先删掉它：
 
 .. code-block:: bash
@@ -474,9 +484,9 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
 
 RLinf 会按 placement 为 Worker 设置设备可见性，启动前的 ``CUDA_VISIBLE_DEVICES`` 或 ``HIP_VISIBLE_DEVICES`` 可能被重新设置。Worker 被隔离为只能看见一张卡时，这张卡在进程内编号为 ``cuda:0``；例如分配的是节点 GPU 2，Worker 内仍可显示 ``cuda:0``。判断实际使用哪张卡时，请结合 placement 和节点 GPU 监控查看。
 
-上面的命令显式设置了两项：
+上面的 ``train_embodied_agent.py`` 命令显式设置了两项：
 
-* ``runner.logger.log_path``：配方里的 ``../results`` 相对启动目录。固定一个目录，恢复和评测都能直接找到检查点。SuperMimic 不要用 ``examples/embodiment/run_embodiment.sh``：它每次启动都换一个 ``logs/<时间>-<配置名>`` 目录，也不转发 Hydra 覆盖项。
+* ``runner.logger.log_path``：配方里的 ``../results`` 相对启动目录。固定一个目录，恢复和评测都能直接找到检查点。
 * ``runner.save_interval``：配方每 2000 次更新保存。可以按实测的每次更新耗时调整间隔（见 `性能与硬件`_）。
 
 TensorBoard 文件写在 ``<log_path>/tensorboard``：``tensorboard --logdir /data/runs/lafan1/tensorboard``。
@@ -730,7 +740,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 * PyTorch 峰值分配 17.1 GB（reserved 18.8 GB），驱动看到的整卡用量 20.1 GB，Warp 内存池峰值 0.48 GB，主机 RSS 约 4.0 GB。
 * 结束时累计 40064 个向量仿真步、约 1.64 亿个环境转移。
 
-**编译。** 首次大规模运行会编译训练扫描和 FK。PyTorch kernel 缓存在 ``/tmp/torchinductor_<用户名>``，换机器或清空缓存后启动会更慢。正式训练保持 ``SUPERMIMIC_SCAN_EAGER`` 和 ``SUPERMIMIC_FK_EAGER`` 未设置。
+**编译。** 首次大规模运行会编译训练扫描和 FK。PyTorch kernel 缓存在 ``/tmp/torchinductor_<用户名>``，换机器或清空缓存后启动会更慢。正式训练保持 ``actor.model.torch_compile`` 为 ``True``；设为 ``False`` 时训练扫描、环境中的编译片段和 FK 都以 eager 方式运行，适合小规模冒烟测试。
 
 在 WSL2 下的一张 8 GB 笔记本 GPU 上：1024 个环境每秒采集约 3,900 个环境转移；用论文批量四分之一（1024 条想象 rollout、512 个窗口）做一次更新约 21 s，PyTorch 峰值 4.2 GB；论文批量下一次更新需要约 11 GB，超过这张卡的显存。这些数字来自受 kernel 启动开销限制的笔记本环境，不能用来推测数据中心 GPU 的表现。
 
@@ -738,3 +748,8 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 --------
 
 上文报告的训练、恢复和评测运行使用此前的单进程实现。对当前的 env、rollout 和 actor worker，FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总已在小规模 CPU 测试中检查；``tests/e2e_tests/embodied/test_supermimic.py`` 中的 GPU 冒烟测试通过 RLinf 入口覆盖训练、恢复和评测。当前结构下的完整训练、论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
+
+致谢
+--------
+
+感谢 `CuboiLeo <https://github.com/CuboiLeo>`__ 和 `zita-ch <https://github.com/zita-ch>`__ 公开各自的 SuperMimic 复现。本实现沿用了其中哪些选择，见 :doc:`算法页 <../../reference/algorithms/supermimic>`。

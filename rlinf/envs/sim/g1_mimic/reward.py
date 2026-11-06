@@ -445,4 +445,4 @@ def xy_yaw_drift(
     return pos_drift, yaw_drift
 
 
-assert NUM_BODIES == 14
+assert NUM_BODIES == 14, f"expected 14 tracked bodies, got {NUM_BODIES}"

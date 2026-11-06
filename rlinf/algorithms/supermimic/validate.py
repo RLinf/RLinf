@@ -23,7 +23,8 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
 
-# Policy settings the G1 envs build observations, goals and critic inputs from.
+# Policy settings the G1 envs build observations, goals and critic inputs from,
+# and the compile switch they share with the policy.
 ENV_MODEL_KEYS = (
     "goal_encoding",
     "goal_anchor",
@@ -31,6 +32,7 @@ ENV_MODEL_KEYS = (
     "velocity_tracking",
     "critic_features",
     "input_norm",
+    "torch_compile",
 )
 # Algorithm settings the G1 envs score and terminate with.
 ENV_ALGORITHM_KEYS = ("reward_anchor", "termination_body", "gamma")
@@ -89,9 +91,10 @@ def _check_number(
 def _check_model(model: DictConfig, prefix: str) -> None:
     for name in ("goal_encoding", "critic_features", "input_norm", "wm_state_loss"):
         _check_choice(model, name, prefix)
-    for name in ("goal_anchor", "velocity_tracking"):
-        if not isinstance(model.get(name, None), bool):
-            raise ValueError(f"{prefix}.{name} must be a bool")
+    for name in ("goal_anchor", "velocity_tracking", "torch_compile"):
+        value = model.get(name, None)
+        if not isinstance(value, bool):
+            raise ValueError(f"{prefix}.{name} must be a bool, got {value!r}")
     if int(model.action_dim) != ACTION_DIM:
         raise ValueError(f"{prefix}.action_dim must be {ACTION_DIM}")
     if int(model.num_action_chunks) != 1:

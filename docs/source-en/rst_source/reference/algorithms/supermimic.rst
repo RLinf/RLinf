@@ -276,10 +276,14 @@ Paper, community, and implementation choices
 
 CuboiLeo (`CuboiLeo/SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`_)
 and zita-ch (`zita-ch/supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`_)
-are community reproductions used as design references; no code was copied
-from them. The table describes their ``main`` branches as consulted during
-development; no commit was recorded, so later changes in those repositories
-take precedence over this table. The ``supermimic_lafan1_goal730`` recipe
+are community reproductions, both released under the MIT License. Where the
+table marks a choice as the same as one of them, this implementation follows
+that reproduction's algorithm flow and parameters; the
+``supermimic_lafan1_goal730`` recipe takes its settings from zita-ch's. The
+code is organized around RLinf's env, rollout and actor workers rather than
+the layout of either repository. The table describes their ``main`` branches
+as consulted during development; no commit was recorded, so later changes in
+those repositories take precedence over this table. The ``supermimic_lafan1_goal730`` recipe
 trains with the 730-d goal, the 99-d observation, the analytic termination
 head, 500 world-model-only updates, the pelvis reward anchor, running input
 normalization, the body-frame residual, and a state loss divided by the

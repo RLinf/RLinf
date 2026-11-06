@@ -20,12 +20,12 @@ world frame, matching ``mj_objectVelocity`` after the COM-to-origin shift.
 
 Bodies at the same depth are one batched walk. A CUDA batch of 256 or more
 is compiled once per process so the walk is not a kernel launch per body.
-``SUPERMIMIC_FK_EAGER=1`` keeps the batched walk but skips that compile.
+``set_kinematics_compile(False)`` keeps the batched walk but skips that
+compile.
 """
 
 from __future__ import annotations
 
-import os
 import warnings
 from typing import TYPE_CHECKING
 
@@ -193,6 +193,17 @@ def _run_levels(state, table, tracked, nbody, levels):
 _COMPILED_LEVELS: dict = {}
 _COMPILE_FAILED = False
 _COMPILE_ANNOUNCED = False
+_COMPILE_ENABLED = True
+
+
+def set_kinematics_compile(enabled: bool) -> None:
+    """Allow or forbid compiling the batched walk in this process.
+
+    The switch is process-wide; the policy and the envs set it from the same
+    ``torch_compile`` value.
+    """
+    global _COMPILE_ENABLED
+    _COMPILE_ENABLED = bool(enabled)
 
 
 def _compiled_levels(state, table, tracked, nbody, levels):
@@ -485,12 +496,11 @@ class G1BodyKinematics:
                 return self._forward_levels(state)
             return self._forward_serial(state)
         batch = 1 if state.dim() == 1 else state.shape[0]
-        eager_only = os.environ.get("SUPERMIMIC_FK_EAGER") == "1"
         if (
             self._level_specs is not None
             and state.is_cuda
             and batch >= 256
-            and not eager_only
+            and _COMPILE_ENABLED
         ):
             squeezed = state.dim() == 1
             if squeezed:

@@ -215,6 +215,9 @@ class SuperMimicRunner(EmbodiedRunner):
 
         while self.global_step < self.max_steps:
             step = self.global_step
+            profiled_step = step if self._should_profile_step(step) else None
+            if profiled_step is not None:
+                self._open_profiling_window(profiled_step)
             with self.timer("step"):
                 with self.timer("generate_rollouts"):
                     ready = 0
@@ -233,6 +236,8 @@ class SuperMimicRunner(EmbodiedRunner):
                     self.update_rollout_weights()
                 last_step = self.global_step - 1
                 eval_metrics = self._maybe_eval_and_checkpoint(last_step)
+            if profiled_step is not None:
+                self._close_profiling_window(profiled_step)
             self._log_iteration(
                 last_step,
                 start_time,
