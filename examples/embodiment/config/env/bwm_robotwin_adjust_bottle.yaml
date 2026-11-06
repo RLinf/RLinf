@@ -1,0 +1,65 @@
+env_type: world_model
+backend: bwm
+task_suite_name: robotwin_adjust_bottle
+wm_env_type: robotwin
+
+total_num_envs: null
+
+auto_reset: True
+ignore_terminations: False
+max_steps_per_rollout_epoch: 200
+max_episode_steps: 200
+# The reward is paid once per episode, so nothing is earned after step 200.
+terminate_at_max_episode_steps: True
+
+use_rel_reward: False
+reward_coef: 1.0
+# Score frames 51-200 and pay 1 on step 200 if the peak reaches the threshold.
+reward_mode: episode_window_max
+reward_first_frame: 51
+success_reward_threshold: 0.9082576036453247
+
+# The RoboTwin pi0.5 policies read their own last joint command as proprio.
+state_from_last_action: True
+# RoboTwin's reset pose: arms at zero, grippers closed.
+rest_action: [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]
+
+is_eval: False
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+enable_offload: False
+
+###  ------------------BWM params define here ------------------
+
+# Reset frames exported from RoboTwin's head camera (Large_D435, 640x480).
+enable_kir: False
+initial_image_path: /path/to/robotwin_adjust_bottle_init_frames/
+
+# Wan2.2-TI2V-5B DiT and VAE, plus the fine-tuned BWM weights loaded on top.
+model_path: /path/to/Wan2.2-TI2V-5B/diffusion_pytorch_model.safetensors.index.json
+VAE_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+checkpoint_path: /path/to/bwm-robotwin-adjust-bottle-failure-ft/step-750.safetensors
+
+num_inference_steps: 50
+action_dim: 14
+chunk: 50                    # must equal actor.model.num_action_chunks
+condition_frame_length: 9
+image_size: [480, 640]
+
+action_bridge:
+  urdf_path: /path/to/RoboTwin/assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf
+  srdf_path: /path/to/RoboTwin/assets/embodiments/aloha-agilex/srdf/arx5_description_isaac.srdf
+  stat_path: /path/to/boundless-world-model/demo/stat.json
+  robot_pose: [0.0, -0.65, 0.0, 0.707, 0.0, 0.0, 0.707]
+
+reward_model:
+  from_pretrained: /path/to/robotwin_adjust_bottle_t5_reward/reward_model.pt
+  t5_model_name: /path/to/t5-base
+  image_size: [3, 224, 224]
