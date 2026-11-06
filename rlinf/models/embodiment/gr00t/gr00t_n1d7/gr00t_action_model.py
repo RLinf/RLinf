@@ -968,7 +968,8 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
                 : self.action_head.action_chunk,
                 : self.valid_action_dim,
             ]
-        value_t = value_t.mean(dim=-1, keepdim=False)
+        # ``[B, 1]``, matching the ``prev_values`` stored during rollout.
+        value_t = value_t.mean(dim=-1, keepdim=True)
 
         env_action_dim = self.action_dim
         log_probs = log_probs[..., :env_action_dim]
