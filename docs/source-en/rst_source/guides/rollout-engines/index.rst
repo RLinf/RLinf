@@ -22,6 +22,8 @@ independently of an RLinf task.
        a router (or a single server) from your own code.
    * - :doc:`SGLang Version Switching <../version>`
      - Switch between SGLang versions for the rollout engine.
+   * - :doc:`PhyAI <phyai>`
+     - Train PI0.5 on LIBERO with an FSDP actor and PhyAI's in-process GPU rollout backend.
 
 .. toctree::
    :hidden:
@@ -30,3 +32,4 @@ independently of an RLinf task.
    SGLang Server & Router <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
    SGLang Version Switching <../version>
+   PhyAI <phyai>
