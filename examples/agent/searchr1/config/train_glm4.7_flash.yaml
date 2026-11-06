@@ -207,7 +207,6 @@ actor:
   group_name: "ActorGroup"
   training_backend: megatron
   enable_dp_load_balance: True
-  enable_ragged_batch: True  # Balance real-length groups before broadcast; pad only loss microbatches.
   calculate_flops: False
   seed: 42
 

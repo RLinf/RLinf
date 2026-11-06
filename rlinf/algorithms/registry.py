@@ -118,9 +118,34 @@ def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Te
             )
     else:
         # reasoning tasks
-        kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
-        advantages, returns = fn(**kwargs)
-        res = postprocess_reasoning_advantages_outputs(advantages, returns)
+        mask = kwargs["loss_mask"]
+        ragged = isinstance(mask, list)
+        if ragged and adv_type == "grpo_dynamic":
+            kwargs["rewards"] = kwargs["rewards"].reshape(-1, 1)
+            res = fn(**kwargs)
+        else:
+            if ragged:
+                lengths = [len(row) for row in mask]
+                width = kwargs.get("sequence_length", max(lengths))
+                for key in ("loss_mask", "logprob", "ref_logprob", "values"):
+                    rows = kwargs.get(key)
+                    if isinstance(rows, list):
+                        kwargs[key] = torch.stack(
+                            [
+                                torch.nn.functional.pad(row, (0, width - len(row)))
+                                for row in rows
+                            ]
+                        )
+            kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
+            advantages, returns = fn(**kwargs)
+            res = postprocess_reasoning_advantages_outputs(advantages, returns)
+            if ragged:
+                res = tuple(
+                    [row[:length].contiguous() for row, length in zip(value, lengths)]
+                    if value is not None
+                    else None
+                    for value in res
+                )
     return res
 
 

@@ -27,8 +27,6 @@
      - 为大模型配置 5D 并行。
    * - :doc:`异步 agentic RL <../async_agentic>`
      - 让多轮 agent rollout 与训练重叠，用两个准入上限约束训练数据的新旧程度。
-   * - :doc:`智能体变长批次 <ragged_batches>`
-     - 在广播前按完整题组负载均衡，延迟到损失计算的小批次再补齐。
 
 .. toctree::
    :hidden:
@@ -42,4 +40,3 @@
    Profiling <../profile>
    5D 并行 <../5D>
    异步 agentic RL <../async_agentic>
-   智能体变长批次 <ragged_batches>

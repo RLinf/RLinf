@@ -28,8 +28,6 @@ training efficiency becomes the bottleneck.
      - Configure 5D parallelism for large models.
    * - :doc:`Asynchronous Agentic RL <../async_agentic>`
      - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
-   * - :doc:`Real-Length Agent Batches <ragged_batches>`
-     - Balance complete question groups before broadcast and defer sequence padding until the loss microbatch.
 
 .. toctree::
    :hidden:
@@ -43,4 +41,3 @@ training efficiency becomes the bottleneck.
    Profiling <../profile>
    5D Parallelism <../5D>
    Asynchronous Agentic RL <../async_agentic>
-   Real-Length Agent Batches <ragged_batches>
