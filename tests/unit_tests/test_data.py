@@ -3613,3 +3613,121 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+@pytest.mark.parametrize("advantage_mode", ["turn", "trajectory"])
+def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
+    """Preserve response spans and loss weights when prefix turns are folded."""
+    from rlinf.algorithms.advantages import compute_grpo_turn_advantages
+    from rlinf.algorithms.loss_scales import agent_scale, group_scale, turn_scale
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    lengths = [5, 9, 14, 7]
+    result = DynamicRolloutResult(
+        num_sequence=4,
+        group_size=2,
+        idx_to_traj=[0, 0, 0, 1],
+        input_ids=[list(range(n)) for n in lengths],
+        prompt_lengths=[3, 7, 12, 4],
+        response_lengths=[2, 2, 2, 3],
+        is_end=[False, False, True, True],
+        rewards=[1.0, 1.0, 1.0, 0.0],
+        recomputed_logprobs=[torch.arange(n) * 0.1 for n in lengths],
+        extra_fields_train={"idx_to_sub_traj": [0] * 4},
+    )
+    ragged = result.to_ragged_actor_batch()
+    values = compute_grpo_turn_advantages(
+        ragged["rewards"], 2, ragged["idx_to_traj"], advantage_mode
+    )
+    ragged["advantages"] = [
+        mask.float() * value for mask, value in zip(ragged["response_mask"], values)
+    ]
+    ragged["loss_scales"] = [mask.float() for mask in ragged["response_mask"]]
+    dense = DynamicRolloutResult.materialize_ragged_batch(ragged, 32, 0)
+    outputs = []
+    for batch in (ragged, dense):
+        context = {
+            "folding_scale": [],
+            "actor_global_batch_size": 2,
+            "data_parallel_world_size": 1,
+        }
+        for scale in (group_scale, agent_scale, turn_scale):
+            batch = scale(context, batch)
+        outputs.append(DynamicRolloutResult.pack_traj_batch(context, batch))
+    restored = DynamicRolloutResult.materialize_ragged_batch(outputs[0], 32, 0)
+    for key in (
+        "input_ids",
+        "response_mask",
+        "recomputed_logprobs",
+        "advantages",
+        "loss_scales",
+        "prompt_lengths",
+        "response_lengths",
+    ):
+        torch.testing.assert_close(restored[key], outputs[1][key])
+    assert restored["response_mask"][0, 5:7].sum() == 0
+
+
+def test_ragged_loss_materialization_preserves_gradients():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    leaves = [torch.randn(n, requires_grad=True) for n in (101, 201, 301)]
+    batch = DynamicRolloutResult.materialize_ragged_batch({"logprobs": leaves}, 8192, 0)
+    batch["logprobs"].square().sum().backward()
+    for row in leaves:
+        torch.testing.assert_close(row.grad, 2 * row.detach())
+
+
+@pytest.mark.parametrize("has_response", [False, True])
+def test_ragged_loss_with_empty_first_row(has_response):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    leaves = [torch.zeros(n, requires_grad=True) for n in (1, 5)]
+    mask = [torch.zeros(1, dtype=torch.bool), torch.full((5,), has_response)]
+    batch = DynamicRolloutResult.materialize_ragged_batch(
+        {"logprobs": leaves, "response_mask": mask}, 32, 0
+    )
+    loss, _ = compute_ppo_actor_loss(
+        logprobs=batch["logprobs"],
+        old_logprobs=batch["logprobs"].detach(),
+        advantages=torch.ones_like(batch["logprobs"]),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_mask=batch["response_mask"],
+        fast_path_zero_loss_mask=False,
+    )
+    loss.backward()
+    torch.testing.assert_close(leaves[0].grad, torch.zeros_like(leaves[0]))
+    expected = torch.full((5,), -0.2) if has_response else torch.zeros(5)
+    torch.testing.assert_close(leaves[1].grad, expected)
+
+
+def test_ragged_logprobs_survive_result_merge_and_split():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = [
+        DynamicRolloutResult(
+            num_sequence=1,
+            group_size=1,
+            idx_to_traj=[0],
+            input_ids=[list(range(n))],
+            prompt_lengths=[1],
+            response_lengths=[n - 1],
+            is_end=[True],
+            rewards=[1.0],
+            recomputed_logprobs=[torch.arange(n).float()],
+            ref_logprobs=[torch.arange(n).float() - 0.1],
+            dp_balanced=True,
+        )
+        for n in (101, 201, 301)
+    ]
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [1, 1, 1])
+    for original, result in zip(results, restored):
+        assert result.dp_balanced
+        assert result.input_ids == original.input_ids
+        torch.testing.assert_close(
+            result.recomputed_logprobs[0], original.recomputed_logprobs[0]
+        )
+        torch.testing.assert_close(result.ref_logprobs[0], original.ref_logprobs[0])

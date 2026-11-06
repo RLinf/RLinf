@@ -47,7 +47,10 @@ def group_scale(context, batch):
     # Convert the local dynamic-turn count back to the effective global batch
     # normalization used by the actor update.
     group_scale = num_sequence * dp_world_size / context["actor_global_batch_size"]
-    batch["advantages"] *= group_scale
+    if isinstance(batch["advantages"], list):
+        batch["advantages"] = [row * group_scale for row in batch["advantages"]]
+    else:
+        batch["advantages"] *= group_scale
     return batch
 
 

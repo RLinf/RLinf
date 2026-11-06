@@ -24,6 +24,72 @@ except (ImportError, ModuleNotFoundError) as e:
     raise ImportError("Megatron core was not found.") from e
 
 
+def preprocess_ragged_seqs(
+    rows: list[torch.Tensor],
+) -> tuple[torch.Tensor, PackedSeqParams]:
+    """Pack real-length rows with the same TP/CP boundaries as dense packing."""
+    tp = parallel_state.get_tensor_model_parallel_world_size()
+    cp = parallel_state.get_context_parallel_world_size()
+    rank = parallel_state.get_context_parallel_rank()
+    alignment = tp * cp * 2 if cp > 1 else tp
+    lengths = [((len(row) + alignment - 1) // alignment) * alignment for row in rows]
+    offsets = [0]
+    for length in lengths:
+        offsets.append(offsets[-1] + length)
+    packed = rows[0].new_zeros((offsets[-1] // cp, *rows[0].shape[1:]))
+    for row, start, length in zip(rows, offsets, lengths):
+        if cp == 1:
+            packed[start : start + len(row)] = row
+        else:
+            padded = row.new_zeros((length, *row.shape[1:]))
+            padded[: len(row)] = row
+            half = length // (2 * cp)
+            start //= cp
+            packed[start : start + half] = padded[rank * half : (rank + 1) * half]
+            reverse = length - (rank + 1) * half
+            packed[start + half : start + 2 * half] = padded[reverse : reverse + half]
+    cu_seqlens = torch.tensor(offsets, dtype=torch.int32, device=packed.device)
+    params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens,
+        cu_seqlens_kv_padded=cu_seqlens,
+        max_seqlen_q=max(lengths),
+        max_seqlen_kv=max(lengths),
+    )
+    return packed.unsqueeze(0), params
+
+
+def postprocess_ragged_seqs(
+    output: torch.Tensor, params: PackedSeqParams, lengths: list[int]
+) -> list[torch.Tensor]:
+    """Restore real-length rows, preserving the local autograd graph."""
+    cp = parallel_state.get_context_parallel_world_size()
+    outputs = [output]
+    if cp > 1:
+        outputs = [torch.empty_like(output) for _ in range(cp)]
+        torch.distributed.all_gather(
+            outputs, output.detach(), group=parallel_state.get_context_parallel_group()
+        )
+        outputs[parallel_state.get_context_parallel_rank()] = output
+    offsets = params.cu_seqlens_q_padded.tolist()
+    rows = []
+    for i, length in enumerate(lengths):
+        start, end = offsets[i : i + 2]
+        if cp == 1:
+            row = output[0, start : start + length]
+        else:
+            half = (end - start) // (cp * 2)
+            chunks = [data[0, start // cp : start // cp + 2 * half] for data in outputs]
+            row = torch.cat(
+                [data[:half] for data in chunks]
+                + [data[half:] for data in reversed(chunks)]
+            )[:length]
+        rows.append(row)
+    return rows
+
+
 def preprocess_packed_seqs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
