@@ -117,4 +117,28 @@ DCP 将训练状态保存到一组分布式检查点文件（``.distcp``）中�
 .. tip::
 
    想验证恢复是否成功，可以查看日志行。  
-   如果下一次训练从 step 30 开始，就说明恢复正常！  
+   如果下一次训练从 step 30 开始，就说明恢复正常！
+
+
+选择并恢复最佳 SFT checkpoint
+-----------------------------
+
+配置 ``runner.early_stop``，按验证指标选择 ``best_model/``，并在连续多次没有改善时停止训练：
+
+.. code-block:: yaml
+
+   runner:
+     early_stop:
+       enabled: true
+       monitor: value_spearman
+       mode: max
+       patience: 5
+       min_delta: 0.001
+
+loss 使用 ``mode: min``，分数使用 ``mode: max``。指标名必须与 worker 验证方法返回的 key 一致；缺少该指标时，错误信息会列出可用指标。改善幅度必须超过 ``min_delta``；非有限值计入 patience，但不会被选为最佳 checkpoint。
+
+省略 ``mode`` 时，``val_accuracy`` 默认使用 ``max``，其他指标默认使用 ``min``。设置 ``enabled: false`` 后，仍会选择最佳 checkpoint，并训练至配置的步数上限。
+
+SFT checkpoint 在 ``actor/`` 旁保存 ``runner_state.json``，记录验证后的训练步数、最佳指标值和 patience 计数。将 ``runner.resume_dir`` 设为 ``global_step_<N>/`` 或 ``best_model/``，即可随 worker checkpoint 一起恢复这些状态。恢复时保持 ``monitor``、``mode`` 和 ``min_delta`` 一致。已耗尽 patience 的 checkpoint 不再执行训练步骤。启用定期保存后，early-stop 也会在停止的那一步保存 checkpoint。
+
+旧版 ``global_step_<N>/`` checkpoint 仍可加载；由于其中没有 runner 状态，日志会提示最佳指标和 patience 从头开始跟踪，首次有限验证值会替换 ``best_model/``。若保存中断后留有 ``runner_state.incomplete``，恢复时会报错。数据加载器和 RNG 的恢复取决于对应 worker 的 checkpoint 支持。

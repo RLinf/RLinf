@@ -146,3 +146,43 @@ Resuming training
    To verify resumption, look for the log line.  
    If the next training step starts at 30, then the resume is working well!
 
+
+Select and resume the best SFT checkpoint
+-----------------------------------------
+
+Use ``runner.early_stop`` to select ``best_model/`` by a validation metric and
+optionally stop after repeated checks without improvement:
+
+.. code-block:: yaml
+
+   runner:
+     early_stop:
+       enabled: true
+       monitor: value_spearman
+       mode: max
+       patience: 5
+       min_delta: 0.001
+
+Set ``mode: min`` for a loss or ``mode: max`` for a score. The metric name must
+match a key returned by the worker's validation method. A missing key raises an
+error listing the available metrics. An improvement must exceed ``min_delta``;
+non-finite values count toward patience and never select a checkpoint.
+
+If you omit ``mode``, it defaults to ``max`` for ``val_accuracy`` and ``min``
+for every other metric. Set ``enabled: false`` to keep selecting the best
+checkpoint while training to the configured step limit.
+
+SFT checkpoints include ``runner_state.json`` alongside ``actor/``. It records
+the step, best metric value, and patience counter after validation. Set
+``runner.resume_dir`` to either ``global_step_<N>/`` or ``best_model/`` to
+restore them together with the worker checkpoint. Keep ``monitor``, ``mode``,
+and ``min_delta`` unchanged when resuming. A checkpoint that has already
+exhausted patience performs no further training steps. When periodic saving is
+enabled, early stopping also writes a checkpoint at the stopping step.
+
+Older ``global_step_<N>/`` checkpoints still load; a warning explains that
+best-model tracking and patience start fresh because those checkpoints contain
+no runner state. The first finite validation value then replaces ``best_model/``.
+A save interrupted while ``runner_state.incomplete`` exists is rejected on resume.
+Worker-specific data-loader and RNG restoration follows the
+worker's checkpoint support.
