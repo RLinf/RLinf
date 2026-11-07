@@ -23,6 +23,7 @@ import io
 import os
 import pickle
 import re
+import signal
 import subprocess
 import sys
 import textwrap
@@ -5488,6 +5489,87 @@ def test_robotwin_env_passes_its_camera_near_to_robotwin(
     assert handed_over["task_config"]["task_name"] == "place_shoe"
     assert "camera_near" not in env.cfg.task_config  # the config is not modified
     assert camera_cls._rlinf_camera_near_installed
+
+
+@pytest.mark.parametrize("state", ["parked", "unparked", "faulted", "close_error"])
+def test_arx5_close_releases_sessions_and_executors(monkeypatch, state):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    signals = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    env = DualARX5Env(
+        {
+            "require_camera": False,
+            "close_joint_timeout_s": 0.01,
+            "joint_return_stall_timeout_s": 0.01,
+        },
+        robot_info=_robot_info(DualARX5Config(node_rank=0)),
+    )
+    robot = env.robot
+    executors = env._arm_executors
+    # Start the workers so shutdown is exercised as well as SDK release.
+    for executor in executors:
+        executor.submit(lambda: None).result(timeout=5)
+    devices = sdk.SingleArm.instances
+    for device in devices:
+        if state == "unparked":
+            device.joints[1:3] = 1.0
+            device.stalled = True
+        elif state == "faulted":
+            device.fault = "latched fault"
+    if state == "close_error":
+        devices[-1].close_error = True
+        with pytest.raises(RuntimeError, match="SDK close failed"):
+            env.close()
+    else:
+        env.close()
+    env.close()
+    assert all(device.close_count == 1 for device in devices)
+    assert all(not owner.is_connected for owner in robot.owners())
+    assert env.robot is None
+    assert env._arms is None
+    assert env._arm_executors is None
+    assert env._closed
+    assert {s: signal.getsignal(s) for s in signals} == signals
+    for executor in executors:
+        with pytest.raises(RuntimeError, match="shutdown"):
+            executor.submit(lambda: None)
+
+
+@pytest.mark.parametrize("failed_component", ["right_arm", "camera"])
+def test_arx5_failed_startup_rolls_back_open_sessions(monkeypatch, failed_component):
+    import cv2
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    hardware = DualARX5Config(node_rank=0)
+    if failed_component == "right_arm":
+        sdk.SingleArm.fail_can_port = "can3"
+        message, opened_count = "CAN open failed", 1
+    else:
+        hardware.camera_type = "v4l2"
+        hardware.base_camera_serials = ["/dev/video-test"]
+        monkeypatch.setattr(
+            cv2, "VideoCapture", Mock(side_effect=RuntimeError("camera open failed"))
+        )
+        message, opened_count = "camera open failed", 2
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    signals = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    with pytest.raises(RuntimeError, match=message):
+        DualARX5Env(
+            {"require_camera": False},
+            robot_info=_robot_info(hardware),
+        )
+    assert len(sdk.SingleArm.instances) == opened_count
+    assert all(device.close_count == 1 for device in sdk.SingleArm.instances)
+    assert {s: signal.getsignal(s) for s in signals} == signals
 
 
 def test_arx5_joint_reset_qpos_uses_radians():

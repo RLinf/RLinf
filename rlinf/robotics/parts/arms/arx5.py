@@ -16,7 +16,6 @@
 
 import sys
 import threading
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -28,7 +27,6 @@ from scipy.spatial.transform import Rotation
 from rlinf.robotics.parts.arms.base import Arm, BaseArm
 from rlinf.robotics.parts.base import Action, Features, RobotPart
 from rlinf.robotics.parts.views import MethodEndEffector
-from rlinf.utils.logging import get_logger
 
 ARX5_REST_TOLERANCE_DEG = 1.25
 ARX5_PARK_MAX_DEG = 0.5
@@ -41,6 +39,7 @@ class _SDKIKOutput:
     def __init__(self, stream: Any) -> None:
         self._stream = stream
         self._local = threading.local()
+        self._active_calls = 0
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -88,6 +87,7 @@ def _quiet_sdk_ik_output() -> Iterator[None]:
         if not isinstance(sys.stdout, _SDKIKOutput):
             sys.stdout = _SDKIKOutput(sys.stdout)
         output = sys.stdout
+        output._active_calls += 1
     previous = getattr(output._local, "pending", None)
     output._local.pending = ""
     try:
@@ -100,6 +100,10 @@ def _quiet_sdk_ik_output() -> Iterator[None]:
                 del output._local.pending
             else:
                 output._local.pending = previous
+            with _SDK_OUTPUT_LOCK:
+                output._active_calls -= 1
+                if output._active_calls == 0 and sys.stdout is output:
+                    sys.stdout = output._stream
 
 
 class ARX5RestMonitor:
@@ -157,7 +161,7 @@ class ARX5RestMonitor:
 class ARX5ParkingMonitor(ARX5RestMonitor):
     """Require J2/J3 near mechanical zero and stable for one second.
 
-    Other joint targets do not gate release. The installation must support
+    Only J2/J3 determine whether parking is confirmed. The installation must support
     disconnecting at this parking pose with its actual end-effector payload.
     """
 
@@ -217,7 +221,6 @@ class ARX5Arm(BaseArm):
         *,
         motion_duration: float = 0.1,
         urdf_path: str | None = None,
-        park_max_deg: float = ARX5_PARK_MAX_DEG,
     ) -> None:
         self.gripper_open, self.gripper_closed = gripper_endpoints(arm_type)
         if not can_port:
@@ -228,10 +231,6 @@ class ARX5Arm(BaseArm):
         self.arm_type = arm_type
         self.motion_duration = motion_duration
         self.urdf_path = urdf_path
-        if not np.isfinite(park_max_deg) or park_max_deg <= 0:
-            raise ValueError("ARX5 park_max_deg must be finite and positive.")
-        self.park_max_deg = park_max_deg
-        self._stop_requested = False
 
     @property
     def parts(self) -> dict[str, RobotPart]:
@@ -249,7 +248,6 @@ class ARX5Arm(BaseArm):
         }
 
     def _open(self) -> Any:
-        self._stop_requested = False
         try:
             from bimanual import SingleArm
         except ModuleNotFoundError as exc:
@@ -267,34 +265,7 @@ class ARX5Arm(BaseArm):
         return SingleArm(config)
 
     def _release(self, device: Any) -> None:
-        # PartGroup rollback can bypass env cleanup. Check the actual parking
-        # pose again before release; other joints need not match their targets.
-        monitor = ARX5ParkingMonitor(self.park_max_deg)
-        settled = False
-        last_warning = time.monotonic()
-        try:
-            while not settled and not self._stop_requested:
-                try:
-                    self._check_ready()
-                    joints = self.read_joint_positions()
-                    settled = monitor.observe(joints, time.monotonic())
-                except Exception:
-                    monitor.reset()
-                if not settled:
-                    if time.monotonic() - last_warning >= 10:
-                        get_logger().critical(
-                            "ARX5 %s: SDK close blocked; J2/J3 parking and rest are not "
-                            "confirmed. Keeping the connection open.",
-                            self.can_port,
-                        )
-                        last_warning = time.monotonic()
-                    time.sleep(0.1)
-        finally:
-            device.close()
-
-    def request_stop(self) -> None:
-        """Bypass parking when an interrupted collector disconnects."""
-        self._stop_requested = True
+        device.close()
 
     def _check_ready(self) -> None:
         if self._device is None:

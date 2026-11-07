@@ -71,9 +71,8 @@ class DualARX5EnvConfig:
     ``max_step`` (meters) and ``max_step_rad`` limit target changes relative
     to measured feedback; zero disables the corresponding limit. Franka's
     corresponding driver settings limit changes relative to preceding targets.
-    ``close`` returns all six arm joints to mechanical zero.
-    A return timeout may release parked arms regardless of other joint errors.
-    If parking cannot be confirmed, ``close`` raises and leaves the SDK connected.
+    ``close`` attempts to return all six arm joints to mechanical zero,
+    logs parking failures, and releases the SDK connections.
     A reset timeout continues from measured feedback after stopping the motion.
     Returns stream small joint targets at ``step_frequency``, accelerate up to
     ``joint_return_speed_deg_s``, and slow down near the target. Timeout budgets
@@ -262,7 +261,6 @@ class DualARX5Env(gym.Env):
             right_can_port=self.hardware.right_can_port,
             arm_type=self.hardware.arm_type,
             motion_duration=1 / self.config.step_frequency,
-            park_max_deg=self.config.close_park_max_deg,
             left_urdf_path=self.hardware.left_urdf_path,
             right_urdf_path=self.hardware.right_urdf_path,
             cameras={info.name: info for info in camera_specs},
@@ -284,11 +282,8 @@ class DualARX5Env(gym.Env):
                 self._signal_handlers[signum] = signal.getsignal(signum)
                 signal.signal(signum, self._request_stop_signal)
         try:
-            # Own partial startup here: PartGroup.connect() otherwise releases
-            # the first arm immediately if the second arm or a camera fails.
-            for part in (*self._cameras.values(), *self._arms):
-                self.check_stop_requested()
-                part.connect()
+            self.check_stop_requested()
+            self.robot.connect()
         except BaseException:
             self.close()
             raise
@@ -381,7 +376,7 @@ class DualARX5Env(gym.Env):
         return target
 
     def _return_to_zero_positions(self) -> None:
-        """Return all six joints to zero, verifying J2/J3 before SDK release."""
+        """Attempt a return to zero and verify J2/J3 parking."""
         self._closing = True
         if not self._arms or not any(arm.is_connected for arm in self._arms):
             return
@@ -791,19 +786,27 @@ class DualARX5Env(gym.Env):
         if self._closed:
             self._restore_signal_handlers()
             return
-        self._return_to_zero_positions()
-        if self._arm_executors is not None:
-            for executor in self._arm_executors:
-                executor.shutdown(wait=True)
-            self._arm_executors = None
-        if self.robot is not None:
-            self.robot.disconnect()
-            self.robot = None
-        self._arms = None
-        self._cameras = {}
-        self._camera_attempted.clear()
-        self._restore_signal_handlers()
-        self._closed = True
+        try:
+            self._return_to_zero_positions()
+        except Exception:
+            self._logger.exception("ARX5 park-on-close failed.")
+        finally:
+            try:
+                if self._arm_executors is not None:
+                    for executor in self._arm_executors:
+                        executor.shutdown(wait=True)
+            finally:
+                try:
+                    if self.robot is not None:
+                        self.robot.disconnect()
+                finally:
+                    self._arm_executors = None
+                    self.robot = None
+                    self._arms = None
+                    self._cameras = {}
+                    self._camera_attempted.clear()
+                    self._restore_signal_handlers()
+                    self._closed = True
 
     def _restore_signal_handlers(self) -> None:
         if threading.current_thread() is threading.main_thread():

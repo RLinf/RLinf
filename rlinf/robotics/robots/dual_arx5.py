@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ..discovery import RobotConfig
-from ..parts.arms.arx5 import ARX5_PARK_MAX_DEG, ARX5Arm
+from ..parts.arms.arx5 import ARX5Arm
 from ..parts.base import PartGroup
 from ..parts.cameras import Camera, CameraInfo
 from ..robot import Robot
@@ -38,7 +38,6 @@ class DualARX5Robot(Robot):
         arm_type: int,
         node_rank: int | None = None,
         motion_duration: float = 0.1,
-        park_max_deg: float = ARX5_PARK_MAX_DEG,
         left_urdf_path: str | None = None,
         right_urdf_path: str | None = None,
         cameras: Mapping[str, CameraInfo] | None = None,
@@ -55,7 +54,6 @@ class DualARX5Robot(Robot):
                     port,
                     arm_type,
                     motion_duration=motion_duration,
-                    park_max_deg=park_max_deg,
                     urdf_path=urdf,
                     node_rank=node_rank,
                 )

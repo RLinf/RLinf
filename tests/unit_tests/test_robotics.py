@@ -18,14 +18,17 @@ from __future__ import annotations
 
 import ast
 import ctypes
+import io
 import os
 import pickle
 import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -3334,6 +3337,118 @@ def test_arx5_gripper_motor_positions_match_physical_open_and_closed_states(
     arm = ARX5Arm("can1", arm_type=arm_type)
     assert arm.gripper_open == opened
     assert arm.gripper_closed == closed
+
+
+@pytest.mark.parametrize("state", ["parked", "unparked", "faulted"])
+def test_arx5_disconnect_releases_sdk_without_waiting_for_parking(state):
+    # A subprocess timeout also catches a regression to an unbounded wait.
+    program = """
+import sys
+sys.path.insert(0, "tests")
+from robot_mocks.sdks import arx5
+from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+sdk = arx5()["bimanual"]
+sys.modules["bimanual"] = sdk
+arm = ARX5Arm("can1")
+arm.connect()
+device = sdk.SingleArm.instances[0]
+if sys.argv[1] == "unparked":
+    device.joints[1:3] = 1.0
+elif sys.argv[1] == "faulted":
+    device.fault = "latched fault"
+arm.disconnect()
+arm.disconnect()
+assert device.close_count == 1
+assert not arm.is_connected
+"""
+    subprocess.run(
+        [sys.executable, "-c", program, state],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@pytest.mark.parametrize("result", ["success", "unreachable", "error"])
+def test_arx5_cartesian_command_restores_stdout(monkeypatch, result):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm, ARX5IKUnreachableError
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    arm = ARX5Arm("can1")
+    arm.connect()
+    device = sdk.SingleArm.instances[0]
+    device.cartesian_result = result != "unreachable"
+    device.cartesian_error = result == "error"
+    target = {"tcp_pose": np.array([0.3, 0, 0.2, 0, 0, 0, 1])}
+    try:
+        if result == "unreachable":
+            with pytest.raises(ARX5IKUnreachableError):
+                arm.send_action(target)
+        elif result == "error":
+            with pytest.raises(RuntimeError, match="Cartesian command failed"):
+                arm.send_action(target)
+        else:
+            arm.send_action(target)
+        assert sys.stdout is stream
+        assert stream.getvalue() == "SDK diagnostic\n"
+    finally:
+        arm.disconnect()
+
+
+@pytest.mark.parametrize("first_to_finish", [0, 1])
+def test_arx5_overlapping_commands_restore_stdout_after_last_call(
+    monkeypatch, first_to_finish
+):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    arms = [ARX5Arm("can1"), ARX5Arm("can3")]
+    for arm in arms:
+        arm.connect()
+    entered = [threading.Event(), threading.Event()]
+    release = [threading.Event(), threading.Event()]
+
+    def command(index):
+        def send(pose, duration):
+            entered[index].set()
+            assert release[index].wait(timeout=5)
+            print("set_ee_pose_xyzrpy(...) IK 无解")
+            return True
+
+        return send
+
+    for index, device in enumerate(sdk.SingleArm.instances):
+        monkeypatch.setattr(device, "set_ee_pose_xyzrpy", command(index))
+    target = {"tcp_pose": np.array([0.3, 0, 0.2, 0, 0, 0, 1])}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(arm.send_action, target) for arm in arms]
+        try:
+            assert all(event.wait(timeout=5) for event in entered)
+            print("background log")
+            release[first_to_finish].set()
+            futures[first_to_finish].result(timeout=5)
+            assert sys.stdout is not stream
+            release[1 - first_to_finish].set()
+            futures[1 - first_to_finish].result(timeout=5)
+            assert sys.stdout is stream
+            assert stream.getvalue() == "background log\n"
+        finally:
+            for event in release:
+                event.set()
+            for arm in arms:
+                arm.disconnect()
 
 
 def test_a_reading_is_empty_until_the_operator_takes_hold():
