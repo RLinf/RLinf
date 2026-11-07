@@ -1,0 +1,80 @@
+defaults:
+  - env/libero_spatial@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  # Keep MuJoCo/EGL environments off the OpenWAM rollout GPU.
+  component_placement:
+    env: 2
+    rollout: 3
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_spatial_openwam_eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  max_steps: -1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    # Three subprocess environments share the dedicated env worker (GPU 2).
+    total_num_envs: 3
+    render_gpu_ids: [0, 1, 2] # one EGL renderer per GPU, none on the rollout GPU (3)
+    auto_reset: true
+    ignore_terminations: true
+    # OpenWAM's LIBERO protocol settles each reset for 30 zero-action steps.
+    num_steps_wait: 30
+    max_episode_steps: 600
+    max_steps_per_rollout_epoch: 600
+    group_size: 1
+    use_fixed_reset_state_ids: true
+    use_ordered_reset_state_ids: true
+    is_eval: true
+    # Render every step; one EGL renderer per GPU (render_gpu_ids) keeps
+    # multi-process LIBERO stable. Set true to render only at chunk ends.
+    skip_intermediate_renders: false
+    openwam_action_representation: native_delta_eef10
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_type: "openwam"
+    precision: bf16
+    is_lora: false
+    model_path: /path/to/openwam-libero-sft-delta-aligned
+    device: cuda
+    load_to_device: true
+    ckpt_name: null
+    num_frames: 33
+    num_action_chunks: 10 # executed per generation, see openwam.inference_horizon
+    action_dim: 10
+    height: 384
+    width: 320
+    denoise_steps: 10
+    openwam:
+      inference_horizon: 10 # OpenWAM's deploy executor regenerates after 10 of 32 actions

@@ -61,7 +61,10 @@ Key points
   (``distrib_optim.pt``) *and* random-number generators are captured,
   guaranteeing bit-for-bit reproducibility after resume.
 * **Data sampler** – ``data.pt`` stores dataloader, so no
-  samples are skipped or repeated.
+  samples are skipped or repeated. When an SFT run resumes from a
+  checkpoint that has no ``data.pt`` (written before the loader became
+  stateful), the loader restarts from the beginning of the epoch with a
+  warning; set ``runner.strict_resume: true`` to fail instead.
 
 
 

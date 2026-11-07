@@ -156,6 +156,9 @@ jobs:
               - '.github/workflows/sft-e2e-tests.yml'
               - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
+              - 'rlinf/models/embodiment/openwam/**'
+              - 'requirements/embodied/models/openwam.txt'
+              - 'tests/e2e_tests/evaluations/libero_spatial_openwam_eval.yaml'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
               - 'evaluations/libero/*fastwam*'
               - 'examples/embodiment/config/model/fastwam.yaml'
@@ -185,6 +188,10 @@ jobs:
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
+              # The OpenWAM adapter, SFT worker and toolkits have unit tests.
+              - 'rlinf/models/embodiment/openwam/**'
+              - 'rlinf/workers/sft/**'
+              - 'toolkits/openwam/**'
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'

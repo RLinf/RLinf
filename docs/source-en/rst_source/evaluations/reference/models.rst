@@ -1,7 +1,7 @@
 Supported Models
 ================
 
-Eval configs reference model presets from ``examples/embodiment/config/model/`` via ``defaults``, and override fields such as ``model_path`` under ``rollout.model``. Models with example configs in ``evaluations/`` today:
+Eval configs reference model presets from ``examples/embodiment/config/model/`` via ``defaults`` and override fields such as ``model_path`` under ``rollout.model``; the OpenWAM recipes instead carry the whole ``rollout.model`` block inline because the checkpoint's own ``config.yaml`` supplies the model settings. Models with example configs in ``evaluations/`` today:
 
 .. list-table::
    :header-rows: 1
@@ -37,6 +37,9 @@ Eval configs reference model presets from ``examples/embodiment/config/model/`` 
    * - π₀-FAST (LeRobot)
      - ``pi0_fast``
      - ``libero_10_pi0_fast_eval``
+   * - OpenWAM
+     - ``openwam``
+     - ``libero_spatial_openwam_eval``, ``libero_object_openwam_eval``, ``libero_goal_openwam_eval``, ``libero_10_openwam_eval``, ``robotwin_adjust_bottle_openwam_eval``, ``robotwin_click_bell_openwam_eval`` (``toolkits/openwam/gen_robotwin_eval_recipes.py --all`` generates the 46 RoboTwin tasks RLinf supports)
 
 Model Path
 ----------
