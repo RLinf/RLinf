@@ -15,6 +15,7 @@
 import dataclasses
 import importlib.util
 import logging
+import math
 import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
@@ -93,6 +94,7 @@ SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
@@ -110,6 +112,7 @@ SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
 SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
+SupportedModel.LINGBOTVLAV2 = SupportedModel.register("lingbotvlav2", force=True)
 SupportedModel.ABOT_M0 = SupportedModel.register("abot_m0", force=True)
 SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
 SupportedModel.CFG_MODEL = SupportedModel.register("cfg_model", force=True)
@@ -140,6 +143,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
+        SupportedModel.PSI0,
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
@@ -155,6 +159,7 @@ EMBODIED_MODEL = set(
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
         SupportedModel.LINGBOTVLA,
+        SupportedModel.LINGBOTVLAV2,
         SupportedModel.ABOT_M0,
         SupportedModel.RESNET_REWARD,
         SupportedModel.GR00T_N1D6,
@@ -281,6 +286,20 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.decode_log_interval = cfg.get("decode_log_interval", 500000)
         cfg.use_torch_compile = cfg.get("use_torch_compile", False)
         cfg.torch_compile_max_bs = cfg.get("torch_compile_max_bs", 128)
+
+        serving_mode = cfg.get("serving_mode", None)
+        backend_type = cfg.get("backend_type", "engine")
+        assert backend_type in ("engine", "server"), (
+            f"rollout.sglang.backend_type must be 'engine' or 'server', "
+            f"but got {backend_type!r}."
+        )
+        # Only SGLangWorker (serving_mode unset) reads backend_type; the
+        # embodied / worker_http workers would silently ignore 'server'.
+        assert not (serving_mode is not None and backend_type == "server"), (
+            f"rollout.sglang.serving_mode={serving_mode!r} does not support "
+            f"backend_type=server; the server backend is only implemented for "
+            f"the default serving worker (leave serving_mode unset)."
+        )
         return cfg
 
     def validate_vllm_cfg(cfg):
@@ -963,6 +982,117 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate Psi0 + SIMPLE standalone evaluation settings."""
+    assert only_eval, "Psi0 evaluation config requires an evaluation runner."
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 Eval does not support decoupled mode."
+    )
+    assert not (
+        cfg.rollout.get("recompute_logprobs", False)
+        or cfg.rollout.get("collect_prev_infos", False)
+    ), "Psi0 evaluation requires collect_prev_infos=false and recompute_logprobs=false."
+
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SIZE, SIMPLE_ACTION_DIM
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert (
+        execution_horizon == SIMPLE_ACTION_CHUNK_SIZE
+        and int(model_cfg.action_dim) == SIMPLE_ACTION_DIM
+    ), (
+        "Psi0 SIMPLE Eval requires actions shaped "
+        f"[B, {SIMPLE_ACTION_CHUNK_SIZE}, {SIMPLE_ACTION_DIM}]."
+    )
+    assert psi0_cfg.get("sampler", "deterministic_euler") == "deterministic_euler", (
+        "Psi0 Eval requires sampler='deterministic_euler'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE Eval requires psi0.rtc.enabled=true."
+    )
+
+    eval_cfg = cfg.env.get("eval", None)
+    assert eval_cfg is not None and eval_cfg.env_type == "simple", (
+        "Psi0 Eval requires env.eval.env_type='simple'."
+    )
+
+
+def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate Psi0 + SIMPLE PPO training settings."""
+    assert not only_eval, "Psi0 training config cannot use an Eval runner."
+    assert cfg.runner.get("val_check_interval", -1) <= 0, (
+        "Psi0 SIMPLE requires runner.val_check_interval <= 0: evaluation "
+        "during training is not supported. "
+        "Use standalone evaluation for saved checkpoints."
+    )
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.rollout_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 SIMPLE training does not support decoupled mode."
+    )
+    assert cfg.rollout.get("collect_prev_infos", False), (
+        "Psi0 training requires rollout.collect_prev_infos=true."
+    )
+    assert not cfg.rollout.get("recompute_logprobs", False), (
+        "Psi0 recomputes logprobs in the actor; rollout.recompute_logprobs must be false."
+    )
+
+    from rlinf.envs.sim.simple.utils import SIMPLE_ACTION_CHUNK_SIZE, SIMPLE_ACTION_DIM
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert (
+        execution_horizon == SIMPLE_ACTION_CHUNK_SIZE
+        and int(model_cfg.action_dim) == SIMPLE_ACTION_DIM
+    ), (
+        "Psi0 SIMPLE training requires actions shaped "
+        f"[B, {SIMPLE_ACTION_CHUNK_SIZE}, {SIMPLE_ACTION_DIM}]."
+    )
+    assert psi0_cfg.get("sampler") == "stochastic_transition", (
+        "Psi0 training requires sampler='stochastic_transition'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE training requires psi0.rtc.enabled=true."
+    )
+    assert cfg.env.train.env_type == "simple", (
+        "Psi0 training requires env.train.env_type='simple'."
+    )
+    assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
+        "actor_critic"
+    ), "Psi0 supports PPO with GAE and actor_critic loss only."
+    assert model_cfg.get("add_value_head", False), (
+        "Psi0 PPO requires actor.model.add_value_head=true."
+    )
+    assert not cfg.critic.get("use_critic_model", False), (
+        "Psi0 PPO uses its model-local value head, not a separate critic model."
+    )
+    assert cfg.actor.fsdp_config.get("use_orig_params", False), (
+        "Psi0 partial freezing requires actor.fsdp_config.use_orig_params=true."
+    )
+
+
 def validate_only_eval_rollout_model(model_cfg) -> None:
     """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
 
@@ -1067,18 +1197,148 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.PSI0:
+        assert cfg.rollout.pipeline_stage_num == 1, (
+            "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
+            "each rollout worker supports one environment and RTC stream."
+        )
+        if only_eval:
+            _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
+        else:
+            _validate_psi0_train_cfg(cfg, model_cfg, only_eval)
+
+    if model_type == SupportedModel.LINGBOTVLAV2:
+        # V2 always computes in bf16; only the FSDP actor stores fp32 weights,
+        # because the rollout has no FSDP cast to bring them back to bf16.
+        rollout_precision = cfg.rollout.model.get("precision", model_cfg.precision)
+        if torch_dtype_from_precision(rollout_precision) != torch.bfloat16:
+            raise ValueError(
+                "Expected rollout.model.precision=bf16 for LingBot-VLA V2, "
+                f"got {rollout_precision!r}."
+            )
+    if model_type == SupportedModel.LINGBOTVLAV2 and not only_eval:
+        if algorithm_cfg.reward_type != "chunk_level":
+            raise ValueError(
+                "LingBot-VLA V2 predicts one value per action chunk; expected "
+                "algorithm.reward_type=chunk_level, got "
+                f"{algorithm_cfg.reward_type!r}."
+            )
+        fsdp_cfg = cfg.actor.fsdp_config
+        if fsdp_cfg.strategy != "fsdp2":
+            raise ValueError(
+                "Expected actor.fsdp_config.strategy=fsdp2 for LingBot-VLA V2, "
+                f"got {fsdp_cfg.strategy!r}."
+            )
+        param_dtype = fsdp_cfg.mixed_precision.get("param_dtype", None)
+        if (
+            torch_dtype_from_precision(model_cfg.precision) != torch.float32
+            or torch_dtype_from_precision(param_dtype) != torch.bfloat16
+        ):
+            raise ValueError(
+                "LingBot-VLA V2 PPO keeps trainable weights in fp32 and computes "
+                "in bf16; expected actor.model.precision=fp32 and "
+                "actor.fsdp_config.mixed_precision.param_dtype=bf16, got "
+                f"{model_cfg.precision!r} and {param_dtype!r}."
+            )
+        if fsdp_cfg.mixed_precision.get("cast_forward_inputs", True):
+            raise ValueError(
+                "Expected actor.fsdp_config.mixed_precision.cast_forward_inputs="
+                "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
+            )
+
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
-        # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
-        # gap per action, which assumes the OpenVLA family's tokenized action layout.
-        # GR00T needs no recompute: it already rescores inside its training forward.
-        assert model_type in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT], (
+        # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
+        # the OpenVLA family and LingBot-VLA V2. OpenPI already returns the
+        # action-token layout. GR00T rescores inside its training forward.
+        assert model_type in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+            SupportedModel.OPENPI,
+            SupportedModel.LINGBOTVLAV2,
+        ], (
             f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value]}, "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value, SupportedModel.LINGBOTVLAV2.value]}, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
+    if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
+        assert model_type == SupportedModel.OPENPI, (
+            "Expected model_type='openpi' for rollout_backend='phyai', "
+            f"got {model_cfg.model_type!r}."
+        )
+        openpi_cfg = model_cfg.get("openpi", {})
+        assert model_cfg.get("pi05", True), (
+            "Expected model.pi05=True for rollout_backend='phyai', "
+            f"got {model_cfg.get('pi05')!r}."
+        )
+        assert openpi_cfg.get("config_name", ""), (
+            "Expected a non-empty model.openpi.config_name for "
+            f"rollout_backend='phyai', got {openpi_cfg.get('config_name')!r}."
+        )
+        expected_variants = {
+            "paligemma_variant": "gemma_2b",
+            "action_expert_variant": "gemma_300m",
+        }
+        for field, expected in expected_variants.items():
+            configured = openpi_cfg.get(field, expected)
+            assert configured == expected, (
+                f"Expected model.openpi.{field}={expected!r} for "
+                f"rollout_backend='phyai', got {configured!r}."
+            )
+        num_images = openpi_cfg.get("num_images_in_input", 3)
+        assert 1 <= num_images <= 3, (
+            "Expected model.openpi.num_images_in_input in [1, 3] for "
+            f"rollout_backend='phyai', got {num_images}."
+        )
+        if not only_eval:
+            loss_type = algorithm_cfg.get("loss_type")
+            assert loss_type not in {"embodied_dagger", "rlt_ac", "rlt_td3"}, (
+                "Expected an algorithm.loss_type other than embodied_dagger, "
+                f"rlt_ac, or rlt_td3 for rollout_backend='phyai', got {loss_type!r}."
+            )
+            adv_type = algorithm_cfg.get("adv_type")
+            assert adv_type != "opd", (
+                "Expected an algorithm.adv_type other than 'opd' for "
+                f"rollout_backend='phyai', got {adv_type!r}."
+            )
+            syncer_type = cfg.weight_syncer.get("type")
+            assert syncer_type == "bucket", (
+                "Expected weight_syncer.type='bucket' for rollout_backend='phyai', "
+                f"got {syncer_type!r}."
+            )
+            assert num_images == 2, (
+                "Expected actor.model.openpi.num_images_in_input=2 for PhyAI "
+                f"training, got {num_images}."
+            )
+            assert model_cfg.get("add_value_head", False), (
+                "Expected actor.model.add_value_head=True for PhyAI training, "
+                f"got {model_cfg.get('add_value_head')!r}."
+            )
+            assert openpi_cfg.get("value_after_vlm", False), (
+                "Expected actor.model.openpi.value_after_vlm=True for PhyAI "
+                f"training, got {openpi_cfg.get('value_after_vlm')!r}."
+            )
+            value_vlm_mode = openpi_cfg.get("value_vlm_mode", "mean_token")
+            assert value_vlm_mode == "mean_token", (
+                "Expected actor.model.openpi.value_vlm_mode='mean_token' for "
+                f"PhyAI training, got {value_vlm_mode!r}."
+            )
+            assert not openpi_cfg.get("joint_logprob", False), (
+                "Expected actor.model.openpi.joint_logprob=False for PhyAI "
+                f"training, got {openpi_cfg.get('joint_logprob')!r}."
+            )
+            noise_method = openpi_cfg.get("noise_method", "flow_ode")
+            assert noise_method in {"flow_ode", "flow_sde"}, (
+                "Expected actor.model.openpi.noise_method 'flow_ode' or "
+                f"'flow_sde' for PhyAI training, got {noise_method!r}."
+            )
+            noise_level = float(openpi_cfg.get("noise_level", 0.0))
+            assert math.isfinite(noise_level) and noise_level >= 0, (
+                "Expected a finite, non-negative actor.model.openpi.noise_level "
+                f"for PhyAI training, got {noise_level}."
+            )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
@@ -1090,6 +1350,9 @@ def validate_embodied_cfg(cfg):
                 "runner.only_eval=True, or runner.task_type=embodied_eval."
             )
             cfg.env.eval.group_size = cfg.env.eval.get("group_size", 1)
+            cfg.env.eval.early_stop_on_done = bool(
+                cfg.env.eval.get("early_stop_on_done", False)
+            )
         if algorithm_cfg.get("rollout_epoch", None) is not None:
             logging.warning(
                 "algorithm.rollout_epoch is deprecated; use env.train.rollout_epoch instead."
@@ -1153,6 +1416,38 @@ def validate_embodied_cfg(cfg):
                     "max_new_token", None
                 )
 
+        if not only_eval:
+            importance_sampling_fix = algorithm_cfg.get(
+                "importance_sampling_fix", False
+            )
+            if importance_sampling_fix:
+                assert cfg.algorithm.loss_type in {"actor", "actor_critic"}, (
+                    "Expected algorithm.loss_type 'actor' or 'actor_critic' with "
+                    "algorithm.importance_sampling_fix=True, "
+                    f"got {cfg.algorithm.loss_type!r}."
+                )
+                importance_sampling_clip = algorithm_cfg.get(
+                    "importance_sampling_clip", None
+                )
+                assert (
+                    importance_sampling_clip is not None
+                    and importance_sampling_clip > 0
+                ), (
+                    "Expected a positive algorithm.importance_sampling_clip with "
+                    "algorithm.importance_sampling_fix=True, "
+                    f"got {importance_sampling_clip!r}."
+                )
+                assert algorithm_cfg.get("recompute_logprobs", False), (
+                    "Expected algorithm.recompute_logprobs=True with "
+                    "algorithm.importance_sampling_fix=True, got "
+                    f"{algorithm_cfg.get('recompute_logprobs')!r}."
+                )
+            if algorithm_cfg.get("recompute_logprobs", False):
+                assert not cfg.runner.get("use_training_pipeline", False), (
+                    "algorithm.recompute_logprobs is not supported with "
+                    "runner.use_training_pipeline=True."
+                )
+
     if not only_eval and cfg.runner.get("use_training_pipeline", False):
         assert cfg.algorithm.adv_type == "gae", (
             "algorithm.adv_type only supports 'gae' now"
@@ -1188,6 +1483,17 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    if model_type == SupportedModel.PSI0:
+        assert component_placement.get_world_size("rollout") == env_world_size, (
+            "Psi0 SIMPLE requires equal env and rollout worker counts: "
+            "each rollout worker maintains RTC state for one environment."
+        )
+        psi0_env_cfg = cfg.env.eval if only_eval else cfg.env.train
+        assert psi0_env_cfg.total_num_envs == env_world_size, (
+            "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
+            f"total_num_envs must equal the environment worker count ({env_world_size}), "
+            f"got {psi0_env_cfg.total_num_envs}."
+        )
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
@@ -1256,6 +1562,28 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
+        if cfg.env.eval.get("early_stop_on_done", False):
+            eval_num_envs_per_stage = (
+                cfg.env.eval.total_num_envs // env_world_size // stage_num
+            )
+            assert not cfg.env.eval.auto_reset, (
+                "env.eval.early_stop_on_done requires env.eval.auto_reset=false: "
+                "each eval rollout epoch is one episode."
+            )
+            assert stage_num == 1, (
+                "env.eval.early_stop_on_done requires rollout.pipeline_stage_num=1."
+            )
+            assert eval_num_envs_per_stage == 1, (
+                "env.eval.early_stop_on_done requires one eval env per worker "
+                f"(got {eval_num_envs_per_stage})."
+            )
+            assert component_placement.get_world_size("rollout") == env_world_size, (
+                "env.eval.early_stop_on_done requires equal env and rollout "
+                "worker counts."
+            )
+            assert not cfg.runner.get("enable_decoupled_mode", False), (
+                "env.eval.early_stop_on_done does not support decoupled mode."
+            )
 
     if not only_eval:
         assert cfg.env.train.total_num_envs > 0, (

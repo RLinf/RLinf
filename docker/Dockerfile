@@ -84,6 +84,8 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
@@ -150,6 +152,10 @@ ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
 ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
 ENV HF_ENDPOINT=${HF_ENDPOINT:-"https://hf-mirror.com"}
+# GitHub proxy for install.sh under --use-mirror. Empty keeps its default,
+# https://gh-proxy.com/.
+ARG GITHUB_PREFIX=
+ENV GITHUB_PREFIX=${GITHUB_PREFIX}
 
 RUN pip config set global.index-url ${PIP_INDEX}
 RUN python3 -m pip install -i ${PIP_INDEX} --upgrade pip setuptools wheel uv
@@ -405,10 +411,11 @@ RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-robotwin-image
 
-# Install openvla-oft, openpi, and lingbotvla envs
+# Install openvla-oft, openpi, lingbotvla, and lingbotvlav2 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env robotwin && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robotwin && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvlav2 --model lingbotvlav2 --env robotwin
 
 RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
@@ -505,6 +512,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
+# Embodied: Psi0 + SIMPLE
+##################################################################################################
+FROM embodied-common-image AS embodied-simple-image
+
+ENV OMNI_KIT_ACCEPT_EULA=YES
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+    embodied --venv psi0 --model psi0 --env simple
+
+RUN echo "source ${UV_PATH}/psi0/bin/activate" >> ~/.bashrc
+
+##################################################################################################
 # Embodied: Genesis
 ##################################################################################################
 FROM embodied-common-image AS embodied-genesis-image
@@ -514,6 +532,24 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: GenieSim client (simulator server runs separately)
+##################################################################################################
+FROM embodied-common-image AS embodied-geniesim-image
+
+ENV UV_TORCH_BACKEND=cu128
+RUN test "${RLINF_PLATFORM}" = nvidia && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} \
+        --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi \
+        --env geniesim
+
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
+RUN link_assets
+
+ENV OPENPI_DATA_HOME=/root/.cache/openpi
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

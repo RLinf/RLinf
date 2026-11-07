@@ -156,12 +156,12 @@ class CollectEpisode(gym.Wrapper):
             each kept episode to its own shard and finalizes that shard after
             the episode save finishes. ``0`` disables periodic non-streaming
             flushing. Defaults to 100.
-        resume: If True and ``export_format == "lerobot_dataset"``, reuse the
-            ``lerobot_dataset`` directory across sessions — new episodes land
-            in a fresh ``id_{N}`` shard
-            (N = max existing shard id + 1) so the in-progress write never
-            touches previously-finalized or partially-written data. Ignored
-            for pickle. Defaults to False.
+        resume: If True and ``export_format == "lerobot_dataset"``, count
+            existing episodes toward collection progress. If False,
+            ``preexisting_episode_count`` stays at 0. Both modes start a fresh
+            ``id_{N}`` shard (N = max existing shard id + 1, or 0 if none exist),
+            preserving finalized and partially written shards. Episode indices
+            within the new shard start at 0. Ignored for pickle. Defaults to False.
         streaming: If True and ``export_format == "lerobot_dataset"``, write
             each recorded frame to the LeRobot dataset immediately instead of
             buffering the whole episode in memory. Each frame's images reach
