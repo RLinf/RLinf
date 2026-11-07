@@ -358,7 +358,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
 
 ``env.train.com_sampling`` 决定躯干质心偏移何时采样：``per_env`` 每个环境只采一次（zita-ch 的做法），``per_reset`` 每次重置都重新采样，并承担重算仿真常量的开销。两种设置下，摩擦和关节偏置都在每次重置时重采。``env/g1_mimic.yaml`` 默认是论文的 ``per_reset``，``supermimic_lafan1_goal730`` 训练时设为 ``per_env``。
 
-``actor.fsdp_config.amp_autocast``\ （配方中为 bfloat16）让 actor 和 rollout worker 的网络前向在 autocast 下运行；积分、运动学、损失和 Adam 权重仍是 float32。每个 SuperMimic 进程都打开 TF32 矩阵乘。
+``actor.fsdp_config.amp_autocast``\ （配方中为 bfloat16）让 actor 和 rollout worker 的网络前向在 autocast 下运行；积分、运动学、损失和 Adam 权重仍是 float32。每个 SuperMimic 进程都打开 TF32 矩阵乘。权重只支持 float32，actor 只支持 FSDP2 训练：配置校验会拒绝 ``32`` 以外的 ``precision``、``fsdp2`` 以外的 ``actor.fsdp_config.strategy``、FSDP 的 ``mixed_precision`` 数据类型、grad scaler 和 FSDP CPU offload。
 
 历史跟踪成绩和计时结果见 `已报告的跟踪结果`_ 与 `性能与硬件`_。
 
@@ -670,28 +670,38 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 已报告的跟踪结果
 ~~~~~~~~~~~~~~~~
 
-本节结果来自此前的单进程实现：每张 GPU 一个 SuperMimic 进程，配方即现在的 ``supermimic_lafan1_goal730``。算法和配方取值没有变化，但这些运行尚未在当前的 env、rollout、actor worker 结构下重跑。
-
-优化后的 A800 运行使用 40 条训练片段、4096 个环境，以及评审修复前的代码。结果衡量训练片段上的跟踪效果，不代表未见动作上的泛化，也不是论文 680 维配方的完整复现。
+``supermimic_lafan1_goal730`` 配方用当前的 env、rollout、actor worker 在一张 80 GB A800 上训练了 16000 次更新，使用 40 条训练片段、4096 个环境。下表把它的检查点与此前单进程实现的一次运行对比；单进程实现每张 GPU 一个 SuperMimic 进程，算法和配方取值相同，使用评审修复前的代码。结果衡量训练片段上的跟踪效果，不代表未见动作上的泛化，也不是论文 680 维配方的完整复现。
 
 .. list-table::
    :header-rows: 1
-   :widths: 50 25 25
+   :widths: 40 14 22 24
 
    * - 运行
      - 更新次数
+     - 无失败片段
      - 平均归一化回报
-   * - RLinf，优化后的 A800 运行
+   * - RLinf，当前 worker 结构，A800
      - 14000
-     - 0.828
-   * - RLinf，优化后的 A800 运行
+     - 39/40
+     - 0.845
+   * - RLinf，当前 worker 结构，A800
      - 16000
+     - 38/40
+     - 0.853
+   * - RLinf，单进程实现，A800
+     - 14000
+     - 36/40
+     - 0.828
+   * - RLinf，单进程实现，A800
+     - 16000
+     - 40/40
      - 0.850
    * - zita-ch 社区报告
      - 14000
+     - 40/40
      - 0.829
 
-社区报告使用不同的 GPU、仿真器和配方，因此这不是受控对比。运行时间和显存见 `性能与硬件`_。
+“无失败片段”统计每条参考动作是否完整执行到结束；归一化回报是按完整片段长度归一化的跟踪回报，两者是不同指标。两次 RLinf 运行的训练曲线也一致：每隔一千次更新，两者的 ``env/sim/reward_mean`` 相差不超过 0.003，到 16000 次都达到 0.089，而单步奖励的上限是 0.1。社区报告使用不同的 GPU、仿真器和配方，因此最后一行不是受控对比。运行时间和显存见 `性能与硬件`_。
 
 MI300X 社区复现
 ^^^^^^^^^^^^^^^^
@@ -718,9 +728,9 @@ MI300X 社区复现
      - 39/40
      - 0.844
 
-“无失败片段”统计每条参考动作是否完整执行到结束；归一化回报是按完整片段长度归一化的跟踪回报，两者是不同指标。对方认为这些结果与 A800 报告的差距处于运行波动量级；两次运行支持训练效果接近，但不足以证明跨平台结果严格等价。它们衡量的是训练片段的跟踪效果。
+对方认为这些结果与 A800 报告的差距处于运行波动量级；两次运行支持训练效果接近，但不足以证明跨平台结果严格等价。它们衡量的是训练片段的跟踪效果。
 
-Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0.97 秒一次更新，actor 首次编译约 6 分钟。对方报告 ``torch.compile`` 在 ROCm 上生效，没有训练扫描回退到 eager。评论引用的 A800 0.856 来自 PR 较早一轮的 16000 次更新报告；本指南另有优化后 0.850、约 2 小时的 A800 记录，属于不同轮次。
+Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0.97 秒一次更新，actor 首次编译约 6 分钟。对方报告 ``torch.compile`` 在 ROCm 上生效，没有训练扫描回退到 eager。评论引用的 A800 0.856 来自 PR 较早一轮的 16000 次更新报告；上表中单进程实现的 A800 运行得到 0.850、约 2 小时，属于不同轮次。
 
 这些第三方运行使用旧基线及其兼容修改，不能据此认定当前 AMD 安装分支或其他 AMD GPU 已通过验证。安装步骤见 `AMD MI300X（实验性）`_。
 
@@ -735,17 +745,22 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 * **BONES-SEED 的 CSV 被拒绝。** 表头需要 ``Frame``、``root_translateX/Y/Z``、``root_rotateX/Y/Z`` 和 29 个 ``关节名_dof``。根位置用厘米，角度用度。报错会写出文件名和缺掉的列。
 * **恢复后从第 0 次更新开始。** 日志里有 ``resume_dir=auto found no complete checkpoint under ...``：``log_path`` 或 ``experiment_name`` 与原运行不同，或者原运行从没写过检查点（``save_interval`` 为 -1）。
 * **"... was trained with <键>=..., but this config has ..."。** 检查点的 ``supermimic_interface.json`` 与配置不一致，请传入训练时用的覆盖项。没有这个文件的检查点来自当前结构之前，不能加载。
-* **日志停在 "Compiling a SuperMimic training scan"。** 第一次大批量在等编译，冷缓存时要几分钟，见 `性能与硬件`_。不要在训练途中删 inductor 缓存目录。
-* **"SuperMimic scan <名字> stayed eager"。** 这一段编译失败了，之后一直走 eager。结果不变，但训练会变慢。
+* **日志停在 "Compiling SuperMimic <名字> for large CUDA batches"。** 第一次大批量在等编译，冷缓存时要几分钟，见 `性能与硬件`_。不要在训练途中删 inductor 缓存目录。
+* **"SuperMimic <名字> stayed eager"。** 这一段编译失败了，之后一直走 eager。结果不变，但训练会变慢。
+* **"the longest clip in env.train.motion_path has <n> control steps"。** episode 随片段结束，所以世界模型窗口需要至少一条片段在 50 Hz 下有 ``algorithm.k`` 个控制步。
 
 性能与硬件
 ----------
 
-下面的记录来自此前单进程实现的训练（见 `已报告的跟踪结果`_），尚未在当前 worker 结构下重测；当前结构的采集每个控制步多了一次 worker 之间的数据交换。正式训练前请先在自己的硬件上测出每次更新的秒数。
+下面的运行仅供参考，正式训练前请先在自己的硬件上测出每次更新的秒数。
 
-**A800 上的训练。** 一张 80 GB A800，单卡，4096 个环境、bfloat16 autocast 的配方，编译缓存已在：
+**A800 上的训练。** env、rollout、actor 三个 worker 共用一张 80 GB A800，配方为 4096 个环境、bfloat16 autocast，编译缓存已在：
 
-* 前 500 次只训世界模型，约 26 s / 100 次；之后 43–47 s / 100 次，平均 44.9 s，也就是约 0.45 s 一次更新。16000 次共 1 小时 59 分 51 秒。zita-ch 的代码在同一型号的 A800 上实测为 2 小时 15 分。
+* 预热加前 100 次更新共 75 s。前 500 次只训世界模型，约 34 s / 100 次；第 600 次之后 51–57 s / 100 次，平均 54 s，也就是约 0.54 s 一次更新。第 14000 次更新时已用 2 小时 5 分，16000 次共 2 小时 23 分 29 秒。
+* 没有卡顿的一次迭代约 0.47 s（``time/step``）。worker 之间每个控制步都通过 CUDA IPC 交换数据；所用节点上，进程间的 CUDA IPC 大约每分钟卡顿 1–3 s，在不经过 RLinf 的双进程测试里也一样，这解释了与 0.54 s 平均值之间的一部分差距。
+
+**单进程实现** 在同一型号的 A800 上运行同一配方：前 500 次约 26 s / 100 次，之后 43–47 s / 100 次，平均 44.9 s，也就是约 0.45 s 一次更新；16000 次共 1 小时 59 分 51 秒。zita-ch 的代码在同一型号的 A800 上实测为 2 小时 15 分。显存只在这次运行中记录过：
+
 * PyTorch 峰值分配 17.1 GB（reserved 18.8 GB），驱动看到的整卡用量 20.1 GB，Warp 内存池峰值 0.48 GB，主机 RSS 约 4.0 GB。
 * 结束时累计 40064 个向量仿真步、约 1.64 亿个环境转移。
 
@@ -756,7 +771,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 验证范围
 --------
 
-上文报告的训练、恢复和评测运行使用此前的单进程实现。对当前的 env、rollout 和 actor worker，FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总已在小规模 CPU 测试中检查；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` 与 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 在生成的站立片段上，通过 RLinf 入口覆盖训练、恢复、双卡速度跟踪和评测；数值检查位于 ``tests/unit_tests/test_supermimic.py``。当前结构下的完整训练、论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
+当前的 env、rollout 和 actor worker 已在一张 A800 上把配方训练了 16000 次更新，并评测了检查点（见 `已报告的跟踪结果`_）。FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总还在小规模 CPU 测试中检查过；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` 与 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 在生成的站立片段上，通过 RLinf 入口覆盖训练、恢复、双卡速度跟踪和评测，其中 ``g1_mimic_supermimic`` 的训练和恢复，以及改用 patch 权重同步的恢复，已在一张 A800 上通过；数值检查位于 ``tests/unit_tests/test_supermimic.py``。论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
 
 致谢
 --------

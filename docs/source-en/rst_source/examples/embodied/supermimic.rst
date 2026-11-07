@@ -549,7 +549,10 @@ every reset either way. ``env/g1_mimic.yaml`` defaults to the paper's
 ``actor.fsdp_config.amp_autocast`` (bfloat16 in the recipe) runs the network
 forwards of the actor and rollout workers under autocast. Integration,
 kinematics, the losses and the Adam weights stay float32. TF32 matmuls are
-on in every SuperMimic process.
+on in every SuperMimic process. The weights are float32 and the actor trains
+with FSDP2 only: validation rejects a ``precision`` other than ``32``, an
+``actor.fsdp_config.strategy`` other than ``fsdp2``, FSDP
+``mixed_precision`` dtypes, the grad scaler and FSDP CPU offload.
 
 Historical tracking results and timing are summarized under
 `Reported Tracking Results`_ and `Performance and Hardware`_.
@@ -1078,36 +1081,51 @@ it to ``<log_path>/metrics.log``.
 Reported Tracking Results
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The results in this section were obtained with the earlier single-process
-implementation of this integration, with one SuperMimic process per GPU and
-the recipe now named ``supermimic_lafan1_goal730``. The algorithm and recipe
-values are unchanged, but these runs have not yet been repeated with the
-current env, rollout and actor workers.
-
-The optimized A800 run used 40 training clips, 4096 environments and the
+The ``supermimic_lafan1_goal730`` recipe was trained for 16000 updates with
+the current env, rollout and actor workers on one 80 GB A800, using 40
+training clips and 4096 environments. The table compares its checkpoints with
+a run of the earlier single-process implementation of this integration, one
+SuperMimic process per GPU, with the same algorithm and recipe values and the
 code before the review fixes. Results measure tracking of training motions,
 not generalization or a full reproduction of the paper's 680-d recipe.
 
 .. list-table::
    :header-rows: 1
-   :widths: 50 25 25
+   :widths: 40 14 22 24
 
    * - Run
      - Update
+     - Clips without failure
      - Mean normalized return
-   * - RLinf, optimized A800 run
+   * - RLinf, current workers, A800
      - 14000
-     - 0.828
-   * - RLinf, optimized A800 run
+     - 39/40
+     - 0.845
+   * - RLinf, current workers, A800
      - 16000
+     - 38/40
+     - 0.853
+   * - RLinf, single-process implementation, A800
+     - 14000
+     - 36/40
+     - 0.828
+   * - RLinf, single-process implementation, A800
+     - 16000
+     - 40/40
      - 0.850
    * - zita-ch, community report
      - 14000
+     - 40/40
      - 0.829
 
-The community's GPU, simulator and recipe differ, so this is not a
-controlled comparison. See `Performance and Hardware`_ for measured
-runtime and memory.
+Clips without failure counts the reference motions played to the end;
+normalized return measures tracking return normalized by the full clip
+length. They are different metrics. The two RLinf runs also follow the same
+training curve: at every thousand updates their ``env/sim/reward_mean``
+differs by at most 0.003, and both reach 0.089 at update 16000, where 0.1 is
+the largest reward of one step. The community's GPU, simulator and recipe
+differ, so the last row is not a controlled comparison. See
+`Performance and Hardware`_ for measured runtime and memory.
 
 MI300X Community Reproduction
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1138,10 +1156,8 @@ reported checkpoints are:
      - 39/40
      - 0.844
 
-Clips without failure counts reference motions that reached the end;
-normalized return measures tracking return normalized by the full clip
-length. They are different metrics. The commenter attributes the gap to
-the A800 report to run-to-run variation. These two runs support similar
+The commenter attributes the gap to the A800 report to run-to-run
+variation. These two runs support similar
 tracking performance, but do not establish strict cross-platform equivalence.
 They evaluate motions included in training.
 
@@ -1149,8 +1165,8 @@ Run A took about 4 h 15 min for 16000 updates, with roughly 0.97 s per update
 in steady state after update 600 and about 6 min for the first actor compile.
 The commenter reports that ``torch.compile`` worked on ROCm and no training
 scan fell back to eager. The A800 value of 0.856 cited in the comment belongs
-to the PR's earlier update-16000 report; the optimized A800 run recorded
-elsewhere on this page scored 0.850 in about 2 h. They are different runs.
+to the PR's earlier update-16000 report; the single-process A800 run in the
+table above scored 0.850 in about 2 h. They are different runs.
 
 These third-party runs used the old baseline and compatibility edits.
 They do not validate the current AMD installer or establish performance
@@ -1188,29 +1204,43 @@ Troubleshooting
   checkpoint's ``supermimic_interface.json`` differs from the config; pass
   the overrides used in training. A checkpoint without that file predates the
   current structure and cannot be loaded.
-* **The log stops at "Compiling a SuperMimic training scan".** The first
-  large batch is waiting for the compile, a few minutes with a cold cache;
-  see `Performance and Hardware`_. Do not delete the inductor cache
-  directory during a run.
-* **"SuperMimic scan <name> stayed eager".** That piece failed to compile
-  and runs eagerly from then on. Results are unchanged; training is slower.
+* **The log stops at "Compiling SuperMimic <name> for large CUDA
+  batches".** The first large batch is waiting for the compile, a few
+  minutes with a cold cache; see `Performance and Hardware`_. Do not delete
+  the inductor cache directory during a run.
+* **"SuperMimic <name> stayed eager".** That piece failed to compile and
+  runs eagerly from then on. Results are unchanged; training is slower.
+* **"the longest clip in env.train.motion_path has <n> control steps".**
+  An episode ends with its clip, so a world-model window needs a clip of at
+  least ``algorithm.k`` control steps at 50 Hz.
 
 Performance and Hardware
 ------------------------
 
-The following measurements describe training runs of the earlier
-single-process implementation (see `Reported Tracking Results`_). They
-have not been repeated with the current worker structure, whose collection
-adds a worker-to-worker exchange per control step. Measure seconds per
-update on your hardware before planning a full run.
+The runs below are references; measure seconds per update on your hardware
+before planning a full run.
 
-**The A800 run.** One 80 GB A800, one GPU, the recipe with 4096
-environments and bfloat16 autocast, warm compile cache:
+**The A800 run.** The env, rollout and actor workers share one 80 GB A800;
+the recipe runs 4096 environments with bfloat16 autocast, and the compile
+cache was warm:
 
-* The first 500 updates train only the world model, at about 26 s per 100
-  updates. After that, 43-47 s per 100 updates, 44.9 s on average, or
-  about 0.45 s per update. 16000 updates took 1 h 59 min 51 s. The
-  zita-ch code, measured on an A800 of the same model, took 2 h 15 min.
+* Warmup and the first 100 updates took 75 s. The first 500 updates train
+  only the world model, at about 34 s per 100 updates. After update 600,
+  51-57 s per 100 updates, 54 s on average, or about 0.54 s per update.
+  Update 14000 was reached after 2 h 5 min and update 16000 after
+  2 h 23 min 29 s.
+* An iteration without a stall took about 0.47 s (``time/step``). The
+  workers exchange every control step through CUDA IPC. On the node used,
+  CUDA IPC between processes stalled for 1-3 s about once a minute, also in
+  a standalone two-process test, which accounts for part of the gap to the
+  0.54 s average.
+
+**The single-process implementation** ran the same recipe on an A800 of the
+same model. The first 500 updates took about 26 s per 100 updates, then
+43-47 s per 100 updates, 44.9 s on average, or about 0.45 s per update;
+16000 updates took 1 h 59 min 51 s. The zita-ch code, measured on an A800 of
+the same model, took 2 h 15 min. Memory was recorded for this run only:
+
 * PyTorch peak allocated 17.1 GB (18.8 GB reserved), whole GPU as the
   driver sees it 20.1 GB, Warp pool peak 0.48 GB, host RSS about 4.0 GB.
 * At the end: 40064 vectorized simulator steps, about 164 million
@@ -1232,21 +1262,23 @@ do not predict datacenter GPUs.
 Validation Scope
 ----------------
 
-The training, resume and evaluation runs reported above used the earlier
-single-process implementation. For the current env, rollout and actor
-workers, the FSDP2 phase freezing, the actor's training phases, its
-checkpoint round trip, the update schedule and the evaluation summaries have
-been checked in small CPU tests. On one GPU, the fused-Adam step matched the
-host-checked step on identical gradients, skipped non-finite steps without
-moving the weights or the Adam state, and survived a checkpoint round trip.
-The CI configs ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` and
+The current env, rollout and actor workers trained the recipe for 16000
+updates on one A800, and its checkpoints were evaluated (see
+`Reported Tracking Results`_). The FSDP2 phase freezing, the actor's
+training phases, its checkpoint round trip, the update schedule and the
+evaluation summaries have also been checked in small CPU tests. On one GPU,
+the fused-Adam step matched the host-checked step on identical gradients,
+skipped non-finite steps without moving the weights or the Adam state, and
+survived a checkpoint round trip. The CI configs
+``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` and
 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` exercise
 training, resume, two-GPU velocity tracking and evaluation through the RLinf
-entries on a generated standing clip; ``tests/unit_tests/test_supermimic.py``
-holds the numerical checks.
-Full training with the current structure, the paper overrides, the paper's
-two-GPU recipe, multiple nodes, Slurm, real BONES-SEED data and paper §4.3
-T-pose recovery remain unvalidated.
+entries on a generated standing clip. On one A800, the training and resume
+runs of ``g1_mimic_supermimic`` passed, and so did a resume with the patch
+weight syncer. ``tests/unit_tests/test_supermimic.py`` holds the numerical
+checks.
+The paper overrides, the paper's two-GPU recipe, multiple nodes, Slurm, real
+BONES-SEED data and paper §4.3 T-pose recovery remain unvalidated.
 
 Acknowledgements
 ----------------

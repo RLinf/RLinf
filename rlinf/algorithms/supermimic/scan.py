@@ -30,8 +30,6 @@ with ``enabled=False`` keeps every piece eager.
 
 from __future__ import annotations
 
-import warnings
-
 import torch
 
 from rlinf.algorithms.supermimic.objectives import (
@@ -39,6 +37,7 @@ from rlinf.algorithms.supermimic.objectives import (
     state_prediction_loss,
     termination_bce,
 )
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import HISTORY_LEN
 from rlinf.envs.sim.g1_mimic.features import integrate_residual
 from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
@@ -51,63 +50,6 @@ from rlinf.envs.sim.g1_mimic.reward import (
     termination_head_input,
 )
 from rlinf.models.embodiment.supermimic.networks import running_state_loss
-
-
-class CompileCache:
-    """Compiled functions and fallback state owned by one worker or scan."""
-
-    def __init__(self, enabled: bool = True):
-        self.enabled = bool(enabled)
-        self.compiled: dict = {}
-        self.failed: set[str] = set()
-        self.announced: set[str] = set()
-
-
-def _leading_batch(args: tuple) -> torch.Tensor | None:
-    for value in args:
-        if torch.is_tensor(value) and value.dim() >= 1 and value.shape[0] > 0:
-            return value
-    return None
-
-
-def run_compiled(name: str, fn, *args, cache: CompileCache):
-    """Run ``fn`` eagerly, or reuse its owner's compiled large-CUDA scan."""
-    probe = _leading_batch(args)
-    eager = (
-        not cache.enabled
-        or name in cache.failed
-        or probe is None
-        or (not probe.is_cuda)
-        or int(probe.shape[0]) < 256
-    )
-    if eager:
-        return fn(*args)
-    compiled = cache.compiled.get(name)
-    if compiled is None:
-        if name not in cache.announced:
-            warnings.warn(
-                "Compiling a SuperMimic training scan (TF32, same math). "
-                "The first large batch waits; later batches reuse it.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            cache.announced.add(name)
-        compiled = torch.compile(fn, dynamic=True, fullgraph=False)
-        cache.compiled[name] = compiled
-    try:
-        return compiled(*args)
-    except Exception as exc:
-        module = type(exc).__module__
-        if module.startswith("torch._dynamo") or "Compiler" in type(exc).__name__:
-            cache.failed.add(name)
-            cache.compiled.pop(name, None)
-            warnings.warn(
-                f"SuperMimic scan {name} stayed eager ({type(exc).__name__}).",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return fn(*args)
-        raise
 
 
 def _caller(compile_name: str | None, cache: CompileCache | None):

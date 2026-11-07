@@ -175,27 +175,25 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
         check_job_coverage(rows, 3)
 
 
-class _OneRankPlacement:
-    def __init__(self, cfg, cluster):
-        pass
-
-    def get_world_size(self, name):
-        return 1
-
-
 @pytest.mark.parametrize(
     "overrides,error",
     [
         (["env.train.max_episode_seconds=0.1"], "allows 5 control steps"),
         (["algorithm.replay_length=9"], r"replay_length must be in \[10, inf\]"),
+        (["actor.fsdp_config.strategy=fsdp"], "strategy=fsdp2"),
+        (["actor.model.precision=bf16"], "actor.model.precision must be 32"),
+        (
+            ["actor.fsdp_config.mixed_precision.param_dtype=bf16"],
+            "param_dtype must be null or fp32",
+        ),
+        (
+            ["actor.fsdp_config.grad_scaler.enabled=True"],
+            "grad_scaler.enabled must be False",
+        ),
         (["env.train.max_episode_seconds=0.16", "algorithm.replay_length=10"], None),
     ],
 )
-def test_training_needs_whole_windows_and_histories(overrides, error, monkeypatch):
-    monkeypatch.setattr("rlinf.scheduler.Cluster", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        "rlinf.utils.placement.HybridComponentPlacement", _OneRankPlacement
-    )
+def test_training_config_rejects_unsupported_values(overrides, error):
     with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.1"):
         cfg = compose(
             config_name="supermimic_lafan1_goal730",

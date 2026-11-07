@@ -1674,9 +1674,14 @@ def validate_embodied_cfg(cfg):
                 )
 
     if model_type == SupportedModel.SUPERMIMIC:
-        from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
+        from rlinf.algorithms.supermimic.validate import (
+            check_supermimic_placement,
+            validate_supermimic_cfg,
+        )
 
         validate_supermimic_cfg(cfg, only_eval=only_eval)
+        if not only_eval:
+            check_supermimic_placement(cfg, component_placement)
     validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg

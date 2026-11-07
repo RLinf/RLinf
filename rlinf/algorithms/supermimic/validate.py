@@ -17,11 +17,17 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
+import torch
 from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
 
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, DT, HISTORY_LEN
+from rlinf.utils.precision import torch_dtype_from_precision
+
+if TYPE_CHECKING:
+    from rlinf.utils.placement import HybridComponentPlacement
 
 # Policy settings the G1 envs build observations, goals and critic inputs from,
 # and the compile switch they share with the policy.
@@ -116,6 +122,53 @@ def _check_model(model: DictConfig, prefix: str) -> None:
         _check_number(model, "termination_bias_init", prefix)
 
 
+def _is_float32(precision) -> bool:
+    return torch_dtype_from_precision(precision) in (None, torch.float32)
+
+
+def _check_weight_precision(cfg: DictConfig, only_eval: bool) -> None:
+    """The policy builder makes float32 weights whatever ``precision`` asks for."""
+    nodes = [] if only_eval else [("actor.model", cfg.actor.model)]
+    nodes.append(("rollout.model", cfg.rollout.model))
+    for prefix, node in nodes:
+        precision = node.get("precision", None)
+        if not _is_float32(precision):
+            raise ValueError(
+                f"{prefix}.precision must be 32, got {precision!r}; SuperMimic "
+                "keeps float32 weights and casts inside the networks with "
+                "amp_autocast"
+            )
+
+
+def _check_actor_backend(actor: DictConfig) -> None:
+    """The actor calls FSDP2 module methods and runs its own optimizer steps."""
+    backend = actor.get("training_backend", None)
+    fsdp = actor.fsdp_config
+    strategy = fsdp.get("strategy", None)
+    if backend != "fsdp" or strategy != "fsdp2":
+        raise ValueError(
+            "SuperMimic training needs actor.training_backend=fsdp and "
+            f"actor.fsdp_config.strategy=fsdp2, got {backend!r} and {strategy!r}"
+        )
+    mixed = fsdp.get("mixed_precision", None) or {}
+    for name in ("param_dtype", "reduce_dtype", "buffer_dtype"):
+        if not _is_float32(mixed.get(name, None)):
+            raise ValueError(
+                f"actor.fsdp_config.mixed_precision.{name} must be null or fp32, "
+                f"got {mixed.get(name)!r}; SuperMimic keeps float32 weights and "
+                "casts inside the networks with fsdp_config.amp_autocast"
+            )
+    if fsdp.get("cpu_offload", False):
+        raise ValueError(
+            "SuperMimic training needs actor.fsdp_config.cpu_offload=False, got True"
+        )
+    if (fsdp.get("grad_scaler", None) or {}).get("enabled", False):
+        raise ValueError(
+            "actor.fsdp_config.grad_scaler.enabled must be False, got True; the "
+            "SuperMimic optimizer steps do not use a grad scaler"
+        )
+
+
 def _sync_env(env: DictConfig, model: DictConfig, algorithm: DictConfig, prefix: str):
     """Copy the policy and scoring settings into one env section."""
     sources = [(name, model.get(name)) for name in ENV_MODEL_KEYS]
@@ -172,10 +225,17 @@ def _check_training(cfg: DictConfig) -> None:
         alg, "replay_length", "algorithm", int, low=max(int(alg.k), HISTORY_LEN)
     )
 
-    from rlinf.scheduler import Cluster
-    from rlinf.utils.placement import HybridComponentPlacement
 
-    placement = HybridComponentPlacement(cfg, Cluster())
+def check_supermimic_placement(
+    cfg: DictConfig, placement: HybridComponentPlacement
+) -> None:
+    """Check the worker counts SuperMimic training pairs and divides batches by.
+
+    Args:
+        cfg: The run config, after :func:`validate_supermimic_cfg`.
+        placement: The component placement the run starts its workers with.
+    """
+    alg = cfg.algorithm
     sizes = {
         name: placement.get_world_size(name) for name in ("actor", "env", "rollout")
     }
@@ -204,6 +264,9 @@ def _check_training(cfg: DictConfig) -> None:
 def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictConfig:
     """Check SuperMimic settings and share the policy settings with the envs.
 
+    The worker counts are checked separately, by
+    :func:`check_supermimic_placement`.
+
     Args:
         cfg: The run config, after the generic embodied checks.
         only_eval: Whether the run only evaluates ``rollout.model``.
@@ -215,6 +278,7 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
     model = cfg.rollout.model if only_eval else cfg.actor.model
     prefix = "rollout.model" if only_eval else "actor.model"
     _check_model(model, prefix)
+    _check_weight_precision(cfg, only_eval)
     for name in ("reward_anchor", "termination_body"):
         _check_choice(cfg.algorithm, name, "algorithm")
     if cfg.rollout.pipeline_stage_num != 1:
@@ -226,6 +290,7 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
                 raise ValueError(
                     f"SuperMimic training needs {group}.enable_offload=False, got True"
                 )
+        _check_actor_backend(cfg.actor)
         _check_training(cfg)
         _sync_env(cfg.env.train, model, cfg.algorithm, "env.train")
         _check_env(cfg.env.train, "env.train", needs_motion=True)

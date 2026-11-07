@@ -345,9 +345,9 @@ Known limitations
   against the §4.3 recovery times of a converged policy. A converter for the
   official BONES-SEED G1 CSV exists, and it has not been checked on a real
   release.
-* **Validation scope:** the historical LAFAN1 results and hardware
-  measurements in the user guide's
-  :ref:`reported results <supermimic-reported-results>` come from the earlier
-  single-process implementation and have not been rerun on the current
-  workers. Full training with the paper overrides, the paper's two-GPU recipe
-  and multi-node execution remain unvalidated.
+* **Validation scope:** the user guide's
+  :ref:`reported results <supermimic-reported-results>` include a
+  16000-update LAFAN1 run of the current workers on one A800, next to the
+  earlier single-process implementation. Full training with the paper
+  overrides, the paper's two-GPU recipe and multi-node execution remain
+  unvalidated.

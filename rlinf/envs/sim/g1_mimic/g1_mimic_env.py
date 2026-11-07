@@ -28,7 +28,7 @@ import torch.distributed as dist
 from omegaconf import DictConfig
 
 from rlinf.algorithms.supermimic.reset_sampler import BinResetSampler
-from rlinf.algorithms.supermimic.scan import CompileCache, run_compiled
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     DT,

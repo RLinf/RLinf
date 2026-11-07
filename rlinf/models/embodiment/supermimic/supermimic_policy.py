@@ -32,11 +32,8 @@ from rlinf.algorithms.supermimic.objectives import (
     state_prediction_loss,
     termination_bce,
 )
-from rlinf.algorithms.supermimic.scan import (
-    CompileCache,
-    make_dynamics_window,
-    make_imagination,
-)
+from rlinf.algorithms.supermimic.scan import make_dynamics_window, make_imagination
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache
 from rlinf.envs.sim.g1_mimic.constants import (
     ANCHOR_DIM,
     GOAL_REF_DIM,

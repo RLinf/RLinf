@@ -26,11 +26,11 @@ compile.
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 import torch
 
+from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, G1_JOINT_NAMES
 from rlinf.envs.sim.g1_mimic.features import quat_normalize, quat_to_rotmat
 
@@ -190,10 +190,7 @@ def _run_levels(state, table, tracked, nbody, levels):
     )
 
 
-_COMPILED_LEVELS: dict = {}
-_COMPILE_FAILED = False
-_COMPILE_ANNOUNCED = False
-_COMPILE_ENABLED = True
+_COMPILE = CompileCache(fullgraph=True)
 
 
 def set_kinematics_compile(enabled: bool) -> None:
@@ -202,52 +199,7 @@ def set_kinematics_compile(enabled: bool) -> None:
     The switch is process-wide; the policy and the envs set it from the same
     ``torch_compile`` value.
     """
-    global _COMPILE_ENABLED
-    _COMPILE_ENABLED = bool(enabled)
-
-
-def _compiled_levels(state, table, tracked, nbody, levels):
-    """Compile ``_run_levels`` once per device and dtype. Falls back on failure."""
-    global _COMPILE_FAILED, _COMPILE_ANNOUNCED
-    if _COMPILE_FAILED:
-        return _run_levels(state, table, tracked, nbody, levels)
-    key = (str(state.device), state.dtype)
-    fn = _COMPILED_LEVELS.get(key)
-    if fn is None:
-        if not _COMPILE_ANNOUNCED:
-            warnings.warn(
-                "Compiling the G1 kinematic tree for CUDA. The first large "
-                "batch waits for this; later batches reuse the compiled walk.",
-                RuntimeWarning,
-                stacklevel=3,
-            )
-            _COMPILE_ANNOUNCED = True
-
-        def eager(
-            state,
-            table=table,
-            tracked=tracked,
-            nbody=nbody,
-            levels=levels,
-        ):
-            return _run_levels(state, table, tracked, nbody, levels)
-
-        fn = torch.compile(eager, dynamic=True, fullgraph=True)
-        _COMPILED_LEVELS[key] = fn
-    try:
-        return fn(state)
-    except Exception as exc:
-        name = type(exc).__name__
-        module = type(exc).__module__
-        if module.startswith("torch._dynamo") or "Compiler" in name:
-            _COMPILE_FAILED = True
-            warnings.warn(
-                f"G1 kinematics stayed on the batched walk ({name}).",
-                RuntimeWarning,
-                stacklevel=3,
-            )
-            return _run_levels(state, table, tracked, nbody, levels)
-        raise
+    _COMPILE.enabled = bool(enabled)
 
 
 class G1BodyKinematics:
@@ -468,13 +420,21 @@ class G1BodyKinematics:
             self._level_cache[key] = cached
         return cached
 
-    def _forward_levels(self, state: torch.Tensor):
-        """Batched depth walk, without the CUDA compile."""
+    def _forward_levels(self, state: torch.Tensor, cache: CompileCache | None = None):
+        """Batched depth walk; with ``cache``, large CUDA batches run compiled."""
         squeezed = state.dim() == 1
         if squeezed:
             state = state.unsqueeze(0)
         table, tracked, nbody, levels = self._level_pack(state.device, state.dtype)
-        out = _run_levels(state, table, tracked, nbody, levels)
+
+        def walk(state, table=table, tracked=tracked, nbody=nbody, levels=levels):
+            return _run_levels(state, table, tracked, nbody, levels)
+
+        if cache is None:
+            out = walk(state)
+        else:
+            name = f"kinematics on {state.device} {state.dtype}"
+            out = run_compiled(name, walk, state, cache=cache)
         if squeezed:
             return tuple(item.squeeze(0) for item in out)
         return out
@@ -491,28 +451,11 @@ class G1BodyKinematics:
         A scan that is already being compiled inlines the eager walk so the
         two compiles do not nest.
         """
-        if torch.compiler.is_compiling():
-            if self._level_specs is not None:
-                return self._forward_levels(state)
+        if self._level_specs is None:
             return self._forward_serial(state)
-        batch = 1 if state.dim() == 1 else state.shape[0]
-        if (
-            self._level_specs is not None
-            and state.is_cuda
-            and batch >= 256
-            and _COMPILE_ENABLED
-        ):
-            squeezed = state.dim() == 1
-            if squeezed:
-                state = state.unsqueeze(0)
-            table, tracked, nbody, levels = self._level_pack(state.device, state.dtype)
-            out = _compiled_levels(state, table, tracked, nbody, levels)
-            if squeezed:
-                return tuple(item.squeeze(0) for item in out)
-            return out
-        if self._level_specs is not None:
+        if torch.compiler.is_compiling():
             return self._forward_levels(state)
-        return self._forward_serial(state)
+        return self._forward_levels(state, _COMPILE)
 
     def _forward_serial(
         self, state: torch.Tensor
