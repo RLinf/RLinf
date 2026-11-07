@@ -1,0 +1,51 @@
+# Standing push recovery (Section 4.3) of a policy with the paper interface:
+# 680-d goal, 93-d observation, root4 critic and no input normalization.
+# Set runner.ckpt_path to the policy's full_weights.pt.
+defaults:
+  - supermimic_lafan1_goal730
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+runner:
+  task_type: embodied_eval
+  only_eval: True
+  ckpt_path: null
+  logger:
+    log_path: ../results/eval
+    experiment_name: supermimic_push_recovery
+  eval_export:
+    enabled: True
+    output_dir: null         # default: <log_path>/<experiment_name>/eval_results
+
+algorithm:
+  reward_anchor: torso
+  residual_frame: heading
+  termination_head: learned
+
+rollout:
+  model: ${actor.model}
+
+actor:
+  model:
+    goal_encoding: paper
+    obs_dim: 93
+    critic_features: root4
+    input_norm: none
+    wm_state_loss: paper
+  fsdp_config:
+    amp_autocast:
+      enabled: False
+
+env:
+  eval:
+    # 4 speeds x 4 trials, one trial per env.
+    total_num_envs: 16
+    eval_tasks: [push_recovery]
+    # 1 s settle + 5 s after the push.
+    max_steps_per_rollout_epoch: 300

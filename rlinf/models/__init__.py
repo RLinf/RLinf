@@ -189,6 +189,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_supermimic(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.supermimic import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_sd3(cfg: DictConfig, torch_dtype):
         from rlinf.models.diffusion.sd3 import get_model
 
@@ -370,6 +375,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.EVO1.value,
         _build_evo1,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.SUPERMIMIC.value,
+        _build_supermimic,
         category="embodied",
         force=True,
     )

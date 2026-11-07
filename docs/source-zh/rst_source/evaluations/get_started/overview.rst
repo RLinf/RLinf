@@ -18,7 +18,8 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    ├── behavior/                # BEHAVIOR-1K 评测配置
    ├── maniskill/               # ManiSkill OOD 评测配置
    ├── realworld/               # 真机评测配置
-   └── polaris/                 # PolaRiS 评测配置
+   ├── polaris/                 # PolaRiS 评测配置
+   └── supermimic/              # SuperMimic 评测配置
 
 评测架构
 --------
@@ -31,6 +32,8 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 2. **Worker 启动** — 根据 ``cluster.component_placement`` 在 GPU 上启动 Env Worker 与 Rollout Worker。
 3. **并行 Rollout** — Env Worker 重置环境并返回观测；Rollout Worker 根据模型生成动作；循环直至 episode 结束。
 4. **指标汇总** — 统计 ``success_once``、``return`` 等任务级指标并写入日志。
+
+SuperMimic 使用同一入口和自己的 ``SuperMimicEvalRunner``，评测动作跟踪、速度跟踪和静止站立姿态推力恢复并写出结果表格，见 :doc:`../../examples/embodied/supermimic` 的“评测”一节。
 
 下一步
 ------

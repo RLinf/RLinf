@@ -135,6 +135,7 @@ SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+SupportedModel.SUPERMIMIC = SupportedModel.register("supermimic", force=True)
 
 DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
@@ -168,6 +169,7 @@ EMBODIED_MODEL = set(
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
         SupportedModel.EVO1,
+        SupportedModel.SUPERMIMIC,
     }
 )
 
@@ -1671,6 +1673,15 @@ def validate_embodied_cfg(cfg):
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
 
+    if model_type == SupportedModel.SUPERMIMIC:
+        from rlinf.algorithms.supermimic.validate import (
+            check_supermimic_placement,
+            validate_supermimic_cfg,
+        )
+
+        validate_supermimic_cfg(cfg, only_eval=only_eval)
+        if not only_eval:
+            check_supermimic_placement(cfg, component_placement)
     validate_online_lerobot_env_cfg(cfg)
     validate_weight_sync_overlap_cfg(cfg)
     return cfg
