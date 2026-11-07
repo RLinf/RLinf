@@ -1096,9 +1096,7 @@ def validate_embodied_cfg(cfg):
         rollout_precision = cfg.rollout.model.get("precision", model_cfg.precision)
         rollout_dtype = torch_dtype_from_precision(rollout_precision)
         allowed_dtypes = (
-            {torch.bfloat16, torch.float32}
-            if only_eval
-            else {torch.bfloat16}
+            {torch.bfloat16, torch.float32} if only_eval else {torch.bfloat16}
         )
         if rollout_dtype not in allowed_dtypes:
             raise ValueError(
