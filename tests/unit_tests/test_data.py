@@ -3689,3 +3689,40 @@ def test_cnn_sft_dataloader_shards_full_batches_across_ranks(tmp_path):
     assert [len(ids) for ids in sample_ids] == [6, 6]
     assert sample_ids[0].isdisjoint(sample_ids[1])
     assert len(sample_ids[0] | sample_ids[1]) == 12
+
+
+def test_image_action_chunk_export_removes_stale_extra_views(tmp_path):
+    pytest.importorskip("tyro")
+
+    from rlinf.data.datasets.image_action_chunks import ImageActionChunkDataset
+    from toolkits.lerobot.export_image_action_chunks import main as export_chunks
+
+    class LeRobotSamples(list):
+        fps = 10
+        meta = SimpleNamespace(shapes={"action": (2,)}, total_episodes=1)
+
+    samples = LeRobotSamples(
+        {
+            "index": torch.tensor(i),
+            "observation.images.front": torch.zeros(3, 4, 4),
+            "observation.images.wrist": torch.ones(3, 4, 4),
+            "observation.state": torch.tensor([float(i), 0.0]),
+            "action": torch.zeros(2, 2),
+            "episode_index": torch.tensor(0),
+        }
+        for i in range(3)
+    )
+    vendor = SimpleNamespace(LeRobotDataset=lambda *args, **kwargs: samples)
+    output = tmp_path / "export"
+    kwargs = {"image_size": 4, "chunk": 2, "state_dim": 2, "num_workers": 0}
+    with mock.patch.dict("sys.modules", {"lerobot.datasets.lerobot_dataset": vendor}):
+        export_chunks(str(tmp_path), str(output), cameras=("front", "wrist"), **kwargs)
+        assert "extra_view_images" in ImageActionChunkDataset(str(output))[0]
+        samples.append({**samples[-1], "index": torch.tensor(3)})
+        export_chunks(str(tmp_path), str(output), cameras=("front",), **kwargs)
+
+    dataset = ImageActionChunkDataset(str(output))
+    assert len(dataset) == 4
+    assert dataset.meta["cameras"] == ["front"]
+    assert not (output / "extra_view_images.npy").exists()
+    assert "extra_view_images" not in dataset[3]

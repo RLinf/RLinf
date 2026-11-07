@@ -102,6 +102,9 @@ class DexJoCoTaskEnv(gym.Wrapper):
         success = bool(info["succeed"])
         truncated = self.env.unwrapped.env_step >= self._step_limit
         terminated = success or (terminated and not truncated)
+        if (terminated or truncated) and not self._render_now:
+            self._render_now = True
+            obs = self.env.observation(self.env.unwrapped._compute_observation())
         info = {"success": success}
         transformed_obs = self._extract_image_and_state(obs, self._render_now)
         return transformed_obs, reward, terminated, truncated, info
@@ -329,6 +332,10 @@ class DexJoCoEnv(gym.Env):
         active = np.arange(0, self.num_envs)[~(self._terminated | self._truncated)]
         step_reward = np.zeros(self.num_envs, dtype=np.float32)
         if len(active) > 0:
+            truncating = active[
+                self._elapsed_steps[active] + 1 >= self.cfg.max_episode_steps
+            ]
+            self.env.set_env_attr("render_countdown", 1, id=truncating)
             raw_obs, reward, terminated, truncated, info_lists = self.env.step(
                 actions[active], id=active
             )

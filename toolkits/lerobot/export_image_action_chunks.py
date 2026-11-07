@@ -82,6 +82,10 @@ def main(
             (num_frames, len(image_keys) - 1, size, size, 3),
             np.uint8,
         )
+    else:
+        extra_path = os.path.join(output, "extra_view_images.npy")
+        if os.path.exists(extra_path):
+            os.remove(extra_path)
     states = open_array("states", (num_frames, state_dim), np.float32)
     actions = open_array(
         "actions",
