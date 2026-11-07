@@ -45,6 +45,7 @@ class CNNConfig:
     q_head_type: str = "default"
     # Per-dimension dataset statistics for unscaled Gaussian actions.
     action_norm_stats: Optional[str] = None
+    sft_loss_type: str = "mse"
 
     state_latent_dim: int = 64
     independent_std: bool = True
@@ -335,7 +336,7 @@ class CNNPolicy(nn.Module, BasePolicy):
         )
         target_actions = data["action"].to(obs["states"].device)
         target_actions = target_actions.reshape(target_actions.shape[0], -1)
-        _, _, action_mean, _ = self._actor_forward_from_processed_tensors(
+        _, _, action_mean, action_logstd = self._actor_forward_from_processed_tensors(
             obs["main_images"],
             obs["states"],
             obs.get("extra_view_images"),
@@ -346,7 +347,16 @@ class CNNPolicy(nn.Module, BasePolicy):
                 f"got predicted {action_mean.shape} and target {target_actions.shape}."
             )
         target_actions = (target_actions - self.action_norm_mean) / self.action_norm_std
-        return F.mse_loss(action_mean, target_actions)
+        if self.cfg.sft_loss_type == "mse":
+            return F.mse_loss(action_mean, target_actions)
+        elif self.cfg.sft_loss_type == "nll":
+            probs = Normal(action_mean, torch.exp(action_logstd))
+            return -probs.log_prob(target_actions).mean()
+        else:
+            raise ValueError(
+                "Expected sft_loss_type 'mse' or 'nll', "
+                f"got {self.cfg.sft_loss_type!r}."
+            )
 
     def default_forward(
         self,

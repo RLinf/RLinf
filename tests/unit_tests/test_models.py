@@ -2274,7 +2274,13 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert torch.all(actions[1, :, 6] == 0.5)
 
 
-def _cnn_policy(tmp_path, num_action_chunks, action_norm_stats=None, dropout=0.0):
+def _cnn_policy(
+    tmp_path,
+    num_action_chunks,
+    action_norm_stats=None,
+    dropout=0.0,
+    sft_loss_type="mse",
+):
     import json
 
     from rlinf.models.embodiment.cnn_policy.cnn_policy import CNNConfig, CNNPolicy
@@ -2292,6 +2298,7 @@ def _cnn_policy(tmp_path, num_action_chunks, action_norm_stats=None, dropout=0.0
         "action_dim": 22,
         "num_action_chunks": num_action_chunks,
         "add_value_head": True,
+        "sft_loss_type": sft_loss_type,
     }
     if action_norm_stats is not None:
         (tmp_path / "meta.json").write_text(json.dumps(action_norm_stats))
@@ -2342,10 +2349,11 @@ def test_cnn_policy_normalizes_chunks_and_preserves_ppo_logprobs(tmp_path):
     )
 
 
-def test_cnn_policy_sft_updates_action_mean_only(tmp_path):
+@pytest.mark.parametrize("sft_loss_type", ["mse", "nll"])
+def test_cnn_policy_sft_updates_action_heads(tmp_path, sft_loss_type):
     from rlinf.models.embodiment.base_policy import ForwardType
 
-    model = _cnn_policy(tmp_path, 10, dropout=0.1).train()
+    model = _cnn_policy(tmp_path, 10, dropout=0.1, sft_loss_type=sft_loss_type).train()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     initial_mean = model.actor_mean.weight.detach().clone()
     initial_logstd = model.actor_logstd.detach().clone()
@@ -2356,10 +2364,18 @@ def test_cnn_policy_sft_updates_action_mean_only(tmp_path):
     assert model.actor_mean.weight.grad is not None
     assert torch.isfinite(model.actor_mean.weight.grad).all()
     assert model.actor_mean.weight.grad.count_nonzero() > 0
-    assert model.actor_logstd.grad is None
+    if sft_loss_type == "nll":
+        assert model.actor_logstd.grad is not None
+        assert torch.isfinite(model.actor_logstd.grad).all()
+        assert model.actor_logstd.grad.count_nonzero() > 0
+    else:
+        assert model.actor_logstd.grad is None
     optimizer.step()
     assert not torch.equal(model.actor_mean.weight, initial_mean)
-    torch.testing.assert_close(model.actor_logstd, initial_logstd)
+    if sft_loss_type == "nll":
+        assert not torch.equal(model.actor_logstd, initial_logstd)
+    else:
+        torch.testing.assert_close(model.actor_logstd, initial_logstd)
 
 
 @pytest.mark.parametrize("num_action_chunks", [1, 10])

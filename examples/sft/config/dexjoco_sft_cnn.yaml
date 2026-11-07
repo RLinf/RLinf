@@ -47,6 +47,7 @@ actor:
     action_dim: 22
     num_action_chunks: 10
     action_norm_stats: "/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json"
+    sft_loss_type: mse
     add_value_head: True # Match the PPO checkpoint layout.
     add_q_head: False
 

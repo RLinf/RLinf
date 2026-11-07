@@ -168,7 +168,8 @@ action normalization statistics. Set these paths in
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-Train the CNN with mean squared error on the demonstrated action chunks:
+For SFT, set ``actor.model.sft_loss_type`` to ``mse`` (mean squared error,
+default) or ``nll`` (Gaussian negative log-likelihood) in the config, then run:
 
 .. code:: bash
 
@@ -324,14 +325,14 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
      logger:
        logger_backends: ["tensorboard", "wandb"]
 
-.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/4b5dbf3db3a251fc33415113b6dbe504f6c08202/pic/dexjoco_cnn_sft_ppo.png
+.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/fe6ff292708c223ed92d4eec81921103a3f0d35a/pic/dexjoco_cnn_nll_vs_mse.png
    :align: center
    :width: 100%
-   :alt: CNN success rate through 8000 SFT updates and 200 PPO iterations on water_plant.
+   :alt: CNN PPO success rates after MSE or NLL SFT on water_plant.
 
-   CNN SFT + PPO on ``water_plant`` (64 evaluation episodes).
+   CNN PPO after MSE or NLL SFT on ``water_plant`` (64 evaluation episodes).
 
-`CNN PPO run logs <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__.
+CNN PPO run logs: `MSE <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__ · `NLL <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-5a6a584b1425>`__.
 
 .. figure:: https://raw.githubusercontent.com/matthewmzy/misc/11c9e5e117ae7231055ec4b561284e131df71c0a/pic/dexjoco_pi05_sft_ppo.png
    :align: center
@@ -350,9 +351,11 @@ contains the evaluation curves and source logs.
    * - Recipe
      - Success rate
    * - CNN + SFT
-     - Step 8000 reaches 46/64 (71.9%).
-   * - CNN + PPO
+     - Step 8000: MSE 46/64 (71.9%); NLL 42/64 (65.6%).
+   * - CNN + PPO (MSE SFT)
      - Continues SFT step 8000: 46/64 (71.9%) at iteration 0 → 44/64 (68.8%) at iteration 200; the peak is 60/64 (93.8%) at iteration 123.
+   * - CNN + PPO (NLL SFT)
+     - Continues SFT step 8000: 42/64 (65.6%) at iteration 0 → 59/64 (92.2%) at iteration 200; first reaches 64/64 (100%) at iteration 163.
    * - π₀.₅ + SFT
      - Step 5000 reaches 44/64 (68.75%).
    * - π₀.₅ + PPO

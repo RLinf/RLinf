@@ -158,7 +158,7 @@ CNN：SFT 与 PPO
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-启动 SFT，以均方误差拟合示范动作块：
+在配置中用 ``actor.model.sft_loss_type`` 选择 SFT 损失：``mse`` 为均方误差（默认），``nll`` 为高斯负对数似然。启动训练：
 
 .. code:: bash
 
@@ -301,14 +301,14 @@ SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在
      logger:
        logger_backends: ["tensorboard", "wandb"]
 
-.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/4b5dbf3db3a251fc33415113b6dbe504f6c08202/pic/dexjoco_cnn_sft_ppo.png
+.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/fe6ff292708c223ed92d4eec81921103a3f0d35a/pic/dexjoco_cnn_nll_vs_mse.png
    :align: center
    :width: 100%
-   :alt: CNN 在 water_plant 上经过 8000 步 SFT 和 200 轮 PPO 的成功率。
+   :alt: CNN 分别经过 MSE、NLL SFT 后在 water_plant 上的 PPO 成功率。
 
-   CNN 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测回合）。
+   CNN 分别经过 MSE、NLL SFT 后在 ``water_plant`` 上的 PPO 成功率（64 个评测回合）。
 
-`CNN PPO 运行日志 <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__。
+CNN PPO 运行日志：`MSE <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__ · `NLL <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-5a6a584b1425>`__。
 
 .. figure:: https://raw.githubusercontent.com/matthewmzy/misc/11c9e5e117ae7231055ec4b561284e131df71c0a/pic/dexjoco_pi05_sft_ppo.png
    :align: center
@@ -326,9 +326,11 @@ SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在
    * - 配方
      - 成功率
    * - CNN + SFT
-     - 第 8000 步达到 46/64（71.9%）。
-   * - CNN + PPO
+     - 第 8000 步：MSE 为 46/64（71.9%），NLL 为 42/64（65.6%）。
+   * - CNN + PPO（MSE SFT）
      - 从 SFT 第 8000 步继续训练：第 0 轮为 46/64（71.9%），第 200 轮为 44/64（68.8%）；峰值为第 123 轮的 60/64（93.8%）。
+   * - CNN + PPO（NLL SFT）
+     - 从 SFT 第 8000 步继续训练：第 0 轮为 42/64（65.6%），第 200 轮为 59/64（92.2%）；第 163 轮首次达到 64/64（100%）。
    * - π₀.₅ + SFT
      - 第 5000 步达到 44/64（68.75%）。
    * - π₀.₅ + PPO
