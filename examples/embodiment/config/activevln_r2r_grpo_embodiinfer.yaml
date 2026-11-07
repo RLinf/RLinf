@@ -65,6 +65,7 @@ env:
     group_size: 1
 rollout:
   group_name: RolloutGroup
+  generation_backend: embodiinfer
   recompute_logprobs: False
   collect_final_values: False
   enable_offload: False
@@ -78,27 +79,26 @@ rollout:
     repetition_penalty: 1.0
     max_new_tokens: 64
   model:
-    model_backend: embodiinfer
     precision: bf16
-    embodiinfer:
-      workspace_tokens: 512
-      query_bucket_size: 32
-      cuda_graph: True
-      fused_ops: True
-      split_attention: True
-      gpu_preprocess: True
-      attention_kernel: gqa
-      vision_kernel: fused
-      # Capacity for the default B=2 and max_context=4096.
-      kv_pool_tokens: 8192
-      incremental_kv_commit: True
-      skip_padded_queries: True
-      packed_prefill: True
-      packed_prefill_bucket: 64
-      decode_linear: True
-      sampling_seed: 42
-      reuse_history: True
-      grammar_tree_budget: 31
+  embodiinfer:
+    workspace_tokens: 512
+    query_bucket_size: 32
+    cuda_graph: True
+    fused_ops: True
+    split_attention: True
+    gpu_preprocess: True
+    attention_kernel: gqa
+    vision_kernel: fused
+    # Capacity for the default B=2 and max_context=4096.
+    kv_pool_tokens: 8192
+    incremental_kv_commit: True
+    skip_padded_queries: True
+    packed_prefill: True
+    packed_prefill_bucket: 64
+    decode_linear: True
+    sampling_seed: 42
+    reuse_history: True
+    grammar_tree_budget: 31
 actor:
   group_name: ActorGroup
   training_backend: fsdp

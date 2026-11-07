@@ -108,7 +108,14 @@ def main(cfg) -> None:
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+    rollout_worker_cls = MultiStepRolloutWorker
+    if cfg.rollout.get("generation_backend") == "embodiinfer":
+        from rlinf.workers.rollout.embodiinfer.embodiinfer_worker import (
+            EmbodiInferRolloutWorker,
+        )
+
+        rollout_worker_cls = EmbodiInferRolloutWorker
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
 

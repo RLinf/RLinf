@@ -153,12 +153,16 @@ class MultiStepRolloutWorker(Worker):
         """Return whether Actor training requires raw transition observations."""
         return self.collect_transitions and not self.enable_rlt
 
+    def _build_model(self, model_cfg: DictConfig) -> BasePolicy:
+        """Build the rollout policy from the merged actor and rollout model config."""
+        return get_model(model_cfg)
+
     def init_worker(self):
         # Train uses actor.model as the architecture source; overlay rollout.model
         # (path, precision, and nested inference knobs). Eval-only is a no-op merge.
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
-        self.hf_model: BasePolicy = get_model(rollout_model_config)
+        self.hf_model: BasePolicy = self._build_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
@@ -229,6 +233,9 @@ class MultiStepRolloutWorker(Worker):
                 "top_p": sampling_params["top_p"],
                 "max_new_tokens": sampling_params["max_new_tokens"],
             }
+            if sampling_params.get("repetition_penalty", 1.0) != 1.0:
+                for params in (self._train_sampling_params, self._eval_sampling_params):
+                    params["repetition_penalty"] = sampling_params["repetition_penalty"]
         else:
             self._train_sampling_params = {}
             self._eval_sampling_params = {}
@@ -511,11 +518,6 @@ class MultiStepRolloutWorker(Worker):
         )
 
         model_type = SupportedModel(self.model_cfg.model_type)
-        if model_type == SupportedModel.ACTIVEVLN:
-            kwargs = dict(kwargs)
-            kwargs["repetition_penalty"] = self.cfg.rollout.sampling_params.get(
-                "repetition_penalty", 1.0
-            )
         if model_type in [
             SupportedModel.OPENPI,
             SupportedModel.PI0_FAST,

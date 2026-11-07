@@ -94,18 +94,20 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             frames = torch.from_numpy(np.stack([entry[2] for entry in entries]))
             pixels = transform(frames.to(device)).to(parameter.dtype).cpu()
             height, width = transform.resized_size(shape[0], shape[1])
-            grid = torch.tensor([
-                [1, height // transform.patch_size, width // transform.patch_size]
-            ])
+            grid = torch.tensor(
+                [[1, height // transform.patch_size, width // transform.patch_size]]
+            )
             for (row, index, _), patches in zip(
                 entries, pixels.chunk(len(entries)), strict=True
             ):
                 rows[row][index] = (patches, grid)
         return [
-            BatchFeature({
-                "pixel_values": torch.cat([entry[0] for entry in row]),
-                "image_grid_thw": torch.cat([entry[1] for entry in row]),
-            })
+            BatchFeature(
+                {
+                    "pixel_values": torch.cat([entry[0] for entry in row]),
+                    "image_grid_thw": torch.cat([entry[1] for entry in row]),
+                }
+            )
             if row
             else None
             for row in rows
