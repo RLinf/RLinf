@@ -34,7 +34,6 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
-- [2026/11] RLinf supports Kuavo joint-control interfaces for 4pro, 5, and 5w robots. Doc: [Kuavo hardware configuration](docs/source-en/rst_source/guides/realworld_robot.rst#kuavo-hardware-configuration).
 - [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization. Doc: [PhyAI rollout backend](docs/source-en/rst_source/guides/rollout-engines/phyai.rst).
 - [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
 - [2026/10] 🎉 RLinf introducing **CEL** (Collective Experience Learning): robot fleets improve a shared policy from their own deployment experience without additional expert demonstrations or corrective actions, validated on up to 96 real robots across 5 real-world tasks. Project page: [CEL](https://cel-robot-learning.github.io/), paper: [arXiv:2610.25736](https://arxiv.org/abs/2610.25736). Code will release soon.
@@ -281,7 +280,6 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
-          <li><a href="docs/source-en/rst_source/guides/realworld_robot.rst#kuavo-hardware-configuration">Kuavo (4pro / 5 / 5w)</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -384,6 +382,19 @@ Choose the model and environment combination you need, then follow the correspon
 
 **SOTA RL Training Reproduction:** RLinf provides end-to-end recipes that reproduce or match **state-of-the-art (SOTA) RL results** out of the box—users can directly run our configs and scripts to obtain SOTA performance without custom engineering. Check out our [example gallery](https://rlinf.readthedocs.io/en/latest/rst_source/examples/index.html) for more details.
 
+
+### Kuavo ROS Startup
+
+To connect Kuavo to existing ROS services, run this on the driver, environment, controller, and camera nodes before starting Python or Ray:
+
+```bash
+export RLINF_ROS_SETUP=preserve
+```
+
+> [!WARNING]
+> This process-wide setting skips ROS cleanup. If unset or set to `reset`, the original cleanup can run before YAML is read. Keep all tasks sharing the ROS master in `preserve` mode.
+
+Start the robot's ROS services before the task. See the [Kuavo setup guide](docs/source-en/rst_source/guides/realworld_robot.rst) and [environment config](examples/embodiment/config/env/realworld_kuavo_joint.yaml).
 
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:
