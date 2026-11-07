@@ -1138,23 +1138,6 @@ def test_policy_input_split_merge_preserves_sources_and_nested_payloads():
     assert torch.equal(merged.rlt_switch_flags, policy_input.rlt_switch_flags)
 
 
-def test_external_policy_input_split_merge_preserves_actions():
-    key = TrajectoryKey(0, 0, 0, 0, 1)
-    policy_input = PolicyInput(
-        obs={"states": torch.arange(12).reshape(4, 3)},
-        external_actions=torch.arange(24).reshape(4, 2, 3),
-        sources=[TrajectorySource(key, 4)],
-    )
-
-    shards = policy_input.split([1, 3])
-    merged = PolicyInput.merge(shards)
-
-    assert all(not shard.requires_inference for shard in shards)
-    assert not merged.requires_inference
-    assert torch.equal(merged.external_actions, policy_input.external_actions)
-    assert merged.sources == policy_input.sources
-
-
 def test_online_lerobot_payload_survives_source_routing():
     episode_data = {
         "chunk_actions": torch.arange(12).reshape(3, 2, 2),
@@ -1428,27 +1411,18 @@ def _source(key: TrajectoryKey, size: int = 1, offset: int = 0):
 def _policy(
     key: TrajectoryKey,
     value: float = 1.0,
-    *,
-    external: bool = False,
     **source_kwargs,
 ):
     value_tensor = torch.tensor([[value]])
-    kwargs = (
-        {"external_actions": value_tensor.unsqueeze(1)}
-        if external
-        else {
-            "output": PolicyOutput(
-                forward_inputs={"action": value_tensor},
-                prev_logprobs=torch.zeros(1, 1),
-                prev_values=torch.zeros(1, 1),
-                versions=torch.full((1, 1), 7.0),
-            )
-        }
-    )
     return PolicyPart(
         sources=[_source(key, **source_kwargs)],
         obs={"states": value_tensor},
-        **kwargs,
+        output=PolicyOutput(
+            forward_inputs={"action": value_tensor},
+            prev_logprobs=torch.zeros(1, 1),
+            prev_values=torch.zeros(1, 1),
+            versions=torch.full((1, 1), 7.0),
+        ),
     )
 
 
@@ -1512,20 +1486,6 @@ def _collect(collector, *parts):
     for part in parts:
         outputs.extend(collector.collect(part, DEFAULT_KEY))
     return outputs
-
-
-def test_policy_part_requires_exactly_one_policy_payload():
-    key = TrajectoryKey(0, 0, 0, 0, 0)
-    common = {"sources": [_source(key)], "obs": {"states": torch.zeros(1, 1)}}
-
-    with pytest.raises(ValueError, match="exactly one"):
-        PolicyPart(**common)
-    with pytest.raises(ValueError, match="exactly one"):
-        PolicyPart(
-            **common,
-            output=PolicyOutput(forward_inputs={}),
-            external_actions=torch.zeros(1, 1),
-        )
 
 
 def test_setup_requires_the_run_config():
@@ -1981,27 +1941,6 @@ def test_pipeline_flushes_each_epoch_to_the_actor_specific_key():
         )
         assert outputs[0][0] == "0_0_pipeline_actor"
         assert (2, epoch_id) not in collector._output._accumulators
-
-
-def test_online_lerobot_accepts_external_policy_actions_and_emits_shards():
-    cfg = _config(
-        algorithm={"dagger": {"online_lerobot": {"enabled": True}}},
-    )
-    collector = _make(cfg, shards_per_source=2)
-    key = TrajectoryKey(3, 0, 0, 0, 0)
-
-    outputs = _collect(
-        collector,
-        _policy(key, external=True),
-        _env_part(
-            key,
-            episode_data=_episode_data(),
-            initial_transition=EnvTransition(),
-        ),
-    )
-
-    assert len(outputs) == 2
-    assert all(key == DEFAULT_KEY for key, _ in outputs)
 
 
 def test_online_lerobot_accumulator_records_external_intervened_action():
@@ -2569,9 +2508,9 @@ def test_policy_input_compression_preserves_attached_env_parts(monkeypatch):
 
 
 def test_sync_and_async_workers_share_the_part_channel_contract():
-    """Only Rollout publishes parts; Env communicates exclusively with Rollout."""
+    """Rollout publishes parts; only async Env also gets the Actor channel."""
     assert "actor_channel" not in inspect.signature(EnvWorker.interact).parameters
-    assert "actor_channel" not in inspect.signature(AsyncEnvWorker.interact).parameters
+    assert "actor_channel" in inspect.signature(AsyncEnvWorker.interact).parameters
     assert (
         "actor_channel" in inspect.signature(MultiStepRolloutWorker.generate).parameters
     )
@@ -2791,28 +2730,6 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
     )
 
 
-def test_smooth_intervention_builds_external_input_without_policy_history():
-    controller = SmoothInterveneController(
-        stage_num=1,
-        num_envs_per_stage=1,
-        num_action_chunks=2,
-        action_dim=3,
-        enabled=True,
-    )
-    env = SimpleNamespace(get_hold_actions=lambda fallback=None: [[1.0, 2.0, 3.0]])
-
-    policy_input = controller.build_external_policy_input(
-        0, env=env, obs={"states": torch.zeros(1, 4)}
-    )
-
-    assert isinstance(policy_input, PolicyInput)
-    assert not policy_input.requires_inference
-    assert torch.equal(
-        policy_input.external_actions,
-        torch.tensor([[[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]]),
-    )
-
-
 def test_smooth_intervention_requires_online_lerobot_dagger():
     cfg = OmegaConf.create(
         {
@@ -2839,41 +2756,6 @@ def test_smooth_intervention_requires_online_lerobot_dagger():
             enable_train=True,
             train_num_envs_per_stage=1,
         )
-
-
-def test_env_sends_external_request_after_intervention_continues():
-    env = object.__new__(EnvWorker)
-    env._trajectory_step = 0
-    env._rank = 0
-    env.train_num_envs_per_stage = 1
-    env.n_train_chunk_steps = 2
-    env.enable_online_lerobot = True
-    env.env_decoupled_mode = False
-    env.env_list = [
-        SimpleNamespace(get_hold_actions=lambda fallback=None: [[1.0, 2.0]])
-    ]
-    env.smooth_intervene = SmoothInterveneController(1, 1, 2, 2, enabled=True)
-    env._build_env_transition = Mock(return_value=EnvTransition())
-    env._send_policy_input = Mock()
-    env_output = EnvOutput(
-        obs={"states": torch.zeros(1, 4)},
-        transition=EnvTransition(
-            dones=torch.tensor([[False, False]]),
-            intervene_flags=torch.tensor([[False, True]]),
-        ),
-    )
-
-    env._publish_step(Mock(), env_output, EnvTransition(), None, {}, 0, 0, 0)
-
-    policy_input = env._send_policy_input.call_args.args[1]
-    assert not policy_input.requires_inference
-    assert policy_input.env_parts[0] is not None
-    assert policy_input.env_parts[0].next_obs is None
-    assert torch.equal(policy_input.obs["states"], env_output.obs["states"])
-    assert torch.equal(
-        policy_input.external_actions,
-        torch.tensor([[[1.0, 2.0], [1.0, 2.0]]]),
-    )
 
 
 def _publish_step_env(**overrides):
@@ -3026,94 +2908,6 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     assert rollout._predict_rollout_actions.call_count == 3
 
 
-def test_rollout_routes_external_input_without_model_inference():
-    rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.n_train_chunk_steps = 2
-    rollout.num_pipeline_stages = 1
-    rollout.env_decoupled_mode = False
-    rollout.enable_rlt = False
-    rollout.collect_transitions = False
-    rollout.hf_model = SimpleNamespace(value_head=object())
-    rollout.update_dagger_beta = Mock()
-    rollout._send_actions = Mock()
-    rollout._build_policy_output = Mock(
-        return_value=PolicyOutput(
-            forward_inputs={"action": torch.ones(1, 6)},
-        )
-    )
-    key0 = TrajectoryKey(0, 0, 0, 0, 0)
-    key1 = TrajectoryKey(0, 0, 0, 0, 1)
-    completion0 = EnvPart(
-        sources=[TrajectorySource(key0, 1)],
-        transition=EnvTransition(),
-        next_obs={"states": torch.ones(1, 4)},
-        requires_inference=False,
-    )
-    completion1 = EnvPart(
-        sources=[TrajectorySource(key1, 1)],
-        transition=EnvTransition(),
-        next_obs={"states": torch.ones(1, 4)},
-        requires_inference=False,
-    )
-    dummy_actions = torch.full((1, 2, 3), 2.0)
-    rollout._receive_policy_input = AsyncMock(
-        side_effect=[
-            (
-                PolicyInput(
-                    obs={"states": torch.zeros(1, 4)},
-                    sources=[TrajectorySource(key0, 1)],
-                    env_parts=[None],
-                    request_sizes=[1],
-                ),
-                None,
-            ),
-            (
-                PolicyInput(
-                    obs={"states": torch.ones(1, 4)},
-                    external_actions=dummy_actions,
-                    sources=[TrajectorySource(key1, 1)],
-                    env_parts=[completion0],
-                    request_sizes=[1],
-                ),
-                None,
-            ),
-            (
-                PolicyInput(
-                    obs={"states": torch.ones(1, 4)},
-                    env_parts=[completion1],
-                    request_sizes=[1],
-                    is_last=True,
-                ),
-                None,
-            ),
-        ]
-    )
-    rollout._predict_rollout_actions = Mock(
-        return_value=(
-            torch.ones(1, 2, 3),
-            {"forward_inputs": {"action": torch.ones(1, 6)}},
-        )
-    )
-    actor_channel = Mock()
-    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
-    while hasattr(generate_one_epoch, "__wrapped__"):
-        generate_one_epoch = generate_one_epoch.__wrapped__
-
-    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
-
-    parts = [call.args[0] for call in actor_channel.put.call_args_list]
-    inferred_parts = [
-        part for part in parts if isinstance(part, PolicyPart) and part.inferred
-    ]
-    assert len(inferred_parts) == 1
-    external_part = next(
-        part for part in parts if isinstance(part, PolicyPart) and not part.inferred
-    )
-    assert torch.equal(external_part.external_actions, dummy_actions)
-    assert rollout._predict_rollout_actions.call_count == 1
-    assert torch.equal(rollout._send_actions.call_args_list[1].args[1], dummy_actions)
-
-
 def test_decoupled_final_completion_uses_next_bootstrap():
     env = object.__new__(EnvWorker)
     env._trajectory_step = 0
@@ -3227,9 +3021,7 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     env = SimpleNamespace(get_hold_actions=get_hold_actions)
     controller.remember_actions(0, torch.tensor([[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]]))
 
-    controller.build_external_policy_input(
-        0, env=env, obs={"states": torch.zeros(1, 4)}
-    )
+    controller.hold_chunk(0, env)
 
     # The wrapper receives the final step of the chunk that was just executed,
     # so it can hold that pose instead of snapping back to its own default.

@@ -35,6 +35,7 @@ class AsyncEnvWorker(EnvWorker):
         rollout_channel: Channel,
         reward_channel: Channel | None,
         metric_channel: Channel,
+        actor_channel: Channel | None = None,
     ):
         assert self._interact_task is None or self._interact_task.done(), (
             "Previous interact task is still running while a new interact call is made."
@@ -45,6 +46,7 @@ class AsyncEnvWorker(EnvWorker):
                 rollout_channel,
                 reward_channel,
                 metric_channel,
+                actor_channel,
             )
         )
         try:
@@ -58,6 +60,7 @@ class AsyncEnvWorker(EnvWorker):
         rollout_channel: Channel,
         reward_channel: Channel | None,
         metric_channel: Channel,
+        actor_channel: Channel | None,
     ):
         while True:
             env_metrics = await self._run_interact_once(
@@ -65,6 +68,7 @@ class AsyncEnvWorker(EnvWorker):
                 rollout_channel,
                 reward_channel,
                 cooperative_yield=True,
+                actor_channel=actor_channel,
             )
 
             env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
@@ -82,3 +86,5 @@ class AsyncEnvWorker(EnvWorker):
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():
             self._interact_task.cancel()
+        if self.smooth_intervene.enabled:
+            self.episode_recorder.wait_for_uploads()

@@ -442,9 +442,11 @@ class PicoTcp(Pico):
 
     def hold(self, context: Mapping[str, Any]) -> dict[str, np.ndarray]:
         """Return a pose command that holds the arm where it was left."""
-        if self._last_command is not None:
-            return {"arm": self._last_command[:-1]}
-        return {"arm": self._pose_to_command(self._measured_pose(context))[:-1]}
+        command = self._last_command
+        if command is None:
+            command = self._pose_to_command(self._measured_pose(context))
+        # A neutral gripper keeps a hold from re-asserting the policy's last grip.
+        return self._split(np.append(command[:-1], np.float32(0.0)))
 
     def on_action_chunk_begin(self) -> None:
         """Clear the pose held after a mid-chunk release."""

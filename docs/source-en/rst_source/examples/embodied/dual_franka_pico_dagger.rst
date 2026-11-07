@@ -558,6 +558,9 @@ Before launch, confirm these fields:
 
 .. code-block:: yaml
 
+   runner:
+     enable_decoupled_mode: True
+
    algorithm:
      dagger:
        only_save_expert: True
@@ -588,7 +591,7 @@ Before launch, confirm these fields:
 
 ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
 
-``smooth_intervene: True`` removes action-chunk boundary stalls while PICO is active. If the final frame of a chunk is human-controlled, the env worker skips the next policy inference and executes a shape-compatible dummy chunk instead. PICO actions still override active arms, while inactive frames hold the measured TCP pose. Normal model inference resumes after the final chunk frame is no longer intervened or the episode ends. This mode is PICO-only: every ``env.train.teleop`` entry must be pico, and it currently requires one environment per env-worker pipeline stage.
+``smooth_intervene: True`` removes action-chunk boundary stalls while PICO is active, and requires ``runner.enable_decoupled_mode: True``. If the final frame of a chunk is human-controlled, the env worker runs the next chunk itself from the hold action and does not contact the rollout. PICO actions still override active arms, while inactive frames hold the measured TCP pose. Normal model inference resumes after the final chunk frame is no longer intervened or the episode ends. The env worker records episodes itself and uploads finished ones to the actor in the background, so collection never waits on the uplink; if the uplink cannot keep up, the oldest unsent episode is dropped (``online_lerobot.max_unsent_episodes``, default 4) and an error is logged. An episode stays in memory until it ends. This mode is PICO-only: every ``env.train.teleop`` entry must be pico. It requires ``only_save_expert: True`` and one environment per env-worker pipeline stage, and the sync runner does not support it.
 
 ``only_success: True`` discards failed rollouts and keeps only successful episodes. ``only_save_expert: True`` still archives each complete successful episode, but training only samples chunk starts where every non-padded frame in the action chunk has ``intervene_flag=True``. Because a dual-arm frame is marked as an intervention when either arm is replaced, such a chunk may combine one arm's PICO action with the other arm's rollout action. Every successful episode is archived immediately under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``. ``env.eval.teleop: none`` means evaluation uses the policy alone, without human intervention.
 

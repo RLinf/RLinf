@@ -372,51 +372,23 @@ class PolicyOutput:
 
 @dataclass(kw_only=True)
 class PolicyPart:
-    """Policy-owned data for one or more routed action chunks.
-
-    Exactly one of ``output`` and ``external_actions`` must be present.
-    The latter represents an online intervention that skipped model inference.
-    """
+    """Policy-owned data for one or more routed action chunks."""
 
     # Logical source shards represented by this payload; sizes sum to B.
     sources: list[TrajectorySource]
     # Pre-action observations; nested leaves start with [B, ...].
     obs: dict[str, Any]
-    # Full model inference output for training; absent for external actions.
-    output: PolicyOutput | None = None
-    # Smooth-intervention actions, float [B, C, A] or [B, D].
-    external_actions: torch.Tensor | None = None
+    # Full model inference output for training.
+    output: PolicyOutput
 
     def __post_init__(self) -> None:
-        """Validate the policy variant and move payloads to CPU."""
-        if (self.output is None) == (self.external_actions is None):
-            raise ValueError(
-                "PolicyPart requires exactly one of output and external_actions."
-            )
+        """Move payloads to CPU."""
         self.obs = put_tensor_device(self.obs, "cpu")
-        if self.external_actions is not None:
-            self.external_actions = self.external_actions.cpu().contiguous()
-
-    @property
-    def inferred(self) -> bool:
-        """Return whether this part came from model inference."""
-        return self.output is not None
 
     def split(self) -> list["PolicyPart"]:
         """Split this routed payload into one fragment per logical source."""
         split_sizes = [source.size for source in self.sources]
         observations = split_batch_value(self.obs, split_sizes)
-        if self.output is None:
-            actions = split_batch_value(self.external_actions, split_sizes)
-            return [
-                type(self)(
-                    sources=[source],
-                    obs=observations[index],
-                    external_actions=actions[index],
-                )
-                for index, source in enumerate(self.sources)
-            ]
-
         outputs = self.output.split(split_sizes)
         return [
             type(self)(
@@ -432,23 +404,12 @@ class PolicyPart:
         """Merge single-source fragments in their validated batch order."""
         if not fragments:
             raise ValueError("Cannot merge an empty list of policy parts.")
-        inferred = [fragment.inferred for fragment in fragments]
-        if any(inferred) and not all(inferred):
-            raise ValueError("Cannot merge inferred and external policy parts.")
         full_sources = TrajectorySource.merge(
             [fragment.sources for fragment in fragments]
         )
         if len(full_sources) != 1:
             raise ValueError("Policy fragments must belong to one logical source.")
         observations = merge_batch_values([fragment.obs for fragment in fragments])
-        if fragments[0].output is None:
-            return cls(
-                sources=full_sources,
-                obs=observations,
-                external_actions=merge_batch_values(
-                    [fragment.external_actions for fragment in fragments]
-                ),
-            )
         return cls(
             sources=full_sources,
             obs=observations,
@@ -696,8 +657,6 @@ class TrajectoryStep:
         it in forward_inputs and must also mask their recomputed statistics.
         """
         output = policy.output
-        if output is None:
-            raise ValueError("Training trajectories require inferred policy output.")
         initial = env.initial_transition
         step = cls(
             actions=output.forward_inputs.get("action"),
@@ -1763,9 +1722,6 @@ class PolicyInput:
     request_sizes: list[int] = field(default_factory=list)
     # Whether this message closes an epoch without requesting another action.
     is_last: bool = False
-    # Externally supplied actions, float [B, C, A] or [B, D]. ``None`` means
-    # Rollout must run model inference. Used by smooth intervention only.
-    external_actions: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         self.obs = put_tensor_device(self.obs, "cpu")
@@ -1773,13 +1729,6 @@ class PolicyInput:
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, value.cpu().contiguous())
-        if self.external_actions is not None:
-            self.external_actions = self.external_actions.cpu().contiguous()
-
-    @property
-    def requires_inference(self) -> bool:
-        """Return whether Rollout must infer actions for this request."""
-        return self.external_actions is None
 
     def split(self, split_sizes: list[int]) -> list["PolicyInput"]:
         """Split this producer request on its batch dimension."""
@@ -1797,7 +1746,6 @@ class PolicyInput:
             if env_part is not None
             else [None] * len(split_sizes)
         )
-        action_shards = split_batch_value(self.external_actions, split_sizes)
         return [
             type(self)(
                 obs=obs,
@@ -1807,7 +1755,6 @@ class PolicyInput:
                 env_parts=[env_part_shards[index]],
                 request_sizes=[split_sizes[index]],
                 is_last=self.is_last,
-                external_actions=action_shards[index],
             )
             for index, obs in enumerate(split_batch_value(self.obs, split_sizes))
         ]
@@ -1817,10 +1764,6 @@ class PolicyInput:
         """Merge routed policy requests in source order."""
         if not policy_inputs:
             raise ValueError("Cannot merge an empty list of policy inputs.")
-        inference_modes = [item.requires_inference for item in policy_inputs]
-        if any(inference_modes) and not all(inference_modes):
-            raise ValueError("Cannot merge inferred and external policy inputs.")
-
         observations = [policy_input.obs for policy_input in policy_inputs]
 
         def merge_optional_tensor(field_name: str) -> torch.Tensor | None:
@@ -1858,13 +1801,6 @@ class PolicyInput:
                 for size in policy_input.request_sizes
             ],
             is_last=policy_inputs[0].is_last,
-            external_actions=(
-                None
-                if policy_inputs[0].requires_inference
-                else merge_batch_values(
-                    [item.external_actions for item in policy_inputs]
-                )
-            ),
         )
 
 
