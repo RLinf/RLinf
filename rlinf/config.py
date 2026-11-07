@@ -1090,12 +1090,20 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     if model_type == SupportedModel.LINGBOTVLAV2:
-        # V2 always computes in bf16; only the FSDP actor stores fp32 weights,
-        # because the rollout has no FSDP cast to bring them back to bf16.
+        # Training rollout stays in bf16. Eval also permits fp32 so the
+        # published RoboTwin checkpoint can be evaluated with its release
+        # precision without changing the training path.
         rollout_precision = cfg.rollout.model.get("precision", model_cfg.precision)
-        if torch_dtype_from_precision(rollout_precision) != torch.bfloat16:
+        rollout_dtype = torch_dtype_from_precision(rollout_precision)
+        allowed_dtypes = (
+            {torch.bfloat16, torch.float32}
+            if only_eval
+            else {torch.bfloat16}
+        )
+        if rollout_dtype not in allowed_dtypes:
             raise ValueError(
-                "Expected rollout.model.precision=bf16 for LingBot-VLA V2, "
+                "Expected rollout.model.precision=bf16 for training or bf16/fp32 "
+                "for eval-only LingBot-VLA V2, "
                 f"got {rollout_precision!r}."
             )
     if model_type == SupportedModel.LINGBOTVLAV2 and not only_eval:

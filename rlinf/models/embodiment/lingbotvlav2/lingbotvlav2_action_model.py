@@ -55,10 +55,8 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 
-# Rollout and actor both compute in bf16. ``torch_dtype`` only sets how the
-# trainable weights are stored: fp32 in the FSDP actor, so small optimizer steps
-# are not rounded away, and bf16 in the rollout. FSDP2 casts the actor's fp32
-# weights to bf16 for compute, which matches the rollout's bf16 copy.
+# Training and RL rollout compute in bf16. Standalone eval may opt into
+# fp32 to match the published RoboTwin release evaluation.
 _COMPUTE_DTYPE = torch.bfloat16
 _REQUIRED_PATHS = (
     "model_path",
@@ -106,6 +104,11 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             if not OmegaConf.select(config, key):
                 raise ValueError(f"Expected an absolute path in model.{key}, got none.")
         self.config = config
+        self.compute_dtype = (
+            torch.float32
+            if torch_dtype == torch.float32 and not torch.distributed.is_initialized()
+            else _COMPUTE_DTYPE
+        )
         self.num_steps = int(config.num_steps)
         self.forward_micro_batch_size = int(config.forward_micro_batch_size)
         if self.forward_micro_batch_size < 1:
@@ -173,7 +176,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             load_model(self.vla_model, str(weights / "model.safetensors"), strict=True)
         else:
             raise FileNotFoundError(f"No safetensors checkpoint in {weights}")
-        self.vla_model.to(dtype=_COMPUTE_DTYPE)
+        self.vla_model.to(dtype=self.compute_dtype)
         # No-grad inference kernels can have different numerical reductions.
         # The source package exposes a common differentiable MoE backend.
         self.vla_model.set_moe_forward_backend("differentiable")
@@ -282,7 +285,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return {
             key: value.to(
                 device=device,
-                dtype=_COMPUTE_DTYPE if key in {"images", "state"} else value.dtype,
+                dtype=self.compute_dtype if key in {"images", "state"} else value.dtype,
             )
             for key, value in inputs.items()
         }
@@ -329,7 +332,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             inputs["state"],
             padding,
             cache,
-            x.to(_COMPUTE_DTYPE),
+            x.to(self.compute_dtype),
             time.expand(len(x)),
             prefix_position_ids=positions,
         ).float()
@@ -337,7 +340,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
     def _values(self, features: torch.Tensor) -> torch.Tensor:
         if self.value_head is None:
             return features.new_zeros((len(features), 1), dtype=torch.float32)
-        return self.value_head(features.to(_COMPUTE_DTYPE)).float()
+        return self.value_head(features.to(self.compute_dtype)).float()
 
     def _times(self, device: torch.device) -> torch.Tensor:
         return torch.linspace(
