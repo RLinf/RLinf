@@ -223,19 +223,45 @@ same machine:
 Kuavo Hardware Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Install the Kuavo environment dependencies on the robot control node. If the
-SDK is not already available through the robot's ROS workspace, point the
-installer at its source checkout:
+On the Kuavo control node, make sure the Python environment used by Ray can
+import the Kuavo SDK. On camera nodes, prepare the ROS image message packages.
+Install the SDK and its generated ROS message packages using the vendor's
+instructions. If the SDK is not available in the control node's Python
+environment, point the installer at its source checkout. From the repository
+root, run:
 
 .. code-block:: bash
 
    KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
      bash requirements/install.sh embodied --env kuavo
 
-Select the built-in Kuavo composition with ``hardware.type: Kuavo``. The
-configuration identifies the platform revision, selected arms, installed end
-effector, initial head pose, control frequencies, ROS observation topics, and
-safety limits. Joint-position control is currently supported.
+The installer creates or reuses ``.venv`` by default. Use
+``--venv /path/to/venv`` to select another environment, then activate that
+environment before starting Ray.
+
+When ``KUAVO_SDK_PATH`` is set, the script installs that directory in editable
+mode. When it is unset, make sure the Python environment used by Ray can import
+the SDK from the robot's ROS workspace.
+
+.. warning::
+
+   Before starting Python or Ray, set this on the driver, environment,
+   controller, and camera nodes:
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   This process-wide setting skips ROS cleanup. If unset or set to ``reset``,
+   loading real-world tasks can stop ROS core processes before YAML is read.
+   Keep all tasks sharing the master in ``preserve`` mode and restart the
+   process after changing the setting.
+
+Start the robot controller, feedback publishers, cameras, and end-effector
+services before the task. Kuavo connects to existing ROS services; it does not
+start or stop them. Starting ``roscore`` alone is not sufficient.
+
+Select ``hardware.type: Kuavo`` and configure the hardware on its owning node:
 
 .. code-block:: yaml
 

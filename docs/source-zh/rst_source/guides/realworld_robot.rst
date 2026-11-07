@@ -213,14 +213,30 @@ YAML 配置
 Kuavo 硬件配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在机器人控制节点安装 Kuavo 环境依赖。如果 SDK 尚未由机器人的 ROS workspace 提供，可将安装器指向 SDK 源码目录：
+在运行 Kuavo 环境的控制节点上，确保 Ray 使用的 Python 环境可导入 Kuavo SDK；在运行相机订阅的节点上，准备好 ROS 图像消息包。SDK 及其生成的 ROS 消息包按厂商步骤安装。如果 SDK 不在控制节点的 Python 环境中，可将 SDK 源码目录交给安装脚本。请在仓库根目录运行：
 
 .. code-block:: bash
 
    KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
      bash requirements/install.sh embodied --env kuavo
 
-使用 ``hardware.type: Kuavo`` 选择内置的 Kuavo 机器人组合。配置中指定平台版本、使用的手臂、末端执行器、可选头部初始位置、控制频率、ROS 观测 topic 和安全限位。目前支持关节位置控制。
+安装器默认创建或复用 ``.venv``；使用 ``--venv /path/to/venv`` 指定其他环境，并在启动 Ray 前激活所选环境。
+
+设置 ``KUAVO_SDK_PATH`` 时，脚本会以 editable 模式安装该目录；不设置时，确保 Ray 使用的 Python 环境能够从机器人 ROS workspace 导入 SDK。
+
+.. warning::
+
+   启动 Python 或 Ray 前，在 driver、环境、控制器和相机节点设置：
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   此设置对整个进程生效，用于跳过 ROS 清理。未设置或设为 ``reset`` 时，加载真机任务可能在读取 YAML 前停止 ROS core 进程。共享同一 master 的所有任务都应使用 ``preserve``；修改设置后须重启进程。
+
+先启动机器人控制器、反馈发布节点、相机和末端执行器服务，再启动任务。Kuavo 连接已有 ROS 服务，不负责启动或停止服务；仅启动 ``roscore`` 并不足够。
+
+选择 ``hardware.type: Kuavo``，在硬件所属节点配置：
 
 .. code-block:: yaml
 
