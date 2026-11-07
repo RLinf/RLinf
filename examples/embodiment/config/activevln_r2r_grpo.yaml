@@ -56,6 +56,7 @@ env:
   enable_offload: False
   train:
     rollout_epoch: 1
+    reuse_environments: True
   eval:
     rollout_epoch: 1
     group_size: 1

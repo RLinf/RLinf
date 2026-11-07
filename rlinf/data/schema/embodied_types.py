@@ -1705,8 +1705,10 @@ class EnvOutput:
             "states": states,
             "task_descriptions": task_descriptions,
         }
-        # Preserve navigation histories in normal and final observations.
-        for key in ("messages", "images"):
+        # Navigation policies consume the full multimodal conversation rather
+        # than a single image/state. Preserve these batched lists in both the
+        # normal and final observation paths.
+        for key in ("messages", "images", "episode_session_ids", "observation_steps"):
             if key in obs:
                 prepared[key] = obs[key]
         return prepared

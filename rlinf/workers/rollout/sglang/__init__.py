@@ -26,20 +26,17 @@ def get_version(pkg):
         return None
 
 
-package_name = "sglang"
-package_version = get_version(package_name)
+def _get_supported_version():
+    package_version = get_version("sglang")
+    if package_version is None:
+        raise ValueError("sglang is not installed.")
+    if not parse("0.4.4") <= package_version <= parse("0.5.19"):
+        raise ValueError(
+            f"sglang version {package_version} is not supported "
+            "(supported range: >=0.4.4, <=0.5.19)."
+        )
+    return package_version
 
-sglang_version = None
-
-if package_version is None:
-    raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
-    sglang_version = package_version
-else:
-    raise ValueError(
-        f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.19)."
-    )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.hybrid_engines.sglang.common import io_struct
@@ -92,7 +89,11 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name == "sglang_version":
+        return _get_supported_version()
     if name in _LAZY_ATTRS:
+        # Native Engine workers do not use RLinf's version-specific SRT patch.
+        _get_supported_version()
         module_name, attr = _LAZY_ATTRS[name]
         module = import_module(module_name)
         value = module if attr is None else getattr(module, attr)

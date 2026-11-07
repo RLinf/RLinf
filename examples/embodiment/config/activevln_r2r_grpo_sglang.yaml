@@ -2,12 +2,11 @@ defaults:
   - activevln_r2r_grpo
   - _self_
 
+# The actor stays Hugging Face; select actor.model.model_backend=sglang separately.
+# SRT penalties cover response tokens; replay scores precede top-p filtering.
 runner:
   logger:
     experiment_name: activevln_r2r_grpo_sglang
-actor:
-  model:
-    model_backend: sglang
 rollout:
   generation_backend: sglang
   # Native SRT options; actor replay uses differentiable SDPA.

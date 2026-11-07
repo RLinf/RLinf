@@ -49,14 +49,13 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
-    native_activevln = (
-        cfg.rollout.get("generation_backend") == "sglang"
-        and cfg.rollout.model.model_type == "activevln"
-    )
-    if native_activevln:
-        from rlinf.workers.rollout.activevln_worker import ActiveVLNRolloutWorker
+    native_sglang = cfg.rollout.get("generation_backend") == "sglang"
+    if native_sglang:
+        from rlinf.workers.rollout.sglang.sglang_engine_worker import (
+            SGLangEngineRolloutWorker,
+        )
 
-        rollout_group = ActiveVLNRolloutWorker.create_group(cfg).launch(
+        rollout_group = SGLangEngineRolloutWorker.create_group(cfg).launch(
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "apxinf":
@@ -105,7 +104,7 @@ def main(cfg) -> None:
     )
 
     # launch the sglang server
-    if rollout_backend == "sglang" and not native_activevln:
+    if rollout_backend == "sglang" and not native_sglang:
         from rlinf.workers.rollout.sglang import (
             launch_sglang_router_and_server,
         )
@@ -132,11 +131,11 @@ def main(cfg) -> None:
         runner.init_workers()
         runner.run()
     finally:
-        if native_activevln:
+        if native_sglang:
             try:
                 rollout_group.shutdown().wait()
             except Exception as error:
-                get_logger().warning("ActiveVLN rollout cleanup failed: %s", error)
+                get_logger().warning("SGLang rollout cleanup failed: %s", error)
 
 
 if __name__ == "__main__":

@@ -14,24 +14,28 @@
 
 """Registry for embodied sglang adapter classes.
 
-An sglang adapter turns an RLinf env observation batch into model action chunks
-over a launched ``sglang serve`` HTTP server. It is registered per
-``cfg.model_type`` with a *lazy* builder (mirroring
+An sglang adapter turns an RLinf env observation batch into model action chunks.
+It is registered per ``cfg.model_type`` and backend with a *lazy* builder (mirroring
 ``rlinf.models._register_builtin_models``) so importing this module never
 force-imports a model's heavy deps; the builder runs only on lookup.
 
 An adapter whose server cannot batch every env together also defines
 ``request_groups(env_obs)``; the worker then sends one request per group.
+
+The default ``server`` backend uses HTTP action requests. An ``engine`` adapter
+exposes a CPU ``model`` for weight synchronization, ``get_engine_args`` and
+``named_weights``. Its ``build_request`` returns Engine.generate kwargs and
+request state; ``parse_response`` returns actions and trajectory information.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import torch
 
 from rlinf.config import SupportedModel
 from rlinf.utils.obs_compression import infer_obs_batch_size
 
-_SGLANG_ADAPTER_REGISTRY: dict[str, Callable[[], type]] = {}
+_SGLANG_ADAPTER_REGISTRY: dict[tuple[str, str], Callable[[], type]] = {}
 
 
 def select_env_rows(env_obs: dict[str, Any], indices: list[int]) -> dict[str, Any]:
@@ -84,6 +88,8 @@ def register_sglang_adapter(
     model_type: str,
     builder: Callable[[], type],
     force: bool = False,
+    *,
+    backend: Literal["server", "engine"] = "server",
 ):
     """Register a lazy sglang adapter builder for ``cfg.model_type``.
 
@@ -93,16 +99,30 @@ def register_sglang_adapter(
     """
     if not model_type:
         raise ValueError("model_type must be a non-empty string.")
-    key = model_type.lower()
+    key = (model_type.lower(), backend)
     if not force and key in _SGLANG_ADAPTER_REGISTRY:
         raise ValueError(
-            f"SGLang adapter `{key}` is already registered. "
+            f"SGLang adapter `{model_type}` for backend `{backend}` is already registered. "
             "Set force=True to override it."
         )
     _SGLANG_ADAPTER_REGISTRY[key] = builder
 
 
 def _register_builtin_sglang_adapters():
+    def _build_activevln_sglang_adapter():
+        from rlinf.models.embodiment.activevln.sglang_adapter import (
+            ActiveVLNSGLangEngineAdapter,
+        )
+
+        return ActiveVLNSGLangEngineAdapter
+
+    register_sglang_adapter(
+        SupportedModel.ACTIVEVLN.value,
+        _build_activevln_sglang_adapter,
+        force=True,
+        backend="engine",
+    )
+
     def _build_dreamzero_sglang_adapter():
         from rlinf.models.embodiment.dreamzero.sglang_adapter import (
             DreamZeroSGLangAdapter,
@@ -133,7 +153,9 @@ def _register_builtin_sglang_adapters():
 _register_builtin_sglang_adapters()
 
 
-def get_sglang_adapter_cls(model_type: str):
-    """Return the sglang adapter class for ``model_type`` (or ``None``)."""
-    builder = _SGLANG_ADAPTER_REGISTRY.get(str(model_type).lower())
+def get_sglang_adapter_cls(
+    model_type: str, *, backend: Literal["server", "engine"] = "server"
+):
+    """Return the adapter class for a model and backend (or ``None``)."""
+    builder = _SGLANG_ADAPTER_REGISTRY.get((str(model_type).lower(), backend))
     return builder() if builder is not None else None
