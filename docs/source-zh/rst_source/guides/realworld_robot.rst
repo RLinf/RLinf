@@ -213,13 +213,14 @@ YAML 配置
 Kuavo 硬件配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在控制节点安装 SDK，在相机节点安装 ROS 图像消息包。先按厂商安装步骤准备 SDK 所需的 ROS 消息包。如果 SDK 尚未由机器人的 ROS workspace 提供，可使用准备好的源码目录，并将 ``KUAVO_HUMANOID_SDK_VERSION`` 设置为该源码对应的 SDK 发布版本：
+在运行 Kuavo 环境的控制节点上，确保 Ray 使用的 Python 环境可导入 Kuavo SDK；在运行相机订阅的节点上，准备好 ROS 图像消息包。SDK 及其生成的 ROS 消息包按厂商步骤安装。如果 SDK 不在控制节点的 Python 环境中，可将 SDK 源码目录交给安装脚本安装到当前虚拟环境。请在仓库根目录、激活 Ray 使用的虚拟环境后运行：
 
 .. code-block:: bash
 
    KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
      bash requirements/install.sh embodied --env kuavo
 
+设置 ``KUAVO_SDK_PATH`` 时，脚本会以 editable 模式安装该目录；不设置时，脚本假定 SDK 已由机器人 ROS workspace 提供。该脚本不通过 ``KUAVO_HUMANOID_SDK_VERSION`` 选择或安装 SDK 版本。
 .. warning::
 
    启动 Python 或 Ray 前，在 driver、环境、控制器和相机节点设置：
