@@ -18,14 +18,17 @@ from __future__ import annotations
 
 import ast
 import ctypes
+import io
 import os
 import pickle
 import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -2717,6 +2720,51 @@ def test_the_pico_transport_links_calibrates_and_tracks_motion():
         assert socket.closed, "the subscriber socket outlived the device"
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_pico_can_stop_and_restart_with_a_real_zmq_socket(streaming):
+    pytest.importorskip("zmq")
+    # A libzmq assertion aborts the interpreter, so isolate the real socket test.
+    script = """
+import resource
+import sys
+import time
+
+import zmq
+
+from rlinf.robotics.parts.transports.pico import PicoExpert
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+context = zmq.Context()
+publisher = context.socket(zmq.PUB)
+port = publisher.bind_to_random_port("tcp://127.0.0.1")
+expert = PicoExpert(zmq_addr=f"tcp://127.0.0.1:{port}", timeout_ms=100)
+try:
+    for _ in range(3):
+        expert.start()
+        if sys.argv[1] == "streaming":
+            deadline = time.monotonic() + 3
+            while not expert.ready and time.monotonic() < deadline:
+                publisher.send_json({"buttons": {}})
+                time.sleep(0.01)
+            assert expert.ready, "subscriber did not receive the test stream"
+        else:
+            time.sleep(0.05)
+        expert.stop()
+        expert.stop()
+finally:
+    expert.stop()
+    publisher.close(linger=0)
+    context.term()
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script, "streaming" if streaming else "idle"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_a_stale_pico_link_stops_driving_the_robot():
     """No frames means no motion, not the last motion repeated forever."""
     import time
@@ -3248,6 +3296,161 @@ def _pico_reader(**overrides):
     return PicoExpert(**config)
 
 
+def test_pico_bax_reward_profile_uses_the_front_trigger_for_gripper(monkeypatch):
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import Pico
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    entry = Pico.from_config(
+        {
+            "no_gripper": False,
+            "pico_reward_wrapper": "default",
+            "pico": {
+                "hand": "right",
+                "control_trigger": "grip",
+                "control_threshold": 0.85,
+                "calibration": {"enabled": False, "required": False},
+            },
+        },
+        {},
+        SimpleNamespace(kinds={"arm": ActionKind.CARTESIAN_POSE}),
+    )
+    reader = entry.device._open()
+    packet = _pico_packet(0.1, 0.2, 0.3, 0.4, grip=0.95, close=True, open_=True)
+    reader._snapshot = lambda: packet
+
+    reading = reader.get_reading()
+    assert (reading["grip_close"], reading["grip_open"]) == (False, True)
+
+    packet["right_controller"]["trigger"] = 0.8
+    reading = reader.get_reading()
+    assert (reading["grip_close"], reading["grip_open"]) == (True, False)
+
+
+@pytest.mark.parametrize("arm_type,opened,closed", [(0, 5.0, 0.0), (2, 0.1, -3.14)])
+def test_arx5_gripper_motor_positions_match_physical_open_and_closed_states(
+    arm_type, opened, closed
+):
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+
+    arm = ARX5Arm("can1", arm_type=arm_type)
+    assert arm.gripper_open == opened
+    assert arm.gripper_closed == closed
+
+
+@pytest.mark.parametrize("state", ["parked", "unparked", "faulted"])
+def test_arx5_disconnect_releases_sdk_without_waiting_for_parking(state):
+    # A subprocess timeout also catches a regression to an unbounded wait.
+    program = """
+import sys
+sys.path.insert(0, "tests")
+from robot_mocks.sdks import arx5
+from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+sdk = arx5()["bimanual"]
+sys.modules["bimanual"] = sdk
+arm = ARX5Arm("can1")
+arm.connect()
+device = sdk.SingleArm.instances[0]
+if sys.argv[1] == "unparked":
+    device.joints[1:3] = 1.0
+elif sys.argv[1] == "faulted":
+    device.fault = "latched fault"
+arm.disconnect()
+arm.disconnect()
+assert device.close_count == 1
+assert not arm.is_connected
+"""
+    subprocess.run(
+        [sys.executable, "-c", program, state],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@pytest.mark.parametrize("result", ["success", "unreachable", "error"])
+def test_arx5_cartesian_command_restores_stdout(monkeypatch, result):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm, ARX5IKUnreachableError
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    arm = ARX5Arm("can1")
+    arm.connect()
+    device = sdk.SingleArm.instances[0]
+    device.cartesian_result = result != "unreachable"
+    device.cartesian_error = result == "error"
+    target = {"tcp_pose": np.array([0.3, 0, 0.2, 0, 0, 0, 1])}
+    try:
+        if result == "unreachable":
+            with pytest.raises(ARX5IKUnreachableError):
+                arm.send_action(target)
+        elif result == "error":
+            with pytest.raises(RuntimeError, match="Cartesian command failed"):
+                arm.send_action(target)
+        else:
+            arm.send_action(target)
+        assert sys.stdout is stream
+        assert stream.getvalue() == "SDK diagnostic\n"
+    finally:
+        arm.disconnect()
+
+
+@pytest.mark.parametrize("first_to_finish", [0, 1])
+def test_arx5_overlapping_commands_restore_stdout_after_last_call(
+    monkeypatch, first_to_finish
+):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    arms = [ARX5Arm("can1"), ARX5Arm("can3")]
+    for arm in arms:
+        arm.connect()
+    entered = [threading.Event(), threading.Event()]
+    release = [threading.Event(), threading.Event()]
+
+    def command(index):
+        def send(pose, duration):
+            entered[index].set()
+            assert release[index].wait(timeout=5)
+            print("set_ee_pose_xyzrpy(...) IK 无解")
+            return True
+
+        return send
+
+    for index, device in enumerate(sdk.SingleArm.instances):
+        monkeypatch.setattr(device, "set_ee_pose_xyzrpy", command(index))
+    target = {"tcp_pose": np.array([0.3, 0, 0.2, 0, 0, 0, 1])}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(arm.send_action, target) for arm in arms]
+        try:
+            assert all(event.wait(timeout=5) for event in entered)
+            print("background log")
+            release[first_to_finish].set()
+            futures[first_to_finish].result(timeout=5)
+            assert sys.stdout is not stream
+            release[1 - first_to_finish].set()
+            futures[1 - first_to_finish].result(timeout=5)
+            assert sys.stdout is stream
+            assert stream.getvalue() == "background log\n"
+        finally:
+            for event in release:
+                event.set()
+            for arm in arms:
+                arm.disconnect()
+
+
 def test_a_reading_is_empty_until_the_operator_takes_hold():
     import numpy as np
 
@@ -3290,16 +3493,6 @@ def test_letting_go_and_grabbing_again_re_anchors():
     # Retaking control resets the anchor without applying motion.
     assert reading["held"] is True
     assert np.allclose(reading["position_delta"], 0.0, atol=1e-9)
-
-
-def test_the_gripper_buttons_are_reported_separately():
-    reader = _pico_reader()
-    reader._snapshot = lambda: _pico_packet(0, 0, 0, 0, grip=0.95, close=True)
-
-    reading = reader.get_reading()
-
-    assert reading["grip_close"] is True
-    assert reading["grip_open"] is False
 
 
 def test_a_dropped_link_reports_stale_rather_than_stale_motion():

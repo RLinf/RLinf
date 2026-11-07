@@ -1,7 +1,7 @@
 真实机器人强化学习
 ========================================
 
-按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper 和 SO101 请进入对应页面。
+按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；ARX X5、YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper 和 SO101 请进入对应页面。
 
 根据硬件检查、遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 的需求，选择相应指南。
 
@@ -59,6 +59,16 @@
          在 Dexmal DOS-W1 双臂机器人上训练 Flow Matching + SAC 抓取任务
        </p>
      </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/arx5.html" style="display: block;"><img src="https://arx-global.us/assets/img/x5.webp"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/arx5.html" style="text-decoration: underline; color: blue;">
+           <b>ARX X5</b>
+         </a><br>
+         使用 PICO 双手柄和三路 RGB 相机采集双臂示教数据
+       </p>
+     </div>
 
    </div>
 
@@ -93,6 +103,7 @@ Piper 与 SO101 配置
 
    单臂 Franka <embodied/franka_index>
    双臂 Franka <embodied/dual_franka_index>
+   ARX X5 <embodied/arx5>
    YAM <embodied/yam_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>

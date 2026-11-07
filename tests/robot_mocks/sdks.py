@@ -331,6 +331,49 @@ def airbot() -> dict[str, types.ModuleType]:
     }
 
 
+def arx5() -> dict[str, types.ModuleType]:
+    """Return an ARX5 SDK with controllable feedback and session failures."""
+
+    class SingleArm:
+        instances: list[Any] = []
+        fail_can_port: str | None = None
+
+        def __init__(self, config):
+            if config["can_port"] == self.fail_can_port:
+                raise RuntimeError("CAN open failed")
+            self.config = config
+            self.fault = None
+            self.joints = np.zeros(6)
+            self.stalled = False
+            self.close_count = 0
+            self.close_error = False
+            self.cartesian_result = True
+            self.cartesian_error = False
+            self.instances.append(self)
+
+        def get_joint_positions(self):
+            return self.joints.copy()
+
+        def set_joint_positions(self, positions, duration):
+            if not self.stalled:
+                self.joints = np.asarray(positions).copy()
+            return True
+
+        def set_ee_pose_xyzrpy(self, pose, duration):
+            print("set_ee_pose_xyzrpy(...) IK 无解")
+            print("SDK diagnostic")
+            if self.cartesian_error:
+                raise RuntimeError("Cartesian command failed")
+            return self.cartesian_result
+
+        def close(self):
+            self.close_count += 1
+            if self.close_error:
+                raise RuntimeError("SDK close failed")
+
+    return {"bimanual": module("bimanual", SingleArm=SingleArm)}
+
+
 def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return the remaining fake robot SDKs keyed by import name."""
     made: dict[str, types.ModuleType] = {}

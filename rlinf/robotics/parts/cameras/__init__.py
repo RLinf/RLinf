@@ -26,6 +26,7 @@ from .orbbec import OrbbecCamera
 from .realsense import RealSenseCamera
 from .uvc import UVCCamera
 from .zed import ZEDCamera
+from .v4l2 import V4L2Camera
 
 __all__ = [
     "BaseCamera",
@@ -36,4 +37,5 @@ __all__ = [
     "RealSenseCamera",
     "UVCCamera",
     "ZEDCamera",
+    "V4L2Camera",
 ]
