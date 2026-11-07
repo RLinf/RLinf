@@ -55,7 +55,6 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
         self._sampling_states = {}
         self._runtime = None
         self._episodes: dict[str, _EpisodeState] = {}
-        self._weight_version = None
         self.history_stats = {
             "cache_hits": 0,
             "prefix_misses": 0,
@@ -67,10 +66,9 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
 
     def set_global_step(self, step: int) -> None:
         """Invalidate episode state after in-place actor weight synchronization."""
-        if step != self._weight_version:
-            self._episodes.clear()
-            self._weight_version = step
-            self.history_stats["weight_invalidations"] += 1
+        # Evaluation can synchronize new weights with the same step number.
+        self._episodes.clear()
+        self.history_stats["weight_invalidations"] += 1
 
     def _prepare_image_batches(self, image_batches):
         """Process new RGB frames together and retain CPU pixels for actor replay."""
@@ -352,7 +350,9 @@ class EmbodiInferActiveVLNPolicy(ActiveVLNPolicy):
             raise ValueError("ActiveVLN requires a nonempty observation batch")
         prepared = PreparedActiveVLNBatch(tuple(turns))
         try:
-            self._runtime.prewarm_prepared(prepared)
+            # Capturing graphs overwrites the runtime's cached KV workspace.
+            if all(turn.memory is None for turn in turns):
+                self._runtime.prewarm_prepared(prepared)
             generations = self._runtime.generate(self._runtime.prefill(prepared))
         except Exception:
             self._episodes.clear()
