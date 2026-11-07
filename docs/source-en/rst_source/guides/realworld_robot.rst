@@ -223,12 +223,12 @@ same machine:
 Kuavo hardware configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Make the Kuavo SDK importable in the Python environment used by Ray on the
-control node, and prepare ROS image message packages on camera nodes. Install
-the SDK and its generated ROS message packages using the vendor's instructions.
-If the SDK is not available in the control node's Python environment, point the
-installer at its source checkout. From the repository root, activate the venv
-used by Ray and run:
+On the Kuavo control node, make sure the Python environment used by Ray can
+import the Kuavo SDK. On camera nodes, prepare the ROS image message packages.
+Install the SDK and its generated ROS message packages using the vendor's
+instructions. If the SDK is not available in the control node's Python
+environment, point the installer at its source checkout. From the repository
+root, activate the venv used by Ray and run:
 
 .. code-block:: bash
 
@@ -236,9 +236,8 @@ used by Ray and run:
      bash requirements/install.sh embodied --env kuavo
 
 When ``KUAVO_SDK_PATH`` is set, the script installs that directory in editable
-mode. Otherwise, it assumes the SDK is provided by the robot's ROS workspace.
-This installer does not select or install an SDK version through
-``KUAVO_HUMANOID_SDK_VERSION``.
+mode. When it is unset, make sure the Python environment used by Ray can import
+the SDK from the robot's ROS workspace.
 .. warning::
 
    Before starting Python or Ray, set this on the driver, environment,

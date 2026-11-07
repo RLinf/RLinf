@@ -220,7 +220,8 @@ Kuavo 硬件配置
    KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
      bash requirements/install.sh embodied --env kuavo
 
-设置 ``KUAVO_SDK_PATH`` 时，脚本会以 editable 模式安装该目录；不设置时，脚本假定 SDK 已由机器人 ROS workspace 提供。该脚本不通过 ``KUAVO_HUMANOID_SDK_VERSION`` 选择或安装 SDK 版本。
+设置 ``KUAVO_SDK_PATH`` 时，脚本会以 editable 模式安装该目录；不设置时，确保 Ray 使用的 Python 环境能够从机器人 ROS workspace 导入 SDK。
+
 .. warning::
 
    启动 Python 或 Ray 前，在 driver、环境、控制器和相机节点设置：
