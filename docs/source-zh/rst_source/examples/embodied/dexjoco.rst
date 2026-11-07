@@ -301,23 +301,19 @@ SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在
      logger:
        logger_backends: ["tensorboard", "wandb"]
 
-.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/fe6ff292708c223ed92d4eec81921103a3f0d35a/pic/dexjoco_cnn_nll_vs_mse.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/3f186472f997ecd29977191f8e4da004cff4a302/pic/dexjoco_cnn_nll_vs_mse.png
    :align: center
    :width: 100%
    :alt: CNN 分别经过 MSE、NLL SFT 后在 water_plant 上的 PPO 成功率。
 
    CNN 分别经过 MSE、NLL SFT 后在 ``water_plant`` 上的 PPO 成功率（64 个评测回合）。
 
-CNN PPO 运行日志：`MSE <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__ · `NLL <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-5a6a584b1425>`__。
-
-.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/11c9e5e117ae7231055ec4b561284e131df71c0a/pic/dexjoco_pi05_sft_ppo.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/3f186472f997ecd29977191f8e4da004cff4a302/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
    :alt: π₀.₅ 在 water_plant 上经过 5000 步 SFT 和 150 轮 PPO 的成功率。
 
    π₀.₅ 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测回合）。
-
-`SFT + PPO 报告 <https://forge.coreweave.com/matthewmzy-peking-university/rlinf-dexjoco/reports/DexJoCo-water_plant:-pi0.5-SFT-to-PPO-B-with-one-evaluation-protocol--VmlldzoxODI0MDM2Nw==>`__ 包含评测曲线和原始日志。
 
 .. list-table::
    :header-rows: 1

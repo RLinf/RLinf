@@ -325,24 +325,19 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
      logger:
        logger_backends: ["tensorboard", "wandb"]
 
-.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/fe6ff292708c223ed92d4eec81921103a3f0d35a/pic/dexjoco_cnn_nll_vs_mse.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/3f186472f997ecd29977191f8e4da004cff4a302/pic/dexjoco_cnn_nll_vs_mse.png
    :align: center
    :width: 100%
    :alt: CNN PPO success rates after MSE or NLL SFT on water_plant.
 
    CNN PPO after MSE or NLL SFT on ``water_plant`` (64 evaluation episodes).
 
-CNN PPO run logs: `MSE <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/cnn-mse-ppo-20261106>`__ · `NLL <https://wandb.ai/matthewmzy-peking-university/rlinf-dexjoco/runs/dj-5a6a584b1425>`__.
-
-.. figure:: https://raw.githubusercontent.com/matthewmzy/misc/11c9e5e117ae7231055ec4b561284e131df71c0a/pic/dexjoco_pi05_sft_ppo.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/3f186472f997ecd29977191f8e4da004cff4a302/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
    :alt: Success rate through 5000 SFT steps and 150 PPO iterations on water_plant.
 
    π₀.₅ SFT + PPO on ``water_plant`` (64 evaluation episodes).
-
-The `SFT + PPO report <https://forge.coreweave.com/matthewmzy-peking-university/rlinf-dexjoco/reports/DexJoCo-water_plant:-pi0.5-SFT-to-PPO-B-with-one-evaluation-protocol--VmlldzoxODI0MDM2Nw==>`__
-contains the evaluation curves and source logs.
 
 .. list-table::
    :header-rows: 1
