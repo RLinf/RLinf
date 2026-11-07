@@ -140,6 +140,7 @@ class KuavoRobot(Robot):
     def build(
         cls,
         *,
+        platform_type: str = "4pro",
         which_arm: str = "both",
         end_effector_type: str = "leju_claw",
         head_position: list[float] | None = None,
@@ -148,7 +149,6 @@ class KuavoRobot(Robot):
         end_effector_limits_min: list[float] | None = None,
         end_effector_limits_max: list[float] | None = None,
         feedback_topics: Mapping[str, str] | None = None,
-        joint_state_start: int = 12,
         feedback_timeout_s: float = 2.0,
         feedback_stale_timeout_s: float = 0.5,
         cameras: Mapping[str, CameraInfo] | None = None,
@@ -158,6 +158,8 @@ class KuavoRobot(Robot):
         worker_rank: int = 0,
     ) -> "KuavoRobot":
         """Compose a Kuavo robot without opening its hardware connection."""
+        if platform_type not in _PLATFORMS:
+            raise ValueError(f"Unsupported Kuavo platform_type {platform_type!r}.")
         connection = cls.declare_connection(
             which_arm=which_arm,
             end_effector_type=end_effector_type,
@@ -179,7 +181,7 @@ class KuavoRobot(Robot):
                 else end_effector_limits_max
             ),
             feedback_topics=feedback_topics,
-            joint_state_start=joint_state_start,
+            joint_state_start=_ARM_JOINT_RANGES[platform_type][0],
             feedback_timeout_s=feedback_timeout_s,
             feedback_stale_timeout_s=feedback_stale_timeout_s,
             node_rank=(
@@ -206,26 +208,11 @@ class KuavoRobotConfig(RobotConfig):
     end_effector_type: str = "leju_claw"
     """Installed end effector: Leju claw, Qiangnao hand, or RQ2F85."""
 
-    only_arm: bool = True
-    """Whether this allocation controls only the arms and end effectors."""
-
-    direct_to_wbc: bool = False
-    """Direct WBC control is reserved for a dedicated controller integration."""
-
-    qiangnao_dof_needed: int = 1
-    """Number of Qiangnao state dimensions exposed per hand."""
-
-    is_binary: bool = False
-    """Whether to collapse end-effector state and commands to open/closed."""
-
     head_position: list[float] | None = None
     """Optional initial head yaw and pitch in radians."""
 
     ros_rate: int = 10
-    """ROS observation and action frequency in hertz."""
-
-    control_rate: int = 100
-    """Robot-side command frequency in hertz."""
+    """Default task step frequency in hertz."""
 
     feedback_timeout_s: float = 2.0
     """Maximum time to wait for valid joint and gripper feedback at connection."""
@@ -238,9 +225,6 @@ class KuavoRobotConfig(RobotConfig):
 
     image_size: list[int] = field(default_factory=lambda: [848, 480])
     """Camera image size as ``[width, height]``."""
-
-    depth_range: list[int] = field(default_factory=lambda: [0, 1500])
-    """Accepted depth interval in millimetres."""
 
     obs_key_map: dict[str, dict[str, Any]] = field(default_factory=_default_obs_key_map)
     """ROS topic, message type, and source frequency for each observation."""
@@ -275,18 +259,9 @@ class KuavoRobotConfig(RobotConfig):
                 f"{self.end_effector_type!r}; choose one of "
                 f"{sorted(_END_EFFECTORS)}."
             )
-        if not self.only_arm:
-            raise ValueError("Kuavo currently supports only_arm=true.")
-        if self.direct_to_wbc:
-            raise ValueError("Kuavo direct_to_wbc control is not yet supported.")
-        if self.qiangnao_dof_needed != 1:
-            raise ValueError("Kuavo currently supports qiangnao_dof_needed=1.")
-        if self.is_binary:
-            raise ValueError("Kuavo binary end-effector control is not yet supported.")
         if self.head_position is not None:
             self._validate_numeric_values("head_position", self.head_position, 2)
         self._validate_pair("image_size", self.image_size, 2)
-        self._validate_numeric_values("depth_range", self.depth_range, 2)
         self._validate_limits(
             "joint_limits", self.joint_limits_min, self.joint_limits_max, 14
         )
@@ -300,11 +275,13 @@ class KuavoRobotConfig(RobotConfig):
             value > 1.0 for value in self.end_effector_limits_max
         ):
             raise ValueError("Kuavo end_effector_limits must stay within 0..1.")
-        if not all(
-            isinstance(rate, (int, float)) and np.isfinite(rate) and rate > 0
-            for rate in (self.ros_rate, self.control_rate)
+        if (
+            not isinstance(self.ros_rate, (int, float))
+            or isinstance(self.ros_rate, bool)
+            or not np.isfinite(self.ros_rate)
+            or self.ros_rate <= 0
         ):
-            raise ValueError("Kuavo control frequencies must be positive.")
+            raise ValueError("Kuavo ros_rate must be finite and positive.")
         for name in ("feedback_timeout_s", "feedback_stale_timeout_s"):
             value = getattr(self, name)
             if (
@@ -318,14 +295,12 @@ class KuavoRobotConfig(RobotConfig):
             self.controller_node_rank, int
         ):
             raise ValueError("Kuavo controller_node_rank must be an integer or None.")
-        if self.depth_range[0] >= self.depth_range[1]:
-            raise ValueError("Kuavo depth_range must be strictly increasing.")
         if any(not isinstance(size, int) or size <= 0 for size in self.image_size):
             raise ValueError("Kuavo image_size values must be positive.")
         self._validate_obs_key_map()
 
     def _validate_obs_key_map(self) -> None:
-        """Validate observation routes and attach image processing dimensions."""
+        """Validate observation routes and selected state entries."""
         message_types = {
             "head_cam_h": {"Image", "CompressedImage"},
             "wrist_cam_l": {"Image", "CompressedImage"},
@@ -393,36 +368,12 @@ class KuavoRobotConfig(RobotConfig):
             if key in active_keys
         }
         active["gripper"] = active.pop(self.end_effector_type)
-        for key, route in active.items():
-            params = route.setdefault("handle", {}).setdefault("params", {})
-            if key in {"head_cam_h", "wrist_cam_l", "wrist_cam_r"}:
-                params["resize_wh"] = list(self.image_size)
-            if "depth" in key:
-                params["depth_range"] = list(self.depth_range)
-        active["joint_q"]["handle"]["params"]["slice"] = self.joint_q_slices
-        active["gripper"]["handle"]["params"]["slice"] = self.gripper_slices
         return active
 
     @property
-    def joint_q_slices(self) -> list[list[int]]:
-        """Return raw joint-state slices for the configured platform and arms."""
-        start, end = _ARM_JOINT_RANGES[self.platform_type]
-        middle = start + 7
-        return {
-            "left": [[start, middle]],
-            "right": [[middle, end]],
-            "both": [[start, middle], [middle, end]],
-        }[self.which_arm]
-
-    @property
-    def gripper_slices(self) -> list[list[int]]:
-        """Return end-effector state slices for the configured device and arms."""
-        right_start = 6 if self.end_effector_type == "qiangnao" else 1
-        return {
-            "left": [[0, 1]],
-            "right": [[right_start, right_start + 1]],
-            "both": [[0, 1], [right_start, right_start + 1]],
-        }[self.which_arm]
+    def joint_state_start(self) -> int:
+        """Return the start of the complete 14-joint arm block in ROS feedback."""
+        return _ARM_JOINT_RANGES[self.platform_type][0]
 
     @staticmethod
     def _validate_pair(name: str, values: list[float], size: int) -> None:
