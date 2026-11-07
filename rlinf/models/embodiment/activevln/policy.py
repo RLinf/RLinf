@@ -396,12 +396,12 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
             for offset, position in enumerate(range(start, length)):
                 effective = logits[:, offset]
                 if penalty != 1.0:
-                    seen = ids[:, :position]
-                    selected = effective.gather(1, seen)
-                    selected = torch.where(
-                        selected < 0, selected * penalty, selected / penalty
+                    seen = torch.zeros_like(effective, dtype=torch.bool)
+                    seen.scatter_(1, ids[:, :position], True)
+                    penalized = torch.where(
+                        effective < 0, effective * penalty, effective / penalty
                     )
-                    effective = effective.scatter(1, seen, selected)
+                    effective = torch.where(seen, penalized, effective)
                 effective = (
                     effective.float() / temperature if do_sample else effective.float()
                 )
