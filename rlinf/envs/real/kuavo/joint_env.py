@@ -28,7 +28,11 @@ import numpy as np
 from rlinf.envs.real.utils.config import get_hardware_config
 from rlinf.robotics import KuavoRobot, KuavoRobotConfig, RobotInfo
 from rlinf.robotics.actions import ActionKind, ActionPart
-from rlinf.robotics.adapters import LegacyObservationAdapter
+from rlinf.robotics.adapters import (
+    LegacyObservationAdapter,
+    VectorActionAdapter,
+    VectorActionBinding,
+)
 from rlinf.robotics.parts.arms.kuavo import KuavoConnection
 from rlinf.robotics.parts.base import PartGroup
 from rlinf.robotics.parts.cameras import Camera, ROSCameraInfo
@@ -168,6 +172,15 @@ class KuavoJointEnv(gym.Env):
             _STATE_FIELDS,
             {name: ("cameras", name, "frame") for name in _CAMERA_NAMES},
         )
+        self._action_adapter = VectorActionAdapter(
+            16,
+            [
+                VectorActionBinding(("left", "arm", "arm_joint_position"), 0, 7),
+                VectorActionBinding(("left", "gripper", "target"), 7, 8),
+                VectorActionBinding(("right", "arm", "arm_joint_position"), 8, 15),
+                VectorActionBinding(("right", "gripper", "target"), 15, 16),
+            ],
+        )
         self._action_low = self._pack_limits(
             self.hardware.joint_limits_min, self.hardware.end_effector_limits_min
         )
@@ -262,9 +275,8 @@ class KuavoJointEnv(gym.Env):
             if self.config.is_dummy:
                 self._dummy_state = accepted.copy()
             else:
-                self._connection().step_arms(
-                    accepted[_JOINT_INDICES], accepted[[7, 15]]
-                )
+                self._connection().begin_step()
+                self._arms.send_action(self._action_adapter.adapt(accepted))
             observation = self._get_observation()
         except Exception:
             self._faulted = True
@@ -351,7 +363,6 @@ class KuavoJointEnv(gym.Env):
         hardware = self.hardware
         routes = hardware.active_obs_key_map()
         self.robot = KuavoRobot.build(
-            platform_type=hardware.platform_type,
             which_arm=hardware.which_arm,
             end_effector_type=hardware.end_effector_type,
             head_position=hardware.head_position,
@@ -362,6 +373,7 @@ class KuavoJointEnv(gym.Env):
             feedback_topics={
                 name: routes[name]["topic"] for name in ("joint_q", "gripper")
             },
+            joint_state_start=hardware.joint_q_slices[0][0],
             feedback_timeout_s=hardware.feedback_timeout_s,
             feedback_stale_timeout_s=hardware.feedback_stale_timeout_s,
             cameras=self._camera_infos(),

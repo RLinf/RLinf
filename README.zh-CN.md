@@ -33,7 +33,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
-- [2026/11] RLinf 支持 Kuavo 4pro、5 和 5w 机器人的关节控制接口。文档：[Kuavo 硬件配置](docs/source-zh/rst_source/guides/realworld_robot.rst#kuavo-硬件配置)。
 - [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步。文档：[PhyAI rollout 后端](docs/source-zh/rst_source/guides/rollout-engines/phyai.rst)。
 - [2026/10] 🎉 RLinf v0.4 发布，让强化学习真正走出仿真、敏捷操控物理世界。主要升级：乐高式真机工程体系（`rlinf.robotics`）、真机 SOTA 后训练算法（RLT、STEAM、OPD、RTC）、全模态模型（PyTorch 原生 OpenPI π₀ / π₀.₅、Cosmos3、FastWAM、π₀-FAST、Evo-1、MolmoAct2、SD3 / Wan2.2）以及八大异构算力支持。发布说明：[RLinf v0.4](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.4.html)。
 - [2026/10] 🎉 RLinf 发布 **CEL**（Collective Experience Learning）：机器人集群从部署期自身经验中共同改进共享策略，无需额外专家示教或纠错动作；在最多 96 台真机、5 项真实任务上验证。项目主页：[CEL](https://cel-robot-learning.github.io/)，论文：[arXiv:2610.25736](https://arxiv.org/abs/2610.25736)。代码即将开源。
@@ -282,7 +281,6 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
-          <li><a href="docs/source-zh/rst_source/guides/realworld_robot.rst#kuavo-硬件配置">Kuavo（4pro / 5 / 5w）</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
@@ -384,6 +382,19 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 
 **SOTA RL 训练复现：** RLinf 提供了端到端的配置和脚本，可以直接运行，无需额外工程改造，即可复现业界领先的训练效果。请参考[示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html)了解更多细节。
 
+
+### Kuavo ROS 启动
+
+让 Kuavo 连接已有 ROS 服务时，在启动 Python 和 Ray 前，先在 driver、环境、控制器和相机节点执行：
+
+```bash
+export RLINF_ROS_SETUP=preserve
+```
+
+> [!WARNING]
+> 此设置对整个进程生效，用于跳过 ROS 清理。未设置或设为 `reset` 时，原有清理可能在读取 YAML 前执行。共享同一 ROS master 的所有任务都应使用 `preserve`。
+
+先启动机器人的 ROS 服务，再启动任务。配置详见 [Kuavo 设置指南](docs/source-zh/rst_source/guides/realworld_robot.rst)和[环境配置](examples/embodiment/config/env/realworld_kuavo_joint.yaml)。
 
 ## 基于 RLinf 的社区项目精选
 我们非常高兴地看到围绕RLinf构建或集成的项目生态系统正在蓬勃发展，涵盖具身智能、机器人技术以及长时序代理系统等领域。以下是一些优秀的社区项目：

@@ -47,7 +47,6 @@ from rlinf.robotics import (
     EndEffector,
     FrankaRobot,
     GimArmConfig,
-    KuavoRobotConfig,
     LegacyObservationAdapter,
     MethodArm,
     MethodEndEffector,
@@ -485,7 +484,6 @@ def test_all_builtin_configs_construct_from_a_node_rank_alone():
         GimArmConfig(node_rank=0),
         DOSW1RobotConfig(node_rank=0),
         Turtle2Config(node_rank=0),
-        KuavoRobotConfig(node_rank=0),
     ]
 
     assert all(config.node_rank == 0 for config in configs)
@@ -4659,7 +4657,6 @@ def test_every_shipped_robot_runs_on_faked_sdks():
     from toolkits.realworld_check.check_robot_parts import check
 
     robots = {
-        "Kuavo": {"platform_type": "4pro", "node_rank": 0},
         "Franka": {"robot_ip": "10.0.0.1", "node_rank": 0},
         "DualFranka": {
             "left_robot_ip": "10.0.0.1",
@@ -4707,233 +4704,6 @@ def test_every_shipped_robot_runs_on_faked_sdks():
         failed = [name for name, args in robots.items() if check(name, args) != 0]
 
     assert failed == []
-
-
-@pytest.mark.parametrize("platform,start", [("4pro", 12), ("5", 13), ("5w", 4)])
-@pytest.mark.parametrize("side", ["left", "right", "both"])
-def test_kuavo_platform_and_arm_selection_read_the_complete_feedback_block(
-    platform, start, side
-):
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics import build_robot
-
-    config = KuavoRobotConfig(node_rank=0, platform_type=platform, which_arm=side)
-    assert config.joint_state_start == start
-    with mocked_sdks():
-        robot = build_robot("Kuavo", platform_type=platform, which_arm=side)
-        try:
-            robot.connect()
-            observation = robot.get_observation()
-            sides = ("left", "right") if side == "both" else (side,)
-            assert set(observation) == set(sides)
-            for selected in sides:
-                offset = start + (7 if selected == "right" else 0)
-                np.testing.assert_allclose(
-                    observation[selected]["arm"]["arm_joint_position"],
-                    np.arange(offset, offset + 7) / 100,
-                )
-                robot.send_action(
-                    {selected: {"arm": {"arm_joint_position": np.zeros(7)}}}
-                )
-        finally:
-            robot.disconnect()
-
-
-@pytest.mark.parametrize("end_effector", ["leju_claw", "rq2f85", "qiangnao"])
-def test_kuavo_step_dispatches_one_complete_target_per_device(end_effector):
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics.parts.arms.kuavo import KuavoConnection
-
-    with mocked_sdks() as modules:
-        bus = modules["kuavo_humanoid_sdk"].bus
-        connection = KuavoConnection(end_effector_type=end_effector)
-        try:
-            connection.connect()
-            before = connection.get_state()
-            joints = np.linspace(-0.3, 0.4, 14)
-            connection.step_arms(joints, [0.3, 0.7])
-            np.testing.assert_allclose(bus.arm_commands, [joints])
-            if end_effector == "leju_claw":
-                assert len(bus.claw_requests) == 1
-                np.testing.assert_allclose(bus.claw_requests[0].data.position, [30, 70])
-            elif end_effector == "rq2f85":
-                assert len(bus.gripper_commands) == 1
-                np.testing.assert_allclose(
-                    bus.gripper_commands[0].position, [76.5, 178.5]
-                )
-            else:
-                assert bus.hand_commands == [
-                    ("both", [30, 100, 30, 30, 30, 30, 70, 100, 70, 70, 70, 70])
-                ]
-            # Command acceptance is not measured robot motion.
-            after = connection.get_state()
-            np.testing.assert_array_equal(
-                after.right_joint_position, before.right_joint_position
-            )
-        finally:
-            connection.disconnect()
-        assert all(sub.closed for sub in bus.subscribers)
-
-
-@pytest.mark.parametrize(
-    "joints,grippers",
-    [
-        ([0.0] * 13, [0.2, 0.8]),
-        ([float("nan")] * 14, [0.2, 0.8]),
-        ([0.0] * 14, [0.2]),
-        ([0.0] * 14, [0.2, float("inf")]),
-    ],
-)
-def test_kuavo_rejects_the_whole_invalid_action_before_dispatch(joints, grippers):
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics.parts.arms.kuavo import KuavoConnection
-
-    with mocked_sdks() as modules:
-        bus = modules["kuavo_humanoid_sdk"].bus
-        connection = KuavoConnection()
-        try:
-            connection.connect()
-            with pytest.raises(ValueError, match="finite values"):
-                connection.step_arms(joints, grippers)
-            assert bus.arm_commands == bus.claw_requests == []
-        finally:
-            connection.disconnect()
-
-
-def test_kuavo_claw_timeout_latches_a_fault_and_blocks_reconnect():
-    from threading import Event
-
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics.parts.arms.kuavo import KuavoConnection
-
-    with mocked_sdks() as modules:
-        bus = modules["kuavo_humanoid_sdk"].bus
-        bus.service_gate = Event()
-        connection = KuavoConnection(feedback_timeout_s=0.02)
-        try:
-            connection.connect()
-            with pytest.raises(TimeoutError, match="service response"):
-                connection.step_arms(np.zeros(14), [0.2, 0.8])
-            with pytest.raises(RuntimeError, match="service fault"):
-                connection.step_arms(np.ones(14), [0.3, 0.7])
-            assert len(bus.arm_commands) == len(bus.claw_requests) == 1
-            connection.disconnect()
-            other = KuavoConnection()
-            with pytest.raises(RuntimeError, match="still pending"):
-                other.connect()
-            other.disconnect()
-        finally:
-            bus.service_gate.set()
-            if connection._claw_call_thread is not None:
-                connection._claw_call_thread.join(timeout=1)
-            connection.disconnect()
-
-
-@pytest.mark.parametrize("feedback", ["joint_q", "gripper"])
-@pytest.mark.parametrize("failure", ["malformed", "stale"])
-def test_kuavo_refuses_commands_without_valid_feedback(feedback, failure):
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics.parts.arms.kuavo import KuavoConnection
-
-    with mocked_sdks() as modules:
-        bus = modules["kuavo_humanoid_sdk"].bus
-        connection = KuavoConnection(feedback_stale_timeout_s=0.01)
-        try:
-            connection.connect()
-            if failure == "stale":
-                time.sleep(0.02)
-                # Refresh the other stream so either stale stream independently blocks.
-                bus.subscribers[1 if feedback == "joint_q" else 0].publish()
-            else:
-                bus.subscribers[0 if feedback == "joint_q" else 1].publish(object())
-            with pytest.raises((RuntimeError, TimeoutError), match="feedback"):
-                connection.step_arms(np.zeros(14), [0.2, 0.8])
-            assert bus.arm_commands == bus.claw_requests == []
-        finally:
-            connection.disconnect()
-
-
-def test_kuavo_failed_connection_releases_subscribers_and_can_reconnect():
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics.parts.arms.kuavo import KuavoConnection
-
-    with mocked_sdks() as modules:
-        bus = modules["kuavo_humanoid_sdk"].bus
-        bus.mode_success = False
-        connection = KuavoConnection()
-        try:
-            with pytest.raises(RuntimeError, match="external arm-control mode"):
-                connection.connect()
-            assert not connection.is_connected
-            assert all(sub.closed for sub in bus.subscribers)
-            old_subscription = bus.subscribers[0]
-            bus.mode_success = True
-            connection.connect()
-            # A callback already queued by the old subscription must be ignored.
-            old_subscription.callback(object())
-            np.testing.assert_allclose(
-                connection.get_state().left_joint_position, np.arange(12, 19) / 100
-            )
-        finally:
-            connection.disconnect()
-        assert all(sub.closed for sub in bus.subscribers)
-
-
-def test_kuavo_observation_routes_are_selected_without_mutating_hardware():
-    config = KuavoRobotConfig(
-        node_rank=0, which_arm="right", end_effector_type="rq2f85"
-    )
-    before = pickle.dumps(config)
-    routes = config.active_obs_key_map()
-    assert set(routes) == {"head_cam_h", "wrist_cam_r", "joint_q", "gripper"}
-    assert routes["gripper"]["topic"] == "/gripper/state"
-    assert all("handle" not in route for route in routes.values())
-    routes["gripper"]["topic"] = "/changed"
-    assert pickle.dumps(config) == before
-
-
-@pytest.mark.parametrize("message_type", ["Image", "CompressedImage"])
-def test_ros_camera_decodes_frames_and_releases_only_its_subscription(message_type):
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics.parts.cameras import ROSCamera, ROSCameraInfo
-
-    with mocked_sdks() as modules:
-        bus = modules["kuavo_humanoid_sdk"].bus
-        camera = ROSCamera(
-            ROSCameraInfo(
-                name="head",
-                serial_number="/cam_h/color/image_raw",
-                message_type=message_type,
-                resolution=(6, 4),
-            )
-        )
-        shutdowns = []
-        modules["rospy"].signal_shutdown = shutdowns.append
-        try:
-            camera.connect()
-            frame = camera.get_observation()["frame"]
-            np.testing.assert_array_equal(
-                frame, np.full((4, 6, 3), [10, 20, 30], np.uint8)
-            )
-            frame[:] = 0
-            assert camera.get_observation()["frame"].sum() > 0
-            subscription = bus.subscribers[-1]
-            bad = subscription.data_class()
-            bad.data = b"broken"
-            subscription.publish(bad)
-            with pytest.raises(RuntimeError, match="Invalid image"):
-                camera.get_observation(timeout=0)
-        finally:
-            camera.disconnect()
-        assert bus.subscribers[-1].closed
-        assert shutdowns == []
 
 
 def test_a_worker_installs_the_fakes_for_itself():

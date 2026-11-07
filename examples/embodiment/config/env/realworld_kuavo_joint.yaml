@@ -29,7 +29,7 @@ init_params:
 override_cfg:
   is_dummy: false
   task_description: "dual-arm Kuavo manipulation task"
-  # Null selects the hardware ros_rate.
+  # Null selects the hardware ros_rate, not control_rate.
   step_frequency: null
   max_num_steps: 1000
   # Per-step joint target bound in radians; this is not a control loop.

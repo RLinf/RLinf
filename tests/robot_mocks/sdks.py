@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fake SDKs for GimArm, Turtle2, DOSW1, and Kuavo."""
+"""Fake SDKs for the remaining robots: GimArm, Turtle2 and DOSW1."""
 
 from __future__ import annotations
 
 import types
-from threading import Event
 from typing import Any
 
 import numpy as np
@@ -332,194 +331,10 @@ def airbot() -> dict[str, types.ModuleType]:
     }
 
 
-def kuavo(ros_modules: dict[str, types.ModuleType]) -> dict[str, types.ModuleType]:
-    """Add Kuavo messages and services without replacing other ROS drivers."""
-    rospy = ros_modules["rospy"]
-    sensors = ros_modules["sensor_msgs.msg"]
-    bus = types.SimpleNamespace(
-        subscribers=[],
-        arm_commands=[],
-        claw_requests=[],
-        hand_commands=[],
-        gripper_commands=[],
-        head_commands=[],
-        init_success=True,
-        mode_success=True,
-        arm_success=True,
-        claw_success=True,
-        hand_success=None,
-        service_gate=None,
-        service_entered=Event(),
-    )
-
-    class SensorsData:
-        def __init__(self, joint_q=None):
-            self.joint_data = types.SimpleNamespace(
-                joint_q=list(np.arange(28) / 100 if joint_q is None else joint_q)
-            )
-
-    class ClawState:
-        def __init__(self, position=None):
-            self.data = types.SimpleNamespace(
-                position=[20.0, 80.0] if position is None else list(position)
-            )
-
-    class ClawRequest:
-        def __init__(self):
-            self.data = types.SimpleNamespace(
-                name=[], position=[], velocity=[], effort=[]
-            )
-
-    class Image:
-        def __init__(self, **kwargs):
-            self.height, self.width, self.step = 4, 6, 18
-            self.encoding = "bgr8"
-            self.data = np.full((4, 6, 3), [10, 20, 30], dtype=np.uint8).tobytes()
-            self.__dict__.update(kwargs)
-
-    class CompressedImage:
-        def __init__(self, data=None):
-            import cv2
-
-            self.format = "png"
-            self.data = (
-                cv2.imencode(".png", np.full((4, 6, 3), [10, 20, 30], np.uint8))[
-                    1
-                ].tobytes()
-                if data is None
-                else data
-            )
-
-    class Subscription:
-        def __init__(self, name, data_class, callback):
-            self.name, self.callback = name, callback
-            self.data_class = data_class
-            self.closed = False
-            bus.subscribers.append(self)
-            if name == "/dexhand/state":
-                initial = data_class(position=[20.0] * 6 + [80.0] * 6)
-            elif name == "/gripper/state":
-                initial = data_class(position=[51.0, 204.0])
-            else:
-                initial = data_class()
-            self.publish(initial)
-
-        def publish(self, message=None):
-            if not self.closed:
-                self.callback(self.data_class() if message is None else message)
-
-        def unregister(self):
-            self.closed = True
-
-    previous_subscriber = rospy.Subscriber
-
-    def subscribe(name, data_class, callback, **kwargs):
-        if data_class in (SensorsData, ClawState, Image, CompressedImage) or name in (
-            "/dexhand/state",
-            "/gripper/state",
-        ):
-            return Subscription(name, data_class, callback)
-        return previous_subscriber(name, data_class, callback, **kwargs)
-
-    previous_publisher = rospy.Publisher
-
-    class GripperPublisher:
-        def __init__(self):
-            self.closed = False
-
-        def publish(self, message):
-            bus.gripper_commands.append(message)
-
-        def unregister(self):
-            self.closed = True
-
-    def publisher(name, data_class, **kwargs):
-        if name == "/gripper/command":
-            return GripperPublisher()
-        return previous_publisher(name, data_class, **kwargs)
-
-    class ClawService:
-        def __init__(self, name, _service_type):
-            assert name == "/control_robot_leju_claw"
-            self.closed = False
-
-        def __call__(self, request):
-            bus.claw_requests.append(request)
-            bus.service_entered.set()
-            if bus.service_gate is not None:
-                bus.service_gate.wait()
-            return types.SimpleNamespace(success=bus.claw_success, message="fake claw")
-
-        def close(self):
-            self.closed = True
-
-    class KuavoSDK:
-        def Init(self):  # noqa: N802 - vendor API
-            return bus.init_success
-
-    class KuavoRobot:
-        def set_external_control_arm_mode(self):
-            return bus.mode_success
-
-        def control_head(self, *positions):
-            bus.head_commands.append(positions)
-            return True
-
-        def control_arm_joint_positions(self, positions):
-            bus.arm_commands.append(list(positions))
-            return bus.arm_success
-
-    class DexterousHand:
-        def control(self, target_positions, **_kwargs):
-            bus.hand_commands.append(("both", list(target_positions)))
-            return bus.hand_success
-
-        def control_left(self, target_positions, **_kwargs):
-            bus.hand_commands.append(("left", list(target_positions)))
-            return bus.hand_success
-
-        def control_right(self, target_positions, **_kwargs):
-            bus.hand_commands.append(("right", list(target_positions)))
-            return bus.hand_success
-
-    rospy.Subscriber = subscribe
-    rospy.Publisher = publisher
-    rospy.ServiceProxy = ClawService
-    rospy.wait_for_service = lambda *_a, **_k: None
-    rospy.core = types.SimpleNamespace(is_initialized=lambda: True)
-    sensors.Image = Image
-    sensors.CompressedImage = CompressedImage
-    sdk = module(
-        "kuavo_humanoid_sdk",
-        KuavoSDK=KuavoSDK,
-        KuavoRobot=KuavoRobot,
-        DexterousHand=DexterousHand,
-        bus=bus,
-    )
-    messages = module(
-        "kuavo_humanoid_sdk.msg.kuavo_msgs.msg",
-        sensorsData=SensorsData,
-        lejuClawState=ClawState,
-    )
-    services = module(
-        "kuavo_humanoid_sdk.msg.kuavo_msgs.srv",
-        controlLejuClaw=object,
-        controlLejuClawRequest=ClawRequest,
-    )
-    kuavo_msgs = module("kuavo_humanoid_sdk.msg.kuavo_msgs", msg=messages, srv=services)
-    sdk.msg = module("kuavo_humanoid_sdk.msg", kuavo_msgs=kuavo_msgs)
-    return {
-        item.__name__: item for item in (sdk, sdk.msg, kuavo_msgs, messages, services)
-    }
-
-
-def modules(
-    *, ros_modules: dict[str, types.ModuleType], **_: Any
-) -> dict[str, types.ModuleType]:
+def modules(**_: Any) -> dict[str, types.ModuleType]:
     """Return the remaining fake robot SDKs keyed by import name."""
     made: dict[str, types.ModuleType] = {}
     made.update(gim_arm())
     made.update(turtle2())
     made.update(airbot())
-    made.update(kuavo(ros_modules))
     return made
