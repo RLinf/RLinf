@@ -22,10 +22,11 @@ the same, only slower.
 
 from __future__ import annotations
 
-import warnings
 from typing import Callable
 
 import torch
+
+from rlinf.utils.logging import get_logger
 
 MIN_COMPILED_ROWS = 256
 
@@ -71,11 +72,9 @@ def run_compiled(name: str, fn: Callable, *args, cache: CompileCache):
         return fn(*args)
     compiled = cache.compiled.get(name)
     if compiled is None:
-        warnings.warn(
+        get_logger().info(
             f"Compiling SuperMimic {name} for large CUDA batches. The first "
-            "such batch waits; later batches reuse it.",
-            RuntimeWarning,
-            stacklevel=2,
+            "such batch waits; later batches reuse it."
         )
         compiled = torch.compile(fn, dynamic=True, fullgraph=cache.fullgraph)
         cache.compiled[name] = compiled
@@ -86,10 +85,8 @@ def run_compiled(name: str, fn: Callable, *args, cache: CompileCache):
         if module.startswith("torch._dynamo") or "Compiler" in type(exc).__name__:
             cache.failed.add(name)
             cache.compiled.pop(name, None)
-            warnings.warn(
-                f"SuperMimic {name} stayed eager ({type(exc).__name__}).",
-                RuntimeWarning,
-                stacklevel=2,
+            get_logger().warning(
+                f"SuperMimic {name} stayed eager ({type(exc).__name__})."
             )
             return fn(*args)
         raise

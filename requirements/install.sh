@@ -35,7 +35,8 @@ PLATFORM_TORCH_STR=""
 # into pyproject.toml so `uv sync` resolves torch/torchvision/torchaudio from
 # this index (UV_TORCH_BACKEND alone only affects `uv pip install` /  `uv add`).
 PLATFORM_TORCH_INDEX=""
-# Most indexes use PEP 503; AMD SuperMimic uses Radeon's flat wheel listing.
+# "simple" for a PEP 503 index, "flat" for a plain wheel listing. Set to flat
+# by apply_env_torch_source.
 PLATFORM_TORCH_INDEX_FORMAT="simple"
 # Package names routed through PLATFORM_TORCH_INDEX. Must include any transitive
 # deps that only live on the platform-specific index (e.g. pytorch-triton-rocm
@@ -79,6 +80,9 @@ PLATFORM_EXTRA_OVERRIDES=()
 # Override entries an environment needs in place of the project-wide pin for
 # the same package (that pin is removed first). Set by apply_env_default_torch.
 ENV_OVERRIDE_REPLACEMENTS=()
+# torchvision version an environment pairs with its torch when that index does
+# not follow torchvision's usual numbering. Set by apply_env_torch_source.
+ENV_TORCHVISION_VERSION=""
 # Package names inserted into the pyproject.toml `exclude-dependencies` array
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
@@ -126,10 +130,8 @@ GITHUB_PREFIX="${GITHUB_PREFIX:-}"
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "supermimic" "simple")
 
 #=======================Utility Functions=======================
@@ -157,10 +159,9 @@ Common options:
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/,
                            unless the model or environment selects its own recipe.
-    --engine <name>        Rollout engine: ${SUPPORTED_ENGINES[*]}.
-                           sglang or vllm for target=agentic (default: sglang),
+    --engine <name>        Rollout engine: sglang or vllm for target=agentic (default: sglang),
                            or phyai for target=embodied (requires --model openpi --env libero).
-                           One venv holds one engine -- they pin the  
+                           One venv holds one engine -- they pin the
                            same kernel libraries to different versions, so run install.sh
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
@@ -810,16 +811,6 @@ configure_amd() {
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="rocm${ROCM_VERSION}"
     fi
-    if [ "$ENV_NAME" = "supermimic" ]; then
-        # Radeon wheels carry build-specific local versions, unlike PyTorch's
-        # +rocmX.Y tags. Public version pins accept those local suffixes.
-        local rocm_release
-        rocm_release=$(printf '%s' "$ROCM_VERSION" | cut -d. -f1,2)
-        PLATFORM_TORCH_STR=""
-        PLATFORM_TORCH_INDEX="https://repo.radeon.com/rocm/manylinux/rocm-rel-${rocm_release}/"
-        PLATFORM_TORCH_INDEX_FORMAT="flat"
-        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "triton")
-    fi
 }
 
 configure_ascend() {
@@ -1173,6 +1164,28 @@ apply_env_default_torch() {
         TORCH_VERSION="$env_torch"
         echo "[install.sh] Environment '${ENV_NAME}' pins torch ${TORCH_VERSION}; overriding the project default."
     fi
+}
+
+# Envs whose torch wheels come from another index than the platform's replace
+# the PLATFORM_TORCH_* settings here. It runs after configure_platform, which
+# resolves the ROCm version these indexes are named after.
+apply_env_torch_source() {
+    case "$ENV_NAME:$PLATFORM" in
+        supermimic:amd)
+            # Radeon wheels carry build-specific local versions, unlike PyTorch's
+            # +rocmX.Y tags. Public version pins accept those local suffixes.
+            local rocm_release
+            rocm_release=$(printf '%s' "$ROCM_VERSION" | cut -d. -f1,2)
+            PLATFORM_TORCH_STR=""
+            PLATFORM_TORCH_INDEX="https://repo.radeon.com/rocm/manylinux/rocm-rel-${rocm_release}/"
+            PLATFORM_TORCH_INDEX_FORMAT="flat"
+            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "triton")
+            # ROCm 7.2's Radeon release pairs torch 2.9.1 with torchvision 0.24.0.
+            if [ "$TORCH_VERSION" = "2.9.1" ]; then
+                ENV_TORCHVISION_VERSION="0.24.0"
+            fi
+            ;;
+    esac
 }
 
 configure_platform() {
@@ -1840,10 +1853,8 @@ apply_torch_override() {
         fi
     fi
 
-    if [ "$PLATFORM" = "amd" ] && [ "$ENV_NAME" = "supermimic" ] \
-        && [ "$torch_version" = "2.9.1" ]; then
-        # ROCm 7.2's Radeon release pairs torch 2.9.1 with torchvision 0.24.0.
-        torchvision_version="0.24.0"
+    if [ -n "$ENV_TORCHVISION_VERSION" ]; then
+        torchvision_version="$ENV_TORCHVISION_VERSION"
     fi
 
     local torch_pin="${torch_version}${PLATFORM_TORCH_STR}"
@@ -4678,6 +4689,7 @@ main() {
     apply_env_default_torch
     apply_agentic_torch_default
     configure_platform
+    apply_env_torch_source
     setup_mirror
     apply_torch_override
 

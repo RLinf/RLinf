@@ -58,7 +58,9 @@ from rlinf.models.embodiment.supermimic.interface import (
 )
 from rlinf.models.embodiment.supermimic.supermimic_policy import goal_width
 from rlinf.scheduler import Worker
+from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.precision import torch_dtype_from_precision
+from rlinf.utils.profiler import PyTorchProfiler
 from rlinf.utils.utils import (
     collect_param_names_need_sync,
     seed_everything,
@@ -117,7 +119,13 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.nonfinite_skips = 0
         self.consecutive_nonfinite = 0
         self._pending_skips: list[tuple[str, torch.Tensor]] = []
-        self.torch_profile_update = cfg.actor.get("torch_profile_update", None)
+        self.profiler = None
+        if cfg.actor.get("use_profiler", False):
+            # One profiler step per global update, counted from this launch.
+            self.profiler = PyTorchProfiler.from_config(cfg.actor.profiler)
+            self.profiler.init_fwd_bwd_schedule(
+                self.profiler.schedule_warmup + self.profiler.schedule_active
+            )
 
     # ------------------------------------------------------------------ setup
 
@@ -261,9 +269,11 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """
         metrics: dict[str, float | torch.Tensor] = {}
         for step in range(global_step, global_step + num_updates):
-            traced = step == self.torch_profile_update
-            with self._torch_profile(step) if traced else contextlib.nullcontext():
-                self._run_update(step, metrics)
+            if self.profiler is not None:
+                self.profiler.start()
+            self._run_update(step, metrics)
+            if self.profiler is not None:
+                self.profiler.stop()
         self.model.reshard()
         metrics = self._read_metrics(metrics)
         metrics.update(
@@ -301,36 +311,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """Time one training phase and label it in ``torch.profiler`` traces."""
         with self.worker_timer(name), torch.profiler.record_function(name):
             yield
-
-    @contextlib.contextmanager
-    def _torch_profile(self, update: int):
-        """Trace one update with ``torch.profiler``.
-
-        Operator tables (``.txt``) and a Chrome trace (``.json``) go to
-        ``<log_path>/<experiment_name>/torch_profile``.
-        """
-        on_cuda = Worker.torch_device_type == "cuda"
-        activities = [torch.profiler.ProfilerActivity.CPU]
-        if on_cuda:
-            activities.append(torch.profiler.ProfilerActivity.CUDA)
-        with torch.profiler.profile(activities=activities) as profiler:
-            yield
-        logger_cfg = self.cfg.runner.logger
-        out_dir = os.path.join(
-            logger_cfg.log_path, logger_cfg.experiment_name, "torch_profile"
-        )
-        os.makedirs(out_dir, exist_ok=True)
-        stem = os.path.join(out_dir, f"update_{update}_rank_{self._rank}")
-        averages = profiler.key_averages()
-        sort_keys = ["cpu_time_total", "self_cpu_time_total"]
-        if on_cuda:
-            sort_keys.append("self_device_time_total")
-        with open(stem + ".txt", "w") as file:
-            for key in sort_keys:
-                table = averages.table(sort_by=key, row_limit=50)
-                file.write(f"sorted by {key}\n{table}\n\n")
-        profiler.export_chrome_trace(stem + ".json")
-        self.log_info(f"torch.profiler output of update {update}: {stem}.txt, .json")
 
     def _read_metrics(
         self, metrics: dict[str, float | torch.Tensor]
@@ -395,9 +375,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """Sum per-rank host values over the actor ranks."""
         if self._world_size == 1:
             return [float(value) for value in values]
-        packed = torch.tensor(values, dtype=torch.float64, device=self.device)
-        dist.all_reduce(packed, group=self._dp_group)
-        return packed.tolist()
+        summed = all_reduce_dict(
+            dict(enumerate(values)), dtype=torch.float64, group=self._dp_group
+        )
+        return [summed[index] for index in range(len(values))]
 
     def _loss_scale(self, weight: float, total: float) -> float:
         """Scale that turns FSDP's mean over ranks into a row-weighted mean."""

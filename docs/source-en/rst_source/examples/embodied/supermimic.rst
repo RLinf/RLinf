@@ -646,11 +646,21 @@ above change some of them. Each can be passed as a Hydra override.
        weight sync, as the RLinf rollout does by default. SuperMimic syncs
        after every update, where a full collection each time is a large
        share of the step.
-   * - ``actor.torch_profile_update``
-     - ``null``
-     - A global update index. The actor's work in that update is traced with
-       ``torch.profiler``; operator tables (``.txt``) and a Chrome trace
-       (``.json``) go to ``<log_path>/<experiment_name>/torch_profile``.
+   * - ``actor.use_profiler``
+     - ``False``
+     - Traces the actor's global updates with RLinf's ``PyTorchProfiler``,
+       one profiler step per update counted from the launch. With the
+       ``actor.profiler`` defaults, the first three updates warm up and the
+       fourth is written per rank to ``<output_dir>/tensorboard/fwd_bwd``, a
+       trace with operator and kernel times that Perfetto opens. Training
+       phases are labelled ``world_model``, ``motion_actor`` and so on. The
+       first ``algorithm.wm_only_updates`` updates fit only the world model;
+       to trace the actor phases, resume past them or set
+       ``algorithm.wm_only_updates=0``.
+   * - ``actor.profiler``
+     - see the config
+     - Settings for ``PyTorchProfiler.from_config``, the same keys as
+       ``actor.megatron.profiler`` in the Megatron configs.
    * - ``env.train.total_num_envs``
      - 4096
      - Parallel simulator environments, global. Collection throughput and
@@ -761,9 +771,6 @@ TensorBoard files go to ``<log_path>/tensorboard``:
 
 On a host with many CPU cores and little RAM, Ray starts one idle worker per
 core; ``RAY_prestart_worker_first_driver=0`` skips them.
-``++cluster.object_store_memory_mb=512`` caps Ray's object store, which the
-replay never passes through; the cap applies only when RLinf starts Ray
-itself.
 
 Multiple GPUs
 -------------
@@ -1273,10 +1280,11 @@ survived a checkpoint round trip. The CI configs
 ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` and
 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` exercise
 training, resume, two-GPU velocity tracking and evaluation through the RLinf
-entries on a generated standing clip. On one A800, the training and resume
-runs of ``g1_mimic_supermimic`` passed, and so did a resume with the patch
-weight syncer. ``tests/unit_tests/test_supermimic.py`` holds the numerical
-checks.
+entries on a generated standing clip. On A800 GPUs, the training and resume
+runs of ``g1_mimic_supermimic``, a resume with the patch weight syncer, the
+two-GPU ``g1_mimic_supermimic_velocity`` run and the
+``g1_mimic_supermimic_eval`` evaluation passed.
+``tests/unit_tests/test_supermimic.py`` holds the numerical checks.
 The paper overrides, the paper's two-GPU recipe, multiple nodes, Slurm, real
 BONES-SEED data and paper §4.3 T-pose recovery remain unvalidated.
 

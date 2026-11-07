@@ -100,7 +100,21 @@ actor:
   global_batch_size: ${algorithm.wm_window_batch}
   seed: 0
   enable_offload: False
-  torch_profile_update: null # a global update index to trace with torch.profiler
+  use_profiler: False # trace the first global updates of a launch with torch.profiler
+  profiler:
+    output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/profiler
+    activities: ["cpu", "cuda"]
+    record_shapes: False
+    profile_memory: False
+    with_stack: False
+    with_flops: False
+    with_modules: False
+    export_tensorboard: True
+    export_chrome_trace: False
+    chrome_filename_prefix: "chrome_trace"
+    schedule_warmup: 3
+    schedule_active: 1
+    schedule_repeat: 1
 
   model:
     goal_encoding: goal730

@@ -428,9 +428,12 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
    * - ``rollout.gc_after_weight_sync``
      - ``False``
      - 设为 ``True`` 时，每次权重同步后执行 ``gc.collect()`` 并清空设备缓存，这是 RLinf rollout 的默认行为。SuperMimic 每次更新后都同步，每次都做完整回收会占去每步相当一部分时间。
-   * - ``actor.torch_profile_update``
-     - ``null``
-     - 一个全局更新序号。用 ``torch.profiler`` 采集 actor 在这次更新中的工作，算子统计表（``.txt``）和 Chrome trace（``.json``）写到 ``<log_path>/<experiment_name>/torch_profile``。
+   * - ``actor.use_profiler``
+     - ``False``
+     - 用 RLinf 的 ``PyTorchProfiler`` 采集 actor 的全局更新，每次更新算一个 profiler 步，从本次启动开始计数。按 ``actor.profiler`` 的默认值，前三次更新用于预热，第四次更新按 rank 写到 ``<output_dir>/tensorboard/fwd_bwd``，其中包含算子和 kernel 耗时，可用 Perfetto 打开。训练阶段以 ``world_model``、``motion_actor`` 等名称标注。前 ``algorithm.wm_only_updates`` 次更新只训练世界模型；要采集 actor 各阶段，需从超过这一步数的 checkpoint 续训，或设置 ``algorithm.wm_only_updates=0``。
+   * - ``actor.profiler``
+     - 见配置文件
+     - 传给 ``PyTorchProfiler.from_config`` 的设置，键与 Megatron 配置中的 ``actor.megatron.profiler`` 相同。
    * - ``env.train.total_num_envs``
      - 4096
      - 并行仿真环境数，全局量。采集吞吐和显存都随它增长。
@@ -500,7 +503,7 @@ RLinf 会按 placement 为 Worker 设置设备可见性，启动前的 ``CUDA_VI
 
 TensorBoard 文件写在 ``<log_path>/tensorboard``：``tensorboard --logdir /data/runs/lafan1/tensorboard``。
 
-CPU 核多、内存少的机器上，Ray 会按核数预启动空闲 worker；设置 ``RAY_prestart_worker_first_driver=0`` 可以不启动它们。``++cluster.object_store_memory_mb=512`` 限制 Ray 的对象存储，replay 从不经过它；这个限制只在 RLinf 自己启动 Ray 时生效。
+CPU 核多、内存少的机器上，Ray 会按核数预启动空闲 worker；设置 ``RAY_prestart_worker_first_driver=0`` 可以不启动它们。
 
 多卡训练
 --------
@@ -771,7 +774,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 验证范围
 --------
 
-当前的 env、rollout 和 actor worker 已在一张 A800 上把配方训练了 16000 次更新，并评测了检查点（见 `已报告的跟踪结果`_）。FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总还在小规模 CPU 测试中检查过；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` 与 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 在生成的站立片段上，通过 RLinf 入口覆盖训练、恢复、双卡速度跟踪和评测，其中 ``g1_mimic_supermimic`` 的训练和恢复，以及改用 patch 权重同步的恢复，已在一张 A800 上通过；数值检查位于 ``tests/unit_tests/test_supermimic.py``。论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
+当前的 env、rollout 和 actor worker 已在一张 A800 上把配方训练了 16000 次更新，并评测了检查点（见 `已报告的跟踪结果`_）。FSDP2 分阶段冻结、actor 的各训练阶段、检查点往返、更新调度和评测汇总还在小规模 CPU 测试中检查过；在单卡上，fused Adam 步与主机端检查的步在相同梯度下结果一致，非有限的步被跳过且权重和 Adam 状态不变，检查点往返后仍可继续训练；CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic*.yaml`` 与 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 在生成的站立片段上，通过 RLinf 入口覆盖训练、恢复、双卡速度跟踪和评测，其中 ``g1_mimic_supermimic`` 的训练和恢复、改用 patch 权重同步的恢复、双卡 ``g1_mimic_supermimic_velocity`` 训练以及 ``g1_mimic_supermimic_eval`` 评测，已在 A800 上通过；数值检查位于 ``tests/unit_tests/test_supermimic.py``。论文覆盖项、论文双卡配方、多节点、Slurm、真实 BONES-SEED 数据及论文 §4.3 的 T-pose 恢复仍未验证。
 
 致谢
 --------
