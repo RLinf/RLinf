@@ -99,7 +99,14 @@ def _openwam_eef20_to_robotwin_ee16(chunk_actions) -> np.ndarray:
     l_quat = rot6d_to_quat_xyzw(raw[..., 3:9])
     r_quat = rot6d_to_quat_xyzw(raw[..., 13:19])
     return np.concatenate(
-        [raw[..., 0:3], l_quat, raw[..., 9:10], raw[..., 10:13], r_quat, raw[..., 19:20]],
+        [
+            raw[..., 0:3],
+            l_quat,
+            raw[..., 9:10],
+            raw[..., 10:13],
+            r_quat,
+            raw[..., 19:20],
+        ],
         axis=-1,
     ).astype(np.float32)
 
@@ -540,7 +547,7 @@ def prepare_actions(
             model_type=model_type,
             env_cfg=env_cfg,
         )
-    elif env_type == SupportedEnvType.EMBODICHAIN:
+    elif env_type in (SupportedEnvType.ROBODOJO, SupportedEnvType.EMBODICHAIN):
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = prepare_actions_for_metaworld(
@@ -595,6 +602,11 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.GENIESIM:
+        # GenieSim consumes the policy's chunk unchanged: the model-side
+        # transforms live in its OpenPI policy and the joint-layout mapping
+        # happens on the simulator server.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.DIFFUSION:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:
