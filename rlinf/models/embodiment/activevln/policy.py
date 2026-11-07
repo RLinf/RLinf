@@ -80,6 +80,19 @@ class HuggingFaceActiveVLNModel(nn.Module):
         """Project only positions used by the response loss."""
         return self.qwen.lm_head(hidden)
 
+    def named_srt_weights(
+        self, *, trainable_only: bool = False
+    ) -> Iterator[tuple[str, torch.Tensor]]:
+        """Export checkpoint names; SRT handles QKV and gate/up fusion."""
+        for name, parameter in self.qwen.named_parameters(remove_duplicate=False):
+            if trainable_only and not parameter.requires_grad:
+                continue
+            if name.startswith("model.language_model."):
+                name = "model." + name.removeprefix("model.language_model.")
+            elif name.startswith("model.visual."):
+                name = name.removeprefix("model.")
+            yield name, parameter.detach()
+
 
 class ActiveVLNPolicy(nn.Module, BasePolicy):
     """Generate token actions and replay their saved images and sampling settings."""
@@ -184,14 +197,7 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
         self, *, trainable_only: bool = False
     ) -> Iterator[tuple[str, torch.Tensor]]:
         """Export either actor's checkpoint names for SRT's fused weight loader."""
-        for name, parameter in self.core.qwen.named_parameters(remove_duplicate=False):
-            if trainable_only and not parameter.requires_grad:
-                continue
-            if name.startswith("model.language_model."):
-                name = "model." + name.removeprefix("model.language_model.")
-            elif name.startswith("model.visual."):
-                name = name.removeprefix("model.")
-            yield name, parameter.detach()
+        return self.core.named_srt_weights(trainable_only=trainable_only)
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs) -> dict:
         if forward_type != ForwardType.DEFAULT:
