@@ -385,16 +385,56 @@ class KuavoConnection(Connection):
         position = self._read_feedback("gripper")
         return float(position[0]), float(position[1])
 
-    def begin_step(self) -> None:
-        """Seed a coordinated action's other-side targets from fresh feedback."""
+    def step_arms(self, joints: ArrayLike, grippers: ArrayLike) -> None:
+        """Send one complete arm target and one request for both end effectors.
+
+        Args:
+            joints: Fourteen absolute joint angles, left arm then right, in radians.
+            grippers: Two normalized end-effector targets, left then right.
+        """
+        if self.which_arm != "both":
+            raise ValueError("Kuavo step_arms requires which_arm='both'.")
+        joints = np.asarray(joints, dtype=np.float64)
+        grippers = np.asarray(grippers, dtype=np.float64)
+        if joints.shape != (14,) or not np.all(np.isfinite(joints)):
+            raise ValueError("Kuavo arm targets must contain 14 finite values.")
+        if grippers.shape != (2,) or not np.all(np.isfinite(grippers)):
+            raise ValueError("Kuavo gripper targets must contain two finite values.")
         if self._robot is None:
             raise RuntimeError("Kuavo connection is not open.")
+        joints = np.clip(joints, self._joint_limits_min, self._joint_limits_max)
+        grippers = np.clip(
+            grippers, self._end_effector_limits_min, self._end_effector_limits_max
+        )
         with self._lock:
-            joints = self._read_arm_positions()
-            grippers = np.asarray(self._read_grippers())
-            self._commanded_joint_position = joints
-            scale = 100.0 if self.end_effector_type == "leju_claw" else 255.0
-            self._commanded_gripper_position = grippers * scale
+            self._read_arm_positions()
+            self._read_grippers()
+            if self._claw_faulted:
+                raise RuntimeError(
+                    "Kuavo claw has a service fault; close and rebuild it."
+                )
+            if not self._robot.control_arm_joint_positions(joints.tolist()):
+                raise RuntimeError("Failed to command both Kuavo arms.")
+            self._commanded_joint_position = joints.copy()
+
+        # A claw acknowledgement can wait for feedback on another thread.
+        if self.end_effector_type == "leju_claw":
+            self._move_claws(grippers * 100.0)
+        elif self.end_effector_type == "rq2f85":
+            self._publish_grippers(grippers * 255.0)
+        else:
+            positions = [
+                position
+                for value in grippers * 100.0
+                for position in (value, 100.0, value, value, value, value)
+            ]
+            result = self._end_effector.control(
+                target_positions=positions,
+                target_velocities=None,
+                target_torques=None,
+            )
+            if result is not None and not result:
+                raise RuntimeError("Failed to command both Kuavo hands.")
 
     def hold_arms(self) -> np.ndarray:
         """Send one measured dual-arm target, refusing missing or stale feedback."""
@@ -479,7 +519,14 @@ class KuavoConnection(Connection):
         self._read_arm_positions()
         grippers = self._read_grippers()
         if self.end_effector_type == "leju_claw":
-            self._move_claw(side, value)
+            with self._lock:
+                current = (
+                    np.asarray(grippers) * 100.0
+                    if self._commanded_gripper_position is None
+                    else self._commanded_gripper_position.copy()
+                )
+                current[side_index] = value * 100.0
+            self._move_claws(current)
             return
         if self.end_effector_type == "rq2f85":
             with self._lock:
@@ -489,11 +536,7 @@ class KuavoConnection(Connection):
                 else:
                     current = self._commanded_gripper_position.copy()
                 current[0 if side == "left" else 1] = value * 255.0
-                message = self._joint_state_type()
-                message.name = ["left_gripper_joint", "right_gripper_joint"]
-                message.position = current.astype(float).tolist()
-                self._gripper_publisher.publish(message)
-                self._commanded_gripper_position = current
+                self._publish_grippers(current)
             return
 
         method = getattr(self._end_effector, f"control_{side}")
@@ -507,7 +550,16 @@ class KuavoConnection(Connection):
         if result is not None and not result:
             raise RuntimeError(f"Failed to command the Kuavo {side} end effector.")
 
-    def _move_claw(self, side: str, value: float) -> None:
+    def _publish_grippers(self, positions: np.ndarray) -> None:
+        """Publish both RQ2F85 targets in their native 0..255 range."""
+        with self._lock:
+            message = self._joint_state_type()
+            message.name = ["left_gripper_joint", "right_gripper_joint"]
+            message.position = positions.astype(float).tolist()
+            self._gripper_publisher.publish(message)
+            self._commanded_gripper_position = positions.copy()
+
+    def _move_claws(self, positions: np.ndarray) -> None:
         if not self._claw_command_lock.acquire(timeout=self._feedback_timeout_s):
             with self._lock:
                 self._claw_faulted = True
@@ -521,16 +573,10 @@ class KuavoConnection(Connection):
                 if self._claw_service is None:
                     raise RuntimeError("Kuavo claw connection is not open.")
                 generation = self._feedback_generation
-                observed = np.asarray(self._read_grippers()) * 100.0
-                current = (
-                    observed
-                    if self._commanded_gripper_position is None
-                    else self._commanded_gripper_position.copy()
-                )
-                current[0 if side == "left" else 1] = value * 100.0
+                self._read_grippers()
                 request = self._claw_request_type()
                 request.data.name = ["left_claw", "right_claw"]
-                request.data.position = current.astype(float).tolist()
+                request.data.position = positions.astype(float).tolist()
                 request.data.velocity = [90.0, 90.0]
                 request.data.effort = [1.0, 1.0]
                 service = self._claw_service
@@ -542,10 +588,10 @@ class KuavoConnection(Connection):
                     )
                 if response is None or not response.success:
                     raise RuntimeError(
-                        f"Failed to command the Kuavo {side} end effector: "
+                        "Failed to command the Kuavo claws: "
                         f"{getattr(response, 'message', 'empty service response')}"
                     )
-                self._commanded_gripper_position = current
+                self._commanded_gripper_position = positions.copy()
         finally:
             self._claw_command_lock.release()
 

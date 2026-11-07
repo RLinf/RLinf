@@ -3596,13 +3596,22 @@ def test_shipped_realworld_task_overrides_contain_no_hardware_fields():
             14,
         ),
         ("Turtle2", "ButtonEnv-v1", {"camera_ids": [0, 2]}, ["wrist_1", "wrist_2"], 7),
+        (
+            "Kuavo",
+            "KuavoJointEnv-v1",
+            {"platform_type": "5", "image_size": [6, 4]},
+            ["head_cam_h", "wrist_cam_l", "wrist_cam_r"],
+            16,
+        ),
     ],
 )
 def test_task_schema_uses_enumerated_hardware_without_changing_it(
-    robot_type, env_id, hardware, frames, action_width
+    robot_type, env_id, hardware, frames, action_width, monkeypatch
 ):
     from robot_mocks import mocked_sdks
 
+    if robot_type == "Kuavo":
+        monkeypatch.setenv("RLINF_ROS_SETUP", "preserve")
     load_tasks()
     registration = RobotDiscovery.registry[robot_type]
     config = registration.config_cls(node_rank=0, **hardware)
@@ -3613,7 +3622,7 @@ def test_task_schema_uses_enumerated_hardware_without_changing_it(
         env = gym.make(
             env_id,
             override_cfg={"is_dummy": True, "enable_camera_player": False}
-            if robot_type != "Turtle2"
+            if robot_type not in {"Turtle2", "Kuavo"}
             else {"is_dummy": True},
             worker_info=None,
             robot_info=info,
@@ -3637,6 +3646,128 @@ def test_task_schema_uses_enumerated_hardware_without_changing_it(
                 assert info.config.model == "piper_h"
         finally:
             env.close()
+
+
+@pytest.mark.parametrize("platform", ["4pro", "5", "5w"])
+@pytest.mark.parametrize("end_effector", ["leju_claw", "qiangnao", "rq2f85"])
+def test_kuavo_task_sends_synchronized_targets_with_measured_delta_limits(
+    monkeypatch, platform, end_effector
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.kuavo.joint_env import KuavoJointEnv
+    from rlinf.robotics import KuavoRobotConfig
+
+    monkeypatch.setenv("RLINF_ROS_SETUP", "preserve")
+    hardware = KuavoRobotConfig(
+        node_rank=0,
+        platform_type=platform,
+        end_effector_type=end_effector,
+        image_size=[6, 4],
+    )
+    before = pickle.dumps(hardware)
+    with mocked_sdks() as modules:
+        bus = modules["kuavo_humanoid_sdk"].bus
+        env = KuavoJointEnv({"max_num_steps": 1}, robot_info=_robot_info(hardware))
+        try:
+            observation, _ = env.reset()
+            assert bus.arm_commands == []
+            joints = np.asarray([*range(7), *range(8, 15)])
+            measured = observation["state"]["joint_position"].copy()
+            np.testing.assert_array_equal(
+                observation["frames"]["head_cam_h"][0, 0], [30, 20, 10]
+            )
+            action = measured.copy()
+            action[joints[:7]] += 1.0
+            action[joints[7:]] -= 1.0
+            action[[7, 15]] = [0.35, 0.65]
+            _, reward, terminated, truncated, info = env.step(action)
+            assert reward == 0 and not terminated and truncated
+            accepted = info["accepted_action"]
+            np.testing.assert_allclose(
+                accepted[joints[:7]], measured[joints[:7]] + 0.05, atol=1e-7
+            )
+            np.testing.assert_allclose(
+                accepted[joints[7:]], measured[joints[7:]] - 0.05, atol=1e-7
+            )
+            assert len(bus.arm_commands) == 1
+            np.testing.assert_allclose(bus.arm_commands[0], accepted[joints])
+            assert (
+                len(bus.claw_requests)
+                + len(bus.hand_commands)
+                + len(bus.gripper_commands)
+                == 1
+            )
+            np.testing.assert_array_equal(env.get_hold_action(), measured)
+            assert pickle.dumps(hardware) == before
+        finally:
+            env.close()
+        assert all(sub.closed for sub in bus.subscribers)
+
+
+def test_kuavo_task_stops_after_a_service_failure_and_holds_measured_joints(
+    monkeypatch,
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.kuavo.joint_env import KuavoJointEnv
+    from rlinf.robotics import KuavoRobotConfig
+
+    monkeypatch.setenv("RLINF_ROS_SETUP", "preserve")
+    with mocked_sdks() as modules:
+        bus = modules["kuavo_humanoid_sdk"].bus
+        env = KuavoJointEnv(
+            {}, robot_info=_robot_info(KuavoRobotConfig(node_rank=0, image_size=[6, 4]))
+        )
+        try:
+            observation, _ = env.reset()
+            measured = observation["state"]["joint_position"]
+            bus.claw_success = False
+            with pytest.raises(RuntimeError, match="Failed to command"):
+                env.step(measured + 0.01)
+            assert len(bus.arm_commands) == 2
+            np.testing.assert_allclose(
+                bus.arm_commands[-1], np.r_[measured[:7], measured[8:15]]
+            )
+            with pytest.raises(RuntimeError, match="hardware fault"):
+                env.step(measured)
+            assert len(bus.arm_commands) == 2
+        finally:
+            env.close()
+
+
+@pytest.mark.parametrize("mode", [None, "reset", "preserve", "invalid"])
+def test_ros_setup_preserves_services_only_when_explicitly_requested(
+    mode, monkeypatch, tmp_path
+):
+    from filelock import FileLock
+
+    import rlinf.envs.real.env as real_env
+
+    if mode is None:
+        monkeypatch.delenv("RLINF_ROS_SETUP", raising=False)
+    else:
+        monkeypatch.setenv("RLINF_ROS_SETUP", mode)
+    killed = []
+    processes = [
+        SimpleNamespace(
+            name=lambda name=name: name, kill=lambda name=name: killed.append(name)
+        )
+        for name in ("roscore", "rosmaster", "rosout", "unrelated_service")
+    ]
+    monkeypatch.setattr(real_env.psutil, "process_iter", lambda: iter(processes))
+    monkeypatch.setattr(
+        real_env, "FileLock", lambda _path: FileLock(tmp_path / "ros.lock")
+    )
+    if mode == "invalid":
+        with pytest.raises(ValueError, match="RLINF_ROS_SETUP"):
+            real_env.RealWorldEnv.realworld_setup()
+        assert killed == []
+    else:
+        real_env.RealWorldEnv.realworld_setup()
+        assert killed == (
+            [] if mode == "preserve" else ["roscore", "rosmaster", "rosout"]
+        )
 
 
 @pytest.mark.parametrize(
