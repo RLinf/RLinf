@@ -27,6 +27,18 @@ from torch.utils.checkpoint import checkpoint
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 
+def _apply_repetition_penalty(
+    logits: torch.Tensor, generated_ids: torch.Tensor, penalty: float
+) -> torch.Tensor:
+    """Penalize each token in the current response once, excluding the prompt."""
+    if penalty == 1.0 or generated_ids.shape[-1] == 0:
+        return logits
+    seen = torch.zeros_like(logits, dtype=torch.bool)
+    seen.scatter_(1, generated_ids, True)
+    penalized = torch.where(logits < 0, logits * penalty, logits / penalty)
+    return torch.where(seen, penalized, logits)
+
+
 class HuggingFaceActiveVLNModel(nn.Module):
     """Keep the native checkpoint layout shared with the SGLang actor."""
 
@@ -236,10 +248,11 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
         if (
             (do_sample and temperature <= 0)
             or not 0 < top_p <= 1
-            or repetition_penalty <= 0
+            or not 0 < repetition_penalty <= 2
         ):
             raise ValueError(
-                "Expected positive sampling temperature/penalty and 0 < top_p <= 1"
+                "Expected positive sampling temperature, 0 < top_p <= 1, "
+                "and 0 < repetition_penalty <= 2"
             )
         if max_new_tokens not in (None, self.max_new_tokens):
             raise ValueError(
@@ -266,7 +279,16 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
                 for ids, _, _ in prompts
             ]
         ).to(device)
-        params = {"do_sample": do_sample, "repetition_penalty": repetition_penalty}
+        # SRT applies repetition penalties to the current response only.
+        params = {"do_sample": do_sample, "repetition_penalty": 1.0}
+        if repetition_penalty != 1.0:
+
+            def penalize_response(input_ids, scores):
+                return _apply_repetition_penalty(
+                    scores, input_ids[:, width:], repetition_penalty
+                )
+
+            params["logits_processor"] = [penalize_response]
         if do_sample:
             params.update(temperature=temperature, top_k=0, top_p=top_p)
         if "mm_token_type_ids" in prompts[0][2]:
@@ -287,13 +309,27 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
             ).to(device),
             max_new_tokens=self.max_new_tokens,
             return_dict_in_generate=True,
-            output_scores=True,
+            output_scores=False,
+            output_logits=True,
             use_cache=True,
             **params,
         )
-        scores = self.core.qwen.compute_transition_scores(
-            generated.sequences, generated.scores, normalize_logits=True
-        ).cpu()
+        scores = []
+        for offset, logits in enumerate(generated.logits):
+            effective = _apply_repetition_penalty(
+                logits.float(),
+                generated.sequences[:, width : width + offset],
+                repetition_penalty,
+            )
+            if do_sample:
+                effective = effective / temperature
+            # Like SRT, report logprobs before top-p truncation.
+            scores.append(
+                effective.log_softmax(-1).gather(
+                    1, generated.sequences[:, width + offset : width + offset + 1]
+                )
+            )
+        scores = torch.cat(scores, dim=1).cpu()
         eos = self.core.qwen.generation_config.eos_token_id
         eos = {eos} if isinstance(eos, int) else set(eos or [])
         responses, logprobs = [], []
@@ -413,30 +449,17 @@ class ActiveVLNPolicy(nn.Module, BasePolicy):
                 ids, positions, image_features=features, image_token_mask=image_mask
             )
             logits = self.core.project(hidden[:, start - 1 : -1])
-            temperature, top_p, penalty, do_sample = forward_inputs["sampling"][
+            temperature, _top_p, penalty, do_sample = forward_inputs["sampling"][
                 index
             ].tolist()
             scores, entropy = [], []
             for offset, position in enumerate(range(start, length)):
-                effective = logits[:, offset]
-                if penalty != 1.0:
-                    seen = ids[:, :position]
-                    selected = effective.gather(1, seen)
-                    selected = torch.where(
-                        selected < 0, selected * penalty, selected / penalty
-                    )
-                    effective = effective.scatter(1, seen, selected)
-                effective = (
-                    effective.float() / temperature if do_sample else effective.float()
+                effective = _apply_repetition_penalty(
+                    logits[:, offset].float(), ids[:, start:position], penalty
                 )
-                if top_p < 1.0:
-                    ordered, order = effective.sort(descending=True, dim=-1)
-                    remove = ordered.softmax(-1).cumsum(-1) > top_p
-                    remove[:, 1:] = remove[:, :-1].clone()
-                    remove[:, 0] = False
-                    effective = torch.full_like(effective, -torch.inf).scatter(
-                        1, order, ordered.masked_fill(remove, -torch.inf)
-                    )
+                if do_sample:
+                    effective = effective / temperature
+                # Top-p selects rollout tokens; training scores the full distribution.
                 logs = effective.log_softmax(-1)
                 scores.append(logs.gather(1, ids[:, position : position + 1]).squeeze())
                 if compute_entropy:

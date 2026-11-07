@@ -1137,14 +1137,23 @@ def validate_activevln_cfg(cfg):
             "ActiveVLN requires recompute_logprobs=True before actor updates"
         )
     sampling = cfg.rollout.sampling_params
-    if (
-        sampling.get("top_k", 0) not in (0, -1)
-        or sampling.get("top_p", 1.0) != 1.0
-        or sampling.get("repetition_penalty", 1.0) != 1.0
-    ):
-        raise ValueError(
-            "ActiveVLN requires untruncated sampling: top_k=0, top_p=1, repetition_penalty=1"
-        )
+    if sampling.get("top_k", 0) not in (0, -1):
+        raise ValueError("ActiveVLN requires top_k=0 or -1")
+    if not 0 < sampling.get("top_p", 1.0) <= 1:
+        raise ValueError("ActiveVLN requires 0 < top_p <= 1")
+    if not 0 < sampling.get("repetition_penalty", 1.0) <= 2:
+        raise ValueError("ActiveVLN requires 0 < repetition_penalty <= 2")
+    if rollout_backend == "sglang" and sampling.get("repetition_penalty", 1.0) != 1.0:
+        srt = cfg.rollout.get("sglang", {})
+        if not srt.get("disable_overlap_schedule", False) or srt.get(
+            "speculative_algorithm"
+        ):
+            raise ValueError(
+                "ActiveVLN repetition_penalty != 1 requires "
+                "rollout.sglang.disable_overlap_schedule=True and "
+                "rollout.sglang.speculative_algorithm=null so SRT penalties "
+                "match actor replay for each generated token"
+            )
     if not only_eval and (
         not sampling.get("do_sample", True)
         or sampling.get("temperature_train", 1.0) <= 0

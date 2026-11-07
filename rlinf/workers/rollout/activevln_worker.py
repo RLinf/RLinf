@@ -133,6 +133,8 @@ class ActiveVLNRolloutWorker(MultiStepRolloutWorker):
             if params.get("do_sample", True)
             else 0.0
         )
+        top_p = float(params.get("top_p", 1.0)) if temperature > 0 else 1.0
+        repetition_penalty = float(params.get("repetition_penalty", 1.0))
         prompts = [
             self.hf_model.prepare_observation(messages, images)
             for messages, images in zip(
@@ -149,8 +151,8 @@ class ActiveVLNRolloutWorker(MultiStepRolloutWorker):
             sampling_params={
                 "temperature": temperature,
                 "top_k": -1,
-                "top_p": 1.0,
-                "repetition_penalty": 1.0,
+                "top_p": top_p,
+                "repetition_penalty": repetition_penalty,
                 "max_new_tokens": self.hf_model.max_new_tokens,
             },
             return_logprob=True,
@@ -173,7 +175,12 @@ class ActiveVLNRolloutWorker(MultiStepRolloutWorker):
             prompts,
             responses,
             logprobs,
-            sampling=(temperature or 1.0, 1.0, 1.0, float(temperature > 0)),
+            sampling=(
+                temperature or 1.0,
+                top_p,
+                repetition_penalty,
+                float(temperature > 0),
+            ),
         )
 
     def offload_model(self):

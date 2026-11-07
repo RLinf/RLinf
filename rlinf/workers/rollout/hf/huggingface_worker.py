@@ -229,6 +229,9 @@ class MultiStepRolloutWorker(Worker):
                 "top_p": sampling_params["top_p"],
                 "max_new_tokens": sampling_params["max_new_tokens"],
             }
+            if sampling_params.get("repetition_penalty", 1.0) != 1.0:
+                for params in (self._train_sampling_params, self._eval_sampling_params):
+                    params["repetition_penalty"] = sampling_params["repetition_penalty"]
         else:
             self._train_sampling_params = {}
             self._eval_sampling_params = {}
