@@ -1262,13 +1262,13 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
-    if not only_eval and model_type == SupportedModel.OPENWAM:
-        raise ValueError(
-            "OpenWAM supports supervised fine-tuning (runner.task_type=sft) and "
-            "evaluation (runner.task_type=embodied_eval or runner.only_eval=True) "
-            "only; RL training with the OpenWAM policy is not implemented."
-        )
-    if only_eval and model_type == SupportedModel.OPENWAM:
+    if model_type == SupportedModel.OPENWAM:
+        if not only_eval:
+            raise ValueError(
+                "OpenWAM supports supervised fine-tuning (runner.task_type=sft) and "
+                "evaluation (runner.task_type=embodied_eval or runner.only_eval=True) "
+                "only; RL training with the OpenWAM policy is not implemented."
+            )
         validate_openwam_eval_cfg(cfg)
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (

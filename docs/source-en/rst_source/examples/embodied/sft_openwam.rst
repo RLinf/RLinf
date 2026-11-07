@@ -1,114 +1,157 @@
 OpenWAM Supervised Fine-Tuning
-===============================
+==============================
 
-Use this recipe to fine-tune OpenWAM on the native LIBERO dataset through RLinf's Ray-managed FSDP runner. The recipe loads OpenWAM's checkpoint directory, reuses its native dataloader and joint video/action loss, and trains the unfrozen modules with full-shard FSDP.
-
-Overview
---------
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: Model
-      :text-align: center
-
-      OpenWAM Wan2.2
-
-   .. grid-item-card:: Method
-      :text-align: center
-
-      Full-parameter SFT
-
-   .. grid-item-card:: Data
-      :text-align: center
-
-      Native LIBERO reader
-
-   .. grid-item-card:: Hardware
-      :text-align: center
-
-      8 GPUs by default with FSDP2
-
-The OpenWAM checkpoint supplies the model and dataloader settings. Set ``data.train_data_paths`` to the dataset root (or a list of roots: each is read with the same dataloader settings and the windows are concatenated, so the mixture is sampled in proportion to size); the loader reads ``config.yaml`` from ``actor.model.model_path`` and keeps the native frame, action, and normalization conventions.
+RLinf supports FSDP supervised fine-tuning of OpenWAM on OpenWAM's LIBERO dataset. This guide starts from the released LIBERO checkpoint and covers preparing the weights and data, configuring training, and exporting the result for evaluation.
 
 Installation
 ------------
 
-Install the OpenWAM environment and RLinf:
+From the RLinf repository root, install the OpenWAM and LIBERO environment and activate it. If the environment is already installed, activate it directly:
 
-.. code:: bash
+.. code-block:: bash
 
    bash requirements/install.sh embodied --model openwam --env libero
    source .venv/bin/activate
 
-Run It
-------
+Supervised Fine-Tuning
+----------------------
 
-Set the checkpoint and dataset paths in ``examples/sft/config/model/openwam.yaml`` and ``examples/sft/config/libero_sft_openwam.yaml``. The checked-in recipe maps the actor to eight GPUs (``0-7``) to leave more memory headroom for OpenWAM's trainable DiT/action parameters and optimizer state. ``mixture_sft_openwam.yaml`` inherits this placement.
+Prepare the Model Weights
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Measured on H200 GPUs with LIBERO data, ``micro_batch_size: 1`` and ``global_batch_size: 8``, four ranks peaked at 72.3 GiB allocated and 113.3 GiB reserved per GPU; eight ranks peaked at 55.5 GiB allocated and 83.7 GiB reserved. These measurements motivate the eight-GPU default; they do not establish that the recipe fits on 80-GiB GPUs. Validate memory use for your checkpoint and hardware.
+Download the released OpenWAM LIBERO checkpoint:
 
-The dataset reader comes from the checkpoint's ``config.yaml``, so a recipe pairs a checkpoint with data of the same type. ``libero_sft_openwam.yaml`` works for any single-source OpenWAM checkpoint: point ``actor.model.model_path`` at the checkpoint and ``data.train_data_paths`` at a dataset of its reader type. OpenWAM ships readers for LIBERO (LeRobot v3, EEF10 actions), AgibotWorld, InternData A1, Muka Franka, OXE DROID, RoboCoin, RoboTwin 2.0 (aloha-agilex, 20-D dual-arm EEF; use the ``robotwin2.0/dataset`` level as the root), RoboDojo real-robot data, EBench, RoboCasa365, RoboCasa GR1 and VLABench. ``mixture_sft_openwam.yaml`` covers checkpoints trained on a mixture of these readers.
+.. code-block:: bash
 
-For a ``mixture`` checkpoint, ``data.train_data_paths`` names one root directory: every enabled source ``datasets.<name>`` of the checkpoint's mixture config is read from ``<root>/<name>``, and ``data.openwam.datasets.<name>.dataset_dir`` points a single source elsewhere. Each source keeps its own normalization statistics, so a mixture run stores no ``normalization_stats.npy`` next to the checkpoint and the exporter takes the source checkpoint's file.
+   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO \
+     --local-dir /your_path_to/OpenWAM-Alpha-Sim-LIBERO
 
-The base recipe enables ``fsdp_config.gradient_checkpointing: true`` and forwards it to OpenWAM's own block checkpointing (``use_gradient_checkpointing``). It also uses ``global_batch_size: 8`` with ``micro_batch_size: 1`` so the effective batch grows without increasing per-rank activation memory.
+The downloaded directory should contain the weights, model configuration, normalization statistics, and tokenizer. This checkpoint includes the required model components, so a separate Wan base model download is unnecessary. Set ``actor.model.model_path`` to the entire directory, rather than an individual weights file:
 
-Start the Ray-managed FSDP runner:
+.. code-block:: text
 
-.. code:: bash
+   /your_path_to/OpenWAM-Alpha-Sim-LIBERO/
+   ├── checkpoint_step_10690.safetensors
+   ├── config.yaml
+   ├── normalization_stats.npy
+   └── tokenizer/
+       └── google/umt5-xxl/
+
+Prepare the Dataset
+~~~~~~~~~~~~~~~~~~~
+
+Download the OpenWAM LIBERO dataset paired with this checkpoint:
+
+.. code-block:: bash
+
+   hf download OpenWAM/LIBERO \
+     --repo-type dataset \
+     --local-dir /your_path_to/libero
+
+The dataset is already in LeRobot v3 format and needs no unpacking or additional conversion. Keep the complete ``data/``, ``meta/``, and ``videos/`` directories. The dataset normalization statistics are stored in ``meta/libero_normalization_stats.npy``:
+
+.. code-block:: text
+
+   /your_path_to/libero/
+   ├── data/
+   ├── meta/
+   │   ├── info.json
+   │   ├── tasks.parquet
+   │   ├── episodes/
+   │   └── libero_normalization_stats.npy
+   └── videos/
+       ├── observation.images.image/
+       └── observation.images.image2/
+
+Set ``data.train_data_paths`` to the dataset root containing these three directories. Training uses the LIBERO data configuration from the checkpoint. For custom data, keep the image fields, robot state, action representation, and normalization conventions consistent with that configuration.
+
+Configure Training
+~~~~~~~~~~~~~~~~~~
+
+Set the downloaded checkpoint path in ``examples/sft/config/model/openwam.yaml`` and retain the training precision and loading settings:
+
+.. code-block:: yaml
+
+   model_path: /your_path_to/OpenWAM-Alpha-Sim-LIBERO
+   precision: fp32
+   load_to_device: false
+
+Set the dataset path in ``examples/sft/config/libero_sft_openwam.yaml``. The key fields are shown below; the remaining fields can keep their recipe defaults:
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 1
+     component_placement:
+       actor: 0-7
+
+   data:
+     train_data_paths: /your_path_to/libero
+
+   runner:
+     max_steps: 30000
+     save_interval: 1000
+
+   actor:
+     micro_batch_size: 1
+     global_batch_size: 8
+     optim:
+       lr: 1.0e-6
+       total_training_steps: 30000
+
+The recipe defaults to eight GPUs, FSDP2, and bf16 mixed-precision computation while retaining fp32 master weights. When changing the GPU count, update ``cluster.component_placement.actor`` and ensure that ``actor.global_batch_size`` is divisible by the actor GPU count. When changing the training duration, also update ``actor.optim.total_training_steps``.
+
+.. note::
+
+   Existing H200 measurements with LIBERO data, ``micro_batch_size: 1``, and ``global_batch_size: 8`` recorded peak allocated/reserved memory of 55.5/83.7 GiB per GPU on eight GPUs and 72.3/113.3 GiB per GPU on four GPUs. Actual requirements depend on the checkpoint and hardware; these results do not establish compatibility with 80 GiB GPUs.
+
+Run Training and Inspect Results
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run the following command from the RLinf repository root:
+
+.. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_openwam
 
-Override ``cluster.component_placement.actor`` and keep ``actor.global_batch_size`` divisible by the actor world size when you change the GPU count.
+The launcher sets the run's log directory to ``logs/<timestamp>-libero_sft_openwam/``. Read ``run_embodiment.log`` for training logs, or use TensorBoard to inspect ``train/loss``, ``train/loss_video``, and ``train/loss_action``. Replace RUN_DIR below with the actual run directory:
 
-The preset loads the weights in fp32 (``precision: fp32``) so the optimizer keeps fp32 master weights while FSDP computes in bf16 (``mixed_precision.param_dtype``); bf16 master weights would round away almost every update at ``lr: 1e-6``. The policy is a single root FSDP2 unit because OpenWAM's joint denoising driver reads block weights outside their forward. ``reshard_after_forward`` only applies to the frozen ``ResidualBlock`` subunits named by the wrap policy; the trainable root parameters remain resident for the joint forward and backward. Gradient checkpointing remains enabled, although four-rank runs with it on and off showed no reduction in peak memory at ``micro_batch_size: 1``. The model preset also keeps ``load_to_device: false``: every rank builds the policy on the CPU and FSDP moves its shard to the GPU while wrapping. The evaluation recipes load straight onto the GPU with ``load_to_device: true``.
+.. code-block:: bash
 
-Validation and resuming
------------------------
+   RUN_DIR="/absolute/path/to/RLinf/logs/<timestamp>-libero_sft_openwam"
+   tensorboard --logdir "$RUN_DIR/tensorboard"
 
-Set ``data.val_data_paths`` (one dataset root or a list, read with the same dataloader settings) and ``runner.val_check_interval`` to report ``eval/loss``, ``eval/loss_video`` and ``eval/loss_action`` averaged over the validation loader. Validation forwards one sample at a time; ``actor.eval_batch_size`` only sets how many samples the loader groups into one batch, and ``actor.eval_max_batches`` caps the number of such batches per rank for large datasets. LeRobot-style readers select episodes by split: validation reads the ``val`` split by default, so set ``data.openwam_val_split`` to ``train`` when the validation root is a separate held-out dataset that only ships a train split (an empty validation set is rejected at start-up). On multiple ranks, short shards are padded by repeating a sample only to keep FSDP forward counts aligned; padded samples are excluded from the reported loss.
+By default, checkpoints are saved every 1000 steps under ``$RUN_DIR/libero_sft_openwam/checkpoints/global_step_<N>/``.
 
-Checkpoints store the data loader, sampler (including the shuffle epoch) and RNG states next to the model weights, so ``runner.resume_dir=<log_path>/<experiment_name>/checkpoints/global_step_<N>`` continues with the next unseen batch instead of restarting the epoch. The OpenWAM recipe sets ``runner.strict_resume: true`` and fails if an older checkpoint has no ``data.pt`` or ``rng.pt``; unset it only when restarting the data stream is intentional.
+Export and Evaluate
+-------------------
 
-Visualization and Results
--------------------------
-
-Monitor ``train/loss``, ``train/loss_video``, and ``train/loss_action`` in TensorBoard. RLinf writes FSDP model and optimizer shards under ``runner.logger.log_path/<experiment_name>/checkpoints/global_step_<N>/actor``.
-
-Export for deployment
----------------------
-
-The FSDP worker stores the whole ``OpenWAMPolicy`` state dict at ``<log_path>/<experiment_name>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` (a sharded ``dcp_checkpoint`` directory is consolidated automatically). Rebuild a self-contained OpenWAM checkpoint directory from it:
+Training saves RLinf checkpoints. Export a checkpoint to an OpenWAM checkpoint directory before using it for inference or evaluation. Using RUN_DIR from the previous step, export the checkpoint saved at step 1000:
 
 .. code-block:: bash
 
    python toolkits/openwam/export_checkpoint.py \
-       --rlinf-checkpoint ../results/libero_sft_openwam/checkpoints/global_step_1000 \
-       --source-checkpoint /path/to/openwam-libero-sft-30000 \
-       --output /path/to/openwam-libero-sft-rlinf-step1000 --link-assets --verify cuda
+     --rlinf-checkpoint "$RUN_DIR/libero_sft_openwam/checkpoints/global_step_1000" \
+     --source-checkpoint /your_path_to/OpenWAM-Alpha-Sim-LIBERO \
+     --output /your_path_to/openwam-libero-step1000
 
-The exporter strips the ``architecture.`` prefix, drops ``vlm_backbone.*`` (OpenWAM stores the VLM as a directory), checks that the key set equals the source checkpoint and writes ``checkpoint_step_<N>.safetensors`` next to the config, tokenizer and normalization files copied (or symlinked with ``--link-assets``) from ``--source-checkpoint``. ``--verify`` reloads the result through ``openwam.deploy.load_from_checkpoint_dir``. The export directory works as a checkpoint for OpenWAM's own tooling and as ``rollout.model.model_path`` in the evaluation recipes below.
+Use the checkpoint that initialized training as ``--source-checkpoint`` so that the matching configuration, tokenizer, and normalization files are retained. The exporter handles RLinf weight shards. Optionally add ``--verify cuda`` to check that the exported checkpoint can be reloaded on a GPU.
 
-Evaluation
-----------
+Set ``rollout.model.model_path`` in the LIBERO evaluation configuration to ``/your_path_to/openwam-libero-step1000``, then follow the OpenWAM instructions in :doc:`../../evaluations/guides/libero`. For RoboTwin checkpoints, see :doc:`../../evaluations/guides/robotwin`.
 
-The LIBERO evaluation recipes use the same checkpoint contract as this recipe. ``evaluations/libero/`` ships ``libero_{spatial,object,goal,10}_openwam_eval.yaml`` (see :doc:`../../evaluations/guides/libero`); each episode is logged as ``[libero eval] task_id=.., trial_id=.., success=..`` so success can be split per task. RoboTwin checkpoints use ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml`` for all 50 tasks (see :doc:`../../evaluations/guides/robotwin`).
+Optional Configuration
+----------------------
 
-Run the short smoke recipe (one environment, 30 steps, i.e. three 10-step generations) through the e2e launcher, which exports the ``EMBODIED_PATH`` search path the recipe needs and sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl``. The recipes place the env worker and rollout worker on separate GPUs so EGL rendering does not share a GPU with OpenWAM inference:
+Validation and Resuming Training
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: bash
+To enable validation during training, point ``data.val_data_paths`` to a separate validation dataset and set ``runner.val_check_interval``. The OpenWAM LIBERO dataset downloaded above only has a ``train`` split; do not reuse the training data as the validation set. If the separate validation dataset also only has a ``train`` split, set ``data.openwam_val_split: train`` and ensure that it uses the same normalization statistics as training. Validation logs ``eval/loss``, ``eval/loss_video``, and ``eval/loss_action``.
 
-   bash tests/e2e_tests/evaluations/run.sh libero_spatial_openwam_eval
+To resume training, set ``runner.resume_dir`` in the training configuration to the actual absolute path corresponding to ``$RUN_DIR/libero_sft_openwam/checkpoints/global_step_<N>``, rather than its ``actor/`` subdirectory. The recipe enables ``runner.strict_resume: true``, which requires the checkpoint to include data-stream and random-number states; older checkpoints missing those states will raise an error. See :doc:`../../guides/resume` for more details.
 
-The full suites run through ``bash evaluations/run_eval.sh libero libero_spatial_openwam_eval`` and the other three suite recipes. All of them follow OpenWAM's LIBERO protocol: 30 settling steps after each reset (``env.eval.num_steps_wait``), 600 steps per episode for ``libero_spatial``, ``libero_object`` and ``libero_goal``, and 700 for ``libero_10``.
+Other Data Sources and Mixture Training
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Keep ``env.eval.max_steps_per_rollout_epoch`` divisible by ``rollout.model.num_action_chunks`` (10 with the default ``openwam.inference_horizon``) when you shorten a recipe.
+For another OpenWAM checkpoint, first check that ``dataloader.type`` in its ``config.yaml`` matches the dataset format. For a single data source, use ``libero_sft_openwam.yaml`` with the corresponding weight and data paths. Use ``mixture_sft_openwam.yaml`` only when the checkpoint is configured for ``mixture``.
 
-The checked-in recipes target checkpoints trained with native delta EEF10 actions (``env.eval.openwam_action_representation: native_delta_eef10``). For a checkpoint trained on the canonical LIBERO bucket, which emits absolute EEF10 goals, set it to ``absolute_eef10``: RLinf then converts each goal against the current achieved pose before sending the 7-D OSC command. Keep this value aligned with the dataset metadata of the checkpoint under evaluation.
-
-
-Alternate video encoders
-------------------------
-
-Some older OpenWAM checkpoints use legacy encoder names (``vjepa2_1``, ``flux_vae``, or ``wan_vae``); RLinf normalizes these names at deployment. If the encoder weights are stored outside the checkpoint, set ``rollout.model.encoder_model_path`` to the local encoder directory. RLinf stages a temporary config and leaves the checkpoint unchanged.
+For mixture training, ``data.train_data_paths`` takes one root directory, with each enabled source loaded from ``<root>/<name>`` by default. To use a different location for a source, set ``data.openwam.datasets.<name>.dataset_dir`` and retain that source's matching normalization statistics.
