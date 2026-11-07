@@ -89,8 +89,63 @@ Available under ``evaluations/robotwin/``:
    * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
      - click_bell
      - LingbotVLA 2.0
+   * - ``robotwin_dream_aloha_click_bell_eval.yaml``
+     - click_bell
+     - Dream API (ALOHA / Piper)
 
 If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
+
+.. _robotwin-dream-eval:
+
+Dream API Evaluation
+--------------------
+
+Run Dream API evaluation on RoboTwin with ALOHA or Piper. RLinf sends three RGB views, measured joint states and the task instruction to the Dream SDK, then executes the returned absolute joint targets through RoboTwin.
+
+**Install dependencies**
+
+Use Python 3.11–3.13 for the Dream SDK. Prepare the RoboTwin repository and assets as described in Environment Setup above. From the RLinf repository root, install the environment and SDK:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --env robotwin
+   source .venv/bin/activate
+   uv pip install "numpy>=1.26.4,<2" pandas opencv-python
+   uv venv --python "$(command -v python)" .venv-dream
+   export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
+   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
+     dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
+     "ray==$(python -c 'import ray; print(ray.__version__)')"
+
+MPLib uses NumPy 1, so resolve pandas and OpenCV with that version. The Dream SDK requires NumPy 2, so RLinf runs the rollout worker with ``DREAM_ROLLOUT_PYTHON`` and keeps RoboTwin in ``.venv``.
+
+Set ``DREAM_API_KEY`` in the rollout worker's environment and point ``ROBOTWIN_PATH`` to the RoboTwin repository root, which contains the ``assets/`` directory. For each robot, use a matching Dream SDK arm specification in ``DREAM_IK_ARM_FILE``. Its URDF, joint order, base frame and TCP must agree with the simulated robot.
+
+Each JSON arm file requires ``urdf``, ``base``, ``flange``, ``tcp``, ``approach``, ``jaw``, and ``rest``. For the reported runs, ALOHA uses ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``; Piper uses a copy of ``assets/embodiments/piper/piper.urdf`` with the six arm joint limits widened to ±6.283185307 radians for SDK IK.
+
+**Launch evaluation**
+
+The config defaults to ALOHA. For Piper, switch the arm specification and override the embodiment and action frequency:
+
+.. code-block:: bash
+
+   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH}
+
+   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH} \
+     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
+
+The click_bell correction is off by default; pass ``rollout.dream.eef_target_bias=true`` to enable it. In the task arm's base frame, if the final target z in the first action chunk minus the observed z is greater than -0.08 m, RLinf shifts that arm's targets by -0.003 m in x and -0.04 m in z before IK. This condition is evaluated once per episode and applies when the task has one active arm.
+
+**Check results**
+
+The config runs ten episodes in one environment, with a 400-step limit per episode. ALOHA runs at 20 Hz and Piper at 30 Hz; both use 48-step, 14-dimensional action chunks.
+
+The config loads the pre-filtered success seeds from ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` through ``env.eval.seeds_path``, following :ref:`robotwin-eval-config`. RLinf shuffles the task's seed list deterministically and uses a different seed for each of the ten episodes. Monitor ``eval/success_once`` for the success rate; see :doc:`../reference/results` for logs and videos.
 
 End-to-End Workflow
 -------------------
