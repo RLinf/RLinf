@@ -175,3 +175,4 @@
    LingbotVLA <embodied/lingbotvla_index>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
+   ActiveVLN <embodied/activevln>

@@ -1,6 +1,4 @@
-# Install the runtime with: pip install -r requirements/embodiinfer.txt
-# Requires EmbodiInfer GPU PIL preprocessing and private-history prewarming.
-# Requires ActiveVLN's vlnce_server client and a running VLN-CE server.
+# Setup: docs/source-en/rst_source/examples/embodied/activevln.rst
 defaults:
   - env/vlnce_server_r2r@env.train
   - env/vlnce_server_r2r@env.eval
