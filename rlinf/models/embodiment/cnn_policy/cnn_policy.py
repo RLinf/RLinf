@@ -467,8 +467,7 @@ class CNNPolicy(nn.Module, BasePolicy):
             )
             env_action = action
         else:
-            # The stored action stays normalized so default_forward scores it
-            # under the same Gaussian; only the env sees physical units.
+            # Log-probabilities use normalized actions; env actions use physical units.
             action = raw_action
             env_action = raw_action * self.action_norm_std + self.action_norm_mean
 

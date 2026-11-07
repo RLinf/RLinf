@@ -41,10 +41,8 @@ actor:
 
   model:
     precision: fp32
-    # Download JAX base: https://huggingface.co/DexJoCo/DexJoCo-Pi05/tree/main/pi05_base
-    # Convert with jax_to_openpi; model_path must point to the local output
-    # directory containing RLinf OpenPI model.safetensors.
-    # Download/conversion steps: docs/source-en/rst_source/examples/embodied/dexjoco.rst
+    # JAX base: https://huggingface.co/DexJoCo/DexJoCo-Pi05/tree/main/pi05_base
+    # Conversion: docs/source-en/rst_source/examples/embodied/dexjoco.rst
     model_path: "/path/to/pi05_base_openpi"
     num_action_chunks: 30
     action_dim: 22

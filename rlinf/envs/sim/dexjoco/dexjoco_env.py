@@ -52,8 +52,7 @@ class DexJoCoTaskEnv(gym.Wrapper):
         from dexjoco.tasks import CONFIG_MAPPING
 
         if task_name == "bimanual_hanoi":
-            # Hanoi otherwise resets itself a few wall-clock seconds after an
-            # illegal move; RLinf resets its envs itself.
+            # RLinf owns episode resets.
             task_options.setdefault("illegal_reset_delay", float("inf"))
         env = CONFIG_MAPPING[task_name]().get_environment(
             policy_mode=True,
@@ -65,9 +64,7 @@ class DexJoCoTaskEnv(gym.Wrapper):
         super().__init__(env)
         # DexJoCo sleeps in every step to pace teleoperation at 30 Hz.
         env.unwrapped.hz = float("inf")
-        # Camera readback dominates a step and the policy only sees the observation
-        # that ends a chunk, so frames refresh on the step where ``render_countdown``
-        # (set on the unwrapped env by DexJoCoEnv.chunk_step) reaches zero.
+        # Refresh camera frames at chunk boundaries and episode endings.
         self._render = env.unwrapped.render
         self._frames = None
         self._render_now = True
@@ -340,7 +337,7 @@ class DexJoCoEnv(gym.Env):
                 actions[active], id=active
             )
             for i, idx in enumerate(active):
-                # Steps without a render carry no images; keep the last rendered frames.
+                # Reuse cached frames between image refreshes.
                 self.current_raw_obs[idx] = {**self.current_raw_obs[idx], **raw_obs[i]}
                 self.current_info_list[idx] = info_lists[i]
             self._elapsed_steps[active] += 1

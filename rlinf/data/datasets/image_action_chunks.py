@@ -17,8 +17,7 @@
 ``toolkits/lerobot/export_image_action_chunks.py`` writes one directory per
 LeRobot dataset with memory-mappable arrays: ``main_images`` [N, H, W, 3] and
 optional ``extra_view_images`` [N, E, H, W, 3] as uint8, ``states`` [N, S] and
-``actions`` [N, C, A] as float32. Items use the env observation keys so the
-policy's ``preprocess_env_obs`` applies unchanged.
+``actions`` [N, C, A] as float32. Items use environment observation keys.
 """
 
 import json

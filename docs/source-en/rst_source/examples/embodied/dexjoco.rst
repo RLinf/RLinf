@@ -112,8 +112,8 @@ Each recipe below prepares its own training inputs from this directory.
 Run It
 ------
 
-Choose a policy and follow its SFT, PPO, and evaluation steps. The reported runs
-use these training configurations:
+Choose a policy and follow its SFT, PPO, and evaluation steps with these training
+configurations:
 
 .. list-table::
    :header-rows: 1
@@ -348,10 +348,10 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
    * - CNN + SFT
      - Step 8000: MSE 46/64 (71.9%); NLL 42/64 (65.6%).
    * - CNN + PPO (MSE SFT)
-     - Continues SFT step 8000: 46/64 (71.9%) at iteration 0 → 44/64 (68.8%) at iteration 200; the peak is 60/64 (93.8%) at iteration 123.
+     - Iteration 0: 46/64 (71.9%); iteration 200: 44/64 (68.8%); peak (iteration 123): 60/64 (93.8%).
    * - CNN + PPO (NLL SFT)
-     - Continues SFT step 8000: 42/64 (65.6%) at iteration 0 → 59/64 (92.2%) at iteration 200; first reaches 64/64 (100%) at iteration 163.
+     - Iteration 0: 42/64 (65.6%); iteration 200: 59/64 (92.2%); peak (iteration 163): 64/64 (100%).
    * - π₀.₅ + SFT
-     - Step 5000 reaches 44/64 (68.75%).
+     - Step 5000: 44/64 (68.75%).
    * - π₀.₅ + PPO
-     - Continues SFT step 5000: 63/64 (98.44%) at iteration 150, with a peak of 64/64 (100%) at iteration 120.
+     - Iteration 150: 63/64 (98.44%); peak (iteration 120): 64/64 (100%).

@@ -14,10 +14,8 @@
 
 """Export a LeRobot dataset to image/state/action-chunk arrays for CNN SFT.
 
-Frames are decoded once, resized with the same ``cv2.INTER_AREA`` call the
-simulator adapters use, and written as memory-mappable ``.npy`` files that
-``rlinf.data.datasets.image_action_chunks`` reads during training. Past an
-episode's end LeRobot repeats its last action, as OpenPI's loader does.
+Images use ``cv2.INTER_AREA`` resizing. Arrays are stored as memory-mappable
+``.npy`` files. Action chunks repeat the last action past an episode's end.
 """
 
 import json
