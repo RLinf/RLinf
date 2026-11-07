@@ -73,6 +73,7 @@ from rlinf.models.embodiment.supermimic.networks import (
     VelocityEncoder,
     running_state_loss,
 )
+from rlinf.models.embodiment.supermimic.normalization import RunningMeanStd
 
 GOAL730_DIM = 730
 
@@ -283,6 +284,12 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
             self.decoder.obs_norm.update_from_packed(obs_stats, obs_count)
         if self.encoder.goal_norm is not None and goal_stats is not None:
             self.encoder.goal_norm.update_from_packed(goal_stats, goal_count)
+
+    def refresh_norm_counts(self) -> None:
+        """Re-read the count of every running norm after a weight sync."""
+        for module in self.modules():
+            if isinstance(module, RunningMeanStd):
+                module.refresh_host_count()
 
     def predict_action_batch(self, env_obs: dict, **kwargs):
         """Deterministic action chunk ``[N, 1, 29]`` for evaluation.

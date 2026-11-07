@@ -50,6 +50,16 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
             dtype = torch_dtype_from_precision(amp.precision)
         self.hf_model.set_autocast(dtype)
 
+    async def sync_model_from_actor(self) -> None:
+        """Apply the actor's weights, then re-read the running-norm counts.
+
+        The patch syncer writes the norm buffers in place and so skips the
+        ``load_state_dict`` hook that keeps their host counts, which the next
+        fold relies on.
+        """
+        await super().sync_model_from_actor()
+        self.hf_model.refresh_norm_counts()
+
     @Worker.timer("serve")
     def serve(self, num_steps: int) -> None:
         """Answer ``num_steps`` control steps of the env worker of this rank.

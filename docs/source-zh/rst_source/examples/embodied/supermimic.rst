@@ -436,7 +436,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 并行仿真环境数，全局量。采集吞吐和显存都随它增长。
    * - ``algorithm.replay_length``
      - 1000
-     - 每个环境的环形 replay 容量，按控制步计（50 Hz 下 20 s）。replay 显存与 ``total_num_envs × replay_length`` 成正比。
+     - 每个环境的环形 replay 容量，按控制步计（50 Hz 下 20 s），至少为 10，即策略读取的观测历史长度。replay 显存与 ``total_num_envs × replay_length`` 成正比。
    * - ``env.train.num_clips``
      - 40
      - 按文件名顺序加载前 N 条片段；``null`` 加载全部。

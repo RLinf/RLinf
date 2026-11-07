@@ -13,17 +13,21 @@
 # limitations under the License.
 
 """Numerical checks of the SuperMimic objectives, reset sampler, evaluation
-guards and forward kinematics. They need neither Ray nor a GPU; the two
-kinematics checks need mjlab and add cross-device cases when a GPU is present.
+guards, training config limits, input norms and forward kinematics. They need
+neither Ray nor a GPU; the two kinematics checks need mjlab and add
+cross-device cases when a GPU is present.
 """
 
 import importlib.util
+from pathlib import Path
 
 import pytest
 import torch
+from hydra import compose, initialize_config_dir
 
 from rlinf.algorithms.supermimic.objectives import actor_objective, gae_targets
 from rlinf.algorithms.supermimic.reset_sampler import RETURN_EMA, BinResetSampler
+from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     EPISODE_CLIP_END,
@@ -40,8 +44,10 @@ from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
 )
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, failure_signals
+from rlinf.models.embodiment.supermimic.normalization import RunningMeanStd
 
 CPU = torch.device("cpu")
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
 needs_mjlab = pytest.mark.skipif(
     importlib.util.find_spec("mjlab") is None, reason="mjlab is not installed"
 )
@@ -167,6 +173,53 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
         return
     with pytest.raises(RuntimeError, match="each of the 3 evaluation jobs"):
         check_job_coverage(rows, 3)
+
+
+class _OneRankPlacement:
+    def __init__(self, cfg, cluster):
+        pass
+
+    def get_world_size(self, name):
+        return 1
+
+
+@pytest.mark.parametrize(
+    "overrides,error",
+    [
+        (["env.train.max_episode_seconds=0.1"], "allows 5 control steps"),
+        (["algorithm.replay_length=9"], r"replay_length must be in \[10, inf\]"),
+        (["env.train.max_episode_seconds=0.16", "algorithm.replay_length=10"], None),
+    ],
+)
+def test_training_needs_whole_windows_and_histories(overrides, error, monkeypatch):
+    monkeypatch.setattr("rlinf.scheduler.Cluster", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "rlinf.utils.placement.HybridComponentPlacement", _OneRankPlacement
+    )
+    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.1"):
+        cfg = compose(
+            config_name="supermimic_lafan1_goal730",
+            overrides=["env.train.motion_path=/data/clips", *overrides],
+        )
+    if error is None:
+        validate_supermimic_cfg(cfg)
+        return
+    with pytest.raises(ValueError, match=error):
+        validate_supermimic_cfg(cfg)
+
+
+def test_norm_written_in_place_folds_like_its_source():
+    source, copy = RunningMeanStd(3), RunningMeanStd(3)
+    source.fold(torch.full((100, 3), 10.0))
+    with torch.no_grad():
+        for name, buffer in source.named_buffers():
+            copy.get_buffer(name).copy_(buffer)
+    copy.refresh_host_count()
+    for norm in (source, copy):
+        norm.fold(torch.full((1, 3), 20.0))
+    torch.testing.assert_close(copy.mean, torch.full((3,), 1020.0 / 101))
+    for name, buffer in source.named_buffers():
+        torch.testing.assert_close(copy.get_buffer(name), buffer)
 
 
 @needs_mjlab

@@ -655,8 +655,8 @@ above change some of them. Each can be passed as a Hydra override.
    * - ``algorithm.replay_length``
      - 1000
      - Ring-buffer replay capacity per environment, in control steps (20 s at
-       50 Hz). Replay memory is proportional to
-       ``total_num_envs x replay_length``.
+       50 Hz); at least 10, the observation history the policy reads. Replay
+       memory is proportional to ``total_num_envs x replay_length``.
    * - ``env.train.num_clips``
      - 40
      - Load the first N clips in file-name order; ``null`` loads all.

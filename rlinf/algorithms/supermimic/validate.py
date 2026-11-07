@@ -21,7 +21,7 @@ import math
 from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM
+from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, DT, HISTORY_LEN
 
 # Policy settings the G1 envs build observations, goals and critic inputs from,
 # and the compile switch they share with the policy.
@@ -166,7 +166,11 @@ def _check_training(cfg: DictConfig) -> None:
     _check_number(alg, "critic_minibatches", "algorithm", int, low=1)
     for name in ("warmup_sim_steps", "wm_only_updates", "max_nonfinite_skips"):
         _check_number(alg, name, "algorithm", int, low=0)
-    _check_number(alg, "replay_length", "algorithm", int, low=int(alg.k))
+    # A world-model window spans k steps and an imagination start needs its
+    # observation history in the replay.
+    _check_number(
+        alg, "replay_length", "algorithm", int, low=max(int(alg.k), HISTORY_LEN)
+    )
 
     from rlinf.scheduler import Cluster
     from rlinf.utils.placement import HybridComponentPlacement
@@ -225,6 +229,13 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
         _check_training(cfg)
         _sync_env(cfg.env.train, model, cfg.algorithm, "env.train")
         _check_env(cfg.env.train, "env.train", needs_motion=True)
+        episode_steps = round(float(cfg.env.train.max_episode_seconds) / DT)
+        if episode_steps < int(cfg.algorithm.k):
+            raise ValueError(
+                f"env.train.max_episode_seconds={cfg.env.train.max_episode_seconds} "
+                f"allows {episode_steps} control steps per episode; world-model "
+                f"windows need at least algorithm.k={cfg.algorithm.k}"
+            )
     if only_eval or cfg.runner.get("val_check_interval", -1) > 0:
         tasks = list(cfg.env.eval.get("eval_tasks", None) or [])
         if not tasks:

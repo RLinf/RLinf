@@ -191,11 +191,17 @@ class RunningMeanStd(nn.Module):
         # Host copy of ``count``. The freeze check reads it, so an update does
         # not wait for the device to finish the previous kernel.
         self._count_cpu = 0.0
+        self.register_load_state_dict_post_hook(
+            lambda module, _incompatible: module.refresh_host_count()
+        )
 
-        def _restore_cpu_count(module, _incompatible) -> None:
-            module._count_cpu = float(module.count.detach().cpu())
+    def refresh_host_count(self) -> None:
+        """Read ``count`` back into its host copy.
 
-        self.register_load_state_dict_post_hook(_restore_cpu_count)
+        ``load_state_dict`` does this itself. Code that writes the buffers in
+        place, such as a weight syncer, must call it before the next fold.
+        """
+        self._count_cpu = float(self.count.detach().cpu())
 
     def batch_stats(
         self, values: torch.Tensor
