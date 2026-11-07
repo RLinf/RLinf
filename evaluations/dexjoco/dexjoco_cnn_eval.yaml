@@ -1,0 +1,78 @@
+defaults:
+  - env@env.eval: dexjoco_water_plant
+  - model/cnn_policy@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dexjoco_cnn_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: "/path/to/dexjoco_sft_cnn/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 64
+    auto_reset: False
+    ignore_terminations: False
+    is_eval: True
+    seed: 42
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      camera_heights: 128
+      camera_widths: 128
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_type: cnn_policy
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    image_size: [3, 128, 128]
+    image_num: 2
+    state_dim: 23
+    action_dim: 22
+    num_action_chunks: 10
+    hidden_dim: 256
+    action_norm_stats: "/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json"
+    precision: "32"
+    add_value_head: True
+    add_q_head: False
+    is_lora: False
+    lora_rank: 32
+    backbone: resnet
+    encoder_config:
+      ckpt_name: "resnet10_pretrained.pt"
+      dropout: 0.0

@@ -2322,6 +2322,132 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert torch.all(actions[1, :, 6] == 0.5)
 
 
+def _cnn_policy(
+    tmp_path,
+    num_action_chunks,
+    action_norm_stats=None,
+    dropout=0.0,
+    sft_loss_type="mse",
+):
+    import json
+
+    from rlinf.models.embodiment.cnn_policy.cnn_policy import CNNConfig, CNNPolicy
+    from rlinf.models.embodiment.modules.resnet_utils import ResNet10
+
+    torch.save(
+        ResNet10(pre_pooling=True).state_dict(), tmp_path / "resnet10_pretrained.pt"
+    )
+    config = {
+        "model_path": str(tmp_path),
+        "encoder_config": {"ckpt_name": "resnet10_pretrained.pt", "dropout": dropout},
+        "image_size": [3, 32, 32],
+        "image_num": 2,
+        "state_dim": 23,
+        "action_dim": 22,
+        "num_action_chunks": num_action_chunks,
+        "add_value_head": True,
+        "sft_loss_type": sft_loss_type,
+    }
+    if action_norm_stats is not None:
+        (tmp_path / "meta.json").write_text(json.dumps(action_norm_stats))
+        config["action_norm_stats"] = str(tmp_path / "meta.json")
+    cfg = CNNConfig()
+    cfg.update_from_dict(config)
+    return CNNPolicy(cfg)
+
+
+def _cnn_batch(batch_size, num_action_chunks):
+    generator = torch.Generator().manual_seed(0)
+    return {
+        "main_images": torch.randint(
+            0, 256, (batch_size, 32, 32, 3), dtype=torch.uint8, generator=generator
+        ),
+        "extra_view_images": torch.randint(
+            0, 256, (batch_size, 1, 32, 32, 3), dtype=torch.uint8, generator=generator
+        ),
+        "states": torch.randn(batch_size, 23, generator=generator),
+        "action": torch.randn(batch_size, num_action_chunks, 22, generator=generator),
+    }
+
+
+def test_cnn_policy_normalizes_chunks_and_preserves_ppo_logprobs(tmp_path):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    mean = [0.5] * 3 + [0.0] * 3 + [0.8] * 16
+    std = [0.01] * 3 + [0.5] * 3 + [0.2] * 16
+    model = _cnn_policy(tmp_path, 10, {"action_mean": mean, "action_std": std}).eval()
+    batch = _cnn_batch(3, 10)
+
+    chunk_actions, result = model.predict_action_batch(batch, mode="train")
+    assert chunk_actions.shape == (3, 10, 22)
+    stored_actions = result["forward_inputs"]["action"]
+    expected = stored_actions.reshape(3, 10, 22) * torch.tensor(std) + torch.tensor(
+        mean
+    )
+    torch.testing.assert_close(chunk_actions, expected)
+
+    model.train()
+    output = model(
+        forward_type=ForwardType.DEFAULT, forward_inputs=result["forward_inputs"]
+    )
+    assert output["logprobs"].shape == output["entropy"].shape == (3, 220)
+    assert output["values"].shape == (3, 1)
+    torch.testing.assert_close(
+        output["logprobs"], result["prev_logprobs"], rtol=1e-4, atol=1e-4
+    )
+
+
+@pytest.mark.parametrize("sft_loss_type", ["mse", "nll"])
+def test_cnn_policy_sft_updates_action_heads(tmp_path, sft_loss_type):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
+    model = _cnn_policy(tmp_path, 10, dropout=0.1, sft_loss_type=sft_loss_type).train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    initial_mean = model.actor_mean.weight.detach().clone()
+    initial_logstd = model.actor_logstd.detach().clone()
+
+    loss = model(forward_type=ForwardType.SFT, data=_cnn_batch(3, 10))
+    assert loss.ndim == 0
+    loss.backward()
+    assert model.actor_mean.weight.grad is not None
+    assert torch.isfinite(model.actor_mean.weight.grad).all()
+    assert model.actor_mean.weight.grad.count_nonzero() > 0
+    if sft_loss_type == "nll":
+        assert model.actor_logstd.grad is not None
+        assert torch.isfinite(model.actor_logstd.grad).all()
+        assert model.actor_logstd.grad.count_nonzero() > 0
+    else:
+        assert model.actor_logstd.grad is None
+    optimizer.step()
+    assert not torch.equal(model.actor_mean.weight, initial_mean)
+    if sft_loss_type == "nll":
+        assert not torch.equal(model.actor_logstd, initial_logstd)
+    else:
+        torch.testing.assert_close(model.actor_logstd, initial_logstd)
+
+
+@pytest.mark.parametrize("num_action_chunks", [1, 10])
+def test_cnn_policy_checkpoint_restores_actions(tmp_path, num_action_chunks):
+    stats = (
+        {"action_mean": [0.8] * 22, "action_std": [0.2] * 22}
+        if num_action_chunks > 1
+        else None
+    )
+    model = _cnn_policy(tmp_path, num_action_chunks, stats).eval()
+    checkpoint = tmp_path / "full_weights.pt"
+    torch.save(model.state_dict(), checkpoint)
+    initial_stats = (
+        {"action_mean": [0.0] * 22, "action_std": [1.0] * 22} if stats else None
+    )
+    restored = _cnn_policy(tmp_path, num_action_chunks, initial_stats).eval()
+    restored.load_state_dict(torch.load(checkpoint, weights_only=True), strict=True)
+
+    batch = _cnn_batch(2, num_action_chunks)
+    expected, _ = model.predict_action_batch(batch, mode="eval")
+    actual, _ = restored.predict_action_batch(batch, mode="eval")
+    torch.testing.assert_close(actual, expected)
+
+
 def test_psi0_rtc_prefix_survives_the_last_denoise_step():
     from rlinf.models.embodiment.psi0.psi0_sampler import (
         Psi0StochasticTransitionSampler,

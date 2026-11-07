@@ -123,7 +123,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple" "dexjoco")
 
 #=======================Utility Functions=======================
 
@@ -2698,6 +2698,22 @@ EOF
             install_polaris_env
             uv pip install "rlinf-openpi==0.1.1"
             ;;
+        dexjoco)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_dexjoco_env
+            # LeRobot 0.4.4 and datasets 4 read LeRobot v3 data; rerun-sdk 0.22
+            # keeps NumPy 1 for OpenPI.
+            local override_file
+            override_file=$(mktemp)
+            echo "rerun-sdk==0.22.1" > "$override_file"
+            uv pip install "rlinf-openpi==0.1.1" "lerobot==0.4.4" "dm-control==1.0.36" --override "$override_file"
+            rm -f "$override_file"
+            pushd ~ >/dev/null
+            uv pip install --no-deps "datasets==4.1.1"
+            popd >/dev/null
+            install_flash_attn
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -3467,6 +3483,19 @@ install_env_only() {
         libero|maniskill_libero)
             install_common_embodied_deps
             install_${ENV_NAME}_env
+            ;;
+        dexjoco)
+            install_common_embodied_deps
+            install_dexjoco_env
+            # The CNN recipe exports the LeRobot v3 demonstrations with LeRobot 0.4.4.
+            local override_file
+            override_file=$(mktemp)
+            echo "rerun-sdk==0.22.1" > "$override_file"
+            uv pip install "lerobot==0.4.4" --override "$override_file"
+            rm -f "$override_file"
+            pushd ~ >/dev/null
+            uv pip install --no-deps "datasets==4.1.1"
+            popd >/dev/null
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -4355,6 +4384,25 @@ install_roboverse_env() {
     uv pip install -e "$pyroki_dir"
     uv pip install "numpy==1.26.4" --force-reinstall
     uv pip install "mujoco==3.3.7" "dm-control==1.0.34" --force-reinstall
+}
+
+install_dexjoco_env() {
+    local dexjoco_dir
+    local dexjoco_ref="${DEXJOCO_GIT_REF:-8d23b0fab23b17a58c4b55f3942e17013aaf8267}"
+    local use_external_dexjoco=0
+    if [ -n "${DEXJOCO_PATH:-}" ]; then
+        use_external_dexjoco=1
+    fi
+
+    dexjoco_dir=$(clone_or_reuse_repo DEXJOCO_PATH "$VENV_DIR/dexjoco" https://github.com/brave-eai/dexjoco.git --filter=blob:none --no-checkout)
+    if [ "$use_external_dexjoco" -eq 0 ] || [ ! -f "$dexjoco_dir/dexjoco/pyproject.toml" ]; then
+        if ! git -C "$dexjoco_dir" cat-file -e "$dexjoco_ref^{commit}" 2>/dev/null; then
+            git -C "$dexjoco_dir" fetch --depth 1 origin "$dexjoco_ref" >&2
+        fi
+        git -C "$dexjoco_dir" checkout --detach "$dexjoco_ref" >&2
+    fi
+
+    uv pip install -e "$dexjoco_dir/dexjoco"
 }
 
 #=======================AGENTIC INSTALLER=======================
