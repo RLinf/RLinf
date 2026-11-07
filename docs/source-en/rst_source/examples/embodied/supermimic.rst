@@ -126,18 +126,12 @@ repository root, create a dedicated virtual environment with RLinf's installer:
 In every new shell, return to the repository root and run
 ``source .venv-supermimic/bin/activate`` first.
 
-The NVIDIA environment uses torch 2.14.0 and ``warp-lang`` 1.18.0,
-with dependencies listed in ``requirements/embodied/envs/supermimic.txt``.
-Keep it separate from other RLinf environments because these requirements
-upgrade torch. The installer selects the CUDA 12 Warp wheel by host
-architecture when needed. ``docker/Dockerfile`` also provides an
-``embodied-supermimic-image`` target using the same installation.
-
-The G1 model, joint order, actuator gains, and the standing keyframe come from
-mjlab. Every reference clip carries the default pose ``q0`` it was converted
-with, and the simulator refuses clips whose ``q0`` differs from mjlab's
-default joint pose, because the goal and observation subtract ``q0`` while the
-PD target adds mjlab's.
+The NVIDIA environment uses torch 2.14.0 and ``warp-lang`` 1.18.0
+(``requirements/embodied/envs/supermimic.txt``). Keep it separate from other
+RLinf environments because these requirements upgrade torch.
+``docker/Dockerfile`` also provides an ``embodied-supermimic-image`` target.
+The G1 model, joint order, actuator gains and standing keyframe come from
+mjlab.
 
 AMD MI300X (Experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -154,26 +148,18 @@ for an environment recipe. From the repository root, run:
        embodied --env supermimic --venv .venv-supermimic
    source .venv-supermimic/bin/activate
 
-The script installs torch 2.9.1, torchvision 0.24.0 and its Triton dependencies
-from AMD's Radeon flat wheel index; use a recent uv that supports flat indexes.
-It builds ROCm Warp ``1.13.0+rocm.0`` at commit
-``36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71``, then installs mjlab 1.2.0,
+The script installs torch 2.9.1 and torchvision 0.24.0 from AMD's Radeon
+wheel index (use a recent uv that supports flat indexes), builds ROCm Warp
+``1.13.0+rocm.0`` at the commit linked above, and installs mjlab 1.2.0,
 MuJoCo 3.8.1 and mujoco-warp 3.8.1 from
-``requirements/embodied/envs/supermimic_amd.txt``. This path uses separate
-dependency pins to retain the ROCm Warp build.
+``requirements/embodied/envs/supermimic_amd.txt``. ``SUPERMIMIC_WARP_PATH``
+sets the Warp checkout (default ``../warp-rocm`` beside the repository) and
+``SUPERMIMIC_HIP_ARCH`` the compile target (default ``gfx942``). Data
+preparation, training and evaluation then work as below.
 
-``ROCM_PATH`` points to the ROCm SDK and defaults to ``/opt/rocm``.
-Warp's source checkout defaults to ``../warp-rocm`` beside the repository;
-set ``SUPERMIMIC_WARP_PATH`` to reuse another checkout. Installation checks
-out the commit above and rebuilds it. ``SUPERMIMIC_HIP_ARCH`` selects the
-compile target and defaults to MI300X's ``gfx942``. After installation, use
-the same data preparation, training and evaluation entries below. Select
-GPUs as described in `Train on One GPU`_.
-
-The AMD installer and current simulator changes have not been validated
-through a full AMD training run. Historical third-party MI300X results
-are listed under `Reported Tracking Results`_; they are not a performance
-guarantee for this installation path. Other AMD models remain unvalidated.
+The current AMD installer has not been validated through a full training
+run. Third-party MI300X results are under `Reported Tracking Results`_;
+other AMD GPUs are unvalidated.
 
 Prepare Reference Motion
 ------------------------
@@ -181,12 +167,6 @@ Prepare Reference Motion
 Motion data is not part of the repository. A clip folder holds ``clip_*.pt``
 files (loaded in file-name order) and optionally a ``manifest.json``. The
 format is in `Clip File Format`_.
-
-Complete `Installation`_ and prepare data in the same SuperMimic virtual
-environment. By default, the LAFAN1 converter reads G1's default joint pose
-``q0`` through mjlab. To prepare data in a CPU RLinf environment with PyTorch
-and NumPy, provide the pose with ``--q0-file`` as shown below. Copy the complete
-output clip directory, including ``manifest.json``, to the training machine.
 
 **LAFAN1 (the paper's 40 clips).** The clips are the ``g1/`` folder of the
 Hugging Face dataset
@@ -204,49 +184,31 @@ terms before passing ``--accept-license``.
    python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 --accept-license
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
 
-For conversion on a machine without mjlab, first export the pose from the
-training environment:
-
-.. code-block:: python
-
-   import torch
-   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-
-   torch.save(asset_default_state()[7:36].clone(), "g1_q0.pt")
-
-Copy ``g1_q0.pt`` to the data-preparation machine and pass it to the converter:
+The converter reads G1's default joint pose ``q0`` through mjlab. To convert
+on a machine without mjlab, export the pose in the training environment and
+pass it with ``--q0-file``:
 
 .. code-block:: bash
 
+   python -c "import torch; from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state; torch.save(asset_default_state()[7:36].clone(), 'g1_q0.pt')"
    python toolkits/supermimic/prepare_lafan1.py \
        --source-dir /data/lafan1_csv --out /data/lafan1_g1 \
        --q0-file ./g1_q0.pt --accept-license
 
-The file must contain a floating-point Tensor of shape ``[29]`` with finite
-joint angles in radians, in ``G1_JOINT_NAMES`` order. The converter loads it
-on CPU and records its name and SHA-256 in ``manifest.json``. The simulator
-still checks that the clips' pose matches the training asset's default pose.
-
-The 40 clips are 2.45 h of motion. With ``manifest.json`` present, the loader
-refuses a clip whose SHA-256 differs or that the manifest does not list, so do
-not rename, add, remove, or edit the prepared files.
+Copy the whole output folder, including ``manifest.json``, to the training
+machine. The 40 clips are 2.45 h of motion. With the manifest present, the
+loader refuses a clip whose SHA-256 differs or that the manifest does not
+list, so do not rename, add, remove or edit the prepared files.
 
 **BONES-SEED (experimental).** The official release is
 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_ on
-Hugging Face. G1 trajectories live in ``g1/csv/{date}/{motion}.csv``. The
-layout is described in
-`bones-studio/seed-viewer <https://github.com/bones-studio/seed-viewer>`_.
-Read ``LICENSE.md`` in the download before converting. The script does not
-download the data.
-
-The public header is the one in NVIDIA ProtoMotions'
-`SEED G1 CSV preparation <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_
-and in the ``Rotation.from_euler("xyz")`` call used by
-GR00T-WholeBodyControl: 120 Hz; ``root_translateX/Y/Z`` in centimeters;
-``root_rotateX/Y/Z`` as extrinsic XYZ Euler angles in degrees; 29 joint
-columns named ``<joint>_dof`` in degrees, matching the mjlab G1 joint names.
-The script reorders columns by those names and does not swap axes. In scipy,
-lowercase ``xyz`` means extrinsic. This convention has not been checked
+Hugging Face, with G1 trajectories in ``g1/csv/{date}/{motion}.csv``. Read
+``LICENSE.md`` in the download first; the script does not download the data.
+It follows the public header in NVIDIA ProtoMotions'
+`SEED G1 CSV preparation <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_:
+120 Hz, ``root_translateX/Y/Z`` in centimeters, ``root_rotateX/Y/Z`` as
+extrinsic XYZ Euler angles in degrees, and 29 ``<joint>_dof`` columns in
+degrees named after the mjlab G1 joints. This convention has not been checked
 against an official CSV.
 
 .. code-block:: bash
@@ -258,36 +220,15 @@ against an official CSV.
        --out /data/bones_g1_filtered
    export SUPERMIMIC_BONES_PATH=/data/bones_g1_filtered
 
-``--input`` is one CSV or a directory, and a directory is scanned
-recursively. The default resample is 120 Hz to 50 Hz. Velocities are
-recomputed on that grid by the existing ``resample_states``. An existing
-``clip_*.pt`` is left in place unless ``--overwrite`` is set. One broken CSV
-is reported and the rest of the directory continues. A clip's ``name`` is its
-path relative to ``--input``, without the suffix, so the same motion name
-under two dates does not share an output file and the Appendix E name filter
-still sees words such as ``stair`` and ``sit``. Feasibility stays in
-``bones_feasibility.py``: it writes per-frame ``mj_geomDistance`` results
-into a copy, and the loader filters on those arrays.
-
-A few CSVs can exercise the training entry without the paper's 4096
-environments:
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_goal730 \
-       env.train.motion_format=bones_seed env.train.num_clips=null \
-       env.train.motion_path=$SUPERMIMIC_BONES_PATH \
-       env.train.total_num_envs=8 algorithm.replay_length=64 runner.max_epochs=3 \
-       algorithm.wm_only_updates=0 algorithm.wm_window_batch=64 \
-       algorithm.imagine_batch=8 runner.save_interval=3 \
-       runner.logger.log_path=/data/runs/bones_smoke
-
-These BONES-SEED overrides load every clip that passes the filters
-(``env.train.num_clips: null``) and log how many each filter removed. The paper's
-142,220 / 129,667 / 129,514 counts belong to its release. The converter is
-tested on synthetic CSVs only. No full BONES-SEED dump has been converted,
-and no official CSV has been checked.
+``--input`` is one CSV or a directory scanned recursively. Clips are
+resampled to 50 Hz, existing outputs are kept unless ``--overwrite`` is set,
+and a broken CSV is reported without stopping the rest. A clip's ``name`` is
+its path relative to ``--input``, which the Appendix E name filter reads;
+``bones_feasibility.py`` stores the per-frame geometry the loader filters on.
+To train on the result, add the BONES-SEED overrides from `Configurations`_
+to the commands in `Run It`_; every clip that passes the filters is loaded
+and the log reports how many each filter removed. The converter is tested on
+synthetic CSVs only.
 
 Clip File Format
 ~~~~~~~~~~~~~~~~
@@ -530,32 +471,21 @@ A checkpoint records these keys and the rest of the policy interface in
 ``supermimic_interface.json``. Resuming or evaluating it with a config that
 differs in any of them is refused.
 
-For a large LAFAN1 library, ``env.train.motion_on_cpu=true`` (and
-``env.eval.motion_on_cpu=true`` for evaluation) keeps both reference states
-and the full reference FK cache in host memory. Queries gather rows there
-and transfer only the requested states, body poses and velocities to the
-GPU. The cache still occupies host RAM. With ``motion_on_cpu=false``, the
-library and its FK cache stay on the GPU. BONES-SEED libraries use CPU
-storage with the same query-transfer behavior. The actor worker keeps its
-own copy of the motion library for imagination, so each GPU holds two.
+``env.train.motion_on_cpu=true`` (``env.eval.motion_on_cpu`` for evaluation)
+keeps a large library and its FK cache in host memory and moves only the
+queried rows to the GPU; BONES-SEED libraries always do. The actor worker
+holds a second copy of the library for imagination.
 
-``env.train.com_sampling`` chooses when the torso CoM offset in :math:`\xi`
-is drawn. ``per_env`` draws it once per environment, as zita-ch does;
-``per_reset`` draws a new one on every reset and incurs the cost of
-recomputing simulation constants. Friction and joint offsets are drawn on
-every reset either way. ``env/g1_mimic.yaml`` defaults to the paper's
-``per_reset``; ``supermimic_lafan1_goal730`` sets ``per_env``.
+``env.train.com_sampling`` draws the torso CoM offset in :math:`\xi` once per
+environment (``per_env``, as zita-ch does and the recipe sets) or on every
+reset (``per_reset``, the paper's choice and the ``env/g1_mimic.yaml``
+default, which recomputes simulation constants).
 
-``actor.fsdp_config.amp_autocast`` (bfloat16 in the recipe) runs the network
-forwards of the actor and rollout workers under autocast. Integration,
-kinematics, the losses and the Adam weights stay float32. TF32 matmuls are
-on in every SuperMimic process. The weights are float32 and the actor trains
-with FSDP2 only: validation rejects a ``precision`` other than ``32``, an
-``actor.fsdp_config.strategy`` other than ``fsdp2``, FSDP
-``mixed_precision`` dtypes, the grad scaler and FSDP CPU offload.
-
-Historical tracking results and timing are summarized under
-`Reported Tracking Results`_ and `Performance and Hardware`_.
+``actor.fsdp_config.amp_autocast`` runs the network forwards under bfloat16
+autocast; integration, kinematics, the losses and the Adam weights stay
+float32, and TF32 matmuls are on. The actor trains with FSDP2 and float32
+weights only; validation rejects other ``precision`` or ``strategy`` values,
+FSDP ``mixed_precision``, the grad scaler and CPU offload.
 
 Common Keys
 ~~~~~~~~~~~
@@ -611,10 +541,8 @@ above change some of them. Each can be passed as a Hydra override.
    * - ``actor.optim.fused``
      - ``True``
      - Fused Adam on CUDA for every phase. A step with a non-finite gradient
-       norm is skipped inside the kernel, so the optimizer steps do not wait
-       for the host; the training metrics and skip flags come back together
-       after the iteration's updates, and the skips are counted then.
-       Multi-GPU runs still sum row counts on the host. ``False`` uses
+       norm is skipped inside the kernel and counted when the metrics are
+       read, so optimizer steps do not wait for the host. ``False`` uses
        PyTorch's default Adam and checks each step on the host.
    * - ``algorithm.wm_batches``
      - 10
@@ -642,34 +570,25 @@ above change some of them. Each can be passed as a Hydra override.
        on large CUDA batches. ``False`` keeps them eager.
    * - ``rollout.gc_after_weight_sync``
      - ``False``
-     - ``True`` runs ``gc.collect()`` and empties the device cache after each
-       weight sync, as the RLinf rollout does by default. SuperMimic syncs
-       after every update, where a full collection each time is a large
-       share of the step.
+     - ``True`` restores RLinf's default ``gc.collect()`` and cache flush
+       after each weight sync, which is costly when syncing after every
+       update.
    * - ``actor.use_profiler``
      - ``False``
-     - Traces the actor's global updates with RLinf's ``PyTorchProfiler``,
-       one profiler step per update counted from the launch. With the
-       ``actor.profiler`` defaults, the first three updates warm up and the
-       fourth is written per rank to ``<output_dir>/tensorboard/fwd_bwd``, a
-       trace with operator and kernel times that Perfetto opens. Training
-       phases are labelled ``world_model``, ``motion_actor`` and so on. The
-       first ``algorithm.wm_only_updates`` updates fit only the world model;
-       to trace the actor phases, resume past them or set
-       ``algorithm.wm_only_updates=0``.
-   * - ``actor.profiler``
-     - see the config
-     - Settings for ``PyTorchProfiler.from_config``, the same keys as
-       ``actor.megatron.profiler`` in the Megatron configs.
+     - Trace actor updates with RLinf's ``PyTorchProfiler``, configured in
+       ``actor.profiler`` as in the Megatron configs. With the defaults,
+       updates 0-2 of a launch warm up and update 3 is written per rank to
+       ``<output_dir>/tensorboard/fwd_bwd`` with the training phases
+       labelled; Perfetto opens it. The first
+       ``algorithm.wm_only_updates`` updates have no actor phases.
    * - ``env.train.total_num_envs``
      - 4096
      - Parallel simulator environments, global. Collection throughput and
        memory grow with it.
    * - ``algorithm.replay_length``
      - 1000
-     - Ring-buffer replay capacity per environment, in control steps (20 s at
-       50 Hz); at least 10, the observation history the policy reads. Replay
-       memory is proportional to ``total_num_envs x replay_length``.
+     - Replay capacity per environment in control steps (20 s at 50 Hz), at
+       least 10. Replay memory grows with ``total_num_envs x replay_length``.
    * - ``env.train.num_clips``
      - 40
      - Load the first N clips in file-name order; ``null`` loads all.
@@ -679,8 +598,7 @@ above change some of them. Each can be passed as a Hydra override.
        nothing.
    * - ``runner.log_interval``
      - 100
-     - Record the metrics to the logger backends and print RLinf's metrics
-       table every N updates, after the last one and after every evaluation.
+     - Record metrics and print RLinf's metrics table every N updates.
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf logger backends: TensorBoard, WandB or SwanLab.
@@ -694,16 +612,10 @@ above change some of them. Each can be passed as a Hydra override.
 
 **Updates versus simulator steps.** Every control step (every environment
 steps once) adds ``updates_per_env_step`` to the updates owed. The runner
-collects until an update is due, runs every whole update owed, sends the new
-weights to the rollout workers, and resumes collection. So
-``runner.max_epochs=16000`` is 16000 / 0.4 = 40,000 control steps plus the
-warmup, and environment transitions are that times
-``env.train.total_num_envs``. The logs count updates in the global step and
-control steps in ``env/env_steps``. Owed updates are capped at the remaining
-budget. RLinf saves and evaluates when the global step is a multiple of
-``runner.save_interval`` or ``runner.val_check_interval`` and after the
-last update; when one iteration runs several updates
-(``updates_per_env_step`` above 1), a multiple can be stepped over.
+collects until an update is due, runs every whole update owed, syncs the new
+weights and resumes collection. So ``runner.max_epochs=16000`` is
+16000 / 0.4 = 40,000 control steps plus the warmup. The global step counts
+updates and ``env/env_steps`` counts control steps.
 
 **Global sizes.** ``env.train.total_num_envs``, ``algorithm.wm_window_batch``
 and ``algorithm.imagine_batch`` are totals over all GPUs and must divide
@@ -727,11 +639,10 @@ RLinf sees (``cluster.component_placement`` maps ``actor,env,rollout`` to
        runner.logger.log_path=/data/runs/lafan1 \
        runner.save_interval=1000
 
-RLinf's shared launcher starts the recipe with its defaults. It writes each
-launch to a new ``logs/<time>-<config>`` folder in the repository and passes
-no Hydra overrides, so call ``train_embodied_agent.py`` directly to change
-keys or to resume. Training does not render; ``MUJOCO_GL=disabled`` replaces
-the launcher's EGL default on machines without EGL:
+RLinf's shared launcher runs the recipe unchanged and logs to a new
+``logs/<time>-<config>`` folder; it passes no Hydra overrides, so call
+``train_embodied_agent.py`` directly to change keys or to resume. Training
+does not render, so ``MUJOCO_GL=disabled`` works without EGL:
 
 .. code-block:: bash
 
@@ -750,27 +661,11 @@ entry per worker group. Hydra cannot override the recipe's combined
        '+cluster.component_placement={actor: 2, env: 2, rollout: 2}' \
        runner.logger.log_path=/data/runs/lafan1
 
-RLinf sets device visibility for its workers from the placement, so it may
-replace a ``CUDA_VISIBLE_DEVICES`` or ``HIP_VISIBLE_DEVICES`` value set
-before launch. When a worker is isolated to one visible GPU, that device is
-numbered ``cuda:0`` inside the process: a worker assigned node GPU 2 can
-still report ``cuda:0``. Check the placement together with node-level GPU
-monitoring to identify the actual device in use.
-
-The ``train_embodied_agent.py`` commands set two keys explicitly:
-
-* ``runner.logger.log_path``: the recipe's ``../results`` is relative to the
-  launch directory. With a fixed folder, resume and evaluation find the
-  checkpoints directly.
-* ``runner.save_interval``: the recipe saves every 2000 updates. Choose an
-  interval from the measured seconds per update (see
-  `Performance and Hardware`_).
-
-TensorBoard files go to ``<log_path>/tensorboard``:
-``tensorboard --logdir /data/runs/lafan1/tensorboard``.
-
-On a host with many CPU cores and little RAM, Ray starts one idle worker per
-core; ``RAY_prestart_worker_first_driver=0`` skips them.
+RLinf sets each worker's device visibility from the placement, so a worker
+on node GPU 2 reports ``cuda:0`` and a ``CUDA_VISIBLE_DEVICES`` set before
+launch may be replaced. The commands set ``runner.logger.log_path`` because
+the recipe's ``../results`` is relative to the launch directory, and a
+``runner.save_interval`` shorter than the recipe's 2000 updates.
 
 Multiple GPUs
 -------------
@@ -892,8 +787,7 @@ scratch`` and trains from the beginning, so check the log for
 A checkpoint with another policy interface is refused. The replay and
 simulator are not saved, so a resumed run warms up a new replay and is a
 continuation, not an exact restore. Resuming on a different number of GPUs
-has not been tested. Checkpoints written by the earlier single-process
-implementation (``global_step_<N>/supermimic.pt``) cannot be loaded.
+has not been tested.
 
 Evaluate
 --------
@@ -968,17 +862,14 @@ unplayed part in the denominator and :math:`\mathrm{NR}_i \le 1`.
 ``actor.model.velocity_tracking=true``; keep that override and select a task:
 
 * ``'env.eval.eval_tasks=[velocity_g2]'`` runs the Appendix G.2 step test:
-  672 commands on a 15 x 15 grid in each of the (vx, vy), (vx, wz), and
-  (vy, wz) planes without the standing command, four trials each
-  (``env.eval.velocity_g2.trials``), 5 s from mjlab's standing pose. The
-  value of a trial is the norm of the mean velocity error over the last 2 s
-  divided by the command norm; a command reports the median over the trials
-  that did not fall. A command whose trials all fell has no value (NaN in the
-  CSV, ``null`` in ``summary.json``) and is counted in
-  ``velocity_g2/commands_all_trials_fell``. Trials differ in the sim context
-  and the initial joint noise, which the paper does not specify. The 2688
-  trials need ``env.eval.total_num_envs`` times ``env.eval.rollout_epoch`` of
-  at least 2688 and ``env.eval.max_steps_per_rollout_epoch`` of at least 250.
+  672 commands on 15 x 15 grids in the (vx, vy), (vx, wz) and (vy, wz)
+  planes, four trials each, 5 s from mjlab's standing pose. A trial scores
+  the mean velocity error over the last 2 s divided by the command norm; a
+  command reports the median over trials that did not fall, and commands
+  whose trials all fell are counted in
+  ``velocity_g2/commands_all_trials_fell``. The 2688 trials need
+  ``env.eval.total_num_envs`` times ``env.eval.rollout_epoch`` of at least
+  2688 and ``env.eval.max_steps_per_rollout_epoch`` of at least 250.
 * ``'env.eval.eval_tasks=[tracking,velocity_smoke]'`` adds seven fixed
   commands from a reference start (``env.eval.velocity_smoke``), writes
   ``velocity_smoke.csv``, and reports aggregates under ``velocity_smoke/``.
@@ -989,35 +880,18 @@ unplayed part in the denominator and :math:`\mathrm{NR}_i \le 1`.
 For repeatable G.2 evaluation, keep ``env.eval.seed``, the environment
 count, hardware and the other evaluation settings fixed.
 
-**Stationary standing-pose push recovery.** Paper §4.3 holds a static
-T-pose. This task is a different protocol and does not claim to reproduce
-that T-pose. ``evaluations/run_eval.sh supermimic_push_recovery`` loads an
-existing tracking checkpoint and does not train. The reference stays one
-standing pose for the whole trial, so the goal does not switch to a walk.
-
-The reference uses mjlab's knees-bent standing pose, with arms beside the
-torso. The settings live under ``env.eval.push_recovery``. The default
-speeds are 0.5, 1, 2 and 4 m/s, four trials each, one trial per
-environment. ``direction: random`` samples a horizontal direction, or set
-``direction=[1.0,0.0]``. ``frame`` selects ``world`` or ``heading``.
-``push_mode: add`` adds horizontal root velocity; ``set`` replaces it while
-preserving vertical velocity. These are settings of this protocol.
-
-A fall is the training ``failure_signals`` test against this static
-reference: height error above 0.25 m or tilt error above 0.8. The settle
-test is this implementation's. After the push the root's horizontal speed
-must stay within ``speed_threshold`` (default 0.15 m/s), the root tilt
-within ``tilt_threshold`` (default 0.35), and the torso orientation error
-within ``torso_ori_threshold`` (default 0.5 rad), for ``stable_seconds``
-(default 0.5 s) without a break. ``max_xy_drift`` defaults to ``null`` and
-does not require a return to the original horizontal position.
-``recovery_time_s`` runs from the push to the control step that completes
-the stable window; ``stable_onset_time_s`` is that window's first frame. A
-trial that does not recover leaves the time blank rather than zero. A fall,
-a joint-limit violation, or a non-finite state before the push is
-``initialization_failed`` and is left out of the post-push fall rate.
-``settle_seconds`` (default 1 s) and ``max_seconds`` (default 5 s) are this
-implementation's wait and cutoff, not the paper's 0.5–2.4 s.
+**Standing-pose push recovery.** The ``supermimic_push_recovery`` config
+loads a tracking checkpoint, holds mjlab's knees-bent standing pose as a
+static reference, and changes the root's
+horizontal velocity after ``settle_seconds``. It is a related robustness
+test, not the paper's §4.3 T-pose protocol. The defaults push at 0.5, 1, 2
+and 4 m/s, four trials each. A fall is the training failure test (height
+error above 0.25 m or tilt error above 0.8). A trial recovers when the root
+speed, root tilt and torso orientation stay within ``speed_threshold``,
+``tilt_threshold`` and ``torso_ori_threshold`` for ``stable_seconds``; a
+fall before the push is ``initialization_failed``. These thresholds, the time
+limits and the push direction, frame and mode are this implementation's
+choices, set under ``env.eval.push_recovery`` in ``env/g1_mimic.yaml``.
 
 ``supermimic_push_recovery.yaml`` uses the paper interface. For a
 ``supermimic_lafan1_goal730`` checkpoint, pass that recipe's interface:
@@ -1032,11 +906,9 @@ implementation's wait and cutoff, not the paper's 0.5–2.4 s.
        runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/data/runs/lafan1/push_recovery
 
-``summary.json`` reports, per speed, the trial count, recovery rate, fall
-rate, timeout rate, and the mean and median recovery time of the trials
-that recovered. A speed with no recovery has a ``null`` recovery time.
-``per_trial.csv`` has one row per trial, including the direction, the
-measured velocity change, the outcome, and the reason.
+``summary.json`` reports, per speed, the recovery, fall and timeout rates
+and the recovery time of the trials that recovered; ``per_trial.csv`` has one
+row per trial.
 
 Visualization and Results
 -------------------------
@@ -1073,15 +945,12 @@ Training metrics are averaged over the actor ranks;
   timers measure host time; the GPU runs asynchronously, so a phase can
   absorb kernels queued by the one before it.
 
-The metrics are recorded every ``runner.log_interval`` updates (100 by
-default), after the last update and after every evaluation. A record holds the
-``train/*`` and ``time/*`` values of the iteration that made it due, while the
-``env/sim/*`` statistics cover every control step since the previous record.
-Recording every update would slow training: TensorBoard blocks the training
-loop once ten events wait to be written, which on network storage costs tens
-of milliseconds per update. Each record also prints RLinf's metrics table
-(progress, elapsed time, ETA and the latest values) to the console and appends
-it to ``<log_path>/metrics.log``.
+Metrics are recorded every ``runner.log_interval`` updates (100 by default),
+after the last update and after every evaluation; ``env/sim/*`` covers every
+control step since the previous record. Recording every update slows
+training, because TensorBoard blocks the loop once ten events wait to be
+written. Each record also prints RLinf's metrics table and appends it to
+``<log_path>/metrics.log``.
 
 .. _supermimic-reported-results:
 
@@ -1138,10 +1007,8 @@ MI300X Community Reproduction
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 `ZJLi2013's PR #1767 feedback <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_
-reports two MI300X runs based on commit ``0a19b154`` with their two old-stack
-compatibility edits. Both used the same recipe, seed 0 and the 40 LAFAN1
-clips; the only config change was a checkpoint every 500 updates. The
-reported checkpoints are:
+reports two MI300X runs of the same recipe, seed and clips, based on commit
+``0a19b154`` with two compatibility edits for an older software stack:
 
 .. list-table::
    :header-rows: 1
@@ -1163,22 +1030,10 @@ reported checkpoints are:
      - 39/40
      - 0.844
 
-The commenter attributes the gap to the A800 report to run-to-run
-variation. These two runs support similar
-tracking performance, but do not establish strict cross-platform equivalence.
-They evaluate motions included in training.
-
-Run A took about 4 h 15 min for 16000 updates, with roughly 0.97 s per update
-in steady state after update 600 and about 6 min for the first actor compile.
-The commenter reports that ``torch.compile`` worked on ROCm and no training
-scan fell back to eager. The A800 value of 0.856 cited in the comment belongs
-to the PR's earlier update-16000 report; the single-process A800 run in the
-table above scored 0.850 in about 2 h. They are different runs.
-
-These third-party runs used the old baseline and compatibility edits.
-They do not validate the current AMD installer or establish performance
-for other AMD GPUs. Installation instructions are under
-`AMD MI300X (Experimental)`_.
+Run A took about 4 h 15 min (about 0.97 s per update in steady state), and
+``torch.compile`` worked on ROCm without falling back to eager. The runs show
+similar tracking on training motions but not strict cross-platform
+equivalence, and they do not validate the current AMD installer.
 
 Troubleshooting
 ---------------
@@ -1209,8 +1064,7 @@ Troubleshooting
   never wrote a checkpoint (``save_interval`` was -1).
 * **"... was trained with <key>=..., but this config has ...".** The
   checkpoint's ``supermimic_interface.json`` differs from the config; pass
-  the overrides used in training. A checkpoint without that file predates the
-  current structure and cannot be loaded.
+  the overrides used in training.
 * **The log stops at "Compiling SuperMimic <name> for large CUDA
   batches".** The first large batch is waiting for the compile, a few
   minutes with a cold cache; see `Performance and Hardware`_. Do not delete
@@ -1231,27 +1085,17 @@ before planning a full run.
 the recipe runs 4096 environments with bfloat16 autocast, and the compile
 cache was warm:
 
-* Warmup and the first 100 updates took 75 s. The first 500 updates train
-  only the world model, at about 34 s per 100 updates. After update 600,
-  51-57 s per 100 updates, 54 s on average, or about 0.54 s per update.
-  Update 14000 was reached after 2 h 5 min and update 16000 after
-  2 h 23 min 29 s.
+* The first 500 updates train only the world model, at about 34 s per 100
+  updates. After update 600 an update took about 0.54 s on average, and
+  16000 updates took 2 h 23 min.
 * An iteration without a stall took about 0.47 s (``time/step``). The
-  workers exchange every control step through CUDA IPC. On the node used,
-  CUDA IPC between processes stalled for 1-3 s about once a minute, also in
-  a standalone two-process test, which accounts for part of the gap to the
-  0.54 s average.
+  workers exchange every control step through CUDA IPC, which on the node
+  used stalled for 1-3 s about once a minute, also in a standalone
+  two-process test.
 
-**The single-process implementation** ran the same recipe on an A800 of the
-same model. The first 500 updates took about 26 s per 100 updates, then
-43-47 s per 100 updates, 44.9 s on average, or about 0.45 s per update;
-16000 updates took 1 h 59 min 51 s. The zita-ch code, measured on an A800 of
-the same model, took 2 h 15 min. Memory was recorded for this run only:
-
-* PyTorch peak allocated 17.1 GB (18.8 GB reserved), whole GPU as the
-  driver sees it 20.1 GB, Warp pool peak 0.48 GB, host RSS about 4.0 GB.
-* At the end: 40064 vectorized simulator steps, about 164 million
-  environment transitions.
+The single-process implementation took about 0.45 s per update and 2 h on
+the same GPU model, with a 17.1 GB PyTorch peak (20.1 GB for the whole GPU)
+and about 4 GB of host memory; the zita-ch code took 2 h 15 min.
 
 **Compilation.** A first large run compiles training scans and FK. The
 PyTorch kernel cache is under ``/tmp/torchinductor_<user>``; starting on a
@@ -1259,12 +1103,8 @@ new machine or after clearing that cache takes longer. Keep
 ``actor.model.torch_compile`` at ``True`` for training; ``False`` keeps the
 scans, the env pieces and FK eager, which suits small smoke runs.
 
-On an 8 GB laptop GPU under WSL2, 1024 environments collected about 3,900
-environment transitions per second, one update with a quarter of the paper
-batches (1024 imagined rollouts, 512 windows) took about 21 s at a 4.2 GB
-PyTorch peak, and one update at the paper batches needed about 11 GB, more
-than that card has. These numbers come from a launch-bound laptop setup and
-do not predict datacenter GPUs.
+One update at the paper batch sizes needs about 11 GB of GPU memory, so 8 GB
+cards only run reduced smoke configurations.
 
 Validation Scope
 ----------------

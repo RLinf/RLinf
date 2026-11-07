@@ -79,9 +79,7 @@ SuperMimic 反复做三件事：在 MuJoCo Warp 里让所有环境走一个控�
 
 之后每打开一个新终端，都要先回到仓库根目录并执行 ``source .venv-supermimic/bin/activate``。
 
-NVIDIA 环境使用 torch 2.14.0 和 ``warp-lang`` 1.18.0，依赖清单在 ``requirements/embodied/envs/supermimic.txt``。这些依赖会升级 torch，请与其他 RLinf 环境隔离安装。需要 CUDA 12 Warp 时，安装脚本按主机架构选择 wheel。``docker/Dockerfile`` 也提供执行同样安装的 ``embodied-supermimic-image`` 目标。
-
-G1 的模型、关节顺序、执行器增益和站立关键帧都来自 mjlab。每个参考片段都带着转换时用的默认姿态 ``q0``，如果它和 mjlab 的默认关节姿态不同，仿真器会拒绝加载：Goal 和观测减去的是 ``q0``，而 PD 目标加的是 mjlab 的默认姿态。
+NVIDIA 环境使用 torch 2.14.0 和 ``warp-lang`` 1.18.0（``requirements/embodied/envs/supermimic.txt``）。这些依赖会升级 torch，请与其他 RLinf 环境隔离安装。``docker/Dockerfile`` 也提供 ``embodied-supermimic-image`` 目标。G1 的模型、关节顺序、执行器增益和站立关键帧都来自 mjlab。
 
 AMD MI300X（实验性）
 ~~~~~~~~~~~~~~~~~~~~
@@ -95,18 +93,14 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
        embodied --env supermimic --venv .venv-supermimic
    source .venv-supermimic/bin/activate
 
-脚本通过 AMD Radeon 的 flat wheel 索引安装 torch 2.9.1、torchvision 0.24.0 及其 Triton 依赖，使用支持 flat 索引的新版 uv。它从固定提交 ``36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71`` 构建 ROCm Warp ``1.13.0+rocm.0``，再按 ``requirements/embodied/envs/supermimic_amd.txt`` 安装 mjlab 1.2.0、MuJoCo 3.8.1 和 mujoco-warp 3.8.1。该路径使用独立依赖约束，保留 ROCm Warp 构建。
+脚本从 AMD Radeon 的 wheel 索引安装 torch 2.9.1 和 torchvision 0.24.0（需要支持 flat 索引的新版 uv），在上面链接的提交上构建 ROCm Warp ``1.13.0+rocm.0``，再按 ``requirements/embodied/envs/supermimic_amd.txt`` 安装 mjlab 1.2.0、MuJoCo 3.8.1 和 mujoco-warp 3.8.1。``SUPERMIMIC_WARP_PATH`` 指定 Warp 源码目录（默认仓库旁的 ``../warp-rocm``），``SUPERMIMIC_HIP_ARCH`` 指定编译目标（默认 ``gfx942``）。之后的数据准备、训练和评测与下文相同。
 
-``ROCM_PATH`` 指向 ROCm SDK，默认 ``/opt/rocm``。Warp 源码默认放在仓库旁的 ``../warp-rocm``，可用 ``SUPERMIMIC_WARP_PATH`` 指定复用的 checkout；安装时会切到上述固定提交并重新构建。``SUPERMIMIC_HIP_ARCH`` 指定编译目标，默认是 MI300X 的 ``gfx942``。先完成安装，再使用本页相同的数据准备、训练和评测入口；选卡方式见 `单卡训练`_。
-
-当前 AMD 安装路径和仿真器改动尚未经过 AMD 完整训练验证。第三方 MI300X 历史成绩集中在 `已报告的跟踪结果`_，不代表当前安装路径的性能承诺；其他 AMD 型号尚未验证。
+当前 AMD 安装路径尚未经过完整训练验证。第三方 MI300X 结果见 `已报告的跟踪结果`_；其他 AMD 型号尚未验证。
 
 准备参考动作
 ------------
 
 动作数据不放进仓库。一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载），可以再放一个 ``manifest.json``。格式见下面的 `片段文件格式`_。
-
-先完成 `安装`_ 并在同一个 SuperMimic 虚拟环境中准备数据。LAFAN1 转换器默认通过 mjlab 读取 G1 的默认关节姿态 ``q0``。若准备数据的机器使用带 PyTorch 和 NumPy 的 CPU RLinf 环境，可按下文通过 ``--q0-file`` 提供姿态。转换后，将包含 ``manifest.json`` 的完整片段目录复制到训练机器。
 
 **LAFAN1（论文的 40 条）。** 片段是 Hugging Face 数据集 `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_ 的 ``g1/`` 目录。脚本固定修订版 ``ce1572906efe6157840e8474d5a0d7aa87481e74``，逐个核对 CSV 的大小和 SHA-256，并写出 ``manifest.json``。数据集卡片没有声明许可证；这些重定向数据来自 Ubisoft La Forge 的 `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_，后者使用 CC BY-NC-ND 4.0（非商业、禁止演绎）。传 ``--accept-license`` 之前请先读这些条款。
 
@@ -116,30 +110,18 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
    python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 --accept-license
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
 
-要在没有 mjlab 的机器上转换，先在训练环境中导出默认姿态：
-
-.. code-block:: python
-
-   import torch
-   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-
-   torch.save(asset_default_state()[7:36].clone(), "g1_q0.pt")
-
-将 ``g1_q0.pt`` 复制到数据准备机器，再传给转换器：
+转换器通过 mjlab 读取 G1 的默认关节姿态 ``q0``。要在没有 mjlab 的机器上转换，先在训练环境中导出姿态，再用 ``--q0-file`` 传入：
 
 .. code-block:: bash
 
+   python -c "import torch; from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state; torch.save(asset_default_state()[7:36].clone(), 'g1_q0.pt')"
    python toolkits/supermimic/prepare_lafan1.py \
        --source-dir /data/lafan1_csv --out /data/lafan1_g1 \
        --q0-file ./g1_q0.pt --accept-license
 
-文件必须保存形状为 ``[29]`` 的浮点 Tensor，按 ``G1_JOINT_NAMES`` 排列，关节角以弧度表示且全部有限。转换器在 CPU 上读取文件，并将文件名和 SHA-256 记入 ``manifest.json``。仿真器加载片段时，仍会检查该姿态是否与训练资产的默认姿态一致。
+将包含 ``manifest.json`` 的整个输出目录复制到训练机器。40 条片段共 2.45 小时。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段，所以不要改名、增删或修改准备好的文件。
 
-40 条片段共 2.45 小时。有 ``manifest.json`` 时，加载器会拒绝 SHA-256 对不上或清单里没有的片段，所以不要改名、增删或修改准备好的文件。
-
-**BONES-SEED（实验性）。** 官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。目录说明见 `bones-studio/seed-viewer <https://github.com/bones-studio/seed-viewer>`_。下载前先读数据包里的 ``LICENSE.md``。下面的脚本不下载数据。
-
-公开表头来自 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_，并与 GR00T-WholeBodyControl 里实际执行的 ``Rotation.from_euler("xyz")`` 一致：120 Hz；``root_translateX/Y/Z`` 是厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个关节列是 ``<关节名>_dof``、单位度，名字对应 mjlab 的 G1 关节。脚本按关节名重排到 ``G1_JOINT_NAMES``，不额外交换坐标轴。scipy 里小写 ``xyz`` 表示外旋。这个约定还没有拿一份官方 CSV 核对过。
+**BONES-SEED（实验性）。** 官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。先读数据包里的 ``LICENSE.md``；脚本不下载数据。表头约定沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_：120 Hz；``root_translateX/Y/Z`` 单位厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个 ``<关节名>_dof`` 列单位度，名字对应 mjlab 的 G1 关节。这个约定还没有拿官方 CSV 核对过。
 
 .. code-block:: bash
 
@@ -150,22 +132,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
        --out /data/bones_g1_filtered
    export SUPERMIMIC_BONES_PATH=/data/bones_g1_filtered
 
-``--input`` 可以是单个 CSV，也可以是目录，目录会递归扫描。默认从 120 Hz 转到 50 Hz，速度由现有的 ``resample_states`` 在 50 Hz 网格上重算。已经存在的 ``clip_*.pt`` 不会被覆盖，除非加上 ``--overwrite``。单个损坏的 CSV 会打印原因并继续处理其他文件。片段的 ``name`` 是相对 ``--input`` 的路径、不含扩展名，因此不同日期下的同名文件不会写到同一个输出，附录 E 的名字过滤仍能看到 ``stair``、``sit`` 这类词。可行性过滤沿用 ``bones_feasibility.py``：它用 ``mj_geomDistance`` 把逐帧几何写进副本，加载器再按这些数组过滤。
-
-先用少量 CSV 确认训练入口时，不必直接跑论文的 4096 个环境：
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_goal730 \
-       env.train.motion_format=bones_seed env.train.num_clips=null \
-       env.train.motion_path=$SUPERMIMIC_BONES_PATH \
-       env.train.total_num_envs=8 algorithm.replay_length=64 runner.max_epochs=3 \
-       algorithm.wm_only_updates=0 algorithm.wm_window_batch=64 \
-       algorithm.imagine_batch=8 runner.save_interval=3 \
-       runner.logger.log_path=/data/runs/bones_smoke
-
-这些 BONES-SEED 覆盖项加载所有通过过滤的片段（``env.train.num_clips: null``），并在日志里打印每个过滤器去掉了多少。论文的 142,220 / 129,667 / 129,514 是它那个版本的数据。转换器只在合成 CSV 上测试过，还没有处理过完整的 BONES-SEED，也没有在真实 CSV 上核对过姿态。
+``--input`` 可以是单个 CSV 或递归扫描的目录。片段重采样到 50 Hz，已有输出默认不覆盖（``--overwrite`` 除外），单个损坏的 CSV 会报告原因而不影响其他文件。片段的 ``name`` 是相对 ``--input`` 的路径，供附录 E 的名字过滤使用；``bones_feasibility.py`` 写入加载器过滤所需的逐帧几何。训练时把 `配置`_ 里的 BONES-SEED 覆盖项加到 `运行`_ 的命令上；所有通过过滤的片段都会加载，日志会打印每个过滤器去掉了多少。转换器只在合成 CSV 上测试过。
 
 片段文件格式
 ~~~~~~~~~~~~
@@ -354,13 +321,11 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
 
 检查点把这几项和其余 policy 接口记在 ``supermimic_interface.json`` 里；用其中任何一项不同的配置恢复或评测，都会被拒绝。
 
-LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测时还有 ``env.eval.motion_on_cpu=true``）可将参考状态和完整的参考 FK 缓存保存在主机内存中。查询先在 CPU 上取行，只把需要的状态、身体位姿和速度传到 GPU；完整缓存仍占用主机内存。``motion_on_cpu=false`` 时，动作库和 FK 缓存都留在 GPU 上。BONES-SEED 动作库使用 CPU 存储，查询结果采用同样的传输方式。actor worker 为想象 rollout 另持有一份动作库，所以每张卡上有两份。
+``env.train.motion_on_cpu=true``\ （评测用 ``env.eval.motion_on_cpu``）把较大的动作库和 FK 缓存放在主机内存，只把查询到的行传到 GPU；BONES-SEED 动作库总是这样存放。actor worker 为想象 rollout 另持有一份动作库。
 
-``env.train.com_sampling`` 决定躯干质心偏移何时采样：``per_env`` 每个环境只采一次（zita-ch 的做法），``per_reset`` 每次重置都重新采样，并承担重算仿真常量的开销。两种设置下，摩擦和关节偏置都在每次重置时重采。``env/g1_mimic.yaml`` 默认是论文的 ``per_reset``，``supermimic_lafan1_goal730`` 训练时设为 ``per_env``。
+``env.train.com_sampling`` 决定 :math:`\xi` 中躯干质心偏移的采样时机：``per_env`` 每个环境只采一次（zita-ch 的做法，配方的设置），``per_reset`` 每次重置都重采（论文的做法，也是 ``env/g1_mimic.yaml`` 的默认值，需要重算仿真常量）。
 
-``actor.fsdp_config.amp_autocast``\ （配方中为 bfloat16）让 actor 和 rollout worker 的网络前向在 autocast 下运行；积分、运动学、损失和 Adam 权重仍是 float32。每个 SuperMimic 进程都打开 TF32 矩阵乘。权重只支持 float32，actor 只支持 FSDP2 训练：配置校验会拒绝 ``32`` 以外的 ``precision``、``fsdp2`` 以外的 ``actor.fsdp_config.strategy``、FSDP 的 ``mixed_precision`` 数据类型、grad scaler 和 FSDP CPU offload。
-
-历史跟踪成绩和计时结果见 `已报告的跟踪结果`_ 与 `性能与硬件`_。
+``actor.fsdp_config.amp_autocast`` 让网络前向在 bfloat16 autocast 下运行；积分、运动学、损失和 Adam 权重仍是 float32，并打开 TF32 矩阵乘。actor 只支持 FSDP2 和 float32 权重，配置校验会拒绝其他 ``precision`` 或 ``strategy``、FSDP ``mixed_precision``、grad scaler 和 CPU offload。
 
 常用配置键
 ~~~~~~~~~~
@@ -403,7 +368,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 梯度范数非有限的优化器步会被跳过；连续超过这个次数就停止训练。
    * - ``actor.optim.fused``
      - ``True``
-     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，优化器步不再等待主机；训练指标和跳步标记在一轮的更新全部结束后一起读回，跳过的步在那时计数。多卡时各 rank 的行数仍在主机端求和。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查。
+     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，读取指标时再计数，优化器步不等待主机。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查。
    * - ``algorithm.wm_batches``
      - 10
      - 每次更新拟合世界模型的小批次数。
@@ -427,19 +392,16 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 在大批量 CUDA 数据上编译训练扫描、环境中的奖励和特征片段以及 FK；设为 ``False`` 时都以 eager 方式运行。
    * - ``rollout.gc_after_weight_sync``
      - ``False``
-     - 设为 ``True`` 时，每次权重同步后执行 ``gc.collect()`` 并清空设备缓存，这是 RLinf rollout 的默认行为。SuperMimic 每次更新后都同步，每次都做完整回收会占去每步相当一部分时间。
+     - 设为 ``True`` 时恢复 RLinf 默认的权重同步后 ``gc.collect()`` 和清缓存；每次更新都同步时开销较大。
    * - ``actor.use_profiler``
      - ``False``
-     - 用 RLinf 的 ``PyTorchProfiler`` 采集 actor 的全局更新，每次更新算一个 profiler 步，从本次启动开始计数。按 ``actor.profiler`` 的默认值，前三次更新用于预热，第四次更新按 rank 写到 ``<output_dir>/tensorboard/fwd_bwd``，其中包含算子和 kernel 耗时，可用 Perfetto 打开。训练阶段以 ``world_model``、``motion_actor`` 等名称标注。前 ``algorithm.wm_only_updates`` 次更新只训练世界模型；要采集 actor 各阶段，需从超过这一步数的 checkpoint 续训，或设置 ``algorithm.wm_only_updates=0``。
-   * - ``actor.profiler``
-     - 见配置文件
-     - 传给 ``PyTorchProfiler.from_config`` 的设置，键与 Megatron 配置中的 ``actor.megatron.profiler`` 相同。
+     - 用 RLinf 的 ``PyTorchProfiler`` 采集 actor 更新，设置在 ``actor.profiler``，与 Megatron 配置相同。按默认值，每次启动的第 0-2 次更新预热，第 3 次更新按 rank 写到 ``<output_dir>/tensorboard/fwd_bwd``，训练阶段带标注，可用 Perfetto 打开。前 ``algorithm.wm_only_updates`` 次更新没有 actor 阶段。
    * - ``env.train.total_num_envs``
      - 4096
      - 并行仿真环境数，全局量。采集吞吐和显存都随它增长。
    * - ``algorithm.replay_length``
      - 1000
-     - 每个环境的环形 replay 容量，按控制步计（50 Hz 下 20 s），至少为 10，即策略读取的观测历史长度。replay 显存与 ``total_num_envs × replay_length`` 成正比。
+     - 每个环境的 replay 容量，按控制步计（50 Hz 下 20 s），至少为 10。replay 显存随 ``total_num_envs × replay_length`` 增长。
    * - ``env.train.num_clips``
      - 40
      - 按文件名顺序加载前 N 条片段；``null`` 加载全部。
@@ -448,7 +410,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - 每隔 N 次更新以及最后一次更新后保存检查点；设为 -1 时不保存。
    * - ``runner.log_interval``
      - 100
-     - 每隔 N 次更新、最后一次更新后以及每次评测后，把指标记录到日志后端并打印 RLinf 的指标表。
+     - 每隔 N 次更新记录指标并打印 RLinf 的指标表。
    * - ``runner.logger.logger_backends``
      - ``[tensorboard]``
      - RLinf 的日志后端：TensorBoard、WandB 或 SwanLab。
@@ -459,7 +421,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
      - ``../results``
      - 检查点和日志的根目录，相对启动目录。正式训练请显式设置。
 
-**更新次数与仿真步数。** 每个控制步（所有环境各走一步）累计 ``updates_per_env_step`` 次欠下的更新。runner 一直采集到有更新到期，执行所有整数次的欠账更新，把新权重同步给 rollout worker，再继续采集。所以 ``runner.max_epochs=16000`` 对应 16000 / 0.4 = 40,000 个控制步（另加预热），环境转移数再乘以 ``env.train.total_num_envs``。日志的全局步是更新次数，``env/env_steps`` 是控制步数。欠账更新受剩余预算限制。RLinf 在全局步是 ``runner.save_interval`` 或 ``runner.val_check_interval`` 的倍数时以及最后一次更新后保存和评测；一轮执行多次更新时（``updates_per_env_step`` 大于 1），可能跨过某个倍数。
+**更新次数与仿真步数。** 每个控制步（所有环境各走一步）累计 ``updates_per_env_step`` 次欠下的更新。runner 一直采集到有更新到期，执行所有整数次的欠账更新，同步新权重后继续采集。所以 ``runner.max_epochs=16000`` 对应 16000 / 0.4 = 40,000 个控制步（另加预热）。全局步是更新次数，``env/env_steps`` 是控制步数。
 
 **全局量。** ``env.train.total_num_envs``、``algorithm.wm_window_batch`` 和 ``algorithm.imagine_batch`` 是所有 GPU 的总和，必须能被 GPU 数整除；``updates_per_env_step`` 和 ``runner.max_epochs`` 数的也是全局更新。所以加 GPU 而不改这些值，训练的数学含义不变，见 `多卡训练`_。
 
@@ -477,7 +439,7 @@ LAFAN1 动作库较大时，设置 ``env.train.motion_on_cpu=true``\ （评测�
        runner.logger.log_path=/data/runs/lafan1 \
        runner.save_interval=1000
 
-RLinf 的通用启动脚本按配方默认值启动训练。它每次启动都在仓库里新建一个 ``logs/<时间>-<配置名>`` 目录，也不转发 Hydra 覆盖项；要改配置项或恢复训练，请直接调用 ``train_embodied_agent.py``。训练不需要渲染；在没有 EGL 的机器上，用 ``MUJOCO_GL=disabled`` 替换脚本默认的 EGL：
+RLinf 的通用启动脚本按配方原样运行，日志写到新建的 ``logs/<时间>-<配置名>`` 目录；它不转发 Hydra 覆盖项，所以改配置项或恢复训练请直接调用 ``train_embodied_agent.py``。训练不需要渲染，没有 EGL 时用 ``MUJOCO_GL=disabled``：
 
 .. code-block:: bash
 
@@ -494,16 +456,7 @@ RLinf 的通用启动脚本按配方默认值启动训练。它每次启动都�
        '+cluster.component_placement={actor: 2, env: 2, rollout: 2}' \
        runner.logger.log_path=/data/runs/lafan1
 
-RLinf 会按 placement 为 Worker 设置设备可见性，启动前的 ``CUDA_VISIBLE_DEVICES`` 或 ``HIP_VISIBLE_DEVICES`` 可能被重新设置。Worker 被隔离为只能看见一张卡时，这张卡在进程内编号为 ``cuda:0``；例如分配的是节点 GPU 2，Worker 内仍可显示 ``cuda:0``。判断实际使用哪张卡时，请结合 placement 和节点 GPU 监控查看。
-
-上面的 ``train_embodied_agent.py`` 命令显式设置了两项：
-
-* ``runner.logger.log_path``：配方里的 ``../results`` 相对启动目录。固定一个目录，恢复和评测都能直接找到检查点。
-* ``runner.save_interval``：配方每 2000 次更新保存。可以按实测的每次更新耗时调整间隔（见 `性能与硬件`_）。
-
-TensorBoard 文件写在 ``<log_path>/tensorboard``：``tensorboard --logdir /data/runs/lafan1/tensorboard``。
-
-CPU 核多、内存少的机器上，Ray 会按核数预启动空闲 worker；设置 ``RAY_prestart_worker_first_driver=0`` 可以不启动它们。
+RLinf 按 placement 设置每个 worker 的设备可见性，所以节点 GPU 2 上的 worker 显示为 ``cuda:0``，启动前设置的 ``CUDA_VISIBLE_DEVICES`` 也可能被替换。上面的命令设置了 ``runner.logger.log_path``，因为配方里的 ``../results`` 相对启动目录；还设置了比配方的 2000 次更新更短的 ``runner.save_interval``。
 
 多卡训练
 --------
@@ -583,7 +536,7 @@ GPU 上的集合通信用 NCCL，超时由 ``RLINF_TIMEOUT``\ （分钟）决定
 
 ``runner.resume_dir=auto`` 在 ``<log_path>/<experiment_name>/checkpoints/`` 下选最新的完整检查点，训练接着跑到 ``runner.max_epochs``；给一个 ``global_step_<N>`` 路径则用那个检查点。``auto`` 找不到完整检查点时\ **不会报错**\ ，而是记一条 ``resume_dir=auto found no complete checkpoint under ...; starting from scratch`` 后从头训练，所以请确认日志里有 ``Resuming from .../global_step_<N>``。
 
-policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，恢复后要先重新预热 replay，所以这是接着训练，不是精确复原。换 GPU 数恢复还没有测试过。此前单进程实现写出的检查点（``global_step_<N>/supermimic.pt``）不能加载。
+policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，恢复后要先重新预热 replay，所以这是接着训练，不是精确复原。换 GPU 数恢复还没有测试过。
 
 评测
 ----
@@ -622,16 +575,12 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 
 **速度跟踪** 评测用 ``actor.model.velocity_tracking=true`` 训练的编码器；保留该覆盖项，再选择任务：
 
-* ``'env.eval.eval_tasks=[velocity_g2]'`` 运行附录 G.2 阶跃测试：在 (vx, vy)、(vx, wz)、(vy, wz) 三个平面上各取 15 × 15 网格，去掉站立命令，共 672 条命令，每条 4 次试验（``env.eval.velocity_g2.trials``），从 mjlab 的站立姿态开始执行 5 s。每次试验的值是最后 2 s 平均速度误差的范数除以命令范数；每条命令报告没有摔倒的试验的中位数；4 次都摔倒的命令没有数值（CSV 里是 NaN，``summary.json`` 里是 ``null``），计入 ``velocity_g2/commands_all_trials_fell``。论文没有说明试验之间什么不同，本实现让仿真上下文和初始关节噪声各不相同。2688 次试验要求 ``env.eval.total_num_envs`` 乘以 ``env.eval.rollout_epoch`` 至少为 2688，``env.eval.max_steps_per_rollout_epoch`` 至少为 250。
+* ``'env.eval.eval_tasks=[velocity_g2]'`` 运行附录 G.2 阶跃测试：在 (vx, vy)、(vx, wz)、(vy, wz) 三个平面的 15 × 15 网格上共 672 条命令，每条 4 次试验，从 mjlab 的站立姿态开始执行 5 s。每次试验取最后 2 s 平均速度误差除以命令范数；每条命令报告没有摔倒的试验的中位数，4 次都摔倒的命令计入 ``velocity_g2/commands_all_trials_fell``。2688 次试验要求 ``env.eval.total_num_envs`` 乘以 ``env.eval.rollout_epoch`` 至少为 2688，``env.eval.max_steps_per_rollout_epoch`` 至少为 250。
 * ``'env.eval.eval_tasks=[tracking,velocity_smoke]'`` 另加 7 条从参考起点开始的固定命令（``env.eval.velocity_smoke``），写出 ``velocity_smoke.csv``，汇总指标以 ``velocity_smoke/`` 为前缀。它只检查速度编码器能跑通，不是论文指标。40 条 LAFAN1 片段加上这 7 条命令共 47 个任务，所以还要设置 ``env.eval.rollout_epoch=2``。
 
 重复 G.2 评测时，请固定 ``env.eval.seed``、环境数、硬件和其余评测设置。
 
-**静止站立姿态推力恢复。** 论文 §4.3 要求静态 T-pose。本评测的协议是 stationary standing-pose push recovery，不把它当作论文的 T-pose 协议。``evaluations/run_eval.sh supermimic_push_recovery`` 用已有跟踪检查点评测，不重新训练。参考在整个试次里保持同一个站立姿态，Goal 不会换成走路。
-
-参考使用 mjlab 的屈膝站立姿态，双臂垂在身侧。设置都在 ``env.eval.push_recovery`` 下。默认速度为 0.5、1、2、4 m/s，每种 4 次，每个环境一次试验。``direction: random`` 在水平面随机取方向，也可以设置 ``direction=[1.0,0.0]``；``frame`` 选择 ``world`` 或 ``heading``。``push_mode: add`` 增加根水平速度，``set`` 替换根水平速度并保留竖直速度。这些都是本评测协议的设置。
-
-跌倒沿用训练的 ``failure_signals``：相对这份静止参考，高度误差超过 0.25 m 或倾角误差超过 0.8 即摔倒。下面几项是本实现的约定。推力之后要同时满足：根水平速度不超过 ``speed_threshold``\ （默认 0.15 m/s），根倾角差不超过 ``tilt_threshold``\ （默认 0.35），躯干朝向误差不超过 ``torso_ori_threshold``\ （默认 0.5 rad），并且连续保持 ``stable_seconds``\ （默认 0.5 s）。``max_xy_drift`` 默认是 ``null``，不要求回到原来的水平位置。``recovery_time_s`` 从推力施加时刻算到稳定窗口结束的那个控制步；``stable_onset_time_s`` 是这个窗口的第一帧。没有恢复的试次把时间留空，不写成 0。推力之前摔倒、关节越限或状态非有限，记为 ``initialization_failed``，不计入推力后的跌倒率。``settle_seconds``\ （默认 1 s）和 ``max_seconds``\ （默认 5 s）也是本实现的等待和截止，不是论文里的 0.5–2.4 s。
+**站立姿态推力恢复。** ``supermimic_push_recovery`` 配置加载跟踪检查点，以 mjlab 的屈膝站立姿态作为静止参考，在 ``settle_seconds`` 之后改变根的水平速度。它是相关的鲁棒性测试，不是论文 §4.3 的 T-pose 协议。默认推力速度为 0.5、1、2、4 m/s，每种 4 次。跌倒沿用训练的失败判据（高度误差超过 0.25 m 或倾角误差超过 0.8）。根速度、根倾角和躯干朝向在 ``stable_seconds`` 内保持在 ``speed_threshold``、``tilt_threshold`` 和 ``torso_ori_threshold`` 以内即算恢复；推力之前摔倒记为 ``initialization_failed``。这些阈值、时间限制以及推力方向、坐标系和方式都是本实现的选择，设置在 ``env/g1_mimic.yaml`` 的 ``env.eval.push_recovery`` 下。
 
 ``supermimic_push_recovery.yaml`` 使用论文接口。评测 ``supermimic_lafan1_goal730`` 的检查点时，传入这套配方的接口：
 
@@ -645,7 +594,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
        runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/data/runs/lafan1/push_recovery
 
-``summary.json`` 按速度给出试验数、恢复率、跌倒率、超时率，以及成功试次的平均和中位恢复时间；某一档没有成功试次时，恢复时间是 ``null``。``per_trial.csv`` 每次一行，包含方向、读回的速度增量、结果和原因。
+``summary.json`` 按速度给出恢复率、跌倒率、超时率和成功试次的恢复时间；``per_trial.csv`` 每次试验一行。
 
 可视化与结果
 ------------
@@ -666,7 +615,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 * ``train/wm_only``、``train/*_optimizer_steps``、``train/nonfinite_skips``。
 * ``time/*``：runner 的 RLinf 计时（``time/generate_rollouts``、``time/actor_training``、``time/sync_weights``、``time/eval``）和各 worker 的计时（``time/env/collect``、``time/rollout/serve``、``time/actor/ingest``、``time/actor/run_updates`` 及其各阶段）。worker 计时是主机时间；GPU 异步执行，某一阶段的耗时可能包含前一阶段排队的 kernel。
 
-每隔 ``runner.log_interval`` 次更新（默认 100）、最后一次更新后以及每次评测后记录一次指标。一次记录里的 ``train/*`` 和 ``time/*`` 是触发这次记录的那次迭代的值，``env/sim/*`` 统计则覆盖上一次记录以来的全部控制步。不每次更新都记录，是因为 TensorBoard 待写的事件超过十条时会阻塞训练循环，在网络存储上每次更新要多花几十毫秒。每次记录还会在控制台打印 RLinf 的指标表（进度、已用时间、预计剩余时间和最新值），并把同一张表追加到 ``<log_path>/metrics.log``。
+每隔 ``runner.log_interval`` 次更新（默认 100）、最后一次更新后以及每次评测后记录一次指标；``env/sim/*`` 覆盖上一次记录以来的全部控制步。每次更新都记录会拖慢训练，因为 TensorBoard 待写的事件超过十条时会阻塞训练循环。每次记录还会打印 RLinf 的指标表，并追加到 ``<log_path>/metrics.log``。
 
 .. _supermimic-reported-results:
 
@@ -709,7 +658,7 @@ policy 接口不同的检查点会被拒绝。replay 和仿真状态不保存，
 MI300X 社区复现
 ^^^^^^^^^^^^^^^^
 
-`PR #1767 中 ZJLi2013 的反馈 <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_ 报告了两次 MI300X 训练：以提交 ``0a19b154`` 为基线，加入对方的两处旧版兼容修改，使用同一套配方、seed 0 和 40 条 LAFAN1 片段，只把保存间隔改为 500 次更新。两个检查点的结果如下：
+`PR #1767 中 ZJLi2013 的反馈 <https://github.com/RLinf/RLinf/pull/1767#issuecomment-6593698481>`_ 报告了两次 MI300X 训练，配方、seed 和片段相同，以提交 ``0a19b154`` 为基线并加入两处适配旧软件栈的兼容修改：
 
 .. list-table::
    :header-rows: 1
@@ -731,11 +680,7 @@ MI300X 社区复现
      - 39/40
      - 0.844
 
-对方认为这些结果与 A800 报告的差距处于运行波动量级；两次运行支持训练效果接近，但不足以证明跨平台结果严格等价。它们衡量的是训练片段的跟踪效果。
-
-Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0.97 秒一次更新，actor 首次编译约 6 分钟。对方报告 ``torch.compile`` 在 ROCm 上生效，没有训练扫描回退到 eager。评论引用的 A800 0.856 来自 PR 较早一轮的 16000 次更新报告；上表中单进程实现的 A800 运行得到 0.850、约 2 小时，属于不同轮次。
-
-这些第三方运行使用旧基线及其兼容修改，不能据此认定当前 AMD 安装分支或其他 AMD GPU 已通过验证。安装步骤见 `AMD MI300X（实验性）`_。
+Run A 用时约 4 小时 15 分（稳态约 0.97 秒一次更新），``torch.compile`` 在 ROCm 上生效，没有回退到 eager。两次运行说明训练片段上的跟踪效果接近，但不能证明跨平台严格等价，也不能验证当前的 AMD 安装路径。
 
 故障排查
 --------
@@ -747,7 +692,7 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 * **"reference clip q0 differs from the mjlab G1 default joint pose"。** 片段是用别的默认姿态转换的，需要重新转换。
 * **BONES-SEED 的 CSV 被拒绝。** 表头需要 ``Frame``、``root_translateX/Y/Z``、``root_rotateX/Y/Z`` 和 29 个 ``关节名_dof``。根位置用厘米，角度用度。报错会写出文件名和缺掉的列。
 * **恢复后从第 0 次更新开始。** 日志里有 ``resume_dir=auto found no complete checkpoint under ...``：``log_path`` 或 ``experiment_name`` 与原运行不同，或者原运行从没写过检查点（``save_interval`` 为 -1）。
-* **"... was trained with <键>=..., but this config has ..."。** 检查点的 ``supermimic_interface.json`` 与配置不一致，请传入训练时用的覆盖项。没有这个文件的检查点来自当前结构之前，不能加载。
+* **"... was trained with <键>=..., but this config has ..."。** 检查点的 ``supermimic_interface.json`` 与配置不一致，请传入训练时用的覆盖项。
 * **日志停在 "Compiling SuperMimic <名字> for large CUDA batches"。** 第一次大批量在等编译，冷缓存时要几分钟，见 `性能与硬件`_。不要在训练途中删 inductor 缓存目录。
 * **"SuperMimic <名字> stayed eager"。** 这一段编译失败了，之后一直走 eager。结果不变，但训练会变慢。
 * **"the longest clip in env.train.motion_path has <n> control steps"。** episode 随片段结束，所以世界模型窗口需要至少一条片段在 50 Hz 下有 ``algorithm.k`` 个控制步。
@@ -759,17 +704,14 @@ Run A 完成 16000 次更新约用 4 小时 15 分，600 次更新后稳态约 0
 
 **A800 上的训练。** env、rollout、actor 三个 worker 共用一张 80 GB A800，配方为 4096 个环境、bfloat16 autocast，编译缓存已在：
 
-* 预热加前 100 次更新共 75 s。前 500 次只训世界模型，约 34 s / 100 次；第 600 次之后 51–57 s / 100 次，平均 54 s，也就是约 0.54 s 一次更新。第 14000 次更新时已用 2 小时 5 分，16000 次共 2 小时 23 分 29 秒。
-* 没有卡顿的一次迭代约 0.47 s（``time/step``）。worker 之间每个控制步都通过 CUDA IPC 交换数据；所用节点上，进程间的 CUDA IPC 大约每分钟卡顿 1–3 s，在不经过 RLinf 的双进程测试里也一样，这解释了与 0.54 s 平均值之间的一部分差距。
+* 前 500 次只训世界模型，约 34 s / 100 次；第 600 次之后平均约 0.54 s 一次更新，16000 次共 2 小时 23 分。
+* 没有卡顿的一次迭代约 0.47 s（``time/step``）。worker 之间每个控制步都通过 CUDA IPC 交换数据，所用节点上 CUDA IPC 大约每分钟卡顿 1–3 s，在单独的双进程测试里也一样。
 
-**单进程实现** 在同一型号的 A800 上运行同一配方：前 500 次约 26 s / 100 次，之后 43–47 s / 100 次，平均 44.9 s，也就是约 0.45 s 一次更新；16000 次共 1 小时 59 分 51 秒。zita-ch 的代码在同一型号的 A800 上实测为 2 小时 15 分。显存只在这次运行中记录过：
-
-* PyTorch 峰值分配 17.1 GB（reserved 18.8 GB），驱动看到的整卡用量 20.1 GB，Warp 内存池峰值 0.48 GB，主机 RSS 约 4.0 GB。
-* 结束时累计 40064 个向量仿真步、约 1.64 亿个环境转移。
+单进程实现在同一型号的 GPU 上约 0.45 s 一次更新，共约 2 小时，PyTorch 峰值 17.1 GB（整卡 20.1 GB），主机内存约 4 GB；zita-ch 的代码用时 2 小时 15 分。
 
 **编译。** 首次大规模运行会编译训练扫描和 FK。PyTorch kernel 缓存在 ``/tmp/torchinductor_<用户名>``，换机器或清空缓存后启动会更慢。正式训练保持 ``actor.model.torch_compile`` 为 ``True``；设为 ``False`` 时训练扫描、环境中的编译片段和 FK 都以 eager 方式运行，适合小规模冒烟测试。
 
-在 WSL2 下的一张 8 GB 笔记本 GPU 上：1024 个环境每秒采集约 3,900 个环境转移；用论文批量四分之一（1024 条想象 rollout、512 个窗口）做一次更新约 21 s，PyTorch 峰值 4.2 GB；论文批量下一次更新需要约 11 GB，超过这张卡的显存。这些数字来自受 kernel 启动开销限制的笔记本环境，不能用来推测数据中心 GPU 的表现。
+论文批量下一次更新需要约 11 GB 显存，8 GB 显卡只能运行缩小规模的冒烟配置。
 
 验证范围
 --------
