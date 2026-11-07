@@ -619,12 +619,14 @@ class _StreamingScalarFeatureDataset(_LegacyDataset):
             {
                 "done": Value("bool"),
                 "is_success": Value("bool"),
+                "intervene_flag": Value("bool"),
                 "segment_id": Value("uint8"),
             }
         )
         self.episode_buffer = {
             "done": [],
             "is_success": [],
+            "intervene_flag": [],
             "segment_id": [],
             "size": 0,
         }
@@ -633,13 +635,21 @@ class _StreamingScalarFeatureDataset(_LegacyDataset):
     def add_frame(self, frame):
         self.episode_buffer["done"].append(frame["done"])
         self.episode_buffer["is_success"].append(frame["is_success"])
+        self.episode_buffer["intervene_flag"].append(frame["intervene_flag"])
         self.episode_buffer["segment_id"].append(frame["segment_id"])
         self.episode_buffer["size"] += 1
 
     def save_episode(self):
+        for name in self.hf_features:
+            assert np.stack(self.episode_buffer[name]).shape == (
+                self.episode_buffer["size"],
+            )
         assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
         assert all(
             isinstance(value, bool) for value in self.episode_buffer["is_success"]
+        )
+        assert all(
+            isinstance(value, bool) for value in self.episode_buffer["intervene_flag"]
         )
         assert all(
             isinstance(value, int) for value in self.episode_buffer["segment_id"]
@@ -677,24 +687,37 @@ def test_current_dataset_gets_task_as_argument():
     assert dataset.saved_episodes == 1
 
 
-def test_streaming_writer_converts_scalar_schema_arrays_before_save():
+@pytest.mark.parametrize(
+    ("streaming", "is_success"),
+    [(False, None), (True, None), (True, False), (True, True)],
+)
+def test_writer_converts_scalar_schema_arrays_before_save(streaming, is_success):
     dataset = _StreamingScalarFeatureDataset()
     writer = _make_writer(dataset)
-    writer.add_frame(
+    frames = [
         {
             "done": np.array([False], dtype=bool),
             "is_success": np.array([False], dtype=bool),
-            "segment_id": np.array([3], dtype=np.uint8),
+            "intervene_flag": np.array([bool(index)], dtype=bool),
+            "segment_id": np.array([3 + index], dtype=np.uint8),
             "task": "pick up the cube",
         }
-    )
+        for index in range(2)
+    ]
 
-    assert writer.save_episode(is_success=True) == 1
+    if streaming:
+        for frame in frames:
+            writer.add_frame(frame)
+        assert writer.save_episode(is_success=is_success) == 2
+    else:
+        writer.add_episode(frames)
+
     assert dataset.episode_buffer == {
-        "done": [True],
-        "is_success": [True],
-        "segment_id": [3],
-        "size": 1,
+        "done": [False, is_success is not None],
+        "is_success": [is_success is True] * 2,
+        "intervene_flag": [False, True],
+        "segment_id": [3, 4],
+        "size": 2,
     }
     assert dataset.saved_episodes == 1
 
