@@ -124,7 +124,7 @@ Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a s
 | Task | Skill |
 |---|---|
 | Open a PR, or fix a PR title or description | `create-pr` |
-| Review a PR against CONTRIBUTING.md | `review-pr` |
+| Review a PR, or post review comments on it | `review-pr` |
 | Write or restructure a docs page | `refine-docs` |
 | Check docs against the code and EN/ZH parity | `docs-check` |
 | Add the example page for a new model or env | `add-example-doc-model-env` |
