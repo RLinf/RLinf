@@ -176,9 +176,9 @@ Papers
 
 2 more papers are accepted to **RSS 2026**:
 
-- **USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI** (RSS 2026, i.e. RLinf-USER). Corresponds to the RLinf real-world online policy learning system. Doc: `RLinf-USER <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_user.html>`__ ｜ Paper: `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ ｜ `RSS Paper <https://roboticsconference.org/program/papers/37/>`__.
+- **USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI** (RSS 2026). Corresponds to the RLinf real-world online policy learning system. Doc: `USER <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_user.html>`__ ｜ Paper: `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ ｜ `RSS Paper <https://roboticsproceedings.org/rss22/p037.html>`__.
 
-- **RLux-VLA: A Unified and Efficient Framework for Reinforcement Learning of Vision-Language-Action Models** (RSS 2026, i.e. RLinf-VLA). Corresponds to RLinf's unified VLA+RL framework. Doc: `RLinf-VLA <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_vla.html>`__ ｜ Paper: `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ ｜ `RSS Paper <https://roboticsconference.org/program/papers/89/>`__.
+- **RLinf-VLA: A Unified and Efficient Framework for Reinforcement Learning of Vision-Language-Action Models** (RSS 2026). Corresponds to RLinf's unified VLA+RL framework. Doc: `RLinf-VLA <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_vla.html>`__ ｜ Paper: `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ ｜ `RSS Paper <https://roboticsproceedings.org/rss22/p089.html>`__.
 
 Important Fixes
 ^^^^^^^^^^^^^^^^^
