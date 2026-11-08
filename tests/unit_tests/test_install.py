@@ -28,9 +28,8 @@ import pytest
 def ascend_install(tmp_path):
     root = Path(__file__).resolve().parents[2]
     requirements = tmp_path / "requirements"
-    requirements.mkdir()
+    shutil.copytree(root / "requirements", requirements)
     script = requirements / "install.sh"
-    shutil.copyfile(root / "requirements/install.sh", script)
     pyproject = tmp_path / "pyproject.toml"
     original = (root / "pyproject.toml").read_text()
     pyproject.write_text(original)
@@ -58,8 +57,22 @@ def ascend_install(tmp_path):
         '__version__ = re.search(r\'"torch==([^"]+)"\', '
         "Path('pyproject.toml').read_text()).group(1)\n"
     )
+    # Model installs reuse this checkout instead of cloning, and the LIBERO
+    # asset download is a no-op.
+    gr00t = tmp_path / "Isaac-GR00T"
+    gr00t.mkdir()
+    (bin_dir / "libero-download-assets").write_text("#!/bin/bash\n")
+    (bin_dir / "libero-download-assets").chmod(0o755)
 
-    def run(chip_output="910B4", probe_exit=0, arch="x86_64", chip=None, torch=None):
+    def run(
+        chip_output="910B4",
+        probe_exit=0,
+        arch="x86_64",
+        chip=None,
+        torch=None,
+        model=None,
+        env_name="dummy",
+    ):
         probe = bin_dir / "npu-smi"
         probe.write_text(
             '#!/bin/bash\nprintf "%s\\n" "$PROBE_OUTPUT"\nexit "$PROBE_EXIT"\n'
@@ -78,6 +91,7 @@ def ascend_install(tmp_path):
             "PROBE_OUTPUT": chip_output,
             "PROBE_EXIT": str(probe_exit),
             "TEST_ARCH": arch,
+            "GR00T_PATH": str(gr00t),
         }
         env.pop("ASCEND_CHIP", None)
         env.pop("UV_TORCH_BACKEND", None)
@@ -95,8 +109,10 @@ def ascend_install(tmp_path):
             str(venv),
             "embodied",
             "--env",
-            "dummy",
+            env_name,
         ]
+        if model is not None:
+            command.extend(["--model", model])
         if torch is not None:
             command.extend(["--torch", torch])
         result = subprocess.run(
@@ -152,3 +168,11 @@ def test_ascend_installer_keeps_950_post_build_with_matching_torch_override(
 ):
     calls = ascend_install(chip="Ascend950PR", torch="2.10.0")
     assert any("torch-npu==2.10.0.post4" in call["args"] for call in calls)
+
+
+def test_ascend_installer_installs_gr00t_n1d7_with_libero(ascend_install):
+    calls = ascend_install(chip="Ascend950PR", model="gr00t_n1d7", env_name="libero")
+    args = [call["args"] for call in calls]
+    assert ["pip", "install", "rlinf-libero"] in args
+    assert any(arg[-1].endswith("models/gr00t_n1d7.txt") for arg in args)
+    assert any("torch-npu==2.10.0.post4" in arg for arg in args)

@@ -3153,8 +3153,8 @@ install_gr00t_n1d7_model() {
     uv pip install -e "$gr00t_path" --no-deps
 
     case "$ENV_NAME" in
-        maniskill_libero)
-            install_maniskill_libero_env
+        maniskill_libero|libero)
+            install_${ENV_NAME}_env
             install_flash_attn
             ;;
         *)
