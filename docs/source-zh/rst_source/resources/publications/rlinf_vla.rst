@@ -6,7 +6,7 @@ RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training
    :height: 16px
    :class: inline-icon
 
-**论文：** `RSS 2026 <https://roboticsconference.org/program/papers/89/>`__ | `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ | **模型：** `RLinf-OpenVLA <https://huggingface.co/collections/RLinf/openvla>`__ | `RLinf-OpenVLAOFT <https://huggingface.co/collections/RLinf/openvla-oft>`__
+**论文：** `RSS 2026 <https://roboticsproceedings.org/rss22/p089.html>`__ | `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ | **模型：** `RLinf-OpenVLA <https://huggingface.co/collections/RLinf/openvla>`__ | `RLinf-OpenVLAOFT <https://huggingface.co/collections/RLinf/openvla-oft>`__
 
 概述
 ----
@@ -192,11 +192,16 @@ RoboTwin（七项任务）
 引用
 ----
 
+请引用以下 RSS 2026 论文：
+
 .. code-block:: bibtex
 
-   @article{zang2025rlinf,
-     title={RLinf-VLA: A unified and efficient framework for VLA+ RL training},
-     author={Zang, Hongzhi and Wei, Mingjie and Xu, Si and Wu, Yongji and Guo, Zhen and Wang, Yuanqing and Lin, Hao and Shi, Liangzhi and Xie, Yuqing and Xu, Zhexuan and others},
-     journal={arXiv preprint arXiv:2510.06710},
-     year={2025}
+   @INPROCEEDINGS{ZangH2-RSS-26,
+       AUTHOR    = {Hongzhi Zang AND Mingjie Wei AND Si Xu AND Yongji Wu AND Zhen Guo AND Yuanqing Wang AND Hao Lin AND Peihong Wang AND Hua Yuan AND Yixian Zhang AND Liangzhi Shi AND Yuqing Xie AND Zhexuan Xu AND Zhihao Liu AND Kang Chen AND Wenhao Tang AND Quanlu Zhang AND Weinan Zhang AND Chao Yu AND Yu Wang},
+       TITLE     = {{RLinf-VLA: A Unified and Efficient Framework for Reinforcement Learning of Vision-Language-Action Models}},
+       BOOKTITLE = {Proceedings of Robotics: Science and Systems},
+       YEAR      = {2026},
+       ADDRESS   = {Sydney, Australia},
+       MONTH     = {July},
+       DOI       = {10.15607/RSS.2026.XXII.089}
    }

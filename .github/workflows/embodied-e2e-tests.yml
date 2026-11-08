@@ -1371,6 +1371,56 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-libero-phyai-test:
+    runs-on: embodied
+    timeout-minutes: 90
+    env:
+      CUDA_VISIBLE_DEVICES: 0,1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PhyAI environment
+        timeout-minutes: 45
+        run: |
+          unset UV_DEFAULT_INDEX PYTHONPATH
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          rm -rf "$GITHUB_WORKSPACE/.venv"
+          bash requirements/install.sh \
+            --python 3.12 \
+            --venv .venv \
+            --install-rlinf \
+            embodied \
+            --model openpi \
+            --env libero \
+            --engine phyai
+
+      - name: PhyAI rollout worker unit tests
+        timeout-minutes: 10
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py -k phyai
+
+      - name: Libero-Spatial PPO OpenPI Pi05 PhyAI test
+        timeout-minutes: 40
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_pi05_phyai_ci
+
+      - name: Clean up
+        if: always()
+        run: |
+          source .venv/bin/activate 2>/dev/null || true
+          ray stop --force || true
+          rm -rf "$GITHUB_WORKSPACE/.venv"
+          uv cache prune
+
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
     steps:
@@ -1614,6 +1664,37 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-openpi-robodojo-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
+          bash requirements/install.sh embodied --model openpi --env robodojo
+
+      - name: RoboDojo OpenPI Pi05 eval test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBODOJO_ASSETS_ROOT=/workspace/dataset/robodojo
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh robodojo_put_bottles_into_dustbin_pi05_eval
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+          rm -rf /tmp/tmp*
 
   embodied-dexbotic-maniskill-libero-test:
     runs-on: embodied
@@ -2176,6 +2257,47 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh robotwin_ppo_lingbotvlav2
 
       - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-psi0-simple-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        timeout-minutes: 90
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export SIMPLE_PATH=/workspace/dataset/psi0_simple/SIMPLE
+          bash requirements/install.sh embodied --model psi0 --env simple
+
+      - name: SIMPLE OpenOven Psi0 PPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export HF_HOME=/workspace/dataset/.cache/huggingface
+          bash tests/e2e_tests/embodied/run.sh simple_openoven_ppo_psi0
+
+      - name: SIMPLE OpenOven Psi0 evaluation test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export HF_HOME=/workspace/dataset/.cache/huggingface
+          bash tests/e2e_tests/evaluations/run.sh simple_openoven_psi0_eval
+
+      - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           uv cache prune
