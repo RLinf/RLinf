@@ -208,15 +208,13 @@ reference model。
    bash requirements/install.sh embodied --model diffusion --venv /path/to/venv
    source /path/to/venv/bin/activate
 
-该命令会创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU 版 PaddlePaddle。它适用于 OCR reward 设置为 ``use_gpu: False`` 的配置，包括 ``sd3_nft_ocr.yaml``。
+该命令创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU 版 PaddlePaddle，适用于 ``sd3_nft_ocr.yaml`` 等使用 ``use_gpu: False`` 的 OCR 配置。
 
-仓库中的 Wan2.2 OCR 配置使用 ``use_gpu: True``。运行以下命令安装支持 CUDA 的 PaddlePaddle wheel：
+Wan2.2 OCR 配置使用 ``use_gpu: True``。添加 ``--paddle-gpu`` 安装 GPU 版 PaddlePaddle，支持 CUDA 11.x 和 12.x：
 
 .. code:: bash
 
    bash requirements/install.sh embodied --model diffusion --paddle-gpu
-
-根据 CUDA 版本，GPU wheel 大约为 760--800 MB。GPU 安装支持检测到的 CUDA 11 和 12，分别选择 ``cu118`` 和 ``cu120`` 构建。安装脚本优先检查 PyTorch 的 CUDA 构建版本，再检查 ``nvcc``；其他版本会在替换现有 Paddle 包之前报错。如果已安装匹配的 GPU 构建，则会跳过下载。diffusion 安装中的两次项目同步都会保留外部安装的包，因此重复安装时会保留匹配的 GPU wheel。切换 CPU/GPU Paddle 时会卸载另一种 distribution；其他模型仍采用精确同步。
 
 .. warning::
 
@@ -297,7 +295,7 @@ prompt，``env.*.dataset.split`` 用于选择对应文件。
 
 更多参数位于 ``examples/diffusion/config/*.yaml``。
 
-将 ``runner.resume_dir`` 设为 ``checkpoints/global_step_N`` 目录即可恢复 NFT 训练。Off-policy checkpoint 在 actor 训练状态之外，还通过 ``actor/nft_rollout_state.pt`` 保存 EMA rollout 权重。加载缺少 EMA 权重的旧 checkpoint 时，actor 会记录告警，并从已恢复的 actor 权重初始化 EMA；这种兼容方式不属于精确续训。
+将 ``runner.resume_dir`` 设为 ``checkpoints/global_step_N`` 目录可恢复 NFT 训练，包括 off-policy 的 EMA rollout 权重。如果旧 checkpoint 缺少 EMA 权重，actor 会记录告警，并用恢复后的 actor 权重初始化 EMA，此时无法精确续训。
 
 预期实验结果
 ------------
@@ -346,41 +344,3 @@ Wan2.2 图像和视频实验上升更快，SD3 随后达到接近的区间。该
 
 Scalar 定义与 logger 目录结构见
 :doc:`训练指标 </rst_source/reference/metrics>`。
-
-
-验证 Offload 数据传输
----------------------
-
-比较训练耗时之前，先验证真实 CUDA 到 pinned CPU 的传输，以及共享 HF offload/reload 路径：
-
-.. code:: bash
-
-   pytest tests/unit_tests/test_utils.py tests/unit_tests/test_models.py \
-     -k 'pinned_offload or hf_rollout_offload_reload' \
-     -o junit_family=xunit1 --junitxml=offload-tests.xml
-
-CUDA 测试检查数值、布局、dtype 和异常后的恢复。HF 测试使用非 diffusion 的 MLP 模块，分别在有、无辅助模型时执行三轮 offload/reload，并将 ``host_peak_rss_bytes`` 和 ``offloaded_tensor_bytes`` 写入 JUnit properties。CUDA 单测 CI 会上传这些 XML 报告。仅有 CPU 时会跳过 CUDA 测试。OpenPI PPO e2e 也会开启 rollout offload，运行两轮训练。
-
-2026 年 10 月 29 日，16 项定向测试在 NVIDIA A100 80GB PCIe、PyTorch 2.6.0+cu124 环境中通过。测试使用的 Python 源码与 commit ``3985e819`` 一致：
-
-.. list-table:: 小模型 Offload 测量
-   :header-rows: 1
-
-   * - 模型
-     - Offload Tensor 大小
-     - 进程 RSS 峰值
-   * - 主 MLP
-     - 4.04 MiB
-     - 1050.67 MiB
-   * - 主 MLP + 两个辅助 MLP
-     - 12.13 MiB
-     - 1088.18 MiB
-
-RSS 是测试进程整个生命周期的高水位，包含 import 和 CUDA runtime，不是单项测试的内存增量，也不是完整训练的测量结果。Tensor 大小统计存活的 offload 参数和 buffer，不包含 pinned allocator 缓存。规划 Wan 训练内存时，应分别测量各 worker 和整机峰值。
-
-记录实验版本
-------------
-
-为 main/PR 对照标注每次运行实际使用的源码版本。``run_diffusion.sh`` 会在运行日志目录中将 commit SHA 和工作区状态保存到 ``git_revision.txt``，将已跟踪文件的改动保存到 ``git_diff.patch``，并将启动命令写入 ``run_diffusion.log``。请将这些文件与解析后的配置和指标一同保存。空 patch 表示已跟踪文件没有改动；未跟踪文件会出现在状态记录中，但不会写入 patch。
-
-实验标签应使用记录的 SHA，而不是分支名或 PR 编号。没有版本记录的历史运行应标为 ``source revision unrecorded``，不要用当前 HEAD 追溯标注旧实验。
