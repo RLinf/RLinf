@@ -76,6 +76,7 @@ from rlinf.scheduler.cluster.utils import (
     pack_dataclass_tensors,
     unpack_dataclass_tensors,
 )
+from rlinf.utils.data_iter_utils import get_seqlen_BFD_partitions
 from rlinf.utils.env_helpers import SmoothInterveneController
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
@@ -93,6 +94,51 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+def _quadratic_bfd_reference(lengths, max_tokens):
+    partitions = []
+    remaining_capacities = []
+    order = sorted(range(len(lengths)), key=lengths.__getitem__, reverse=True)
+    for sample_idx in order:
+        sample_len = lengths[sample_idx]
+        candidates = [
+            (capacity - sample_len, group_idx)
+            for group_idx, capacity in enumerate(remaining_capacities)
+            if capacity >= sample_len
+        ]
+        if candidates:
+            _, group_idx = min(candidates)
+            partitions[group_idx].append(sample_idx)
+            remaining_capacities[group_idx] -= sample_len
+        else:
+            partitions.append([sample_idx])
+            remaining_capacities.append(max_tokens - sample_len)
+    return partitions
+
+
+@pytest.mark.parametrize(
+    ("lengths", "max_tokens"),
+    [
+        ([6, 5, 4, 3, 2], 10),
+        ([8, 7, 6, 5, 4, 3, 2, 1], 10),
+        ([5] * 17, 10),
+        ([0, 0, 1, 1, 2, 2], 3),
+    ],
+)
+def test_bfd_partitioning_preserves_best_fit_order(lengths, max_tokens):
+    assert get_seqlen_BFD_partitions(lengths, max_tokens) == (
+        _quadratic_bfd_reference(lengths, max_tokens)
+    )
+
+
+def test_bfd_partitioning_matches_reference_for_realistic_batch():
+    generator = random.Random(20261108)
+    lengths = [generator.randint(64, 8192) for _ in range(1024)]
+
+    assert get_seqlen_BFD_partitions(lengths, 8192) == (
+        _quadratic_bfd_reference(lengths, 8192)
+    )
 
 
 def _scalar_trajectory(value: float) -> Trajectory:
