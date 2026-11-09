@@ -149,8 +149,26 @@ class Encoder(nn.Module):
         mlp_dim: int | None = None,
         dropout: float = 0.0,
         use_gradient_checkpointing: bool = False,
+        temporal_layers: Sequence[int] = (),
+        drop_history_layer: int | None = None,
     ):
         super().__init__()
+        self.temporal_layers = tuple(temporal_layers)
+        self.drop_history_layer = drop_history_layer
+        if tuple(sorted(set(self.temporal_layers))) != self.temporal_layers:
+            raise ValueError("Temporal layers must be unique and sorted.")
+        if drop_history_layer is not None and not 0 <= drop_history_layer < depth:
+            raise ValueError(
+                f"History-drop layer {drop_history_layer} must be within "
+                f"the {depth} SigLIP layers."
+            )
+        if any(
+            drop_history_layer is None or not 0 <= index <= drop_history_layer
+            for index in self.temporal_layers
+        ):
+            raise ValueError(
+                "Temporal layers must precede or equal the history-drop layer."
+            )
         self.layers = nn.ModuleList(
             [
                 Encoder1DBlock(
@@ -174,20 +192,15 @@ class Encoder(nn.Module):
         *,
         frame_mask: torch.Tensor | None = None,
         time_offsets: torch.Tensor | None = None,
-        temporal_layers: Sequence[int] = (),
-        drop_history_layer: int | None = None,
     ) -> torch.Tensor:
+        if (frame_mask is None) != (time_offsets is None):
+            raise ValueError("frame_mask and time_offsets must be provided together.")
         if frame_mask is not None:
-            if not 0 <= drop_history_layer < len(self.layers):
-                raise ValueError(
-                    f"History-drop layer {drop_history_layer} must be within "
-                    f"the {len(self.layers)} SigLIP layers."
-                )
             x = x * frame_mask[:, :, None, None]
         for index, layer in enumerate(self.layers):
             layer_forward = (
                 partial(layer, frame_mask=frame_mask, time_offsets=time_offsets)
-                if index in temporal_layers
+                if index in self.temporal_layers
                 else layer
             )
             if self.gradient_checkpointing and self.training:
@@ -200,7 +213,7 @@ class Encoder(nn.Module):
                 x = layer_forward(x)
             if frame_mask is not None:
                 x = x * frame_mask[:, :, None, None]
-                if index == drop_history_layer:
+                if index == self.drop_history_layer:
                     x = x[:, -1]
                     frame_mask = None
                     time_offsets = None
@@ -221,6 +234,8 @@ class SigLIPViT(nn.Module):
         num_classes: int = 0,
         use_gradient_checkpointing: bool = False,
         dtype_mm: str = "float32",
+        temporal_layers: Sequence[int] = (),
+        drop_history_layer: int | None = None,
     ):
         super().__init__()
 
@@ -259,6 +274,8 @@ class SigLIPViT(nn.Module):
             mlp_dim=self.mlp_dim,
             dropout=0.0,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            temporal_layers=temporal_layers,
+            drop_history_layer=drop_history_layer,
         )
 
         # Output head: projects width -> num_classes (used when num_classes matches PaliGemma width)
@@ -303,8 +320,6 @@ class SigLIPViT(nn.Module):
         *,
         frame_mask: torch.Tensor | None = None,
         time_offsets: torch.Tensor | None = None,
-        temporal_layers: Sequence[int] = (),
-        drop_history_layer: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass.
 
@@ -312,8 +327,6 @@ class SigLIPViT(nn.Module):
             image: [B, H, W, 3] or [B, K, H, W, 3] in [-1, 1] float32.
             frame_mask: Valid frames [B, K] for video inputs.
             time_offsets: Relative frame times [B, K] in seconds.
-            temporal_layers: Encoder layers that mix matching patches over time.
-            drop_history_layer: Last layer that processes historical frames.
 
         Returns:
             tokens: (B, num_patches, width) - all patch tokens when pool_type="none"
@@ -344,8 +357,6 @@ class SigLIPViT(nn.Module):
             x,
             frame_mask=frame_mask,
             time_offsets=time_offsets,
-            temporal_layers=temporal_layers,
-            drop_history_layer=drop_history_layer,
         )
 
         if self.pool_type == "map":

@@ -205,7 +205,7 @@ def _worker(
             elif cmd == "reset_memory_progress":
                 core = env.env
                 core.reset_subgoal_progress()
-                # Upstream omits the episode-local overshoot latch.
+                # LIBERO-Mem 0eee0def workaround: reset leaves the overshoot latch set.
                 core._overshot = False
                 advance_memory = True
                 p.send(None)

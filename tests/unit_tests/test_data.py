@@ -757,6 +757,52 @@ def test_episode_boundaries_rejects_v30_meta_without_the_columns():
         episode_boundaries(_Partial())
 
 
+@pytest.mark.parametrize(
+    "config_name,image_key,wrist_key,state_key,action_key",
+    [
+        ("pi05_libero", "image", "wrist_image", "state", "actions"),
+        (
+            "pi05_libero_mem",
+            "observation.images.image",
+            "observation.images.wrist_image",
+            "observation.state",
+            "action",
+        ),
+    ],
+)
+def test_libero_data_config_preserves_camera_state_and_action_targets(
+    config_name, image_key, wrist_key, state_key, action_key
+):
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config(config_name)
+    data_config = config.data.create(config.assets_dirs, config.model)
+    sample = {
+        image_key: np.full((8, 8, 3), 10, dtype=np.uint8),
+        wrist_key: np.full((8, 8, 3), 20, dtype=np.uint8),
+        state_key: np.arange(8, dtype=np.float32),
+        action_key: np.arange(70, dtype=np.float32).reshape(10, 7),
+        "prompt": "pick up the cup",
+    }
+    transformed = sample
+    for transform in (
+        *data_config.repack_transforms.inputs,
+        *data_config.data_transforms.inputs,
+    ):
+        transformed = transform(transformed)
+
+    assert data_config.action_sequence_keys == (action_key,)
+    assert data_config.prompt_from_task
+    np.testing.assert_array_equal(transformed["image"]["base_0_rgb"], sample[image_key])
+    np.testing.assert_array_equal(
+        transformed["image"]["left_wrist_0_rgb"], sample[wrist_key]
+    )
+    np.testing.assert_array_equal(transformed["state"], sample[state_key])
+    np.testing.assert_array_equal(transformed["actions"], sample[action_key])
+    assert transformed["prompt"] == sample["prompt"]
+
+
 @pytest.mark.parametrize("num_frames", [1, 3])
 def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_frames):
     from datasets import Dataset

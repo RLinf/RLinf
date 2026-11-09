@@ -14,7 +14,7 @@ imitate demonstrations first, then continue with RL from a stronger prior.
 
 For visual-history conditioning on LIBERO-Mem, follow
 :doc:`OpenPI Short Memory Evaluation and Training </rst_source/guides/data-checkpoints/openpi_short_memory>`.
-That guide covers history sampling and the FSDP1 / FSDP2 SFT recipe.
+That guide covers history sampling and the FSDP1 SFT recipe.
 
 Recipes
 -------

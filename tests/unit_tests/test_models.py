@@ -161,11 +161,81 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
     assert wrap_policy(module=model.head, recurse=False, nonwrapped_numel=0)
 
 
+@pytest.mark.parametrize(
+    "memory_enabled,history_config,use_rlt,error",
+    [
+        (False, None, False, None),
+        (False, None, True, None),
+        (False, {"num_frames": 8, "stride": 70}, False, None),
+        (True, {"num_frames": 8, "stride": 70}, False, None),
+        (True, None, False, "requires data.short_memory"),
+        (False, {"num_frames": 8, "stride": 70}, True, "requires the RLT loader"),
+        (True, {"num_frames": 8, "stride": 70}, True, "requires the RLT loader"),
+    ],
+)
+def test_openpi_short_memory_sft_configuration(
+    memory_enabled, history_config, use_rlt, error
+):
+    from rlinf.config import validate_sft_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {},
+            "data": {"train_data_paths": "dataset", "short_memory": history_config},
+            "actor": {
+                "global_batch_size": 8,
+                "micro_batch_size": 2,
+                "model": {
+                    "model_type": "openpi",
+                    "openpi": {"short_memory": memory_enabled, "use_rlt": use_rlt},
+                },
+            },
+        }
+    )
+    if error is None:
+        validate_sft_cfg(cfg)
+        assert cfg.actor.model.openpi.short_memory is memory_enabled
+        assert cfg.data.short_memory == history_config
+    else:
+        with pytest.raises(AssertionError, match=error):
+            validate_sft_cfg(cfg)
+
+
+def test_openpi_short_memory_eval_requires_environment_history():
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied_eval"},
+            "env": {"eval": {"short_memory": None}},
+            "rollout": {
+                "model": {
+                    "model_type": "openpi",
+                    "num_action_chunks": 5,
+                    "num_steps": 5,
+                    "openpi": {
+                        "config_name": "pi05_libero",
+                        "task": "eval",
+                        "short_memory": True,
+                    },
+                }
+            },
+        }
+    )
+    with pytest.raises(AssertionError, match="requires env.eval.short_memory"):
+        validate_embodied_cfg(cfg)
+
+
 @pytest.fixture
 def short_memory_vision():
     torch.manual_seed(0)
     vision = SigLIPViT(variant="mu/32", pool_type="none")
-    vision.encoder = Encoder(vision.width, 3, vision.num_heads, vision.mlp_dim)
+    vision.encoder = Encoder(
+        vision.width,
+        3,
+        vision.num_heads,
+        vision.mlp_dim,
+        temporal_layers=(0, 1),
+        drop_history_layer=1,
+    )
     return vision
 
 
@@ -174,7 +244,7 @@ def test_openpi_short_memory_current_only_matches_image_encoder(
     short_memory_vision, num_frames
 ):
     vision = short_memory_vision.eval()
-    memory = ShortMemoryVisionEncoder(temporal_layers=(0, 1), drop_history_layer=1)
+    memory = ShortMemoryVisionEncoder()
     images = torch.randn(2, num_frames, 224, 224, 3)
     frame_mask = torch.zeros(2, num_frames, dtype=torch.bool)
     frame_mask[:, -1] = True
@@ -195,12 +265,12 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
 ):
     vision = short_memory_vision.train()
     vision.encoder.gradient_checkpointing = gradient_checkpointing
-    memory = ShortMemoryVisionEncoder(temporal_layers=(0, 1), drop_history_layer=1)
-    images = torch.randn(2, num_frames, 224, 224, 3, requires_grad=True)
-    frame_mask = torch.ones(2, num_frames, dtype=torch.bool)
+    memory = ShortMemoryVisionEncoder()
+    images = torch.randn(3, num_frames, 224, 224, 3, requires_grad=True)
+    frame_mask = torch.ones(3, num_frames, dtype=torch.bool)
     frame_mask[0, :-1] = False
     frame_mask[1, 0] = False
-    time_offsets = torch.arange(1 - num_frames, 1).float().expand(2, -1)
+    time_offsets = torch.arange(1 - num_frames, 1).float().expand(3, -1)
     calls = []
 
     def record_call(module, args):
@@ -214,10 +284,13 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
 
     # FSDP hooks must see one shared call path even when batch histories differ.
     assert calls == list(zip(owners, [5, 4, 4, 4, 4, 3]))
-    assert tokens.shape == (2, 49, vision.width)
+    assert tokens.shape == (3, 49, vision.width)
+    assert torch.isfinite(tokens).all()
     changed_padding = images.detach().clone()
     changed_padding[~frame_mask] = torch.randn_like(changed_padding[~frame_mask]) * 100
     with torch.no_grad():
+        current_only = vision(images[:1, -1])[0]
+        torch.testing.assert_close(tokens[:1], current_only, rtol=1e-5, atol=1e-5)
         changed_tokens = memory(
             vision,
             changed_padding,
@@ -231,6 +304,21 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
     assert torch.count_nonzero(images.grad[~frame_mask]) == 0
     assert images.grad[1, 1:-1].abs().sum() > 0
     assert vision.stem.weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("missing", ["frame_mask", "time_offsets"])
+def test_openpi_short_memory_requires_mask_and_time_together(
+    short_memory_vision, missing
+):
+    inputs = {
+        "frame_mask": torch.ones(1, 3, dtype=torch.bool),
+        "time_offsets": torch.tensor([[-2.0, -1.0, 0.0]]),
+    }
+    inputs.pop(missing)
+    with pytest.raises(ValueError, match="must be provided together"):
+        short_memory_vision.encoder(
+            torch.randn(1, 3, 49, short_memory_vision.width), **inputs
+        )
 
 
 def test_openpi_short_memory_temporal_attention_cannot_read_future_frames():

@@ -29,7 +29,7 @@ runner:
   save_interval: 2125
 
 data:
-  train_data_paths: /path/to/libero-mem-lerobot
+  train_data_paths: CollisionCode/libero_mem_lerobot_v2.1
   num_workers: 2
   short_memory:
     num_frames: 8
@@ -43,11 +43,11 @@ actor:
   seed: 42
   model:
     precision: fp32
-    model_path: /path/to/libero10_pi05_sft_checkpoint
+    model_path: /path/to/RLinf-Pi05-LIBERO-SFT
     num_action_chunks: 10
     openpi:
       task: sft
-      config_name: pi05_libero
+      config_name: pi05_libero_mem
       embed_dtype: bf16
       discrete_state_input: False
       train_expert_only: False
@@ -55,7 +55,7 @@ actor:
       short_memory_temporal_layers: [3, 7, 11, 15]
       short_memory_drop_history_layer: 15
     openpi_data:
-      norm_stats_path: /path/to/libero-mem-lerobot/norm_stats.json
+      norm_stats_path: /path/to/libero-mem/norm_stats.json
   optim:
     lr: 1.0e-5
     adam_beta1: 0.9

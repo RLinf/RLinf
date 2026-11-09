@@ -2,9 +2,9 @@ Evaluate and Train OpenPI with Short Memory
 ===========================================
 
 Use this guide to evaluate a short-memory π₀.₅ checkpoint on LIBERO-Mem and
-fine-tune one with FSDP or FSDP2. Start with the history settings, supply your
+fine-tune one with FSDP1. Start with the history settings, supply your
 checkpoint and normalization statistics, then launch evaluation or SFT.
-These recipes use RLinf's native ``openpi`` model with ``pi05_libero`` transforms.
+These recipes use RLinf's native ``openpi`` model with LIBERO transforms.
 Short memory supports ``openpi.task: eval`` and ``sft``; RL replay does not yet
 carry camera history.
 
@@ -14,7 +14,8 @@ Choose the Visual History
 Both recipes sample camera frames from the current episode, ordered from oldest
 to current. ``num_frames`` includes the current frame and is configurable; eight
 is the recipe default. ``stride`` counts environment control steps for evaluation
-and dataset frames for SFT. At 20 Hz, eight frames with stride 70 span 24.5 seconds.
+and dataset frames for SFT. In evaluation at 20 Hz, eight frames with stride 70
+span 24.5 seconds.
 
 Evaluation configures history under ``env.eval.short_memory``. SFT uses
 ``data.short_memory`` and reads the sampling rate from LeRobot metadata:
@@ -35,7 +36,13 @@ Evaluation configures history under ``env.eval.short_memory``. SFT uses
 
 Match evaluation's ``fps`` to the environment control rate. Evaluation derives
 relative times from control-step differences; SFT uses the selected frames'
-actual dataset timestamps. Missing frames at the episode start are zero-padded
+dataset timestamps. The two strides describe the same physical interval only
+when the dataset retains every control step at that rate. Conversion that drops
+idle frames and renumbers timestamps compresses the training timeline; reading
+those timestamps does not recover the removed time. Check the conversion before
+equating training and evaluation history spans. The public dataset below declares
+20 Hz, but its metadata alone does not establish that no control steps were
+dropped. Missing frames at the episode start are zero-padded
 and masked out, and histories are cleared when their environment resets.
 
 Only camera inputs carry history. State and prompt describe the current frame;
@@ -63,13 +70,27 @@ short-memory loader.
 The commands below use the dedicated ``.venv-libero-mem`` environment from that
 installation.
 
-Supply your own compatible π₀.₅ checkpoint and the OpenPI ``norm_stats.json``
-used with its dataset. All ``/path/to/...`` values in the recipes are placeholders.
+For SFT, download the public
+`RLinf-Pi05-LIBERO-SFT weights <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__:
+
+.. code-block:: bash
+
+   hf download RLinf/RLinf-Pi05-LIBERO-SFT \
+     --local-dir checkpoints/RLinf-Pi05-LIBERO-SFT
+
+This supplies the initial weights for the recipe below. Compute LIBERO-Mem
+normalization statistics from the training dataset as described below. The
+reported paired experiment used a separate LIBERO-10 ``global_step_8000``
+checkpoint; these public weights are a starting point for training, not an
+assertion of identical experiment lineage.
+
+For evaluation, supply your fine-tuned checkpoint and its OpenPI
+``norm_stats.json``. All ``/path/to/...`` values are placeholders.
 ``model_path`` accepts a safetensors checkpoint directory or an RLinf checkpoint
 with ``actor/model_state_dict/full_weights.pt`` (also its ``actor`` or
 ``model_state_dict`` directory). Direct safetensors and ``.pt`` weight paths are
 accepted. Model shape and transforms come from the selected YAML configuration,
-so keep ``pi05_libero``, the action horizon, and normalization consistent with
+so keep the LIBERO transforms, action horizon, and normalization consistent with
 the weights. Loading weights alone starts a new training run; complete training
 state is restored through ``runner.resume_dir``.
 
@@ -98,12 +119,76 @@ command. Use the checkpoint's training history settings for comparable results.
 See :doc:`LIBERO Evaluation </rst_source/evaluations/guides/libero>` for evaluation
 outputs and the LIBERO page for LIBERO-Mem success semantics.
 
+History increases vision computation even though the language model receives
+the same number of visual tokens. In a reviewer measurement on one RTX PRO 5000,
+``predict_action_batch`` with eight frames took 174.0 ms versus 141.6 ms for the
+current-frame model at batch size one, and 1641.7 ms versus 859.2 ms at batch size
+20. Measure with your own batch size and hardware when choosing history length.
+
+Prepare the Training Data
+-------------------------
+
+Download `CollisionCode/libero_mem_lerobot_v2.1
+<https://huggingface.co/datasets/CollisionCode/libero_mem_lerobot_v2.1>`__ into
+LeRobot's cache. Its metadata lists 961 episodes, 321,405 frames and 10 tasks
+at 20 Hz, with all episodes in the training split:
+
+.. code-block:: bash
+
+   export HF_LEROBOT_HOME="$PWD/datasets"
+   hf download CollisionCode/libero_mem_lerobot_v2.1 --repo-type dataset \
+     --local-dir "$HF_LEROBOT_HOME/CollisionCode/libero_mem_lerobot_v2.1"
+
+Keep ``HF_LEROBOT_HOME`` set for the following commands. The SFT recipe selects
+``pi05_libero_mem``, which reads the published columns directly and maps them to
+the same LIBERO policy inputs used at evaluation:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 45 25 30
+
+   * - Dataset column
+     - Policy input
+     - Contents
+   * - ``observation.images.image``
+     - ``observation/image``
+     - Third-person RGB video.
+   * - ``observation.images.wrist_image``
+     - ``observation/wrist_image``
+     - Wrist RGB video.
+   * - ``observation.state``
+     - ``observation/state``
+     - Eight-dimensional end-effector and gripper state.
+   * - ``action``
+     - ``actions``
+     - Seven-dimensional delta pose and gripper action.
+
+Task prompts come from LeRobot task metadata. The loader uses episode boundaries
+and timestamps for history sampling. If you already converted the dataset to
+``image``, ``wrist_image``, ``state`` and ``actions``, use ``pi05_libero`` instead
+of ``pi05_libero_mem`` for both normalization and SFT. Keep that existing data
+and configuration when reproducing an earlier run.
+
+Compute normalization statistics with the same data configuration used for SFT:
+
+.. code-block:: bash
+
+   export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+   python toolkits/lerobot/calculate_norm_stats.py \
+     --config-name pi05_libero_mem \
+     --repo-id CollisionCode/libero_mem_lerobot_v2.1
+
+This writes ``norm_stats.json`` under
+``assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/``. Pass this file
+explicitly to training and evaluation. See
+:doc:`OpenPI SFT </rst_source/examples/embodied/sft_openpi>` for the normalization
+workflow with other datasets.
+
 Fine-Tune with FSDP
 -------------------
 
-For training, prepare a map-style LeRobot LIBERO-Mem dataset with task prompts,
-state, actions and both cameras. Set ``data.train_data_paths`` to its local root
-or LeRobot repository ID. Historical camera queries stay within each episode;
+With the dataset and statistics ready, set ``data.train_data_paths`` to its local
+root or LeRobot repository ID. Historical camera queries stay within each episode;
 the current state, prompt and forward action window follow the usual OpenPI
 transforms. Prompt tokenization runs once per sample.
 
@@ -121,9 +206,9 @@ Launch the SFT entry point directly so that Hydra overrides reach the recipe:
    export PYTHONPATH="$PWD:${PYTHONPATH:-}"
    python examples/sft/train_vla_sft.py \
      --config-name libero_mem_sft_openpi_pi05 \
-     data.train_data_paths=/path/to/libero-mem-lerobot \
-     actor.model.model_path=/path/to/libero10_pi05_sft_checkpoint \
-     actor.model.openpi_data.norm_stats_path=/path/to/libero-mem-lerobot/norm_stats.json \
+     data.train_data_paths=CollisionCode/libero_mem_lerobot_v2.1 \
+     actor.model.model_path="$PWD/checkpoints/RLinf-Pi05-LIBERO-SFT" \
+     actor.model.openpi_data.norm_stats_path="$PWD/assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/norm_stats.json" \
      runner.logger.log_path="$PWD/logs/libero_mem_short_memory"
 
 The recipe trains the complete model with the existing flow-matching loss,
@@ -137,14 +222,6 @@ activations. The ``openpi_fsdp`` preset retains FP32 compute for action/time
 projections, RMSNorm and vision embedding modules. Gradient checkpointing uses
 the non-reentrant implementation. Short memory adds no separate optimizer or
 trainable memory parameters.
-
-To use FSDP2, append ``actor.fsdp_config.strategy=fsdp2`` to the same command.
-Keep ``actor.training_backend=fsdp``: that field selects the shared worker, while
-``strategy`` selects its FSDP implementation. FSDP2 applies the same named
-precision policies. Keep the original parameter dtype uniform within each
-sharding boundary; configure compute dtypes through those policies rather than
-casting individual parameters. FSDP2 requires
-``keep_low_precision_grads: false``, the preset default.
 
 Resume Training
 ---------------

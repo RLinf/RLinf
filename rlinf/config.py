@@ -549,9 +549,12 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             sharding = (
                 str(cfg.fsdp_config.sharding_strategy).strip().lower().replace("-", "_")
             )
-            assert sharding in ("no_shard", "shard_grad_op", "full_shard"), (
-                "openpi training requires sharding_strategy in "
-                "['no_shard', 'shard_grad_op', 'full_shard']; "
+            assert sharding == "no_shard" or (
+                cfg.fsdp_config.strategy == "fsdp"
+                and sharding in ("shard_grad_op", "full_shard")
+            ), (
+                "openpi sharded training requires actor.fsdp_config.strategy='fsdp' "
+                "and sharding_strategy in ['shard_grad_op', 'full_shard']; "
                 f"got strategy={cfg.fsdp_config.strategy!r}, "
                 f"sharding_strategy={cfg.fsdp_config.sharding_strategy!r}."
             )
@@ -569,7 +572,6 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
         if (
             model_type is not None
             and str(model_type) == SupportedModel.OPENPI.value
-            and cfg.fsdp_config.strategy == "fsdp"
             and not cfg.fsdp_config.use_orig_params
         ):
             # Dual-expert Gemma packs frozen VLM (expert-0) and trainable
@@ -1190,6 +1192,15 @@ def validate_embodied_cfg(cfg):
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
+    if (
+        only_eval
+        and model_type == SupportedModel.OPENPI
+        and model_cfg.openpi.get("short_memory", False)
+    ):
+        assert OmegaConf.select(cfg, "env.eval.short_memory") is not None, (
+            "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "
+            "got no environment history configuration."
+        )
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
@@ -1794,6 +1805,21 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
         model_type = cfg.actor.model.get("model_type", None)
+        if model_type == SupportedModel.OPENPI.value:
+            openpi_cfg = cfg.actor.model.openpi
+            memory_enabled = openpi_cfg.get("short_memory", False)
+            memory_data = cfg.data.get("short_memory")
+            assert not memory_enabled or memory_data is not None, (
+                "actor.model.openpi.short_memory=True requires data.short_memory; "
+                "got no history sampling configuration."
+            )
+            assert not (
+                openpi_cfg.get("use_rlt", False)
+                and (memory_enabled or memory_data is not None)
+            ), (
+                "OpenPI use_rlt=True requires the RLT loader; "
+                "got short_memory enabled in the model or data configuration."
+            )
         if (
             model_type is not None
             and SupportedModel(model_type) == SupportedModel.DREAMZERO

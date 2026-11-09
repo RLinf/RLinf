@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
@@ -101,22 +100,7 @@ def factorized_space_time_attention(
 
 
 class ShortMemoryVisionEncoder(nn.Module):
-    """Configure temporal SigLIP attention without owning backbone parameters."""
-
-    def __init__(
-        self,
-        temporal_layers: Sequence[int] = (3, 7, 11, 15),
-        drop_history_layer: int = 15,
-    ) -> None:
-        super().__init__()
-        self.temporal_layers = tuple(temporal_layers)
-        self.drop_history_layer = drop_history_layer
-        if tuple(sorted(set(self.temporal_layers))) != self.temporal_layers:
-            raise ValueError("Temporal layers must be unique and sorted.")
-        if any(index < 0 or index > drop_history_layer for index in temporal_layers):
-            raise ValueError(
-                "Temporal layers must precede or equal the history-drop layer."
-            )
+    """Encode visual history without owning backbone parameters."""
 
     def forward(
         self,
@@ -139,6 +123,4 @@ class ShortMemoryVisionEncoder(nn.Module):
             images,
             frame_mask=frame_mask,
             time_offsets=time_offsets,
-            temporal_layers=self.temporal_layers,
-            drop_history_layer=self.drop_history_layer,
         )[0]

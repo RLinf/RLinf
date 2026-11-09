@@ -125,14 +125,15 @@ class Pi0(model.BaseModel):
             num_classes=paligemma_config.width,
             use_gradient_checkpointing=False,
             dtype_mm=config.dtype,
+            temporal_layers=(
+                config.short_memory_temporal_layers if config.short_memory else ()
+            ),
+            drop_history_layer=(
+                config.short_memory_drop_history_layer if config.short_memory else None
+            ),
         )
         self.short_memory_encoder = (
-            ShortMemoryVisionEncoder(
-                temporal_layers=config.short_memory_temporal_layers,
-                drop_history_layer=config.short_memory_drop_history_layer,
-            )
-            if config.short_memory
-            else None
+            ShortMemoryVisionEncoder() if config.short_memory else None
         )
 
         action_expert_width = action_expert_config.width
