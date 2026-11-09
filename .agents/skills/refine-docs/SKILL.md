@@ -81,17 +81,20 @@ When the two disagree, the style guide wins.
    underscore include partial (`_name.rst`).
 10. **Keep EN ↔ ZH parity:** same structure and (translated) headings; identical,
    untranslated code identifiers (config keys, CLI flags, env/model names); stable
-   `:doc:` / `:ref:` links (no hardcoded ReadTheDocs URLs); never glue `**bold**`
-   directly between CJK characters. Locale-specific network and download notes
-   (mainland-China mirrors, ModelScope, proxy commands) may exist only on the
-   Chinese page.
+   `:doc:` / `:ref:` links (no hardcoded ReadTheDocs URLs); never glue inline
+   markup (`` `` ``, `**`, `*em*`, `:doc:`, `:ref:`) to a CJK character.
+   Locale-specific network and download notes (mainland-China mirrors,
+   ModelScope, proxy commands) may exist only on the Chinese page. The mirror
+   prefix, environment variable, or proxy wrapper is exempt from parity; the
+   underlying command, repo id, and config key stay identical.
    Write each language natively: preserve meaning and structure, not English
    clause order. Keep familiar developer terms in English when a Chinese
    translation would sound unusual or make the code harder to search.
    Chinese prose must render without an inserted space between Chinese
    characters: keep the paragraph on one source line, or end each wrapped line
-   with `\`. Keep structural line breaks in headings, directives, tables, and
-   code blocks.
+   with `\`. A `\` continuation inserts no space, so a next line starting with a
+   Latin word or a digit (`node_rank`, `8`) needs a plain break. Keep structural
+   line breaks in headings, directives, tables, and code blocks.
 11. **Verify (the gate)** — see below.
 
 ## Natural-language gate
@@ -135,11 +138,12 @@ When the two disagree, the style guide wins.
 - [ ] Extension examples compose with existing components and reach a real caller,
       task, or environment.
 - [ ] One H1; Title Case headings; standard section names where applicable.
-- [ ] EN and ZH updated together; code tokens identical; no CJK-glued `**bold**`.
+- [ ] EN and ZH updated together; code tokens identical; no inline markup glued
+      to CJK characters.
 - [ ] ZH preserves meaning without mirroring EN sentence by sentence.
 - [ ] ZH prose renders without an inserted space between CJK characters (one
-      source line, or `\`-continued lines with no inline markup at the start of
-      the next line).
+      source line, or `\`-continued lines; a next line starting with Latin or
+      digits uses a plain break). Inline markup does not touch CJK characters.
 - [ ] Reference material linked, not inlined; repeated blocks factored into partials.
 
 **Index / landing page**
@@ -162,7 +166,7 @@ When the two disagree, the style guide wins.
   same for `docs/source-zh`.
 - Run the **`docs-check`** skill (doc-to-code correctness + EN/ZH parity).
 - Confirm: no new bullet-list index pages, no throat-clearing intros, and no
-  literal `**` leaking into built ZH pages from CJK-glued bold.
+  inline markup leaking literally into built ZH pages from CJK-glued delimiters.
 - For every article, read the introduction followed only by section leads, then
   read the complete page. Reject the page if the short pass does not form a
   logical outline. Apply the same rule compactly to indexes and references: the

@@ -70,7 +70,10 @@ If scope is unclear, default to checking:
    - Same topic coverage and section structure, except locale-specific network
      and download notes (mainland-China mirrors, ModelScope, proxy commands),
      which may exist only on the Chinese page.
-   - Same commands, config keys, and model/env identifiers.
+   - Same commands, config keys, and model/env identifiers. A locale-only
+     mirror prefix, environment variable, or proxy wrapper (`--use-mirror`,
+     `HF_ENDPOINT=...`, a `gh-proxy` URL) is exempt; the underlying command,
+     repo id, and config key stay identical.
    - Translations preserve technical meaning (do not rename code symbols).
    - Corresponding EN/ZH pages use equivalent stable internal links.
 6. Verify natural-language flow:
@@ -109,7 +112,11 @@ If scope is unclear, default to checking:
    - Chinese prose renders without an inserted space between Chinese
      characters. A hard wrap inside prose renders as a visible space, so either
      keep the paragraph on one source line or end each wrapped line with `\` to
-     remove the newline. Judge the rendered result, not the source line count.
+     remove the newline. A `\` continuation inserts no space, so a next line
+     starting with a Latin word or a digit (`node_rank`, `8`) needs a plain
+     break. Inline markup (`` `` ``, `**`, `*em*`, `:doc:`, `:ref:`) stays clear
+     of CJK characters on both sides. Judge the rendered result, not the source
+     line count.
 7. Report findings with severity and concrete fixes.
 
 ## Severity Rules

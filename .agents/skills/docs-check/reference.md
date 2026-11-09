@@ -113,10 +113,24 @@ wrap inside Chinese prose inserts a visible gap even when no space was typed:
 
 This renders as `成功条件 或复位`. Either keep each Chinese prose paragraph and
 prose list item on one source line, or end every wrapped line with `\`, which
-removes the newline and inserts nothing. Judge the rendered result, not the
-source line count. Preserve newlines that define headings, directives, tables,
-and code blocks, and never put `\` on a line whose successor starts with inline
-markup.
+removes the newline and inserts nothing. A `\` continuation inserts no space,
+so a next line that starts with a Latin word or a digit (`node_rank`, `8`) needs
+a plain break instead, which renders as the required space. Judge the rendered
+result, not the source line count. Preserve newlines that define headings,
+directives, tables, and code blocks.
+
+A `\` continuation does not break inline markup:
+
+```rst
+中文\
+**粗体** 继续。        ← renders as bold text
+中文\
+**粗体**继续。          ← Inline strong start-string without end-string
+```
+
+What breaks is a delimiter touching a CJK character: the adjacent character
+must belong to the opener, closer, or delimiter classes above. The rule applies
+to `*em*` and roles such as `:doc:` and `:ref:` as well.
 
 Note that inline markup does **not** nest — `` **stuck in ``reach``** `` is a
 strong containing literal backtick characters, not a nested literal, and is
@@ -129,8 +143,8 @@ perfectly legal.
 ### Build
 - [ ] `python3 .agents/skills/docs-check/build_docs.py` is clean for **both** `en` and `zh`
 - [ ] `python3 .agents/skills/docs-check/check_rst_markup.py` reports no new findings
-- [ ] Changed ZH pages have no ` `` ` or `**` touching `（`, `《` or a CJK character
-- [ ] Changed ZH prose renders without an inserted space between CJK characters (one source line, or `\`-continued lines with no inline markup at the start of the next line)
+- [ ] Changed ZH pages have no inline markup delimiter (`` `` ``, `**`, `*em*`, `:doc:`, `:ref:`) bounded by a CJK character or by a full-width bracket of the wrong class
+- [ ] Changed ZH prose renders without an inserted space between CJK characters (one source line, or `\`-continued lines; a next line starting with Latin or digits uses a plain break)
 
 ### Doc vs Code
 - [ ] Every config name in docs exists under `examples/embodiment/config/` or `env/`
@@ -173,7 +187,7 @@ perfectly legal.
 
 ### EN vs ZH
 - [ ] Same section headings (translated)
-- [ ] Config names, YAML keys, and commands identical in both
+- [ ] Config names, YAML keys, and commands identical in both (a locale-only mirror prefix, environment variable, or proxy wrapper is exempt)
 - [ ] Technical terms (PPO, GRPO, SFT, model names) consistent
 - [ ] Internal and external links correct
 - [ ] EN and ZH use equivalent stable internal links for counterpart sections

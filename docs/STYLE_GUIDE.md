@@ -531,14 +531,20 @@ Visualization and Results → TensorBoard / video / logger + link to Training me
   CLI flags, script names, or model names in ZH.
 - Headings are translated; internal links use stable `:doc:` / `:ref:` (no
   hardcoded ReadTheDocs URLs).
-- **ZH:** don't put `**bold**` directly between CJK characters — docutils won't
-  render it and a literal `**` leaks into the page. Use a space-bounded boundary,
-  Chinese quotes, or drop the emphasis.
+- **ZH:** don't glue inline markup to CJK characters. docutils recognises a
+  start-string and an end-string only when whitespace or qualifying punctuation
+  bounds them, and a CJK character never qualifies: markup with CJK on both
+  sides renders literally, and a closing delimiter followed by CJK reports
+  `... start-string without end-string`. Keep that boundary on both sides of
+  `` `` ``, `**`, `*em*`, `:doc:`, and `:ref:`, for example with the escaped
+  space in `中文\ **粗体**`, or drop the emphasis. `check_rst_markup.py` holds
+  the exact punctuation classes.
 - **Locale-specific network notes may be ZH-only.** Mirrors and download helpers
   for mainland China (`--use-mirror`, `HF_ENDPOINT`, ModelScope, `gh-proxy`)
   belong on the Chinese page when they only serve that audience; the English
-  page does not need a matching paragraph. Commands, config keys, identifiers,
-  and the rest of the structure stay in parity.
+  page does not need a matching paragraph. The mirror prefix, environment
+  variable, or proxy wrapper is exempt from parity; the underlying command,
+  repo id, config key, path, and the rest of the structure stay in parity.
 
 ### Writing the Chinese pages
 
@@ -554,7 +560,7 @@ Conventions, on every page:
 - 标题后的第一句应直接说明本页介绍什么、帮助读者完成什么，或可供查阅什么。若页面以图片开头，则从图片后的第一句开始遵循此要求。不要先铺陈背景，到后文才交代页面用途。
 - 全角标点：，。、；：（）「」。中文句子里不要混用半角逗号句号。
 - 中文与英文、数字之间空一格，例如「在 node_rank 指定的节点上」。
-- 中文正文可以按列宽手动换行，但换行必须保证渲染结果正确。reStructuredText 会把段内换行渲染成空格，因此若断行两侧都是汉字，需在行尾加 `\` 续行（该反斜杠会吞掉换行和缩进，不插入空格），或避免在两个汉字之间断行。判断标准是渲染结果而不是源文件行数：行尾 `\` 之后的一行如果以内联标记（双反引号或 `**`）开头，内联标记会和前一个汉字粘连，需要改写句子或换行位置。标题、directive、表格和代码块所需的结构换行不受此规则影响。
+- 中文正文可以按列宽手动换行，但换行必须保证渲染结果正确。reStructuredText 会把段内换行渲染成空格，因此若断行两侧都是汉字，需在行尾加 `\` 续行（该反斜杠会吞掉换行和缩进，不插入空格），或避免在两个汉字之间断行。行尾 `\` 不插入空格，所以下一行以拉丁字母或数字开头时（例如 `node_rank`、`8`），要用普通换行让渲染结果保留中文与英文、数字之间的空格。判断标准是渲染结果而不是源文件行数；`\` 续行本身不会导致内联标记失配，内联标记的边界规则见上一条。标题、directive、表格和代码块所需的结构换行不受此规则影响。
 - 英文技术名词保留原文，不要硬译；已有通行中文说法的用通行说法；术语前后统一。强化学习中的 policy 统一写作 policy，不译成“策略”；描述通用决策方法时仍可使用“策略”，例如“placement 策略”。rollout 保留原文，不译成“展开”；GPU memory 写作“显存”。
 - 自然不等于口语化。正文应采用清晰、克制的书面技术表达，避免“看看长什么样”“等需要时再看”“不用跟着改”等聊天式说法；同时避免“本文旨在”“进行相关操作”等公文腔。
 - 不要滥用「的」；少用「进行/实现/提供/负责/使得」这类空动词。
@@ -584,7 +590,7 @@ After each change:
   same for `source-zh`.
 - Run the **`docs-check`** skill (doc-to-code correctness + EN/ZH parity).
 - Confirm no new bullet-list index pages, no throat-clearing intros, and no
-  `**bold**` glued between CJK characters.
+  inline markup glued to CJK characters.
 
 For every article, also read the page top to bottom in both languages before
 merging, and rewrite if any of these are true:

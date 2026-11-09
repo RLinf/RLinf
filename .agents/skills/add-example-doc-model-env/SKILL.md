@@ -52,7 +52,9 @@ developer terms in English when an unusual translation would obscure the code.
    but rewrite the prose in natural Chinese. Do not mirror English sentence order.
    Locale-specific network and download notes (mainland-China mirrors,
    ModelScope, proxy commands) may be added on the Chinese page without an
-   English counterpart.
+   English counterpart. The mirror prefix, environment variable, or proxy
+   wrapper is exempt from parity; the underlying command, repo id, and config
+   key stay identical.
    Use existing EN/ZH pairs under the same category (e.g. `embodied/libero.rst` in
    both `source-en` and `source-zh`) as reference.
 
