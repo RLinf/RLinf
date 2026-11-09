@@ -101,36 +101,37 @@ CUDA 设备 0 通常\ **并不是** EGL 设备 0。
 `WARNING` for the silent mis-render. Only the first blocks a PR, but a doc PR
 touching a Chinese page should leave no new warnings either.
 
-### Wrapped Chinese prose
+### Hard-wrapped Chinese prose
 
-reStructuredText joins source lines inside a paragraph with a space, so a hard
-wrap inside Chinese prose inserts a visible gap even when no space was typed:
+reStructuredText joins source lines inside a paragraph with a space. Hard-wrapping
+Chinese prose therefore inserts a visible gap even when no space was typed:
 
 ```rst
 定义奖励、成功条件
 或复位吗？
 ```
 
-This renders as `成功条件 或复位`. Either keep each Chinese prose paragraph and
-prose list item on one source line, or end every wrapped line with `\`, which
-removes the newline and inserts nothing. A `\` continuation inserts no space,
-so a next line that starts with a Latin word or a digit (`node_rank`, `8`) needs
-a plain break instead, which renders as the required space. Judge the rendered
-result, not the source line count. Preserve newlines that define headings,
-directives, tables, and code blocks.
+This renders as `成功条件 或复位`. Keep each Chinese prose paragraph and prose
+list item on one source line, or end every wrapped line with `\`, which removes
+the newline and inserts nothing. Use the continuation only where the text should
+continue without a space; if either side of the break is a Latin word or a digit
+(`node_rank`, `8`), use a plain line break instead, which renders as the required
+space. Judge the rendered result, not the source line count. Preserve newlines
+that define headings, directives, tables, and code blocks.
 
 A `\` continuation does not break inline markup:
 
 ```rst
 中文\
-**粗体** 继续。        ← renders as bold text
+**粗体**\ 继续。       ← bold text, no extra space
 中文\
-**粗体**继续。          ← Inline strong start-string without end-string
+**粗体**继续。         ← Inline strong start-string without end-string
 ```
 
-What breaks is a delimiter touching a CJK character: the adjacent character
-must belong to the opener, closer, or delimiter classes above. The rule applies
-to `*em*` and roles such as `:doc:` and `:ref:` as well.
+What breaks is an inline-markup delimiter touching a CJK character. Put an
+escaped space or qualifying punctuation between the two; a `\` continuation at
+the start of a line already provides that boundary. The same applies to `*em*`
+and roles such as `:doc:` and `:ref:`.
 
 Note that inline markup does **not** nest — `` **stuck in ``reach``** `` is a
 strong containing literal backtick characters, not a nested literal, and is
@@ -143,8 +144,8 @@ perfectly legal.
 ### Build
 - [ ] `python3 .agents/skills/docs-check/build_docs.py` is clean for **both** `en` and `zh`
 - [ ] `python3 .agents/skills/docs-check/check_rst_markup.py` reports no new findings
-- [ ] Changed ZH pages have no inline markup delimiter (`` `` ``, `**`, `*em*`, `:doc:`, `:ref:`) bounded by a CJK character or by a full-width bracket of the wrong class
-- [ ] Changed ZH prose renders without an inserted space between CJK characters (one source line, or `\`-continued lines; a next line starting with Latin or digits uses a plain break)
+- [ ] Changed ZH pages have no ` `` ` or `**` touching `（`, `《` or a CJK character
+- [ ] Changed ZH prose has no hard wrap that creates a space between CJK characters
 
 ### Doc vs Code
 - [ ] Every config name in docs exists under `examples/embodiment/config/` or `env/`
@@ -187,7 +188,7 @@ perfectly legal.
 
 ### EN vs ZH
 - [ ] Same section headings (translated)
-- [ ] Config names, YAML keys, and commands identical in both (a locale-only mirror prefix, environment variable, or proxy wrapper is exempt)
+- [ ] Config names, YAML keys, and commands identical in both (a mirror flag or prefix, environment variable, or proxy wrapper that appears only on the ZH page is exempt; the underlying command, repo id, and config key must still match)
 - [ ] Technical terms (PPO, GRPO, SFT, model names) consistent
 - [ ] Internal and external links correct
 - [ ] EN and ZH use equivalent stable internal links for counterpart sections

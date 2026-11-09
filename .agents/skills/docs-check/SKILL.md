@@ -70,10 +70,11 @@ If scope is unclear, default to checking:
    - Same topic coverage and section structure, except locale-specific network
      and download notes (mainland-China mirrors, ModelScope, proxy commands),
      which may exist only on the Chinese page.
-   - Same commands, config keys, and model/env identifiers. A locale-only
-     mirror prefix, environment variable, or proxy wrapper (`--use-mirror`,
-     `HF_ENDPOINT=...`, a `gh-proxy` URL) is exempt; the underlying command,
-     repo id, and config key stay identical.
+   - Same commands, config keys, and model/env identifiers. Mirror flags or
+     prefixes, environment variables, and proxy wrappers that appear only on
+     the Chinese page (`--use-mirror`, `HF_ENDPOINT=...`, a `gh-proxy` URL) are
+     exempt from parity; the underlying command, repo id, and config key stay
+     identical.
    - Translations preserve technical meaning (do not rename code symbols).
    - Corresponding EN/ZH pages use equivalent stable internal links.
 6. Verify natural-language flow:
@@ -109,14 +110,14 @@ If scope is unclear, default to checking:
      unusual or make the code harder to search.
    - Chinese uses restrained written technical language: neither casual chat nor
      bureaucratic prose.
-   - Chinese prose renders without an inserted space between Chinese
-     characters. A hard wrap inside prose renders as a visible space, so either
-     keep the paragraph on one source line or end each wrapped line with `\` to
-     remove the newline. A `\` continuation inserts no space, so a next line
-     starting with a Latin word or a digit (`node_rank`, `8`) needs a plain
-     break. Inline markup (`` `` ``, `**`, `*em*`, `:doc:`, `:ref:`) stays clear
-     of CJK characters on both sides. Judge the rendered result, not the source
-     line count.
+   - Keep each Chinese prose paragraph and prose list item on one source line,
+     or end each wrapped line with `\`. A hard wrap inside prose renders as a
+     visible space between Chinese characters even when the source contains no
+     typed space. Use the continuation only where the text should continue
+     without a space; if either side of the break is a Latin word or a digit
+     (`node_rank`, `8`), use a plain line break instead. A `\` before inline
+     markup is fine, but keep the delimiters clear of CJK characters on both
+     sides. Judge the rendered result, not the source line count.
 7. Report findings with severity and concrete fixes.
 
 ## Severity Rules

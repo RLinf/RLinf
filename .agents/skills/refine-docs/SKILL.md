@@ -81,20 +81,23 @@ When the two disagree, the style guide wins.
    underscore include partial (`_name.rst`).
 10. **Keep EN ↔ ZH parity:** same structure and (translated) headings; identical,
    untranslated code identifiers (config keys, CLI flags, env/model names); stable
-   `:doc:` / `:ref:` links (no hardcoded ReadTheDocs URLs); never glue inline
-   markup (`` `` ``, `**`, `*em*`, `:doc:`, `:ref:`) to a CJK character.
-   Locale-specific network and download notes (mainland-China mirrors,
-   ModelScope, proxy commands) may exist only on the Chinese page. The mirror
-   prefix, environment variable, or proxy wrapper is exempt from parity; the
+   `:doc:` / `:ref:` links (no hardcoded ReadTheDocs URLs); never glue `**bold**`
+   directly between CJK characters. Locale-specific network and download notes
+   (mainland-China mirrors, ModelScope, proxy commands) may exist only on the
+   Chinese page. Mirror flags or prefixes, environment variables, and proxy
+   wrappers that appear only on the Chinese page are exempt from parity; the
    underlying command, repo id, and config key stay identical.
    Write each language natively: preserve meaning and structure, not English
    clause order. Keep familiar developer terms in English when a Chinese
    translation would sound unusual or make the code harder to search.
-   Chinese prose must render without an inserted space between Chinese
-   characters: keep the paragraph on one source line, or end each wrapped line
-   with `\`. A `\` continuation inserts no space, so a next line starting with a
-   Latin word or a digit (`node_rank`, `8`) needs a plain break. Keep structural
-   line breaks in headings, directives, tables, and code blocks.
+   Keep each Chinese prose paragraph or prose list item on one source line, or
+   end each wrapped line with `\`. reStructuredText renders a hard wrap inside
+   prose as a visible space, which leaves an unnatural gap between Chinese
+   characters. Use the continuation only where the text should continue without
+   a space; if either side of the break is a Latin word or a digit (`node_rank`,
+   `8`), use a plain line break instead. A `\` before inline markup is fine, but
+   keep the delimiters clear of CJK characters. Keep structural line breaks in
+   headings, directives, tables, and code blocks.
 11. **Verify (the gate)** — see below.
 
 ## Natural-language gate
@@ -138,12 +141,12 @@ When the two disagree, the style guide wins.
 - [ ] Extension examples compose with existing components and reach a real caller,
       task, or environment.
 - [ ] One H1; Title Case headings; standard section names where applicable.
-- [ ] EN and ZH updated together; code tokens identical; no inline markup glued
-      to CJK characters.
+- [ ] EN and ZH updated together; code tokens identical; no CJK-glued `**bold**`.
 - [ ] ZH preserves meaning without mirroring EN sentence by sentence.
-- [ ] ZH prose renders without an inserted space between CJK characters (one
-      source line, or `\`-continued lines; a next line starting with Latin or
-      digits uses a plain break). Inline markup does not touch CJK characters.
+- [ ] ZH prose is not hard-wrapped where the break would render a space between
+      CJK characters (end the line with `\` instead; use a plain break when
+      either side of the break is Latin or a digit). Inline markup does not
+      touch CJK characters.
 - [ ] Reference material linked, not inlined; repeated blocks factored into partials.
 
 **Index / landing page**
@@ -166,7 +169,7 @@ When the two disagree, the style guide wins.
   same for `docs/source-zh`.
 - Run the **`docs-check`** skill (doc-to-code correctness + EN/ZH parity).
 - Confirm: no new bullet-list index pages, no throat-clearing intros, and no
-  inline markup leaking literally into built ZH pages from CJK-glued delimiters.
+  literal `**` leaking into built ZH pages from CJK-glued bold.
 - For every article, read the introduction followed only by section leads, then
   read the complete page. Reject the page if the short pass does not form a
   logical outline. Apply the same rule compactly to indexes and references: the
