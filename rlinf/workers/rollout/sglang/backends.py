@@ -23,6 +23,7 @@ import asyncio
 from typing import Callable, Optional
 
 import aiohttp
+from omegaconf import OmegaConf
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -154,7 +155,12 @@ class SGLangServerBackend(RolloutBackend):
 
     The server binds to 127.0.0.1: the only client is this worker's own
     process, and the /rlinf/* routes unpickle their request body, so the
-    server must not be reachable from other machines.
+    server must not be reachable from other machines. When
+    ``session_server.enable`` is set the rollout data plane crosses nodes
+    (the sglang router forwards /generate between them), so the server
+    then binds 0.0.0.0 and advertises the node IP; the peer-address
+    whitelist installed with those routes keeps every other endpoint
+    loopback-only.
     """
 
     def __init__(
@@ -190,7 +196,13 @@ class SGLangServerBackend(RolloutBackend):
 
     @property
     def server_url(self) -> str:
-        """The loopback base URL of the server subprocess."""
+        """The advertised base URL of the server subprocess.
+
+        For registering this server with the sglang router; the worker's
+        own control-plane client uses the loopback URL
+        (:meth:`SGLangServerProcess.get_control_url`) so its peer address
+        stays local under the peer-address whitelist.
+        """
         if self._process is None:
             raise RuntimeError(
                 "SGLangServerBackend.server_url is not available before initialize()"
@@ -215,6 +227,30 @@ class SGLangServerBackend(RolloutBackend):
         return self._process.poll_child_failure()
 
     async def initialize(self) -> None:
+        # Loopback unless the session server path opens the data plane to
+        # other nodes. advertise_host=None lets SGLangServerProcess
+        # advertise the node IP (ray.util.get_node_ip_address()).
+        session_server_enabled = bool(
+            OmegaConf.select(
+                self._rlinf_ctx.cfg, "session_server.enable", default=False
+            )
+        )
+        # On the session server path the router's forwarding client holds
+        # idle connections to the engines for 50 s (sgl-model-gateway
+        # app_context.rs, hardcoded `.pool_idle_timeout(50s)` in
+        # sglang-router 0.3.x; the CLI flag of newer routers defaults to
+        # the same). The engine's uvicorn keep-alive must outlive that or
+        # the router reuses a connection the engine just closed
+        # (ECONNRESET race); validate_session_server_cfg checks the
+        # configured values. Without the session server, uvicorn's
+        # default of 5 s stays.
+        extra_env = None
+        if session_server_enabled:
+            extra_env = {
+                "SGLANG_TIMEOUT_KEEP_ALIVE": str(
+                    self._rlinf_ctx.cfg.session_server.engine_keep_alive_s
+                )
+            }
         self._process = SGLangServerProcess(
             server_args_kwargs=dict(self._server_args),
             acquire_free_port=self._acquire_free_port,
@@ -222,9 +258,10 @@ class SGLangServerBackend(RolloutBackend):
             nnodes=self._nnodes,
             node_rank=self._node_rank,
             dist_init_addr=self._dist_init_addr,
-            bind_host="127.0.0.1",
-            advertise_host="127.0.0.1",
+            bind_host="0.0.0.0" if session_server_enabled else "127.0.0.1",
+            advertise_host=None if session_server_enabled else "127.0.0.1",
             apply_rlinf_patch=True,
+            extra_env=extra_env,
             log_info=self._log_info,
             log_error=self._log_error,
         )
@@ -247,8 +284,12 @@ class SGLangServerBackend(RolloutBackend):
         # keepalive_timeout must be shorter than the server's keep-alive
         # (uvicorn default 5s) so we never reuse a connection the server
         # is about to close (an ECONNRESET race).
+        # Loopback base URL: under session_server.enable the server
+        # advertises its node IP, and a client connecting to that IP
+        # presents it as the TCP peer, which the whitelist rejects on
+        # the /rlinf/* control routes.
         self._client = InferenceHTTPClient(
-            self._process.get_server_url(), keepalive_timeout=4.0
+            self._process.get_control_url(), keepalive_timeout=4.0
         )
         await self._client.async_run_task_method(
             io_struct.TaskMethodInput(

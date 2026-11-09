@@ -82,6 +82,7 @@ def _run_sglang_server(
     ready_pipe,
     apply_rlinf_patch: bool = False,
     dist_init_addr: Optional[str] = None,
+    extra_env: Optional[dict[str, str]] = None,
     *,
     parent_pid: int,
 ) -> None:
@@ -120,6 +121,12 @@ def _run_sglang_server(
         daemon=True,
     )
     watchdog.start()
+
+    # Environment overrides for this subprocess only; the spawning worker's
+    # own os.environ stays untouched (setdefault: an explicit export in the
+    # worker's env wins).
+    for key, value in (extra_env or {}).items():
+        os.environ.setdefault(key, value)
 
     _ensure_no_proxy_for_localhost()
     os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
@@ -240,6 +247,7 @@ class SGLangServerProcess:
         bind_host: str = "0.0.0.0",
         advertise_host: Optional[str] = None,
         apply_rlinf_patch: bool = False,
+        extra_env: Optional[dict[str, str]] = None,
         log_info: Callable[[str], None] = lambda msg: None,
         log_error: Callable[[str], None] = lambda msg: None,
     ):
@@ -270,6 +278,7 @@ class SGLangServerProcess:
         self._bind_host = bind_host
         self._advertise_host = advertise_host
         self._apply_rlinf_patch = apply_rlinf_patch
+        self._extra_env = dict(extra_env) if extra_env else None
         self._log_info = log_info
         self._log_error = log_error
 
@@ -334,6 +343,7 @@ class SGLangServerProcess:
             kwargs={
                 "apply_rlinf_patch": self._apply_rlinf_patch,
                 "dist_init_addr": self._dist_init_addr,
+                "extra_env": self._extra_env,
                 "parent_pid": os.getpid(),
             },
             daemon=False,
@@ -352,8 +362,10 @@ class SGLangServerProcess:
 
         if self._node_rank == 0:
             try:
+                # Readiness is probed from this process; loopback is
+                # reachable for both bind hosts (0.0.0.0 / 127.0.0.1).
                 _wait_for_http_health(
-                    host=self._advertise_host,
+                    host="127.0.0.1",
                     port=http_port,
                     is_alive=lambda: self._server_proc.is_alive(),
                 )
@@ -418,10 +430,27 @@ class SGLangServerProcess:
         return (proc.exitcode, error)
 
     def get_server_url(self) -> str:
-        """Return the advertised ``http://host:port`` URL for this server."""
+        """The advertised ``http://host:port`` URL of this server.
+
+        This is the address cross-node clients (the sglang router, other
+        nodes) use. Same-process control-plane clients must use
+        :meth:`get_control_url` instead: the peer-address whitelist treats
+        only loopback peers as local, and connecting to this host from the
+        same machine presents the node IP as the TCP peer.
+        """
         assert self._server_port is not None, "start() has not been called."
         host = self._advertise_host or "0.0.0.0"
         return f"http://{host}:{self._server_port}"
+
+    def get_control_url(self) -> str:
+        """The loopback ``http://127.0.0.1:port`` URL of this server.
+
+        Base URL for control-plane clients (/rlinf/* routes) running in
+        this process. bind_host is loopback or 0.0.0.0, so 127.0.0.1 is
+        always reachable.
+        """
+        assert self._server_port is not None, "start() has not been called."
+        return f"http://127.0.0.1:{self._server_port}"
 
     def is_healthy(self) -> bool:
         if self._server_proc is None or not self._server_proc.is_alive():
