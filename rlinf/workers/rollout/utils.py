@@ -32,6 +32,10 @@ from rlinf.utils.placement import (
 if typing.TYPE_CHECKING:
     from vllm.outputs import RequestOutput
 
+    from rlinf.scheduler import Cluster
+    from rlinf.scheduler.worker import WorkerGroup
+    from rlinf.utils.placement import HybridComponentPlacement
+
 
 COLOR_END = "\033[0m"
 
@@ -326,6 +330,129 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
             return SGLangWorker
         else:
             raise ValueError(f"Unsupported sglang serving_mode: {serving_mode}.")
+
+
+def get_embodied_rollout_worker(cfg: DictConfig) -> type[Worker]:
+    """Select a synchronous embodied training or evaluation worker class.
+
+    Args:
+        cfg: Embodied config selecting rollout.rollout_backend explicitly.
+
+    Returns:
+        Worker class accepting cfg as its sole required constructor argument.
+        RTC evaluation requires the caller to also select RTCEnvWorker.
+
+    Raises:
+        ValueError: The task, backend, or execution mode is unsupported.
+    """
+    task_type = cfg.runner.get("task_type")
+    if task_type not in ("embodied", "embodied_eval"):
+        raise ValueError(
+            f"Expected an embodied task, got runner.task_type={task_type!r}"
+        )
+    only_eval = cfg.runner.get("only_eval", False) or task_type == "embodied_eval"
+    backend = cfg.rollout.get("rollout_backend", "huggingface")
+
+    if cfg.runner.get("rtc", {}).get("enabled", False):
+        if not only_eval or backend != "huggingface":
+            raise ValueError(
+                "RTC requires huggingface embodied evaluation, got "
+                f"backend={backend!r}, only_eval={only_eval}"
+            )
+        from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
+            RTCMultiStepRolloutWorker,
+        )
+
+        return RTCMultiStepRolloutWorker
+
+    if backend == "huggingface":
+        from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+        return MultiStepRolloutWorker
+    if backend == "phyai":
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+
+        return PhyAIRolloutWorker
+    if backend == "sglang":
+        serving_mode = cfg.rollout.sglang.get("serving_mode")
+        if serving_mode not in (None, "embodied"):
+            raise ValueError(
+                "Expected sglang.serving_mode='embodied' or unset for embodied "
+                f"rollout, got {serving_mode!r}"
+            )
+        from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+            SGLangEmbodiedWorker,
+        )
+
+        return SGLangEmbodiedWorker
+    if backend == "apxinf":
+        if not only_eval:
+            raise ValueError("Embodied backend 'apxinf' requires evaluation mode")
+        from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
+
+        return ApxInfRolloutWorker
+    raise ValueError(
+        f"Unsupported embodied rollout backend {backend!r}; expected huggingface, "
+        "phyai, sglang, or apxinf (evaluation only)"
+    )
+
+
+def launch_embodied_sglang_server(
+    cfg: DictConfig,
+    cluster: "Cluster",
+    component_placement: "HybridComponentPlacement",
+    rollout_group: "WorkerGroup",
+) -> tuple["WorkerGroup | None", "WorkerGroup | None"]:
+    """Launch SGLang servers for embodied rollout and distribute their URLs.
+
+    Args:
+        cfg: Embodied config selecting rollout.rollout_backend.
+        cluster: Cluster on which to launch serving workers.
+        component_placement: Placement used by the rollout component.
+        rollout_group: Rollout workers that receive the server URLs.
+
+    Returns:
+        Server and router groups, both None for backends without a server.
+        The caller owns returned groups and must stop them after the run.
+
+    Raises:
+        ValueError: SGLang server launch is disabled.
+    """
+    if cfg.rollout.get("rollout_backend", "huggingface") != "sglang":
+        return None, None
+
+    from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
+
+    if not cfg.rollout.sglang.get("launch_server", True):
+        raise ValueError(
+            "SGLang embodied rollout requires rollout.sglang.launch_server=true"
+        )
+    only_eval = cfg.runner.get("only_eval", False) or (
+        cfg.runner.get("task_type") == "embodied_eval"
+    )
+    server_group, router_group = launch_sglang_router_and_server(
+        cfg,
+        cluster,
+        rollout_hardware_ranks=component_placement.get_hardware_ranks("rollout")
+        if only_eval
+        else None,
+        router_server_args=cfg.rollout.sglang,
+        placement_strategy=None
+        if only_eval
+        else component_placement.get_strategy("rollout"),
+    )
+    try:
+        rollout_group.set_sglang_server_urls(
+            server_group.get_server_url().wait()
+        ).wait()
+    except BaseException:
+        try:
+            if router_group is not None:
+                router_group.stop().wait()
+        finally:
+            server_group.stop().wait()
+        raise
+    return server_group, router_group
 
 
 class RunningStatusManager:

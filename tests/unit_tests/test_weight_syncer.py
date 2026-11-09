@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import asyncio
+import base64
 import copy
 import inspect
 import logging
+import pickle
 import unittest
 from collections import OrderedDict
 from types import MethodType
@@ -29,6 +31,7 @@ from torch.distributed.tensor.placement_types import Partial, Replicate, Shard
 from rlinf.config import validate_weight_sync_overlap_cfg
 from rlinf.data.schema.embodied_types import EnvOutput, EnvTransition
 from rlinf.envs.layout import EnvAssignment
+from rlinf.hybrid_engines.sglang.common.http_weight_target import SGLangHTTPWeightTarget
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
@@ -1616,6 +1619,8 @@ def test_weight_syncer_factory_builds_patch_and_bucket():
     bucket_syncer = WeightSyncer.create(bucket_cfg)
     assert isinstance(bucket_syncer, BucketWeightSyncer)
     assert bucket_syncer.comm_options is None
+    assert bucket_syncer.include_prefixes is None
+    assert bucket_syncer.init_sync_enabled is False
 
 
 def test_weight_syncer_factory_builds_shared_comm_options():
@@ -2311,3 +2316,256 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _SGLangWeightEndpoint:
+    """Remote SGLang weight endpoint backed by a tiny serving state."""
+
+    def __init__(self, target_module, state):
+        self.target_module = target_module
+        self.state = {name: torch.zeros_like(value) for name, value in state.items()}
+        self.requests = []
+        self.success = True
+
+    def post(self, path, payload, **options):
+        assert path == "/update_weights_from_tensor"
+        assert payload["target_modules"] == [self.target_module]
+        assert options["max_retries"] == 0
+        self.requests.append(payload)
+        if not self.success:
+            return {"success": False, "message": "remote weight load failed"}
+        named = pickle.loads(base64.b64decode(payload["serialized_named_tensors"][0]))
+        for name, value in named:
+            assert value.device.type == "cpu"
+            assert value.shape == self.state[name].shape
+            self.state[name] = value.clone()
+        return {"success": True}
+
+
+def _make_sglang_http_target(tmp_path, prefix="policy.", target_module="transformer"):
+    from safetensors.torch import save_file
+
+    model = _TinyWeightSyncModel()
+    model.linear.weight.requires_grad_(False)
+    serving_state = {
+        "served_" + name: value for name, value in model.state_dict().items()
+    }
+    save_file(serving_state, str(tmp_path / "model.safetensors"))
+    endpoint = _SGLangWeightEndpoint(target_module, serving_state)
+
+    def map_name(name):
+        return (
+            "served_" + name.removeprefix(prefix) if name.startswith(prefix) else None
+        )
+
+    target = SGLangHTTPWeightTarget(
+        endpoint,
+        checkpoint_dir=tmp_path,
+        target_module=target_module,
+        name_mapper=map_name,
+        timeout_s=10,
+    )
+    state = {prefix + name: value.clone() for name, value in model.state_dict().items()}
+    return model, state, endpoint, target
+
+
+@pytest.mark.parametrize(
+    "prefix,target_module",
+    [("policy.", "transformer"), ("action_head.", "action_model")],
+)
+def test_sglang_http_initial_and_training_sync_use_fixed_selections(
+    tmp_path, prefix, target_module
+):
+    model, state, endpoint, target = _make_sglang_http_target(
+        tmp_path, prefix, target_module
+    )
+    state[prefix + "linear.weight"].fill_(37)
+    state["vae.unserved"] = torch.ones(2)
+    training_names = [prefix + name for name in collect_param_names_need_sync(model)]
+    sender = WeightSyncer.create(
+        OmegaConf.create(
+            {
+                "type": "bucket",
+                "bucket": {
+                    "bucket_size": 32,
+                    "bucket_dtype": None,
+                    "bucket_device": "cpu",
+                    "include_prefixes": [prefix],
+                    "init_sync": {"enabled": True},
+                },
+            }
+        )
+    )
+    receiver = BucketWeightSyncer(
+        bucket_size=32, bucket_dtype=None, bucket_device="cpu"
+    )
+    transport = _InMemoryTransport()
+
+    async def run():
+        await sender.init_sender(
+            state, training_names + ["vae.unserved"], transport.send
+        )
+        fixed_selection = sender.param_names_need_sync
+        for version in (0, 1, 2):
+            endpoint.requests.clear()
+            state[prefix + "linear.bias"].add_(1)
+            state[prefix + "scalar_buf"].add_(2)
+            target.begin_sync(full=not receiver.receiver_initialized())
+            if not receiver.receiver_initialized():
+                await receiver.init_receiver(state_dict=None, recv=transport.recv)
+            await sender.sync(state, transport.send, version=version)
+            assert await receiver.apply(target, transport.recv) == version
+            target.finish_sync()
+            sent_names = {
+                name
+                for request in endpoint.requests
+                for name, _ in pickle.loads(
+                    base64.b64decode(request["serialized_named_tensors"][0])
+                )
+            }
+            expected = (
+                model.state_dict()
+                if version == 0
+                else collect_param_names_need_sync(model)
+            )
+            assert sent_names == {"served_" + name for name in expected}
+            assert sender.param_names_need_sync is fixed_selection
+            assert fixed_selection == training_names
+            torch.testing.assert_close(
+                endpoint.state["served_scalar_buf"], state[prefix + "scalar_buf"]
+            )
+            torch.testing.assert_close(
+                endpoint.state["served_linear.weight"], state[prefix + "linear.weight"]
+            )
+        torch.testing.assert_close(
+            endpoint.state["served_linear.bias"], state[prefix + "linear.bias"]
+        )
+
+    asyncio.run(run())
+
+
+def test_sglang_http_load_checkpoint_includes_frozen_weights_and_buffers(tmp_path):
+    _, state, endpoint, target = _make_sglang_http_target(tmp_path)
+    state["policy.linear.weight"].fill_(71)
+    state["vae.unserved"] = torch.ones(2)
+    checkpoint = tmp_path / "actor.pt"
+    torch.save(state, checkpoint)
+    target.load_checkpoint(str(checkpoint), bucket_size=32)
+    assert len(endpoint.requests) > 1
+    for name, tensor in state.items():
+        if name.startswith("policy."):
+            torch.testing.assert_close(endpoint.state[target.name_mapper(name)], tensor)
+
+
+def test_sglang_http_rejects_incomplete_checkpoint_before_updates(tmp_path):
+    _, state, endpoint, target = _make_sglang_http_target(tmp_path)
+    del state["policy.linear.weight"]
+    checkpoint = tmp_path / "actor.pt"
+    torch.save(state, checkpoint)
+    with pytest.raises(ValueError, match="complete transformer serving state"):
+        target.load_checkpoint(str(checkpoint))
+    assert not endpoint.requests
+
+
+@pytest.mark.parametrize(
+    "bucket,error",
+    [
+        ({"vae.unserved": torch.ones(2)}, "no serving counterpart"),
+        ({"policy.unknown": torch.ones(2)}, "no serving counterpart"),
+        ({"policy.linear.bias": torch.ones(99)}, "shape mismatch"),
+        ({}, "empty serving weight bucket"),
+    ],
+)
+def test_sglang_http_rejects_invalid_buckets_before_updates(tmp_path, bucket, error):
+    _, _, endpoint, target = _make_sglang_http_target(tmp_path)
+    with pytest.raises(ValueError, match=error):
+        target.load_state_dict(bucket)
+    assert not endpoint.requests
+
+
+def test_sglang_http_initial_sync_requires_complete_coverage(tmp_path):
+    _, state, _, target = _make_sglang_http_target(tmp_path)
+    target.begin_sync(full=True)
+    target.load_state_dict({"policy.linear.bias": state["policy.linear.bias"]})
+    with pytest.raises(ValueError, match="missing .* weights"):
+        target.finish_sync()
+    with pytest.raises(ValueError, match="Duplicate serving tensor"):
+        target.load_state_dict({"policy.linear.bias": state["policy.linear.bias"]})
+
+
+def test_sglang_http_propagates_remote_weight_update_failure(tmp_path):
+    _, state, endpoint, target = _make_sglang_http_target(tmp_path)
+    endpoint.success = False
+    target.begin_sync(full=True)
+    with pytest.raises(RuntimeError, match="remote weight load failed"):
+        target.load_state_dict(state)
+    with pytest.raises(ValueError, match="missing .* weights"):
+        target.finish_sync()
+
+
+@pytest.mark.parametrize("prefixes", [None, ["linear."]])
+def test_bucket_initial_sync_uses_full_matching_state_then_fixed_training_selection(
+    prefixes,
+):
+    model = _TinyWeightSyncModel()
+    model.linear.weight.requires_grad_(False)
+    sender = BucketWeightSyncer(
+        bucket_size=32,
+        bucket_dtype=None,
+        bucket_device="cpu",
+        include_prefixes=prefixes,
+        init_sync_enabled=True,
+    )
+    transport = _InMemoryTransport()
+    state = model.state_dict()
+
+    async def run():
+        await _init_bucket_syncer(
+            sender, model, param_names_need_sync=collect_param_names_need_sync(model)
+        )
+        expected = {
+            name
+            for name in state
+            if prefixes is None or name.startswith(tuple(prefixes))
+        }
+        selection = sender.param_names_need_sync
+        for version in (7, 8):
+            await sender.sync(state, transport.send, version=version)
+            keys = {
+                key
+                for bucket in transport._queue
+                for key in bucket
+                if key not in {"total_buckets", "syncer_version"}
+            }
+            assert keys == (expected if version == 7 else set(selection))
+            assert sender.param_names_need_sync is selection
+            transport._queue.clear()
+
+    asyncio.run(run())
+
+
+def test_bucket_failed_initial_send_does_not_drop_frozen_weights_on_retry():
+    model = _TinyWeightSyncModel()
+    model.linear.weight.requires_grad_(False)
+    sender = BucketWeightSyncer(
+        bucket_size=32,
+        bucket_dtype=None,
+        bucket_device="cpu",
+        init_sync_enabled=True,
+    )
+    transport = _InMemoryTransport()
+
+    async def fail_send(data):
+        raise ConnectionError("transport disconnected")
+
+    async def run():
+        await _init_bucket_syncer(
+            sender, model, param_names_need_sync=collect_param_names_need_sync(model)
+        )
+        with pytest.raises(ConnectionError, match="transport disconnected"):
+            await sender.sync(model.state_dict(), fail_send, version=0)
+        await sender.sync(model.state_dict(), transport.send, version=0)
+        sent_names = {key for bucket in transport._queue for key in bucket}
+        assert "linear.weight" in sent_names
+
+    asyncio.run(run())

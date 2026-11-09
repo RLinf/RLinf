@@ -143,24 +143,15 @@ class SGLangEngineBackend(RolloutBackend):
 
 
 class SGLangServerBackend(RolloutBackend):
-    """A spawned sglang HTTP server subprocess as a rollout backend.
+    """Own an SRT or SGLang Diffusion server and its loopback HTTP client.
 
-    All rollout control flows over loopback HTTP: generation via the native
-    `/generate`, offload/onload via the native memory-occupation routes,
-    and `run_task_method` / `sync_hf_weight` / `abort_generation` via the
-    custom `/rlinf/*` routes mounted by
-    `rlinf.hybrid_engines.sglang.common.http_routes`. Weight sync itself
-    still goes over NCCL inside the scheduler subprocess (started with the
-    RLinf patch; see `SGLangServerProcess`).
+    Control requests use shared ``/rlinf/*`` routes; actor weights travel
+    directly to scheduler workers. Embodied adapters use ``http_client`` for
+    their model-specific generation endpoints.
 
-    The server binds to 127.0.0.1: the only client is this worker's own
-    process, and the /rlinf/* routes unpickle their request body, so the
-    server must not be reachable from other machines. When
-    ``session_server.enable`` is set the rollout data plane crosses nodes
-    (the sglang router forwards /generate between them), so the server
-    then binds 0.0.0.0 and advertises the node IP; the peer-address
-    whitelist installed with those routes keeps every other endpoint
-    loopback-only.
+    SRT uses loopback control HTTP. With ``session_server.enable`` it binds
+    0.0.0.0 and advertises the node IP for router access; the peer-address
+    whitelist keeps other endpoints loopback-only.
     """
 
     def __init__(
@@ -174,6 +165,7 @@ class SGLangServerBackend(RolloutBackend):
         nnodes: int = 1,
         node_rank: int = 0,
         dist_init_addr: Optional[str] = None,
+        server_type: str = "srt",
     ):
         super().__init__(server_args, rlinf_ctx)
         self._acquire_free_port = acquire_free_port
@@ -182,6 +174,7 @@ class SGLangServerBackend(RolloutBackend):
         self._nnodes = nnodes
         self._node_rank = node_rank
         self._dist_init_addr = dist_init_addr
+        self._server_type = server_type
         self._process: Optional[SGLangServerProcess] = None
         self._client: Optional[InferenceHTTPClient] = None
 
@@ -263,7 +256,7 @@ class SGLangServerBackend(RolloutBackend):
         self._process = SGLangServerProcess(
             server_args_kwargs=server_args_kwargs,
             acquire_free_port=self._acquire_free_port,
-            server_type="srt",
+            server_type=self._server_type,
             nnodes=self._nnodes,
             node_rank=self._node_rank,
             dist_init_addr=self._dist_init_addr,
@@ -286,7 +279,7 @@ class SGLangServerBackend(RolloutBackend):
     async def _initialize_entry_frontend(self) -> None:
         if self._node_rank != 0:
             # Non-entry nodes have no HTTP frontend. The entry's
-            # init_rlinf_worker still reaches every scheduler: sglang
+            # init_rlinf_worker still reaches every SRT scheduler: sglang
             # delivers it to tp rank 0 (or each DP-group leader under DP
             # attention), which broadcasts to the whole TP group.
             return
@@ -350,8 +343,8 @@ class SGLangServerBackend(RolloutBackend):
             image_data=image_data,
         )
 
-    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
-        await self.http_client.async_sync_hf_weight(
+    async def sync_weights(self, pause_mode: Optional[str] = None) -> dict:
+        return await self.http_client.async_sync_hf_weight(
             obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
         )
 

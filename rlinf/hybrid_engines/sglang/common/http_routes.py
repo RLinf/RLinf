@@ -12,29 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RLinf control-plane routes mounted onto sglang's FastAPI app.
+"""Private pickle-based control routes for SRT and SGLang Diffusion servers.
 
-Server-mode rollout drives a sglang HTTP server from the RLinf rollout
-worker over loopback. Three capabilities of the patched TokenizerManager
-(`run_task_method` / `sync_hf_weight` / `abort_generation`) exist only as
-Python methods, so they need matching HTTP routes. They are mounted with
-`app.add_api_route` before `launch_server` starts uvicorn — no
-monkeypatching, one less import-order dependency.
-
-Requests carry arbitrary Python objects (worker address, placement,
-config) that the ZMQ path already pickles today, so the body is
-``{"payload_b64": base64(pickle.dumps(obj))}`` and each handler unpickles
-it before forwarding to the TokenizerManager.
-
-Security: these routes unpickle the request body — an RCE surface. The
-server binds to 127.0.0.1 unless the multi-node rollout data plane needs
-otherwise, and the peer-address whitelist installed alongside these routes
-(`PeerWhitelistMiddleware`) keeps non-local requests off them in that mode.
-
-Note: routes are registered on the in-process ``app`` object, so they
-serve on the default single-tokenizer path (``uvicorn.run(app, ...)``)
-only, not in ``--tokenizer-worker-num > 1`` worker processes. RLinf never
-enables that mode.
+Requests and responses contain pickled Python objects; untrusted pickle can
+execute arbitrary code. The peer-address whitelist blocks non-loopback access
+except for SRT router data-plane paths when the server binds a network address.
+Weight tensors travel through RLinf scheduler communication, not HTTP.
 """
 
 import base64
@@ -62,31 +45,34 @@ def _encode(result: Any) -> dict:
     return {"payload_b64": base64.b64encode(pickle.dumps(result)).decode()}
 
 
-def _tokenizer_manager():
+def _manager(request: Request):
+    manager = getattr(request.app.state, "rlinf_manager", None)
+    if manager is not None:
+        return manager
     from sglang.srt.entrypoints.http_server import get_global_state
 
     return get_global_state().tokenizer_manager
 
 
 async def rlinf_run_task_method(payload: RlinfPayload, request: Request) -> dict:
-    """Run a method in the scheduler via the TokenizerManager."""
-    result = await _tokenizer_manager().run_task_method(_decode(payload), request)
+    """Run a scheduler method through the runtime's control manager."""
+    result = await _manager(request).run_task_method(_decode(payload), request)
     return _encode(result)
 
 
 async def rlinf_sync_hf_weight(payload: RlinfPayload, request: Request) -> dict:
-    """Trigger an actor→rollout NCCL weight sync round."""
-    await _tokenizer_manager().sync_hf_weight(_decode(payload), request)
-    return {"status": "ok"}
+    """Trigger an actor-to-scheduler weight sync over RLinf communication."""
+    result = await _manager(request).sync_hf_weight(_decode(payload), request)
+    return {"status": "ok", **(result if isinstance(result, dict) else {})}
 
 
 async def rlinf_abort_generation(payload: RlinfPayload, request: Request) -> dict:
     """Abort all in-flight generations."""
-    await _tokenizer_manager().abort_generation(_decode(payload), request)
+    await _manager(request).abort_generation(_decode(payload), request)
     return {"status": "ok"}
 
 
-def add_rlinf_routes(app) -> None:
+def add_rlinf_routes(app, *, manager=None) -> None:
     """Mount the three /rlinf/* control routes on a sglang FastAPI app.
 
     Also installs the peer-address whitelist middleware guarding them. Both
@@ -94,6 +80,8 @@ def add_rlinf_routes(app) -> None:
     ``launch_server``).
     """
     app.add_middleware(PeerWhitelistMiddleware)
+    if manager is not None:
+        app.state.rlinf_manager = manager
     app.add_api_route("/rlinf/run_task_method", rlinf_run_task_method, methods=["POST"])
     app.add_api_route("/rlinf/sync_hf_weight", rlinf_sync_hf_weight, methods=["POST"])
     app.add_api_route(

@@ -226,9 +226,9 @@ class InferenceHTTPClient:
         resp = await self.async_post("/rlinf/run_task_method", _b64_payload(obj))
         return pickle.loads(base64.b64decode(resp["payload_b64"]))
 
-    async def async_sync_hf_weight(self, obj: Any = None) -> None:
+    async def async_sync_hf_weight(self, obj: Any = None) -> dict:
         """Trigger an actor-to-rollout weight sync round via HTTP."""
-        await self.async_post("/rlinf/sync_hf_weight", _b64_payload(obj))
+        return await self.async_post("/rlinf/sync_hf_weight", _b64_payload(obj))
 
     async def async_abort_generation(self, obj: Any = None) -> None:
         """Abort all in-flight generations via HTTP."""
@@ -302,18 +302,20 @@ class InferenceHTTPClient:
         body: dict,
         *,
         msgpack: bool = False,
+        response_msgpack: bool = False,
         timeout_s: Optional[float] = None,
         max_retries: int = 0,
         retry_backoff_s: float = 0.0,
     ) -> dict:
-        """POST ``body`` to ``path`` and return the decoded response dict.
+        """POST ``body`` to ``path`` and return the decoded response.
 
         JSON by default. With ``msgpack=True`` the body (including torch tensors
         / numpy arrays) is serialized with the sglang msgpack codec and the
         response is msgpack-decoded; transient 5xx / connection errors are then
         retried with linear backoff. Proxies are always stripped. Heavy deps
         (sglang codec, torch, tianshou) are imported lazily so this module stays
-        importable without them.
+        importable without them. ``response_msgpack=True`` instead sends JSON
+        and decodes a plain msgpack response, as used by diffusion rollout APIs.
         """
         url = f"{self.base_url}{path}"
         retries = max(0, int(max_retries))
@@ -381,6 +383,12 @@ class InferenceHTTPClient:
                         f"{resp.headers.get('content-type')!r}"
                     )
                 return unpack_msgpack(resp.content)
+            if response_msgpack:
+                import msgspec
+
+                if "msgpack" not in resp.headers.get("content-type", "").lower():
+                    raise RuntimeError("Expected a msgpack rollout response")
+                return msgspec.msgpack.decode(resp.content)
             return resp.json()
 
     @staticmethod

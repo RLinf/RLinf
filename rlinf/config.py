@@ -1431,6 +1431,8 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
 
 
 def validate_embodied_cfg(cfg):
+    with open_dict(cfg.rollout):
+        cfg.rollout.rollout_backend = cfg.rollout.get("rollout_backend", None)
     only_eval = (
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"

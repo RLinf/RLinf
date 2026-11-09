@@ -5,9 +5,6 @@ defaults:
   - override hydra/job_logging: stdout
 
 hydra:
-  job:
-    env_set:
-      SGLANG_EXTERNAL_MODEL_PACKAGE: rlinf.models.embodiment.cosmos3.sglang_sampling
   run:
     dir: .
   output_subdir: null

@@ -35,6 +35,8 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
    bash requirements/install.sh embodied --model sglang --env libero
    source .venv/bin/activate
 
+按 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 中的步骤，将修改后的 SGLang 0.5.19 源码安装到 serving 环境。该源码的原生 action API 会保留显式设置的 Edge action guidance。
+
 准备 Checkpoint
 ----------------------------------------
 
@@ -129,7 +131,7 @@ RLinf 通过 SGLang 的 pipeline 注册接口保留显式采样参数，避免 S
 
 1. 起 server：``Launching sglang server (server_type=embodied) ...``
 2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>`` （本地盘通常数十秒内；**缺这行** 说明加载卡住，见常见问题）
-3. server 就绪：``sglang server assigned: rank=i -> http://...``
+3. server 就绪：``sglang server ready at http://...``
 4. 逐 episode 结果：``[libero eval] task_id=.., trial_id=.., success=..``
 5. 汇总：``success_once`` / ``success_at_end`` / ``num_trajectories``
 

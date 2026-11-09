@@ -34,6 +34,47 @@ from rlinf.utils.obs_compression import infer_obs_batch_size
 _SGLANG_ADAPTER_REGISTRY: dict[str, Callable[[], type]] = {}
 
 
+class SGLangEmbodiedAdapter:
+    """Model-specific HTTP requests and weight loading for embodied serving."""
+
+    action_path = "/v1/actions/generations"
+    rollout_path = "/rollout/generate"
+    supports_training = False
+
+    def validate_training(self, cfg) -> None:
+        if not self.supports_training:
+            raise ValueError(f"{type(self).__name__} supports evaluation only")
+
+    def create_weight_target(self, load_weights, model_path: str):
+        """Return a SGLangWeightTarget using the server-local loading callback."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement create_weight_target() "
+            "to load or synchronize serving weights"
+        )
+
+    @staticmethod
+    def map_weight_name(name: str) -> str | None:
+        """Map an actor key to serving state, or return None to exclude it."""
+        raise NotImplementedError("Training adapters must implement map_weight_name()")
+
+    def request_actions(self, client, env_obs, mode="eval", **http_options):
+        """Build, send and parse one model request."""
+        if mode == "train" and not self.supports_training:
+            raise ValueError(f"{type(self).__name__} does not support training rollout")
+        payload, state = self.build_request(env_obs, mode=mode)
+        training = mode == "train"
+        response = client.post(
+            self.rollout_path if training else self.action_path,
+            payload,
+            msgpack=not training,
+            response_msgpack=training,
+            **http_options,
+        )
+        if training:
+            return self.parse_rollout_response(response, state)
+        return self.parse_response(response, state)
+
+
 def select_env_rows(env_obs: dict[str, Any], indices: list[int]) -> dict[str, Any]:
     """Select the envs at ``indices`` from an env observation batch.
 

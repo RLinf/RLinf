@@ -87,5 +87,5 @@ rollout:
 
   model:
     # Export the non-EMA SFT net from the same full_weights.pt used by HF eval.
-    model_path: path/to/Cosmos3-SFT-SGLang
-    action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
+    model_path: /mnt/public/new_fuxu/model/cosmos3-nano-policy-liberoall-5k
+    action_stats_path: /mnt/public/new_fuxu/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json

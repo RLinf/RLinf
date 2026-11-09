@@ -320,7 +320,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             velocity = torch.stack(
                 self.omni._get_velocity(
                     noise_x=list(x.unbind(0)),
-                    timestep=t[:, None],
+                    timestep=self._velocity_timesteps(t[:, None]),
                     text_tokens=cond,
                     sequence_plans=plans,
                     gen_data_clean=clean,
@@ -359,6 +359,11 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             },
         }
 
+    def _velocity_timesteps(self, sigmas: torch.Tensor) -> torch.Tensor:
+        """Convert sampler sigmas to the native model's training timestep units."""
+        scale = self.omni.config.rectified_flow_inference_config.num_train_timesteps
+        return sigmas * float(scale)
+
     def default_forward(
         self,
         forward_inputs: dict,
@@ -379,9 +384,11 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         self._set_device(x.device)
         self._ensure_vision_device_patch()
         batch = self._build_batch(forward_inputs["images"], forward_inputs["prompts"])
-        plans, clean, cond, _, _, _, _, has_actions = self.omni._prepare_inference_data(
-            batch, seed=[0] * n
-        )
+        # Frozen conditioning uses the native inference-only VAE prefix encoder.
+        with torch.no_grad():
+            plans, clean, cond, _, _, _, _, has_actions = (
+                self.omni._prepare_inference_data(batch, seed=[0] * n)
+            )
         if not has_actions:
             raise RuntimeError("Cosmos3 replay has no action target")
         if getattr(self.omni.config, "sound_gen", False):
@@ -395,7 +402,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         velocity = torch.stack(
             self.omni._get_velocity(
                 noise_x=list(x.unbind(0)),
-                timestep=t[:, None],
+                timestep=self._velocity_timesteps(t[:, None]),
                 text_tokens=cond,
                 sequence_plans=plans,
                 gen_data_clean=clean,

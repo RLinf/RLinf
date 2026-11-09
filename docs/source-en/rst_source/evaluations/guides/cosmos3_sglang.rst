@@ -35,6 +35,10 @@ Install the LIBERO environment and SGLang 0.5.19 with its ``diffusion`` extra. T
    bash requirements/install.sh embodied --model sglang --env libero
    source .venv/bin/activate
 
+Install the modified SGLang 0.5.19 checkout into the serving environment as
+described in :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
+Its native action API preserves explicitly configured Edge action guidance.
+
 Prepare Checkpoint
 ----------------------------------------
 
@@ -129,7 +133,7 @@ Check ``eval_embodiment.log`` and confirm these milestones appear in order:
 
 1. Server launch: ``Launching sglang server (server_type=embodied) ...``
 2. Weight loading complete: ``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <seconds>`` (usually within tens of seconds on local disk; **missing this line** means loading is stuck — see FAQ)
-3. Server ready: ``sglang server assigned: rank=i -> http://...``
+3. Server ready: ``sglang server ready at http://...``
 4. Per-episode results: ``[libero eval] task_id=.., trial_id=.., success=..``
 5. Summary: ``success_once`` / ``success_at_end`` / ``num_trajectories``
 

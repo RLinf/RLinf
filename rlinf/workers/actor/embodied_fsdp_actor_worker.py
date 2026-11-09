@@ -113,8 +113,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self._build_sft_data_loader()
 
         # create weight syncer
-        weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
-        self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+        self.rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+        self.weight_syncer = (
+            WeightSyncer.create(OmegaConf.select(cfg, "weight_syncer"))
+            if self.rollout_backend == "huggingface"
+            else None
+        )
 
         assert (
             self.cfg.actor.global_batch_size
@@ -129,13 +133,27 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
 
-        self._sync_weight_comm_options = self.weight_syncer.comm_options
+        self._sync_weight_comm_options = (
+            self.weight_syncer.comm_options if self.weight_syncer is not None else None
+        )
 
         self._is_weight_sender = self._rank == 0
         self._actor_world_size = self._world_size
         self._rollout_all_ranks = list(
             range(self._component_placement.get_world_size("rollout"))
         )
+        if self.rollout_backend == "sglang":
+            from rlinf.workers.rollout.utils import DisaggRankMapper
+
+            self._sglang_weight_targets = (
+                DisaggRankMapper.get_actor_rank_to_rollout_rank_map(
+                    actor_tp_size=1,
+                    actor_pp_size=1,
+                    actor_world_size=self._world_size,
+                    rollout_tp_size=1,
+                    rollout_world_size=len(self._rollout_all_ranks),
+                )[self._rank]
+            )
 
     # Built on first use: offline actors have no env.train and never read them.
     @cached_property
@@ -213,43 +231,66 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         state_dict = self.get_rollout_state_dict()
 
-        async def send_func(data):
-            if not self._is_weight_sender:
-                return
-            await self.broadcast(
-                data,
-                groups=[
-                    (self._group_name, 0),
-                    (self._rollout_group_name, self._rollout_all_ranks),
-                ],
-                src=(self._group_name, 0),
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
+        if self.rollout_backend == "sglang":
+            from rlinf.models.embodiment.sglang_adapter import get_sglang_adapter_cls
 
-        async def recv_func():
-            return await self.recv(
-                src_group_name=self._rollout_group_name,
-                src_rank=0,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        if not self.weight_syncer.sender_initialized():
-            await self.weight_syncer.init_sender(
-                state_dict=state_dict,
-                send=send_func,
-                recv=recv_func,
-                param_names_need_sync=self.param_names_need_sync,
-                is_sender=self._is_weight_sender,
+            adapter_cls = get_sglang_adapter_cls(self.cfg.rollout.model.model_type)
+            serving_state = {
+                name: tensor
+                for name, tensor in state_dict.items()
+                if adapter_cls.map_weight_name(name) is not None
+            }
+            self.send_hf_weights(
+                serving_state,
+                self._rollout_group_name,
+                self._sglang_weight_targets,
+                cpu_offload=True,
+                version=self.version,
             )
+        elif self.rollout_backend == "huggingface":
 
-        version = (
-            self.get_rollout_sync_version()
-            if hasattr(self, "get_rollout_sync_version")
-            else self.version
-        )
-        await self.weight_syncer.sync(state_dict, send_func, version=version)
+            async def send_func(data):
+                if not self._is_weight_sender:
+                    return
+                await self.broadcast(
+                    data,
+                    groups=[
+                        (self._group_name, 0),
+                        (self._rollout_group_name, self._rollout_all_ranks),
+                    ],
+                    src=(self._group_name, 0),
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+
+            async def recv_func():
+                return await self.recv(
+                    src_group_name=self._rollout_group_name,
+                    src_rank=0,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+
+            if not self.weight_syncer.sender_initialized():
+                await self.weight_syncer.init_sender(
+                    state_dict=state_dict,
+                    send=send_func,
+                    recv=recv_func,
+                    param_names_need_sync=self.param_names_need_sync,
+                    is_sender=self._is_weight_sender,
+                )
+
+            version = (
+                self.get_rollout_sync_version()
+                if hasattr(self, "get_rollout_sync_version")
+                else self.version
+            )
+            await self.weight_syncer.sync(state_dict, send_func, version=version)
+        else:
+            raise ValueError(
+                "Embodied weight synchronization supports 'sglang' and 'huggingface', "
+                f"got rollout_backend={self.rollout_backend!r}"
+            )
 
         if self.enable_offload:
             assert not self.is_weight_offloaded, (

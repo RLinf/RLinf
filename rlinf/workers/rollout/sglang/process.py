@@ -144,7 +144,13 @@ def _run_sglang_server(
             server_args_kwargs["master_port"] = dist_port
             server_args = ServerArgs.from_kwargs(**server_args_kwargs)
             set_global_server_args(server_args)
-            dispatch_launch(server_args)
+            from rlinf.hybrid_engines.sglang.common import embodied_scheduler
+
+            dispatch_launch(
+                server_args,
+                run_scheduler_process_func=embodied_scheduler.run_scheduler_process,
+                app_factory=embodied_scheduler.create_app,
+            )
         else:
             if apply_rlinf_patch:
                 # Must precede the launch_server import below: the Patcher
@@ -241,6 +247,9 @@ class SGLangServerProcess:
     (``SGLangServerWorker``), the server backend layer uses it directly.
     ``acquire_free_port`` is injected so port allocation still goes
     through the caller's port lock.
+
+    ``server_type`` is an RLinf selector: ``srt`` launches SGLang's LLM
+    runtime, and ``embodied`` launches SGLang Diffusion for embodied policies.
     """
 
     def __init__(
@@ -274,8 +283,6 @@ class SGLangServerProcess:
                 "dist_init_addr (the entry node's rendezvous host:port) is "
                 "required when nnodes > 1."
             )
-        if apply_rlinf_patch:
-            _assert_sglang_supports_rlinf_patch()
         self._server_args_kwargs = dict(server_args_kwargs)
         self._acquire_free_port = acquire_free_port
         self._server_type = server_type
@@ -308,6 +315,8 @@ class SGLangServerProcess:
         """
         assert self._server_proc is None, "sglang server already initialized."
 
+        from . import sglang_version
+
         # Every node needs an HTTP port (non-entry nodes bind a dummy
         # /health); a local dist port only on single node, cross-node uses
         # the negotiated dist_init_addr.
@@ -327,7 +336,8 @@ class SGLangServerProcess:
             server_kwargs["node_rank"] = self._node_rank
 
         self._log_info(
-            f"Launching sglang server (server_type={self._server_type}): "
+            f"Launching sglang server (version={sglang_version}, "
+            f"server_type={self._server_type}): "
             f"http=:{http_port}, dist_port={dist_port}, "
             f"dist_init_addr={self._dist_init_addr}, "
             f"node_rank={self._node_rank}/{self._nnodes}, "
@@ -497,28 +507,6 @@ class SGLangServerProcess:
             proc.join(timeout=5)
         self._server_proc = None
         self._server_port = None
-
-
-def _assert_sglang_supports_rlinf_patch() -> None:
-    """Refuse ``apply_rlinf_patch`` on sglang versions lacking the hooks.
-
-    Server-mode patching needs ``launch_server``'s ``run_scheduler_process_func``
-    injection parameter (sglang > 0.5.5). Checked in the parent process so the
-    failure surfaces as a readable error instead of a dead child.
-    """
-    from importlib.metadata import PackageNotFoundError, version
-
-    from packaging.version import parse
-
-    try:
-        sglang_version = parse(version("sglang"))
-    except PackageNotFoundError as e:
-        raise RuntimeError("sglang is not installed.") from e
-    assert sglang_version > parse("0.5.5"), (
-        f"apply_rlinf_patch requires sglang > 0.5.5 "
-        f"(launch_server run_scheduler_process_func injection); "
-        f"installed: {sglang_version}"
-    )
 
 
 def _pin_bundled_cudart() -> None:

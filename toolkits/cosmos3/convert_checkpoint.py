@@ -33,6 +33,7 @@ run in the cosmos-framework environment (``transformers 4.57.x`` + ``diffusers
 """
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -41,6 +42,17 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Keep direct script execution usable with just torch and safetensors. Importing
+# the model package would also initialize RLinf's scheduler/training dependencies.
+_mapping_spec = importlib.util.spec_from_file_location(
+    "cosmos3_weight_mapping",
+    Path(__file__).resolve().parents[2]
+    / "rlinf/models/embodiment/cosmos3/weight_mapping.py",
+)
+_mapping_module = importlib.util.module_from_spec(_mapping_spec)
+_mapping_spec.loader.exec_module(_mapping_module)
+_diffusers_key = _mapping_module.native_to_diffusers_key
 
 DEFAULT_EXPERIMENT = "action_policy_libero_all_nano"
 DEFAULT_CONFIG = "cosmos_framework/configs/base/config.py"
@@ -70,43 +82,6 @@ export_model._coerce_to_base_model = coerce_and_drop
 sys.argv = ["export_model", *sys.argv[2:]]
 export_model.main()
 """
-
-
-# Same attention names as cosmos-framework's native -> Diffusers converter.
-_ATTENTION_NAMES = (
-    ("q_proj_moe_gen", "add_q_proj"),
-    ("k_proj_moe_gen", "add_k_proj"),
-    ("v_proj_moe_gen", "add_v_proj"),
-    ("o_proj_moe_gen", "to_add_out"),
-    ("q_norm_moe_gen", "norm_added_q"),
-    ("k_norm_moe_gen", "norm_added_k"),
-    ("q_proj", "to_q"),
-    ("k_proj", "to_k"),
-    ("v_proj", "to_v"),
-    ("o_proj", "to_out"),
-    ("q_norm", "norm_q"),
-    ("k_norm", "norm_k"),
-)
-_ROOT_NAMES = (
-    ("time_embedder.mlp.0.", "time_embedder.linear_1."),
-    ("time_embedder.mlp.2.", "time_embedder.linear_2."),
-    ("vae2llm.", "proj_in."),
-    ("llm2vae.", "proj_out."),
-    ("action2llm.", "action_proj_in."),
-    ("llm2action.", "action_proj_out."),
-)
-
-
-def _diffusers_key(name: str) -> str:
-    if name.startswith("language_model."):
-        name = name.removeprefix("language_model.").removeprefix("model.")
-        for native, exported in _ATTENTION_NAMES:
-            name = name.replace(f".self_attn.{native}.", f".self_attn.{exported}.")
-        return name
-    for native, exported in _ROOT_NAMES:
-        if name.startswith(native):
-            return exported + name.removeprefix(native)
-    return name
 
 
 def export_from_template(

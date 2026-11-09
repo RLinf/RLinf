@@ -202,6 +202,8 @@ jobs:
               - 'rlinf/models/embodiment/mlp_policy/**'
               - 'rlinf/models/embodiment/prefix_features.py'
               - 'toolkits/rlt/**'
+              - 'toolkits/cosmos3/convert_checkpoint.py'
+              - 'rlinf/models/embodiment/cosmos3/**'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the

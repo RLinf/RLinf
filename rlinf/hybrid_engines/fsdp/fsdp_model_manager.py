@@ -21,6 +21,7 @@ import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.tensor import DTensor
+from torch.multiprocessing.reductions import reduce_tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM
@@ -357,7 +358,7 @@ class FSDPModelManager:
 
     def load_model_with_state_dict(
         self,
-        state_dict: dict,
+        state_dict: dict[str, torch.Tensor | DTensor],
         cpu_offload: bool,
         full_state_dict: bool,
     ) -> None:
@@ -759,6 +760,54 @@ class FSDPModelManager:
         return self._strategy.before_micro_batch(
             model=model, is_last_micro_batch=is_last_micro_batch
         )
+
+    def send_hf_weights(
+        self,
+        state_dict: dict,
+        dst_group_name: str,
+        dst_ranks: list[tuple[int, int]],
+        *,
+        use_cuda_ipc: bool = False,
+        dtype: torch.dtype | None = None,
+        cpu_offload: bool = False,
+        version: int | None = None,
+    ) -> None:
+        """Gather full parameter tensors and send buckets to rollout receivers.
+
+        All FSDP ranks participate, including ranks with no send targets.
+        The first bucket carries its count and an optional policy version.
+        """
+        has_visual = any("visual." in name for name in state_dict)
+        buckets = self.divide_model_to_bucket(state_dict, has_visual)
+        if not buckets:
+            raise ValueError("Server weight synchronization requires nonempty state")
+        if use_cuda_ipc and cpu_offload:
+            raise ValueError("CUDA IPC weight synchronization requires GPU tensors")
+        handles = []
+        for index, bucket in enumerate(buckets):
+            buffer = {}
+            for name, tensor in bucket.items():
+                if isinstance(tensor, DTensor):
+                    tensor = tensor.full_tensor()
+                if dtype is not None:
+                    tensor = tensor.to(dtype)
+                if cpu_offload:
+                    tensor = tensor.cpu()
+                buffer[name] = reduce_tensor(tensor) if use_cuda_ipc else tensor
+            if index == 0:
+                buffer["bucket_length"] = torch.tensor(
+                    [len(buckets)], device="cpu" if cpu_offload else self.device
+                )
+                if version is not None:
+                    buffer["weight_version"] = int(version)
+            for handle in handles:
+                handle.wait()
+            handles = [
+                self.send(buffer, dst_group_name, list(rank), async_op=True)
+                for rank in dst_ranks
+            ]
+        for handle in handles:
+            handle.wait()
 
     def divide_model_to_bucket(self, state_dict, agent_and_has_visual=False):
         bucket_capacity = self.bucket_capacity

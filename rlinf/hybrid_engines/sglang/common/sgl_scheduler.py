@@ -52,6 +52,7 @@ from .io_struct import (
     TaskMethodInput,
     TaskMethodOutput,
 )
+from .weight_target import receive_hf_weights
 
 logger.setLevel(logging.WARNING)
 
@@ -72,15 +73,15 @@ def patch_glm4_moe_lite_shared_expert_tp1():
 
 
 class Scheduler(_Scheduler):
-    """
-    Overridden class of SGLang's TP worker class _Scheduler.
-    A Scheduler is a Task that manages the TP worker, and performs necessary weight synchronization with actor and weight offloading.
-    """
+    """Extend the SRT scheduler with RLinf weight synchronization and offload."""
 
     def __init__(self, *args, **kwargs):
         # Must run before super().__init__, which builds the model.
         patch_glm4_moe_lite_shared_expert_tp1()
         super().__init__(*args, **kwargs)
+        if not hasattr(self, "tp_size"):
+            self.tp_size = self.ps.tp_size
+            self.tp_rank = self.ps.tp_rank
         # `TpModelWorkerClient` is used when ServerArgs.enable_overlap=True, and it has 'worker' attribute.
         # But in early SGLang version, `TpModelWorker` doesn't have 'worker' attribute.
         if not hasattr(self.tp_worker, "worker"):
@@ -212,6 +213,15 @@ class Scheduler(_Scheduler):
         assert self.weight_reload == "sync", (
             "only sglang with 'sync' can run 'batch_load_hf_weight'"
         )
+        if self.is_weight_offloaded:
+            # Resume model weights only. KV cache and cuda graph are deferred
+            # to onload_kv_cudagraph() in the runner, which runs after the
+            # actor offloads its model, so the two models are never both
+            # resident. Large MoE models OOM otherwise.
+            self.resume_memory_occupation(
+                ResumeMemoryOccupationReqInput(tags=["weights"])
+            )
+
         model = self.tp_worker.worker.model_runner.model
         rename = self._hf_to_sglang_name(model)
         rollout_sync_mode_collocated = (
@@ -245,57 +255,12 @@ class Scheduler(_Scheduler):
         use_cudagraph = not self.cfg.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
-        # Under overlap scheduling an already-launched batch may still be on
-        # the GPU when a pause leaves it unprocessed; wait before load_weights.
-        Worker.torch_platform.synchronize()
-
-        state_dict = self._rlinf_worker.recv(
-            src_group_name=self._actor_group_name,
-            src_rank=self.actor_weight_rank,
+        receive_hf_weights(
+            self._rlinf_worker,
+            self._actor_group_name,
+            self.actor_weight_rank,
+            self.batch_load_hf_weight,
         )
-
-        bucket_length = state_dict.get("bucket_length", None)
-        if bucket_length is None:
-            # recv from the Sglang backend
-            # fsdp just send a bucket and don't have the key bucket_length
-            bucket_length = 1
-        else:
-            # recv from the Megatron backend
-            # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
-            state_dict.pop("bucket_length")
-            if isinstance(bucket_length, torch.Tensor):
-                bucket_length = bucket_length.item()
-            assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
-
-        if self.is_weight_offloaded:
-            # Resume model weights only. KV cache and cuda graph are deferred
-            # to onload_kv_cudagraph() in the runner, which runs after the
-            # actor offloads its model, so the two models are never both
-            # resident. Large MoE models OOM otherwise.
-            self.resume_memory_occupation(
-                ResumeMemoryOccupationReqInput(tags=["weights"])
-            )
-
-        self.batch_load_hf_weight(state_dict)
-        if bucket_length > 1:
-            recv_handle = self._rlinf_worker.recv(
-                src_group_name=self._actor_group_name,
-                src_rank=self.actor_weight_rank,
-                async_op=True,
-            )
-            for _ in range(bucket_length - 2):
-                next_recv_handle = self._rlinf_worker.recv(
-                    src_group_name=self._actor_group_name,
-                    src_rank=self.actor_weight_rank,
-                    async_op=True,
-                )
-                state_dict = recv_handle.wait()
-                self.batch_load_hf_weight(state_dict)
-                recv_handle = next_recv_handle
-
-            state_dict = recv_handle.wait()
-            self.batch_load_hf_weight(state_dict)
-        state_dict = None
 
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
@@ -377,10 +342,7 @@ class Scheduler(_Scheduler):
             )
 
     def run_task_method(self, obj: TaskMethodInput):
-        """
-        Run a CommTask method with the given name and arguments.
-        NOTE: will call wait() if async_op is True.
-        """
+        """Invoke a scheduler method and wait for an async RLinf handle if requested."""
         result = getattr(self, obj.method_name)(*obj.args, **obj.kwargs)
         if "async_op" in obj.kwargs and obj.kwargs["async_op"]:
             result = result.wait()

@@ -326,6 +326,76 @@ The script runs all four steps in order (``--use-ema-weights`` keeps the EMA wei
 
 The resulting ``model_diffusers`` is the ``rollout.model.model_path`` for :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
 
+Continue With Edge GRPO and SGLang
+----------------------------------------
+
+After exporting an Edge LIBERO policy, use
+``examples/embodiment/config/libero_spatial_grpo_cosmos3_edge_sglang.yaml``
+to continue with GRPO. The native Cosmos actor trains through FSDP, while
+SGLang generates action chunks and their transition logprobs. This integration
+requires SGLang's diffusion ``/rollout/generate`` and
+``/update_weights_from_tensor`` APIs. Install the serving environment as described
+in :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
+
+Set the example's paths before launching. ``actor.model.model_path`` points to
+the complete exported Edge LIBERO ``model_diffusers`` directory; the actor and
+SGLang both load it. Set ``actor.model.wan_vae_path`` to the native equivalent
+of the exported VAE and ``actor.model.action_stats_path`` to the LIBERO statistics
+used during SFT. The template assigns GPUs 0–3 to the actor and GPUs 4–7 to four
+single-GPU servers. Set
+``cluster.node_groups[0].env_configs[0].python_interpreter_path`` to the SGLang
+environment's Python. The driver, actor, and simulator use the native Cosmos
+training environment; both environments must import this RLinf checkout.
+The same ``SGLangEmbodiedWorker`` handles training and evaluation. The driver
+launches a separate ``SGLangServerWorker`` group and passes its URLs to the
+rollout workers before initialization. During training, each rollout worker
+uses one server on the same GPU and node group. The driver stops the server
+group when training finishes; Hugging Face rollout keeps its existing lifecycle.
+
+Launch from the repository root with the native training environment activated:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_cosmos3_edge_sglang
+
+Action rollout is implemented directly in the modified SGLang 0.5.19 checkout,
+using the existing Cosmos3 pipeline, scheduler, logprob collection, and
+trajectory protocol. Activate the serving environment and install that checkout
+before starting the servers:
+
+.. code-block:: bash
+
+   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e /path/to/sglang-0.5.19/python
+
+The build environment needs ``setuptools-scm>=8.0`` and ``wheel``. Installing the
+unmodified release alone does not provide Cosmos3 action rollout.
+
+Training samples an SDE action trajectory with guidance 1 and positive
+``noise_level``. SGLang returns per-step mean action logprobs, the scheduler's
+sigma grid, and the latents of one randomly selected transition. RLinf selects
+that step and converts the mean to a sum over the valid action dimensions for
+the chunk-level loss. The actor replays the transition with the same flow
+schedule and Gaussian density. These logprobs describe the normalized action
+transition, rather than language tokens or the marginal probability of the
+final environment action. The example uses chunk-level GRPO, ``kl_beta=0``,
+and ``entropy_bonus=0``.
+
+Weight updates use ``weight_syncer.type=bucket``. Each received bucket is mapped
+from native Cosmos names to Diffusers names and applied to the live SGLang
+transformer before rollout resumes. The first actor sync sends the complete online
+transformer, including frozen parameters, after the actor has loaded
+``runner.ckpt_path`` or resumed from a training checkpoint. Subsequent buckets
+carry the actor's trainable parameters. Standalone evaluation loads
+``runner.ckpt_path`` through the same server weight target. Keep the tokenizer and
+VAE consistent with the exported package when supplying this override or resuming
+from ``runner.resume_dir``. The current implementation uses one GPU per server,
+dedicated rollout GPUs, and disabled rollout offload and CUDA graphs.
+
+.. note::
+
+   This is a development recipe. End-to-end training and numerical agreement
+   between the native actor and SGLang have not yet been validated.
+
 Visualization and Results
 ----------------------------------------
 

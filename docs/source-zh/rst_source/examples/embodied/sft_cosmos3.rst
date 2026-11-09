@@ -326,6 +326,37 @@ Nano 和 Edge 都可以使用 ``--base-model-path``，在 SGLang 环境中用 to
 
 转换得到的 ``model_diffusers`` 即 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 的 ``rollout.model.model_path``。
 
+使用 SGLang 继续训练 Edge GRPO
+----------------------------------------
+
+导出 Edge LIBERO policy 后，可使用 ``examples/embodiment/config/libero_spatial_grpo_cosmos3_edge_sglang.yaml`` 继续 GRPO 训练。原生 Cosmos actor 通过 FSDP 训练，SGLang 生成 action chunk 并返回转移 logprob。该接入依赖 SGLang diffusion 的 ``/rollout/generate`` 和 ``/update_weights_from_tensor`` API；serving 环境的安装方式见 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>`。
+
+启动前先修改配置中的路径。``actor.model.model_path`` 指向完整导出的 Edge LIBERO ``model_diffusers`` 目录，actor 与 SGLang 均从这里加载权重。``actor.model.wan_vae_path`` 应指向与导出包中 VAE 对应的原生权重，``actor.model.action_stats_path`` 使用 SFT 时的 LIBERO 统计文件。示例将 GPU 0–3 分配给 actor，GPU 4–7 分配给四个单卡 server。将 ``cluster.node_groups[0].env_configs[0].python_interpreter_path`` 改成 SGLang 环境的 Python 路径；driver、actor 和模拟器使用原生 Cosmos 训练环境。两个环境都需要能导入当前 RLinf checkout。
+
+训练和评测均使用现有 ``SGLangEmbodiedWorker``。driver 启动独立的 ``SGLangServerWorker`` group，在初始化 rollout worker 前下发 server URL。训练时每个 rollout worker 使用同一 GPU 和 node group 上的一个 server，训练结束后由 driver 关闭 server group。Hugging Face rollout 保留原有生命周期。
+
+激活原生训练环境后，在仓库根目录启动：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_cosmos3_edge_sglang
+
+action rollout 直接实现在修改后的 SGLang 0.5.19 源码中，复用已有 Cosmos3 pipeline、scheduler、logprob 收集和 trajectory 协议。启动 server 前，先激活 serving 环境并安装该源码目录：
+
+.. code-block:: bash
+
+   SGLANG_BUILD_RUST_EXTS=none uv pip install --no-deps --no-build-isolation -e /path/to/sglang-0.5.19/python
+
+构建环境需要 ``setuptools-scm>=8.0`` 和 ``wheel``。只安装未经修改的发布版不包含 Cosmos3 action rollout。
+
+训练阶段以 guidance 1 和正数 ``noise_level`` 采样 SDE action trajectory。SGLang 返回每个去噪步骤在有效动作维度上的平均 logprob、scheduler 的 sigma grid，以及随机选中步骤前后的 latent。RLinf 提取选中步骤，将平均 logprob 换算为有效动作维度上的总和，交给 chunk-level loss。actor 使用相同的 flow schedule 和高斯密度重算该步骤的 logprob。这里的 logprob 描述归一化动作的单步转移，并非语言 token 的概率或最终环境动作的边缘概率。示例采用 chunk-level GRPO，并设置 ``kl_beta=0``、``entropy_bonus=0``。
+
+权重同步使用 ``weight_syncer.type=bucket``。rollout 将每个 bucket 的原生 Cosmos 参数名转换为 Diffusers 参数名，写入 SGLang transformer，全部更新成功后才恢复采样。actor 加载 ``runner.ckpt_path`` 或恢复训练后，首次同步会发送完整 online transformer，包括冻结参数；后续 bucket 发送可训练参数。独立评测通过同一个 server 权重接收接口加载 ``runner.ckpt_path``。tokenizer 和 VAE 均需与导出包保持一致。当前实现要求每个 server 使用一张 GPU，actor 与 rollout 使用独立 GPU，并关闭 rollout offload 和 CUDA graphs。
+
+.. note::
+
+   这是开发阶段的配置，尚未验证端到端训练及原生 actor 与 SGLang 的数值一致性。
+
 可视化与结果
 ----------------------------------------
 

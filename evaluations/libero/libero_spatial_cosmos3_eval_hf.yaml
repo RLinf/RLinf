@@ -49,12 +49,12 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
   return_logprobs: false
   model:
-    model_path: path/to/Cosmos3-Nano-DCP
+    model_path: /mnt/public/new_fuxu/model/cosmos3-nano-policy-liberoall-5k
     checkpoint_format: diffusers
-    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
-    action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
+    wan_vae_path: /mnt/public/new_fuxu/model/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    action_stats_path: /mnt/public/new_fuxu/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
