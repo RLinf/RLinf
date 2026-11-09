@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
 
 import torch
 
 from rlinf.algorithms.registry import register_advantage
 from rlinf.algorithms.utils import kl_penalty, safe_normalize
 from rlinf.utils.utils import masked_mean
+
+if TYPE_CHECKING:
+    from rlinf.data.schema.actor_batch import TokenRows
 
 
 @register_advantage("gae")
@@ -264,12 +269,12 @@ def compute_grpo_turn_advantages(
 @register_advantage("grpo_dynamic")
 def compute_grpo_dynamic_advantages(
     rewards: torch.Tensor,
-    loss_mask: torch.Tensor,
+    loss_mask: TokenRows,
     group_size: int,
     idx_to_traj: list[int],
     advantage_mode: str = "turn",  # "trajectory" or "turn"
     **kwargs,
-):
+) -> tuple[TokenRows, None]:
     """
     Compute GRPO advantages for multi-turn multi-agent scenarios.
 
@@ -293,30 +298,22 @@ def compute_grpo_dynamic_advantages(
 
     Args:
         rewards: Shape [num_sequence, 1] after preprocessing (num_sequence = total turns)
-        loss_mask: Shape [seq_len, num_sequence] after preprocessing
+        loss_mask: Real-length token rows, one per sequence
         group_size: Number of trajectories per question (e.g., 4)
         idx_to_traj: List mapping turn_idx -> global_traj_idx
         advantage_mode: "trajectory" or "turn"
 
     Returns:
-        advantages: Shape [seq_len, num_sequence]
+        advantages: TokenRows in the input row order, masked at absolute token positions
     """
     turn_advantages = compute_grpo_turn_advantages(
         rewards, group_size, idx_to_traj, advantage_mode
     )
 
-    if isinstance(loss_mask, list):
-        return [
-            mask.to(rewards.dtype) * value
-            for mask, value in zip(loss_mask, turn_advantages)
-        ], None
-
-    advantages = torch.zeros_like(
-        loss_mask, dtype=rewards.dtype
-    ) + turn_advantages.view(1, -1)
-    advantages = advantages * loss_mask
-
-    return advantages, None
+    return [
+        mask.to(rewards.dtype) * value
+        for mask, value in zip(loss_mask, turn_advantages)
+    ], None
 
 
 @register_advantage("reinpp")

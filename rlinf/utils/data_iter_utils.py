@@ -17,11 +17,14 @@ import heapq
 import itertools
 import logging
 from collections import UserDict
-from typing import Any, Iterator, Optional, Union
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Union
 
 import numpy as np
 import torch
 from torch import distributed as dist
+
+if TYPE_CHECKING:
+    from rlinf.data.schema.actor_batch import DynamicActorBatch
 
 
 def concat_dict_list(list_of_dicts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -88,19 +91,14 @@ def split_list(
         return result
     else:
         if enforce_divisible_batch:
-            chunk_size = len(inputs) // num_chunks
-            assert len(inputs) % chunk_size == 0, (
-                f"Issue with batch size configuration! inputs len:{len(inputs)} num_chunks:{num_chunks}"
+            assert len(inputs) % num_chunks == 0, (
+                f"Expected {len(inputs)} rows to be divisible by {num_chunks} chunks."
             )
-            return [
-                inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)
-            ]
-        else:
-            k, m = divmod(len(inputs), num_chunks)
-            return [
-                inputs[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)]
-                for i in range(num_chunks)
-            ]
+        k, m = divmod(len(inputs), num_chunks)
+        return [
+            inputs[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)]
+            for i in range(num_chunks)
+        ]
 
 
 def merge_tensor(dst_tensor: torch.Tensor, src_tensor: torch.Tensor):
@@ -134,9 +132,10 @@ def get_iterator_k_split(
     shuffle_seed: Optional[int] = None,
 ) -> Iterator:
     """
-    Split a batch into k microbatches, where the batch size is divisible by k. Batch could be
-    a dictionary of tensors or a list of tensors. A dictionary batch could also have items of List type,
-    as long as the length of that list is the same as the batch size.
+    Split aligned batch columns into k microbatches.
+
+    Dictionary columns share a row count and identical split boundaries. When
+    uneven splits are allowed, the first remainder chunks receive one extra row.
 
     Args:
         batch: Input batch data (dict or list of tensors).
@@ -211,7 +210,7 @@ def get_iterator_k_split(
         list_items = {k: v for k, v in batch.items() if isinstance(v, list)}
 
         # Split tensor items
-        batch_size = next(iter(tensor_items.values())).shape[0]
+        batch_size = len(next(iter(batch.values())))
         if isinstance(num_splits, list):
             assert all((i > 0 for i in num_splits)) and sum(num_splits) == batch_size, (
                 f"Issue with batch size configuration! batch_size = {batch_size}, num_splits = {num_splits}"
@@ -227,13 +226,6 @@ def get_iterator_k_split(
             tensor_items = {
                 k: torch.tensor_split(v, num_splits) for k, v in tensor_items.items()
             }
-            # handle the case where the batch size from dynamic bucketting is not divisible
-            if batch_size % num_splits != 0:
-                chunk_size = batch_size // num_splits
-                tensor_items = {
-                    k: v[:chunk_size] for i, (k, v) in enumerate(tensor_items.items())
-                }
-
         list_items = {
             k: split_list(
                 v,
@@ -503,14 +495,14 @@ def get_seqlen_BFD_partitions(seq_len_list, max_tokens_per_mbs):
 
 
 def get_iterator_dynamic(
-    batch: Union[dict, list[torch.Tensor]],
+    batch: "DynamicActorBatch | dict[str, torch.Tensor] | list[torch.Tensor]",
     max_tokens_per_mbs: Optional[int] = None,
     dp_group=None,
     num_batches_divided_by=None,
     same_micro_num_in_dp=True,
     min_num_micro_batch=None,
-    length_alignment: int = 1,
-):
+    seq_len_effective: Optional[torch.Tensor] = None,
+) -> tuple[Iterator, list[list[int]], int]:
     """
     Split a batch into microbatches based on max token length or fixed number
 
@@ -521,20 +513,20 @@ def get_iterator_dynamic(
         num_batches_divided_by: Ensure number of micro-batches is divisible by this number
         same_micro_num_in_dp: Whether to synchronize micro-batch numbers across data parallel ranks
         min_num_micro_batch: Minimum number of micro-batches to create
+        seq_len_effective: Per-row compute lengths, including backend alignment.
     """
+    from rlinf.scheduler import Worker
+
     assert dist.is_initialized()
+    collective_device = (
+        "cpu"
+        if dist.get_backend(dp_group) == "gloo"
+        else Worker.torch_platform.current_device()
+    )
     if isinstance(batch, (dict, UserDict)):
-        # Get effective sequence length of each sample
-        ragged = isinstance(batch["attention_mask"], list)
-        if ragged:
-            seq_len_effective = torch.tensor([len(row) for row in batch["input_ids"]])
-            seq_len_effective = (
-                (seq_len_effective + length_alignment - 1) // length_alignment
-            ) * length_alignment
-            max_seq_len = seq_len_effective.max().item()
-        else:
+        if seq_len_effective is None:
             seq_len_effective = batch["attention_mask"].sum(dim=1)
-            max_seq_len = batch["attention_mask"].shape[-1]
+        max_seq_len = seq_len_effective.max().item()
 
         # Validate max_tokens_per_mbs
         assert max_tokens_per_mbs >= max_seq_len, (
@@ -551,7 +543,9 @@ def get_iterator_dynamic(
             # used to support pp
             num_micro_batches = max(min_num_micro_batch, num_micro_batches)
         if same_micro_num_in_dp:
-            num_micro_batches = torch.tensor([num_micro_batches], device="cuda")
+            num_micro_batches = torch.tensor(
+                [num_micro_batches], device=collective_device
+            )
             dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
             num_micro_batches = num_micro_batches.cpu().item()
         if num_batches_divided_by is not None:
@@ -581,12 +575,7 @@ def get_iterator_dynamic(
                     else:
                         continue
                 microbatches.append(curr_batch)
-                token_count = (
-                    sum(seq_len_list[idx] for idx in partition)
-                    if ragged
-                    else sum(curr_batch["prompt_lengths"])
-                    + sum(curr_batch["response_lengths"])
-                )
+                token_count = sum(seq_len_list[idx] for idx in partition)
                 if token_count > max_tokens_per_mbs:
                     valid_max_token = 0
                     # print(
@@ -597,7 +586,7 @@ def get_iterator_dynamic(
                     #     f"max_tokens_per_mbs: {max_tokens_per_mbs}"
                     # )
                     break
-            valid_max_token = torch.tensor([valid_max_token], device="cuda")
+            valid_max_token = torch.tensor([valid_max_token], device=collective_device)
             dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
             valid_max_token = valid_max_token.cpu().item()
             if valid_max_token == 0:
@@ -625,7 +614,9 @@ def get_iterator_dynamic(
             # used to support pp
             num_micro_batches = max(min_num_micro_batch, num_micro_batches)
         if same_micro_num_in_dp:
-            num_micro_batches = torch.tensor([num_micro_batches], device="cuda")
+            num_micro_batches = torch.tensor(
+                [num_micro_batches], device=collective_device
+            )
             dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
             num_micro_batches = num_micro_batches.cpu().item()
         if num_batches_divided_by is not None:
@@ -674,7 +665,7 @@ def get_iterator_dynamic(
                     #     f"max_tokens_per_mbs: {max_tokens_per_mbs}"
                     # )
                     break
-            valid_max_token = torch.tensor([valid_max_token], device="cuda")
+            valid_max_token = torch.tensor([valid_max_token], device=collective_device)
             dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
             valid_max_token = valid_max_token.cpu().item()
             if valid_max_token == 0:
@@ -684,13 +675,13 @@ def get_iterator_dynamic(
 
 
 def split_dynamic_batch_size(
-    batch: dict[str, torch.Tensor],
+    batch: "DynamicActorBatch | dict[str, torch.Tensor]",
     cp_world_size: int,
-    vpp_world_size: int,
+    vpp_world_size: Optional[int],
     max_tokens_per_mbs: int,
     microbatch_group_size_per_vp_stage: int,
-    length_alignment: int = 1,
-):
+    seq_len_effective: Optional[torch.Tensor] = None,
+) -> tuple[Iterator, int, int, list[list[int]]]:
     """Split a global batch using dynamic batch sizing."""
     max_tokens_per_mbs = max_tokens_per_mbs * cp_world_size
     vpp_size = vpp_world_size
@@ -700,7 +691,7 @@ def split_dynamic_batch_size(
             batch,
             num_batches_divided_by=microbatch_group_size_per_vp_stage,
             max_tokens_per_mbs=max_tokens_per_mbs,
-            length_alignment=length_alignment,
+            seq_len_effective=seq_len_effective,
         )
         assert n_micro_batch % microbatch_group_size_per_vp_stage == 0, (
             f"micro_batches {data_iter} must be divisible by microbatch_group_size_per_vp_stage {microbatch_group_size_per_vp_stage} for megatron backend"
@@ -709,7 +700,7 @@ def split_dynamic_batch_size(
         data_iter, indices, n_micro_batch = get_iterator_dynamic(
             batch,
             max_tokens_per_mbs=max_tokens_per_mbs,
-            length_alignment=length_alignment,
+            seq_len_effective=seq_len_effective,
         )
     total_seqlen = max_tokens_per_mbs
     return data_iter, total_seqlen, n_micro_batch, indices

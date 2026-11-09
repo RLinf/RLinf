@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers: metrics, entropy aggregation, checkpoint paths, and resume."""
+"""Shared helpers: metrics, padding, rollout redistribution, and checkpointing."""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import inspect
 import math
@@ -24,11 +25,14 @@ import subprocess
 import sys
 import textwrap
 from contextlib import nullcontext
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -36,9 +40,69 @@ from rlinf.algorithms.utils import (
     apply_importance_sampling_correction,
     compute_entropy_loss,
 )
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.reasoning_runner import ReasoningRunner
+from rlinf.utils.distributed import balance_rollout_groups
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+@pytest.mark.parametrize(
+    "dtype", [torch.bool, torch.int64, torch.float32, torch.float64]
+)
+def test_batch_padding_preserves_values_and_dtype(left_pad, dtype):
+    rows = [torch.tensor(values, dtype=dtype) for values in ([], [1], [2, 3, 4])]
+    padded = batch_pad_to_fixed_len(rows, 3, -1, left_pad=left_pad)
+    expected = torch.tensor(
+        [[-1, -1, -1], [-1, -1, 1] if left_pad else [1, -1, -1], [2, 3, 4]],
+        dtype=dtype,
+    )
+    torch.testing.assert_close(padded, expected)
+    assert [len(row) for row in rows] == [0, 1, 3]
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_batch_padding_preserves_input_device(device, left_pad):
+    rows = [torch.ones(n, device=device) for n in (1, 3)]
+    padded = batch_pad_to_fixed_len(rows, 5, 0, left_pad=left_pad)
+    assert padded.device == rows[0].device
+    assert padded.dtype == rows[0].dtype and padded.shape == (2, 5)
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+def test_batch_padding_preserves_gradients(left_pad):
+    rows = [
+        torch.arange(1, n + 1, dtype=torch.float32).requires_grad_() for n in (1, 3, 5)
+    ]
+    padded = batch_pad_to_fixed_len(rows, 8, 0, left_pad=left_pad)
+    padded.square().sum().backward()
+    for row in rows:
+        torch.testing.assert_close(row.grad, 2 * row.detach())
+
+
+@pytest.mark.parametrize("left_pad", [False, True])
+def test_batch_padding_does_not_truncate_overlength_rows(left_pad):
+    with pytest.raises(RuntimeError, match="negative"):
+        batch_pad_to_fixed_len([torch.arange(5)], 4, 0, left_pad=left_pad)
+
+
+@pytest.mark.parametrize("valid_tokens", [0, 5])
+def test_seq_mean_token_mean_handles_empty_rows(valid_tokens):
+    from rlinf.utils.utils import seq_mean_token_mean
+
+    values = torch.ones(2, 8, requires_grad=True)
+    mask = torch.zeros(2, 8, dtype=torch.bool)
+    mask[1, :valid_tokens] = True
+    loss = seq_mean_token_mean(values, mask)
+    assert loss.item() == (0.5 if valid_tokens else 0.0)
+    loss.backward()
+    expected = torch.zeros_like(values)
+    if valid_tokens:
+        expected[1, :valid_tokens] = 1 / (2 * valid_tokens)
+    torch.testing.assert_close(values.grad, expected)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
@@ -917,3 +981,143 @@ def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatc
     assert f"source_device={source.device}" in str(info.value)
     assert "requested_bytes=8" in str(info.value)
     assert torch.Tensor.to is original_to
+
+
+def _balance_groups_process(rank, counts, num_groups, init_file):
+    world_size = len(counts) * num_groups
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        dp_group = dist.group.WORLD
+        if num_groups > 1:
+            groups = [
+                dist.new_group(list(range(i, world_size, num_groups)))
+                for i in range(num_groups)
+            ]
+            dp_group = groups[rank % num_groups]
+        dp_rank = dist.get_rank(dp_group)
+        total = sum(counts)
+        first_identity = (rank % num_groups) * total
+        start = first_identity + sum(counts[:dp_rank])
+        results = []
+        for i in range(counts[dp_rank]):
+            identity = start + i
+            length = 11 + identity * 7
+            results.append(
+                DynamicRolloutResult(
+                    num_sequence=2,
+                    group_size=2,
+                    idx_to_traj=[0, 1],
+                    input_ids=[[identity] * length, [identity] * (length + 1)],
+                    prompt_lengths=[3, 3],
+                    response_lengths=[length - 3, length - 2],
+                    is_end=[True, True],
+                    rewards=[float(identity), -float(identity)],
+                    rollout_logprobs=[[-0.5] * (length - 3), [-0.25] * (length - 2)],
+                    extra_fields_group={"identity": identity},
+                    extra_fields_train={"idx_to_sub_traj": [0, 0]},
+                )
+            )
+        snapshots = copy.deepcopy(results)
+        output = balance_rollout_groups(results, dp_group)
+        assert len(output) == total // len(counts)
+        local = {res.extra_fields_group["identity"]: res for res in results}
+        for result in output:
+            identity = result.extra_fields_group["identity"]
+            if identity in local:
+                assert result is local[identity]
+            length = 11 + identity * 7
+            assert result.idx_to_traj == [0, 1]
+            assert result.input_ids == [[identity] * length, [identity] * (length + 1)]
+            assert result.rewards == [float(identity), -float(identity)]
+            assert result.rollout_logprobs == [
+                [-0.5] * (length - 3),
+                [-0.25] * (length - 2),
+            ]
+            assert result.extra_fields_train == {"idx_to_sub_traj": [0, 0]}
+        assert results == snapshots
+        identities = [None] * len(counts)
+        dist.all_gather_object(
+            identities,
+            [res.extra_fields_group["identity"] for res in output],
+            group=dp_group,
+        )
+        assert sorted(sum(identities, [])) == list(
+            range(first_identity, first_identity + total)
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    ("counts", "num_groups"),
+    [
+        pytest.param((2,), 1, id="dp1"),
+        pytest.param((2, 2), 1, id="dp2"),
+        pytest.param((2, 2, 2, 2), 1, id="dp4"),
+        pytest.param((1, 3), 1, id="dp2-uneven-increasing"),
+        pytest.param((3, 1), 1, id="dp2-uneven-decreasing"),
+        pytest.param((0, 4), 1, id="dp2-empty-first"),
+        pytest.param((4, 0), 1, id="dp2-empty-last"),
+        pytest.param((1, 2, 0, 5), 1, id="dp4-uneven-empty-middle"),
+        pytest.param((0, 0, 0, 8), 1, id="dp4-single-source"),
+        pytest.param((5, 0, 2, 1), 1, id="dp4-uneven-decreasing"),
+        pytest.param((1, 3), 2, id="dp2-interleaved-subgroups"),
+    ],
+)
+def test_balance_complete_rollout_groups(tmp_path, counts, num_groups):
+    mp.spawn(
+        _balance_groups_process,
+        args=(counts, num_groups, str(tmp_path / "rendezvous")),
+        nprocs=len(counts) * num_groups,
+        join=True,
+    )
+
+
+def _source_weights_process(rank, redistribute, init_file):
+    import torch
+
+    from rlinf.algorithms.loss_scales import restore_source_dp_normalization
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        sources = (
+            ([0, 0, 1] if rank == 0 else [0]) if redistribute else [rank] * (3, 1)[rank]
+        )
+        batch = {
+            "extra:source_dp": torch.tensor(sources),
+            "advantages": [torch.ones(i + 1) for i in range(len(sources))],
+        }
+        restore_source_dp_normalization(
+            batch, {"folding_scale": ["group_level"]}, dist.group.WORLD, "cpu"
+        )
+        expected = (
+            ([1.0, 1.0, 1.0 / 3] if rank == 0 else [3.0])
+            if redistribute
+            else [1.0] * len(sources)
+        )
+        for row, value in zip(batch["advantages"], expected, strict=True):
+            torch.testing.assert_close(row, torch.full_like(row, value))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("redistribute", [False, True])
+def test_source_dp_loss_weights_survive_uneven_redistribution(tmp_path, redistribute):
+    mp.spawn(
+        _source_weights_process,
+        args=(redistribute, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )

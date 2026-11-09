@@ -422,8 +422,8 @@ def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
 
 
 def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
-        mask, dim=-1
+    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(mask, dim=-1).clamp_min(
+        1
     )  # token-mean
     loss = torch.mean(seq_losses)  # seq-mean
     return loss

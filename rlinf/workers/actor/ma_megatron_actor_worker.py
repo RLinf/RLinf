@@ -24,12 +24,17 @@ from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
 import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.loss_scales import restore_source_dp_normalization
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
     get_loss_scales,
     policy_loss,
 )
 from rlinf.algorithms.utils import kl_penalty
+from rlinf.data.schema.actor_batch import (
+    DynamicActorBatch,
+    pad_actor_batch_rows,
+)
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.hybrid_engines.megatron.utils import (
     postprocess_ragged_seqs,
@@ -42,6 +47,7 @@ from rlinf.utils.data_iter_utils import (
 )
 from rlinf.utils.distributed import (
     balance_rollout_groups,
+    broadcast_tensor_within_pp,
     compute_rollout_metrics_dynamic,
     masked_normalization,
     vocab_parallel_entropy_and_log_probs,
@@ -82,7 +88,9 @@ class MAMegatronActor(MegatronActor):
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
-    def get_batch(self, channel: Channel) -> tuple[dict, list[DynamicRolloutResult]]:
+    def get_batch(
+        self, channel: Channel
+    ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
         """Balance raw groups once, then broadcast them to model-parallel peers."""
         count = (
             self.cfg.data.rollout_batch_size
@@ -93,7 +101,7 @@ class MAMegatronActor(MegatronActor):
             results = [channel.get() for _ in range(count)]
             if not channel.is_local:
                 for result in results:
-                    result.extra_fields_train["ragged_source_dp"] = [
+                    result.extra_fields_train["source_dp"] = [
                         parallel_state.get_data_parallel_rank()
                     ] * result.num_sequence
             if not channel.is_local and self.enable_dp_load_balance:
@@ -101,8 +109,6 @@ class MAMegatronActor(MegatronActor):
                     results = balance_rollout_groups(
                         results, parallel_state.get_data_parallel_group()
                     )
-                for result in results:
-                    result.dp_balanced = True
         if not channel.is_local:
             with self.worker_timer("ragged_model_broadcast"):
                 results = self.broadcast(
@@ -121,52 +127,30 @@ class MAMegatronActor(MegatronActor):
                     ],
                 )
         batch = DynamicRolloutResult.merge_batches(
-            [result.to_ragged_actor_batch() for result in results],
+            [result.to_actor_batch() for result in results],
             self.cfg.algorithm.group_size,
         )
         return batch, results
 
-    def _restore_source_normalization(self, batch: dict, scale_context: dict) -> None:
+    def _restore_source_normalization(
+        self, batch: DynamicActorBatch, scale_context: dict
+    ) -> None:
         """Retain the original source-DP loss weights after early redistribution."""
-        if "group_level" not in scale_context["folding_scale"]:
-            return
-        sources = batch["extra:ragged_source_dp"].long()
-        counts = torch.bincount(
-            sources, minlength=parallel_state.get_data_parallel_world_size()
-        ).to(self.torch_platform.current_device())
-        torch.distributed.all_reduce(
-            counts, group=parallel_state.get_data_parallel_group()
+        restore_source_dp_normalization(
+            batch,
+            scale_context,
+            parallel_state.get_data_parallel_group(),
+            self.torch_platform.current_device(),
         )
-        ratios = counts.cpu()[sources].float() / len(sources)
-        batch["advantages"] = [
-            row * ratio for row, ratio in zip(batch["advantages"], ratios)
-        ]
 
-    def _pad_ragged_rows(self, batch: dict) -> dict:
-        """Equalize row counts for the existing minibatch/gradient schedule."""
-        count = torch.tensor(
-            len(batch["input_ids"]), device=self.torch_platform.current_device()
+    def _pad_ragged_rows(self, batch: DynamicActorBatch) -> DynamicActorBatch:
+        """Align every column with the minibatch and microbatch schedule."""
+        return pad_actor_batch_rows(
+            batch,
+            self.num_train_steps * self.cfg.actor.micro_batch_size,
+            parallel_state.get_data_parallel_group(),
+            self.torch_platform.current_device(),
         )
-        torch.distributed.all_reduce(
-            count,
-            op=torch.distributed.ReduceOp.MAX,
-            group=parallel_state.get_data_parallel_group(),
-        )
-        divisor = self.num_train_steps * self.cfg.actor.micro_batch_size
-        target = (count.item() + divisor - 1) // divisor * divisor
-        missing = target - len(batch["input_ids"])
-        for key, value in batch.items():
-            if isinstance(value, list):
-                for _ in range(missing):
-                    row = value[0].new_zeros((1, *value[0].shape[1:]))
-                    if key == "attention_mask":
-                        row.fill_(True)
-                    value.append(row)
-            else:
-                batch[key] = torch.cat(
-                    (value, value.new_zeros((missing, *value.shape[1:])))
-                )
-        return batch
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -238,16 +222,10 @@ class MAMegatronActor(MegatronActor):
                         lambda output, non_loss_data=True: logprob_rows,
                     )
                 width = self.cfg.actor.model.encoder_seq_length
-                output = {
-                    key: torch.stack(
-                        [
-                            torch.nn.functional.pad(row, (0, width - len(row)))
-                            for row in values
-                        ]
-                    )
-                    for key, values in output_rows.items()
-                }
-                batch = DynamicRolloutResult.materialize_ragged_batch(
+                output = DynamicRolloutResult.materialize_actor_batch(
+                    output_rows, width, 0, input_ids.device
+                )
+                batch = DynamicRolloutResult.materialize_actor_batch(
                     {
                         key: batch[key]
                         for key in (
@@ -384,16 +362,45 @@ class MAMegatronActor(MegatronActor):
 
         return forward_output_and_loss_func
 
-    def run_forward_backward(self, batch: dict[str, torch.Tensor], forward_only=True):
+    def _get_num_microbatches(
+        self, batch: DynamicActorBatch, forward_only: bool
+    ) -> int:
+        """Include partial inference microbatches; retain the training schedule."""
+        if not forward_only:
+            return super()._get_num_microbatches(batch, forward_only)
+        micro_batch_size = self.logprob_forward_micro_batch_size
+        return max(
+            1, (len(batch["input_ids"]) + micro_batch_size - 1) // micro_batch_size
+        )
+
+    def run_forward_backward(self, batch: DynamicActorBatch, forward_only=True):
         """Run the forward and backward pass on the model.
 
         Args:
-            batch (Dict[str, torch.Tensor]): The input batch for the forward pass.
+            batch (dict): Real-length token rows and per-sequence metadata.
             forward_only (bool): If True, only run the forward pass without backpropagation.
         """
         clear_memory()
+        row_count = len(batch["input_ids"])
+        if forward_only:
+            vpp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+            divisor = (
+                self.transformer_config.microbatch_group_size_per_vp_stage
+                if vpp_size is not None and vpp_size > 1
+                else 1
+            )
+            batch = pad_actor_batch_rows(
+                batch,
+                divisor,
+                parallel_state.get_data_parallel_group(),
+                self.torch_platform.current_device(),
+            )
         if self.enable_dynamic_batch_size:
-            # Enable dynamic batch sizing
+            alignment = parallel_state.get_tensor_model_parallel_world_size() * (
+                2 * parallel_state.get_context_parallel_world_size()
+                if parallel_state.get_context_parallel_world_size() > 1
+                else 1
+            )
             batch_iter, total_seqlen, num_microbatches, self.dbs_indices = (
                 split_dynamic_batch_size(
                     batch=batch,
@@ -401,13 +408,14 @@ class MAMegatronActor(MegatronActor):
                     vpp_world_size=parallel_state.get_virtual_pipeline_model_parallel_world_size(),
                     max_tokens_per_mbs=self.max_tokens_per_mbs,
                     microbatch_group_size_per_vp_stage=self.transformer_config.microbatch_group_size_per_vp_stage,
-                    length_alignment=(
-                        parallel_state.get_tensor_model_parallel_world_size()
-                        * (
-                            2 * parallel_state.get_context_parallel_world_size()
-                            if parallel_state.get_context_parallel_world_size() > 1
-                            else 1
+                    seq_len_effective=(
+                        (
+                            torch.tensor(list(map(len, batch["input_ids"])))
+                            + alignment
+                            - 1
                         )
+                        // alignment
+                        * alignment
                     ),
                 )
             )
@@ -448,21 +456,29 @@ class MAMegatronActor(MegatronActor):
 
         outputs = self._process_fwd_bwd_outputs(forward_outputs, forward_only)
 
-        return outputs
+        return outputs[:row_count] if forward_only else outputs
 
     def _process_fwd_bwd_outputs(self, forward_outputs, forward_only):
         if not forward_only:
             return super()._process_fwd_bwd_outputs(forward_outputs, forward_only)
         rows = [row for microbatch in forward_outputs for row in microbatch]
-        if not self.enable_dynamic_batch_size:
+        if self.enable_dynamic_batch_size:
+            indices = sum(self.dbs_indices, [])
+            restored = [None] * len(rows)
+            for index, row in zip(indices, rows):
+                restored[index] = row
+            rows = restored
+        if parallel_state.get_pipeline_model_parallel_world_size() == 1:
             return rows
-        indices = sum(self.dbs_indices, [])
-        restored = [None] * len(rows)
-        for index, row in zip(indices, rows):
-            restored[index] = row
-        return restored
+        lengths = broadcast_tensor_within_pp(
+            torch.tensor([len(row) for row in rows], dtype=torch.int64)
+            if rows
+            else None
+        )
+        values = broadcast_tensor_within_pp(torch.cat(rows) if rows else None)
+        return list(values.cpu().split(lengths.cpu().tolist()))
 
-    def _setup_valid_token_scale(self, batch: Optional[dict[str, torch.Tensor]] = None):
+    def _setup_valid_token_scale(self, batch: Optional[DynamicActorBatch] = None):
         if batch is None:
             self.global_valid_token = (
                 self.average_response_len
@@ -472,10 +488,10 @@ class MAMegatronActor(MegatronActor):
         else:
             loss_mask = batch["response_mask"]
             global_valid_token = (
-                torch.stack([row.sum() for row in loss_mask]).sum()
-                if isinstance(loss_mask, list)
-                else loss_mask.to(dtype=torch.float32).sum()
-            ).to(self.torch_platform.current_device(), dtype=torch.float32)
+                torch.stack([row.sum() for row in loss_mask])
+                .sum()
+                .to(self.torch_platform.current_device(), dtype=torch.float32)
+            )
             torch.distributed.all_reduce(
                 global_valid_token, group=parallel_state.get_data_parallel_group()
             )
@@ -558,7 +574,10 @@ class MAMegatronActor(MegatronActor):
                     dp=dp_size,
                 )
                 num_microbatches = get_num_microbatches()
-                assert num_microbatches == global_batch_size_per_dp
+                assert (
+                    num_microbatches * self.cfg.actor.micro_batch_size
+                    == global_batch_size_per_dp
+                )
                 training_metrics = self.training_step(global_batch)
                 training_metrics_list.append(training_metrics)
 
@@ -638,11 +657,13 @@ class MAMegatronActor(MegatronActor):
         self.scheduler_offload_sync()
 
     # Advantages and returns
-    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
+    def compute_advantages_and_returns(
+        self, batch: DynamicActorBatch
+    ) -> DynamicActorBatch:
         """Compute the advantages and returns.
 
         Args:
-            batch (Dict[str, torch.Tensor]): The rollout batch.
+            batch: Real-length token rows and per-sequence metadata.
         """
         with self.worker_timer():
             if batch.get("advantages") is None:

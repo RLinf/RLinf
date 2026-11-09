@@ -3696,7 +3696,7 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
         recomputed_logprobs=[torch.arange(n) * 0.1 for n in lengths],
         extra_fields_train={"idx_to_sub_traj": [0] * 4},
     )
-    ragged = result.to_ragged_actor_batch()
+    ragged = result.to_actor_batch()
     values = compute_grpo_turn_advantages(
         ragged["rewards"], 2, ragged["idx_to_traj"], advantage_mode
     )
@@ -3704,29 +3704,31 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
         mask.float() * value for mask, value in zip(ragged["response_mask"], values)
     ]
     ragged["loss_scales"] = [mask.float() for mask in ragged["response_mask"]]
-    dense = DynamicRolloutResult.materialize_ragged_batch(ragged, 32, 0)
-    outputs = []
-    for batch in (ragged, dense):
-        context = {
-            "folding_scale": [],
-            "actor_global_batch_size": 2,
-            "data_parallel_world_size": 1,
-        }
-        for scale in (group_scale, agent_scale, turn_scale):
-            batch = scale(context, batch)
-        outputs.append(DynamicRolloutResult.pack_traj_batch(context, batch))
-    restored = DynamicRolloutResult.materialize_ragged_batch(outputs[0], 32, 0)
-    for key in (
-        "input_ids",
-        "response_mask",
-        "recomputed_logprobs",
-        "advantages",
-        "loss_scales",
-        "prompt_lengths",
-        "response_lengths",
-    ):
-        torch.testing.assert_close(restored[key], outputs[1][key])
-    assert restored["response_mask"][0, 5:7].sum() == 0
+    context = {
+        "folding_scale": [],
+        "actor_global_batch_size": 2,
+        "data_parallel_world_size": 1,
+    }
+    for scale in (group_scale, agent_scale, turn_scale):
+        ragged = scale(context, ragged)
+    folded = DynamicRolloutResult.pack_traj_batch(context, ragged)
+    assert [len(row) for row in folded["input_ids"]] == [14, 7]
+    expected_positions = ([3, 4, 7, 8, 12, 13], [4, 5, 6])
+    for i, (row, positions) in enumerate(zip(folded["input_ids"], expected_positions)):
+        torch.testing.assert_close(row, torch.arange(len(row)))
+        mask = torch.zeros(len(row), dtype=torch.bool)
+        mask[list(positions)] = True
+        torch.testing.assert_close(folded["response_mask"][i], mask)
+        torch.testing.assert_close(
+            folded["recomputed_logprobs"][i],
+            torch.arange(len(row)) * 0.1 * (mask if i == 0 else torch.ones_like(mask)),
+        )
+        torch.testing.assert_close(folded["loss_scales"][i], mask.float() * 0.5)
+        torch.testing.assert_close(
+            folded["advantages"][i], mask * values[0 if i == 0 else 3] * 2
+        )
+    assert folded["prompt_lengths"].tolist() == [3, 4]
+    assert folded["response_lengths"].tolist() == [11, 3]
 
 
 @pytest.mark.parametrize(
@@ -3734,9 +3736,6 @@ def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
     [
         ("grpo_dynamic", "turn"),
         ("grpo_dynamic", "trajectory"),
-        ("grpo", "trajectory"),
-        ("reinpp", "trajectory"),
-        ("raw", "trajectory"),
     ],
 )
 def test_ragged_advantage_dispatch_matches_dense(adv_type, advantage_mode):
@@ -3764,41 +3763,58 @@ def test_ragged_advantage_dispatch_matches_dense(adv_type, advantage_mode):
         **common, loss_mask=masks, logprob=logprobs, ref_logprob=reference
     )
 
-    def pad(rows):
-        return torch.stack(
-            [torch.nn.functional.pad(row, (0, 32 - len(row))) for row in rows]
-        )
+    from rlinf.algorithms.advantages import compute_grpo_turn_advantages
 
-    dense, dense_returns = calculate_adv_and_returns(
-        **common,
-        loss_mask=pad(masks),
-        logprob=pad(logprobs),
-        ref_logprob=pad(reference),
+    scalars = compute_grpo_turn_advantages(
+        common["rewards"], 2, common["idx_to_traj"], advantage_mode
     )
-    assert ragged_returns is dense_returns is None
-    for actual, expected, length in zip(ragged, dense, lengths):
+    assert ragged_returns is None
+    for actual, mask, scalar, length in zip(ragged, masks, scalars, lengths):
         assert actual.shape == (length,)
-        torch.testing.assert_close(actual, expected[:length])
+        torch.testing.assert_close(actual, mask * scalar)
 
 
 def test_ragged_loss_materialization_preserves_gradients():
     from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 
     leaves = [torch.randn(n, requires_grad=True) for n in (101, 201, 301)]
-    batch = DynamicRolloutResult.materialize_ragged_batch({"logprobs": leaves}, 8192, 0)
+    batch = DynamicRolloutResult.materialize_actor_batch({"logprobs": leaves}, 8192, 0)
     batch["logprobs"].square().sum().backward()
     for row in leaves:
         torch.testing.assert_close(row.grad, 2 * row.detach())
 
 
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_ragged_loss_materialization_preserves_output_devices(device):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    rows = [torch.ones(n, device=device, requires_grad=True) for n in (1, 5)]
+    batch = DynamicRolloutResult.materialize_actor_batch(
+        {"log_probs": rows, "entropy": rows}, 8, 0, device
+    )
+    for values in batch.values():
+        assert values.device == rows[0].device and values.shape == (2, 8)
+        assert values.requires_grad
+
+
+@pytest.mark.parametrize("key", ["log_probs", "entropy"])
+def test_ragged_loss_materialization_does_not_truncate_outputs(key):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    with pytest.raises(RuntimeError, match="negative"):
+        DynamicRolloutResult.materialize_actor_batch({key: [torch.ones(9)]}, 8, 0)
+
+
 @pytest.mark.parametrize("has_response", [False, True])
-def test_ragged_loss_with_empty_first_row(has_response):
+@pytest.mark.parametrize("aggregation", ["token_mean", "sequence_mean"])
+def test_ragged_loss_with_empty_first_row(has_response, aggregation):
     from rlinf.algorithms.losses import compute_ppo_actor_loss
     from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.utils.utils import masked_mean, seq_mean_token_mean
 
     leaves = [torch.zeros(n, requires_grad=True) for n in (1, 5)]
     mask = [torch.zeros(1, dtype=torch.bool), torch.full((5,), has_response)]
-    batch = DynamicRolloutResult.materialize_ragged_batch(
+    batch = DynamicRolloutResult.materialize_actor_batch(
         {"logprobs": leaves, "response_mask": mask}, 32, 0
     )
     loss, _ = compute_ppo_actor_loss(
@@ -3808,11 +3824,15 @@ def test_ragged_loss_with_empty_first_row(has_response):
         clip_ratio_low=0.2,
         clip_ratio_high=0.2,
         loss_mask=batch["response_mask"],
+        loss_agg_func=(
+            masked_mean if aggregation == "token_mean" else seq_mean_token_mean
+        ),
         fast_path_zero_loss_mask=False,
     )
     loss.backward()
     torch.testing.assert_close(leaves[0].grad, torch.zeros_like(leaves[0]))
-    expected = torch.full((5,), -0.2) if has_response else torch.zeros(5)
+    gradient = -0.2 if aggregation == "token_mean" else -0.1
+    expected = torch.full((5,), gradient) if has_response else torch.zeros(5)
     torch.testing.assert_close(leaves[1].grad, expected)
 
 
@@ -3831,16 +3851,169 @@ def test_ragged_logprobs_survive_result_merge_and_split():
             rewards=[1.0],
             recomputed_logprobs=[torch.arange(n).float()],
             ref_logprobs=[torch.arange(n).float() - 0.1],
-            dp_balanced=True,
         )
         for n in (101, 201, 301)
     ]
     merged = DynamicRolloutResult.merge_result_list(results)
     restored = DynamicRolloutResult.split_results(merged, [1, 1, 1])
     for original, result in zip(results, restored):
-        assert result.dp_balanced
         assert result.input_ids == original.input_ids
+        assert result.prompt_lengths == original.prompt_lengths
+        assert result.response_lengths == original.response_lengths
+        assert result.rewards == [1.0]
         torch.testing.assert_close(
             result.recomputed_logprobs[0], original.recomputed_logprobs[0]
         )
         torch.testing.assert_close(result.ref_logprobs[0], original.ref_logprobs[0])
+
+
+@pytest.mark.parametrize("ragged", [False, True])
+@pytest.mark.parametrize("count", [0, 1, 5])
+def test_ragged_batch_size_accepts_dense_and_list_rows(ragged, count):
+    from rlinf.data.schema.reasoning_requests import get_batch_size
+
+    rows = [torch.arange(n + 1) for n in range(count)]
+    value = rows if ragged else torch.zeros(count, 8)
+    assert get_batch_size({"input_ids": value}) == count
+    assert get_batch_size({"responses": value}, "responses") == count
+
+
+@pytest.mark.parametrize(
+    ("count", "num_splits", "enforce_divisible", "sizes"),
+    [
+        (5, 2, False, [3, 2]),
+        (5, 3, False, [2, 2, 1]),
+        (5, [2, 2, 1], False, [2, 2, 1]),
+        (10, 4, False, [3, 3, 2, 2]),
+        (14, 4, False, [4, 4, 3, 3]),
+        (12, 4, True, [3, 3, 3, 3]),
+        (3, 5, False, [1, 1, 1, 0, 0]),
+        (0, 4, True, [0, 0, 0, 0]),
+    ],
+)
+@pytest.mark.parametrize("tensor_metadata", [False, True])
+@pytest.mark.parametrize("shuffle", [False, True])
+def test_ragged_fixed_split_preserves_every_row(
+    count, num_splits, enforce_divisible, sizes, tensor_metadata, shuffle
+):
+    from rlinf.utils.data_iter_utils import get_iterator_k_split
+
+    rows = [torch.full((n + 1,), n) for n in range(count)]
+    batch = {"input_ids": rows, "logprobs": [row.float() for row in rows]}
+    if tensor_metadata:
+        batch["rewards"] = torch.arange(count)
+    chunks = list(
+        get_iterator_k_split(
+            batch,
+            num_splits,
+            enforce_divisible_batch=enforce_divisible,
+            shuffle=shuffle,
+            shuffle_seed=42,
+        )
+    )
+    assert [len(chunk["input_ids"]) for chunk in chunks] == sizes
+    seen = []
+    for chunk in chunks:
+        for row, logprobs in zip(chunk["input_ids"], chunk["logprobs"], strict=True):
+            identity = row[0].item()
+            torch.testing.assert_close(row, rows[identity])
+            torch.testing.assert_close(logprobs, rows[identity].float())
+            seen.append(identity)
+        if tensor_metadata:
+            identities = torch.tensor(
+                [row[0] for row in chunk["input_ids"]], dtype=torch.long
+            )
+            torch.testing.assert_close(chunk["rewards"], identities)
+    expected = (
+        torch.randperm(count, generator=torch.Generator().manual_seed(42)).tolist()
+        if shuffle
+        else list(range(count))
+    )
+    assert seen == expected
+
+
+@pytest.mark.parametrize("count", [3, 10, 14])
+def test_ragged_list_split_requires_divisible_rows(count):
+    from rlinf.utils.data_iter_utils import split_list
+
+    with pytest.raises(AssertionError, match="divisible"):
+        split_list(list(range(count)), 4)
+
+
+@pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])
+def test_multi_turn_batch_rejects_dense_only_advantages(adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    with pytest.raises(AssertionError, match="grpo_dynamic"):
+        validate_searchr1_cfg(cfg)
+
+
+@pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])
+def test_multi_turn_shared_registry_keeps_dense_reasoning_layout(adv_type):
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    rewards = torch.tensor([1.0, 3.0, 2.0, 4.0])
+    mask = torch.ones(4, 8, dtype=torch.bool)
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type=adv_type,
+        rewards=rewards,
+        loss_mask=mask,
+        group_size=2,
+    )
+    expected = {
+        "grpo": torch.tensor([-1.0, 1.0, -1.0, 1.0]) / (2**0.5 + 1e-6),
+        "reinpp": torch.tensor([-1.5, 0.5, -0.5, 1.5]) / (1.25**0.5),
+        "raw": rewards,
+    }[adv_type]
+    assert isinstance(advantages, torch.Tensor) and returns is None
+    torch.testing.assert_close(advantages, expected[:, None].expand(4, 8))
+
+
+def test_multi_turn_batch_preserves_real_lengths_through_merge_and_split():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = []
+    for lengths in ((5, 9), (7, 11)):
+        results.append(
+            DynamicRolloutResult(
+                num_sequence=2,
+                group_size=2,
+                idx_to_traj=[0, 1],
+                input_ids=[list(range(n)) for n in lengths],
+                prompt_lengths=[2, 3],
+                response_lengths=[lengths[0] - 2, lengths[1] - 3],
+                is_end=[True, True],
+                rewards=[1.0, 0.0],
+                rollout_logprobs=[
+                    [-0.5] * (lengths[0] - 2),
+                    [-0.25] * (lengths[1] - 3),
+                ],
+                recomputed_logprobs=[torch.full((n,), -0.4) for n in lengths],
+                ref_logprobs=[torch.full((n,), -0.6) for n in lengths],
+                advantages=[torch.ones(n) for n in lengths],
+            )
+        )
+    merged = DynamicRolloutResult.merge_batches(
+        [result.to_actor_batch() for result in results], 2
+    )
+    assert merged["idx_to_traj"] == [0, 1, 2, 3]
+    for key in (
+        "input_ids",
+        "attention_mask",
+        "position_ids",
+        "response_mask",
+        "rollout_logprobs",
+        "recomputed_logprobs",
+        "ref_logprobs",
+        "advantages",
+    ):
+        assert [len(row) for row in merged[key]] == [5, 9, 7, 11]
+        assert all(row.device.type == "cpu" for row in merged[key])
+    assert merged["rewards"].shape == (4,)
