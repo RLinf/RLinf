@@ -128,8 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         if frame.shape[:2] != (args.height, args.width):
             logger.warning(
-                "Expected %dx%d but the device delivered %dx%d; OpenCV resizes it, "
-                "so pick a resolution the camera supports natively.",
+                "Expected %dx%d but the device delivered %dx%d; "
+                "pick a resolution the camera supports natively.",
                 args.width,
                 args.height,
                 frame.shape[1],

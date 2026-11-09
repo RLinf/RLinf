@@ -52,13 +52,11 @@ class WebcamCamera(BaseCamera):
         if camera_info.enable_depth:
             raise ValueError("WebcamCamera does not support depth capture.")
         self._out_w, self._out_h = camera_info.resolution
-        self._cv2: Any = None
 
     def _open(self) -> Any:
         """Open the device and ask for the configured resolution and frame rate."""
         import cv2
 
-        self._cv2 = cv2
         info = self._camera_info
         device = self._resolve_device(info.serial_number)
         capture = cv2.VideoCapture(device)
@@ -87,15 +85,10 @@ class WebcamCamera(BaseCamera):
         return serial_number
 
     def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
-        """Read one frame, resizing in software when the device disagrees."""
+        """Read a frame at the resolution delivered by the device."""
         ok, frame = self._device.read()
         if not ok or frame is None:
             return False, None
-        height, width = frame.shape[:2]
-        if (width, height) != (self._out_w, self._out_h):
-            frame = self._cv2.resize(
-                frame, (self._out_w, self._out_h), interpolation=self._cv2.INTER_AREA
-            )
         return True, frame
 
     def _release(self, device: Any) -> None:

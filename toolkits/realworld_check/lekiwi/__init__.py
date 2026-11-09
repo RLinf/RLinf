@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware check and bring-up tools for robotics platforms."""
+"""LeKiwi checks run from the repository root with ``python -m``.
+
+Use the ``wheels``, ``camera``, and ``teleop`` modules to check the wheel bus,
+inspect camera frames, and drive with a local or remote keyboard.
+"""

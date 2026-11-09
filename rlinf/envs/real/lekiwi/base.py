@@ -31,7 +31,6 @@ import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.real.utils.config import get_hardware_config
-from rlinf.envs.real.utils.image import crop_and_resize
 from rlinf.envs.real.utils.seeding import seed_sampled_spaces
 from rlinf.envs.real.utils.video import VideoPlayer
 from rlinf.robotics import Camera, LeKiwiConfig, LeKiwiRobot, RobotInfo
@@ -234,20 +233,22 @@ class LeKiwiEnv(gym.Env):
             )
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        if not self.config.is_dummy:
-            self.robot.send_action({"base": {"velocity": action}})
-        self._num_steps += 1
-
-        # Hold the command for the rest of the control period before reading
-        # the wheels, so the observation measures the commanded motion.
-        remaining = 1.0 / self.config.step_frequency - (time.monotonic() - start_time)
-        time.sleep(max(0.0, remaining))
-        observation = self._get_observation()
-
-        # The step is over: stop the wheels before returning, so a policy
-        # that stops stepping stops the base.
-        if not self.config.is_dummy:
-            self._base.reset()
+        reading = None
+        try:
+            if not self.config.is_dummy:
+                self.robot.send_action({"base": {"velocity": action}})
+            self._num_steps += 1
+            remaining = 1.0 / self.config.step_frequency - (
+                time.monotonic() - start_time
+            )
+            time.sleep(max(0.0, remaining))
+            if not self.config.is_dummy:
+                reading = self._state_parts.get_observation()["base"]
+        finally:
+            # Camera retries must not extend the commanded motion.
+            if not self.config.is_dummy:
+                self._base.reset()
+        observation = self._get_observation(reading)
 
         truncated = self._num_steps >= self.config.max_num_steps
         return observation, 0.0, False, truncated, {}
@@ -273,11 +274,14 @@ class LeKiwiEnv(gym.Env):
 
     # Observation.
 
-    def _get_observation(self) -> dict[str, Any]:
-        """Return the measured body velocity and any camera frames."""
+    def _get_observation(
+        self, reading: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """Return camera frames and the supplied or freshly read body velocity."""
         if self.config.is_dummy:
             return self._base_observation_space.sample()
-        reading = self._state_parts.get_observation()["base"]
+        if reading is None:
+            reading = self._state_parts.get_observation()["base"]
 
         observation: dict[str, Any] = {
             "state": {"velocity": np.asarray(reading["velocity"], dtype=np.float32)}
@@ -310,7 +314,6 @@ class LeKiwiEnv(gym.Env):
                 name=name,
                 serial_number=str(serial),
                 camera_type=camera_type,
-                resolution=self.config.frame_size,
             )
             for name, serial in zip(
                 self._frame_names(), self.hardware.camera_serials or [], strict=True
@@ -330,10 +333,12 @@ class LeKiwiEnv(gym.Env):
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
         """Read one frame per camera, reopening a camera that has stalled.
 
-        A camera that delivers nothing is reopened once. A second timeout
+        Camera retries are handled by get_frame. A second timeout
         raises instead of retrying forever: a stalled camera cannot be driven
         around, and a step that never returns hides the fault.
         """
+        import cv2
+
         declared = self.observation_space["frames"]
         frames: dict[str, np.ndarray] = {}
         for camera in getattr(self, "_cameras", []):
@@ -342,22 +347,23 @@ class LeKiwiEnv(gym.Env):
             # Cameras deliver their native resolution; the space fixes one.
             size = declared[name].shape[:2][::-1]
             try:
-                frame = camera.get_frame(max_age=self.config.camera_max_age)
-            except queue.Empty:
-                self._logger.warning(
-                    "Camera %s is not producing frames; reopening it.", name
-                )
-                time.sleep(5)
-                # Reopen this camera rather than rebuilding the declarations,
-                # which would drop the placement the robot gave it.
-                camera.reopen()
-                try:
-                    frame = camera.get_frame(max_age=self.config.camera_max_age)
-                except queue.Empty as exc:
-                    raise RuntimeError(
-                        f"Camera {name} still delivers no frame after reopening."
-                    ) from exc
-            frames[name] = crop_and_resize(frame, size)
+                frame = camera.get_frame(max_age=self.config.camera_max_age, attempts=2)
+            except queue.Empty as exc:
+                raise RuntimeError(
+                    f"Camera {name} still delivers no frame after reopening."
+                ) from exc
+            height, width = frame.shape[:2]
+            target_width, target_height = size
+            scale = min(width / target_width, height / target_height)
+            crop_width = int(target_width * scale)
+            crop_height = int(target_height * scale)
+            top = (height - crop_height) // 2
+            left = (width - crop_width) // 2
+            frames[name] = cv2.resize(
+                frame[top : top + crop_height, left : left + crop_width],
+                size,
+                interpolation=cv2.INTER_AREA,
+            )
 
         if hasattr(self, "camera_player"):
             self.camera_player.put_frame(frames)

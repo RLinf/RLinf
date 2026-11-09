@@ -70,9 +70,9 @@ Install the robot dependencies from the repository root:
 
 The installer includes LeRobot with Feetech support and OpenCV's headless
 build, which captures frames without the system GL libraries a camera window
-needs. ``--install-rlinf`` installs RLinf itself, which is what provides the
-three ``rlinf-lekiwi-*`` commands used below; without it the installer installs
-only dependencies. ``--no-root`` skips the system libraries the installer would
+needs. ``--install-rlinf`` installs RLinf itself. Run the checks below from
+the repository root using the modules in ``toolkits/realworld_check/lekiwi``.
+``--no-root`` skips the system libraries the installer would
 otherwise add with sudo: the checks below use only the serial port and that
 headless build, so a base computer needs none of them. Drop the flag if you also
 train or run simulators on this computer. Platform prerequisites are in
@@ -117,7 +117,7 @@ run:
 
 .. code-block:: bash
 
-   rlinf-lekiwi-test-wheels --port /dev/ttyACM0
+   python -m toolkits.realworld_check.lekiwi.wheels --port /dev/ttyACM0
 
 Each wheel turns for half a second and the command reports the velocity its
 encoder sent back:
@@ -136,7 +136,7 @@ Check the camera
 
 .. code-block:: bash
 
-   rlinf-lekiwi-check-camera --save check.png
+   python -m toolkits.realworld_check.lekiwi.camera --save check.png
 
 The command lists the webcams it finds, opens one, and reports the frames it
 actually delivers, because a camera can open and still send nothing:
@@ -161,13 +161,13 @@ reach. Check the key handling without touching the motors first:
 
 .. code-block:: bash
 
-   rlinf-lekiwi-teleoperate --dry-run
+   python -m toolkits.realworld_check.lekiwi.teleop --dry-run
 
 Then drive:
 
 .. code-block:: bash
 
-   rlinf-lekiwi-teleoperate --port /dev/ttyACM0
+   python -m toolkits.realworld_check.lekiwi.teleop --port /dev/ttyACM0
 
 .. list-table::
    :header-rows: 1
@@ -225,10 +225,10 @@ them.
 .. code-block:: bash
 
    # On the robot, wired to the motors:
-   rlinf-lekiwi-teleoperate --listen --port /dev/ttyACM0
+   python -m toolkits.realworld_check.lekiwi.teleop --listen --port /dev/ttyACM0
 
    # On the machine with the keyboard:
-   rlinf-lekiwi-teleoperate --remote <robot-ip>
+   python -m toolkits.realworld_check.lekiwi.teleop --remote <robot-ip>
 
 The keys and speed levels are the same. Both sides use TCP port 5555 unless you
 change it with ``--remote-port``. ``--listen`` also takes ``--fps``,
@@ -247,11 +247,10 @@ support.
 
 .. code-block:: bash
 
-   cd <path to the RLinf checkout>
+   cd /path/to/RLinf
    pip install pynput
-   PYTHONPATH=$PWD python -m rlinf.robotics.tools.lekiwi.teleop --remote <robot-ip>
+   PYTHONPATH=$PWD python -m toolkits.realworld_check.lekiwi.teleop --remote <robot-ip>
 
-The last command is the same one the ``rlinf-lekiwi-teleoperate`` script runs.
 On macOS, also allow the terminal in System Settings under Privacy & Security
 in Accessibility and Input Monitoring, then restart it; without that the
 sender connects and sends heartbeats, but no key reaches the robot.
@@ -312,15 +311,16 @@ Per-run settings are listed under ``override_cfg`` in the training config:
          step_frequency: 10.0
 
 The keys of ``camera_names`` are the identifiers printed by
-``rlinf-lekiwi-check-camera``. Name the camera ``front`` so its frames appear
+``python -m toolkits.realworld_check.lekiwi.camera``. Name the camera ``front``
+so its frames appear
 under the key ``main_image_key`` points at; a camera left unnamed reports under
 ``camera_1`` and so on.
 
 ``frame_size`` sets the width and height of every frame in the observation, 128
 by 128 pixels by default. A policy usually wants a small frame; a live viewer
-wants a larger one. The camera driver asks the device for that size and resizes
-in software when the device cannot deliver it, so pick a resolution the camera
-supports natively.
+wants a larger one. The driver requests a capture resolution and returns the
+frame at the size delivered by the device. The environment crops the center
+to the target aspect ratio before resizing, preserving object proportions.
 
 The reward is always zero and the episode never terminates early: a task
 decides success itself, as
@@ -329,64 +329,6 @@ decides success itself, as
 RPent Deployment
 ----------------
 
-RPent, the agent framework built on RLinf, drives this base through its LeKiwi
-extension: the robot computer serves the environment over HTTP, and the agent
-machine runs a planner that calls ``drive(velocity, duration_s)``, ``stop()``,
-and the read-only ``view_env_state(step)``. No Ray cluster runs on the robot
-computer.
-
-Install RPent with the ``lekiwi`` extra on both machines. The extra pins the
-RLinf revision that has the LeKiwi environment layer, so uv installs RLinf
-with RPent. On the robot computer, install it into the environment built above
-rather than creating a second one.
-
-.. code-block:: bash
-
-   # Robot computer, in the environment built above:
-   source .venv/bin/activate
-   uv pip install -e '/path/to/RPent[lekiwi]'
-
-   # Agent machine, in the RPent checkout:
-   uv pip install -e '/path/to/RPent[lekiwi]'
-
-``uv pip check`` reports any shared package the install moved: the pinned
-revision replaces an editable RLinf install in that environment, so later
-edits to a local checkout stop taking effect there. A later ``install.sh`` run
-ends in ``uv sync``, which removes packages RLinf does not declare, RPent
-included, so install it again afterwards. Quote the extras: an unquoted
-``[lekiwi]`` is a glob to zsh.
-
-Write the LeKiwi YAML from the hardware the detection script finds; it takes the
-servo port and the camera identifier from the checks above and never commands
-motion. Edit it where it does not fit, and copy it to the agent machine, which
-reads it with ``--robot-config`` as well:
-
-.. code-block:: bash
-
-   rpent-lekiwi-detect --output /path/to/lekiwi.yaml
-
-Start the environment server on the robot computer, then run a task or the
-Dashboard from the agent machine:
-
-.. code-block:: bash
-
-   # Robot computer:
-   rpent-lekiwi-server \
-     --robot-config /path/to/lekiwi.yaml \
-     --transport http --host 0.0.0.0 --port 8120
-
-   # Agent machine, task 0 (drive_smoke_test) with an API planner:
-   rpent --robot lekiwi --task-id 0 \
-     --env-endpoint http://<robot-ip>:8120 \
-     --robot-config /path/to/lekiwi.yaml \
-     --planner api --model <model-id>
-
-   # Agent machine, hands-on driving from the browser:
-   rpent --robot lekiwi --dashboard --planner manual \
-     --env-endpoint http://<robot-ip>:8120 \
-     --robot-config /path/to/lekiwi.yaml
-
-Task 1, ``room_survey``, moves around the room and reports what the camera
-sees. The `RPent LeKiwi instructions
-<https://github.com/RLinf/RPent/blob/main/docs/source-en/rst_source/real_world_robots/lekiwi.rst>`_
-cover the LeKiwi YAML fields and the Dashboard.
+For agent control and deployment, follow the
+`RPent LeKiwi guide <https://github.com/RLinf/RPent/blob/main/docs/source-en/rst_source/real_world_robots/lekiwi.rst>`_.
+It covers the environment server, robot configuration, and planner setup.

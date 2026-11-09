@@ -16,9 +16,7 @@
 
 These commands talk to the wheels directly rather than through
 :class:`~rlinf.robotics.parts.mobility.LeKiwiBase`, because assigning motor IDs
-and reading raw velocities are exactly what they check. For the same reason
-they log through the standard library: importing the training stack would cost
-the robot's computer hundreds of megabytes before the first motor write.
+and reading raw velocities are exactly what they check.
 """
 
 from __future__ import annotations
@@ -33,15 +31,10 @@ if TYPE_CHECKING:
 
 
 def cli_logger() -> logging.Logger:
-    """Return the process logger, configured once for command-line output."""
-    logger = logging.getLogger("rlinf.lekiwi")
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
-    return logger
+    """Return the RLinf logger for command-line output."""
+    from rlinf.utils.logging import get_logger
+
+    return get_logger()
 
 
 def make_wheel_bus(port: str) -> FeetechMotorsBus:
@@ -60,13 +53,20 @@ def make_wheel_bus(port: str) -> FeetechMotorsBus:
 
 def start_velocity_mode(bus: FeetechMotorsBus) -> None:
     """Connect, put every wheel in velocity mode at zero, and enable torque."""
-    bus.connect()
-    bus.disable_torque()
-    for name in WHEEL_ORDER:
-        bus.write("Operating_Mode", name, 1)
-        bus.write("Acceleration", name, 10)
-        bus.write("Goal_Velocity", name, 0, normalize=False)
-    bus.enable_torque()
+    try:
+        bus.connect()
+        bus.disable_torque()
+        for name in WHEEL_ORDER:
+            bus.write("Operating_Mode", name, 1)
+            bus.write("Acceleration", name, 10)
+            bus.write("Goal_Velocity", name, 0, normalize=False)
+        bus.enable_torque()
+    except BaseException:
+        try:
+            if bus.is_connected:
+                stop_and_disconnect(bus, cli_logger())
+        finally:
+            raise
 
 
 def stop_and_disconnect(bus: FeetechMotorsBus, logger: logging.Logger) -> None:

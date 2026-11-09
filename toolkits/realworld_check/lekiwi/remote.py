@@ -16,8 +16,8 @@
 """The TCP half of keyboard teleoperation.
 
 Keyboard capture reads the local desktop input, so the machine wired to the
-motors cannot be driven over SSH. ``rlinf-lekiwi-teleoperate --listen`` on that
-machine and ``rlinf-lekiwi-teleoperate --remote HOST`` where the keyboard is
+motors cannot be driven over SSH. ``python -m toolkits.realworld_check.lekiwi.teleop --listen`` on that
+machine and ``python -m toolkits.realworld_check.lekiwi.teleop --remote HOST`` where the keyboard is
 split the command into the two halves this module implements.
 
 The wire protocol is newline-delimited text: ``down <key>``, ``up <key>``, and
@@ -129,6 +129,12 @@ class SocketKeySource:
                 try:
                     data = conn.recv(4096)
                 except socket.timeout:
+                    with self._lock:
+                        expired = (
+                            time.monotonic() - self._last_msg > self.heartbeat_timeout
+                        )
+                    if expired:
+                        break
                     continue
                 except OSError:
                     break

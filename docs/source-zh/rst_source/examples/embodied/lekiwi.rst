@@ -28,7 +28,7 @@ LeKiwi 移动底盘配置与控制
 各部分如何协作
 --------------
 
-底盘是三个互成 120 度的轮电机，挂在同一条串口总线上，硬件只认识每个轮子的速度。RLinf 把机体速度 ``[x, y, theta]``（单位分别为 m/s、m/s、deg/s）换算成各轮速度；当某个轮子超出上限时，所有轮子按同一比例缩小，因此达不到满速的方向会变慢，但行进方向不变。机器人层用底盘和摄像头组装 ``LeKiwiRobot``，环境层再把它包装成 ``LeKiwiDriveEnv-v1``。各部件的观测与动作契约见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
+底盘是三个互成 120 度的轮电机，挂在同一条串口总线上，硬件只认识每个轮子的速度。RLinf 把机体速度 ``[x, y, theta]``\ （单位分别为 m/s、m/s、deg/s）换算成各轮速度；当某个轮子超出上限时，所有轮子按同一比例缩小，因此达不到满速的方向会变慢，但行进方向不变。机器人层用底盘和摄像头组装 ``LeKiwiRobot``，环境层再把它包装成 ``LeKiwiDriveEnv-v1``。各部件的观测与动作契约见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
 安装环境
 --------
@@ -46,7 +46,7 @@ LeKiwi 移动底盘配置与控制
    bash requirements/install.sh embodied --env lekiwi --install-rlinf --no-root
    source .venv/bin/activate
 
-安装脚本包含 LeRobot 及 Feetech 支持和 OpenCV 的无界面（headless）构建，它只采集画面，不需要打开窗口所需的系统 GL 库。``--install-rlinf`` 会安装 RLinf 本身，下文使用的三个 ``rlinf-lekiwi-*`` 命令即由它提供；不加该参数时只安装依赖。``--no-root`` 会跳过安装脚本原本要用 sudo 安装的系统库：下文检查只用到串口和这个无界面构建，底盘计算机并不需要它们。若还要在这一台机器上训练或跑仿真，则不要加该参数。平台要求见 :doc:`安装 </rst_source/start/installation>`。
+安装脚本包含 LeRobot 及 Feetech 支持和 OpenCV 的无界面（headless）构建，它只采集画面，不需要打开窗口所需的系统 GL 库。``--install-rlinf`` 会安装 RLinf 本身。下文的检查命令使用 ``toolkits/realworld_check/lekiwi`` 中的模块，请从仓库根目录运行。``--no-root`` 会跳过安装脚本原本要用 sudo 安装的系统库：下文检查只用到串口和这个无界面构建，底盘计算机并不需要它们。若还要在这一台机器上训练或跑仿真，则不要加该参数。平台要求见 :doc:`安装 </rst_source/start/installation>`。
 
 找到舵机串口
 ------------
@@ -77,7 +77,7 @@ LeKiwi 移动底盘配置与控制
 
 .. code-block:: bash
 
-   rlinf-lekiwi-test-wheels --port /dev/ttyACM0
+   python -m toolkits.realworld_check.lekiwi.wheels --port /dev/ttyACM0
 
 每个轮子转动半秒，命令报告编码器读回的速度：
 
@@ -95,7 +95,7 @@ LeKiwi 移动底盘配置与控制
 
 .. code-block:: bash
 
-   rlinf-lekiwi-check-camera --save check.png
+   python -m toolkits.realworld_check.lekiwi.camera --save check.png
 
 命令列出发现的摄像头、打开其中一个，并报告它实际送出的画面——因为摄像头可能打开成功却一帧都不给：
 
@@ -115,13 +115,13 @@ LeKiwi 移动底盘配置与控制
 
 .. code-block:: bash
 
-   rlinf-lekiwi-teleoperate --dry-run
+   python -m toolkits.realworld_check.lekiwi.teleop --dry-run
 
 然后正式遥控：
 
 .. code-block:: bash
 
-   rlinf-lekiwi-teleoperate --port /dev/ttyACM0
+   python -m toolkits.realworld_check.lekiwi.teleop --port /dev/ttyACM0
 
 .. list-table::
    :header-rows: 1
@@ -170,10 +170,10 @@ LeKiwi 移动底盘配置与控制
 .. code-block:: bash
 
    # 在机器人上，连接电机：
-   rlinf-lekiwi-teleoperate --listen --port /dev/ttyACM0
+   python -m toolkits.realworld_check.lekiwi.teleop --listen --port /dev/ttyACM0
 
    # 在接键盘的机器上：
-   rlinf-lekiwi-teleoperate --remote <机器人 IP>
+   python -m toolkits.realworld_check.lekiwi.teleop --remote <机器人 IP>
 
 按键与速度档位完全相同。两端默认使用 TCP 端口 5555，可用 ``--remote-port`` 修改。``--listen`` 还接受 ``--fps``、``--wheel-radius``、``--base-radius``、``--max-raw`` 和 ``--dry-run``，``--connect-timeout`` 决定 ``--remote`` 持续重试多久。接收端监视发送端的心跳：发送端被杀、网络断开或笔记本休眠时，它会把车轮归零并等待新的发送端。用 Ctrl+C 停止发送端；接收端关闭时它也会退出。
 
@@ -181,11 +181,11 @@ LeKiwi 移动底盘配置与控制
 
 .. code-block:: bash
 
-   cd <RLinf 仓库路径>
+   cd /path/to/RLinf
    pip install pynput
-   PYTHONPATH=$PWD python -m rlinf.robotics.tools.lekiwi.teleop --remote <机器人 IP>
+   PYTHONPATH=$PWD python -m toolkits.realworld_check.lekiwi.teleop --remote <机器人 IP>
 
-最后一条命令与 ``rlinf-lekiwi-teleoperate`` 脚本执行的是同一个。macOS 还需在“系统设置 > 隐私与安全性”中为终端打开“辅助功能”和“输入监控”，然后重启终端；否则发送端能连上并持续发送心跳，但按键不会到达机器人。
+macOS 还需在“系统设置 > 隐私与安全性”中为终端打开“辅助功能”和“输入监控”，然后重启终端；否则发送端能连上并持续发送心跳，但按键不会到达机器人。
 
 驱动环境
 --------
@@ -233,54 +233,13 @@ LeKiwi 移动底盘配置与控制
          max_angular_velocity: 90.0
          step_frequency: 10.0
 
-``camera_names`` 的键就是 ``rlinf-lekiwi-check-camera`` 打印的标识符。把摄像头命名为 ``front``，其画面就会出现在 ``main_image_key`` 指向的键下；未命名的摄像头以 ``camera_1`` 等上报。
+``camera_names`` 的键就是 ``python -m toolkits.realworld_check.lekiwi.camera`` 打印的标识符。把摄像头命名为 ``front``，其画面就会出现在 ``main_image_key`` 指向的键下；未命名的摄像头以 ``camera_1`` 等上报。
 
-``frame_size`` 决定观测中每帧的宽和高，默认 128×128 像素。策略通常需要小画面，而实时预览窗口需要更大的画面。摄像头驱动会向设备申请该尺寸，设备无法提供时在软件中缩放，因此请选择摄像头原生支持的分辨率。
+``frame_size`` 决定观测中每帧的宽和高，默认 128×128 像素。策略通常需要小画面，而实时预览窗口需要更大的画面。驱动向设备申请采集分辨率，并保留设备实际返回的画面尺寸；环境层先按目标宽高比居中裁剪，再缩放到观测尺寸，避免拉伸物体。
 
 奖励恒为零，回合也不会提前终止：任务成功与否由任务本身判定，参见 :doc:`新真机任务 </rst_source/extending/new_task>`。
 
 RPent 部署
 ----------
 
-基于 RLinf 构建的智能体框架 RPent 通过其 LeKiwi 扩展控制这台底盘：机器人计算机用 HTTP 提供环境服务，智能体计算机运行规划器，由规划器调用 ``drive(velocity, duration_s)``、``stop()`` 和只读的 ``view_env_state(step)``。机器人计算机上不运行 Ray 集群。
-
-在两台机器上都安装带 ``lekiwi`` 可选依赖的 RPent。该可选依赖固定到包含 LeKiwi 环境层的 RLinf 修订版本，因此安装 RPent 时会一并安装 RLinf。机器人计算机直接装进上面建好的环境，不必再建一个。
-
-.. code-block:: bash
-
-   # 机器人计算机，在上面建好的环境中：
-   source .venv/bin/activate
-   uv pip install -e '/path/to/RPent[lekiwi]'
-
-   # 智能体计算机，在 RPent 仓库中：
-   uv pip install -e '/path/to/RPent[lekiwi]'
-
-``uv pip check`` 会报告安装过程中改动的共享依赖：固定的修订版本会替换该环境中以可编辑方式安装的 RLinf，因此之后对本地源码的修改在该环境中不再生效。之后再运行 ``install.sh`` 会以 ``uv sync`` 结束，它会移除 RLinf 未声明的包（包括 RPent），因此在重装 RLinf 之后需要再装一次 RPent。可选依赖要加引号：未加引号的 ``[lekiwi]`` 会被 zsh 当作通配符展开。
-
-用检测脚本按硬件生成 LeKiwi YAML，其中的舵机串口和摄像头标识符就是上面检查得到的值；该脚本不会让底盘运动。与实际不符时直接修改这个文件，并把它复制到智能体计算机——两端都用 ``--robot-config`` 读取它：
-
-.. code-block:: bash
-
-   rpent-lekiwi-detect --output /path/to/lekiwi.yaml
-
-在机器人计算机上启动环境服务，然后在智能体计算机上运行任务或 Dashboard：
-
-.. code-block:: bash
-
-   # 机器人计算机：
-   rpent-lekiwi-server \
-     --robot-config /path/to/lekiwi.yaml \
-     --transport http --host 0.0.0.0 --port 8120
-
-   # 智能体计算机，运行任务 0（drive_smoke_test），使用 API 规划器：
-   rpent --robot lekiwi --task-id 0 \
-     --env-endpoint http://<机器人 IP>:8120 \
-     --robot-config /path/to/lekiwi.yaml \
-     --planner api --model <模型 ID>
-
-   # 智能体计算机，在浏览器中手动驾驶：
-   rpent --robot lekiwi --dashboard --planner manual \
-     --env-endpoint http://<机器人 IP>:8120 \
-     --robot-config /path/to/lekiwi.yaml
-
-任务 1 ``room_survey`` 在房间里分段行驶并报告摄像头看到的画面。LeKiwi YAML 各字段和 Dashboard 用法见 `RPent LeKiwi 说明 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/real_world_robots/lekiwi.rst>`_。
+智能体控制与部署步骤见 `RPent LeKiwi 指南 <https://github.com/RLinf/RPent/blob/main/docs/source-zh/rst_source/real_world_robots/lekiwi.rst>`_，其中包含环境服务、机器人配置与规划器的使用方法。

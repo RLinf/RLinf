@@ -52,9 +52,9 @@ def spin_each_wheel(
     Each wheel is measured while it is still moving, because a stopped wheel
     reports zero either way.
     """
-    start_velocity_mode(bus)
     measured: dict[str, int] = {}
     try:
+        start_velocity_mode(bus)
         for name in WHEEL_ORDER:
             command = dict.fromkeys(WHEEL_ORDER, 0)
             command[name] = raw
@@ -71,7 +71,8 @@ def spin_each_wheel(
             )
             time.sleep(0.1)
     finally:
-        stop_and_disconnect(bus, logger)
+        if bus.is_connected:
+            stop_and_disconnect(bus, logger)
     return measured
 
 

@@ -70,11 +70,6 @@ dependencies = [
     "sortedcontainers"
 ]
 
-[project.scripts]
-rlinf-lekiwi-check-camera = "rlinf.robotics.tools.lekiwi.camera:main"
-rlinf-lekiwi-teleoperate = "rlinf.robotics.tools.lekiwi.teleop:main"
-rlinf-lekiwi-test-wheels = "rlinf.robotics.tools.lekiwi.wheels:main"
-
 [project.urls]
 Homepage = "https://github.com/RLinf/RLinf"
 Repository = "https://github.com/RLinf/RLinf"
