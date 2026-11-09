@@ -35,6 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 ## What's NEW!
 
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
+- [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](docs/source-en/rst_source/examples/embodied/so101.rst).
 - [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).
 - [2026/11] 🔥 RLinf supports [PhyAI](https://github.com/mingti-org/phyai) as an in-process rollout backend for π₀.₅ PPO training on LIBERO, including hot weight synchronization. Doc: [PhyAI rollout backend](docs/source-en/rst_source/guides/rollout-engines/phyai.rst).
 - [2026/10] 🎉 RLinf v0.4 is released, taking RL out of simulation and into agile control of the physical world. Highlights: a modular real-robot system (`rlinf.robotics`), real-robot SOTA post-training algorithms (RLT, STEAM, OPD, RTC), full-modality models (native PyTorch OpenPI π₀ / π₀.₅, Cosmos3, FastWAM, π₀-FAST, Evo-1, MolmoAct2, SD3 / Wan2.2), and eight accelerator backends. Release notes: [RLinf v0.4](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.4.html).
@@ -582,6 +583,20 @@ If you use FUSCO for MoE communication in RLinf, you can cite our paper:
   author={Zhu, Zhuoran and Zhu, Chunyang and Lin, Hao and Fu, Xu and Zhou, Yiming and Zhang, Quanlu and Li, Zhenhua and Qian, Feng and Yu, Chao and Li, Boxun and Dai, Guohao and Wang, Yu},
   journal={arXiv preprint arXiv:2512.22036},
   year={2025}
+}
+```
+
+If you use Collective Experience Learning (CEL), please cite:
+
+```bibtex
+@misc{yu2026learningfleetexperiencecollective,
+  title={Learning from Fleet Experience: Collective Experience Learning Across 96 Robots},
+  author={Chao Yu and Shu'ang Yu and Hao Lin and Hongzhi Zang and Yuxiang Yan and Chenxi Jiang and Zhen Guo and Chuankang Li and Yihao Chen and Xin Xu and Xu Fu and Jiakai Zhou and Liangzhi Shi and Hongyi Ren and Yiwei Liu and Jing Wu and Yuanqing Wang and Chen Wu and Bo Dai and Chunyu Yang and Hongliang Huang and Shuoyu Yue and Weiqi Yin and Yinuo Chen and Ruihua Chen and Chunyang Zhu and Han Xiao and Yanghao Li and Ruipu Wu and Zhikai Cai and Xiu Chen and Xu Tan and Si Liu and Yuchen Yan and Jialin Zhang and Wen Zeng and Yiming Zhou and Zixiao Huang and Xinlei Chen and Guanghui Ren and Quanlu Zhang and Boxun Li and Maoqing Yao and Yu Wang},
+  year={2026},
+  eprint={2610.25736},
+  archivePrefix={arXiv},
+  primaryClass={cs.RO},
+  url={https://arxiv.org/abs/2610.25736},
 }
 ```
 

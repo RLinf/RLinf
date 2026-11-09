@@ -34,6 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 ## 最新动态
 
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
+- [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](docs/source-zh/rst_source/examples/embodied/so101.rst)。
 - [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。
 - [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步。文档：[PhyAI rollout 后端](docs/source-zh/rst_source/guides/rollout-engines/phyai.rst)。
 - [2026/10] 🎉 RLinf v0.4 发布，让强化学习真正走出仿真、敏捷操控物理世界。主要升级：乐高式真机工程体系（`rlinf.robotics`）、真机 SOTA 后训练算法（RLT、STEAM、OPD、RTC）、全模态模型（PyTorch 原生 OpenPI π₀ / π₀.₅、Cosmos3、FastWAM、π₀-FAST、Evo-1、MolmoAct2、SD3 / Wan2.2）以及八大异构算力支持。发布说明：[RLinf v0.4](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.4.html)。
@@ -581,6 +582,20 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
   author={Zhu, Zhuoran and Zhu, Chunyang and Lin, Hao and Fu, Xu and Zhou, Yiming and Zhang, Quanlu and Li, Zhenhua and Qian, Feng and Yu, Chao and Li, Boxun and Dai, Guohao and Wang, Yu},
   journal={arXiv preprint arXiv:2512.22036},
   year={2025}
+}
+```
+
+如果您的研究使用了 Collective Experience Learning（CEL），欢迎引用我们的论文：
+
+```bibtex
+@misc{yu2026learningfleetexperiencecollective,
+  title={Learning from Fleet Experience: Collective Experience Learning Across 96 Robots},
+  author={Chao Yu and Shu'ang Yu and Hao Lin and Hongzhi Zang and Yuxiang Yan and Chenxi Jiang and Zhen Guo and Chuankang Li and Yihao Chen and Xin Xu and Xu Fu and Jiakai Zhou and Liangzhi Shi and Hongyi Ren and Yiwei Liu and Jing Wu and Yuanqing Wang and Chen Wu and Bo Dai and Chunyu Yang and Hongliang Huang and Shuoyu Yue and Weiqi Yin and Yinuo Chen and Ruihua Chen and Chunyang Zhu and Han Xiao and Yanghao Li and Ruipu Wu and Zhikai Cai and Xiu Chen and Xu Tan and Si Liu and Yuchen Yan and Jialin Zhang and Wen Zeng and Yiming Zhou and Zixiao Huang and Xinlei Chen and Guanghui Ren and Quanlu Zhang and Boxun Li and Maoqing Yao and Yu Wang},
+  year={2026},
+  eprint={2610.25736},
+  archivePrefix={arXiv},
+  primaryClass={cs.RO},
+  url={https://arxiv.org/abs/2610.25736},
 }
 ```
 
