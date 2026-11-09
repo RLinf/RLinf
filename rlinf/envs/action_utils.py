@@ -385,9 +385,11 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif env_type == SupportedEnvType.ROBOTWIN:
-        chunk_actions = raw_chunk_actions
-    elif env_type == SupportedEnvType.EMBODICHAIN:
+    elif env_type in (
+        SupportedEnvType.ROBOTWIN,
+        SupportedEnvType.ROBODOJO,
+        SupportedEnvType.EMBODICHAIN,
+    ):
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = prepare_actions_for_metaworld(
@@ -442,6 +444,11 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.GENIESIM:
+        # GenieSim consumes the policy's chunk unchanged: the model-side
+        # transforms live in its OpenPI policy and the joint-layout mapping
+        # happens on the simulator server.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.DIFFUSION:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:

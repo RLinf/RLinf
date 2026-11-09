@@ -28,7 +28,7 @@ If using the **OpenVLA** model, run the following command:
    hf download gen-robot/openvla-7b-rlvla-warmup \
    --local-dir /path/to/model/openvla-7b-rlvla-warmup/
 
-This model is cited in the paper: `paper <https://arxiv.org/abs/2505.19789>`_
+This model is cited in the paper: `paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_
 
 If using the **OpenVLA-OFT** model, run the following command:
 
