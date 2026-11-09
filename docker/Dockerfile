@@ -87,7 +87,6 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-ur5e
 
 
 ##################################################################################################
@@ -405,16 +404,6 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env franka
 
 RUN echo "source ${UV_PATH}/franky/bin/activate" >> ~/.bashrc
-
-
-##################################################################################################
-# Embodied: UR5e
-##################################################################################################
-FROM embodied-common-image AS embodied-ur5e-image
-
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env ur5e
-
-RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################
