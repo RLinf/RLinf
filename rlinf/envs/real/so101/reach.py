@@ -19,6 +19,8 @@ it, command it, and score the result -- so a new arm can be brought up
 before any manipulation task is written for it.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -33,6 +35,9 @@ from .base import _DOF, SO101Env, SO101EnvConfig
 @dataclass
 class SO101ReachConfig(SO101EnvConfig):
     """Configuration for :class:`SO101ReachEnv`."""
+
+    task_description: str = "reach a joint configuration"
+    """Task prompt attached to observations and saved with demonstrations."""
 
     enable_random_reset: bool = False
     """Perturb the rest configuration at the start of each episode."""
@@ -63,11 +68,37 @@ class SO101ReachEnv(SO101Env):
         config = SO101ReachConfig(**override_cfg)
         super().__init__(config, worker_info, robot_info, env_idx)
         self._base_reset_qpos = list(self.config.reset_joint_qpos)
+        self._reset_target_prepared = False
 
     @property
     def task_description(self) -> str:
         """Natural-language task name, for policies that condition on one."""
-        return "reach a joint configuration"
+        return self.config.task_description
+
+    @contextmanager
+    def prepared_reset_target(self, seed: Optional[int]) -> Iterator[None]:
+        """Keep one reset target active while the leader and follower reset."""
+        if not self.config.enable_random_reset or self._reset_target_prepared:
+            yield
+            return
+
+        rng = np.random.default_rng(seed)
+        noise = rng.uniform(
+            -self.config.random_joint_noise,
+            self.config.random_joint_noise,
+            size=_DOF,
+        )
+        perturbed = np.asarray(self._base_reset_qpos, dtype=float) + noise
+        original_target = self.config.reset_joint_qpos
+        self.config.reset_joint_qpos = list(
+            np.clip(perturbed, self._joint_limit_low, self._joint_limit_high)
+        )
+        self._reset_target_prepared = True
+        try:
+            yield
+        finally:
+            self.config.reset_joint_qpos = original_target
+            self._reset_target_prepared = False
 
     def reset(
         self,
@@ -75,15 +106,5 @@ class SO101ReachEnv(SO101Env):
         options: Optional[dict[str, Any]] = None,
     ) -> tuple[Any, dict[str, Any]]:
         """Reset, optionally starting from a perturbed rest pose."""
-        if self.config.enable_random_reset:
-            rng = np.random.default_rng(seed)
-            noise = rng.uniform(
-                -self.config.random_joint_noise,
-                self.config.random_joint_noise,
-                size=_DOF,
-            )
-            perturbed = np.asarray(self._base_reset_qpos, dtype=float) + noise
-            self.config.reset_joint_qpos = list(
-                np.clip(perturbed, self._joint_limit_low, self._joint_limit_high)
-            )
-        return super().reset(seed=seed, options=options)
+        with self.prepared_reset_target(seed):
+            return super().reset(seed=seed, options=options)
