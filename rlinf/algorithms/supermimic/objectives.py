@@ -103,3 +103,17 @@ def termination_bce(logit: torch.Tensor, end_kind: torch.Tensor) -> torch.Tensor
     """BCE of the termination logit against failure-only labels."""
     target = wm_termination_target(end_kind).to(device=logit.device, dtype=logit.dtype)
     return F.binary_cross_entropy_with_logits(logit, target)
+
+
+def termination_bce_scale(
+    rows: int, motion_rows: int, total_rows: float, total_motion_rows: float
+) -> float:
+    """Weight of one rank's termination BCE inside its world-model loss.
+
+    Each rank's loss counts ``rows / total_rows`` of the update, but its BCE
+    averages only its ``motion_rows``. This weight makes the BCE part of the
+    update the mean over the motion rows of every rank.
+    """
+    if total_motion_rows <= 0:
+        return 0.0
+    return motion_rows * total_rows / (rows * total_motion_rows)

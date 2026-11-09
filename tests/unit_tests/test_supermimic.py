@@ -13,44 +13,81 @@
 # limitations under the License.
 
 """Numerical checks of the SuperMimic objectives, reset sampler, evaluation
-guards, training config limits, input norms and forward kinematics. They need
-neither Ray nor a GPU; the two kinematics checks need mjlab and add
-cross-device cases when a GPU is present.
+guards, training config limits, input norms, forward kinematics and simulator.
+None needs Ray. The two-rank check needs Gloo, the kinematics and world-model
+checks need mjlab, and the MuJoCo Warp checks need mjlab and a CUDA device.
 """
 
 import importlib.util
+import socket
 from pathlib import Path
 
 import pytest
 import torch
+import torch.distributed as dist
 from hydra import compose, initialize_config_dir
 
-from rlinf.algorithms.supermimic.objectives import actor_objective, gae_targets
+from rlinf.algorithms.supermimic.objectives import (
+    actor_objective,
+    gae_targets,
+    termination_bce_scale,
+)
 from rlinf.algorithms.supermimic.reset_sampler import RETURN_EMA, BinResetSampler
 from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
+    DT,
     EPISODE_CLIP_END,
+    EPISODE_CONT,
     EPISODE_FAILURE,
     EPISODE_TIMEOUT,
     G1_JOINT_NAMES,
     JOINT_POS,
+    ROOT_LIN_VEL,
+    XI_DIM,
 )
 from rlinf.envs.sim.g1_mimic.eval_metrics import check_job_coverage
 from rlinf.envs.sim.g1_mimic.features import default_state
 from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
+    G1MimicEvalEnv,
     checked_eval_states,
     checked_policy_action,
 )
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, failure_signals
-from rlinf.models.embodiment.supermimic.normalization import RunningMeanStd
+from rlinf.models import get_model
+from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.supermimic.normalization import (
+    RunningMeanStd,
+    merged_batch_stats,
+)
 
 CPU = torch.device("cpu")
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
 needs_mjlab = pytest.mark.skipif(
     importlib.util.find_spec("mjlab") is None, reason="mjlab is not installed"
 )
+needs_gloo = pytest.mark.skipif(
+    not dist.is_available() or not dist.is_gloo_available(),
+    reason="torch.distributed with Gloo is not available",
+)
+needs_warp = pytest.mark.skipif(
+    not torch.cuda.is_available() or importlib.util.find_spec("mjlab") is None,
+    reason="MuJoCo Warp needs mjlab and a CUDA device",
+)
+VELOCITY_MODEL = [
+    "actor.model.goal_encoding=paper",
+    "actor.model.obs_dim=93",
+    "actor.model.critic_features=root4",
+    "actor.model.input_norm=none",
+    "actor.model.velocity_tracking=true",
+    "actor.model.torch_compile=false",
+]
+
+
+def _compose(overrides: list[str]):
+    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.1"):
+        return compose(config_name="supermimic_lafan1_goal730", overrides=overrides)
 
 
 def test_actor_objective_value_and_gradient():
@@ -194,11 +231,7 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
     ],
 )
 def test_training_config_rejects_unsupported_values(overrides, error):
-    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.1"):
-        cfg = compose(
-            config_name="supermimic_lafan1_goal730",
-            overrides=["env.train.motion_path=/data/clips", *overrides],
-        )
+    cfg = _compose(["env.train.motion_path=/data/clips", *overrides])
     if error is None:
         validate_supermimic_cfg(cfg)
         return
@@ -218,6 +251,94 @@ def test_norm_written_in_place_folds_like_its_source():
     torch.testing.assert_close(copy.mean, torch.full((3,), 1020.0 / 101))
     for name, buffer in source.named_buffers():
         torch.testing.assert_close(copy.get_buffer(name), buffer)
+
+
+_RANK_ROWS = (
+    torch.tensor([[0.0, 1.0], [2.0, -1.0]]),
+    torch.tensor([[1.25, 4.0], [2.25, 2.0], [1.75, 3.0]]),
+)
+
+
+def _fold_merged_stats(rank: int, port: int, out: str) -> None:
+    dist.init_process_group(
+        "gloo", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=2
+    )
+    try:
+        norm = RunningMeanStd(2)
+        norm.update_from_packed(*merged_batch_stats(_RANK_ROWS[rank], dist.group.WORLD))
+        torch.save(dict(norm.named_buffers()), f"{out}/rank{rank}.pt")
+    finally:
+        dist.destroy_process_group()
+
+
+@needs_gloo
+def test_policy_input_stats_merge_over_ranks_like_one_batch(tmp_path):
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    torch.multiprocessing.spawn(
+        _fold_merged_stats, args=(port, str(tmp_path)), nprocs=2, join=True
+    )
+    one_batch = RunningMeanStd(2)
+    one_batch.fold(torch.cat(_RANK_ROWS))
+    for rank in range(2):
+        buffers = torch.load(tmp_path / f"rank{rank}.pt")
+        for name, buffer in one_batch.named_buffers():
+            torch.testing.assert_close(buffers[name], buffer)
+
+
+@needs_mjlab
+def test_world_model_bce_over_two_ranks_matches_one_batch():
+    cfg = validate_supermimic_cfg(
+        _compose(
+            [
+                "env.train.motion_path=/data/clips",
+                "algorithm.termination_head=learned",
+                *VELOCITY_MODEL,
+            ]
+        )
+    )
+    torch.manual_seed(0)
+    model = get_model(cfg.actor.model).to(CPU)
+    model.configure_training(cfg.algorithm)
+    rows, k = 8, model.k
+    gen = torch.Generator().manual_seed(3)
+    pose = default_state(rows, "cpu", torch.float32)
+    end_kind = torch.full((rows, k), EPISODE_CONT)
+    end_kind[0] = EPISODE_FAILURE
+    batch = {
+        "state0": pose + 0.01 * torch.randn(pose.shape, generator=gen),
+        "actions": 0.1 * torch.randn(rows, k, ACTION_DIM, generator=gen),
+        "xi": 0.1 * torch.randn(rows, XI_DIM, generator=gen),
+        "targets": pose.unsqueeze(1)
+        + 0.02 * torch.randn(rows, k, pose.shape[-1], generator=gen),
+        "refs": pose.unsqueeze(1).expand(-1, k, -1),
+        "end_kind": end_kind,
+        # Rank 0: one failing motion row; rank 1: three motion rows that hold.
+        "task": torch.tensor([0, 1, 1, 1, 0, 0, 0, 1]),
+    }
+    motion_total = int((batch["task"] == 0).sum())
+
+    def gradients(part: slice, share: float) -> dict[str, torch.Tensor]:
+        part_rows = int(batch["task"][part].numel())
+        motion = int((batch["task"][part] == 0).sum())
+        model.zero_grad(set_to_none=True)
+        loss = model(
+            forward_type=ForwardType.SUPERMIMIC_WORLD_MODEL,
+            **{name: value[part] for name, value in batch.items()},
+            bce_scale=termination_bce_scale(part_rows, motion, rows, motion_total),
+        )["loss"]
+        (loss * share).backward()
+        return {name: p.grad.clone() for name, p in model.named_parameters()}
+
+    merged = gradients(slice(None), 1.0)
+    # FSDP averages the rank gradients and the actor weights each rank's loss
+    # by its share of the rows, so the update sums the row-weighted gradients.
+    first, second = gradients(slice(0, 4), 0.5), gradients(slice(4, 8), 0.5)
+    head = [g for name, g in merged.items() if name.startswith("termination.")]
+    assert head and max(g.abs().max().item() for g in head) > 0.1, head
+    for name, gradient in merged.items():
+        torch.testing.assert_close(first[name] + second[name], gradient)
 
 
 @needs_mjlab
@@ -265,3 +386,91 @@ def test_reference_fk_matches_online_fk(storage, query):
     for actual, wanted in zip(result, expected, strict=True):
         assert actual.device == ids.device
         torch.testing.assert_close(actual, wanted, atol=2e-5, rtol=2e-5)
+
+
+@needs_warp
+@pytest.mark.parametrize("mode", ["add", "set"])
+def test_push_writes_only_the_horizontal_root_velocity(mode):
+    from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
+    from rlinf.envs.sim.g1_mimic.push_recovery import default_standing_state
+
+    device = torch.device("cuda:0")
+    pose = default_standing_state()
+    pose[ROOT_LIN_VEL] = torch.tensor([0.3, -0.1, 0.4])
+    motion = MotionLibrary([pose.repeat(30, 1)], q0=pose[JOINT_POS])
+    env = MjlabG1Env(2, motion, device, eval_mode=True)
+    ids = torch.arange(2, device=device)
+    env.reset(ids, torch.zeros_like(ids), torch.zeros_like(ids))
+    before = env.state.clone()
+    xy = slice(ROOT_LIN_VEL.start, ROOT_LIN_VEL.start + 2)
+    assert before[1, xy].abs().min() > 0.05, before[1, xy]
+    push = torch.tensor([[1.25, -0.5]], device=device)
+    after = env.apply_horizontal_velocity_push(ids[1:], push, mode=mode).clone()
+    expected = before.clone()
+    expected[1, xy] = push[0] + (before[1, xy] if mode == "add" else 0.0)
+    torch.testing.assert_close(after, expected, atol=1e-5, rtol=1e-5)
+    next_state = env.step(torch.zeros(2, ACTION_DIM, device=device))["next_state"]
+    moved = next_state[1, :2] - after[1, :2]
+    torch.testing.assert_close(moved, expected[1, xy] * DT, atol=5e-3, rtol=0)
+
+
+@needs_warp
+def test_velocity_step_test_repeats_for_its_seed(tmp_path):
+    from rlinf.envs.sim.g1_mimic.push_recovery import default_standing_state
+
+    pose = default_standing_state()
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    torch.save(
+        {
+            "fps": 50.0,
+            "joint_names": list(G1_JOINT_NAMES),
+            "q0": pose[JOINT_POS],
+            "state": pose.repeat(64, 1),
+        },
+        clips / "clip_000.pt",
+    )
+    cfg = validate_supermimic_cfg(
+        _compose(
+            [
+                f"env.train.motion_path={clips}",
+                f"env.eval.motion_path={clips}",
+                "env.eval.num_clips=1",
+                "env.eval.total_num_envs=2",
+                "env.eval.eval_tasks=[velocity_g2]",
+                "env.eval.velocity_g2.trials=1",
+                "env.eval.velocity_g2.seconds=0.2",
+                "env.eval.velocity_g2.steady_seconds=0.1",
+                "env.eval.max_steps_per_rollout_epoch=10",
+                # Two envs cover the 672 step commands in 336 chunks.
+                "env.eval.rollout_epoch=336",
+                "runner.val_check_interval=1",
+                *VELOCITY_MODEL,
+            ]
+        )
+    ).env.eval
+
+    def evaluate(env):
+        obs, _ = env.reset()
+        terminated = torch.zeros(1, dtype=torch.bool)
+        while not terminated.all():
+            _, _, terminated, _, infos = env.chunk_step(torch.zeros(2, 1, ACTION_DIM))
+        for _ in range(int(cfg.rollout_epoch)):
+            env.update_reset_state_ids()
+        return obs["states"], infos[0]["episode"]
+
+    torch.manual_seed(1)
+    env = G1MimicEvalEnv(cfg, num_envs=2, seed_offset=0, total_num_processes=1)
+    first = evaluate(env)
+    torch.manual_seed(2)
+    torch.rand(100, device="cuda")
+    process_rng = torch.get_rng_state()
+    repeated = evaluate(env)
+    assert torch.equal(torch.get_rng_state(), process_rng)
+    rebuilt = evaluate(
+        G1MimicEvalEnv(cfg, num_envs=2, seed_offset=0, total_num_processes=1)
+    )
+    for states, rows in (repeated, rebuilt):
+        torch.testing.assert_close(states, first[0])
+        for name, value in first[1].items():
+            torch.testing.assert_close(rows[name], value)

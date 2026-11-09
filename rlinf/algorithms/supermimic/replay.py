@@ -68,11 +68,7 @@ class _SlotMask:
 class SuperMimicReplay:
     """Stores transitions written *before* any reset of a finished env.
 
-    Fields needed to rebuild observation and the action-smoothness term:
-
-    * ``action_policy``: clean ``π(o, g)``. Observation at ``t`` uses
-      ``action_policy[t-1]``, or 0 at an episode start.
-    * ``action_executed``: ``a + ε``, the world-model input.
+    ``action_executed`` is ``a + ε``, the world-model input.
     """
 
     def __init__(
@@ -102,9 +98,6 @@ class SuperMimicReplay:
         self.next_state = torch.zeros(
             num_envs, capacity, STATE_DIM, device=device, dtype=dtype
         )
-        self.action_policy = torch.zeros(
-            num_envs, capacity, ACTION_DIM, device=device, dtype=dtype
-        )
         self.action_executed = torch.zeros(
             num_envs, capacity, ACTION_DIM, device=device, dtype=dtype
         )
@@ -121,7 +114,6 @@ class SuperMimicReplay:
         self.command_from_ref = torch.zeros(
             num_envs, capacity, dtype=torch.bool, device=device
         )
-        self.reward = torch.zeros(num_envs, capacity, device=device, dtype=dtype)
         self.end_kind = torch.zeros(num_envs, capacity, dtype=torch.long, device=device)
         self.xi = torch.zeros(num_envs, capacity, XI_DIM, device=device, dtype=dtype)
         self.motion_id = torch.zeros(
@@ -142,9 +134,7 @@ class SuperMimicReplay:
         env_ids: torch.Tensor,
         state: torch.Tensor,
         next_state: torch.Tensor,
-        action_policy: torch.Tensor,
         action_executed: torch.Tensor,
-        reward: torch.Tensor,
         end_kind: torch.Tensor,
         xi: torch.Tensor,
         motion_id: torch.Tensor,
@@ -162,14 +152,12 @@ class SuperMimicReplay:
         count_before = self.count[env_ids].clone()
         self.state[env_ids, idx] = state
         self.next_state[env_ids, idx] = next_state
-        self.action_policy[env_ids, idx] = action_policy
         self.action_executed[env_ids, idx] = action_executed
         self.prev_action[env_ids, idx] = prev_action
         self.obs_noisy[env_ids, idx] = obs_noisy
         self.task_id[env_ids, idx] = task_id
         self.command[env_ids, idx] = command
         self.command_from_ref[env_ids, idx] = command_from_ref
-        self.reward[env_ids, idx] = reward
         self.end_kind[env_ids, idx] = end_kind
         self.xi[env_ids, idx] = xi
         self.motion_id[env_ids, idx] = motion_id
@@ -351,14 +339,13 @@ class SuperMimicReplay:
         drawn = self._window_mask(k).draw(batch)
         if drawn is None:
             return None
-        env, start, total = drawn
+        env, start, _ = drawn
         b = int(env.shape[0])
         pos = (start.unsqueeze(1) + torch.arange(k, device=self.device)) % self.capacity
         env_k = env.unsqueeze(1).expand_as(pos)
         states = torch.empty(b, k + 1, STATE_DIM, device=self.device, dtype=self.dtype)
         states[:, 0] = self.state[env, start]
         states[:, 1:] = self.next_state[env_k, pos]
-        prev_actions = self.prev_action[env, start]
         actions_exec = self.action_executed[env_k, pos]
         end_kind = self.end_kind[env_k, pos]
         xi = self.xi[env, start]
@@ -367,13 +354,11 @@ class SuperMimicReplay:
         return {
             "state": states,
             "action_executed": actions_exec,
-            "prev_action": prev_actions,
             "end_kind": end_kind,
             "xi": xi,
             "motion_id": motion_id,
             "motion_time": motion_time,
             "task_id": self.task_id[env, start],
-            "valid_windows": torch.full((), total, device=self.device),
         }
 
     def sample_imagination_starts(

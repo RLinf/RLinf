@@ -410,9 +410,7 @@ class G1MimicEnv:
         transition = {
             "state": before,
             "next_state": next_state.clone(),
-            "action": action.clone(),
             "executed": executed,
-            "reward": reward.contiguous(),
             "end_kind": end_kind,
             "xi": xi,
             "motion_id": motion_id,

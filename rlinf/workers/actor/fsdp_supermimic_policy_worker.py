@@ -38,7 +38,7 @@ import torch
 import torch.distributed as dist
 from omegaconf import DictConfig
 
-from rlinf.algorithms.supermimic.objectives import gae_targets
+from rlinf.algorithms.supermimic.objectives import gae_targets, termination_bce_scale
 from rlinf.algorithms.supermimic.replay import SuperMimicReplay
 from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
 from rlinf.envs.sim.g1_mimic.g1_mimic_env import build_motion_library, make_goal
@@ -242,9 +242,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 self._env_ids,
                 step["state"],
                 step["next_state"],
-                step["action"],
                 step["executed"],
-                step["reward"],
                 step["end_kind"],
                 step["xi"],
                 step["motion_id"],
@@ -502,14 +500,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             if batch is None:
                 out = self.model(forward_type=WORLD_MODEL, empty=True)
             else:
-                # Each rank's BCE averages its own motion rows; this weight
-                # makes the row-weighted gradient mean the mean over all of them.
                 bce_scale = 1.0
                 if self.velocity:
-                    bce_scale = (
-                        motion * total / (weight * motion_total)
-                        if motion_total > 0
-                        else 0.0
+                    bce_scale = termination_bce_scale(
+                        weight, motion, total, motion_total
                     )
                 out = self.model(
                     forward_type=WORLD_MODEL,
