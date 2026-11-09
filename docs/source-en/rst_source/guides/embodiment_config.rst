@@ -254,6 +254,12 @@ OpenPI, GR00T, etc.) do not use ``rollout.sampling_params``.
      - Model backend (e.g., ``huggingface``).
    * - ``rollout.enable_offload``
      - Offload the rollout model to reduce GPU memory usage.
+   * - ``rollout.enable_cuda_graph``
+     - Replay rollout inference from CUDA graphs (default False). Supported by
+       the MLP and CNN policies and, for the pi0.5 denoise steps, by OpenPI;
+       OpenPI outputs are bitwise equal to eager and each graph holds one extra
+       copy of the prefix KV cache. With ``rollout.enable_offload``, graphs are
+       released at each offload and captured again after reload.
    * - ``rollout.pipeline_stage_num``
      - Number of pipeline stages for rollout.
    * - ``rollout.rollout_queue_size``

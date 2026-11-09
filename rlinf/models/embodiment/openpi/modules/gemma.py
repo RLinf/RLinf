@@ -364,11 +364,8 @@ class Attention(nn.Module):
         # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
         big_neg = -2.3819763e38
         mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
-        masked_logits = torch.where(
-            mask_for_logits,
-            logits,
-            torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
-        )
+        # A Python scalar avoids a host-to-device copy, which CUDA graph capture rejects.
+        masked_logits = torch.where(mask_for_logits, logits, big_neg)
 
         probs = F.softmax(masked_logits, dim=-1).to(dtype)
 

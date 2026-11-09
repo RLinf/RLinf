@@ -218,6 +218,7 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         nft_state = self._init_nft_state(collect_nft, noise, num_steps, device)
+        suffix_step = self.bind_suffix_step(observation, kv_cache, prefix_mask)
         timesteps = rl_sampler.get_timesteps(num_steps, device)
         idx_step = torch.empty(B, device=device, dtype=torch.long)
         chains = [noise]
@@ -240,9 +241,7 @@ class Pi0RL(EnvIO, Pi0):
             )
             t_val = float(timesteps[idx].item())
             t_tensor = torch.full((B,), t_val, device=device, dtype=torch.float32)
-            suffix_act = self.run_suffix(
-                observation, x_t, t_tensor, kv_cache, prefix_mask
-            )
+            suffix_act = suffix_step(x_t, t_tensor)
             v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
             noise_std = None
             if method == "flow_noise":

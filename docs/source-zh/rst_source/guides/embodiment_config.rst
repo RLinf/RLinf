@@ -244,6 +244,8 @@ rollout
      - 模型后端（例如 ``huggingface``）。
    * - ``rollout.enable_offload``
      - 卸载 rollout 模型以降低显存占用。
+   * - ``rollout.enable_cuda_graph``
+     - 使用 CUDA Graph 回放 rollout 推理（默认 False）。MLP 与 CNN 策略支持；OpenPI 支持 pi0.5 的去噪步骤，输出与 eager 逐位一致，每个 Graph 额外占用一份 prefix KV cache 显存。开启 ``rollout.enable_offload`` 时，每次卸载会释放 Graph，重新加载后再次捕获。
    * - ``rollout.pipeline_stage_num``
      - rollout 的流水线阶段数。
    * - ``rollout.rollout_queue_size``

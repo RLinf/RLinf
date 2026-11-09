@@ -2533,3 +2533,132 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+
+
+# OpenPI denoise CUDA graphs
+
+
+@pytest.fixture
+def tiny_openpi(monkeypatch):
+    from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    monkeypatch.setattr(gemma, "PALIGEMMA_VOCAB_SIZE", 32)
+    monkeypatch.setattr(utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(
+        siglip,
+        "_decode_variant",
+        lambda variant: {
+            "width": 32,
+            "depth": 1,
+            "num_heads": 4,
+            "mlp_dim": 64,
+            "patch_size": (14, 14),
+        },
+    )
+
+    def build(pi05: bool = True):
+        torch.manual_seed(0)
+        cfg = Pi0Config(
+            pi05=pi05,
+            dtype="float32",
+            paligemma_variant="dummy",
+            action_expert_variant="dummy",
+            action_horizon=4,
+            max_token_len=4,
+        )
+        model = Pi0(cfg).eval()
+        # Zero-initialized gates and projections would make the suffix ignore
+        # the prefix cache.
+        with torch.no_grad():
+            for param in model.parameters():
+                param.add_(0.05 * torch.randn_like(param))
+        return model, cfg
+
+    return build
+
+
+@pytest.mark.parametrize(("pi05", "num_ar_tokens"), [(True, 1), (False, 2)])
+def test_openpi_suffix_starts_a_new_attention_block(tiny_openpi, pi05, num_ar_tokens):
+    model, cfg = tiny_openpi(pi05)
+    observation = cfg.fake_obs(batch_size=2)
+    _, input_mask, ar_mask, _ = model.embed_suffix(
+        observation, torch.zeros(2, cfg.action_horizon, cfg.action_dim), torch.ones(2)
+    )
+
+    expected = torch.zeros(input_mask.shape[1], dtype=torch.bool)
+    expected[:num_ar_tokens] = True
+    assert torch.equal(ar_mask, expected)
+
+
+def test_openpi_denoise_graph_request_runs_eager_off_cuda(tiny_openpi):
+    model, cfg = tiny_openpi()
+    observation = cfg.fake_obs(batch_size=2)
+    noise = torch.randn(2, cfg.action_horizon, cfg.action_dim)
+    with torch.no_grad():
+        expected = model.sample_actions(observation, num_steps=2, noise=noise)
+        model.capture_cuda_graph(train_batch_size=2, eval_batch_size=2)
+        actions = model.sample_actions(observation, num_steps=2, noise=noise)
+
+    assert model.cuda_graph_manager is None
+    assert torch.equal(actions, expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires a CUDA GPU")
+@pytest.mark.parametrize("compiled", [False, True])
+def test_openpi_denoise_graph_matches_eager(tiny_openpi, monkeypatch, compiled):
+    from rlinf.models.embodiment.openpi.modules import utils
+
+    model, cfg = tiny_openpi()
+    model = model.cuda()
+    monkeypatch.setattr(utils, "_torch_compile_enabled", compiled)
+
+    def observation(batch_size: int, fill: float, prompt_len: int = cfg.max_token_len):
+        obs = cfg.fake_obs(batch_size=batch_size)
+        obs.state.fill_(fill)
+        obs.images["base_0_rgb"].fill_(fill)
+        obs.tokenized_prompt = torch.ones(batch_size, prompt_len, dtype=torch.long)
+        obs.tokenized_prompt_mask = torch.ones(batch_size, prompt_len, dtype=torch.bool)
+        return model._observation_to_device(obs)
+
+    def noise(batch_size: int, seed: int):
+        generator = torch.Generator(device="cuda").manual_seed(seed)
+        shape = (batch_size, cfg.action_horizon, cfg.action_dim)
+        return torch.randn(shape, device="cuda", generator=generator)
+
+    def sample(inputs):
+        return model.sample_actions(inputs[0], num_steps=3, noise=inputs[1])
+
+    first, second, masked = (
+        (observation(2, 0.5), noise(2, 1)),
+        (observation(2, -0.25), noise(2, 1)),
+        (observation(2, 0.5), noise(2, 1)),
+    )
+    masked[0].tokenized_prompt_mask[:, -1] = False
+    # Each call binds a new prefix cache and mask into the same graph.
+    calls = [first, second, first, masked]
+    uncaptured = [
+        (observation(3, 0.5), noise(3, 3)),  # batch size without a graph
+        (observation(2, 0.5, prompt_len=6), noise(2, 1)),  # longer prefix
+    ]
+    with torch.no_grad():
+        expected = [sample(inputs) for inputs in calls + uncaptured]
+        model.capture_cuda_graph(train_batch_size=2, eval_batch_size=2)
+        actions = [sample(inputs) for inputs in calls + uncaptured]
+
+        # In-place weight sync, as the rollout worker does, reaches the graph.
+        state = {k: v * 0.5 for k, v in model.state_dict().items() if "action" in k}
+        model.load_state_dict(state, strict=False)
+        updated = sample(first)
+        captured = set(model.cuda_graph_manager.graphs)
+        model.release_cuda_graph()
+        expected_updated = sample(first)
+
+    assert not torch.equal(expected[0], expected[1])
+    assert not torch.equal(expected[0], expected[3])
+    assert captured == {"denoise_step_bs2"}
+    assert all(torch.equal(a, e) for a, e in zip(actions, expected, strict=True))
+    assert torch.equal(updated, expected_updated)
+    assert not torch.equal(updated, expected[0])
+    assert model.cuda_graph_manager is None
