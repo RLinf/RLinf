@@ -69,6 +69,7 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.scheduler import AcceleratorType
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -3156,6 +3157,35 @@ def test_decoupled_final_completion_uses_next_bootstrap():
     assert policy_input.env_parts == [completion]
 
 
+@pytest.mark.parametrize("chunked", [False, True])
+def test_reward_request_forwards_done_masks_and_final_info(chunked):
+    worker = object.__new__(EnvWorker)
+    worker._accelerator_type = AcceleratorType.NO_ACCEL
+    worker._timer_metrics = {}
+    worker.reward_mode = "per_step"
+    worker.env_infos_reward_keys = ("success", "episode", "final_info", "_final_info")
+    worker.cfg = OmegaConf.create({"reward": {"group_name": "reward"}})
+    worker.env_decoupled_mode = False
+    worker.train_batch_size = 2
+    worker.send_to = Mock()
+    worker.recv_from = Mock()
+    done = torch.tensor([True, False])
+    valid = torch.tensor([False, True])
+    dones = torch.stack([done, torch.zeros_like(done)], dim=-1) if chunked else done
+    env_output = EnvOutput(
+        obs={"states": torch.zeros(2, 1)},
+        transition=EnvTransition(dones=dones),
+        env_infos={"final_info": {"success": done}, "_final_info": valid},
+    )
+
+    worker.get_reward_model_output(env_output, Mock(), Mock())
+
+    payload = worker.send_to.call_args.kwargs["data"]
+    assert torch.equal(payload["dones"], done)
+    assert torch.equal(payload["env_infos"]["_final_info"], valid)
+    assert torch.equal(payload["env_infos"]["final_info"]["success"], done)
+
+
 def test_env_closes_reward_stream_with_final_chunk():
     env = object.__new__(EnvWorker)
     env.rollout_epoch = 2
@@ -3357,6 +3387,57 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
         forward_inputs["rlt_transition_z_rl"],
     )
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
+
+
+@pytest.mark.parametrize("use_chat_template", [False, True])
+def test_vlm_trend_sft_uses_inference_prefix_without_trailing_assistant(
+    use_chat_template,
+):
+    from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+
+    class Processor:
+        video_token = "<|video_pad|>"
+        assistant_prefix = "<|im_start|>assistant\n"
+
+        def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+            assert not tokenize
+            text = "".join(
+                f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+                for msg in messages
+            )
+            return text + self.assistant_prefix if add_generation_prompt else text
+
+        def __call__(self, *, text, **kwargs):
+            input_ids = torch.tensor([[ord(char) for char in text[0]]])
+            return {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            }
+
+    dataset = object.__new__(VLMTrendRewardSFTDataset)
+    dataset._processor = Processor()
+    dataset.system_prompt = "Score the attempt."
+    dataset.use_chat_template = use_chat_template
+    dataset._video_fps = 24.0
+    videos = [torch.zeros(2, 3, 2, 2), torch.zeros(1, 3, 2, 2)]
+    question, answer = "Did the robot finish?", "Yes"
+    prompt, prefix, _ = dataset.process_inputs(
+        dataset._processor, dataset.system_prompt, use_chat_template, [question], videos
+    )
+    ids, length, attention_mask, label_mask, _ = dataset.encode_prompt(
+        question, videos, answer
+    )
+
+    assert prompt.count(dataset._processor.video_token) == 2
+    assert prompt.endswith(dataset._processor.assistant_prefix)
+    assert label_mask.shape == prefix["input_ids"].shape
+    prefix_length = int(label_mask.sum())
+    torch.testing.assert_close(ids[:prefix_length], prefix["input_ids"][0])
+    assert (
+        "".join(chr(token) for token in ids[prefix_length:].tolist())
+        == "Yes<|im_end|>\n"
+    )
+    assert length == int(attention_mask.sum())
 
 
 def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():

@@ -4956,6 +4956,115 @@ class _FakeEnv:
         self.loaded_state = state
 
 
+@pytest.fixture
+def maniskill_env_class(monkeypatch):
+    # Load the wrapper without importing the SDK-backed task registry.
+    package = "rlinf.envs.sim.maniskill"
+    package_dir = Path(__file__).resolve().parents[2] / "rlinf/envs/sim/maniskill"
+    fake_package = types.ModuleType(package)
+    fake_package.__path__ = [str(package_dir)]
+    monkeypatch.setitem(sys.modules, package, fake_package)
+    sdk_modules = {
+        "mani_skill.envs.sapien_env": SimpleNamespace(BaseEnv=object),
+        "mani_skill.utils": SimpleNamespace(common=None, gym_utils=None),
+        "mani_skill.utils.common": SimpleNamespace(torch_clone_dict=dict),
+        "mani_skill.utils.structs.types": SimpleNamespace(Array=torch.Tensor),
+        "mani_skill.utils.visualization.misc": SimpleNamespace(
+            put_info_on_image=None, tile_images=None
+        ),
+    }
+    for name, module in sdk_modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    spec = importlib.util.spec_from_file_location(
+        f"{package}.maniskill_env", package_dir / "maniskill_env.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.ManiskillEnv
+
+
+@pytest.fixture
+def maniskill_reset_env(maniskill_env_class):
+    class Simulator:
+        device = "cpu"
+        num_envs = 2
+        obs_mode = "state"
+
+        def __init__(self):
+            self.unwrapped = self
+
+        def reset(self, *, seed, options):
+            self.seed = seed
+            self.options = options
+            return torch.zeros(self.num_envs, 1), {}
+
+    env = object.__new__(maniskill_env_class)
+    env.env = Simulator()
+    env.cfg = OmegaConf.create(
+        {"wrap_obs_mode": "simple", "_reconfigure_on_full_reset": True}
+    )
+    env.seed = 10
+    env.use_fixed_reset_state_ids = True
+    env.reset_state_ids = torch.tensor([4, 7])
+    env.prev_step_reward = torch.ones(2)
+    env.record_metrics = True
+    env._init_metrics()
+    env.success_once[:] = True
+    return env
+
+
+def test_maniskill_fixed_eval_reset_preserves_explicit_options(maniskill_reset_env):
+    env = maniskill_reset_env
+    env.reset()
+    assert env.env.seed == 10
+    assert env.env.options["reconfigure"] is True
+    assert torch.equal(env.env.options["episode_id"], env.reset_state_ids)
+    assert not env.success_once.any()
+
+    explicit = {"episode_id": [8, 9], "reconfigure": False, "custom": "value"}
+    env.reset(seed=[31, 32], options=explicit)
+    assert env.env.seed == [31, 32]
+    assert env.env.options == explicit
+    assert env.env.options is not explicit
+
+    no_override = {"custom": "value"}
+    env.reset(seed=0, options=no_override)
+    assert env.env.seed == 0
+    assert env.env.options["reconfigure"] is True
+    assert torch.equal(env.env.options["episode_id"], env.reset_state_ids)
+    assert no_override == {"custom": "value"}
+
+
+def test_maniskill_partial_auto_reset_uses_selected_fixed_ids(maniskill_reset_env):
+    env = maniskill_reset_env
+    dones = torch.tensor([False, True])
+    _, infos = env._handle_auto_reset(dones, {}, {"success": dones})
+
+    assert env.env.seed is None
+    assert set(env.env.options) == {"env_idx", "episode_id"}
+    assert env.env.options["env_idx"].tolist() == [1]
+    assert env.env.options["episode_id"].tolist() == [7]
+    assert env.success_once.tolist() == [True, False]
+    assert torch.equal(infos["_final_info"], dones)
+
+    options = {"env_idx": torch.tensor([0]), "custom": "value"}
+    env.reset(seed=0, options=options)
+    assert env.env.seed == 0
+    assert env.env.options == options
+
+
+@pytest.mark.parametrize("fixed_ids", [False, True])
+def test_maniskill_training_reset_keeps_reconfigure_default(
+    maniskill_reset_env, fixed_ids
+):
+    env = maniskill_reset_env
+    del env.cfg._reconfigure_on_full_reset
+    env.use_fixed_reset_state_ids = fixed_ids
+    env.reset()
+    assert "reconfigure" not in env.env.options
+    assert ("episode_id" in env.env.options) is fixed_ids
+
+
 class _FakeManiskillEnv:
     pass
 

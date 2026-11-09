@@ -775,16 +775,34 @@ def set_rng_state(rng_state: dict) -> None:
 @contextmanager
 def isolated_rng(seed: Optional[int] = None) -> Iterator[None]:
     """Restore the caller's RNG streams after a synchronous evaluation block."""
+    from rlinf.scheduler.worker.worker import Worker
+
     state = get_rng_state()
-    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    platform = Worker.torch_platform
+    device_states = None
+    set_all = None
+    if platform is not None and platform.is_available():
+        get_all = getattr(platform, "get_rng_state_all", None)
+        set_all = getattr(platform, "set_rng_state_all", None)
+        if callable(get_all) and callable(set_all):
+            device_states = get_all()
+        else:
+            set_all = None
+            device_states = [
+                platform.get_rng_state(device)
+                for device in range(platform.device_count())
+            ]
     try:
         if seed is not None:
             seed_everything(seed)
         yield
     finally:
         set_rng_state(state)
-        if cuda_states is not None:
-            torch.cuda.set_rng_state_all(cuda_states)
+        if set_all is not None:
+            set_all(device_states)
+        elif device_states is not None:
+            for device, device_state in enumerate(device_states):
+                platform.set_rng_state(device_state, device)
 
 
 PIPELINE_BATCH_KEY_SEPARATOR = "::"

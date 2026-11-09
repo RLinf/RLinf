@@ -884,6 +884,79 @@ def test_empty_history_input_still_resets_shaping_state_on_done():
     assert model._success_streak.tolist() == [0, 1]
 
 
+@pytest.mark.parametrize("chunked", [False, True])
+def test_gt_success_bonus_uses_only_valid_terminal_infos(chunked):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
+        apply_gt_success_bonus,
+    )
+
+    rewards = torch.arange(5, dtype=torch.float32).reshape(-1, 1)
+    dones = torch.tensor([True, True, False, True, False])
+    if chunked:
+        dones = torch.stack([dones, torch.zeros_like(dones)], dim=-1)
+    reward_input = {
+        "dones": dones,
+        "env_infos": {
+            "success": torch.tensor([False, True, True, True, False]),
+            "_final_info": torch.tensor([True, True, False, False, True]),
+            "final_info": {"success": torch.tensor([True, False, False, False, True])},
+        },
+    }
+
+    result = apply_gt_success_bonus(rewards, reward_input, gt_success_bonus=20.0)
+
+    torch.testing.assert_close(
+        result, torch.tensor([[20.0], [1.0], [22.0], [23.0], [4.0]])
+    )
+
+
+@pytest.fixture
+def video_processor_inputs():
+    return {
+        "input_ids": torch.tensor([[7, 11, 13, 17]]),
+        "attention_mask": torch.ones(1, 4, dtype=torch.long),
+        "pixel_values_videos": torch.arange(24, dtype=torch.float32).reshape(4, 6).T
+        / 7,
+        "video_grid_thw": torch.tensor([[1, 1, 2], [1, 2, 2]], dtype=torch.int32),
+        "second_per_grid_ts": torch.tensor([0.25, 0.5], dtype=torch.float64),
+        "mm_token_type_ids": torch.tensor([[0, 2, 2, 0]]),
+    }
+
+
+def test_video_transport_preserves_processor_outputs(video_processor_inputs):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+        encode_video_inputs,
+    )
+
+    restored = decode_video_inputs(encode_video_inputs(video_processor_inputs))
+
+    assert restored.keys() == video_processor_inputs.keys()
+    for key, original in video_processor_inputs.items():
+        torch.testing.assert_close(restored[key], original, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "field, value, error",
+    [
+        ("attention_mask", [[1, 1, 1, 0]], "unpadded sample"),
+        ("video_grid_thw", [[1, 1, 1]], "pixels do not match"),
+        ("second_per_grid_ts", np.array([None], dtype=object), "allow_pickle=False"),
+    ],
+)
+def test_video_transport_rejects_invalid_inputs(
+    video_processor_inputs, field, value, error
+):
+    from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+        decode_video_inputs,
+        encode_video_inputs,
+    )
+
+    video_processor_inputs[field] = value
+    with pytest.raises(ValueError, match=error):
+        decode_video_inputs(encode_video_inputs(video_processor_inputs))
+
+
 VALUE_CLIP = 0.2
 HUBER_DELTA = 10.0
 

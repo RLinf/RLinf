@@ -1633,6 +1633,11 @@ def validate_embodied_cfg(cfg):
             if cfg.env.get("eval", None) is not None
             else None
         )
+        if eval_env_type == SupportedEnvType.MANISKILL:
+            with open_dict(cfg.env.eval):
+                cfg.env.eval._reconfigure_on_full_reset = (
+                    cfg.env.eval.use_fixed_reset_state_ids
+                )
         if (
             train_env_type == SupportedEnvType.MANISKILL
             or eval_env_type == SupportedEnvType.MANISKILL

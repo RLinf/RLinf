@@ -1280,15 +1280,7 @@ class EnvWorker(Worker):
                     self.eval_prev_done[stage_id] = torch.zeros(
                         self.eval_num_envs_per_stage, dtype=torch.bool
                     )
-                    reset_kwargs = {}
-                    if (
-                        self.cfg.env.eval.env_type == "maniskill"
-                        and self.cfg.env.eval.use_fixed_reset_state_ids
-                    ):
-                        reset_kwargs["options"] = {"reconfigure": True}
-                    extracted_obs, infos = self.eval_env_list[stage_id].reset(
-                        **reset_kwargs
-                    )
+                    extracted_obs, infos = self.eval_env_list[stage_id].reset()
                     env_output = EnvOutput(
                         obs=extracted_obs,
                         final_obs=(

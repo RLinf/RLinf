@@ -283,6 +283,8 @@ class ManiskillEnv(gym.Env):
                 seed = self.seed
             if self.use_fixed_reset_state_ids:
                 options.setdefault("episode_id", self.reset_state_ids)
+                if self.cfg.get("_reconfigure_on_full_reset", False):
+                    options.setdefault("reconfigure", True)
         raw_obs, infos = self.env.reset(seed=seed, options=options)
         self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)

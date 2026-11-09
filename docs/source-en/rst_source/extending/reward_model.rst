@@ -488,32 +488,19 @@ Both local VLM Trend paths use history-window reward inputs. The standard path u
    reward worker **every step**. When ``min_history_size`` is not met,
    the reward worker returns ``interval_reward`` instead of skipping the RPC.
 
-When ``gt_success_bonus`` is enabled, ongoing environments use their current
-success flag; environments that just ended use valid ``final_info`` from before
-automatic reset. The bonus remains a per-successful-step reward, including when
-success does not terminate the task.
+Set ``gt_success_bonus`` to add a bonus for each successful step. Set
+``env.eval.use_fixed_reset_state_ids: true`` to reuse initial states across
+evaluation rounds and ``rollout.seed`` to seed Hugging Face action sampling per
+worker rank. Compare ``eval/success_at_end`` (success at the end of an episode)
+with ``eval/success_once`` (success at any point in the episode).
 
-With ``env.eval.use_fixed_reset_state_ids: true``, evaluation keeps the selected
-reset IDs between rounds. Fixed ManiSkill evaluation rebuilds the scene at each
-round's start to clear prior physics and controller state. Validation preserves
-training RNG streams. Rollout RNG swaps cover synchronous predictions only, so
-asynchronous training is not rewound when validation finishes. Fresh-process
-evaluation remains useful for checking repeatability. Report
-``eval/success_at_end`` for complete episodes and distinguish it from
-``eval/success_once``.
-
-Set ``rollout.seed`` to control Hugging Face policy action sampling after model
-initialization; each rollout worker adds its rank to this seed.
-
-SFT and reward inference share video processing and prompt construction. Keep
-the checkpoint's ``subprocessor_kwargs.video_processor.do_sample_frames``, frame
-order, ``video_fps``, system prompt, and chat-template settings consistent. Set
-SFT prompt options under ``data`` and inference prompt options under
-``reward.model.input_builder_params`` (``success_input_builder_params`` for the
-separate success head). A
-five-frame window does not necessarily produce five processed frames when
-sampling is enabled. SFT appends the supervised answer to the inference prefix,
-without another assistant generation prompt after the answer.
+Match the checkpoint's SFT and inference settings for frame order, frame
+sampling, ``video_fps``, system prompt, and chat template. Match
+``data.video_do_sample_frames`` with
+``reward.model.subprocessor_kwargs.video_processor.do_sample_frames``. Set FPS
+and prompt options under ``data`` for SFT and
+``reward.model.input_builder_params`` for inference. For a separate success
+head, use ``reward.model.success_input_builder_params``.
 
 3.4.1 Local Hugging Face Inference
 .....................................
