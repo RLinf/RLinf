@@ -247,7 +247,7 @@ class Scheduler(_Scheduler):
 
         # Under overlap scheduling an already-launched batch may still be on
         # the GPU when a pause leaves it unprocessed; wait before load_weights.
-        torch.cuda.synchronize()
+        Worker.torch_platform.synchronize()
 
         state_dict = self._rlinf_worker.recv(
             src_group_name=self._actor_group_name,

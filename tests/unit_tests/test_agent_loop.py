@@ -130,37 +130,6 @@ class _NullContext:
         return False
 
 
-class TestAggregateAgentMetrics:
-    """The runner's one-pass aggregation of per-group metric dicts."""
-
-    @staticmethod
-    def _make_runner():
-        # The runner module pulls in the megatron actor, which is not
-        # installed in every unit-test env.
-        pytest.importorskip("megatron.core")
-        from rlinf.runners.async_agent_runner import AsyncAgentRunner
-
-        return AsyncAgentRunner.__new__(AsyncAgentRunner)
-
-    def test_aggregates_each_stat_kind(self):
-        runner = self._make_runner()
-        aggregated = runner._aggregate_agent_metrics(
-            [
-                {"__sum__/a": 1, "__max__/b": 3, "__min__/c": 2, "__mean__/d": (1, 4)},
-                {"__sum__/a": 2, "__max__/b": 5, "__min__/c": 1, "__mean__/d": (2, 4)},
-            ]
-        )
-        assert aggregated == {"a": 3, "b": 5, "c": 1, "d": 3 / 8}
-
-    def test_drops_keys_without_a_stat_prefix(self):
-        runner = self._make_runner()
-        assert runner._aggregate_agent_metrics([{"stray": 1}]) == {}
-
-    def test_empty_list_returns_empty(self):
-        runner = self._make_runner()
-        assert runner._aggregate_agent_metrics([]) == {}
-
-
 class TestGetAgentMetrics:
     """Draining the metric channel: only the None bucket is aggregated."""
 

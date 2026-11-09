@@ -348,7 +348,7 @@ class TestAdmissionByCapacity:
 
             waiter = asyncio.create_task(issue_if_admitted())
             await asyncio.sleep(0.05)
-            # Loaded versions no longer affect admission; the wake frees
+            # Loaded versions do not affect admission; the wake frees
             # no in-flight capacity.
             buffer.set_loaded_versions({0: 5, 1: 5})
             await asyncio.sleep(0.05)

@@ -293,6 +293,48 @@ CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
 )
 
 
+def aggregate_agent_metrics(metrics_list: list[dict]) -> dict:
+    """Aggregate per-group agent metric dicts in one pass.
+
+    Keys prefixed with `__sum__/`, `__max__/` or `__min__/` merge directly
+    across the dicts; `__mean__/` values are (numerator, denominator) pairs
+    whose sums are divided; keys without one of these prefixes are dropped.
+    An empty list aggregates to an empty dict.
+
+    Args:
+        metrics_list: Metric dicts to aggregate.
+
+    Returns:
+        Aggregated dict keyed by each metric's prefix-stripped name.
+    """
+    if len(metrics_list) == 0:
+        return {}
+
+    all_keys: set[str] = set()
+    for metric_dict in metrics_list:
+        all_keys.update(metric_dict.keys())
+
+    aggregated = {}
+    stat_methods = {
+        METRIC_SUM_PREFIX: sum,
+        "__max__/": max,
+        "__min__/": min,
+        "__mean__/": lambda x: sum(i[0] for i in x) / sum(i[1] for i in x),
+    }
+    for key in all_keys:
+        for stat_key in stat_methods:
+            if key.startswith(stat_key):
+                real_key = key[len(stat_key) :]
+                break
+        else:
+            stat_key, real_key = None, None
+        if stat_key is not None:
+            values = [metric_dict[key] for metric_dict in metrics_list]
+            aggregated[real_key] = stat_methods[stat_key](values)
+
+    return aggregated
+
+
 INTERACT_DELAY_METRIC_KEYS = {"interact_delay"}
 
 

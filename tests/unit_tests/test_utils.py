@@ -39,6 +39,7 @@ from rlinf.algorithms.utils import (
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import (
     VersionedTrajectoryRecord,
+    aggregate_agent_metrics,
     compute_evaluate_metrics,
     compute_rollout_metrics,
     compute_staleness_metrics,
@@ -950,6 +951,25 @@ class TestComputeStalenessMetrics:
         # No tokens anywhere: no token-weighted metric is defined.
         assert "data_staleness/token_mean" not in metrics
         assert not any(k.endswith("token_ratio") for k in metrics)
+
+
+class TestAggregateAgentMetrics:
+    """aggregate_agent_metrics over per-group agent metric dicts."""
+
+    def test_aggregates_each_stat_kind(self):
+        aggregated = aggregate_agent_metrics(
+            [
+                {"__sum__/a": 1, "__max__/b": 3, "__min__/c": 2, "__mean__/d": (1, 4)},
+                {"__sum__/a": 2, "__max__/b": 5, "__min__/c": 1, "__mean__/d": (2, 4)},
+            ]
+        )
+        assert aggregated == {"a": 3, "b": 5, "c": 1, "d": 3 / 8}
+
+    def test_drops_keys_without_a_stat_prefix(self):
+        assert aggregate_agent_metrics([{"stray": 1}]) == {}
+
+    def test_empty_list_returns_empty(self):
+        assert aggregate_agent_metrics([]) == {}
 
 
 class TestRewardsAllEqual:

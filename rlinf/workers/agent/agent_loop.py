@@ -37,6 +37,7 @@ from rlinf.data.schema.reasoning_results import (
 )
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Channel, Worker
+from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
 from rlinf.workers.rollout.utils import green
@@ -407,8 +408,9 @@ class AgentLoopWorker(Worker):
         if exc is None:
             agent_metrics = task.result()
             if agent_metrics is not None and agent_metrics:
-                # The bucket key is always None for now; the runner groups
-                # records by it before aggregating.
+                # `bucket` is reserved for grouping agent metrics by the weight
+                # version that generated the group; it is always None here, and the
+                # runner aggregates only None-keyed records.
                 self._agent_metric_channel.put(
                     {"bucket": None, "metrics": agent_metrics}, async_op=True
                 )
@@ -777,32 +779,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             else:
                 self.send(agent_metrics_list, self._group_name, 0)
                 return
-        if len(agent_metrics_list) == 0:
-            return {}
-
-        all_keys: set[str] = set()
-        for metric_dict in agent_metrics_list:
-            all_keys.update(metric_dict.keys())
-
-        whole_metrics = {}
-        stat_methods = {
-            "__sum__/": sum,
-            "__max__/": max,
-            "__min__/": min,
-            "__mean__/": lambda x: sum(i[0] for i in x) / sum(i[1] for i in x),
-        }
-        for key in all_keys:
-            for stat_key in stat_methods:
-                if key.startswith(stat_key):
-                    real_key = key[len(stat_key) :]
-                    break
-            else:
-                stat_key, real_key = None, None
-            if stat_key is not None:
-                values = [metric_dict[key] for metric_dict in agent_metrics_list]
-                whole_metrics[real_key] = stat_methods[stat_key](values)
-
-        return whole_metrics
+        return aggregate_agent_metrics(agent_metrics_list)
 
     def get_rollout_metrics(
         self,

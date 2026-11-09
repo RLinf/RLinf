@@ -31,6 +31,7 @@ from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
+    PlacementMode,
 )
 
 sys.path.insert(
@@ -818,7 +819,7 @@ class TestModelParallelComponentPlacement:
 
 
 class TestDisaggregatedMultiAgentPlacement:
-    """AS0 disaggregated layout for the multi-agent (searchr1) actor:
+    """Disaggregated layout for the multi-agent (searchr1) actor:
     2x8, actor 0-7 / rollout 8-15, rollout tp1."""
 
     def _make_config(self):
@@ -976,7 +977,8 @@ class TestSearchr1AsyncPauseModeDefaults:
         import rlinf.config as cfg_mod
 
         placement = MagicMock()
-        placement.is_collocated = True
+        placement.is_collocated = False
+        placement.is_disaggregated = True
         placement.rollout_num_model_instances = 1
         placement.actor_dp_size = 4
         with mock.patch.object(
@@ -1047,7 +1049,8 @@ class TestSearchr1AsyncBatchDivisibility:
         import rlinf.config as cfg_mod
 
         placement = MagicMock()
-        placement.is_collocated = True
+        placement.is_collocated = False
+        placement.is_disaggregated = True
         placement.rollout_num_model_instances = 1
         placement.actor_dp_size = actor_dp_size
         with mock.patch.object(
@@ -1111,7 +1114,8 @@ class TestSearchr1AsyncDiscardConfig:
         import rlinf.config as cfg_mod
 
         placement = MagicMock()
-        placement.is_collocated = True
+        placement.is_collocated = False
+        placement.is_disaggregated = True
         placement.actor_dp_size = actor_dp_size
         placement.rollout_num_model_instances = 1
         with mock.patch.object(
@@ -2180,8 +2184,9 @@ if __name__ == "__main__":
 
 
 class TestSearchr1AsyncAdmissionCfg:
-    """validate_searchr1_cfg: async admission config (rollout_buffer,
-    agentloop.task_name) and the removal of algorithm.staleness_threshold."""
+    """validate_searchr1_cfg: async admission config (disaggregated
+    placement, rollout_buffer, agentloop.task_name) and the rejection of
+    algorithm.staleness_threshold."""
 
     @staticmethod
     def _make_cfg(**overrides):
@@ -2231,13 +2236,28 @@ class TestSearchr1AsyncAdmissionCfg:
         import rlinf.config as cfg_mod
 
         placement = MagicMock()
-        placement.is_collocated = True
+        placement.is_collocated = False
+        placement.is_disaggregated = True
         placement.actor_dp_size = 4
         placement.rollout_num_model_instances = 2
         with mock.patch.object(
             cfg_mod, "ModelParallelComponentPlacement", return_value=placement
         ):
             return cfg_mod.validate_searchr1_cfg(cfg)
+
+    def test_collocated_placement_is_rejected(self):
+        """Async training requires the actor and rollout on separate GPUs."""
+        import rlinf.config as cfg_mod
+
+        placement = MagicMock()
+        placement.is_collocated = True
+        placement.is_disaggregated = False
+        placement.placement_mode = PlacementMode.COLLOCATED
+        with mock.patch.object(
+            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
+        ):
+            with pytest.raises(ValueError, match="disaggregated placement.*COLLOCATED"):
+                cfg_mod.validate_searchr1_cfg(self._make_cfg())
 
     def test_defaults_are_derived(self):
         """Unset caps derive from engine capacity and batch size."""
@@ -2262,9 +2282,10 @@ class TestSearchr1AsyncAdmissionCfg:
         )
         assert cfg.rollout_buffer.max_inflight_groups == 3
 
-    def test_old_staleness_threshold_errors(self):
-        """algorithm.staleness_threshold is rejected with its replacements."""
-        with pytest.raises(ValueError, match="staleness_threshold is no longer used"):
+    def test_staleness_threshold_errors(self):
+        """algorithm.staleness_threshold, an embodied async setting, is
+        rejected with the async agent admission settings."""
+        with pytest.raises(ValueError, match="is not used by async agent training"):
             self._validate(self._make_cfg(**{"algorithm.staleness_threshold": 2}))
 
     def test_missing_task_name_errors(self):
@@ -2300,24 +2321,6 @@ class TestSearchr1AsyncAdmissionCfg:
         del cfg.rollout.max_running_requests
         cfg = self._validate(cfg)
         assert cfg.rollout_buffer.max_inflight_groups == 3
-
-    def test_old_algorithm_max_actor_accept_staleness_errors(self):
-        """algorithm.max_actor_accept_staleness is rejected with its new
-        home."""
-        with pytest.raises(ValueError, match="agentloop.max_actor_accept_staleness"):
-            self._validate(
-                self._make_cfg(**{"algorithm.max_actor_accept_staleness": 2})
-            )
-
-    def test_old_algorithm_max_dropped_groups_errors(self):
-        """algorithm.max_dropped_groups_per_step is rejected with its new
-        home."""
-        with pytest.raises(
-            ValueError, match="rollout_buffer.max_dropped_groups_per_step"
-        ):
-            self._validate(
-                self._make_cfg(**{"algorithm.max_dropped_groups_per_step": 100})
-            )
 
     def test_negative_max_actor_accept_staleness_errors(self):
         """A negative staleness cap would drop every group as stale."""

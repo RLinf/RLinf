@@ -88,7 +88,7 @@ class RolloutBuffer:
         self._admission_event.set()
         # Weight version each rollout instance has loaded; None before
         # the first sync. Release-time staleness checks run against the
-        # minimum; admission no longer depends on it.
+        # minimum; admission does not depend on it.
         self.loaded_versions: Optional[dict[int, int]] = None
         # Dataset samples this process has taken from the dataloader,
         # whether issued yet or not. A resume-relevant quantity, so it is
@@ -166,7 +166,7 @@ class RolloutBuffer:
         """Record the version each rollout instance has loaded.
 
         Used by release-time staleness checks and the loaded-version
-        metrics; admission no longer depends on the loaded versions.
+        metrics; admission does not depend on the loaded versions.
         """
         self.loaded_versions = dict(versions)
 
@@ -723,7 +723,7 @@ class RolloutBufferWorker(Worker):
     async def load_checkpoint(self, path: str, start_step: int):
         """Load the dataloader state; `start_step` is accepted for the
         synchronous runner's checkpoint interface and unused here (admission
-        no longer depends on the training step).
+        does not depend on the training step).
 
         Only the dataloader state depends on `data.pt` existing; without
         it the buffer starts from the beginning of the dataset.

@@ -25,6 +25,7 @@ from tqdm import tqdm
 from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.metric_utils import aggregate_agent_metrics
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
 from rlinf.workers.actor.megatron_actor_worker import MegatronActor
@@ -184,47 +185,14 @@ class AsyncAgentRunner(AgentRunner):
             time.sleep(0.1)
         return actor_handle.wait()
 
-    def _aggregate_agent_metrics(self, metrics_list: list[dict]) -> dict:
-        """Aggregate per-group agent metric dicts in one pass.
-
-        Follows the `post_process_metric` key convention: `__sum__/`,
-        `__max__/` and `__min__/` keys merge directly, `__mean__/` values are
-        (numerator, denominator) pairs summed separately then divided; keys
-        without one of these prefixes are dropped.
-        """
-        if len(metrics_list) == 0:
-            return {}
-
-        all_keys: set[str] = set()
-        for metric_dict in metrics_list:
-            all_keys.update(metric_dict.keys())
-
-        aggregated = {}
-        stat_methods = {
-            "__sum__/": sum,
-            "__max__/": max,
-            "__min__/": min,
-            "__mean__/": lambda x: sum(i[0] for i in x) / sum(i[1] for i in x),
-        }
-        for key in all_keys:
-            for stat_key in stat_methods:
-                if key.startswith(stat_key):
-                    real_key = key[len(stat_key) :]
-                    break
-            else:
-                stat_key, real_key = None, None
-            if stat_key is not None:
-                values = [metric_dict[key] for metric_dict in metrics_list]
-                aggregated[real_key] = stat_methods[stat_key](values)
-
-        return aggregated
-
     def get_agent_metrics(self) -> dict:
         """Drain and aggregate the agent metrics accumulated since the last call.
 
         Drains `agent_metric_channel` with `get_nowait()` until
-        `asyncio.QueueEmpty`, keeps the records with the bucket key None (all
-        records carry it currently) and aggregates them in one pass.
+        `asyncio.QueueEmpty` and aggregates, in one pass, the records whose
+        bucket key is None. The key is reserved for grouping agent metrics by
+        the weight version that generated the group; the agent loop always
+        sets it to None.
         """
         metrics_list: list[dict] = []
         while True:
@@ -234,7 +202,7 @@ class AsyncAgentRunner(AgentRunner):
                 break
             if record["bucket"] is None:
                 metrics_list.append(record["metrics"])
-        return self._aggregate_agent_metrics(metrics_list)
+        return aggregate_agent_metrics(metrics_list)
 
     def _save_checkpoint(self):
         """Save the actor first and the buffer worker's dataloader last.

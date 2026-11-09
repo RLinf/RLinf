@@ -1950,30 +1950,23 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "placement unless actor.training_backend is megatron."
             )
     if cfg.runner.get("async_mode", False):
+        if not component_placement.is_disaggregated:
+            raise ValueError(
+                "SearchR1 async training requires the actor and the rollout "
+                "to be deployed on separate GPUs (disaggregated placement); "
+                "the current placement mode is "
+                f"{component_placement.placement_mode.name}."
+            )
         if cfg.algorithm.get("staleness_threshold", None) is not None:
             raise ValueError(
-                f"algorithm.staleness_threshold is no longer used by async "
+                f"algorithm.staleness_threshold is the embodied async "
+                f"runner's admission setting and is not used by async agent "
                 f"training (found {cfg.algorithm.staleness_threshold}). "
-                "Admission is now controlled by rollout_buffer."
+                "Admission is controlled by rollout_buffer."
                 "max_inflight_groups and rollout_buffer.max_buffered_groups; "
                 "how stale training data may be is bounded by "
                 "rollout_buffer.max_buffered_groups and agentloop."
                 "max_actor_accept_staleness. Remove the field."
-            )
-        if cfg.algorithm.get("max_actor_accept_staleness", None) is not None:
-            raise ValueError(
-                f"algorithm.max_actor_accept_staleness is no longer used by "
-                f"async training (found "
-                f"{cfg.algorithm.max_actor_accept_staleness}); it moved to "
-                "agentloop.max_actor_accept_staleness. Remove the field."
-            )
-        if cfg.algorithm.get("max_dropped_groups_per_step", None) is not None:
-            raise ValueError(
-                f"algorithm.max_dropped_groups_per_step is no longer used by "
-                f"async training (found "
-                f"{cfg.algorithm.max_dropped_groups_per_step}); it moved to "
-                "rollout_buffer.max_dropped_groups_per_step. Remove the "
-                "field."
             )
         task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
         if task_name is None:
