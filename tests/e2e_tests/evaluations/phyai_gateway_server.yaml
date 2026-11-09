@@ -1,0 +1,29 @@
+# Resource paths are supplied through PHYAI_HTTP_CHECKPOINT/PHYAI_HTTP_TOKENIZER.
+plugin: pi05
+plugin_args:
+  checkpoint_dir: /path/to/lerobot-pi05-libero
+  max_batch_size: 8
+  inputs_image_shape:
+    - [360, 360, 3]
+    - [360, 360, 3]
+config:
+  device:
+    target: cuda
+    params_dtype: bfloat16
+  runtime:
+    use_cuda_graph: true
+    flashinfer_workspace_bytes: 2147483648
+deployment:
+  mode: auto
+server:
+  host: 127.0.0.1
+  port: 50063
+  model_name: pi05
+  workers: 1
+adapter:
+  factory: phyai.server.backends.pi05:PI05Backend
+  args:
+    tokenizer_dir: /path/to/paligemma-tokenizer
+    image_names: [main_images, wrist_images]
+    state_dim: 8
+    action_dim: 7

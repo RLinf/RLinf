@@ -87,9 +87,23 @@ def main(cfg) -> None:
             cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "phyai":
-        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+        phyai_serving_mode = cfg.rollout.get("phyai", {}).get("serving_mode", "embodied")
+        if phyai_serving_mode == "embodied":
+            from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
-        rollout_group = PhyAIRolloutWorker.create_group(cfg).launch(
+            rollout_group = PhyAIRolloutWorker.create_group(cfg)
+        elif phyai_serving_mode == "worker_http":
+            from rlinf.workers.rollout.phyai.phyai_embodied_worker import (
+                PhyaiEmbodiedWorker,
+            )
+
+            rollout_group = PhyaiEmbodiedWorker.create_group(cfg)
+        else:
+            raise ValueError(
+                "Expected phyai.serving_mode in ['embodied', 'worker_http'], "
+                f"got {phyai_serving_mode!r}."
+            )
+        rollout_group = rollout_group.launch(
             cluster,
             name=cfg.rollout.group_name,
             placement_strategy=rollout_placement,
@@ -120,6 +134,20 @@ def main(cfg) -> None:
         )
         rollout_group.set_sglang_server_urls(_server_urls).wait()
 
+    # The HTTP worker connects to an externally managed Gateway.
+    elif rollout_backend == "phyai" and phyai_serving_mode == "worker_http":
+        _server_url = cfg.rollout.phyai.get("gateway_url")
+
+        if not isinstance(_server_url, str) or not _server_url.strip():
+            raise ValueError(
+                "rollout.phyai.gateway_url must be a nonempty string "
+                "when serving_mode='worker_http'."
+            )
+
+        _server_url = _server_url.strip().rstrip("/")
+        get_logger().info(f"[eval] using external PhyAI Gateway: {_server_url}")
+
+        rollout_group.set_phyai_server_urls([_server_url]).wait()
     runner = EmbodiedEvalRunner(
         cfg=cfg,
         rollout=rollout_group,

@@ -1,0 +1,10 @@
+# HTTP serving additions to the environment created by --engine phyai.
+# Install phyai-gateway and phyai-utils-tools separately with --no-deps so
+# their Transformers/Torch metadata does not replace the shared PI0.5 stack.
+fastapi
+uvicorn
+grpcio>=1.73.1
+protobuf>=6.33.5,<7
+msgpack>=1.0,<2
+sentencepiece
+tiktoken>=0.7,<1
