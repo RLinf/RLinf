@@ -20,6 +20,7 @@ from typing import Any, Sequence
 
 import numpy as np
 import torch
+from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.openpi.modules.model import Observation
 from rlinf.models.embodiment.openpi.transforms.apply import (
@@ -102,6 +103,10 @@ class EnvIO:
     def _observation_dict_to_device(self, processed: dict) -> Observation:
         """Convert a per-key dict into a device-resident Observation."""
         device = self.device
+        # Copy uint8 images before from_dict so they are normalised on the device.
+        processed = tree_map(
+            lambda x: x.to(device) if isinstance(x, torch.Tensor) else x, processed
+        )
         obs = Observation.from_dict(processed)
 
         def _move(x):

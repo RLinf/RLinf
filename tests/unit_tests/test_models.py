@@ -44,7 +44,7 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
-from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
+from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS, Observation
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -1428,6 +1428,26 @@ def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
 
     assert repacked["prompt"] == raw_sample["task"]
     assert "task" not in repacked
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_openpi_observation_normalises_cuda_images_like_cpu():
+    plane = torch.arange(256, dtype=torch.uint8).reshape(1, 16, 16, 1)
+    image = plane.repeat(1, 1, 1, 3)  # every uint8 value once per channel
+
+    def normalise(x):
+        obs = {
+            "image": {IMAGE_KEYS[0]: x},
+            "image_mask": {IMAGE_KEYS[0]: torch.ones(1, dtype=torch.bool)},
+            "state": torch.zeros(1, 8),
+        }
+        return Observation.from_dict(obs).images[IMAGE_KEYS[0]]
+
+    cpu, cuda = normalise(image.clone()), normalise(image.cuda())
+    mismatch = (cuda.cpu() != cpu).sum().item()
+    assert mismatch == 0, (
+        f"expected CUDA to match CPU, {mismatch} of {cpu.numel()} differ"
+    )
 
 
 def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
