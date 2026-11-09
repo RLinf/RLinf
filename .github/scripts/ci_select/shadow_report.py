@@ -34,6 +34,9 @@ import yaml
 from jobs import CALLER
 from snapshot import FsSnapshot
 
+# Conclusions that mean the job found a problem.
+FAILED = ("failure", "timed_out", "startup_failure")
+
 
 def run_jobs(repo: str, run_id: str, attempt: str, token: str) -> list[dict]:
     """All jobs of one workflow run attempt, from the Actions API."""
@@ -103,7 +106,9 @@ def main() -> int:
             }
         )
     ran = [r for r in rows if r["conclusion"] not in (None, "skipped")]
-    missed = [r for r in ran if r["conclusion"] == "failure" and not r["selected"]]
+    failed = [r for r in ran if r["conclusion"] in FAILED]
+    missed = [r for r in failed if not r["selected"]]
+    cancelled = [r for r in ran if r["conclusion"] == "cancelled" and not r["selected"]]
     skipped_by_selector = [r for r in ran if not r["selected"]]
     not_run = sorted(selected - {r["job"] for r in ran})
 
@@ -112,8 +117,11 @@ def main() -> int:
         "ran": len(ran),
         "would_skip": len(skipped_by_selector),
         "selected_total": len(selected),
-        "failures": [r["job"] for r in ran if r["conclusion"] == "failure"],
-        "missed_failures": [r["job"] for r in missed],
+        "failures": [r["job"] for r in failed],
+        "missed_failures": [
+            {"job": r["job"], "conclusion": r["conclusion"]} for r in missed
+        ],
+        "cancelled_would_skip": [r["job"] for r in cancelled],
         "selected_not_run": not_run,
         "uncovered": selection.get("uncovered", []),
     }
@@ -125,13 +133,19 @@ def main() -> int:
         "",
         f"- Jobs that ran: **{len(ran)}**; the selector would have run **{len(ran) - len(skipped_by_selector)}** of them "
         f"and skipped **{len(skipped_by_selector)}**.",
-        f"- Failed jobs: {len(report['failures'])}; failed jobs the selector would have skipped: "
+        f"- Failed or timed-out jobs: {len(failed)}; of those, the selector would have skipped: "
         f"**{len(missed)}**" + (" :warning:" if missed else ""),
     ]
     if selection.get("full"):
         lines.append(f"- The selector chose every job: {selection['full']}")
     for r in missed:
-        lines.append(f"  - missed: `{r['job']}`")
+        lines.append(f"  - missed: `{r['job']}` ({r['conclusion']})")
+    if cancelled:
+        lines.append(
+            f"- Cancelled jobs the selector would have skipped: {len(cancelled)}"
+            " (their outcome is unknown)"
+        )
+        lines += [f"  - `{r['job']}`" for r in cancelled[:30]]
     if not_run:
         lines.append(f"- Selected but not run by the path filters: {len(not_run)}")
         lines += [f"  - `{n}`" for n in not_run[:30]]

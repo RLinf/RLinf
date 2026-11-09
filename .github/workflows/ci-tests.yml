@@ -318,6 +318,9 @@ jobs:
   # decide what runs, and ci-test-finish does not wait for these jobs.
 
   ci-select-shadow:
+    # check-changes fails for drafts and PRs without run-ci, whose test jobs
+    # do not run and so leave nothing to compare.
+    needs: [check-changes]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -335,9 +338,8 @@ jobs:
         run: |
           pip install -q pyyaml
           python .github/scripts/ci_select/select_jobs.py \
-            --base ${{ github.event.pull_request.base.sha }} --head HEAD --json > ci-select.json
-          python .github/scripts/ci_select/select_jobs.py \
-            --base ${{ github.event.pull_request.base.sha }} --head HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+            --base ${{ github.event.pull_request.base.sha }} --head HEAD \
+            --json-out ci-select.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:

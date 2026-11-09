@@ -26,11 +26,13 @@ change to the selector itself selects everything.
 import argparse
 import ast
 import fnmatch
+import io
 import json
 import re
 import shlex
 import sys
-from dataclasses import dataclass, field
+import tokenize
+from dataclasses import dataclass, field, replace
 
 import hydra_cfg
 import yaml
@@ -85,25 +87,110 @@ class Change:
     status: str
     added: set[int] = field(default_factory=set)  # new-side lines
     removed: set[int] = field(default_factory=set)  # old-side lines
-    anchors: set[int] = field(
-        default_factory=set
-    )  # new-side neighbours of pure deletions
+    # New-side neighbours of pure deletions.
+    anchors: set[int] = field(default_factory=set)
+    # The diff showed content lines for this file.
+    content_seen: bool = False
+    # No line information: a binary or mode-only change counts as the whole file.
+    whole: bool = False
 
     @property
     def comment_only(self) -> bool:
         """A content edit that touched only comments and blank lines."""
-        return self.status == "M" and not (self.added or self.removed or self.anchors)
+        return (
+            self.status == "M"
+            and self.content_seen
+            and not (self.added or self.removed or self.anchors)
+        )
 
 
-# Line comments in the files CI reads (bash, Python, YAML, TOML, Dockerfile).
-_COMMENT_SUFFIXES = (".sh", ".py", ".yaml", ".yml", ".toml", ".txt", "Dockerfile")
+def _blank_or_hash(line: str) -> bool:
+    t = line.strip()
+    return not t or (t.startswith("#") and not t.startswith("#!"))
 
 
-def _is_comment(path: str, text: str) -> bool:
-    t = text.strip()
-    return path.endswith(_COMMENT_SUFFIXES) and (
-        not t or (t.startswith("#") and not t.startswith("#!"))
-    )
+def _python_comment_lines(lines: list[str]) -> set[int]:
+    text = "\n".join(lines) + "\n"
+    in_string: set[int] = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.STRING and tok.end[0] > tok.start[0]:
+                in_string.update(range(tok.start[0] + 1, tok.end[0] + 1))
+            elif tok.type == getattr(tokenize, "FSTRING_MIDDLE", -1):
+                in_string.update(range(tok.start[0], tok.end[0] + 1))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return set()
+    return {
+        i
+        for i, line in enumerate(lines, 1)
+        if i not in in_string and _blank_or_hash(line)
+    }
+
+
+_HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
+
+
+def _shell_comment_lines(lines: list[str]) -> set[int]:
+    out, end = set(), None
+    for i, line in enumerate(lines, 1):
+        if end is not None:
+            if line.strip() == end:
+                end = None
+            continue
+        if _blank_or_hash(line):
+            out.add(i)
+            continue
+        m = _HEREDOC.search(line)
+        if m and "<<<" not in line:
+            end = m.group(1)
+    return out
+
+
+_BLOCK_SCALAR = re.compile(r"(:|^\s*-)\s*[|>][-+0-9]*\s*(#.*)?$")
+
+
+def _yaml_comment_lines(lines: list[str]) -> set[int]:
+    out, block_indent = set(), None
+    for i, line in enumerate(lines, 1):
+        indent = len(line) - len(line.lstrip())
+        if block_indent is not None:
+            if not line.strip() or indent > block_indent:
+                continue
+            block_indent = None
+        if _blank_or_hash(line):
+            out.add(i)
+        elif _BLOCK_SCALAR.search(line):
+            block_indent = indent
+    return out
+
+
+def _toml_comment_lines(lines: list[str]) -> set[int]:
+    out, in_string = set(), False
+    for i, line in enumerate(lines, 1):
+        if not in_string and _blank_or_hash(line):
+            out.add(i)
+        if (line.count('"""') + line.count("'''")) % 2:
+            in_string = not in_string
+    return out
+
+
+def comment_lines(path: str, text: str | None) -> set[int]:
+    """Lines of ``text`` that are blank or comments, outside any string."""
+    if text is None:
+        return set()
+    lines = text.split("\n")
+    name = path.rsplit("/", 1)[-1]
+    if path.endswith(".py"):
+        return _python_comment_lines(lines)
+    if path.endswith(".sh") or name.startswith("Dockerfile"):
+        return _shell_comment_lines(lines)
+    if path.endswith((".yaml", ".yml")):
+        return _yaml_comment_lines(lines)
+    if path.endswith(".toml"):
+        return _toml_comment_lines(lines)
+    if path.endswith(".txt"):
+        return {i for i, line in enumerate(lines, 1) if _blank_or_hash(line)}
+    return set()
 
 
 def diff(repo: GitRepo, base: str, head: str) -> list[Change]:
@@ -117,41 +204,63 @@ def diff(repo: GitRepo, base: str, head: str) -> list[Change]:
             changes[parts[2]] = Change(parts[2], parts[1], "R")
         else:
             changes[parts[1]] = Change(parts[1], None, status)
-    current = None
+    by_old = {(c.old_path or c.path): c for c in changes.values()}
+    post, pre = repo.snapshot(head), repo.snapshot(base)
+    current: Change | None = None
+    in_header = False
+    new_comments: set[int] = set()
+    old_comments: set[int] = set()
+    old_no = new_no = 0
+    hunk_anchor: set[int] | None = None
+
+    def enter(ch: Change | None) -> None:
+        nonlocal current, new_comments, old_comments
+        current = ch
+        if ch is not None:
+            new_comments = comment_lines(ch.path, post.read(ch.path))
+            old = ch.old_path or ch.path
+            old_comments = comment_lines(old, pre.read(old))
+
     for line in repo.git(
         "diff", "-U0", "-M", "--no-color", "--no-ext-diff", base, head
     ).splitlines():
-        if line.startswith("--- "):
-            old = line[4:]
-            current = (
-                None
-                if old == "/dev/null"
-                else next(
-                    (c for c in changes.values() if (c.old_path or c.path) == old[2:]),
-                    None,
-                )
-            )
-        elif line.startswith("+++ "):
-            new = line[4:]
-            if new != "/dev/null":
-                current = changes.get(new[2:], current)
-        elif line.startswith("@@") and current is not None:
+        if line.startswith("diff --git "):
+            # File headers (---/+++, mode, Binary) appear only before the
+            # first hunk, so a content line starting with "--- " is not one.
+            in_header = True
+            m = re.match(r"diff --git a/(.*) b/(.*)$", line)
+            enter(changes.get(m.group(2)) if m else None)
+            continue
+        if in_header and not line.startswith("@@"):
+            if line.startswith("--- ") and line[4:] != "/dev/null":
+                enter(by_old.get(line[6:], current))
+            elif line.startswith("+++ ") and line[4:] != "/dev/null":
+                enter(changes.get(line[6:], current))
+            elif line.startswith("Binary files") and current is not None:
+                current.whole = True
+            continue
+        if current is None:
+            continue
+        if line.startswith("@@"):
+            in_header = False
             m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
             old_no, new_no = int(m.group(1)), int(m.group(3))
-            if int(m.group(4) or 1) == 0:
-                hunk_anchor = {new_no, new_no + 1}
-            else:
-                hunk_anchor = None
-        elif current is not None and line.startswith("-"):
-            if not _is_comment(current.path, line[1:]):
+            hunk_anchor = {new_no, new_no + 1} if int(m.group(4) or 1) == 0 else None
+        elif line.startswith("-"):
+            current.content_seen = True
+            if old_no not in old_comments:
                 current.removed.add(old_no)
                 if hunk_anchor:
                     current.anchors.update(hunk_anchor)
             old_no += 1
-        elif current is not None and line.startswith("+"):
-            if not _is_comment(current.path, line[1:]):
+        elif line.startswith("+"):
+            current.content_seen = True
+            if new_no not in new_comments:
                 current.added.add(new_no)
             new_no += 1
+    for ch in changes.values():
+        if ch.status == "M" and not ch.content_seen:
+            ch.whole = True
     return list(changes.values())
 
 
@@ -285,8 +394,10 @@ def new_definitions(ch: Change, post: Snapshot, pre: Snapshot) -> dict[str, set[
         or name == "conftest.py"
     ):
         return {}
+    new_text = post.read(ch.path) or ""
+    new_lines = new_text.split("\n")
     try:
-        new_tree = ast.parse(post.read(ch.path) or "")
+        new_tree = ast.parse(new_text)
         old_tree = ast.parse(pre.read(ch.path) or "")
     except SyntaxError:
         return {}
@@ -300,10 +411,14 @@ def new_definitions(ch: Change, post: Snapshot, pre: Snapshot) -> dict[str, set[
             and node.name not in old_names
             and not node.decorator_list
         ):
-            start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+            start = node.lineno
             span = set(range(start, node.end_lineno + 1))
             # Blank lines just above the definition belong to it as well.
-            out[node.name] = span | {start - 1, start - 2}
+            i = start - 1
+            while i >= 1 and start - i <= 2 and not new_lines[i - 1].strip():
+                span.add(i)
+                i -= 1
+            out[node.name] = span
     return out
 
 
@@ -346,14 +461,7 @@ def _drop_unused_definitions(
         unused |= span
     if not unused:
         return ch
-    return Change(
-        ch.path,
-        ch.old_path,
-        ch.status,
-        ch.added - unused,
-        ch.removed,
-        ch.anchors - unused,
-    )
+    return replace(ch, added=ch.added - unused, anchors=ch.anchors - unused)
 
 
 def touches(
@@ -366,6 +474,13 @@ def touches(
     members: dict[int, str] | None = None,
     defs: tuple[dict[str, set[int]], NameIndex, Snapshot] | None = None,
 ) -> bool:
+    if ch.whole:
+        old = ch.old_path or ch.path
+        return (
+            ch.path in post.lines
+            or ch.path in post.files
+            or (pre is not None and (old in pre.lines or old in pre.files))
+        )
     if defs and defs[0]:
         ch = _drop_unused_definitions(ch, post, *defs)
         if ch.status == "M" and not (ch.added or ch.removed or ch.anchors):
@@ -380,26 +495,17 @@ def touches(
             keep = set(members)
         else:
             keep = {i for i, v in members.items() if v in values}
-        ch = Change(
-            ch.path,
-            ch.old_path,
-            ch.status,
-            (ch.added - members.keys()) | keep,
-            ch.removed,
-            ch.anchors,
-        )
+        ch = replace(ch, added=(ch.added - members.keys()) | keep)
         if ch.status == "M" and not (ch.added or ch.removed or ch.anchors):
             return False
     if appended:
         values = post.bash_values.get(ch.path, set())
         hits = {i for i, (_, added) in appended.items() if added & values}
-        ch = Change(
-            ch.path,
-            ch.old_path,
-            ch.status,
-            (ch.added - appended.keys()) | hits,
-            ch.removed - {old for i, (old, _) in appended.items() if i not in hits},
-            ch.anchors,
+        ch = replace(
+            ch,
+            added=(ch.added - appended.keys()) | hits,
+            removed=ch.removed
+            - {old for i, (old, _) in appended.items() if i not in hits},
         )
     if ch.status in "ADR":
         for d, name_rx in post.listings.items():
@@ -468,11 +574,12 @@ def select(
     pre: Snapshot,
 ) -> Selection:
     sel = Selection()
+    # build_jobs already indexed both snapshots; reuse that work.
     py = PyLines(
-        PyIndex(post),
-        PyIndex(pre),
-        hydra_cfg.vocabulary(post),
-        hydra_cfg.vocabulary(pre),
+        getattr(post_jobs, "py", None) or PyIndex(post),
+        getattr(pre_jobs, "py", None) or PyIndex(pre),
+        getattr(post_jobs, "vocab", None) or hydra_cfg.vocabulary(post),
+        getattr(pre_jobs, "vocab", None) or hydra_cfg.vocabulary(pre),
     )
     names = NameIndex(post)
     for ch in changes:
@@ -571,24 +678,25 @@ def main() -> int:
     ap.add_argument("--base", required=True)
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--json", action="store_true", help="print the selection as JSON")
+    ap.add_argument("--json-out", help="also write the selection as JSON to this file")
     args = ap.parse_args()
     repo = GitRepo(args.repo)
     base = repo.git("merge-base", args.base, args.head).strip()
     post, pre = repo.snapshot(args.head), repo.snapshot(base)
     post_jobs, pre_jobs = build_jobs(post), build_jobs(pre)
     sel = select(diff(repo, base, args.head), post_jobs, pre_jobs, post, pre)
+    result = {
+        "total": len(post_jobs),
+        "jobs": sorted(sel.jobs),
+        "reasons": {n: sorted(set(p))[:5] for n, p in sel.jobs.items()},
+        "full": sel.full,
+        "uncovered": sel.uncovered,
+    }
+    if args.json_out:
+        with open(args.json_out, "w") as f:
+            json.dump(result, f, indent=1)
     if args.json:
-        json.dump(
-            {
-                "total": len(post_jobs),
-                "jobs": sorted(sel.jobs),
-                "reasons": {n: sorted(set(p))[:5] for n, p in sel.jobs.items()},
-                "full": sel.full,
-                "uncovered": sel.uncovered,
-            },
-            sys.stdout,
-            indent=1,
-        )
+        json.dump(result, sys.stdout, indent=1)
         return 0
     print(
         f"{len(sel.jobs)} of {len(post_jobs)} jobs"

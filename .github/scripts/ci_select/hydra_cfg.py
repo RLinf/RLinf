@@ -24,6 +24,7 @@ import posixpath
 import re
 
 import yaml
+from pyscan import KEY_MARK
 from snapshot import Snapshot
 
 _yaml_cache: dict[str, object] = {}
@@ -52,6 +53,20 @@ def scalars(data) -> set[str]:
             out.add(x.lower())
         elif x is not None:
             out.add(str(x).lower())
+    return out
+
+
+def config_keys(data) -> set[str]:
+    """Every mapping key, marked so it cannot collide with a value."""
+    out: set[str] = set()
+    stack = [data]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            out.update(KEY_MARK + str(k).lower() for k in x)
+            stack.extend(x.values())
+        elif isinstance(x, list):
+            stack.extend(x)
     return out
 
 
@@ -116,7 +131,7 @@ def compose(
             continue
         files.add(path)
         data = load_yaml(snap, path)
-        values |= scalars(data)
+        values |= scalars(data) | config_keys(data)
         here = posixpath.dirname(path)
         for entry in _defaults_entries(data):
             entry = entry.lstrip("/")
@@ -138,13 +153,15 @@ def compose(
         key, _, value = ov.lstrip("+~").partition("=")
         if value:
             values.add(value.strip("'\"").lower())
+            values.add(KEY_MARK + key.rsplit(".", 1)[-1].lower())
             if "/" in key or key in ("model", "env"):
                 # A group override such as env/train=libero_spatial.
                 for base in roots:
                     cand = f"{base}/{key.split('@')[0]}/{value}.yaml"
                     if snap.exists(cand):
                         files.add(cand)
-                        values |= scalars(load_yaml(snap, cand))
+                        data = load_yaml(snap, cand)
+                        values |= scalars(data) | config_keys(data)
     return files, values
 
 

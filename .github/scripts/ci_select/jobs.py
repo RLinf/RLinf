@@ -585,9 +585,17 @@ def caller_groups(snap: Snapshot) -> dict[str, str]:
     return out
 
 
-def build_jobs(snap: Snapshot) -> dict[str, Job]:
+class JobMap(dict):
+    """Jobs by name, with the snapshot's Python index and config vocabulary."""
+
+    py: PyIndex
+    vocab: frozenset[str]
+
+
+def build_jobs(snap: Snapshot) -> JobMap:
     mapper = JobMapper(snap)
-    jobs: dict[str, Job] = {}
+    jobs = JobMap()
+    jobs.py, jobs.vocab = mapper.py, mapper.vocab
     for wf in caller_groups(snap):
         if snap.exists(wf):
             for job in mapper.workflow_jobs(wf):

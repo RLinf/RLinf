@@ -36,6 +36,9 @@ from dataclasses import dataclass, field
 
 from snapshot import Snapshot
 
+#: Prefix of the config keys ``hydra_cfg.compose`` adds to a job's values.
+KEY_MARK = "\x00key="
+
 # A guard constant: ("s", value) for a string literal, ("a", owner, name) for
 # an attribute such as SupportedEnvType.MANISKILL resolved later.
 Sym = tuple
@@ -70,7 +73,10 @@ class FileInfo:
     path_strings: list[str] = field(default_factory=list)
     dynamic: list[tuple[Guards, bool]] = field(default_factory=list)
     consts: dict[str, dict[str, str]] = field(default_factory=dict)
-    str_defaults: set[str] = field(default_factory=set)
+    # (key, default) of every ``cfg.get("key", "default")`` and ``getattr``.
+    key_defaults: set[tuple[str, str]] = field(default_factory=set)
+    # Names other modules can reach: imported names and attribute names.
+    external_names: set[str] = field(default_factory=set)
     # (first line, last line, guards) of every statement, outermost first.
     spans: list[tuple[int, int, Guards]] = field(default_factory=list)
     parse_error: bool = False
@@ -194,7 +200,9 @@ def _registration_guards(tree: ast.AST) -> dict[str, Guard]:
         and isinstance(node.ctx, ast.Load)
         and id(node) not in keyed_nodes
     }
-    return {name: tuple(syms) for name, syms in keyed.items() if name not in plain}
+    return {
+        name: (("f", name), *syms) for name, syms in keyed.items() if name not in plain
+    }
 
 
 def _called_names(nodes: list[ast.AST], into_functions: bool) -> set[str]:
@@ -370,8 +378,13 @@ class _Scanner(ast.NodeVisitor):
                 )
             )
 
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        self.info.external_names.add(node.attr)
+        self.generic_visit(node)
+
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         names = tuple(a.name for a in node.names if a.name != "*")
+        self.info.external_names.update(names)
         self.info.imports.append(
             RawImport(node.level, node.module, names, self._g(), self._lazy())
         )
@@ -406,7 +419,7 @@ class _Scanner(ast.NodeVisitor):
             and isinstance(default, ast.Constant)
             and isinstance(default.value, str)
         ):
-            self.info.str_defaults.add(default.value.lower())
+            self.info.key_defaults.add((key.value.lower(), default.value.lower()))
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> None:
@@ -417,6 +430,7 @@ class _Scanner(ast.NodeVisitor):
         if len(v) >= 300:
             return
         if MODULE_STR.match(v):
+            self.info.external_names.add(v.replace(":", ".").rsplit(".", 1)[-1])
             self.info.module_strings.append((v.split(":")[0], self._g(), self._lazy()))
         elif REL_MODULE_STR.match(v):
             self.info.rel_module_strings.append((v, self._g(), self._lazy()))
@@ -444,8 +458,10 @@ def scan_python(text: str) -> FileInfo:
     for name in top_funcs - reg.keys() - load_time:
         sites = first.refs.get(name)
         # Every reference sits in a guarded branch: the body runs only then.
+        # The ("f", name) marker voids the guard if another module uses it.
         if sites and all(g is not None for g in sites):
-            guards[name] = tuple(dict.fromkeys(sym for g in sites for sym in g))
+            syms = dict.fromkeys(x for g in sites for x in g if x[0] != "f")
+            guards[name] = (("f", name), *syms)
     _Scanner(info, guards, load_time).visit(tree)
     return info
 
@@ -476,6 +492,9 @@ class PyIndex:
                 d = parent
         self._closure_cache: dict = {}
         self._consts = None
+        self._external = None
+        self._key_defaults = None
+        self._effective: dict = {}
         #: Files with a dynamic import whose target no string in the file names.
         self.unresolved_dynamic: set[str] = set()
 
@@ -488,17 +507,60 @@ class PyIndex:
     @property
     def consts(self) -> dict[str, dict[str, str]]:
         if self._consts is None:
-            merged: dict[str, dict[str, str]] = {}
+            # Owners are bare class names; a name two classes define with
+            # different values resolves to None, which never prunes.
+            merged: dict[str, dict[str, str | None]] = {}
             for f in self.py_files:
                 for owner, table in self.info(f).consts.items():
-                    merged.setdefault(owner, {}).update(table)
+                    slot = merged.setdefault(owner, {})
+                    for attr, value in table.items():
+                        if attr in slot and slot[attr] != value:
+                            slot[attr] = None
+                        else:
+                            slot[attr] = value
             self._consts = merged
         return self._consts
+
+    @property
+    def external_names(self) -> frozenset[str]:
+        if self._external is None:
+            out: set[str] = set()
+            for f in self.py_files:
+                out |= self.info(f).external_names
+            self._external = frozenset(out)
+        return self._external
+
+    @property
+    def key_defaults(self) -> frozenset[tuple[str, str]]:
+        if self._key_defaults is None:
+            out: set[tuple[str, str]] = set()
+            for f in self.py_files:
+                out |= self.info(f).key_defaults
+            self._key_defaults = frozenset(out)
+        return self._key_defaults
+
+    def effective(self, values: frozenset[str] | None) -> frozenset[str] | None:
+        """Config values plus the code default of every key the config leaves unset.
+
+        ``cfg.get("rollout_backend", "sglang")`` in ``rlinf/config.py`` makes
+        SGLang the backend of every config without that key, wherever the
+        branch on it lives.
+        """
+        if values is None:
+            return None
+        if values not in self._effective:
+            self._effective[values] = values | {
+                d for k, d in self.key_defaults if KEY_MARK + k not in values
+            }
+        return self._effective[values]
 
     def resolve_guard(self, guard: Guard) -> frozenset[str] | None:
         out = set()
         for sym in guard:
-            if sym[0] == "s":
+            if sym[0] == "f":
+                if sym[1] in self.external_names:
+                    return None
+            elif sym[0] == "s":
                 out.add(sym[1])
             else:
                 value = self.consts.get(sym[1], {}).get(sym[2])
@@ -601,7 +663,7 @@ class PyIndex:
         guards = info.line_guards(line)
         if guards is None:
             return True
-        return self._guard_ok(guards, values | info.str_defaults, vocab)
+        return self._guard_ok(guards, self.effective(values), vocab)
 
     def _guard_ok(
         self, guards: Guards, values: frozenset[str] | None, vocab: frozenset[str]
@@ -630,6 +692,7 @@ class PyIndex:
         ``vocab`` is every value any config sets; guards outside it never prune.
         ``parents``, when given, records the file that first reached each file.
         """
+        values = self.effective(values)
         key = (tuple(sorted(roots)), values, extra_paths)
         if parents is None and key in self._closure_cache:
             return self._closure_cache[key]
@@ -649,12 +712,9 @@ class PyIndex:
                 lazy_done.add(path)
             info = self.info(path)
 
-            # A ``cfg.get("key", "default")`` in this file sets "default".
-            file_values = values | info.str_defaults if values is not None else None
-
             def wanted(lazy: bool, guards: Guards) -> bool:
                 return (do_lazy if lazy else do_eager) and self._guard_ok(
-                    guards, file_values, vocab
+                    guards, values, vocab
                 )
 
             targets: list[tuple[str, bool]] = []
@@ -674,7 +734,7 @@ class PyIndex:
                     pkg = posixpath.dirname(path).replace("/", ".")
                     resolved = []
                     for rel, rguards, _ in info.rel_module_strings:
-                        if self._guard_ok(rguards, file_values, vocab):
+                        if self._guard_ok(rguards, values, vocab):
                             level = len(rel) - len(rel.lstrip("."))
                             base = pkg
                             for _ in range(level - 1):
