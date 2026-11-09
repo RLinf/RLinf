@@ -2703,7 +2703,7 @@ EOF
             create_and_sync_venv
             install_common_embodied_deps
             install_robolab_env
-            uv pip uninstall -y transformers || true
+            uv pip uninstall transformers || true
             uv pip install "rlinf-openpi==0.1.1"
             ;;
         *)
