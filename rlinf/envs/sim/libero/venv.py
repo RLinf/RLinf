@@ -78,7 +78,7 @@ warnings.simplefilter("once", DeprecationWarning)
 LIBERO_CAMERA_OBS_NAMES = ("agentview_image", "robot0_eye_in_hand_image")
 
 
-def _memory_progress(env) -> dict[str, float | int | bool]:
+def _update_subgoal_progress(env) -> dict[str, float | int | bool]:
     """Advance the ordered goals once per control step."""
     core = env.env
     core._check_success(inc=True)
@@ -111,7 +111,7 @@ def _worker(
     p: connection.Connection,
     env_fn_wrapper: CloudpickleWrapper,
     obs_bufs: Optional[Union[dict, tuple, ShArray]] = None,
-    memory_suite: bool = False,
+    is_libero_mem: bool = False,
 ) -> None:
     def _encode_obs(
         obs: Union[dict, tuple, np.ndarray], buffer: Union[dict, tuple, ShArray]
@@ -128,7 +128,8 @@ def _worker(
 
     parent.close()
     env = env_fn_wrapper.data()
-    advance_memory = False
+    # Reset settling steps must not advance LIBERO-Mem subgoals.
+    track_subgoals = False
     try:
         while True:
             try:
@@ -138,9 +139,9 @@ def _worker(
                 break
             if cmd == "step":
                 env_return = env.step(data)
-                if memory_suite and advance_memory:
+                if is_libero_mem and track_subgoals:
                     obs, reward, _done, info = env_return
-                    progress = _memory_progress(env)
+                    progress = _update_subgoal_progress(env)
                     env_return = (
                         obs,
                         reward,
@@ -152,7 +153,7 @@ def _worker(
                     env_return = (None, *env_return[1:])
                 p.send(env_return)
             elif cmd == "reset":
-                advance_memory = False
+                track_subgoals = False
                 retval = env.reset(**data)
                 reset_returns_info = (
                     isinstance(retval, (tuple, list))
@@ -200,14 +201,14 @@ def _worker(
                 seed = data.pop("seed")
                 env = OffScreenRenderEnv(**data)
                 env.seed(seed)
-                advance_memory = False
+                track_subgoals = False
                 p.send(None)
             elif cmd == "reset_memory_progress":
                 core = env.env
                 core.reset_subgoal_progress()
                 # LIBERO-Mem 0eee0def workaround: reset leaves the overshoot latch set.
                 core._overshot = False
-                advance_memory = True
+                track_subgoals = True
                 p.send(None)
             elif cmd == "get_camera_meta":
                 # Compute camera intrinsics/extrinsics and depth near/far
@@ -271,7 +272,7 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
         self,
         env_fn: Callable[[], gym.Env],
         share_memory: bool = False,
-        memory_suite: bool = False,
+        is_libero_mem: bool = False,
     ):
         ctx = multiprocessing.get_context("spawn")
         self.parent_remote, self.child_remote = ctx.Pipe()
@@ -288,7 +289,7 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
             self.child_remote,
             CloudpickleWrapper(env_fn),
             self.buffer,
-            memory_suite,
+            is_libero_mem,
         )
         self.process = ctx.Process(target=_worker, args=args, daemon=True)
         self.process.start()
@@ -301,15 +302,21 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
 
 
 class ReconfigureSubprocEnv(SubprocVectorEnv):
+    """Run reconfigurable simulators in subprocesses.
+
+    ``is_libero_mem`` selects ordered subgoal tracking in the worker that owns
+    each simulator; visual observation history is managed by ``LiberoEnv``.
+    """
+
     def __init__(
         self,
         env_fns: list[Callable[[], gym.Env]],
-        memory_suite: bool = False,
+        is_libero_mem: bool = False,
         **kwargs: Any,
     ) -> None:
         def worker_fn(fn: Callable[[], gym.Env]) -> ReconfigureSubprocEnvWorker:
             return ReconfigureSubprocEnvWorker(
-                fn, share_memory=False, memory_suite=memory_suite
+                fn, share_memory=False, is_libero_mem=is_libero_mem
             )
 
         BaseVectorEnv.__init__(self, env_fns, worker_fn, **kwargs)

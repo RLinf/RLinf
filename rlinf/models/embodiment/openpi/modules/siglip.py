@@ -193,8 +193,6 @@ class Encoder(nn.Module):
         frame_mask: torch.Tensor | None = None,
         time_offsets: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if (frame_mask is None) != (time_offsets is None):
-            raise ValueError("frame_mask and time_offsets must be provided together.")
         if frame_mask is not None:
             x = x * frame_mask[:, :, None, None]
         for index, layer in enumerate(self.layers):
@@ -332,6 +330,16 @@ class SigLIPViT(nn.Module):
             tokens: (B, num_patches, width) - all patch tokens when pool_type="none"
             _: placeholder for compatibility (None)
         """
+        if (frame_mask is None) != (time_offsets is None):
+            raise ValueError("frame_mask and time_offsets must be provided together.")
+        if image.ndim == 5:
+            if image.shape[1] == 1 or torch.all(frame_mask.sum(dim=1) <= 1):
+                image = image[:, -1]
+                frame_mask = None
+                time_offsets = None
+            elif self.pool_type != "none":
+                raise ValueError("Short memory requires SigLIP pool_type='none'.")
+
         # --- Stem + pos_embed in float32 (matching JAX) ---
         # image is (B, H, W, C) -> (B, C, H, W)
         history_shape = image.shape[:2] if image.ndim == 5 else None

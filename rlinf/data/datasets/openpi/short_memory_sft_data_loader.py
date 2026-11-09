@@ -139,24 +139,19 @@ def build_short_memory_sft_dataloader(
 ) -> tuple[StatefulDataLoader, Any]:
     """Build a resumable LeRobot loader with configurable past-frame sampling."""
     import openpi.transforms as transforms
+    from lerobot.common.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
 
-    try:
-        from lerobot.datasets.lerobot_dataset import (
-            LeRobotDataset,
-            LeRobotDatasetMetadata,
-        )
-    except ImportError:
-        from lerobot.common.datasets.lerobot_dataset import (
-            LeRobotDataset,
-            LeRobotDatasetMetadata,
-        )
-
-    config = build_official_openpi_sft_config(cfg, world_size, data_paths, eval_dataset)
-    data_config = config.data.create(config.assets_dirs, config.model)
-    memory_config = cfg.data.short_memory
+    train_config = build_official_openpi_sft_config(
+        cfg, world_size, data_paths, eval_dataset
+    )
+    data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
+    history_cfg = cfg.data.short_memory
     include_history = bool(cfg.actor.model.openpi.get("short_memory", False))
-    num_frames = int(memory_config.num_frames) if include_history else 1
-    stride = int(memory_config.stride)
+    num_frames = int(history_cfg.num_frames) if include_history else 1
+    stride = int(history_cfg.stride)
     if num_frames < 1 or stride < 1:
         raise ValueError(
             "Short-memory num_frames and stride must be positive; "
@@ -173,7 +168,8 @@ def build_short_memory_sft_dataloader(
     ]
     delta_timestamps = {
         key: [
-            position / metadata.fps for position in range(config.model.action_horizon)
+            position / metadata.fps
+            for position in range(train_config.model.action_horizon)
         ]
         for key in data_config.action_sequence_keys
     }
@@ -211,25 +207,25 @@ def build_short_memory_sft_dataloader(
         num_replicas=world_size,
         rank=rank,
         shuffle=not eval_dataset,
-        seed=config.seed,
+        seed=train_config.seed,
         drop_last=True,
     )
     loader = StatefulDataLoader(
         dataset,
-        batch_size=config.batch_size // world_size,
+        batch_size=train_config.batch_size // world_size,
         sampler=sampler,
-        num_workers=config.num_workers,
+        num_workers=train_config.num_workers,
         multiprocessing_context=(
-            multiprocessing.get_context("spawn") if config.num_workers else None
+            multiprocessing.get_context("spawn") if train_config.num_workers else None
         ),
-        persistent_workers=config.num_workers > 0,
+        persistent_workers=train_config.num_workers > 0,
         collate_fn=partial(collate_short_memory_items, include_history=include_history),
         drop_last=True,
-        generator=torch.Generator().manual_seed(config.seed + rank),
+        generator=torch.Generator().manual_seed(train_config.seed + rank),
     )
     if len(loader) == 0:
         raise ValueError(
             f"Short-memory dataset has {len(dataset)} frames, insufficient for "
-            f"batch_size={config.batch_size} across {world_size} ranks."
+            f"batch_size={train_config.batch_size} across {world_size} ranks."
         )
     return loader, data_config

@@ -46,30 +46,28 @@ def factorized_space_time_attention(
     frame_mask: torch.Tensor,
 ) -> torch.Tensor:
     """Mix values causally over time, then spatially, sharing SigLIP projections."""
-    batch_size, history_length, patch_count, width = tokens.shape
-    head_count = attention.num_heads
-    head_width = width // head_count
+    batch_size, num_frames, num_patches, width = tokens.shape
+    num_heads = attention.num_heads
+    head_dim = width // num_heads
     qkv = F.linear(tokens, attention.in_proj_weight, attention.in_proj_bias)
     queries, keys, values = (
-        projection.reshape(
-            batch_size, history_length, patch_count, head_count, head_width
-        )
+        projection.reshape(batch_size, num_frames, num_patches, num_heads, head_dim)
         for projection in qkv.chunk(3, dim=-1)
     )
     temporal_queries, temporal_keys, temporal_values = (
         projection.permute(0, 2, 3, 1, 4).reshape(
-            batch_size * patch_count, head_count, history_length, head_width
+            batch_size * num_patches, num_heads, num_frames, head_dim
         )
         for projection in (queries, keys, values)
     )
     causal_mask = torch.ones(
-        history_length, history_length, dtype=torch.bool, device=tokens.device
+        num_frames, num_frames, dtype=torch.bool, device=tokens.device
     ).tril()
     temporal_mask = causal_mask[None] & frame_mask[:, None, :]
     temporal_mask = (
         temporal_mask[:, None, None]
-        .expand(-1, patch_count, 1, -1, -1)
-        .reshape(batch_size * patch_count, 1, history_length, history_length)
+        .expand(-1, num_patches, 1, -1, -1)
+        .reshape(batch_size * num_patches, 1, num_frames, num_frames)
     )
     dropout = attention.dropout if attention.training else 0.0
     temporal_values = F.scaled_dot_product_attention(
@@ -80,11 +78,11 @@ def factorized_space_time_attention(
         dropout_p=dropout,
     )
     temporal_values = temporal_values.reshape(
-        batch_size, patch_count, head_count, history_length, head_width
+        batch_size, num_patches, num_heads, num_frames, head_dim
     ).permute(0, 3, 1, 2, 4)
     spatial_queries, spatial_keys, spatial_values = (
         projection.permute(0, 1, 3, 2, 4).reshape(
-            batch_size * history_length, head_count, patch_count, head_width
+            batch_size * num_frames, num_heads, num_patches, head_dim
         )
         for projection in (queries, keys, temporal_values)
     )
@@ -92,35 +90,8 @@ def factorized_space_time_attention(
         spatial_queries, spatial_keys, spatial_values, dropout_p=dropout
     )
     output = (
-        output.reshape(batch_size, history_length, head_count, patch_count, head_width)
+        output.reshape(batch_size, num_frames, num_heads, num_patches, head_dim)
         .permute(0, 1, 3, 2, 4)
-        .reshape(batch_size, history_length, patch_count, width)
+        .reshape(batch_size, num_frames, num_patches, width)
     )
     return F.linear(output, attention.out_proj.weight, attention.out_proj.bias)
-
-
-class ShortMemoryVisionEncoder(nn.Module):
-    """Encode visual history without owning backbone parameters."""
-
-    def forward(
-        self,
-        vision_model: nn.Module,
-        images: torch.Tensor,
-        *,
-        frame_mask: torch.Tensor,
-        time_offsets: torch.Tensor,
-    ) -> torch.Tensor:
-        """Encode oldest-to-current [B, K, H, W, C] into [B, P, D] tokens.
-
-        Masks and relative time in seconds have shape [B, K]. Every rank calls
-        the vision backbone once, independently of its valid-frame counts.
-        """
-        if images.shape[1] == 1 or torch.all(frame_mask.sum(dim=1) <= 1):
-            return vision_model(images[:, -1])[0]
-        if vision_model.pool_type != "none":
-            raise ValueError("Short memory requires SigLIP pool_type='none'.")
-        return vision_model(
-            images,
-            frame_mask=frame_mask,
-            time_offsets=time_offsets,
-        )[0]

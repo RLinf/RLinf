@@ -31,7 +31,6 @@ import torch.nn.functional as F
 
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, siglip
-from rlinf.models.embodiment.openpi.modules.short_memory import ShortMemoryVisionEncoder
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
@@ -132,9 +131,6 @@ class Pi0(model.BaseModel):
                 config.short_memory_drop_history_layer if config.short_memory else None
             ),
         )
-        self.short_memory_encoder = (
-            ShortMemoryVisionEncoder() if config.short_memory else None
-        )
 
         action_expert_width = action_expert_config.width
         self.action_dim = config.action_dim
@@ -219,16 +215,15 @@ class Pi0(model.BaseModel):
         image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
         for name in image_names:
             image_mask = obs.image_masks[name]
-            if self.short_memory_encoder is None:
-                image_tokens, _ = self.img(obs.images[name])
-            else:
-                image_tokens = self.short_memory_encoder(
-                    self.img,
+            if self._config.short_memory:
+                image_tokens, _ = self.img(
                     obs.images[name],
                     frame_mask=image_mask,
                     time_offsets=obs.history_time_offsets,
                 )
                 image_mask = image_mask[:, -1]
+            else:
+                image_tokens, _ = self.img(obs.images[name])
             tokens.append(image_tokens)
 
             # Image tokens use bidirectional attention

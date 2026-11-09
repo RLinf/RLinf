@@ -26,14 +26,14 @@ from rlinf.envs.sim.libero.utils import get_libero_image, get_libero_wrist_image
 
 
 @pytest.mark.parametrize("extract_image", [get_libero_image, get_libero_wrist_image])
-@pytest.mark.parametrize("memory_suite", [False, True])
-def test_camera_orientation_matches_demonstrations(extract_image, memory_suite):
+@pytest.mark.parametrize("is_libero_mem", [False, True])
+def test_camera_orientation_matches_demonstrations(extract_image, is_libero_mem):
     image = np.arange(3 * 4 * 3, dtype=np.uint8).reshape(3, 4, 3)
     obs = {"agentview_image": image, "robot0_eye_in_hand_image": image}
 
-    actual = extract_image(obs, memory_suite=memory_suite)
+    actual = extract_image(obs, is_libero_mem=is_libero_mem)
 
-    expected = image[::-1] if memory_suite else image[::-1, ::-1]
+    expected = image[::-1] if is_libero_mem else image[::-1, ::-1]
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(extract_image(obs), image[::-1, ::-1])
 
@@ -63,7 +63,7 @@ def history_env():
 
 
 def test_history_samples_oldest_to_current_after_buffer_rollover(history_env):
-    history = history_env._history_observation()
+    history = history_env._get_history_obs()
 
     assert history["history_main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
     assert history["history_wrist_images"][0, :, 0, 0, 0].tolist() == [12, 14, 16]
@@ -77,7 +77,7 @@ def test_partial_reset_clears_only_the_reset_environment_history(history_env):
     env = history_env
     env._is_start = False
     env.is_eval = True
-    env.is_memory_suite = True
+    env.is_libero_mem = True
     env.short_memory = {"num_frames": 3, "stride": 2, "fps": 20}
     env.cfg = OmegaConf.create({"num_steps_wait": 1, "reset_gripper_open": True})
     env.seed = 0
@@ -100,7 +100,7 @@ def test_partial_reset_clears_only_the_reset_environment_history(history_env):
     env.env = Mock()
     env.env.step.return_value = ([raw_obs], [0.0], [False], [{}])
 
-    before = env._history_observation()
+    before = env._get_history_obs()
     obs, _ = env.reset(env_idx=[0], reset_state_ids=[0])
 
     assert obs["history_frame_mask"][0].tolist() == [False, False, True]

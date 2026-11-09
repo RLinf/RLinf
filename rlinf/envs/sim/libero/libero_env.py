@@ -135,6 +135,7 @@ class LiberoEnv(gym.Env):
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         self.seed_offset = seed_offset
         self.cfg = cfg
+        self.is_libero_mem = cfg.task_suite_name.lower() == "libero_mem"
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
 
@@ -154,7 +155,6 @@ class LiberoEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
         self.is_eval = cfg.get("is_eval", False)
-        self.is_memory_suite = cfg.task_suite_name.lower() == "libero_mem"
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
@@ -174,7 +174,22 @@ class LiberoEnv(gym.Env):
         self.skip_intermediate_renders = bool(
             OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
-        self.short_memory = cfg.get("short_memory")
+        self._init_history()
+
+        self._init_env()
+
+        self.prev_step_reward = np.zeros(self.num_envs)
+        self.use_rel_reward = cfg.use_rel_reward
+        self.use_step_penalty = getattr(cfg, "use_step_penalty", False)
+
+        self._init_metrics()
+        self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
+
+        self.video_cfg = cfg.video_cfg
+        self.current_raw_obs = None
+
+    def _init_history(self):
+        self.short_memory = self.cfg.get("short_memory")
         if self.short_memory is not None:
             self.history_length = int(self.short_memory.num_frames)
             self.history_stride = int(self.short_memory.stride)
@@ -197,18 +212,6 @@ class LiberoEnv(gym.Env):
                 deque(maxlen=capacity) for _ in range(self.num_envs)
             ]
 
-        self._init_env()
-
-        self.prev_step_reward = np.zeros(self.num_envs)
-        self.use_rel_reward = cfg.use_rel_reward
-        self.use_step_penalty = getattr(cfg, "use_step_penalty", False)
-
-        self._init_metrics()
-        self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
-
-        self.video_cfg = cfg.video_cfg
-        self.current_raw_obs = None
-
     def _log_evaluation_mode(self):
         """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
         libero_type = get_libero_type()
@@ -218,14 +221,14 @@ class LiberoEnv(gym.Env):
         elif libero_type == "plus":
             suffix = os.environ.get("LIBERO_SUFFIX", "all")
             logger.info(f"Evaluation Mode: LIBERO-PLUS | Suffix: {suffix}")
-        elif self.cfg.task_suite_name.lower() == "libero_mem":
+        elif self.is_libero_mem:
             logger.info("Evaluation Mode: LIBERO-Mem | Ordered full-task success")
         else:
             logger.info("Evaluation Mode: Standard LIBERO")
 
     def _init_env(self):
         env_fns = self.get_env_fns()
-        self.env = ReconfigureSubprocEnv(env_fns, memory_suite=self.is_memory_suite)
+        self.env = ReconfigureSubprocEnv(env_fns, is_libero_mem=self.is_libero_mem)
 
     def get_env_fns(self):
         env_fn_params = self.get_env_fn_params()
@@ -493,7 +496,7 @@ class LiberoEnv(gym.Env):
                         bddl_goal,
                         final_path,
                     )
-            elif self.is_memory_suite:
+            elif self.is_libero_mem:
                 bddl_lang, _ = _read_bddl_language_and_goal(final_path)
                 task_descriptions.append(bddl_lang)
             else:
@@ -786,9 +789,9 @@ class LiberoEnv(gym.Env):
 
     def _extract_image_and_state(self, obs):
         return {
-            "full_image": get_libero_image(obs, memory_suite=self.is_memory_suite),
+            "full_image": get_libero_image(obs, is_libero_mem=self.is_libero_mem),
             "wrist_image": get_libero_wrist_image(
-                obs, memory_suite=self.is_memory_suite
+                obs, is_libero_mem=self.is_libero_mem
             ),
             "state": np.concatenate(
                 [
@@ -829,7 +832,7 @@ class LiberoEnv(gym.Env):
                 )
             )
 
-    def _history_observation(self):
+    def _get_history_obs(self):
         """Sample oldest to current frames, with masked left padding."""
         history = {
             "history_main_images": [],
@@ -932,14 +935,14 @@ class LiberoEnv(gym.Env):
             self.current_raw_obs[idx] = raw_obs[i]
 
         self._reset_metrics(env_idx)
-        if self.is_memory_suite:
+        if self.is_libero_mem:
             self.env.reset_memory_progress(id=env_idx)
         obs = self._wrap_obs(self.current_raw_obs)
         if self.short_memory is not None:
             for index in env_idx:
                 self._observation_history[index].clear()
             self._append_history(obs, env_idx)
-            obs.update(self._history_observation())
+            obs.update(self._get_history_obs())
         infos = {}
         return obs, infos
 
@@ -997,12 +1000,12 @@ class LiberoEnv(gym.Env):
         if self.short_memory is not None:
             self._append_history(obs, range(self.num_envs))
             if _include_history:
-                obs.update(self._history_observation())
+                obs.update(self._get_history_obs())
 
         step_reward = self._calc_step_reward(terminations)
 
         infos = self._record_metrics(step_reward, terminations, infos)
-        if self.is_memory_suite:
+        if self.is_libero_mem:
             for key in (
                 "strict_success",
                 "subgoals_completed",
@@ -1154,7 +1157,7 @@ class LiberoEnv(gym.Env):
             self.num_envs,
             self._eval_seen_trials,
             self._task_success_stats,
-            success_key="strict_success" if self.is_memory_suite else "success_once",
+            success_key="strict_success" if self.is_libero_mem else "success_once",
         )
 
         new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))

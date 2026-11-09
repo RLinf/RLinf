@@ -53,7 +53,7 @@ class EnvIO:
         self._input_transform_fn = compose(transforms)
         self._output_transform_fn = compose(output_transforms)
         if self._config.short_memory:
-            self._history_frame_transform, self._history_current_transform = (
+            self._frame_transform, self._sample_transform = (
                 split_short_memory_transforms(transforms)
             )
 
@@ -137,7 +137,7 @@ class EnvIO:
         """Repack env obs through the transform pipeline onto this device."""
         self._ensure_transforms()
         if self._config.short_memory:
-            return self._history_env_obs_to_observation(env_obs)
+            return self._history_to_observation(env_obs)
         repacked = repack_env_obs(
             self.config_name,
             env_obs,
@@ -146,7 +146,7 @@ class EnvIO:
         processed = self.input_transform(repacked, transpose=False)
         return self._observation_dict_to_device(processed)
 
-    def _history_env_obs_to_observation(self, env_obs: dict[str, Any]) -> Observation:
+    def _history_to_observation(self, env_obs: dict[str, Any]) -> Observation:
         """Transform camera history framewise, keeping the current state and prompt."""
         main_images = env_obs["history_main_images"]
         batch_size, num_frames = main_images.shape[:2]
@@ -165,13 +165,13 @@ class EnvIO:
             history_obs,
             select_state=self._select_configured_state,
         )
-        processed = apply_input_transform(self._history_frame_transform, repacked)
+        processed = apply_input_transform(self._frame_transform, repacked)
         prompts = processed.pop("prompt")
         from torch.utils._pytree import tree_map
 
         current = tree_map(lambda value: value[num_frames - 1 :: num_frames], processed)
         current["prompt"] = prompts[num_frames - 1 :: num_frames]
-        current = apply_input_transform(self._history_current_transform, current)
+        current = apply_input_transform(self._sample_transform, current)
         frame_mask = env_obs["history_frame_mask"].bool()
         current["image"] = {
             key: value.reshape(batch_size, num_frames, *value.shape[1:])

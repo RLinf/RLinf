@@ -40,31 +40,31 @@ libero_type = get_libero_type()
 
 
 def get_libero_image(
-    obs: dict[str, np.ndarray], *, memory_suite: bool = False
+    obs: dict[str, np.ndarray], *, is_libero_mem: bool = False
 ) -> np.ndarray:
     """
     Extracts image from observations and preprocesses it.
 
     Args:
         obs: Observation dictionary from LIBERO environment
-        memory_suite: Match LIBERO-Mem's demonstration image orientation.
+        is_libero_mem: Match LIBERO-Mem's demonstration image orientation.
 
     Returns:
         Preprocessed image as numpy array
     """
-    return _orient_libero_image(obs["agentview_image"], memory_suite=memory_suite)
+    return _orient_libero_image(obs["agentview_image"], is_libero_mem=is_libero_mem)
 
 
-def _orient_libero_image(img: np.ndarray, *, memory_suite: bool) -> np.ndarray:
+def _orient_libero_image(img: np.ndarray, *, is_libero_mem: bool) -> np.ndarray:
     # LIBERO-Mem refinement flips columns before rotating both cameras by 180 degrees.
-    return img[::-1] if memory_suite else img[::-1, ::-1]
+    return img[::-1] if is_libero_mem else img[::-1, ::-1]
 
 
 def get_libero_wrist_image(
     obs: dict[str, np.ndarray],
     resize_size: Union[int, tuple[int, int]] = 224,
     *,
-    memory_suite: bool = False,
+    is_libero_mem: bool = False,
 ) -> np.ndarray:
     """
     Extracts wrist camera image from observations and preprocesses it.
@@ -72,13 +72,13 @@ def get_libero_wrist_image(
     Args:
         obs: Observation dictionary from LIBERO environment
         resize_size: Target size for resizing
-        memory_suite: Match LIBERO-Mem's demonstration image orientation.
+        is_libero_mem: Match LIBERO-Mem's demonstration image orientation.
 
     Returns:
         Preprocessed wrist camera image as numpy array
     """
     return _orient_libero_image(
-        obs["robot0_eye_in_hand_image"], memory_suite=memory_suite
+        obs["robot0_eye_in_hand_image"], is_libero_mem=is_libero_mem
     )
 
 

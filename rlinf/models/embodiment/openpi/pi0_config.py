@@ -38,6 +38,8 @@ class Pi0Config:
     discrete_state_input: bool | None = None
     pcd: bool = False
     short_memory: bool = False
+    # Mix history every fourth block through index 15; later blocks use only
+    # the current frame.
     short_memory_temporal_layers: tuple[int, ...] = (3, 7, 11, 15)
     short_memory_drop_history_layer: int = 15
 

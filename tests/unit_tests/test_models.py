@@ -49,9 +49,6 @@ from rlinf.models.embodiment.openpi.modules.model import (
     Observation,
     preprocess_observation,
 )
-from rlinf.models.embodiment.openpi.modules.short_memory import (
-    ShortMemoryVisionEncoder,
-)
 from rlinf.models.embodiment.openpi.modules.siglip import (
     Encoder,
     Encoder1DBlock,
@@ -244,7 +241,6 @@ def test_openpi_short_memory_current_only_matches_image_encoder(
     short_memory_vision, num_frames
 ):
     vision = short_memory_vision.eval()
-    memory = ShortMemoryVisionEncoder()
     images = torch.randn(2, num_frames, 224, 224, 3)
     frame_mask = torch.zeros(2, num_frames, dtype=torch.bool)
     frame_mask[:, -1] = True
@@ -252,9 +248,7 @@ def test_openpi_short_memory_current_only_matches_image_encoder(
 
     with torch.no_grad():
         expected = vision(images[:, -1])[0]
-        actual = memory(
-            vision, images, frame_mask=frame_mask, time_offsets=time_offsets
-        )
+        actual, _ = vision(images, frame_mask=frame_mask, time_offsets=time_offsets)
 
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
@@ -265,7 +259,6 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
 ):
     vision = short_memory_vision.train()
     vision.encoder.gradient_checkpointing = gradient_checkpointing
-    memory = ShortMemoryVisionEncoder()
     images = torch.randn(3, num_frames, 224, 224, 3, requires_grad=True)
     frame_mask = torch.ones(3, num_frames, dtype=torch.bool)
     frame_mask[0, :-1] = False
@@ -278,7 +271,7 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
 
     owners = [vision, vision.stem, vision.encoder, *vision.encoder.layers]
     handles = [owner.register_forward_pre_hook(record_call) for owner in owners]
-    tokens = memory(vision, images, frame_mask=frame_mask, time_offsets=time_offsets)
+    tokens, _ = vision(images, frame_mask=frame_mask, time_offsets=time_offsets)
     for handle in handles:
         handle.remove()
 
@@ -291,8 +284,7 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
     with torch.no_grad():
         current_only = vision(images[:1, -1])[0]
         torch.testing.assert_close(tokens[:1], current_only, rtol=1e-5, atol=1e-5)
-        changed_tokens = memory(
-            vision,
+        changed_tokens, _ = vision(
             changed_padding,
             frame_mask=frame_mask,
             time_offsets=time_offsets,
@@ -316,9 +308,7 @@ def test_openpi_short_memory_requires_mask_and_time_together(
     }
     inputs.pop(missing)
     with pytest.raises(ValueError, match="must be provided together"):
-        short_memory_vision.encoder(
-            torch.randn(1, 3, 49, short_memory_vision.width), **inputs
-        )
+        short_memory_vision(torch.randn(1, 3, 224, 224, 3), **inputs)
 
 
 def test_openpi_short_memory_temporal_attention_cannot_read_future_frames():

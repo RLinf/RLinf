@@ -115,14 +115,12 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         OmegaConf.select(model_cfg, "short_memory", default=False)
     )
     if pi0_kwargs["short_memory"]:
-        pi0_kwargs["short_memory_temporal_layers"] = tuple(
-            OmegaConf.select(
-                model_cfg, "short_memory_temporal_layers", default=[3, 7, 11, 15]
-            )
-        )
-        pi0_kwargs["short_memory_drop_history_layer"] = int(
-            OmegaConf.select(model_cfg, "short_memory_drop_history_layer", default=15)
-        )
+        temporal_layers = model_cfg.get("short_memory_temporal_layers")
+        if temporal_layers is not None:
+            pi0_kwargs["short_memory_temporal_layers"] = tuple(temporal_layers)
+        drop_history_layer = model_cfg.get("short_memory_drop_history_layer")
+        if drop_history_layer is not None:
+            pi0_kwargs["short_memory_drop_history_layer"] = int(drop_history_layer)
 
     pi0_config = Pi0Config(**pi0_kwargs)
     rlt_cfg = build_rlt_config(model_cfg)
