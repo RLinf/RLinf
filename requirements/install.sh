@@ -1145,9 +1145,11 @@ EOF
     # torch-npu imports a few packages at runtime (`yaml`, `decorator`) but
     # doesn't declare them in its wheel metadata, so install them explicitly.
     uv pip install pyyaml decorator
-    # The default Ascend stack uses torch-npu 2.6.0.post5.
-    echo "[install.sh] Installing torch-npu==${torch_ver}.post5 to match torch"
-    uv pip install "torch-npu==${torch_ver}.post5"
+    # The default Ascend stack (torch 2.6.0) pins torch-npu 2.6.0.post5.
+    local torch_npu_spec="torch-npu==${torch_ver}.*"
+    [ "$torch_ver" = "2.6.0" ] && torch_npu_spec="torch-npu==2.6.0.post5"
+    echo "[install.sh] Installing ${torch_npu_spec} to match torch ${torch_ver}"
+    uv pip install "$torch_npu_spec"
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
         echo "source /usr/local/Ascend/ascend-toolkit/set_env.sh" >> "$VENV_DIR/bin/activate"
     fi

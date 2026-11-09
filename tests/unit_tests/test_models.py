@@ -1616,17 +1616,24 @@ def test_fastwam_time_embedding_matches_fp64_reference(fastwam_npu_ops):
 
 def test_fastwam_fused_operators_forward_and_backward(fastwam_npu_ops):
     """Check the production BF16 RoPE and RMSNorm kernels against PyTorch."""
-    import os
-
-    device = os.environ.get("FASTWAM_TEST_DEVICE", "cpu")
-    if not device.startswith("npu"):
-        pytest.skip("Fused operators require FASTWAM_TEST_DEVICE=npu:<id>")
+    if (
+        Worker.torch_device_type != "npu"
+        or Worker.torch_platform is None
+        or not Worker.torch_platform.is_available()
+    ):
+        pytest.skip("Fused FastWAM operators require an Ascend NPU")
+    device = f"npu:{Worker.torch_platform.current_device()}"
     ops = fastwam_npu_ops
     torch.manual_seed(7)
     x = torch.randn(
         2, 19, 3072, device=device, dtype=torch.bfloat16, requires_grad=True
     )
-    freqs = ops.precompute_freqs_real(128, 19).to(device)
+    pre_dit = ops._wrap_pre_dit(
+        lambda self: {"freqs": ops.precompute_freqs_real(128, 19).to(device)}
+    )
+    assert ops._wrap_pre_dit(pre_dit) is pre_dit
+    freqs = pre_dit(None)["freqs"]
+    assert hasattr(freqs, "_fastwam_fused_rotations")
     actual = ops.rope_apply_fused(x, freqs, 24)
     expected = ops.rope_apply_real(x, freqs, 24)
     grad = torch.randn_like(x)
