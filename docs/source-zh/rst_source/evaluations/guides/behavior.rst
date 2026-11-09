@@ -223,7 +223,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 --------
 
 - **数据下载：** BEHAVIOR 资源体积较大，请按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。
-- **ISAAC_PATH 未设置：** ``run_eval.sh`` 默认值为 ``/path/to/isaac-sim``，未正确设置会导致 Isaac Sim 无法启动。
+- **ISAAC_PATH 未设置：** 请将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录，否则 Isaac Sim 无法启动。
 - **Headless 模式：** ``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
 - **显存不足：** 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
