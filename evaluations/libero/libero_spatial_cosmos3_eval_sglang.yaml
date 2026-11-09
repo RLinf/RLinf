@@ -68,6 +68,8 @@ rollout:
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     launch_server: true
+    server_urls: null  # running action servers to use; set with launch_server: false
+    api_key_env: null  # env var holding a bearer token for those servers
     launch_router: false
     server_type: embodied
     group_name: SGLangServerGroup

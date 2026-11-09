@@ -29,7 +29,9 @@ The SGLang embodied evaluation path separates general logic from model-specific 
   server processes via :func:`launch_sglang_router_and_server` and pushes each
   server's URL to the rollout workers; server startup, ``/health`` polling, and
   port allocation are handled by ``SGLangServerWorker`` (driver side) — the
-  rollout worker itself no longer owns a server subprocess;
+  rollout worker itself no longer owns a server subprocess. With
+  ``rollout.sglang.server_urls`` set, the driver pushes those running servers
+  instead and launches none;
 - ``SGLangEmbodiedWorker`` picks the driver-assigned server URL for its own rank,
   uses it to create an :class:`InferenceHTTPClient`, loads the model's **sglang
   adapter**, and exchanges observations and actions with the environment Worker
@@ -751,6 +753,12 @@ Top-level private-key fields:
      - PP size per server engine
    * - ``launch_server`` / ``launch_router``
      - Whether the driver launches the server group / router
+   * - ``server_urls``
+     - Base URLs of action servers that are already running; set with
+       ``launch_server: false`` and the driver launches nothing
+   * - ``api_key_env``
+     - Name of the environment variable holding a bearer token; the worker
+       sends ``Authorization: Bearer <token>`` with every request
    * - ``server_type``
      - server dispatch branch: ``srt`` / ``embodied``
    * - ``seed``
