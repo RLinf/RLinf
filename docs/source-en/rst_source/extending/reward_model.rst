@@ -222,7 +222,8 @@ Training logs are written to a newly created ``logs/<timestamp>-reward_training`
 
 Checkpoints are saved under ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/``:
 ``global_step_<N>/`` every ``runner.save_interval`` steps, and ``best_model/`` whenever the
-validation accuracy improves (this requires ``runner.early_stop``). To use the trained model in
+metric configured by ``runner.early_stop.monitor`` improves. Configure its direction
+with ``runner.early_stop.mode``; see :doc:`../guides/resume`. To use the trained model in
 RL, set ``reward.model.model_path`` to the weights file, for example:
 
 .. code-block:: text
