@@ -4,7 +4,7 @@ Asynchronous Search-R1 Training
 Run Search-R1 with the rollout and the training overlapped, so that prompts
 keep flowing into the rollout engines while the actor trains on an earlier
 weight version. This page uses
-`examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml` on two
+``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`` on two
 8-GPU nodes with the actor and the rollout placed on separate nodes. Set up
 the environment and the Qdrant wiki retrieval server first, as described in
 :doc:`index`; the model-specific configuration (data format, tokenizer,

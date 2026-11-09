@@ -1,7 +1,7 @@
 Search-R1 异步训练
 ================================
 
-以 rollout 与训练重叠的方式跑 Search-R1：prompt 持续流入 rollout 引擎，actor 同时在更早的权重版本上训练。本页使用 `examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`，在两台 8 卡机器上把 actor 和 rollout 分别放在不同节点。请先按 :doc:`index` 搭建 RLinf 环境和 Qdrant wiki 检索服务；模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的工作原理和两个调度上限怎么取，见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
+以 rollout 与训练重叠的方式跑 Search-R1：prompt 持续流入 rollout 引擎，actor 同时在更早的权重版本上训练。本页使用 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，在两台 8 卡机器上把 actor 和 rollout 分别放在不同节点。请先按 :doc:`index` 搭建 RLinf 环境和 Qdrant wiki 检索服务；模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的工作原理和两个调度上限怎么取，见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
 
 概述
 --------------------------------
