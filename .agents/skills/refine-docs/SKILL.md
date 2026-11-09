@@ -137,7 +137,9 @@ When the two disagree, the style guide wins.
 - [ ] One H1; Title Case headings; standard section names where applicable.
 - [ ] EN and ZH updated together; code tokens identical; no CJK-glued `**bold**`.
 - [ ] ZH preserves meaning without mirroring EN sentence by sentence.
-- [ ] ZH prose is not hard-wrapped inside a paragraph or list item.
+- [ ] ZH prose renders without an inserted space between CJK characters (one
+      source line, or `\`-continued lines with no inline markup at the start of
+      the next line).
 - [ ] Reference material linked, not inlined; repeated blocks factored into partials.
 
 **Index / landing page**
