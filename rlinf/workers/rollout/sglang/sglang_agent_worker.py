@@ -115,7 +115,7 @@ class SGLangAgentWorkerWithHTTPServer(SGLangWorker):
         if _LEGACY_OPENAI:
             return
 
-        tokenizer_manager = self._engine.tokenizer_manager
+        tokenizer_manager = self._backend.tokenizer_manager
         template_manager = TemplateManager()
         template_manager.initialize_templates(
             tokenizer_manager=tokenizer_manager,
@@ -141,7 +141,7 @@ class SGLangAgentWorkerWithHTTPServer(SGLangWorker):
             if request.top_k is None and "top_k" in self._sampling_params:
                 request.top_k = self._sampling_params["top_k"]
 
-            tokenizer_manager = self._engine.tokenizer_manager
+            tokenizer_manager = self._backend.tokenizer_manager
             if _LEGACY_OPENAI:
                 adapted_request, _ = v1_chat_generate_request(
                     [request],
