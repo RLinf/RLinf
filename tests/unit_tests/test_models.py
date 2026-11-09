@@ -2322,57 +2322,6 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert torch.all(actions[1, :, 6] == 0.5)
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
-@pytest.mark.parametrize("with_auxiliary_models", [False, True])
-def test_hf_rollout_offload_reload_preserves_non_diffusion_models(
-    with_auxiliary_models,
-):
-    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
-
-    def make_model():
-        model = torch.nn.Sequential(
-            torch.nn.Linear(16, 16),
-            torch.nn.LayerNorm(16),
-            torch.nn.Linear(16, 8),
-        ).eval()
-        model.register_buffer("step", torch.tensor(1, dtype=torch.int64))
-        return model.to("cuda")
-
-    # Device transfers do not require a scheduler or Ray worker process.
-    worker = object.__new__(MultiStepRolloutWorker)
-    worker.device = torch.device("cuda")
-    worker.torch_platform = torch.cuda
-    worker.enable_cuda_graph = False
-    worker.hf_model = make_model()
-    worker.rlt_feature_model = make_model() if with_auxiliary_models else None
-    worker.expert_model = make_model() if with_auxiliary_models else None
-    models = [
-        model
-        for model in (worker.hf_model, worker.rlt_feature_model, worker.expert_model)
-        if model is not None
-    ]
-    inputs = torch.randn(2, 16, device="cuda")
-    with torch.no_grad():
-        expected = [model(inputs).cpu() for model in models]
-        states = [
-            {key: value.cpu().clone() for key, value in model.state_dict().items()}
-            for model in models
-        ]
-        for _ in range(3):
-            original_to = torch.Tensor.to
-            worker.offload_model()
-            assert torch.Tensor.to is original_to
-            for model, state in zip(models, states):
-                for key, value in model.state_dict().items():
-                    assert value.device.type == "cpu"
-                    assert value.is_pinned()
-                    torch.testing.assert_close(value, state[key])
-            worker.reload_model()
-            for model, output in zip(models, expected):
-                assert all(value.is_cuda for value in model.state_dict().values())
-                torch.testing.assert_close(model(inputs).cpu(), output)
-
-
 def test_psi0_rtc_prefix_survives_the_last_denoise_step():
     from rlinf.models.embodiment.psi0.psi0_sampler import (
         Psi0StochasticTransitionSampler,

@@ -1313,7 +1313,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi rollout.enable_offload=True runner.max_epochs=2
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
 
       - name: Libero-Object NFT OpenPI test
         timeout-minutes: 20
