@@ -64,6 +64,7 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
     split_episode_data,
 )
+from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
@@ -76,6 +77,7 @@ from rlinf.scheduler.cluster.utils import (
     pack_dataclass_tensors,
     unpack_dataclass_tensors,
 )
+from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.env_helpers import SmoothInterveneController
 from rlinf.utils.nested_dict_process import split_dict_to_chunk
 from rlinf.utils.obs_compression import (
@@ -93,6 +95,94 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+
+@pytest.mark.parametrize("batch_size,num_chunks", [(6, 4), (8, 3), (10, 6), (2, 4)])
+def test_split_list_requires_divisible_batch(batch_size, num_chunks):
+    with pytest.raises(AssertionError, match="batch size.*divisible"):
+        split_list(list(range(batch_size)), num_chunks)
+
+
+@pytest.mark.parametrize("num_chunks", [0, -2])
+@pytest.mark.parametrize("enforce_divisible_batch", [False, True])
+def test_split_list_requires_positive_chunk_count(num_chunks, enforce_divisible_batch):
+    with pytest.raises(AssertionError, match="num_chunks.*positive"):
+        split_list(
+            list(range(6)), num_chunks, enforce_divisible_batch=enforce_divisible_batch
+        )
+
+
+@pytest.mark.parametrize(
+    "batch_size,num_chunks", [(0, 3), (1, 1), (6, 2), (6, 3), (6, 6)]
+)
+def test_split_list_returns_exact_equal_chunks(batch_size, num_chunks):
+    inputs = list(range(batch_size))
+    chunks = split_list(inputs, num_chunks)
+    assert len(chunks) == num_chunks
+    assert [len(chunk) for chunk in chunks] == [batch_size // num_chunks] * num_chunks
+    assert [item for chunk in chunks for item in chunk] == inputs
+
+
+@pytest.mark.parametrize(
+    "batch_size,num_chunks,expected_sizes",
+    [(6, 4, [2, 2, 1, 1]), (8, 3, [3, 3, 2]), (2, 4, [1, 1, 0, 0]), (0, 3, [0, 0, 0])],
+)
+def test_split_list_preserves_uneven_chunks(batch_size, num_chunks, expected_sizes):
+    inputs = list(range(batch_size))
+    chunks = split_list(inputs, num_chunks, enforce_divisible_batch=False)
+    assert [len(chunk) for chunk in chunks] == expected_sizes
+    assert [item for chunk in chunks for item in chunk] == inputs
+
+
+def test_split_list_preserves_explicit_sizes():
+    assert split_list(list(range(6)), [1, 3, 2]) == [[0], [1, 2, 3], [4, 5]]
+
+
+@pytest.mark.parametrize("batch_size,split_size", [(6, 4), (8, 3)])
+def test_rollout_request_split_requires_divisible_batch(batch_size, split_size):
+    batch = {
+        "prompt": torch.arange(batch_size).reshape(-1, 1),
+        "length": torch.ones(batch_size, dtype=torch.long),
+        "answer": [[f"answer-{i}"] for i in range(batch_size)],
+        "image_data": [[f"image-{i}"] for i in range(batch_size)],
+        "multi_modal_inputs": [{"id": i} for i in range(batch_size)],
+    }
+    with pytest.raises(AssertionError, match="batch size.*divisible"):
+        build_rollout_requests_from_batch(
+            batch, group_size=2, split_size=split_size, enforce_divisible_batch=True
+        )
+
+
+@pytest.mark.parametrize(
+    "enforce_divisible_batch,split_size,expected_sizes",
+    [(True, 3, [2, 2, 2]), (False, 4, [2, 2, 1, 1])],
+)
+def test_rollout_request_split_preserves_fields(
+    enforce_divisible_batch, split_size, expected_sizes
+):
+    batch = {
+        "prompt": torch.arange(6).reshape(-1, 1),
+        "length": torch.ones(6, dtype=torch.long),
+        "answer": [[f"answer-{i}"] for i in range(6)],
+        "image_data": [[f"image-{i}"] for i in range(6)],
+        "multi_modal_inputs": [{"id": i} for i in range(6)],
+    }
+    requests = build_rollout_requests_from_batch(
+        batch,
+        group_size=2,
+        split_size=split_size,
+        enforce_divisible_batch=enforce_divisible_batch,
+    )
+    assert [len(request.input_ids) for request in requests] == expected_sizes
+    assert all(request.n == 2 for request in requests)
+    assert [ids for request in requests for ids in request.input_ids] == [
+        [i] for i in range(6)
+    ]
+    for field in ("answers", "image_data", "multi_modal_inputs"):
+        source = "answer" if field == "answers" else field
+        assert [
+            item for request in requests for item in getattr(request, field)
+        ] == batch[source]
 
 
 def _scalar_trajectory(value: float) -> Trajectory:
