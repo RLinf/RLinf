@@ -72,6 +72,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-dreamzero-droid-wan22-ascend-test:
@@ -103,6 +105,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-maniskill-openpi-test:
@@ -139,6 +143,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-fastwam-libero-test:
@@ -183,6 +189,8 @@ jobs:
         run: |
           ray stop || true
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-openpi-behavior-test:
@@ -215,6 +223,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
           rm -rf /tmp/tmp*
 
@@ -263,6 +273,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-maniskill-reward-model-test:
@@ -299,6 +311,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-cosmos3-libero-test:
