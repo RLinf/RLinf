@@ -24,8 +24,10 @@ from rlinf.data.storage.replay.dataset import (
     ReplayBufferDataset,
     replay_buffer_collate_fn,
 )
+from rlinf.data.storage.replay.env_buffer import EnvReplayBuffer
 
 __all__ = [
+    "EnvReplayBuffer",
     "PreloadReplayBufferDataset",
     "PriorityStore",
     "ReplayBufferDataset",

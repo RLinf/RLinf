@@ -2415,6 +2415,23 @@ def test_build_recv_plan_matches_expected_receive_sizes():
     ] == [(1, 4)]
 
 
+def test_recv_plan_restricted_to_some_peers_keeps_their_planned_order():
+    plan = build_recv_plan(
+        src_group_name="env",
+        dst_group_name="rollout",
+        dst_rank=0,
+        src_world_size=4,
+        dst_world_size=2,
+        tag="train_obs",
+        batch_size=8,
+    )
+
+    assert [entry.peer_rank for entry in plan.with_peers({1, 0}).entries] == [0, 1]
+    assert [entry.peer_rank for entry in plan.with_peers([1]).entries] == [1]
+    with pytest.raises(ValueError, match=r"planned peers \[0, 1\], got \[3\]"):
+        plan.with_peers([3])
+
+
 def test_build_route_channel_key_is_stable():
     assert build_route_channel_key("env", "rollout", 2, 1, "train") == (
         "scheduler_route",

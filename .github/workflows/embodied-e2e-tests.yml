@@ -619,6 +619,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
 
+      - name: ManiSkill + Libero-Goal heterogeneous env GRPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh maniskill_libero_grpo_openvlaoft
+
       - name: Libero-Spatial OPD test
         timeout-minutes: 20
         run: |

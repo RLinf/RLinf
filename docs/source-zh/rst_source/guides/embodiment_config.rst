@@ -196,6 +196,12 @@ env
    * - ``env.train.max_steps_per_rollout_epoch`` / ``env.eval.max_steps_per_rollout_epoch``
      - 每个 rollout 轮采集的最大环境步数。必须能被 ``actor.model.num_action_chunks``
        整除。
+   * - ``env.train.envs`` / ``env.eval.envs``
+     - 以名字为 key 的多份环境配置，设置后 ``env.train`` 或 ``env.eval`` 成为异构的，每份环境配置运行在自己的一段 env worker 上。见 :doc:`hetero_envs` 。
+   * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
+     - 发送给 policy 的观测 key 和图像尺寸，使相机配置不同的环境能共用一个 batch。见 :doc:`hetero_envs`。
+   * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
+     - OpenVLA-OFT 还原这份环境配置的动作时使用的统计量，用来代替 ``actor.model.unnorm_key`` 。见 :doc:`hetero_envs` 。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -379,6 +385,8 @@ actor
      - LoRA 低秩适配的秩。
    * - ``actor.model.lora_path``
      - LoRA 权重路径。
+   * - ``actor.model.merged_loras``
+     - 加载时合并进基础权重的 LoRA adapter 列表，每项为 ``{path, scale}`` ， ``scale`` 是合并的 adapter 更新量所占的比例。可训练的 LoRA（ ``is_lora`` ）加在合并后的权重之上。
    * - ``actor.model.num_images_in_input``
      - 模型输入中的图像数量。
    * - ``actor.model.attn_implementation``

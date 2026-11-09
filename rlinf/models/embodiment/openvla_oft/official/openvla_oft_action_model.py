@@ -34,6 +34,7 @@ from rlinf.models.embodiment.openvla_oft.openvla_utils import (
     find_checkpoint_file,
     load_component_state_dict,
     normalize_proprio,
+    resolve_unnorm_key,
 )
 from rlinf.utils.torch_functionals import pad_tensor_to_length
 from rlinf.utils.utils import (
@@ -122,7 +123,8 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         state_dict = load_component_state_dict(checkpoint_path)
         self.proprio_projector.load_state_dict(state_dict)
 
-    def prepare_inputs(self, env_obs):
+    def prepare_inputs(self, env_obs, unnorm_key: str):
+        """Build model inputs, normalizing proprio with ``unnorm_key``'s statistics."""
         task_descriptions = [
             f"In: What action should the robot take to {t.lower()}?\nOut: "
             for t in env_obs["task_descriptions"]
@@ -179,7 +181,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
             # Process proprioception
             if self.use_proprio:
                 state = env_obs["states"][i]
-                proprio_norm_stats = self.norm_stats[self.unnorm_key]["proprio"]
+                proprio_norm_stats = self.norm_stats[unnorm_key]["proprio"]
                 norm_proprio = normalize_proprio(state, proprio_norm_stats)
                 batchdata["proprio"].append(torch.from_numpy(norm_proprio))
 
@@ -421,13 +423,26 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         env_obs=None,
         calulate_logprobs=True,
         calulate_values=True,
+        unnorm_key: str | None = None,
         **kwargs,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Sample action chunks for a batch of observations.
+
+        ``unnorm_key`` names the dataset whose statistics normalize proprio
+        and unnormalize the actions sent to the env; ``None`` uses the model's
+        ``unnorm_key``. The normalized proprio is kept in ``forward_inputs``,
+        so training does not depend on it.
+        """
         do_sample = kwargs.pop("do_sample")
+        unnorm_key = (
+            self.unnorm_key
+            if unnorm_key is None
+            else resolve_unnorm_key(self.norm_stats, unnorm_key)
+        )
 
         if env_obs is not None:
             input_ids, attention_mask, pixel_values, proprio = self.prepare_inputs(
-                env_obs
+                env_obs, unnorm_key
             )
 
         forward_inputs = {
@@ -479,7 +494,7 @@ class OpenVLAOFTForRLActionPrediction(OpenVLAOFTForActionPrediction, BasePolicy)
         )
 
         # Unnormalize predicted actions
-        actions = self._unnormalize_actions(normalized_actions, self.unnorm_key)
+        actions = self._unnormalize_actions(normalized_actions, unnorm_key)
         actions = actions.reshape(-1, self.num_action_chunks, self.action_dim)
 
         # Compute chunk logprobs (and critic values)

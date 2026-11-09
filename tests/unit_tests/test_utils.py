@@ -362,23 +362,21 @@ def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
     worker.model = _ReplayModel()
     expected = torch.arange(24, dtype=torch.float32).reshape(6, 2, 2)
     behavior = torch.zeros_like(expected)
-    worker.rollout_batch = {
+    batch = {
         "prev_logprobs": behavior,
         "forward_inputs": {"expected_logprobs": expected},
     }
 
-    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(
-        worker, batch_size_per_rank=3
-    )
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(worker, batch)
 
     assert worker.model.batch_sizes == [3, 3]
     assert all("temperature" not in kwargs for kwargs in worker.model.kwargs)
     assert all("top_k" not in kwargs for kwargs in worker.model.kwargs)
     if importance_sampling_fix:
-        assert worker.rollout_batch["rollout_logprobs"] is behavior
+        assert batch["rollout_logprobs"] is behavior
     else:
-        assert "rollout_logprobs" not in worker.rollout_batch
-    assert torch.equal(worker.rollout_batch["prev_logprobs"], expected + 0.25)
+        assert "rollout_logprobs" not in batch
+    assert torch.equal(batch["prev_logprobs"], expected + 0.25)
     assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(11.75)
     assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(87.0)
 
@@ -406,15 +404,13 @@ def test_lingbot_recompute_restores_action_layout_before_masking(monkeypatch):
     recomputed = torch.zeros(6, 4, dtype=torch.float32)
     per_action_gap = torch.linspace(5.0e-5, 2.0e-4, 6).unsqueeze(-1)
     rollout = recomputed - per_action_gap
-    worker.rollout_batch = {
+    batch = {
         "prev_logprobs": rollout,
         "forward_inputs": {"expected_logprobs": recomputed},
         "loss_mask": torch.ones(6, 1, dtype=torch.bool),
     }
 
-    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(
-        worker, batch_size_per_rank=3
-    )
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(worker, batch)
 
     assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(8.0e-4)
 
@@ -820,3 +816,20 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_loss_weights_count_every_step_of_an_unmasked_trajectory_and_keep_filters():
+    from rlinf.utils.utils import add_loss_weights
+
+    dones = torch.zeros(4, 2, 1, dtype=torch.bool)
+    reward_filter = torch.tensor([True, False]).reshape(1, 2, 1).expand(3, 2, 1)
+    batch = add_loss_weights(
+        {"dones": dones, "loss_mask": reward_filter},
+        reward_type="action_level",
+        reference_length=6.0,
+        loss_weight=2.0,
+    )
+
+    assert batch["loss_mask"] is reward_filter
+    assert batch["loss_mask_sum"].unique().tolist() == [3]
+    assert torch.allclose(batch["loss_mask_ratio"], torch.full((3, 2, 1), 0.25))

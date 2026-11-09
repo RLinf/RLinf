@@ -24,7 +24,7 @@ import time
 import traceback
 import warnings
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Collection, Optional, TypeVar
 
 import ray
 import ray.util.state
@@ -865,6 +865,7 @@ class Worker(metaclass=WorkerMeta):
         options: Optional["CollectiveGroupOptions"] = None,
         decoupled_mode: bool = False,
         send_queue_size: int = 0,
+        peer_ranks: Optional[Collection[int]] = None,
     ):
         """Send a payload to another worker group according to a routing plan.
 
@@ -913,6 +914,9 @@ class Worker(metaclass=WorkerMeta):
                 with ``batch_index`` metadata.
             send_queue_size: Number of send queue entries used when building the
                 decoupled send plan.
+            peer_ranks: Optional destination ranks to send to, a subset of the
+                planned destinations. ``data`` then holds only their shards, in
+                planned order. Not supported with ``decoupled_mode``.
 
         Returns:
             ``AsyncRouteWork`` if ``async_op`` is True; otherwise ``None``.
@@ -933,6 +937,10 @@ class Worker(metaclass=WorkerMeta):
             assert getattr(self, "batch_router", None) is not None, (
                 "batch_router must be provided when decoupled_mode is True."
             )
+            assert peer_ranks is None, (
+                "send_to takes peer_ranks only with fixed routes, but "
+                "decoupled_mode is True."
+            )
 
         if not enable_p2p and channel is None:
             raise ValueError("send_to requires ``channel`` when enable_p2p is False.")
@@ -952,6 +960,8 @@ class Worker(metaclass=WorkerMeta):
                 route_key=route_key,
                 batch_size=batch_size,
             )
+            if peer_ranks is not None:
+                plan = plan.with_peers(peer_ranks)
         else:
             if tag in self.batch_router:
                 # if the batch_router has this tag
@@ -1055,6 +1065,7 @@ class Worker(metaclass=WorkerMeta):
         options: Optional["CollectiveGroupOptions"] = None,
         decoupled_mode: bool = False,
         recv_queue_size: int = 0,
+        peer_ranks: Optional[Collection[int]] = None,
     ):
         """Receive routed payload shards from another worker group.
 
@@ -1096,6 +1107,9 @@ class Worker(metaclass=WorkerMeta):
                 ``batch_index`` metadata from channel items.
             recv_queue_size: Number of receive queue entries used when building the
                 decoupled receive plan.
+            peer_ranks: Optional source ranks to receive from, a subset of the
+                planned sources. Shards arrive in planned order. Not supported with
+                ``decoupled_mode``.
 
         Returns:
             If ``async_op`` is True, an ``AsyncRouteWork``. Otherwise, returns ``None``
@@ -1108,6 +1122,10 @@ class Worker(metaclass=WorkerMeta):
             )
             assert getattr(self, "batch_router", None) is not None, (
                 "batch_router must be provided when decoupled_mode is True."
+            )
+            assert peer_ranks is None, (
+                "recv_from takes peer_ranks only with fixed routes, but "
+                "decoupled_mode is True."
             )
 
         from ..collective import AsyncRouteWork
@@ -1135,6 +1153,8 @@ class Worker(metaclass=WorkerMeta):
                 route_key=route_key,
                 batch_size=batch_size,
             )
+            if peer_ranks is not None:
+                plan = plan.with_peers(peer_ranks)
         else:
             if tag in self.batch_router:
                 # if the batch_router has this tag

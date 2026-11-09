@@ -24,7 +24,6 @@ from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.nested_dict_process import (
-    process_nested_dict_for_train,
     put_tensor_device,
     split_dict_to_chunk,
 )
@@ -121,18 +120,14 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             self.load_optimizer(self.device)
 
         self.model.train()
-        rollout_size = (
-            self.rollout_batch["prev_logprobs"].shape[0]
-            * self.rollout_batch["prev_logprobs"].shape[1]
+        self._order_training_batch()
+        assert len(self.rollout_batches) == 1, (
+            "NFT training expects every env to send the policy the same "
+            f"observation format, got {len(self.rollout_batches)} formats; set "
+            "env.train.policy_obs to match them."
         )
-        g = torch.Generator()
-        g.manual_seed(self.cfg.actor.seed + self._rank)
-        shuffle_id = torch.randperm(rollout_size, generator=g)
-
+        self.rollout_batch = self.rollout_batches[0]
         with torch.no_grad():
-            self.rollout_batch = process_nested_dict_for_train(
-                self.rollout_batch, shuffle_id
-            )
             self._precompute_nft_training_inputs()
 
         assert (

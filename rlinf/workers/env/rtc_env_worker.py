@@ -35,6 +35,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.layout import EnvLayout
 from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
 
@@ -68,8 +69,13 @@ class RTCEnvWorker(EnvWorker):
         assert self.eval_num_envs_per_stage == 1, (
             "RTC real-world evaluation currently supports a single env per worker."
         )
+        # The RTC rollout picks its delay model from env.eval.env_type.
+        assert not EnvLayout.is_heterogeneous(self.cfg.env.eval), (
+            "RTC evaluation needs a homogeneous env.eval, but env.eval.envs lists "
+            f"{list(self.cfg.env.eval.envs)}."
+        )
 
-        env_type = self.cfg.env.eval.env_type
+        env_type = self.eval_assignment.cfg.env_type
         chunk_pause_seconds = float(rtc_cfg.get("chunk_pause_seconds", 0.0))
         inject_delay_ms = float(rtc_cfg.get("inject_delay_ms", 0.0))
         fixed_delay_steps = int(rtc_cfg.get("fixed_delay_steps", 0))
@@ -210,12 +216,12 @@ class RTCEnvWorker(EnvWorker):
         """Prepare and optionally rewrite gripper actions from an RTC response."""
         chunk_actions = prepare_actions(
             raw_chunk_actions=rtc_response.actions,
-            env_type=self.cfg.env.eval.env_type,
+            env_type=self.eval_assignment.cfg.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
             action_dim=self.model_cfg.action_dim,
             policy=self.model_cfg.get("policy_setup", None),
-            wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
+            wm_env_type=self.eval_assignment.cfg.get("wm_env_type", None),
         )
         return self._maybe_rewrite_eval_chunk_gripper(chunk_actions)
 
@@ -260,7 +266,7 @@ class RTCEnvWorker(EnvWorker):
             self.send_rtc_request(
                 rollout_channel,
                 RTCRequest(
-                    obs=env_batch["obs"],
+                    obs=self._eval_policy_obs_spec.apply(env_batch["obs"]),
                     request_type="bootstrap",
                     executed_horizon=0,
                     predicted_delay_steps=initial_delay_steps,
@@ -301,7 +307,11 @@ class RTCEnvWorker(EnvWorker):
                     self.send_rtc_request(
                         rollout_channel,
                         RTCRequest(
-                            obs=self._copy_rtc_obs(env_output.to_dict()["obs"]),
+                            obs=self._copy_rtc_obs(
+                                self._eval_policy_obs_spec.apply(
+                                    env_output.to_dict()["obs"]
+                                )
+                            ),
                             request_type="replan",
                             executed_horizon=current_chunk_index,
                             predicted_delay_steps=predicted_delay_steps,
@@ -376,7 +386,7 @@ class RTCEnvWorker(EnvWorker):
         )
 
         for stage_id in range(self.stage_num):
-            if self.cfg.env.eval.get("enable_offload", False) and hasattr(
+            if self.eval_enable_offload and hasattr(
                 self.eval_env_list[stage_id], "offload"
             ):
                 self.eval_env_list[stage_id].offload()
@@ -384,4 +394,4 @@ class RTCEnvWorker(EnvWorker):
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
-        return eval_metrics
+        return self.eval_assignment.scope_metrics(eval_metrics)
