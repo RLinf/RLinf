@@ -150,7 +150,7 @@ if [ ! -f "${CONFIG_PATH}/${CONFIG_NAME}.yaml" ]; then
     echo "Config not found under evaluations/${BENCHMARK}, fallback to ${CONFIG_PATH}"
 fi
 
-if [ "${BENCHMARK}" != "realworld" ] && [ "${BENCHMARK}" != "robolab" ]; then
+if [ "${BENCHMARK}" != "realworld" ]; then
     setup_sim_env
 fi
 

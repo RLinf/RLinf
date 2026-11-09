@@ -2157,10 +2157,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          rm -rf logs/robolab_openpi_eval
-          mkdir -p logs/robolab_openpi_eval
-          bash tests/e2e_tests/evaluations/run.sh robolab_openpi_eval \
-            2>&1 | tee logs/robolab_openpi_eval/console.log
+          bash tests/e2e_tests/evaluations/run.sh robolab_openpi_eval
 
       - name: RoboLab truncation and reset evaluation
         timeout-minutes: 15
@@ -2169,10 +2166,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          rm -rf logs/robolab_openpi_truncation_eval
-          mkdir -p logs/robolab_openpi_truncation_eval
-          bash tests/e2e_tests/evaluations/run.sh robolab_openpi_truncation_eval \
-            2>&1 | tee logs/robolab_openpi_truncation_eval/console.log
+          bash tests/e2e_tests/evaluations/run.sh robolab_openpi_truncation_eval
 
       - name: Clean up
         if: always()
