@@ -26,7 +26,7 @@ import ray
 import ray.remote_function
 
 from ..cluster import Cluster, ClusterEnvVar
-from ..hardware import AcceleratorUtil
+from ..hardware import AcceleratorType, AcceleratorUtil
 from ..placement import (
     NodePlacementStrategy,
     PackedPlacementStrategy,
@@ -271,6 +271,17 @@ class WorkerGroup(Generic[WorkerClsType]):
                     accelerator_type, placement.visible_accelerators
                 )
             )
+            if accelerator_type == AcceleratorType.INTEL_GPU:
+                # Ray is not an MPI launcher. Tell oneCCL to use the local
+                # topology that RLinf already computed for this worker group;
+                # otherwise oneCCL tries MPI discovery, falls back to OFI, and
+                # can block while attempting to infer local_idx/local_count.
+                env_vars.update(
+                    {
+                        "CCL_LOCAL_RANK": str(placement.local_rank),
+                        "CCL_LOCAL_SIZE": str(placement.local_world_size),
+                    }
+                )
 
             worker = self._cluster.allocate(
                 cls=self._worker_cls,
