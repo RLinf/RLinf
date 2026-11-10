@@ -23,8 +23,7 @@ Download the released OpenWAM LIBERO checkpoint:
 
 .. code-block:: bash
 
-   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO \
-     --local-dir /your_path_to/OpenWAM-Alpha-Sim-LIBERO
+   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir /your_path_to/OpenWAM-Alpha-Sim-LIBERO
 
 The downloaded directory should contain the weights, model configuration, normalization statistics, and tokenizer. This checkpoint includes the required model components, so a separate Wan base model download is unnecessary. Set ``actor.model.model_path`` to the entire directory, rather than an individual weights file:
 
@@ -44,9 +43,7 @@ Download the OpenWAM LIBERO dataset paired with this checkpoint:
 
 .. code-block:: bash
 
-   hf download OpenWAM/LIBERO \
-     --repo-type dataset \
-     --local-dir /your_path_to/libero
+   hf download OpenWAM/LIBERO --repo-type dataset --local-dir /your_path_to/libero
 
 The dataset is already in LeRobot v3 format and needs no unpacking or additional conversion. Keep the complete ``data/``, ``meta/``, and ``videos/`` directories. The dataset normalization statistics are stored in ``meta/libero_normalization_stats.npy``:
 
@@ -103,7 +100,7 @@ The recipe defaults to eight GPUs, FSDP2, and bf16 mixed-precision computation w
 
 .. note::
 
-   Existing H200 measurements with LIBERO data, ``micro_batch_size: 1``, and ``global_batch_size: 8`` recorded peak allocated/reserved memory of 55.5/83.7 GiB per GPU on eight GPUs and 72.3/113.3 GiB per GPU on four GPUs. Actual requirements depend on the checkpoint and hardware; these results do not establish compatibility with 80 GiB GPUs.
+   Existing H200 measurements with LIBERO data, ``micro_batch_size: 1``, and ``global_batch_size: 8`` recorded peak allocated/reserved memory of 55.5/83.7 GiB per GPU on eight GPUs and 72.3/113.3 GiB per GPU on four GPUs.
 
 Run Training and Inspect Results
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

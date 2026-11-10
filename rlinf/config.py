@@ -126,12 +126,6 @@ SupportedModel.STEAM_VALUE_MODEL = SupportedModel.register(
 SupportedModel.SD3 = SupportedModel.register("sd3", force=True)
 SupportedModel.WAN22_TI2V_5B = SupportedModel.register("wan22_ti2v_5b", force=True)
 
-# Action spaces the OpenWAM policy can be evaluated in, per environment. The
-# env worker converts each chunk with rlinf.envs.action_utils; the recipes name
-# the representation the checkpoint was trained with.
-OPENWAM_LIBERO_ACTION_REPRESENTATIONS = ("native_delta_eef10", "absolute_eef10")
-OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS = ("absolute_eef20",)
-
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
@@ -191,6 +185,13 @@ SUPPORTED_TASK_TYPE = [
     "offline",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
+
+# Action spaces the OpenWAM policy can be evaluated in, per environment. The
+# env worker converts each chunk with rlinf.envs.action_utils; the recipes name
+# the representation the checkpoint was trained with.
+OPENWAM_LIBERO_ACTION_REPRESENTATIONS = ("native_delta_eef10", "absolute_eef10")
+OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS = ("absolute_eef20",)
+
 __all__ = ["build_config"]
 
 

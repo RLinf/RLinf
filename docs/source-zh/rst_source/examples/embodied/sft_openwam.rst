@@ -23,8 +23,7 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. code-block:: bash
 
-   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO \
-     --local-dir /your_path_to/OpenWAM-Alpha-Sim-LIBERO
+   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir /your_path_to/OpenWAM-Alpha-Sim-LIBERO
 
 下载目录应包含权重文件、模型配置、归一化统计文件和 tokenizer。该 checkpoint 已包含所需的模型组件，无需另外下载 Wan 基座模型。后续的 ``actor.model.model_path`` 应指向整个目录，而不是单个权重文件：
 
@@ -44,9 +43,7 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. code-block:: bash
 
-   hf download OpenWAM/LIBERO \
-     --repo-type dataset \
-     --local-dir /your_path_to/libero
+   hf download OpenWAM/LIBERO --repo-type dataset --local-dir /your_path_to/libero
 
 该数据集已经是 LeRobot v3 格式，无需解压或额外转换。请保留完整的 ``data/``、``meta/`` 和 ``videos/`` 目录，其中 ``meta/libero_normalization_stats.npy`` 是数据集的归一化统计文件：
 
@@ -103,7 +100,7 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. note::
 
-   在 H200 上，使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 的已有测试中，8 卡训练每卡峰值已分配显存为 55.5 GiB，保留显存为 83.7 GiB；4 卡时分别为 72.3 GiB 和 113.3 GiB。实际需求取决于 checkpoint 和硬件，这些结果不代表已经验证可在 80 GiB GPU 上运行。
+   在 H200 上，使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 的已有测试中，8 卡训练每卡峰值已分配显存为 55.5 GiB，保留显存为 83.7 GiB；4 卡时分别为 72.3 GiB 和 113.3 GiB。
 
 启动训练与查看结果
 ~~~~~~~~~~~~~~~~~~
