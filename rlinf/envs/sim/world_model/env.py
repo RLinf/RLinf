@@ -96,6 +96,11 @@ class WorldModelEnv:
         self.reward_mode = cfg.get("reward_mode", "chunk")
         if self.reward_mode not in ("chunk", "episode_window_max"):
             raise ValueError(f"Unknown reward_mode: {self.reward_mode!r}")
+        self.reward_first_frame = int(cfg.get("reward_first_frame", 1))
+        if self.reward_first_frame < 1:
+            raise ValueError(
+                f"Expected reward_first_frame >= 1, got {self.reward_first_frame}"
+            )
         # Policies trained to read their own last command as proprio get it back as
         # states; rest_action stands in before an episode's first chunk.
         self.state_from_last_action = cfg.get("state_from_last_action", False)
@@ -546,7 +551,7 @@ class WorldModelEnv:
                 + 1
                 + torch.arange(self.chunk, device=self.device)
             )
-            scored = frame_idx >= self.cfg.reward_first_frame
+            scored = frame_idx >= self.reward_first_frame
             if not scored.any():
                 return torch.zeros((self.num_envs, self.chunk), device=self.device)
 
@@ -644,7 +649,7 @@ class WorldModelEnv:
         obs = {
             "main_images": full_image,  # [num_envs, H, W, 3]
             "wrist_images": None,  # Not available in world model
-            "states": states,  # [num_envs, 16]
+            "states": states,  # [num_envs, 16], or [num_envs, action_dim]
             "task_descriptions": list(self.task_descriptions),
         }
 

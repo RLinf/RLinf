@@ -1197,6 +1197,21 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    for split in ("train", "eval"):
+        env_cfg = cfg.get("env", {}).get(split)
+        if env_cfg is None or env_cfg.get("env_type") != "world_model":
+            continue
+        for env_key, model_key in (
+            ("chunk", "num_action_chunks"),
+            ("action_dim", "action_dim"),
+        ):
+            env_value = env_cfg.get(env_key)
+            model_value = model_cfg.get(model_key)
+            if env_value is not None and env_value != model_value:
+                raise ValueError(
+                    f"Expected env.{split}.{env_key} to equal the policy's "
+                    f"{model_key} ({model_value}), got {env_value}."
+                )
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
