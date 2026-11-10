@@ -56,17 +56,11 @@
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: 视频生成模型
+   .. grid-item-card:: 图像与视频生成
       :link: video_models
       :link-type: doc
 
-      使用 Diffusion-NFT 对 SD3 和 Wan2.2 图像/视频生成模型进行强化学习微调。
-
-   .. grid-item-card:: DiffusionART
-      :link: diffusion_art
-      :link-type: doc
-
-      分组奖励引导用于微调 SD3.5 与 Wan2.2 图像/视频生成模型。
+      准备 SD3 与 Wan2.2 模型，再选择 Diffusion-NFT 或 DiffusionART 训练。
 
    .. grid-item-card:: 智能体
       :link: agentic/index
@@ -91,7 +85,6 @@
    奖励模型 <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
-   视频生成模型 <video_models>
-   DiffusionART <diffusion_art>
+   图像与视频生成 <video_models>
    智能体 <agentic/index>
    系统 <system/index>
