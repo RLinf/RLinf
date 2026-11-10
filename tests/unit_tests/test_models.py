@@ -1435,6 +1435,26 @@ def test_so101_openpi_transforms_pad_six_joint_contract():
     assert not result["image_mask"]["left_wrist_0_rgb"]
 
 
+def test_aloha_inputs_mask_wrist_views_missing_from_a_head_only_observation():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.aloha_policy import AlohaInputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = AlohaInputs(adapt_to_pi=False)(
+        {
+            "observation/image": image,
+            "observation/wrist_image": None,
+            "observation/state": np.zeros(14, dtype=np.float32),
+            "prompt": "adjust the bottle",
+        }
+    )
+    assert result["image_mask"]["base_0_rgb"]
+    for view in ("left_wrist_0_rgb", "right_wrist_0_rgb"):
+        assert not result["image_mask"][view]
+        assert result["image"][view].shape == image.shape
+
+
 def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
     np = pytest.importorskip("numpy")
     pytest.importorskip("openpi")
@@ -2176,6 +2196,22 @@ def phyai_example_cfg(monkeypatch):
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(config_dir=str(config_dir), version_base=None):
         return compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+
+
+@pytest.mark.parametrize(
+    ("path", "value"), [("env.train.chunk", 25), ("env.train.action_dim", 7)]
+)
+def test_world_model_env_must_match_the_policy_action_shape(monkeypatch, path, value):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="bwm_robotwin_adjust_bottle_ppo_openpi_pi05")
+    OmegaConf.update(cfg, path, value)
+
+    with pytest.raises(ValueError, match=f"Expected {path} to equal"):
+        validate_embodied_cfg(cfg)
 
 
 def test_phyai_example_config_validates_and_shares_the_actor_checkpoint(

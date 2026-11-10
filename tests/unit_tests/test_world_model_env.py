@@ -198,6 +198,30 @@ class _HalfActionBridge:
         return np.asarray(joint14, dtype=np.float32) * 0.5
 
 
+def test_bwm_history_condition_noises_all_but_the_reset_frame():
+    from rlinf.envs.sim.world_model.backend import bwm
+
+    first = torch.ones(1, 2, 3, 2, 2)
+
+    def condition(noise, seed=5):
+        latents = torch.zeros(1, 2, 5, 2, 2)
+        inputs = {"first_frame_latents": first, "latents": latents, "seed": seed}
+        cond, history_t = bwm._history_condition_latents(
+            None, inputs, use_history_condition_noise_in_inference=noise
+        )
+        assert history_t == 3
+        assert torch.equal(latents[:, :, :3], cond)
+        assert latents[:, :, 3:].eq(0).all()
+        return cond
+
+    assert torch.equal(condition(noise=False), first)
+    noised = condition(noise=True)
+    assert torch.equal(noised[:, :, 0], first[:, :, 0])
+    assert not torch.equal(noised[:, :, 1:], first[:, :, 1:])
+    assert torch.equal(noised, condition(noise=True))
+    assert not torch.equal(noised, condition(noise=True, seed=6))
+
+
 def test_bwm_backend_rolls_its_condition_window(monkeypatch):
     from rlinf.envs.sim.world_model.backend import bwm
 
