@@ -27,7 +27,7 @@ Fine-tune a VLA on RoboTwin 2.0; OpenVLA-OFT + GRPO lifts average task success b
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenVLA-OFT · π₀ / π₀.₅ · LingBot-VLA 1.0 / 2.0
+      OpenVLA-OFT · π₀ / π₀.₅ · Lingbot-VLA
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -174,6 +174,11 @@ By default, this script downloads assets under ``/path/to/RoboTwin/assets/``.
 After the download completes, set ``env.train.assets_path`` and
 ``env.eval.assets_path`` to ``/path/to/RoboTwin`` (the parent folder of ``assets/``).
 
+RLinf creates RoboTwin's cameras with a 0.01 m near plane instead of RoboTwin's
+0.1 m: SAPIEN 3.0.1 clips everything closer than the near plane, and 0.1 m hides
+the gripper fingers from the wrist cameras. The value is ``camera_near`` in the
+RoboTwin env configs; set it to ``null`` to keep RoboTwin's own value.
+
 Download the Model
 ------------------
 
@@ -211,21 +216,8 @@ Download the SFT checkpoint that matches your config. Examples:
 
 .. include:: _model_path.rst
 
-For Lingbot-VLA 1.0 recipes, point ``actor.model.model_path`` and
+For Lingbot-VLA recipes, point ``actor.model.model_path`` and
 ``rollout.model.model_path`` at your Lingbot-VLA SFT checkpoint.
-
-For :doc:`LingBot-VLA 2.0 <lingbotvla_v2>`, follow the same flow as 1.0: install
-with ``--model lingbotvla_v2`` in place of ``--model lingbotvla``, point
-``LINGBOT_VLA_V2_CHECKPOINT`` at your LingBot-VLA 2.0 checkpoint
-(``actor.model.model_path`` reads it by default and ``rollout.model.model_path``
-inherits the actor path), and launch with the 2.0 config from the table below. 2.0
-checkpoints and configs are not interchangeable with 1.0. 2.0 reuses the generic
-``run_vla_sft.sh`` and ``run_embodiment.sh`` launchers; activate the installed
-``.venv`` and export ``LINGBOT_VLA_V2_PATH``, ``ROBOTWIN_PATH``, and the other
-required paths first, as described in the 2.0 guide. The Docker image above
-does not include 2.0; install it with ``requirements/install.sh`` or build the
-``embodied-robotwin-lingbotvla-v2`` Docker target. See the 2.0 guide for full
-installation and resource-preparation instructions.
 
 .. note::
 
@@ -263,9 +255,6 @@ Pick one recipe and launch training:
    * - Lingbot-VLA + GRPO
      - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
      - ``robotwin_click_bell_grpo_lingbotvla``
-   * - LingBot-VLA 2.0 + GRPO
-     - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla_v2.yaml``
-     - ``robotwin_click_bell_grpo_lingbotvla_v2``
 
 .. code:: bash
 
@@ -319,8 +308,35 @@ the same command:
 
    bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
 
-RLinf publishes no ROCm RoboTwin image, so the Docker steps above apply to CUDA
-hosts only.
+To build the ROCm RoboTwin image from your checkout, run this command on the
+host, with ``ROCM_ARCHS`` set to the ``gfx`` architecture of your GPUs
+(``gfx1100`` for the Radeon PRO W7900):
+
+.. code-block:: bash
+
+   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile \
+      --build-arg PLATFORM=amd \
+      --build-arg ROCM_VER=7.2 \
+      --build-arg ROCM_ARCHS=gfx1100 \
+      --build-arg BUILD_TARGET=embodied-robotwin \
+      -t rlinf:embodied-robotwin-rocm7.2 .
+
+Start the container with the AMD kernel and render devices:
+
+.. code-block:: bash
+
+   docker run -it --rm \
+      --device=/dev/kfd --device=/dev/dri --group-add video \
+      --ipc=host --shm-size 32g --network host \
+      -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
+      rlinf:embodied-robotwin-rocm7.2 bash
+
+.. warning::
+
+   Match ``ROCM_ARCHS`` to the target GPUs. During Docker builds the devices may
+   be invisible, so extensions such as ``flash-attn`` need explicit architecture
+   values. On GPUs other than ``gfx90a`` and ``gfx942``, the installer also
+   switches ``flash-attn`` to its Triton backend.
 
 Visualization and Results
 -------------------------

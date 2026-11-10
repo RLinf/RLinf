@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 import torch
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.optim import Optimizer
 
 
@@ -177,6 +178,46 @@ class FP32MasterAdamW(Optimizer):
         super().load_state_dict(state_for_super)
         for param, saved_state in fp32_state.items():
             self.state[param].update(saved_state)
+
+
+def validate_adam_mixed_precision(
+    model: torch.nn.Module,
+    *,
+    use_fp32_master_params: bool = False,
+    optimizer_name: str = "AdamW",
+) -> None:
+    """Check the dtype FSDP prepares for native Adam or AdamW updates."""
+    if use_fp32_master_params:
+        return
+    for path, module in model.named_modules():
+        if not isinstance(module, FSDP):
+            continue
+        handle = module._handle
+        if handle is None or not handle._keep_low_precision_grads:
+            continue
+        param = handle.flat_param
+        if not param.requires_grad:
+            continue
+        # Match FlatParamHandle.prepare_gradient_for_optim (PyTorch 2.4+).
+        grad_dtype = (
+            handle._fwd_bwd_param_dtype
+            if handle.uses_sharded_strategy or handle._offload_params
+            else handle._reduce_dtype
+        )
+        if grad_dtype == param.dtype:
+            continue
+        scope = path.replace("_fsdp_wrapped_module.", "") or "<root>"
+        remedy = "Set keep_low_precision_grads=false in this wrapper's MP policy."
+        if optimizer_name == "AdamW":
+            remedy += (
+                " For FSDP1 NO_SHARD, select "
+                "actor.optim.use_fp32_master_params=true to retain these gradients."
+            )
+        raise ValueError(
+            f"FSDP wrapper {scope!r} has {param.dtype} parameters and prepares "
+            f"{grad_dtype} gradients. Native {optimizer_name} requires matching dtypes. "
+            + remedy
+        )
 
 
 def build_adamw(

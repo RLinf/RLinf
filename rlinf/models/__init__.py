@@ -74,6 +74,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_psi0(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.psi0 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_pi0_fast(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.pi0_fast import get_model
 
@@ -124,8 +129,8 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_lingbotvla_v2(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.lingbotvla_v2 import get_model
+    def _build_lingbotvlav2(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.lingbotvlav2 import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -219,6 +224,12 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.PSI0.value,
+        _build_psi0,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.PI0_FAST.value,
         _build_pi0_fast,
         category="embodied",
@@ -279,8 +290,8 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        SupportedModel.LINGBOTVLA_V2.value,
-        _build_lingbotvla_v2,
+        SupportedModel.LINGBOTVLAV2.value,
+        _build_lingbotvlav2,
         category="embodied",
         force=True,
     )

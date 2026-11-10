@@ -60,6 +60,25 @@ from rlinf.utils.utils import (
 )
 
 
+def _reshape_recompute_logprob_gap(
+    logprob_gap: torch.Tensor, cfg: DictConfig
+) -> torch.Tensor:
+    """Return the logprob gap as ``[..., chunks, action_dim]``.
+
+    OpenVLA, OpenVLA-OFT, and LingBot-VLA V2 return one flat logprob per action
+    dimension; OpenPI already returns this layout.
+    """
+    model_type = SupportedModel(cfg.actor.model.model_type)
+    if model_type in (
+        SupportedModel.OPENVLA,
+        SupportedModel.OPENVLA_OFT,
+        SupportedModel.LINGBOTVLAV2,
+    ):
+        action_dim = cfg.actor.model.get("action_dim", 7)
+        return logprob_gap.reshape(*logprob_gap.shape[:-1], -1, action_dim)
+    return logprob_gap
+
+
 class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -417,7 +436,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             batch_size_per_rank: Samples per optimizer step on this rank.
 
         Returns:
-            Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob difference).
+            Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob
+            difference) and ``actor/rollout_train_joint_logprob_gap_max`` (largest
+            absolute difference of a sample's summed log-probability).
+
+        Raises:
+            ValueError: If ``algorithm.max_recompute_logprob_gap`` is set and the
+                joint gap exceeds it or is not finite.
         """
         assert "forward_inputs" in self.rollout_batch, (
             "Recomputing logprobs requires rollout forward_inputs."
@@ -425,10 +450,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_logprobs = self.rollout_batch["prev_logprobs"]
         rollout_size = rollout_logprobs.shape[0]
-        kwargs = {
-            "temperature": self.cfg.rollout.sampling_params.temperature_train,
-            "top_k": self.cfg.rollout.sampling_params.top_k,
-        }
+        kwargs = {}
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+        ]:
+            kwargs = {
+                "temperature": self.cfg.rollout.sampling_params.temperature_train,
+                "top_k": self.cfg.rollout.sampling_params.top_k,
+            }
 
         recomputed_logprobs = []
         with torch.no_grad():
@@ -460,23 +490,37 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         clear_memory()
 
-        # Logprobs are per action token, the mask and the advantages per action.
-        action_dim = self.cfg.actor.model.get("action_dim", 7)
-        log_ratio = (recomputed_logprobs - rollout_logprobs).reshape(
-            *rollout_logprobs.shape[:-1], -1, action_dim
+        log_ratio = _reshape_recompute_logprob_gap(
+            recomputed_logprobs - rollout_logprobs, self.cfg
         )
         loss_mask = self.rollout_batch.get("loss_mask", None)
-        mask = (
-            None
-            if loss_mask is None
-            else loss_mask.bool().unsqueeze(-1).expand_as(log_ratio)
-        )
+        mask = None
+        if loss_mask is not None:
+            mask = loss_mask.bool()
+            while mask.ndim < log_ratio.ndim:
+                mask = mask.unsqueeze(-1)
+            mask = mask.expand_as(log_ratio)
+        joint_log_ratio = (
+            log_ratio if mask is None else log_ratio.masked_fill(~mask, 0)
+        ).sum(dim=(-2, -1))
+        joint_gap = joint_log_ratio.abs().max().item()
         metrics = {
             "actor/rollout_train_logprob_gap": masked_mean(
                 log_ratio.abs(), mask=mask
-            ).item()
+            ).item(),
+            "actor/rollout_train_joint_logprob_gap_max": joint_gap,
         }
+        max_gap = self.cfg.algorithm.get("max_recompute_logprob_gap", None)
+        # Written so that a NaN gap also fails.
+        if max_gap is not None and not joint_gap <= max_gap:
+            raise ValueError(
+                "Expected the rollout/actor log-probability of every sample to "
+                f"differ by at most algorithm.max_recompute_logprob_gap={max_gap}, "
+                f"found {joint_gap}."
+            )
 
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            self.rollout_batch["rollout_logprobs"] = rollout_logprobs
         self.rollout_batch["prev_logprobs"] = recomputed_logprobs
         return metrics
 
@@ -775,11 +819,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "log_logprob_diagnostics", False
             ),
         }
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
+            loss_kwargs["importance_sampling_clip"] = (
+                self.cfg.algorithm.importance_sampling_clip
+            )
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
             SupportedModel.GR00T_N1D7,
             SupportedModel.PI0_FAST,
+            SupportedModel.LINGBOTVLAV2,
         ]:
             loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
             if self.cfg.algorithm.get("clip_log_ratio_min") is not None:

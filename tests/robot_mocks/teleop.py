@@ -127,10 +127,78 @@ def glove() -> dict[str, types.ModuleType]:
     return {"rlinf_dexhand": package, "rlinf_dexhand.glove": inner}
 
 
+def pico_packet(
+    buttons: dict[str, bool] | None = None,
+    *,
+    left: dict[str, Any] | None = None,
+    right: dict[str, Any] | None = None,
+) -> str:
+    """Return one PICO publisher packet, both controllers at rest by default.
+
+    The headset faces forward, so the transport can calibrate from it, and no
+    grip is held, so no arm follows a controller. ``left`` and ``right``
+    override fields of that controller, such as ``grip`` or ``position``.
+    """
+    import json
+
+    controller = {
+        "position": [0.0, 0.0, 0.0],
+        "orientation": [0.0, 0.0, 0.0, 1.0],
+        "grip": 0.0,
+        "trigger": 0.0,
+    }
+    return json.dumps(
+        {
+            "headset_pose": [0.0, 1.6, 0.0, 0.0, 0.0, 0.0, 1.0],
+            "left_controller": {**controller, **(left or {})},
+            "right_controller": {**controller, **(right or {})},
+            "buttons": dict(buttons or {}),
+        }
+    )
+
+
+#: Subscribing here replays :func:`operator_packet` instead of the queue.
+SCRIPTED_OPERATOR = "mock://pico-operator"
+
+
+def operator_packet(elapsed: float) -> str:
+    """Return what an operator's eight-second take publishes at ``elapsed``.
+
+    Press record at 1 s, hold both grips from 2 s while drifting both
+    controllers outward, close both grippers at 3 s and open them at 5 s, let
+    go at 6 s and press record again to end the take.
+    """
+    phase = elapsed % 8.0
+    offset = 0.003 * float(np.clip(phase - 2.0, 0.0, 2.0))
+    grip = float(2.0 <= phase < 6.0)
+    closing, opening = 3.0 <= phase < 3.4, 5.0 <= phase < 5.4
+    return pico_packet(
+        {
+            "right_menu_button": 1.0 <= phase < 1.4 or 6.0 <= phase < 6.4,
+            "X": closing,
+            "A": closing,
+            "Y": opening,
+            "B": opening,
+        },
+        left={"position": [-(0.25 + offset), 1.25, -0.4], "grip": grip},
+        right={"position": [0.25 + offset, 1.25, -0.4], "grip": grip},
+    )
+
+
 def vr() -> types.ModuleType:
-    """Return a ``zmq`` module backed by a test-controlled packet queue."""
+    """Return a ``zmq`` module backed by a test-controlled packet queue.
+
+    Queued ``packets`` are delivered first; then ``frame``, when set, is
+    published over and over like a live controller. A socket connected to
+    :data:`SCRIPTED_OPERATOR` instead receives an operator's take on repeat,
+    so a collection run reaches its target unattended.
+    """
+    import time
+
     fake = module("zmq")
     fake.packets: list[Any] = []
+    fake.frame: str | None = None
+    fake.operator_started: float | None = None
 
     class Socket:
         def __init__(self, *_a, **_k):
@@ -141,6 +209,8 @@ def vr() -> types.ModuleType:
 
         def connect(self, address):
             self.address = address
+            if address == SCRIPTED_OPERATOR and fake.operator_started is None:
+                fake.operator_started = time.monotonic()
 
         def set_hwm(self, value):
             self.hwm = value
@@ -155,7 +225,14 @@ def vr() -> types.ModuleType:
             self.closed = True
 
         def recv_string(self, flags=0):
+            if self.address == SCRIPTED_OPERATOR:
+                # Paced like a publisher, so a polling thread does not spin.
+                time.sleep(0.01)
+                return operator_packet(time.monotonic() - fake.operator_started)
             if not fake.packets:
+                if fake.frame is not None:
+                    time.sleep(0.002)
+                    return fake.frame
                 raise fake.Again()
             packet = fake.packets.pop(0)
             return packet if isinstance(packet, str) else packet.decode("utf-8")

@@ -18,8 +18,9 @@ TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
-# googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
-RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
+# Keep Ray's protobuf runtime and generated code compatible. Platforms with
+# older TensorFlow builds also pin googleapis-common-protos here.
+RAY_COMPAT_DEPS=("protobuf>=6.33.5,<7")
 # ManiSkill and RoboTwin both run on SAPIEN, and RoboTwin's dependencies do not
 # install it.
 SAPIEN_SPEC="sapien==3.0.1; platform_system == 'Linux' and platform_machine == 'x86_64' and python_version < '3.14'"
@@ -59,6 +60,8 @@ DISABLE_FLASH_ATTN=0
 DISABLE_APEX=0
 # User-level opt-out for natten, set by --no-natten.
 DISABLE_NATTEN=0
+# Install the larger CUDA-enabled PaddlePaddle wheel for diffusion OCR rewards.
+INSTALL_PADDLE_GPU=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
 PLATFORM_TORCHCODEC_SPEC=""
@@ -73,6 +76,12 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Package names inserted into the pyproject.toml `exclude-dependencies` array
+# by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
+# version constraints), these make the resolver ignore the package entirely.
+# Use this for packages with no wheel for the target ABI, where an override
+# can't help (e.g. tensorflow-addons has no cp312 wheel for any version).
+PLATFORM_EXCLUDE_DEPS=()
 # Extra flags appended to every `uv sync`. Set by configure_<platform>.
 PLATFORM_UV_SYNC_ARGS=()
 # Whether the venv exposes the interpreter's system site-packages.
@@ -97,7 +106,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa" "kunlun" "biren" "metax")
 TEST_BUILD=${TEST_BUILD:-0}
 UNINSTALL_FA4=${UNINSTALL_FA4:-0}
 # Set by select_flash_attn_variant: 1 when this venv keeps FA4 and skips FA2.
@@ -106,13 +115,17 @@ FA4_KEPT=0
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 USE_MIRRORS=0
-GITHUB_PREFIX=""
+# GitHub proxy prefix for clones and release downloads. Read from the
+# environment so a caller (e.g. the Docker build arg of the same name) can pick
+# a proxy that is fast on its network. It only takes effect with --use-mirror,
+# where it defaults to https://gh-proxy.com/ (see setup_mirror).
+GITHUB_PREFIX="${GITHUB_PREFIX:-}"
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvla_v2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
+SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -128,6 +141,7 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+    --paddle-gpu           Install CUDA-enabled PaddlePaddle for diffusion OCR rewards.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -138,8 +152,9 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
-    --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
-                           (default: sglang). One venv holds one engine -- they pin the
+    --engine <name>        Rollout engine: sglang or vllm for target=agentic (default: sglang),
+                           or phyai for target=embodied (requires --model openpi --env libero).
+                           One venv holds one engine -- they pin the
                            same kernel libraries to different versions, so run install.sh
                            twice with different --venv to get both.
     --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
@@ -151,14 +166,15 @@ Common options:
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
                            ROCm), ascend (experimental, NPU), musa (experimental, Moore
-                           Threads), kunlun (experimental, Kunlunxin), or biren (experimental,
-                           SUPA). Sets UV_TORCH_BACKEND where applicable (auto / rocm<version> /
-                           cpu); export UV_TORCH_BACKEND yourself to bypass (e.g.
+                           Threads), kunlun (experimental, Kunlunxin), biren (experimental,
+                           SUPA), or metax (experimental, MetaX MACA). Sets UV_TORCH_BACKEND
+                           where applicable (auto / rocm<version> / cpu); export
+                           UV_TORCH_BACKEND yourself to bypass (e.g.
                            UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI and adds
-                           torch-npu in install_ascend_extras. MUSA and Biren install no torch:
-                           run inside the corresponding vendor runtime and reuse its torch stack
-                           via a --system-site-packages venv. KUNLUN clones the training-suite
-                           image's complete torch environment into --venv using
+                           torch-npu in install_ascend_extras. MUSA, Biren, and MetaX install
+                           no torch: run inside the corresponding vendor runtime and reuse its
+                           torch stack via a --system-site-packages venv. KUNLUN clones the
+                           training-suite image's complete torch environment into --venv using
                            /opt/clone-uv-env.sh, so torch/torch-kunlun and their dependencies
                            are reused.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
@@ -167,7 +183,9 @@ Common options:
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
                            or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
-    --use-mirror           Use mirrors for faster downloads.
+    --use-mirror           Use mirrors for faster downloads. GitHub downloads go through
+                           the proxy in the GITHUB_PREFIX environment variable
+                           (default https://gh-proxy.com/).
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support
@@ -286,6 +304,10 @@ parse_args() {
                 USE_MIRRORS=1
                 shift
                 ;;
+            --paddle-gpu)
+                INSTALL_PADDLE_GPU=1
+                shift
+                ;;
             --no-root)
                 NO_ROOT=1
                 shift
@@ -342,6 +364,39 @@ validate_python_version() {
     local mm="${py_major}.${py_minor}"
     if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
         echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
+    fi
+}
+
+validate_engine() {
+    [ -z "$ENGINE" ] && return 0
+
+    if [ "$TARGET" = "embodied" ]; then
+        if [ "$ENGINE" != "phyai" ]; then
+            echo "target=embodied supports only --engine phyai." >&2
+            exit 1
+        fi
+        if [ "$MODEL" != "openpi" ] || [ "$ENV_NAME" != "libero" ]; then
+            echo "--engine phyai currently requires --model openpi --env libero." >&2
+            exit 1
+        fi
+        if [ "$PLATFORM" != "nvidia" ]; then
+            echo "--engine phyai currently requires --platform nvidia." >&2
+            exit 1
+        fi
+        local py_major py_minor _py_patch
+        IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+        if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 12 ]; }; then
+            echo "--engine phyai requires Python >=3.12 (got ${PYTHON_VERSION})." >&2
+            exit 1
+        fi
+    elif [ "$TARGET" = "agentic" ]; then
+        if [ "$ENGINE" = "phyai" ]; then
+            echo "--engine phyai is supported only with target=embodied." >&2
+            exit 1
+        fi
+    else
+        echo "--engine is not supported when target=${TARGET}." >&2
+        exit 1
     fi
 }
 
@@ -405,6 +460,23 @@ amd_gfx_is_cdna() {
         gfx908|gfx90a|gfx940|gfx941|gfx942|gfx950) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Whether flash-attn needs its Triton backend on these AMD targets. The ROCm
+# flash-attn wheels install_flash_attn selects carry Composable Kernel code for
+# gfx90a and gfx942 only; on any other ISA the default backend crashes on the
+# first call. $1 is the detected ISA; without a visible GPU (a docker build)
+# the targets come from PYTORCH_ROCM_ARCH. Unknown targets keep the default.
+amd_flash_attn_needs_triton() {
+    local archs="${1:-${PYTORCH_ROCM_ARCH:-}}" arch
+    [ -n "$archs" ] || return 1
+    for arch in ${archs//;/ }; do
+        case "$arch" in
+            gfx90a|gfx942) ;;
+            *) return 0 ;;
+        esac
+    done
+    return 1
 }
 
 # Find a torch version on the PyTorch wheel index that has a +rocm<rocm_ver>
@@ -499,6 +571,23 @@ EOF
     ver=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',')
     [ -z "$ver" ] && return 1
     echo "${ver%%.*} ${ver#*.}"
+}
+
+# Export TORCH_CUDA_ARCH_LIST for extensions built from source. CUDA 12.8+
+# adds Blackwell (sm_100); earlier toolkits reject that target.
+set_torch_cuda_arch_list() {
+    local cuda_mm cuda_major cuda_minor
+    cuda_mm=$(detect_cuda_major_minor) || {
+        echo "Could not detect the CUDA version; cannot build CUDA extensions." >&2
+        exit 1
+    }
+    cuda_major="${cuda_mm%% *}"
+    cuda_minor="${cuda_mm##* }"
+    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
+    else
+        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
+    fi
 }
 
 detect_nvidia_driver_max_cuda() {
@@ -701,6 +790,11 @@ configure_amd() {
             "export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
             "export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
         )
+    fi
+    # flash-attn selects its backend at import time from this variable.
+    if amd_flash_attn_needs_triton "$gfx_arch"; then
+        echo "[install.sh] flash-attn will use its Triton backend on ${gfx_arch:-${PYTORCH_ROCM_ARCH}}."
+        PLATFORM_VENV_EXPORTS+=("export FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE")
     fi
     PLATFORM_FLASH_ATTN_INSTALL=1
     PLATFORM_FLASH_ATTN_PREBUILT=1
@@ -929,20 +1023,18 @@ configure_kunlun() {
         echo "[install.sh] kunlun: environment clone script not found at '$clone_script'." >&2
         exit 1
     fi
-    if [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ] || [ ! -x "/opt/venvs/$VENV_DIR/bin/python" ]; then
+    if [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -x "$VENV_DIR/bin/python" ]; then
         echo "[install.sh] kunlun: cloning the base environment into '$VENV_DIR'."
         bash "$clone_script" "$VENV_DIR"
     else
         echo "[install.sh] kunlun: reusing existing environment at '$VENV_DIR'."
     fi
 
-    local base_python="/opt/venvs/$VENV_DIR/bin/python"
-    if [ ! -x "$base_python" ] || [ ! -f "/opt/venvs/$VENV_DIR/bin/activate" ]; then
+    local base_python="$VENV_DIR/bin/python"
+    if [ ! -x "$base_python" ] || [ ! -f "$VENV_DIR/bin/activate" ]; then
         echo "[install.sh] kunlun: cloned environment at '$VENV_DIR' is missing python/activate." >&2
         exit 1
     fi
-    VENV_DIR="/opt/venvs/$VENV_DIR"
-
 
     local image_python_mm image_torch image_torch_public
     image_python_mm=$("$base_python" - <<'EOF'
@@ -1013,6 +1105,31 @@ EOF
     echo "[install.sh] kunlun: using ${VENV_DIR} (python=${PYTHON_VERSION}, torch=${image_torch})."
 }
 
+configure_metax() {
+    # The CUDA-compatible MACA build of torch ships preinstalled in the
+    # MetaX MACA base image; it drives MACA devices through the standard
+    # torch.cuda API.
+    configure_vendor_torch_platform metax "is this a MetaX MACA container?"
+    PLATFORM_VENDOR_DISTS=(torch torchvision torchaudio flash_attn)
+    # Skip TensorFlow during the base sync. Model-specific pip installs can
+    # still require its CPU build for data processing.
+    PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "tensorflow" "--no-install-package" "tensorflow_datasets")
+    # scipy: the image's scipy requires numpy>=2, which the numpy<2 override
+    # makes unusable (tensorboard -> tensorflow -> scipy.sparse fails on
+    # np.long); pin a scipy that still accepts numpy<2.
+    # ray: pin 2.47.0, whose dashboard agent starts within the raylet's
+    # startup wait (2.5x can exceed it and crash the raylet). The MACA image
+    # ships no ray, so it must be installed, not just resolved.
+    # tensorflow: openvla==0.0.3 pins tensorflow==2.15.0, which has no
+    # cp312 wheels and the MACA image interpreter is Python 3.12. Override
+    # to the first TF line that ships cp312 wheels and still accepts
+    # numpy<2. Keep its protobuf runtime compatible with Ray's generated code
+    # throughout resolution and the final dependency installation.
+    RAY_COMPAT_DEPS=("protobuf==4.25.3" "googleapis-common-protos<1.75.1")
+    PLATFORM_EXCLUDE_DEPS=("tensorflow-addons")
+    PLATFORM_EXTRA_OVERRIDES=("numpy<2" "scipy==1.13.1" "ray==2.47.0" "tensorflow==2.16.1")
+}
+
 
 # Envs that need a different torch than the project default (Isaac Sim /
 # OmniGibson need 2.5.1) declare it here, so configure_platform and
@@ -1024,6 +1141,8 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        simple) env_torch="2.7.0" ;;
+        robodojo) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -1049,6 +1168,7 @@ configure_platform() {
         musa)    configure_musa ;;
         kunlun)  configure_kunlun ;;
         biren)   configure_biren ;;
+        metax)   configure_metax ;;
     esac
     echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
@@ -1273,6 +1393,91 @@ else:
 EOF
 }
 
+install_metax_extras() {
+    # pymxsml is an optional SML binding shipped with the MACA SDK; the
+    # MetaxGPUManager falls back to parsing mx-smi when it is missing.
+    if ! python -c "import pymxsml" >/dev/null 2>&1; then
+        if compgen -G "/opt/maca/share/mxsml/pymxsml-*.whl" >/dev/null; then
+            echo "[install.sh] metax: installing pymxsml from the MACA SDK."
+            pip3 install /opt/maca/share/mxsml/pymxsml-*.whl \
+                || echo "[install.sh] metax: WARNING: pymxsml install failed; mx-smi fallback will be used." >&2
+        else
+            echo "[install.sh] metax: pymxsml wheel not found under /opt/maca/share/mxsml; mx-smi fallback will be used." >&2
+        fi
+    fi
+
+    # Nothing else to install; just fail here rather than mid-training.
+    python - <<'EOF'
+import importlib.metadata as metadata
+import sys
+
+# Checkable without a device, unlike `import torch`.
+try:
+    metadata.distribution("torch")
+except metadata.PackageNotFoundError:
+    print(
+        "[install.sh] --platform metax requires torch to be installed for "
+        "the image's interpreter. Run this inside a MetaX MACA container.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# The image's torch is CUDA-API-compatible, so the device check goes
+# through the standard torch.cuda interface.
+# Only possible where a device is visible, i.e. not in a docker build.
+try:
+    import torch
+
+    available = torch.cuda.is_available()
+except Exception as exc:
+    print(
+        f"[install.sh] metax: torch {metadata.version('torch')} present; "
+        f"skipping the device check ({type(exc).__name__}). This is expected "
+        "during a docker build.",
+        file=sys.stderr,
+    )
+else:
+    if available:
+        print(
+            f"[install.sh] metax: torch {torch.__version__}, "
+            f"{torch.cuda.device_count()} device(s)"
+        )
+    else:
+        print(
+            "[install.sh] WARNING: torch is installed but reports no "
+            "available MetaX device. At runtime that means the container "
+            "was started without the MetaX container runtime.",
+            file=sys.stderr,
+        )
+EOF
+
+    # These are renamed between torch releases (nvidia-cuda-runtime-cu12 ->
+    # nvidia-cuda-runtime -> ...), so sweep by prefix. nvidia-ml-py is a
+    # pure-python NVML binding others import defensively, so keep it. Any
+    # package whose version carries a '+metax...' local tag is a
+    # MetaX-adapted build from the base image and must never be removed.
+    local cuda_pkgs
+    cuda_pkgs=$(uv pip list --format json 2>/dev/null \
+        | python -c '
+import json
+import re
+import sys
+
+for pkg in json.load(sys.stdin):
+    name, version = pkg["name"], pkg["version"]
+    if "metax" in version.lower():
+        continue
+    if re.match(r"^(nvidia|cuda)[-_]", name) and name != "nvidia-ml-py":
+        print(name)
+' \
+        | tr '\n' ' ' || true)
+    if [ -n "$cuda_pkgs" ]; then
+        echo "[install.sh] metax: removing CUDA-only wheels: ${cuda_pkgs}"
+        # shellcheck disable=SC2086
+        uv pip uninstall $cuda_pkgs || true
+    fi
+}
+
 install_platform_extras() {
     case "$PLATFORM" in
         nvidia)  install_nvidia_extras ;;
@@ -1281,6 +1486,7 @@ install_platform_extras() {
         musa)    install_musa_extras ;;
         kunlun)  install_kunlun_extras ;;
         biren)   install_biren_extras ;;
+        metax)   install_metax_extras ;;
     esac
 }
 
@@ -1349,7 +1555,7 @@ agentic_cuda_line() {
 }
 
 agentic_requirements_file() {
-    # $1 = engine (sglang|vllm), $2 = version
+    # $1 = engine (sglang|vllm|phyai), $2 = version
     local line path
     line=$(agentic_cuda_line)
     path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
@@ -1387,6 +1593,11 @@ install_engine_requirements() {
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
         printf '%s\n' "$engine_specs" > "$engine_req"
+        # Same as the requirements file above: a direct wheel URL is not rewritten
+        # by git insteadOf.
+        if [ -n "$GITHUB_PREFIX" ]; then
+            sed -i "s|https://github.com/|${GITHUB_PREFIX}https://github.com/|g" "$engine_req"
+        fi
         env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" --no-deps -r "$engine_req"
         rm -f "$engine_req"
     fi
@@ -1454,6 +1665,12 @@ apply_model_default_torch() {
     [ -z "$TORCH_VERSION" ] || return 0
     local model_torch="-"
     case "$MODEL" in
+        openpi)
+            if [ "$ENV_NAME" = "yam" ]; then
+                # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
+                model_torch="2.7.1"
+            fi
+            ;;
         sglang) model_torch=$(sglang_torch_version "${SGLANG_VERSION:-$EMBODIED_SGLANG_VERSION}") ;;
     esac
     [ "$model_torch" != "-" ] || return 0
@@ -1495,7 +1712,8 @@ apply_torch_override() {
     fi
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
-        && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ]; then
+        && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
 
@@ -1513,16 +1731,44 @@ apply_torch_override() {
         echo "[install.sh] Set torchcodec override to ${_torchcodec_spec} for torch ${_eff_torch}"
     fi
 
-    if [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -gt 0 ]; then
+    # Replace the default protobuf override rather than adding a conflicting
+    # second pin. The same policy is enforced after all model/env installs.
+    sed -i -E '/^override-dependencies = \[/,/^\]/ { /"protobuf[<>=!]/d; }' "$PYPROJECT_FILE"
+    local extra_overrides=("${RAY_COMPAT_DEPS[@]}" "${PLATFORM_EXTRA_OVERRIDES[@]}")
+    if [ ${#extra_overrides[@]} -gt 0 ]; then
         # Insert each extra override right after the opening bracket of the
         # override-dependencies array. Done in reverse so the final order
         # matches the array order. The trap restores the original on exit.
         local i
-        for (( i=${#PLATFORM_EXTRA_OVERRIDES[@]}-1; i>=0; i-- )); do
-            local entry="${PLATFORM_EXTRA_OVERRIDES[i]}"
+        for (( i=${#extra_overrides[@]}-1; i>=0; i-- )); do
+            local entry="${extra_overrides[i]}"
             sed -i "/^override-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
         done
-        echo "[install.sh] Added override-dependencies entries: ${PLATFORM_EXTRA_OVERRIDES[*]}"
+        echo "[install.sh] Added override-dependencies entries: ${extra_overrides[*]}"
+    fi
+
+    if [ ${#PLATFORM_EXCLUDE_DEPS[@]} -gt 0 ]; then
+        # Unlike override-dependencies, exclude-dependencies makes the resolver
+        # ignore the package entirely (no wheel lookup). Insert each entry after
+        # the opening bracket, in reverse so the final order matches the array
+        # order. The trap restores the original on exit.
+        if grep -q '^exclude-dependencies = \[' "$PYPROJECT_FILE"; then
+            local j
+            for (( j=${#PLATFORM_EXCLUDE_DEPS[@]}-1; j>=0; j-- )); do
+                local entry="${PLATFORM_EXCLUDE_DEPS[j]}"
+                sed -i "/^exclude-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
+            done
+        else
+            # No exclude-dependencies array yet; create one just above
+            # override-dependencies so [tool.uv] stays grouped.
+            local joined=""
+            local entry
+            for entry in "${PLATFORM_EXCLUDE_DEPS[@]}"; do
+                joined="${joined}${joined:+, }\"${entry}\""
+            done
+            sed -i "/^override-dependencies = \\[\$/i exclude-dependencies = [${joined}]" "$PYPROJECT_FILE"
+        fi
+        echo "[install.sh] Added exclude-dependencies entries: ${PLATFORM_EXCLUDE_DEPS[*]}"
     fi
 
     if [ "$needs_torch_rewrite" -eq 0 ]; then
@@ -1644,6 +1890,9 @@ setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
         export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
+        # Every user appends a URL to the prefix, so add the trailing slash if
+        # it is missing: https://gh-proxy.org works like https://gh-proxy.org/.
+        export GITHUB_PREFIX="${GITHUB_PREFIX%/}/"
         export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
@@ -1653,6 +1902,8 @@ setup_mirror() {
         export "GIT_CONFIG_KEY_${idx}=url.${GITHUB_PREFIX}github.com/.insteadOf"
         export "GIT_CONFIG_VALUE_${idx}=https://github.com/"
         export GIT_CONFIG_COUNT=$((idx + 1))
+    else
+        GITHUB_PREFIX=""
     fi
 }
 
@@ -1738,7 +1989,12 @@ EOF
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
-    uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    # Diffusion installs Paddle outside the project dependency set.
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -2105,7 +2361,11 @@ EOF
 }
 
 install_common_embodied_deps() {
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --extra embodied --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
         { grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" || [ $? -eq 1 ]; } \
             | uv pip install -r -
@@ -2303,13 +2563,62 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        geniesim)
+            create_and_sync_venv
+            install_common_embodied_deps
+            local index_args=()
+            mapfile -t index_args < <(platform_index_args)
+            # uv pip does not use uv sync's named sources. Keep OpenPI's
+            # transitive Torch pins on the platform versions selected above.
+            uv pip install "rlinf-openpi==0.1.1" "${index_args[@]}" \
+                --overrides <(sed -nE 's/^[[:space:]]*"(torch(vision|audio)?==[^"]+)".*/\1/p' "$PYPROJECT_FILE")
+            install_flash_attn
+            install_geniesim_env
+            ;;
+        yam)
+            create_and_sync_venv
+            install_common_embodied_deps
+            local yam_openpi_deps=(
+                "numpy<2" "transformers==4.53.2" "gym-aloha==0.1.3"
+                "mujoco==3.12.0" "dm-control==1.0.40"
+            )
+            (
+                local i2rt_spec i2rt_repo i2rt_build
+                i2rt_spec=$(sed -n 's/^i2rt @ git+//p' "$SCRIPT_DIR/embodied/envs/yam.txt")
+                i2rt_repo=$(clone_or_reuse_repo I2RT_PATH "$VENV_DIR/i2rt" "${i2rt_spec%@*}")
+                i2rt_build=$(mktemp -d)
+                trap 'rm -rf -- "$i2rt_build"' EXIT
+                git -C "$i2rt_repo" archive "${i2rt_spec##*@}" | tar -x -C "$i2rt_build"
+                # TODO(guozhen): relax these pinned OpenPI dependencies once rlinf-openpi-lite is adopted.
+                # OpenPI needs NumPy 1; Rerun is only used by SDK visualization examples.
+                python - "$i2rt_build" <<'EOF'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+project = root / "pyproject.toml"
+text = project.read_text()
+text = text.replace('"numpy==2.2.6"', '"numpy>=1.26.4,<=2.2.6"')
+text = text.replace('    "rerun-sdk>=0.32.2",\n', '')
+text = text.replace(
+    "[project.optional-dependencies]\n",
+    '[project.optional-dependencies]\nvisualization = ["rerun-sdk>=0.32.2"]\n',
+)
+project.write_text(text)
+(root / "override.txt").write_text(f"i2rt @ {root.as_uri()}\n")
+EOF
+                install_yam_env --override "$i2rt_build/override.txt" "${yam_openpi_deps[@]}"
+            )
+            uv pip install "rlinf-openpi==0.1.1" "${yam_openpi_deps[@]}"
+            install_flash_attn
+            ;;
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+            uv pip install "${RAY_COMPAT_DEPS[@]}"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -2360,6 +2669,15 @@ install_openpi_model() {
             install_flash_attn
             install_robotwin_env
             ;;
+        robodojo)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            # Keep the RoboDojo pins and the self-check last: OpenPI declares
+            # torch==2.7.1 and its own lerobot/opencv bounds.
+            install_robodojo_env
+            ;;
         isaaclab)
             create_and_sync_venv
             install_common_embodied_deps
@@ -2381,6 +2699,13 @@ install_openpi_model() {
             install_common_embodied_deps
             install_franka_franky_env
             uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            ;;
+        so101)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install "rlinf-openpi==0.1.1"
+            install_so101_env
             install_flash_attn
             ;;
         polaris)
@@ -2420,6 +2745,112 @@ EOF
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
+}
+
+install_phyai_runtime() {
+    local phyai_version="0.2.0rc1"
+    local cuda_line expected_cuda_major cudart_lib
+    cuda_line=$(agentic_cuda_line)
+    case "$cuda_line" in
+        cu12)
+            expected_cuda_major=12
+            cudart_lib=libcudart.so.12
+            ;;
+        cu13)
+            expected_cuda_major=13
+            cudart_lib=libcudart.so.13
+            ;;
+        *)
+            echo "[install.sh] ERROR: unsupported PhyAI CUDA line: ${cuda_line}." >&2
+            exit 1
+            ;;
+    esac
+    local torch_before transformers_before version_output
+    version_output=$(python - "$cuda_line" "$expected_cuda_major" <<'PYEOF'
+import sys
+
+import torch
+import transformers
+
+expected_line, expected_major = sys.argv[1:]
+torch_cuda = torch.version.cuda
+actual_major = torch_cuda.split(".", 1)[0] if torch_cuda else None
+if actual_major != expected_major:
+    raise SystemExit(
+        "PhyAI CUDA line mismatch: "
+        f"expected {expected_line}, but torch.version.cuda={torch_cuda!r}."
+    )
+print(torch.__version__, transformers.__version__)
+PYEOF
+) || exit 1
+    read -r torch_before transformers_before <<< "$version_output"
+
+    install_engine_requirements "$(agentic_requirements_file phyai "$phyai_version")"
+    env -u UV_TORCH_BACKEND uv pip install --no-deps \
+        "phyai==${phyai_version}" \
+        "phyai-kernel==${phyai_version}" \
+        "phyai-ext==${phyai_version}" \
+        --index https://mingti-org.github.io/phyai/simple/
+
+    export CUDNN_FRONTEND_CUDART_LIB_NAME="$cudart_lib"
+    if grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i "s|^export CUDNN_FRONTEND_CUDART_LIB_NAME=.*|export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}|" "$VENV_DIR/bin/activate"
+    else
+        echo "export CUDNN_FRONTEND_CUDART_LIB_NAME=${cudart_lib}" >> "$VENV_DIR/bin/activate"
+    fi
+
+    python - "$torch_before" "$transformers_before" <<'PYEOF'
+import sys
+from importlib.metadata import version
+
+import torch
+import transformers
+from phyai.engine import Engine, EngineArgs
+from phyai.models.pi05.main_pi05 import PI05Args
+from phyai.models.pi05.scheduler_pi05 import PI05Request, PI05RolloutRequest
+
+expected_torch, expected_transformers = sys.argv[1:]
+if torch.__version__ != expected_torch:
+    raise SystemExit(
+        f"PhyAI installation changed Torch: {expected_torch} -> {torch.__version__}."
+    )
+if transformers.__version__ != expected_transformers:
+    raise SystemExit(
+        "PhyAI installation changed Transformers: "
+        f"{expected_transformers} -> {transformers.__version__}."
+    )
+assert all((Engine, EngineArgs, PI05Args, PI05Request, PI05RolloutRequest))
+print(
+    "[install.sh] PhyAI import smoke passed; "
+    f"phyai={version('phyai')}, phyai-kernel={version('phyai-kernel')}, "
+    f"phyai-ext={version('phyai-ext')}, torch={torch.__version__}, "
+    f"transformers={transformers.__version__}."
+)
+PYEOF
+}
+
+install_psi0_model() {
+    case "$ENV_NAME" in
+        simple)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_simple_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Psi0 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local psi0_dir
+    psi0_dir=$(clone_or_reuse_repo PSI0_PATH "$VENV_DIR/Psi0" https://github.com/physical-superintelligence-lab/Psi0.git)
+    if [ -z "${PSI0_PATH:-}" ]; then
+        git -C "$psi0_dir" checkout a32e57a3fabb8590c80677f9cd3d1fc3db60eb06 >&2
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/models/psi0.txt"
+    uv pip install -e "$psi0_dir" --no-deps
+    install_flash_attn
 }
 
 install_pi0_fast_model() {
@@ -2649,7 +3080,7 @@ install_dexbotic_model() {
             local dexbotic_path
             dexbotic_path=$(clone_or_reuse_repo DEXBOTIC_PATH "$VENV_DIR/dexbotic" https://github.com/dexmal/dexbotic.git -b 0.2.0)
             maybe_build_decord_from_source
-            uv pip install -e "$dexbotic_path"
+            uv pip install -e "$dexbotic_path" "transformers==4.53.2"
 
             install_${ENV_NAME}_env
             uv pip install transformers==4.53.2
@@ -2691,223 +3122,27 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
-install_lingbot_vla_v2_model() (
-    set -Eeuo pipefail
-if [ "$ENV_NAME" != "robotwin" ] || [ "$PLATFORM" != "nvidia" ]; then
-    echo "LingBot-VLA V2 installation requires --env robotwin --platform nvidia." >&2
-    exit 2
-fi
-if [ "$USER_SET_PYTHON" = 1 ] && [[ ! "$PYTHON_VERSION" =~ ^3\.12(\.[0-9]+)?$ ]]; then
-    echo "LingBot-VLA V2 requires Python 3.12; set PYTHON to its interpreter." >&2
-    exit 2
-fi
-if [ -n "$TORCH_VERSION$TRANSFORMERS_VERSION$SGLANG_VERSION$VLLM_VERSION$ENGINE$ROCM_VERSION" ] ||
-    [ "$USE_MIRRORS" = 1 ] || [ "$DISABLE_FLASH_ATTN" = 1 ]; then
-    echo "LingBot-VLA V2 uses pinned dependencies; version overrides, --use-mirror and --no-flash-attn are unsupported." >&2
-    exit 2
-fi
-if [ "$NO_ROOT" -eq 0 ]; then
-    bash "$SCRIPT_DIR/sys_deps.sh" "$PLATFORM"
-fi
-REPO_DIR=$(dirname "$SCRIPT_DIR")
-VENV_DIR=$(realpath -m "$VENV_DIR")
-if [[ -e "$VENV_DIR" ]]; then
-    echo "Refusing to modify existing environment: $VENV_DIR" >&2
-    exit 2
-fi
-GIT_SSL_VERIFY="${LINGBOT_VLA_V2_GIT_SSL_VERIFY:-true}"
-case "$GIT_SSL_VERIFY" in
-    true|false) ;;
-    *) echo "LINGBOT_VLA_V2_GIT_SSL_VERIFY must be true or false." >&2; exit 2 ;;
-esac
-unset PYTHONPATH PYTHONHOME PIP_TARGET PIP_PREFIX PIP_USER GIT_SSL_NO_VERIFY
-install_uv
-# The CUDA extensions below are compiled with the nvcc that torch will find, and torch
-# rejects a toolkit whose major version differs from its own CUDA build.
-NVCC="${CUDA_HOME:-${CUDA_PATH:-}}"
-NVCC="${NVCC:+$NVCC/bin/nvcc}"
-NVCC="${NVCC:-$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)}"
-CUDA_TOOLKIT_VERSION=$("$NVCC" --version 2>/dev/null | sed -nE 's/.*release ([0-9]+\.[0-9]+).*/\1/p')
-case "${CUDA_TOOLKIT_VERSION%%.*}" in
-    12) export UV_TORCH_BACKEND=cu128 ;;
-    13) export UV_TORCH_BACKEND=cu130 ;;
-    *)
-        echo "LingBot-VLA V2 needs a CUDA 12 or 13 toolkit; found '${CUDA_TOOLKIT_VERSION:-none}' at $NVCC." >&2
-        exit 2
-        ;;
-esac
-# Copied files keep the sapien and mplib patches below out of uv's shared cache.
-export UV_LINK_MODE=copy
-export PYTHONNOUSERSITE=1
-export PIP_REQUIRE_VIRTUALENV=true
-export PIP_DISABLE_PIP_VERSION_CHECK=1
-export MAX_JOBS="${MAX_JOBS:-4}"
-export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;9.0}"
-export FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80;90}"
-LINGBOT_VLA_V2_REVISION=951475ae1b1d87553e7dc47c97b53a3d695c0d13
-ROBOTWIN_V2_REVISION=0008ae6800df9f75fc8de7098bacb01735fd8fd2
-BOOTSTRAP_PYTHON=$(command -v "${PYTHON:-python3.12}")
-"$BOOTSTRAP_PYTHON" -I -c 'import sys; assert sys.version_info[:2] == (3, 12), "Python 3.12 is required"'
-"$BOOTSTRAP_PYTHON" -I -m venv --without-pip "$VENV_DIR"
-PYTHON_BIN="$VENV_DIR/bin/python"
-export VIRTUAL_ENV="$VENV_DIR"
-export PATH="$VENV_DIR/bin:$PATH"
-trap 'echo "Installation failed at line $LINENO; incomplete environment: $VENV_DIR" >&2' ERR
-uv_pip_install() {
-    # RLinf's [tool.uv] overrides pin the default torch stack, not this model's.
-    uv pip install --no-config --python "$PYTHON_BIN" "$@"
+install_lingbot_vla_v2_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+    # The RLinf fork's rlinf branch adds the checkpoint metadata and PPO MoE hooks.
+    local vla2_path
+    vla2_path=$(clone_or_reuse_repo LINGBOT_VLA_V2_PATH "$VENV_DIR/lingbot-vla-v2" "${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla-v2.git" -b rlinf)
+    uv pip install -e "$vla2_path" --no-deps
+
+    case "$ENV_NAME" in
+        robotwin)
+            install_robotwin_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for LingBot-VLA V2." >&2
+            exit 1
+            ;;
+    esac
+    # Model pins go last so the env install cannot move them.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/lingbotvlav2.txt"
+    install_flash_attn
 }
-# uv installs every package here; pip is only needed by the uninstall and freeze steps.
-echo "=== Bootstrap packaging tools in isolated environment ==="
-uv_pip_install --upgrade pip setuptools==80.9.0 wheel
-if [[ "$GIT_SSL_VERIFY" == false ]]; then
-    echo "WARNING: Git HTTPS certificate verification is disabled for the LingBot-VLA V2, RoboTwin and LeRobot checkouts; use only on a trusted network." >&2
-fi
-echo "=== Check GitHub connectivity (http.sslVerify=$GIT_SSL_VERIFY) ==="
-git -c "http.sslVerify=$GIT_SSL_VERIFY" ls-remote https://github.com/robbyant/lingbot-vla-v2.git HEAD
-clone_v2_source() {
-    # Usage: clone_v2_source ENV_VAR_NAME DEFAULT_DIR GIT_URL REVISION
-    # Reuses an existing checkout named by ENV_VAR_NAME; otherwise fetches only the
-    # pinned commit. LeRobot's LFS objects are test artifacts, so they are skipped.
-    # Runs inside $(...), so the http.sslVerify override never reaches later git+ builds.
-    local count="${GIT_CONFIG_COUNT:-0}" target attempt
-    export "GIT_CONFIG_KEY_${count}=http.sslVerify" "GIT_CONFIG_VALUE_${count}=$GIT_SSL_VERIFY"
-    export GIT_CONFIG_COUNT=$((count + 1)) GIT_LFS_SKIP_SMUDGE=1
-    target="$(printenv "$1" 2>/dev/null || true)"
-    if [[ -n "$target" && -d "$target" ]]; then
-        git -C "$target" checkout --detach "$4" >&2 || return 1
-    else
-        target="${target:-$2}"
-        git init -q "$target" || return 1
-        for attempt in 1 2 3 4; do
-            git -C "$target" fetch --depth 1 "$3" "$4" >&2 && break
-            [ "$attempt" -lt 4 ] || return 1
-            sleep $(( attempt * 5 ))
-        done
-        git -C "$target" checkout -q --detach FETCH_HEAD >&2 || return 1
-    fi
-    echo "$target"
-}
-LINGBOT_VLA_V2_PATH=$(realpath "$(clone_v2_source LINGBOT_VLA_V2_SOURCE "$VENV_DIR/lingbot-vla-v2" https://github.com/robbyant/lingbot-vla-v2.git "$LINGBOT_VLA_V2_REVISION")")
-ROBOTWIN_PATH=$(realpath "$(clone_v2_source ROBOTWIN_V2_SOURCE "$VENV_DIR/RoboTwin" https://github.com/RoboTwin-Platform/RoboTwin.git "$ROBOTWIN_V2_REVISION")")
-LEROBOT_PATH=$(realpath "$(clone_v2_source LEROBOT_V2_SOURCE "$VENV_DIR/lerobot" https://github.com/huggingface/lerobot.git 58f70b6bd370864139a3795ac3497a9eae8c42d5)")
-"$PYTHON_BIN" -I - "$LINGBOT_VLA_V2_PATH" "$ROBOTWIN_PATH" <<'LINGBOT_V2_COMPAT'
-import ast
-import sys
-from pathlib import Path
-
-lingbot_dir, robotwin_dir = map(Path, sys.argv[1:])
-replacements = [
-    (
-        robotwin_dir / "envs/_base_task.py",
-        '        self.setup_scene()\n',
-        '        self.setup_scene(camera_shader=kwags.get("camera_shader", "rt"))\n',
-    ),
-    (
-        robotwin_dir / "envs/_base_task.py",
-        '        sapien.render.set_camera_shader_dir("rt")\n'
-        '        sapien.render.set_ray_tracing_samples_per_pixel(32)\n'
-        '        sapien.render.set_ray_tracing_path_depth(8)\n'
-        '        sapien.render.set_ray_tracing_denoiser("oidn")\n',
-        '        camera_shader = kwargs.get("camera_shader", "rt")\n'
-        '        sapien.render.set_camera_shader_dir(camera_shader)\n'
-        '        if camera_shader == "rt":\n'
-        '            sapien.render.set_ray_tracing_samples_per_pixel(32)\n'
-        '            sapien.render.set_ray_tracing_path_depth(8)\n'
-        '            sapien.render.set_ray_tracing_denoiser("oidn")\n',
-    ),
-    (
-        robotwin_dir / "robotwin/envs/vector_env.py",
-        '                        task.close_env()\n'
-        '                        trial_seed += 1\n',
-        '                        task.close_env()\n'
-        '                        if not isinstance(e, UnStableError) or trial_seed - self.env_seed >= 20:\n'
-        '                            raise\n'
-        '                        trial_seed += 1\n',
-    ),
-    (
-        lingbot_dir / "lingbotvla/models/vla/lingbot_vla/modeling_lingbot_vla_v2.py",
-        '                    _full_len = query_states.shape[1]\n'
-        '                    _full_block_mask = build_block_mask(\n'
-        '                        attention_mask,\n'
-        '                        self.qwenvl.config.text_config.num_attention_heads,\n'
-        '                        _full_len,\n'
-        '                        _full_len,\n'
-        '                    )\n',
-        '                    query_length = query_states.shape[1]\n'
-        '                    key_value_length = key_states.shape[1]\n'
-        '                    if attention_mask.shape[-2:] != (query_length, key_value_length):\n'
-        '                        raise ValueError("flex_cached mask shape must match Q/KV lengths")\n'
-        '                    _full_block_mask = build_block_mask(\n'
-        '                        attention_mask,\n'
-        '                        self.qwenvl.config.text_config.num_attention_heads,\n'
-        '                        query_length,\n'
-        '                        key_value_length,\n'
-        '                    )\n',
-    ),
-]
-updated = {}
-for path, original, replacement in replacements:
-    text = updated.get(path, path.read_text())
-    if text.count(replacement) == 1:
-        continue
-    if text.count(original) != 1:
-        raise RuntimeError(f"Unexpected dependency source; refusing to modify {path}")
-    updated[path] = text.replace(original, replacement, 1)
-for path, text in updated.items():
-    ast.parse(text, filename=str(path))
-for path, text in updated.items():
-    path.write_text(text)
-print("LingBot-VLA V2 compatibility: raster rendering, bounded setup retries, rectangular KV-cache mask")
-LINGBOT_V2_COMPAT
-"$PYTHON_BIN" -I - "$ROBOTWIN_PATH" <<'PY'
-import site
-import sys
-from pathlib import Path
-
-(Path(site.getsitepackages()[0]) / "robotwin_release.pth").write_text(sys.argv[1] + "\n")
-PY
-
-echo "=== Install CUDA PyTorch and runtime dependencies ==="
-CONSTRAINTS="$VENV_DIR/lingbotvla_v2_constraints.txt"
-cp "$SCRIPT_DIR/embodied/models/lingbotvla_v2.txt" "$CONSTRAINTS"
-printf '\ntorch==2.11.0\ntorchvision==0.26.0\ntorchaudio==2.11.0\n' >> "$CONSTRAINTS"
-export UV_CONSTRAINT="$CONSTRAINTS"
-uv_pip_install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0
-"$PYTHON_BIN" -I - "$REPO_DIR/pyproject.toml" "$VENV_DIR/rlinf_runtime.txt" <<'PY'
-import sys
-import tomllib
-from pathlib import Path
-
-project = tomllib.loads(Path(sys.argv[1]).read_text())["project"]
-requirements = project["dependencies"] + project["optional-dependencies"]["embodied"]
-Path(sys.argv[2]).write_text("\n".join(requirements) + "\n")
-PY
-uv_pip_install -r "$VENV_DIR/rlinf_runtime.txt" -r "$SCRIPT_DIR/embodied/models/lingbotvla_v2.txt" -r "$SCRIPT_DIR/embodied/envs/common.txt"
-uv_pip_install --no-deps -e "$REPO_DIR" -e "$LINGBOT_VLA_V2_PATH" -e "$LEROBOT_PATH"
-uv_pip_install --no-deps -e "$LINGBOT_VLA_V2_PATH/lingbotvla/models/vla/vision_models/lingbot-depth" -e "$LINGBOT_VLA_V2_PATH/lingbotvla/models/vla/vision_models/MoGe"
-uv_pip_install mplib==0.2.1 gymnasium==0.29.1 open3d 'zarr<3' openai warp-lang==1.11.1 "$SAPIEN_SPEC"
-# pytorch3d's v0.7.9 tag is given as its commit, like curobo below, so uv can reuse the
-# wheels it builds for them from its cache.
-uv_pip_install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git@33824be3cbc87a7dd1db0f6a9a9de9ac81b2d0ba
-uv_pip_install setuptools_scm
-uv_pip_install --no-build-isolation git+https://github.com/NVlabs/curobo.git@d64c4b005459db10c5dd867d8b30a87d5bda9bdb
-uv_pip_install --no-build-isolation flash-attn==2.8.3
-"$PYTHON_BIN" -I - <<'PY'
-from pathlib import Path
-
-import mplib
-import sapien
-
-urdf = Path(sapien.__file__).parent / "wrapper/urdf_loader.py"
-urdf.write_text(urdf.read_text().replace('open(urdf_file, "r")', 'open(urdf_file, "r", encoding="utf-8")').replace('open(srdf_file, "r")', 'open(srdf_file, "r", encoding="utf-8")'))
-planner = Path(mplib.__file__).parent / "planner.py"
-planner.write_text(planner.read_text().replace("if np.linalg.norm(delta_twist) < 1e-4 or collide or not within_joint_limit:", "if np.linalg.norm(delta_twist) < 1e-4 or not within_joint_limit:"))
-PY
-"$PYTHON_BIN" -I -m pip uninstall -y pynvml
-"$PYTHON_BIN" -I -m pip freeze --all > "$VENV_DIR/installed-packages.txt"
-echo "Installation completed: $VENV_DIR"
-)
 
 install_abot_m0_model() {
     create_and_sync_venv
@@ -2996,6 +3231,63 @@ install_dreamzero_model() {
             exit 1
             ;;
     esac
+}
+
+install_paddle_gpu() {
+    local paddle_gpu_ver=""
+    local paddle_gpu_index=""
+    local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/packages/stable/cu120/paddlepaddle-gpu/"
+    local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/"
+
+    local cuda_mm cuda_major
+    if cuda_mm=$(detect_cuda_major_minor) 2>/dev/null; then
+        cuda_major="${cuda_mm%% *}"
+    else
+        cuda_major=""
+    fi
+
+    if [ "$cuda_major" = "12" ]; then
+        paddle_gpu_ver="2.6.2.post120"
+        paddle_gpu_index="$paddle_gpu_index_cuda12"
+    elif [ "$cuda_major" = "11" ]; then
+        paddle_gpu_ver="2.6.2"
+        paddle_gpu_index="$paddle_gpu_index_cuda11"
+    else
+        echo "[install.sh] --paddle-gpu supports only CUDA 11.x and 12.x; detected CUDA ${cuda_major:-<none>}." >&2
+        return 1
+    fi
+
+    if PADDLE_GPU_VERSION="$paddle_gpu_ver" python - <<'EOF'
+import os
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    gpu_version = version("paddlepaddle-gpu")
+    version("paddlepaddle")
+except PackageNotFoundError as error:
+    if error.name == "paddlepaddle":
+        import paddle
+
+        if gpu_version == os.environ["PADDLE_GPU_VERSION"] and paddle.device.is_compiled_with_cuda():
+            raise SystemExit(0)
+raise SystemExit(1)
+EOF
+    then
+        echo "[install.sh] paddlepaddle-gpu==${paddle_gpu_ver} is already installed; skipping."
+        return 0
+    fi
+
+    uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
+    echo "[install.sh] Installing paddlepaddle-gpu==${paddle_gpu_ver} for CUDA ${cuda_major}.x"
+    # The exact CUDA 12 build only exists on PaddlePaddle's index. Dependencies
+    # continue to use UV_DEFAULT_INDEX, including the --use-mirror setting.
+    uv pip install --find-links "$paddle_gpu_index" \
+        "paddlepaddle-gpu==${paddle_gpu_ver}"
+    if ! python -c 'import paddle; raise SystemExit(not paddle.device.is_compiled_with_cuda())'; then
+        uv pip uninstall paddlepaddle-gpu 2>/dev/null || true
+        echo "[install.sh] Installed PaddlePaddle package is not CUDA-enabled." >&2
+        return 1
+    fi
 }
 
 install_fastwam_deps() {
@@ -3113,11 +3405,20 @@ install_cosmos3_model() {
 
 install_diffusion_model() {
     # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
-    # Python 3.10 in the generation examples.
+    # Python 3.10 in the diffusion (generation) examples.
     PYTHON_VERSION="3.10"
     create_and_sync_venv
     install_common_embodied_deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    if [ "$INSTALL_PADDLE_GPU" -eq 1 ]; then
+        sed '/^paddlepaddle==/d' "$SCRIPT_DIR/embodied/models/diffusion.txt" \
+            | uv pip install -r -
+        install_paddle_gpu
+    else
+        if python -c 'from importlib.metadata import version; version("paddlepaddle-gpu")' 2>/dev/null; then
+            uv pip uninstall paddlepaddle-gpu
+        fi
+        uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    fi
     uv pip uninstall pynvml || true
 }
 
@@ -3179,7 +3480,7 @@ install_franka_ros_realworld_env() {
 }
 
 install_env_only() {
-    if [ "$ENV_NAME" = "d4rl" ]; then
+    if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
     fi
     create_and_sync_venv
@@ -3187,7 +3488,7 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2)
+        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
@@ -3231,8 +3532,19 @@ install_env_only() {
         dosw1)
             install_dosw1_env
             ;;
+        yam)
+            install_yam_env
+            ;;
         polaris)
             install_polaris_env
+            ;;
+        simple)
+            install_common_embodied_deps
+            install_simple_env
+            ;;
+        robodojo)
+            install_common_embodied_deps
+            install_robodojo_env
             ;;
         libero|maniskill_libero)
             install_common_embodied_deps
@@ -3260,9 +3572,10 @@ install_dummy_env() {
 # package with copied files so both agree.
 materialize_package_files() {
     local dist="$1" ver
+    shift
     ver=$(uv pip show "$dist" 2>/dev/null | sed -n 's/^Version: //p')
     [ -n "$ver" ] || return 0
-    UV_LINK_MODE=copy uv pip install --force-reinstall --no-deps "${dist}==${ver}"
+    UV_LINK_MODE=copy uv pip install --force-reinstall --no-deps "$@" "${dist}==${ver}"
 }
 
 reset_libero_config() {
@@ -3451,6 +3764,7 @@ install_d4rl_env() {
 
     uv pip install "mujoco-py==2.1.2.14"
     uv pip install "tqdm"
+    uv pip install "numpy<2" --force-reinstall
 }
 
 install_liberopro_env() {
@@ -3493,8 +3807,15 @@ install_behavior_env() {
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
 }
 
+install_geniesim_env() {
+    local geniesim_path
+    geniesim_path=$(clone_or_reuse_repo GENIESIM_PATH "$VENV_DIR/genie_sim" ${GITHUB_PREFIX}https://github.com/AgibotTech/genie_sim.git -b "${GENIESIM_GIT_REF:-v3.5.0}" --depth 1)
+    uv pip install "$geniesim_path/source/rlinf_geniesim"
+}
+
 install_metaworld_env() {
-    uv pip install metaworld==3.0.0
+    # Meta-World 3.0.0 writes an 11-wide weld row. MuJoCo 3.17.0 widened eq_data to 12.
+    uv pip install metaworld==3.0.0 "mujoco==3.16.0"
 }
 
 install_calvin_env() {
@@ -3533,6 +3854,34 @@ import isaacsim
 EOF
 }
 
+install_simple_env() {
+    local simple_dir
+    simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    # Checkout the fixed parent revision before initializing its gitlink-pinned
+    # submodules; this avoids ever resolving submodules from a moving default branch.
+    if [ -z "${SIMPLE_PATH:-}" ]; then
+        git -C "$simple_dir" checkout 5e3d6f84e85343e34e9bca8d157f0d7813231185 >&2
+        git -C "$simple_dir" submodule update --init --recursive
+    fi
+
+    # Isaac Sim resolves its shared extension tree through real file paths.
+    UV_LINK_MODE=hardlink uv pip install -r "$SCRIPT_DIR/embodied/envs/simple.txt"
+    uv pip install -e "$simple_dir/third_party/unitree_sdk2_python"
+    uv pip install -e "$simple_dir/third_party/gear_sonic[sim]"
+    uv pip install -e "$simple_dir/third_party/decoupled_wbc[full]"
+    uv pip install -e "$simple_dir" --no-deps
+
+    # cuRobo's Git-derived version can change after submodule initialization.
+    # Avoid stale wheels; copies survive removal of uv's temporary cache.
+    UV_NO_CACHE=1 UV_LINK_MODE=copy \
+        UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
+        bash "$simple_dir/scripts/install_curobo.sh"
+}
+
 install_isaaclab_env() {
     local isaaclab_dir
     isaaclab_dir=$(clone_or_reuse_repo ISAAC_LAB_PATH "$VENV_DIR/isaaclab" https://github.com/RLinf/IsaacLab)
@@ -3554,7 +3903,7 @@ install_robocasa_env() {
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
     
     uv pip install -e "$robocasa_dir"
-    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
     python -m robocasa.scripts.setup_macros
 }
 
@@ -3584,11 +3933,20 @@ install_robocasa365_env() {
         git -C "$robocasa_dir" pull --ff-only origin main >&2
     fi
 
+    # RoboCasa365 pins lerobot==0.3.3. Do not replace it with the older
+    # LeRobot 0.1.0 used by other environments after installing RoboCasa.
+    # OpenPI's optional offline data loader still imports lerobot.common;
+    # PPO/eval do not use that loader, but SFT co-training needs an API update.
     uv pip install -e "$robocasa_dir"
-    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
+    # robosuite is installed without dependencies to preserve RoboCasa's
+    # MuJoCo pin, so install its QP solver requirement explicitly.
+    uv pip install "qpsolvers[quadprog]>=4.3.1"
+    # New dm-control releases require MuJoCo >=3.8, while RoboCasa pins 3.3.1.
+    # 1.0.28 requires MuJoCo >=3.2.7 and also satisfies gym-aloha's lower bound.
+    uv pip install --no-deps "dm-control==1.0.28"
     uv pip install --no-deps mujoco==3.3.1
-    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
 
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
         rm -rf "$assets_path"
@@ -3716,6 +4074,9 @@ install_so101_env() {
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "lerobot[feetech]>=0.4.1,<0.7"
+    # OpenPI currently requires NumPy 1.x; reassert the bound after LeRobot's
+    # dependency resolution so installing the robot stack cannot upgrade it.
+    uv pip install "numpy<2"
     use_opencv_gui_wheel
 }
 
@@ -3730,6 +4091,143 @@ install_gim_arm_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/gim_arm.txt"
 }
 
+install_robodojo_env() {
+    # The runtime distribution owns the simulator stack: Isaac Sim 5.1, the
+    # IsaacLab fork RoboDojo tracks, cuRobo and the Torch family they need.
+    # Installing it here keeps those pins out of the rest of the environment.
+    if [[ "${PLATFORM}" != "nvidia" ]]; then
+        echo "RoboDojo currently requires --platform nvidia and a CUDA GPU." >&2
+        exit 1
+    fi
+    if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+        echo "RoboDojo currently supports Linux x86_64 only." >&2
+        exit 1
+    fi
+
+    local override_file="$SCRIPT_DIR/embodied/envs/robodojo-override.txt"
+    local runtime_ref="${ROBODOJO_RUNTIME_REF:-}"
+    local isaaclab_ref curobo_ref
+    local isaaclab_dir
+    local use_external_isaaclab=0
+    local assets_root="${ROBODOJO_ASSETS_ROOT:-$(dirname "$SCRIPT_DIR")/data/robodojo}"
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    index_args+=(--extra-index-url https://pypi.nvidia.com)
+
+    if [[ ! -f "${override_file}" ]]; then
+        echo "Missing RoboDojo compatibility overrides: ${override_file}" >&2
+        exit 1
+    fi
+    # The override file owns the source pins; bump them there only.
+    isaaclab_ref=$(sed -n 's|.*IsaacLab\.git@\([0-9a-f]\{40\}\).*|\1|p' "$override_file" | awk 'NR == 1')
+    curobo_ref=$(sed -n 's|.*curobo\.git@\([0-9a-f]\{40\}\).*|\1|p' "$override_file" | awk 'NR == 1')
+    if [[ -z "$runtime_ref" ]]; then
+        runtime_ref=$(sed -n 's/^# runtime-ref: //p' "$override_file" | awk 'NR == 1')
+    fi
+    if [[ -z "$runtime_ref" || -z "$isaaclab_ref" || -z "$curobo_ref" ]]; then
+        echo "Could not read the RoboDojo runtime/IsaacLab/cuRobo pins from ${override_file}." >&2
+        exit 1
+    fi
+    if [[ -n "${ROBODOJO_ISAACLAB_PATH:-}" ]]; then
+        use_external_isaaclab=1
+    fi
+
+    # Isaac Sim needs the EULA flag at import time. Keep it in the venv so
+    # later eval/training shells work without another undocumented setup step.
+    export OMNI_KIT_ACCEPT_EULA=YES
+    export ROBODOJO_ASSETS_ROOT="${assets_root}"
+    if [[ -z "${TERM:-}" || "${TERM}" == "dumb" ]]; then
+        export TERM=xterm-256color
+    fi
+    export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+    local escaped_assets_root
+    printf -v escaped_assets_root '%q' "${assets_root}"
+    if grep -q '^export ROBODOJO_ASSETS_ROOT=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        sed -i '/^export ROBODOJO_ASSETS_ROOT=/d' "$VENV_DIR/bin/activate"
+    fi
+    echo "export ROBODOJO_ASSETS_ROOT=\${ROBODOJO_ASSETS_ROOT:-${escaped_assets_root}}" >> "$VENV_DIR/bin/activate"
+
+    # Torch comes from apply_env_default_torch (2.7.0 on the platform's wheel
+    # index) before this function runs. TORCH_CUDA_ARCH_LIST only affects the
+    # IsaacLab and cuRobo extensions built below.
+    set_torch_cuda_arch_list
+
+    # cuRobo derives its version from git through setuptools_scm. Install it
+    # first so the metadata and wheel stages both see it; otherwise uv prepares
+    # 0.0.0 metadata and rejects the wheel named with the SCM version.
+    uv pip install --no-config --prerelease=allow "setuptools_scm==10.3.4"
+
+    # cuRobo is pinned to the revision the RoboDojo runtime was validated with.
+    # ``--no-config`` keeps these installs on the runtime's own pins: the
+    # simulator stack must resolve from the upstream compatibility overrides,
+    # not from the repository's override-dependencies.
+    uv pip install --no-config --prerelease=allow --no-build-isolation \
+        --overrides "$override_file" \
+        "nvidia-curobo[cu12] @ git+${GITHUB_PREFIX}https://github.com/yuechen0614/curobo.git@${curobo_ref}"
+
+    # The runtime package pulls in the simulator stack and the Torch family it
+    # needs. Bump ``# runtime-ref`` in the override file after revalidating.
+    uv pip install --no-config --prerelease=allow \
+        --overrides "$override_file" "${index_args[@]}" \
+        "rlinf-robodojo-runtime @ git+${GITHUB_PREFIX}https://github.com/RLinf/RoboDojo.git@${runtime_ref}"
+    # isaacsim-kernel owns isaacsim/__init__.py, which finds the Isaac Sim root
+    # with realpath(__file__); under CI's UV_LINK_MODE=symlink that resolves
+    # into the uv cache archive, where the extensions sibling wheels install
+    # beside it are missing. Copy just this package so the lookup stays in
+    # site-packages.
+    materialize_package_files isaacsim-kernel --no-config "${index_args[@]}"
+    # RLinf and RoboDojo resolve different OpenCV distributions. Keep one GUI
+    # wheel so cv2 cannot be silently replaced by an ABI-incompatible variant.
+    use_opencv_gui_wheel
+
+    # IsaacLab's wheel intentionally contains only isaaclab/__init__.py. The
+    # extension metadata and modules live beside the source package, so the
+    # runtime's three IsaacLab dependencies must be installed editable on top.
+    # The fork is pinned to the revision the runtime was validated with; the
+    # commit is read from the override file above.
+    isaaclab_dir=$(clone_or_reuse_repo \
+        ROBODOJO_ISAACLAB_PATH \
+        "$VENV_DIR/robodojo-isaaclab" \
+        "https://github.com/yuechen0614/IsaacLab.git")
+    if [ "$use_external_isaaclab" -eq 0 ]; then
+        if ! git -C "$isaaclab_dir" cat-file -e "${isaaclab_ref}^{commit}" 2>/dev/null; then
+            git -C "$isaaclab_dir" fetch --depth 1 origin "$isaaclab_ref"
+        fi
+        git -C "$isaaclab_dir" checkout --detach "$isaaclab_ref"
+    elif [ "$(git -C "$isaaclab_dir" rev-parse HEAD 2>/dev/null || true)" != "$isaaclab_ref" ]; then
+        echo "ROBODOJO_ISAACLAB_PATH=$isaaclab_dir is not the RoboDojo-validated IsaacLab commit ${isaaclab_ref}; check it out or unset ROBODOJO_ISAACLAB_PATH." >&2
+        exit 1
+    fi
+    uv pip install --no-config --no-deps --no-build-isolation \
+        -e "$isaaclab_dir/source/isaaclab" \
+        -e "$isaaclab_dir/source/isaaclab_assets" \
+        -e "$isaaclab_dir/source/isaaclab_tasks"
+    export ROBODOJO_ISAACLAB_SOURCE="$isaaclab_dir/source"
+
+    python - <<'PY'
+import json
+import os
+from importlib.metadata import distribution
+from pathlib import Path
+
+import torch
+from robodojo_runtime import source_root
+from robodojo_runtime.bridge import VectorEnv  # noqa: F401 - RLinf's entry point
+
+if not torch.cuda.is_available():
+    print("[install.sh] WARNING: PyTorch cannot see a CUDA GPU; RoboDojo needs one at runtime.")
+assert source_root().is_dir(), "RoboDojo source tree is missing."
+isaaclab = Path(os.environ["ROBODOJO_ISAACLAB_SOURCE"]) / "isaaclab/config/extension.toml"
+assert isaaclab.is_file(), "IsaacLab source tree is missing extension.toml."
+direct_url = json.loads(distribution("isaaclab").read_text("direct_url.json"))
+assert direct_url["url"].startswith("file://"), "isaaclab is not an editable install."
+print("[install.sh] RoboDojo environment verified.")
+PY
+}
+
 install_robotwin_env() {
     # pytorch3d, warp-lang and curobo are CUDA-only, and TORCH_CUDA_ARCH_LIST exists solely
     # for them. RoboTwin itself runs without all three once the task config selects
@@ -3737,25 +4235,15 @@ install_robotwin_env() {
     local build_curobo_stack=0
     if [ "$PLATFORM" = "nvidia" ]; then
         build_curobo_stack=1
-        local cuda_mm cuda_major cuda_minor
-        cuda_mm=$(detect_cuda_major_minor) || {
-            echo "Could not detect CUDA version. Cannot build robotwin environment." >&2
-            exit 1
-        }
-        cuda_major="${cuda_mm%% *}"
-        cuda_minor="${cuda_mm##* }"
-        if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-            # Include Blackwell support for CUDA 12.8+
-            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
-        else
-            export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
-        fi
+        set_torch_cuda_arch_list
     else
         echo "[install.sh] ${PLATFORM}: skipping pytorch3d/warp-lang/curobo (CUDA-only)."
         echo "[install.sh] Set planner_backend: mplib in the task config; curobo is unavailable."
     fi
 
-    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai "$SAPIEN_SPEC"
+    # RoboTwin imports trimesh and h5py directly. curobo also depends on trimesh,
+    # but curobo is installed on NVIDIA only.
+    uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai trimesh h5py "$SAPIEN_SPEC"
 
     if [ "$build_curobo_stack" -eq 1 ]; then
         uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
@@ -3807,12 +4295,12 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
-    # build_env into embodichain.lab.gym.utils.registration.
-    # <0.3 keeps CartPole at
-    # embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json.
-    # 0.3.0 moves that file and changes the gym/sim APIs this env uses.
-    uv pip install "embodichain>=0.2.4,<0.3" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # Only dexsim-engine needs wheels from the vendor package server.
+    # TensorDict 0.15 rejects get_proprioception()[:, active_joint_ids]: the
+    # joint axis is a feature dim, and CartPole init fails with IndexError.
+    uv pip install "embodichain==0.3.0" "tensordict>=0.6,<0.15" \
+        --find-links http://pyp.open3dv.site:2345/simple/dexsim-engine/ \
+        --trusted-host pyp.open3dv.site
 }
 
 install_dosw1_env() {
@@ -3846,6 +4334,14 @@ install_dosw1_env() {
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"
     uv pip install -e "$repo_root" --no-deps
+}
+
+install_yam_env() {
+    uv pip install \
+        --build-constraint "$SCRIPT_DIR/embodied/envs/yam-build-constraints.txt" \
+        -r "$SCRIPT_DIR/embodied/envs/yam.txt" "$@"
+    install_lerobot "$@"
+    use_opencv_gui_wheel
 }
 
 install_habitat_env() {
@@ -4160,7 +4656,13 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    if [ "$INSTALL_PADDLE_GPU" -eq 1 ] \
+        && { [ "$TARGET" != "embodied" ] || [ "$MODEL" != "diffusion" ]; }; then
+        echo "--paddle-gpu is only supported with 'embodied --model diffusion'." >&2
+        exit 1
+    fi
     validate_python_version
+    validate_engine
     apply_model_default_torch
     apply_env_default_torch
     apply_agentic_torch_default
@@ -4198,6 +4700,9 @@ main() {
                 openpi)
                     install_openpi_model
                     ;;
+                psi0)
+                    install_psi0_model
+                    ;;
                 pi0_fast)
                     install_pi0_fast_model
                     ;;
@@ -4219,13 +4724,11 @@ main() {
                 dexbotic)
                     install_dexbotic_model
                     ;;
+                lingbotvlav2)
+                    install_lingbot_vla_v2_model
+                    ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
-                    ;;
-                lingbotvla_v2)
-                    install_lingbot_vla_v2_model
-                    # The pinned venv needs none of the uv sync post-install steps below.
-                    return
                     ;;
                 abot_m0)
                     install_abot_m0_model
@@ -4255,6 +4758,9 @@ main() {
                     install_env_only
                     ;;
             esac
+            if [ "$ENGINE" = "phyai" ]; then
+                install_phyai_runtime
+            fi
             ;;
         agentic)
             # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
@@ -4278,9 +4784,11 @@ main() {
     esac
 
     install_platform_extras
-    # Last step: env/model pip installs may have downgraded protobuf.
-    echo "[install.sh] Ensuring ${RAY_COMPAT_PROTOBUF_SPEC} for Ray dashboard/agent"
-    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
+    # Env/model installs may have changed the protobuf runtime or gencode.
+    echo "[install.sh] Ensuring ${RAY_COMPAT_DEPS[*]} for Ray dashboard/agent"
+    uv pip install "${RAY_COMPAT_DEPS[@]}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

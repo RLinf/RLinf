@@ -68,14 +68,24 @@ class WanVideoVAE(nn.Module):
             2.8251,
             1.9160,
         ]
-        self.mean = torch.tensor(mean, device="cuda")
-        self.std = torch.tensor(std, device="cuda")
+        # Plain FP32 attributes, so model.to(dtype) leaves them alone;
+        # _scale_on moves them to the latent's device on first use.
+        self.mean = torch.tensor(mean, dtype=torch.float32, device="cpu")
+        self.std = torch.tensor(std, dtype=torch.float32, device="cpu")
         self.scale = [self.mean, 1.0 / self.std]
 
         self.model = VideoVAE_(z_dim=z_dim).eval().requires_grad_(False)
         self.upsampling_factor = 8
         self.z_dim = z_dim
         self.vae_pretrained_path = vae_pretrained_path
+
+    def _scale_on(self, device: torch.device) -> list[torch.Tensor]:
+        """Return the FP32 latent mean and inverse std on ``device``."""
+        if self.mean.device != device:
+            self.mean = self.mean.to(device)
+            self.std = self.std.to(device)
+            self.scale = [self.mean, 1.0 / self.std]
+        return self.scale
 
     def build_1d_mask(self, length, left_bound, right_bound, border_width, device):
         x = torch.ones((length,), device=device)
@@ -148,7 +158,9 @@ class WanVideoVAE(nn.Module):
 
         for h, h_, w, w_ in tqdm(tasks, desc="VAE decoding"):
             hidden_states_batch = hidden_states[:, :, :, h:h_, w:w_]
-            hidden_states_batch = self.model.decode(hidden_states_batch, self.scale)
+            hidden_states_batch = self.model.decode(
+                hidden_states_batch, self._scale_on(hidden_states.device)
+            )
 
             mask = self.build_mask(
                 hidden_states_batch,
@@ -208,7 +220,9 @@ class WanVideoVAE(nn.Module):
 
         for h, h_, w, w_ in tqdm(tasks, desc="VAE encoding"):
             hidden_states_batch = video[:, :, :, h:h_, w:w_]
-            hidden_states_batch = self.model.encode(hidden_states_batch, self.scale)
+            hidden_states_batch = self.model.encode(
+                hidden_states_batch, self._scale_on(video.device)
+            )
 
             mask = self.build_mask(
                 hidden_states_batch,
@@ -236,12 +250,12 @@ class WanVideoVAE(nn.Module):
         return values
 
     def single_encode(self, video):
-        x = self.model.encode(video, self.scale)
+        x = self.model.encode(video, self._scale_on(video.device))
         x = x.clone()
         return x
 
     def single_decode(self, hidden_state):
-        video = self.model.decode(hidden_state, self.scale)
+        video = self.model.decode(hidden_state, self._scale_on(hidden_state.device))
         return video.clamp_(-1, 1)
 
     def encode(self, videos, tiled=False, tile_size=(34, 34), tile_stride=(18, 16)):
@@ -387,8 +401,9 @@ class WanVideoVAE38(WanVideoVAE):
             0.7468,
             0.7744,
         ]
-        self.mean = torch.tensor(mean, device="cuda")
-        self.std = torch.tensor(std, device="cuda")
+        # Plain FP32 attributes; see WanVideoVAE.__init__.
+        self.mean = torch.tensor(mean, dtype=torch.float32, device="cpu")
+        self.std = torch.tensor(std, dtype=torch.float32, device="cpu")
         self.scale = [self.mean, 1.0 / self.std]
 
         self.model = VideoVAE38_(z_dim=z_dim, dim=dim).eval().requires_grad_(False)

@@ -35,10 +35,14 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
     ``cfg.model_path`` may point at either a new-format base checkpoint
-    containing ``model.safetensors`` or an RLinf FSDP SFT checkpoint containing
-    ``full_weights.pt``. Model shape comes from YAML; no checkpoint
-    ``config.json`` is read. ``cfg.openpi.task`` selects ``Pi0`` (SFT) or a
+    containing ``model.safetensors`` or ``model.safetensors.index.json``, or an
+    RLinf FSDP SFT checkpoint containing ``full_weights.pt``. Model shape comes
+    from YAML; no checkpoint ``config.json`` is read.
+    ``cfg.openpi.task`` selects ``Pi0`` (SFT) or a
     task subclass; omitted ``task`` defaults to SFT.
+
+    ``cfg.precision`` controls parameter storage. ``cfg.openpi.embed_dtype``
+    controls backbone activations and defaults to the parameter precision.
     """
     import pathlib
 
@@ -57,6 +61,12 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         if torch_dtype is not None
         else torch_dtype_from_precision(cfg.precision)
     )
+    embed_precision = OmegaConf.select(model_cfg, "embed_dtype", default=None)
+    embed_dtype = (
+        target_dtype
+        if embed_precision is None
+        else torch_dtype_from_precision(embed_precision)
+    )
 
     model_path = pathlib.Path(cfg.model_path).expanduser()
     safetensors_path = resolve_model_safetensors(model_path)
@@ -64,14 +74,15 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     if safetensors_path is None and full_weights_path is None:
         raise FileNotFoundError(
             "openpi checkpoint not found. Expected either "
-            f"{model_path}/model.safetensors or one of "
+            f"{model_path}/model.safetensors, "
+            f"{model_path}/model.safetensors.index.json, or one of "
             f"{[str(model_path / rel) for rel in FULL_WEIGHTS_CANDIDATES]}."
         )
     if full_weights_path is not None and safetensors_path is not None:
         logger.warning(
             "openpi: both %s and %s exist; loading full_weights (RLinf "
-            "resume) and ignoring model.safetensors. Remove the leftover file "
-            "if that is not what you intended.",
+            "resume) and ignoring the safetensors checkpoint. Remove the "
+            "leftover file if that is not what you intended.",
             full_weights_path,
             safetensors_path,
         )
@@ -89,7 +100,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_dim": int(model_cfg.model_action_dim),
         "paligemma_variant": str(model_cfg.paligemma_variant),
         "action_expert_variant": str(model_cfg.action_expert_variant),
-        "dtype": _pi0_dtype_name(target_dtype),
+        "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
     }
     discrete_state_input = OmegaConf.select(
@@ -326,7 +337,7 @@ def _apply_openpi_param_dtypes(model, target_dtype) -> None:
 
 
 def _pi0_dtype_name(target_dtype) -> str:
-    """Map the factory compute dtype onto ``Pi0Config.dtype`` (embed dtype)."""
+    """Map a torch dtype onto ``Pi0Config.dtype`` (embed dtype)."""
     import torch
 
     if target_dtype is None or target_dtype == torch.bfloat16:

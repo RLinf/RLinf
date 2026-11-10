@@ -6,8 +6,7 @@ model_type: "openpi"
 # live in the experiment config so this template stays path-free.
 
 # OpenPI default: Gemma / SigLIP in bf16, action heads stay fp32.
-# openpi does not support FSDP mixed precision — keep
-# mixed_precision.* bound to this field (null or fp32).
+# Use precision: fp32 for FP32 optimizer updates; configure activations and FSDP MP separately.
 precision: null
 
 # LoRA is not used, but the shared model factory reads these keys.

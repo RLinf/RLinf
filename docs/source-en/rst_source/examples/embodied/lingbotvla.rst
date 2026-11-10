@@ -1,5 +1,5 @@
-RL on Lingbot-VLA Models
-=========================
+RL on LingbotVLA 1.0 Models
+===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -10,9 +10,9 @@ RL on Lingbot-VLA Models
    :align: center
    :width: 90%
 
-   Lingbot-VLA on RoboTwin (image: `RLinf <https://github.com/RLinf>`__).
+   LingbotVLA 1.0 on RoboTwin (image: `RLinf <https://github.com/RLinf>`__).
 
-`Lingbot-VLA <https://huggingface.co/robbyant/lingbot-vla-4b>`__ is a Qwen2.5-VL-based
+`LingbotVLA 1.0 <https://huggingface.co/robbyant/lingbot-vla-4b>`__ is a Qwen2.5-VL-based
 vision-language-action model that autoregressively generates continuous action chunks.
 RLinf integrates it **natively** — embedded in RLinf's Python memory space for
 zero-latency, tensor-level interaction — and supports full-parameter SFT and GRPO
@@ -21,7 +21,7 @@ fine-tuning on the RoboTwin 2.0 simulator.
 Overview
 --------
 
-SFT then GRPO-fine-tune Lingbot-VLA on RoboTwin 2.0 dual-arm manipulation tasks.
+SFT then GRPO-fine-tune LingbotVLA 1.0 on RoboTwin 2.0 dual-arm manipulation tasks.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -47,7 +47,7 @@ SFT then GRPO-fine-tune Lingbot-VLA on RoboTwin 2.0 dual-arm manipulation tasks.
       1–2 nodes · 8–16 GPUs
 
 | **You'll do:** install (native) → clone RoboTwin + assets → download checkpoints → SFT → GRPO → watch ``env/success_once``.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the RoboTwin repo and assets · the Lingbot-VLA and Qwen backbone checkpoints (steps below).
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the RoboTwin repo and assets · the LingbotVLA 1.0 and Qwen backbone checkpoints (steps below).
 
 Tasks
 ~~~~~
@@ -127,7 +127,7 @@ Please switch to the corresponding virtual environment via the built-in `switch_
 
 **Option 2: Custom Environment**
 
-Install the Lingbot-VLA native environment and RoboTwin base dependencies in one command:
+Install the LingbotVLA 1.0 native environment and RoboTwin base dependencies in one command:
 
 .. code-block:: bash
 
@@ -150,7 +150,7 @@ RoboTwin Assets are asset files required by the RoboTwin environment and need to
 Download the Model
 ------------------
 
-Before starting training, download the Lingbot-VLA base weights, the RoboTwin SFT checkpoint, and the Qwen backbone model from HuggingFace. For RoboTwin SFT and RL experiments, use the pinned RoboTwin SFT checkpoint revision below instead of the latest ``main`` revision.
+Before starting training, download the LingbotVLA 1.0 base weights, the RoboTwin SFT checkpoint, and the Qwen backbone model from HuggingFace. For RoboTwin SFT and RL experiments, use the pinned RoboTwin SFT checkpoint revision below instead of the latest ``main`` revision.
 
 .. code-block:: bash
 
@@ -180,7 +180,7 @@ Run It
 Configuration Files
 ~~~~~~~~~~~~~~~~~~~
 
-RLinf supports full-parameter Supervised Fine-Tuning (SFT) and reinforcement learning alignment (GRPO) for Lingbot-VLA. Relevant configuration files are as follows:
+RLinf supports full-parameter Supervised Fine-Tuning (SFT) and reinforcement learning alignment (GRPO) for LingbotVLA 1.0. Relevant configuration files are as follows:
 
 * **SFT (Behavior Cloning)**:
   ``examples/sft/config/robotwin_sft_lingbotvla.yaml``
@@ -219,7 +219,7 @@ Key Config Snippets (GRPO)
 
 The top-level file dynamically assembles the environment and model via Hydra, and directly overrides the core SDE sampling parameters required for GRPO reinforcement learning under ``actor.model``.
 
-**Note**: Because Lingbot-VLA uses the unified global normalization keys (e.g., ``action.arm.position``) from ``robotwin_50.json``, there is **no need to configure or override** ``unnorm_key`` when switching between different tasks, enabling truly smooth multi-task transfer.
+**Note**: Because LingbotVLA 1.0 uses the unified global normalization keys (e.g., ``action.arm.position``) from ``robotwin_50.json``, there is **no need to configure or override** ``unnorm_key`` when switching between different tasks, enabling truly smooth multi-task transfer.
 
 .. code-block:: yaml
 
@@ -240,6 +240,16 @@ The top-level file dynamically assembles the environment and model via Hydra, an
         noise_method: "flow_sde"
         noise_level: 0.5
         action_env_dim: 14
+
+.. note::
+
+   To limit host-memory retention by glibc during long RoboTwin runs, the LingbotVLA GRPO examples default to ``env.train.malloc_trim_reset_interval: 8`` (Linux/glibc only). This attempts to reclaim unused heap memory every 8 resets per RoboTwin environment instance. Set it to ``0`` to disable; the default remains ``0`` when unset. Automatic resets are counted; evaluation remains disabled unless configured. This targets host RSS, not GPU memory.
+
+   .. code-block:: yaml
+
+      env:
+        train:
+          malloc_trim_reset_interval: 8
 
 Launch Commands
 ~~~~~~~~~~~~~~~
@@ -277,7 +287,7 @@ Standalone Evaluation
 ---------------------
 
 Run standalone evaluation through the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`.
-Use the Lingbot-VLA eval configs such as ``robotwin_click_bell_lingbotvla_eval`` and
+Use the LingbotVLA 1.0 eval configs such as ``robotwin_click_bell_lingbotvla_eval`` and
 ``robotwin_place_shoe_lingbotvla_eval``; the guide owns ``ROBOT_PLATFORM=ALOHA``,
 ``ROBOTWIN_PATH``, assets, launch commands, and result interpretation.
 
@@ -288,7 +298,7 @@ Launch TensorBoard from the RLinf repo root:
 
 .. code:: bash
 
-   tensorboard --logdir ../results --port 6006
+   tensorboard --logdir ./logs --port 6006
 
 The key signal is ``env/success_once``. For every logged metric, see
 :doc:`Training metrics <../../reference/metrics>`.
@@ -301,7 +311,7 @@ Videos are saved through the env video config:
      save_video: True
      video_base_dir: ${runner.logger.log_path}/video/eval
 
-.. list-table:: Lingbot-VLA evaluation results on RoboTwin tasks
+.. list-table:: LingbotVLA 1.0 evaluation results on RoboTwin tasks
    :header-rows: 1
 
    * - Task
@@ -322,6 +332,6 @@ Videos are saved through the env video config:
 
 .. note::
 
-   Lingbot-VLA results use the ``demo_randomized`` setting. For task-level simulator
+   LingbotVLA 1.0 results use the ``demo_randomized`` setting. For task-level simulator
    options, see the
    `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__.

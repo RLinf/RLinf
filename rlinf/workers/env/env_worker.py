@@ -157,6 +157,11 @@ class EnvWorker(Worker):
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
             self.eval_batch_size = self.cfg.env.eval.total_num_envs // self.stage_num
+            self.eval_early_stop_on_done = bool(
+                eval_env_cfg.get("early_stop_on_done", False)
+            )
+        else:
+            self.eval_early_stop_on_done = False
         self.n_train_chunk_steps = 0
         if self.enable_train:
             self.n_train_chunk_steps = (
@@ -354,7 +359,7 @@ class EnvWorker(Worker):
                     rank=self._rank,
                     num_envs=num_envs_per_stage,
                     export_format=getattr(
-                        env_cfg.data_collection, "export_format", "pickle"
+                        env_cfg.data_collection, "export_format", "pickle_episode"
                     ),
                     robot_type=getattr(env_cfg.data_collection, "robot_type", "panda"),
                     fps=getattr(env_cfg.data_collection, "fps", 10),
@@ -364,6 +369,8 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
+                    resume=bool(getattr(env_cfg.data_collection, "resume", False)),
+                    streaming=getattr(env_cfg.data_collection, "streaming", False),
                 )
             env_list.append(env)
         return env_list
@@ -487,6 +494,10 @@ class EnvWorker(Worker):
                 intervene_actions=intervene_actions,
                 intervene_flags=intervene_flags,
                 rlt_switch_flags=rlt_switch_flags,
+                executed_mask=infos["executed_mask"]
+                if SupportedEnvType(self.cfg.env.train.env_type)
+                is SupportedEnvType.SIMPLE
+                else None,
             ),
         )
         chunk_step_payload = {
@@ -560,7 +571,12 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
-            transition=EnvTransition(rlt_switch_flags=rlt_switch_flags),
+            transition=EnvTransition(
+                dones=chunk_dones,
+                terminations=chunk_terminations,
+                truncations=chunk_truncations,
+                rlt_switch_flags=rlt_switch_flags,
+            ),
         )
         return env_output, env_info
 
@@ -1272,6 +1288,7 @@ class EnvWorker(Worker):
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
+            eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
                     policy_output = self.recv_from(
@@ -1301,6 +1318,27 @@ class EnvWorker(Worker):
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)
 
+                    if (
+                        self.eval_early_stop_on_done
+                        and env_output.dones is not None
+                        and env_output.dones.any()
+                        and eval_step < self.n_eval_chunk_steps - 1
+                    ):
+                        env_batch = self._build_rollout_input_data(env_output.to_dict())
+                        env_batch["eval_epoch_done"] = True
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=env_batch,
+                            split_fn=self._obs_split_fn,
+                            mode="eval",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                        eval_epoch_done = True
+                        break
+
                     if self.cfg.env.eval.auto_reset:
                         if (
                             eval_rollout_epoch == self.eval_rollout_epoch - 1
@@ -1321,6 +1359,9 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+
+                if eval_epoch_done:
+                    break
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):

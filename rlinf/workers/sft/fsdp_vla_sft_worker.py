@@ -20,13 +20,19 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.utils.utils import get_rng_state, set_rng_state
+from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+
+    def init_worker(self):
+        # SFT forwards draw augmentation, noise and time from the global RNGs;
+        # seed them per rank so runs follow actor.seed.
+        seed_everything(self.cfg.actor.seed + self._rank)
+        super().init_worker()
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
@@ -44,14 +50,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             )
 
             return build_lingbot_sft_dataloader(
-                self.cfg, self._world_size, self._rank, data_paths
-            )
-        elif model_type == SupportedModel.LINGBOTVLA_V2:
-            from rlinf.models.embodiment.lingbotvla_v2.sft_builder import (
-                build_lingbot_v2_sft_dataloader,
-            )
-
-            return build_lingbot_v2_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
         elif model_type == SupportedModel.DREAMZERO:

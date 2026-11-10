@@ -450,6 +450,8 @@ contract 已分别验证各项公开约定，下一步需要检查完整组合�
      - ``so101_mock_sac_mlp_reach``
    * - Piper
      - ``piper_mock_sac_mlp_reach``
+   * - 双臂 YAM
+     - ``realworld_dual_yam_collect_data_mock``
 
 连接真机
 ~~~~~~~~

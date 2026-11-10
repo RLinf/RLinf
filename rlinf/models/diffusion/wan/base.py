@@ -87,12 +87,20 @@ class Wan22Model(torch.nn.Module, BasePolicy):
     def to(self, device):
         module = super().to(device)
         device = torch.device(device)
-        if device.type == "cpu":
+        if device.type == "cpu" and not getattr(self, "_nft_reference_only", False):
             self.pipeline.vae.to(device=device)
             self.pipeline.text_encoder.to(device=device)
             if getattr(self.pipeline, "image_encoder", None) is not None:
                 self.pipeline.image_encoder.to(device=device)
         return module
+
+    def prepare_nft_reference_model(self) -> None:
+        """Release pipeline modules that NFT reference forward does not use."""
+        self._nft_reference_only = True
+        self.pipeline.vae = None
+        self.pipeline.text_encoder = None
+        if hasattr(self.pipeline, "image_encoder"):
+            self.pipeline.image_encoder = None
 
     def obs_processor(self, env_obs: Any) -> tuple[list[str], dict[str, Any]]:
         raise NotImplementedError

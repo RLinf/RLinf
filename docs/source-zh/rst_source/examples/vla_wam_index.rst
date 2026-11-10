@@ -126,13 +126,13 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/lingbotvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
+       <a href="embodied/lingbotvla_index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/lingbotvla.html" style="text-decoration: underline; color: blue;">
-           <b>基于 Lingbot-VLA 模型的强化学习</b>
+         <a href="embodied/lingbotvla_index.html" style="text-decoration: underline; color: blue;">
+           <b>基于 LingbotVLA 模型的强化学习</b>
          </a><br>
-         支持 Lingbot-VLA + RoboTwin + GRPO 训练
+         支持 LingbotVLA 1.0（GRPO）与 2.0（PPO）+ RoboTwin 训练
        </p>
      </div>
 
@@ -158,6 +158,17 @@
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/psi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/physical-superintelligence-lab/Psi0/a32e57a3fabb8590c80677f9cd3d1fc3db60eb06/assets/media/arch.png" alt="Psi0 model architecture"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/psi0.html" style="text-decoration: underline; color: blue;">
+           <b>Psi0 模型强化学习训练</b>
+         </a><br>
+         Psi0 + SIMPLE + PPO 人形机器人强化学习训练
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -172,7 +183,7 @@
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>
    MolmoAct2 <embodied/molmoact2>
-   Lingbot-VLA <embodied/lingbotvla>
-   LingBot-VLA 2.0 <embodied/lingbotvla_v2>
+   LingbotVLA <embodied/lingbotvla_index>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
+   Psi0 <embodied/psi0>

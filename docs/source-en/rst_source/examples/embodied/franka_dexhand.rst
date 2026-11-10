@@ -110,7 +110,7 @@ This config includes:
 
 - ``end_effector_type: "ruiyan_hand"``
 - glove settings for teleoperation
-- ``data_collection`` for raw episode export in ``pickle`` format
+- ``data_collection`` writing both ``replay_buffer`` (``demo_buffer/``) and ``pickle_episode`` (``pickle_episode/``)
 
 Use ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` for RL training.
 Before running, fill in:

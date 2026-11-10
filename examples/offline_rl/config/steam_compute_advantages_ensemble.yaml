@@ -10,7 +10,7 @@ advantage:
   label_mode: quantile
   rollout_quantile: 0.3
   expert_quantile: 0.8
-  tag: steam_k32_ensemble3_ckpt16000_wco_exp_and_rollout
+  tag: steam_k32_ensemble3_q30
 
   model:
     precision: "bf16"

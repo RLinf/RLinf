@@ -401,6 +401,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            return_prefix=False,
         )[0]
 
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
@@ -813,6 +814,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            prefix_requires_grad=False,
         )[0]
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
         loss = torch.square(v_t - u_t)
@@ -826,8 +828,6 @@ class Pi0(model.BaseModel):
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Flow-matching SFT loss. Shared by SFT, DAgger, and PPO co-train."""
         del kwargs
-        if hasattr(self, "gradient_checkpointing_disable"):
-            self.gradient_checkpointing_disable()
         observation, actions = self._unpack_sft_batch(data)
         observation = self._observation_to_device(observation)
         actions = self._actions_to_device(actions)

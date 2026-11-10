@@ -36,13 +36,24 @@ RLinf's distributed trainer.
 Installation
 ------------
 
-For the base RLinf environment, see :doc:`RLinf Installation </rst_source/start/installation>`.
-
-Install dependencies for this example:
+AgentLightning 0.3.0 requires the OpenTelemetry versions constrained by RLinf
+because OpenTelemetry 1.45 changed the exporter implementation used to route
+rollout spans to the Lightning Store. After creating the base environment,
+install the compatible OpenTelemetry set before the dependencies for this
+example:
 
 .. code-block:: bash
 
-   pip install "agentlightning==0.3.0" "litellm<1.95" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator"
+   cd /path/to/RLinf
+   bash requirements/install.sh agentic
+   source .venv/bin/activate
+   uv pip install -r requirements/agentic/agentlightning_constraints.txt
+   uv pip install "agentlightning==0.3.0" "litellm<1.95" \
+     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
+     "mcp-server-calculator" "openai==2.32.0"
+
+For other installation options and supported platforms, see
+:doc:`RLinf Installation </rst_source/start/installation>`.
 
 Data Preparation
 ----------------

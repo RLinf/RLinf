@@ -27,19 +27,28 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 1.1 启用数据采集
 """"""""""""""""
 
-在 YAML 配置文件的 ``env`` 部分开启 ``data_collection``：
+在 YAML 配置文件的 ``env.eval`` 下开启 ``data_collection``；采集训练环境的数据时，改放在 ``env.train`` 下：
 
 .. code-block:: yaml
 
    env:
-     data_collection:
-       enabled: True
-       save_dir: ${runner.logger.log_path}/collected_data
-       export_format: "pickle"
-       only_success: False
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}
+         export_format: pickle_episode
+         only_success: False
 
-启动训练或评估后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
-每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
+启动训练或评估后，``export_format: pickle_episode`` 的每个 episode 会写入
+``{save_dir}/pickle_episode/`` 下一个独立的 ``.pkl`` 文件，便于后续离线预处理。
+
+对于 ResNet reward，可以直接使用 ``maniskill_ppo_mlp_collect`` 采集数据。该配置在 ManiSkill
+PickCube 上训练基于状态的 MLP PPO 策略，并在周期性评估（每隔 ``runner.val_check_interval`` 步）时
+以 ``pickle`` 格式采集 RGB episode，只保留成功的 episode（``only_success: True``）：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_collect
 
 对于 VLM Trend reward，RLinf 也提供了可直接运行的数据采集配置：
 
@@ -64,7 +73,7 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data
 
 默认会生成：
@@ -106,7 +115,7 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 .. code-block:: bash
 
    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
@@ -206,6 +215,15 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
    bash examples/reward/run_reward_training.sh
 
 训练日志会保存到新建的 ``logs/<timestamp>-reward_training`` 目录下。
+
+训练的 checkpoint 保存在 ``<runner.logger.log_path>/<runner.logger.experiment_name>/checkpoints/`` 下：
+每隔 ``runner.save_interval`` 步保存一次 ``global_step_<N>/``，验证集准确率提升时更新
+``best_model/``\ （需要配置 ``runner.early_stop``）。在 RL 中使用训练好的模型时，
+将 ``reward.model.model_path`` 设为权重文件，例如：
+
+.. code-block:: text
+
+   logs/<timestamp>-reward_training/reward_training/checkpoints/best_model/actor/model_state_dict/full_weights.pt
 
 2.3 微调 VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
@@ -363,6 +381,9 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
   对 ``shaped_vlm``，标量来自 potential 差分和一次性 success bonus。
   配置里的 ``reward_threshold`` 当前不会被 VLM 路径读取。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
+  对于 ``model_type: resnet``，它是权重文件本身，例如 2.2.3 节中的
+  ``checkpoints/best_model/actor/model_state_dict/full_weights.pt``。
+  ``maniskill_ppo_mlp_resnet_reward.yaml`` 默认的 ``model_path: null`` 不会加载任何训练好的权重。
 
 3.2 Rollout 阶段的 worker 交互
 """"""""""""""""""""""""""""""
@@ -412,6 +433,25 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+
+部署下方任一 reward 方法前，先使用 ManiSkill 稠密环境奖励预热 MLP policy，采用 ``maniskill_ppo_mlp`` 并保持 ``reward.use_reward_model: false``。本地 VLM Trend、本地 Success + Potential 和 SGLang API 推理都需要完成这一步。使用同一组 1,024 个固定 reset state、每条 50 步的 episode 评估保存的 checkpoint，选择 ``eval/success_at_end`` 约为 50% 的权重，再开始使用 reward model 的 PPO 训练：
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+该命令每 5 个 PPO step 保存并评估一次 checkpoint。如果尚未达到目标，可增大 ``runner.max_steps`` 继续预热；按实测成功率选择权重，而不是按固定训练步数选择。为后续部署命令设置选中的 policy 权重路径：
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+Trend 启动命令通过 ``runner.ckpt_path`` 传入该路径；Success + Potential 则将同一路径填写到 ``vlm_trend_paths.policy_checkpoint``。
 
 标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
@@ -480,25 +520,12 @@ API 推理仍只支持 ``buffered_vlm``。
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
-
-先使用 ManiSkill 原有的稠密环境奖励预热 MLP policy。这里直接复用未修改的
-``maniskill_ppo_mlp``，预热阶段不要启用 reward overlay。使用同一组 1,024 个
-固定 reset state 评估保存的 checkpoint，并选择 ``success_once`` 非零且接近
-5%（约 3--7%）的一个；正式 PPO 不要从零成功率 checkpoint 开始：
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp \
-     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
-     env.eval.total_num_envs=1024
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
-然后使用选中的低成功率 checkpoint 和上述三个 reward 产物启动双输出分支。
-该配置基于现有 VLM Trend 配置，使用 1,024 个环境，每 5 个 PPO step 评估一次，
-关闭环境奖励，默认训练 160 个 step：
+Success + Potential 使用上方选好的 warmup checkpoint 和三个 reward 产物。该配置基于现有 VLM Trend 配置，使用 1,024 个环境，每 5 个 PPO step 评估一次，关闭环境奖励，默认训练 160 个 step：
 
 在
 ``examples/embodiment/config/maniskill_ppo_mlp_shaped_vlm.yaml``
@@ -507,7 +534,7 @@ API 推理仍只支持 ``buffered_vlm``。
 .. code-block:: yaml
 
    vlm_trend_paths:
-     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
      model_path: /path/to/Qwen3-VL-4B-Instruct
      success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
      potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
@@ -593,7 +620,10 @@ SGLang 路径额外说明：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
 4. 总结
 ^^^^^^^^^^^^
@@ -782,7 +812,7 @@ SGLang 路径额外说明：
 .. code-block:: bash
 
    python examples/reward/preprocess_reward_dataset.py \
-       --raw-data-path logs/xxx/collected_data \
+       --raw-data-path logs/xxx/pickle_episode \
        --output-dir logs/xxx/processed_reward_data \
        --fail-success-ratio 3
 
