@@ -208,8 +208,13 @@ reference model。
    bash requirements/install.sh embodied --model diffusion --venv /path/to/venv
    source /path/to/venv/bin/activate
 
-该命令会创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的
-Diffusers、PEFT、Transformers、PaddleOCR、PaddlePaddle 等依赖。
+该命令创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU 版 PaddlePaddle，适用于 ``sd3_nft_ocr.yaml`` 等使用 ``use_gpu: False`` 的 OCR 配置。
+
+Wan2.2 OCR 配置使用 ``use_gpu: True``。添加 ``--paddle-gpu`` 安装 GPU 版 PaddlePaddle，支持 CUDA 11.x 和 12.x：
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model diffusion --paddle-gpu
 
 .. warning::
 
@@ -289,6 +294,8 @@ prompt，``env.*.dataset.split`` 用于选择对应文件。
       env.eval.dataset.path=/path/to/dataset/ocr
 
 更多参数位于 ``examples/diffusion/config/*.yaml``。
+
+将 ``runner.resume_dir`` 设为 ``checkpoints/global_step_N`` 目录可恢复 NFT 训练，包括 off-policy 的 EMA rollout 权重。如果旧 checkpoint 缺少 EMA 权重，actor 会记录告警，并用恢复后的 actor 权重初始化 EMA，此时无法精确续训。
 
 预期实验结果
 ------------
