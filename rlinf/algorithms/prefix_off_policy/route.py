@@ -18,12 +18,12 @@ from typing import Any, Literal
 
 import torch
 
-from rlinf.algorithms.rlt.expert import predict_expert_actions
-from rlinf.algorithms.rlt.transition import use_maniskill_rlt_env
+from rlinf.algorithms.prefix_off_policy.expert import predict_expert_actions
+from rlinf.algorithms.prefix_off_policy.transition import use_maniskill_rlt_env
 
 
 @dataclass(kw_only=True)
-class RLTRouteContext:
+class PrefixRouteContext:
     env_obs: dict[str, Any]
     rlt_obs: dict[str, torch.Tensor]
     student_actions: torch.Tensor
@@ -37,7 +37,7 @@ class RLTRouteContext:
 
 
 @dataclass(kw_only=True)
-class RLTRouteOutput:
+class PrefixRouteOutput:
     actions: torch.Tensor
     result: dict[str, Any]
 
@@ -107,7 +107,7 @@ def _base_ref_actions(
     return ref_chunk[:, :chunk_len, :action_dim].to(device=device, dtype=dtype)
 
 
-class RLTRoute(ABC):
+class PrefixRoute(ABC):
     def actor_routing_enabled(self, version: int) -> bool:
         """Return whether a learned actor switch can take effect now."""
         del version
@@ -125,14 +125,14 @@ class RLTRoute(ABC):
         return False
 
     @abstractmethod
-    def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
+    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
         """Route student actions among actor, reference, and optional expert."""
 
 
-class RealworldRLTRoute(RLTRoute):
+class RealworldPrefixRoute(PrefixRoute):
     """Actor/ref routing for realworld RLT (keyboard critical-phase switch).
 
-    Aligned with :class:`SimulatorRLTRoute`:
+    Aligned with :class:`SimulatorPrefixRoute`:
       - ``record_transition`` = critical (press ``b``)
       - ``actor_switch`` = critical ∧ ready_for_online (``warmup_post_collect_updates``)
 
@@ -151,7 +151,7 @@ class RealworldRLTRoute(RLTRoute):
     def actor_routing_enabled(self, version: int) -> bool:
         return self._ready_for_online(version)
 
-    def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
+    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
         actions = ctx.student_actions
         result = ctx.result
         batch_size, chunk_len, action_dim = actions.shape
@@ -189,10 +189,10 @@ class RealworldRLTRoute(RLTRoute):
         forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
         forward_inputs["record_transition"] = critical_phase[:, None]
         forward_inputs["actor_switch"] = actor_switch[:, None]
-        return RLTRouteOutput(actions=routed_actions, result=result)
+        return PrefixRouteOutput(actions=routed_actions, result=result)
 
 
-class SimulatorRLTRoute(RLTRoute):
+class SimulatorPrefixRoute(PrefixRoute):
     """Actor/ref/expert routing for ManiSkill RLT with schedule warmup."""
 
     def __init__(self, *, use_schedule: bool, warmup_updates: int):
@@ -218,7 +218,7 @@ class SimulatorRLTRoute(RLTRoute):
             and expert_model is not None
         )
 
-    def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
+    def route(self, ctx: PrefixRouteContext) -> PrefixRouteOutput:
         actions = ctx.student_actions
         result = ctx.result
         batch_size, chunk_len, action_dim = actions.shape
@@ -305,19 +305,19 @@ class SimulatorRLTRoute(RLTRoute):
         forward_inputs["actor_switch"] = (actor_switch & ~expert_takeover)[:, None]
         forward_inputs["intervention_requested"] = requested_expert_takeover[:, None]
         result["intervene_flags"] = intervene_flags
-        return RLTRouteOutput(actions=routed_actions, result=result)
+        return PrefixRouteOutput(actions=routed_actions, result=result)
 
 
-def build_rlt_route(cfg: Any) -> RLTRoute:
+def build_prefix_route(cfg: Any) -> PrefixRoute:
     schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
     use_schedule = bool(schedule_cfg.get("enable", False))
     warmup_updates = int(schedule_cfg.get("warmup_post_collect_updates", 0))
     if use_maniskill_rlt_env(cfg):
-        return SimulatorRLTRoute(
+        return SimulatorPrefixRoute(
             use_schedule=use_schedule,
             warmup_updates=warmup_updates,
         )
-    return RealworldRLTRoute(
+    return RealworldPrefixRoute(
         use_schedule=use_schedule,
         warmup_updates=warmup_updates,
     )

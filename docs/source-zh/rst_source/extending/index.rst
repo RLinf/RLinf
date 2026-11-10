@@ -58,7 +58,7 @@
       :link: prefix
       :link-type: doc
 
-      扩展冻结 VLA 特征、MLP head 和 off-policy algorithm。
+      在冻结 VLA 特征上训练 actor-critic，再接入自己的特征模型、head 或算法。
 
    .. grid-item-card:: 高级集成
       :link: advanced-integrations/index

@@ -17,9 +17,9 @@ from typing import Any
 
 import torch
 
-from rlinf.algorithms.rlt.rlt_steam_gate_trace import RLTGateTraceWriter
-from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
-from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
+from rlinf.algorithms.prefix_off_policy.transition import (
+    use_simulator_transition_replay,
+)
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -37,17 +37,12 @@ class ReplayIngestResult:
     metrics: dict[str, float]
 
 
-class RLTReplayService:
-    """Convert RLT rollout trajectories into learner replay entries."""
+class PrefixReplayService:
+    """Convert Prefix rollout trajectories into learner replay entries."""
 
-    def __init__(self, cfg: Any, *, rank: int) -> None:
+    def __init__(self, cfg: Any, *, trace_writer: Any | None = None) -> None:
         self.cfg = cfg
-        trace_cfg = cfg.algorithm.get("rlt_gate_calibration", {}) or {}
-        self.trace_writer = (
-            RLTGateTraceWriter(trace_cfg, rank=rank)
-            if bool(trace_cfg.get("enable", False))
-            else None
-        )
+        self.trace_writer = trace_writer
         self.replay_buffer = None
         self.demo_buffer = None
 
@@ -57,11 +52,14 @@ class RLTReplayService:
         self.demo_buffer = demo_buffer
 
     def ingest(self, trajectories: list[Trajectory]) -> ReplayIngestResult:
-        """Add rollout data to replay using the configured RLT storage mode."""
+        """Add rollout data to replay using the configured Prefix storage mode."""
         if self.replay_buffer is None:
-            raise RuntimeError("RLT replay buffers must be bound before ingestion.")
+            raise RuntimeError("Prefix replay buffers must be bound before ingestion.")
         if self.trace_writer is not None:
             self.trace_writer.write(trajectories)
+
+        for trajectory in trajectories:
+            trajectory.trajectory_infos = {}
 
         if use_simulator_transition_replay(self.cfg):
             replay_trajectories: list[Trajectory] = []
@@ -275,12 +273,14 @@ class RLTReplayService:
                 forward_inputs = flat.get("forward_inputs")
                 if isinstance(forward_inputs, dict):
                     row_value = self._row_tensor_dict(forward_inputs, index)
-                    row_value.pop(RLT_PHASE_FEATURE_KEY, None)
                     transition.forward_inputs = row_value
 
                 curr_obs = self._prefix_obs_from_flat_dict(flat, "curr_obs", index)
                 if curr_obs is None:
-                    continue
+                    raise ValueError(
+                        "Prefix transition replay requires curr_obs for recorded "
+                        f"transitions, got row index {index}."
+                    )
                 transition.curr_obs = curr_obs
 
                 done_index = min(
@@ -317,7 +317,7 @@ class RLTReplayService:
                 )
                 if next_obs is None:
                     raise ValueError(
-                        "RLT transition replay requires next_obs for non-terminal "
+                        "Prefix transition replay requires next_obs for non-terminal "
                         f"transitions, got row index {index}."
                     )
                 transition.next_obs = next_obs

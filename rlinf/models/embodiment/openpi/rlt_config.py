@@ -58,8 +58,6 @@ def build_rlt_config(model_cfg: Any, *, parent_cfg: Any) -> OpenPiPytorchRLTConf
     """
     from omegaconf import OmegaConf
 
-    from rlinf.models.embodiment.prefix.config import resolve_prefix_pool
-
     for legacy_key, replacement in _LEGACY_PREFIX_FIELDS.items():
         if OmegaConf.select(model_cfg, legacy_key, default=None) is not None:
             raise ValueError(
@@ -83,8 +81,15 @@ def build_rlt_config(model_cfg: Any, *, parent_cfg: Any) -> OpenPiPytorchRLTConf
         rlt_mlp_ratio=float(OmegaConf.select(model_cfg, "rlt_mlp_ratio", default=4.0)),
         rlt_use_mask=bool(OmegaConf.select(model_cfg, "rlt_use_mask", default=False)),
         prefix_image_only=bool(image_only),
-        prefix_pool=resolve_prefix_pool(
+        prefix_pool=_resolve_prefix_pool(
             use_rlt=use_rlt,
             prefix_pool=str(prefix_pool) if prefix_pool is not None else None,
         ),
     )
+
+
+def _resolve_prefix_pool(*, use_rlt: bool, prefix_pool: str | None = None) -> str:
+    pool = prefix_pool or ("rlt_token" if use_rlt else "masked_mean")
+    if pool not in ("rlt_token", "masked_mean", "mean", "last"):
+        raise ValueError(f"Unsupported prefix.pool={pool!r}.")
+    return pool

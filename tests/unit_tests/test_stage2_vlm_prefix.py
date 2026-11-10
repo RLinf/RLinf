@@ -17,10 +17,11 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.models.embodiment.openpi.pi0 import Pi0
+from rlinf.models.embodiment.openpi.prefix import OpenPiPrefixMixin
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 
 
-class _PrefixPoolStub(Pi0):
+class _PrefixPoolStub(OpenPiPrefixMixin, Pi0):
     def __init__(self, rlt_cfg: OpenPiPytorchRLTConfig):
         torch.nn.Module.__init__(self)
         self.rlt_cfg = rlt_cfg

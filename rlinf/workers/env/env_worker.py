@@ -21,6 +21,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.data.schema.embodied_types import (
+    ActionPayload,
     EnvOutput,
     EnvPart,
     EnvTransition,
@@ -42,12 +43,6 @@ from rlinf.utils.nested_dict_process import (
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
 from rlinf.utils.placement import HybridComponentPlacement
-
-_RLT_TRAJECTORY_INFO_DTYPES = {
-    "geometry_critical_active": torch.bool,
-    "rlt_oracle_expert_active": torch.bool,
-    "success_current": torch.bool,
-}
 
 
 class EnvWorker(Worker):
@@ -81,7 +76,7 @@ class EnvWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.enable_rlt = is_prefix_off_policy_loss(
+        self.enable_prefix = is_prefix_off_policy_loss(
             OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
         )
         self.collect_rlt_gate_trace = bool(
@@ -386,6 +381,13 @@ class EnvWorker(Worker):
                     resume=bool(getattr(env_cfg.data_collection, "resume", False)),
                     streaming=getattr(env_cfg.data_collection, "streaming", False),
                 )
+            gate_cfg = OmegaConf.select(self.cfg, "rollout.routing_gate", default=None)
+            if gate_cfg is not None and gate_cfg.get("enable", False):
+                if not callable(get_env_attr(env, "set_rollout_infos")):
+                    raise ValueError(
+                        f"rollout.routing_gate requires {type(env).__name__} to implement "
+                        "RolloutInfoReceiver.set_rollout_infos(infos)."
+                    )
             env_list.append(env)
         return env_list
 
@@ -841,21 +843,26 @@ class EnvWorker(Worker):
             "obs": env_batch["obs"],
             "final_obs": env_batch["final_obs"],
         }
-        if self.enable_rlt:
+        if self.enable_prefix:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
             data["dones"] = env_batch.get("dones", None)
         return data
 
-    def _select_rlt_trajectory_infos(
-        self, env_infos: dict[str, Any] | None
+    def _select_trajectory_infos(
+        self,
+        env_infos: dict[str, Any] | None,
+        env: Any,
     ) -> dict[str, torch.Tensor] | None:
-        """Select environment-owned tensors used by STEAM gate traces."""
+        """Export only the diagnostic fields declared by the environment."""
         if not self.collect_rlt_gate_trace or not isinstance(env_infos, dict):
             return None
-
+        export_spec = get_env_attr(env, "trajectory_info_spec")
+        if not callable(export_spec):
+            return None
         selected = {}
-        for key, dtype in _RLT_TRAJECTORY_INFO_DTYPES.items():
+        batch_size = int(get_env_attr(env, "num_envs"))
+        for key, dtype in export_spec().items():
             value = env_infos.get(key)
             if value is None:
                 final_info = env_infos.get("final_info")
@@ -864,11 +871,10 @@ class EnvWorker(Worker):
             if value is None:
                 continue
             normalized = torch.as_tensor(value, dtype=dtype)
-            batch_size = self.train_num_envs_per_stage
-            if normalized.numel() % batch_size:
+            if normalized.ndim == 0 or normalized.shape[0] != batch_size:
                 raise ValueError(
-                    f"RLT trajectory info {key!r} has {normalized.numel()} values "
-                    f"for batch size {batch_size}."
+                    f"Trajectory info {key!r} expected leading batch {batch_size}, "
+                    f"got shape {tuple(normalized.shape)}."
                 )
             selected[key] = normalized.reshape(batch_size, -1)[:, -1:]
         return selected or None
@@ -901,7 +907,9 @@ class EnvWorker(Worker):
             reward_assign_lengths=reward_assign_lengths,
             episode_data=chunk_step_data if self.enable_online_lerobot else None,
             trajectory_infos=(
-                self._select_rlt_trajectory_infos(env_output.env_infos)
+                self._select_trajectory_infos(
+                    env_output.env_infos, self.env_list[stage_id]
+                )
                 if stage_id is not None
                 else None
             ),
@@ -1145,25 +1153,25 @@ class EnvWorker(Worker):
     @staticmethod
     def _infer_action_batch_size(actions: Any) -> int:
         """Infer the batch dimension of a policy response."""
-        if isinstance(actions, dict):
+        if isinstance(actions, ActionPayload):
+            actions = actions.actions
+        elif isinstance(actions, dict):
             actions = actions["actions"]
+        elif hasattr(actions, "actions"):
+            actions = actions.actions
         return int(actions.shape[0])
 
     @staticmethod
     def _consume_action_payload(payload: Any, env: Any) -> torch.Tensor:
         """Apply optional rollout diagnostics and return executable actions."""
-        if not isinstance(payload, dict):
-            return payload
-        rollout_infos = payload.get("rollout_infos")
-        if rollout_infos:
-            set_rollout_infos = get_env_attr(env, "set_rollout_infos")
-            if not callable(set_rollout_infos):
-                raise ValueError(
-                    "Rollout diagnostics require the environment to implement "
-                    "set_rollout_infos()."
-                )
-            set_rollout_infos(rollout_infos)
-        return payload["actions"]
+        if isinstance(payload, ActionPayload):
+            if payload.rollout_infos:
+                get_env_attr(env, "set_rollout_infos")(payload.rollout_infos)
+            return payload.actions
+        # Other rollout backends may return their own action response object.
+        if hasattr(payload, "actions"):
+            return payload.actions
+        return payload
 
     def _recv_actions(self, input_channel: Channel, stage_id: int) -> Any:
         """Receive actions using the route paired with the policy request."""

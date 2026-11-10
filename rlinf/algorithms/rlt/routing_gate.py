@@ -39,12 +39,23 @@ class RoutingDecision:
     diagnostics: dict[str, torch.Tensor]
     phase_features: torch.Tensor | None = None
 
+    @property
+    def trajectory_infos(self) -> dict[str, torch.Tensor]:
+        """Return complete trace data in the gate-owned diagnostic namespace."""
+        if self.phase_features is None:
+            return self.diagnostics
+        from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
+
+        return {**self.diagnostics, RLT_PHASE_FEATURE_KEY: self.phase_features}
+
 
 @runtime_checkable
 class RoutingGate(Protocol):
     """Stateful component that decides actor and expert routing."""
 
     emit_phase_features: bool
+    # Subset of trajectory diagnostics required by the environment.
+    rollout_info_keys: tuple[str, ...]
 
     @property
     def controls_actor_routing(self) -> bool:

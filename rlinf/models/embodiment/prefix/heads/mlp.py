@@ -166,7 +166,7 @@ class DeterministicMLPActor(PrefixActorHead):
                 if reference_dropout_prob is None
                 else float(reference_dropout_prob),
             )
-        action = self.mean_action(state, reference)
+        action = self.mlp(torch.cat([state, reference], dim=-1))
         add_noise = (
             not deterministic if apply_action_noise is None else apply_action_noise
         )

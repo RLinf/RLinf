@@ -149,6 +149,8 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
         }
     )
     model = get_model(cfg)
+    model.extra = torch.nn.Sequential(torch.nn.Linear(2, 2))
+    model.extra._fsdp_wrap_role = "independent_component"
     wrap_policy = get_fsdp_wrap_policy(
         module=model,
         config=fsdp_cfg,
@@ -159,6 +161,7 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
     assert wrap_policy is not None
     assert wrap_policy(module=model.block, recurse=False, nonwrapped_numel=0)
     assert wrap_policy(module=model.head, recurse=False, nonwrapped_numel=0)
+    assert wrap_policy(module=model.extra, recurse=False, nonwrapped_numel=0)
 
 
 def _make_model(*, prefix_seq_len: int = 5) -> RLTTokenTransformer:
@@ -1711,7 +1714,7 @@ def test_phyai_eval_worker_accepts_a_config_without_algorithm(monkeypatch):
     worker = _build_phyai_worker(monkeypatch, _phyai_cfg(only_eval=True))
 
     assert worker.only_eval
-    assert not worker.enable_rlt
+    assert not worker.enable_prefix
     assert worker.weight_syncer is None
 
 
@@ -1720,7 +1723,7 @@ def test_phyai_eval_worker_accepts_a_config_without_algorithm(monkeypatch):
     [
         (False, "actor_critic", False),
         (True, "actor_critic", True),
-        (True, "rlt_ac", False),
+        (True, "prefix_off_policy", False),
     ],
 )
 def test_phyai_worker_sends_raw_transition_obs_only_when_the_actor_reads_them(
@@ -2653,21 +2656,31 @@ def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
             for p in raw_model.q_head.parameters()
         )
         context.model.zero_grad(set_to_none=True)
-        raw_model.set_critic_requires_grad(False)
         actor_loss, entropy, metrics = algorithm.actor_loss(context, batch)
         assert torch.isfinite(actor_loss) and torch.isfinite(entropy)
         assert online_calls[-2:] == [PrefixForwardType.ACTOR, PrefixForwardType.CRITIC]
         assert metrics["bc_weight"] == pytest.approx(0.6)
         assert metrics["q_weight"] == pytest.approx(0.5)
         actor_loss.backward()
-        assert all(
-            p.grad is not None and torch.isfinite(p.grad).all()
-            for p in raw_model.actor_head.parameters()
+        # A second microbatch must not let accumulated critic gradients change clipping.
+        second_loss, _, _ = algorithm.actor_loss(context, batch)
+        second_loss.backward()
+        from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+            PrefixOffPolicyRuntime,
         )
-        assert all(
-            p.grad is None or torch.count_nonzero(p.grad) == 0
-            for p in raw_model.q_head.parameters()
-        )
+
+        actor_params = list(raw_model.actor_head.parameters())
+        expected_norm = torch.stack([p.grad.norm() for p in actor_params]).norm()
+        assert all(p.grad is not None for p in raw_model.q_head.parameters())
+        for p in raw_model.q_head.parameters():
+            p.grad.mul_(1000)
+        optimizer = torch.optim.SGD(actor_params, lr=0.01)
+        worker = object.__new__(PrefixOffPolicyRuntime)
+        worker.model = context.model
+        norm = worker.clip_optimizer_grad_norm(optimizer, max_norm=0.01)
+        torch.testing.assert_close(norm, expected_norm)
+        assert all(p.grad is None for p in raw_model.q_head.parameters())
+        assert torch.stack([p.grad.norm() for p in actor_params]).norm() <= 0.01001
         assert all(m.steps.item() == 1 for m in renorms)
     finally:
         dist.destroy_process_group()
@@ -2844,16 +2857,13 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
     assert training_cfg.rollout.routing_gate.actor_switch.phase_head_path == (
         "/path/to/steam_phase_head.pt"
     )
-    assert (
-        training_cfg.rollout.routing_gate.actor_switch.enter_threshold
-        == pytest.approx(0.940951)
-    )
-    assert training_cfg.rollout.routing_gate.actor_switch.patience_chunks == 1
+    assert training_cfg.rollout.routing_gate.actor_switch.enter_threshold is None
+    assert training_cfg.rollout.routing_gate.actor_switch.patience_chunks is None
     expert = training_cfg.rollout.routing_gate.expert_takeover
     assert expert.mode == "shadow"
-    assert expert.enter_threshold == pytest.approx(-0.568753)
-    assert expert.patience_chunks == 6
-    assert expert.warmup_chunks == 4
+    assert expert.enter_threshold is None
+    assert expert.patience_chunks is None
+    assert expert.warmup_chunks is None
     assert training_cfg.env.train.rlt_policy_switch.routing_source == "rollout"
     assert not training_cfg.algorithm.rlt_gate_calibration.enable
 
@@ -3565,3 +3575,176 @@ def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm
     )
     torch.testing.assert_close(with_dropout, without_dropout, rtol=0, atol=0)
     assert torch.equal(torch.get_rng_state(), rng_after_dropout)
+
+
+@pytest.mark.parametrize("raw", [-1.2, 1.2])
+def test_prefix_td3_exploration_adds_noise_before_clamping(raw):
+    from rlinf.models.embodiment.prefix.heads.mlp import DeterministicMLPActor
+
+    actor = DeterministicMLPActor(1, 1, 1, {"hidden_dims": [], "noise_sigma": 0.5})
+    linear = next(m for m in actor.mlp.modules() if isinstance(m, torch.nn.Linear))
+    with torch.no_grad():
+        linear.weight.zero_()
+        linear.bias.fill_(raw)
+    state = torch.zeros(32, 1)
+    torch.manual_seed(0)
+    noise = torch.randn_like(state) * 0.5
+    torch.manual_seed(0)
+    actual, _ = actor(
+        state,
+        state,
+        deterministic=False,
+        apply_reference_dropout=False,
+        reference_dropout_prob=0,
+        apply_action_noise=True,
+    )
+    torch.testing.assert_close(actual, (raw + noise).clamp(-1, 1))
+    actual.sum().backward()
+    expected_grad = ((raw + noise).abs() < 1).sum().float().reshape(1)
+    torch.testing.assert_close(linear.bias.grad, expected_grad)
+
+
+def test_steam_gate_uses_head_metadata_and_warns_on_overrides(tmp_path, caplog):
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+    from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
+
+    path = tmp_path / "head.pt"
+    head = SteamPhaseHead(input_dim=6, hidden_dim=2)
+    for threshold in (0.7, 0.9):
+        head.save_checkpoint(
+            path,
+            metadata={
+                "recommended_enter_threshold": threshold,
+                "recommended_patience_chunks": 4,
+                "recommended_expert_gate": {
+                    "enter_threshold": -0.3,
+                    "patience_chunks": 6,
+                    "warmup_chunks": 2,
+                },
+            },
+        )
+        cfg = _steam_gate_cfg(
+            actor_switch={
+                "enable": True,
+                "phase_head_path": str(path),
+                "enter_threshold": None,
+                "patience_chunks": None,
+            },
+            expert_takeover={
+                "enable": True,
+                "mode": "shadow",
+                "enter_threshold": None,
+                "patience_chunks": None,
+                "warmup_chunks": None,
+            },
+        )
+        gate = SteamRoutingGate(_FakeSteamCritic(), cfg)
+        assert gate.enter_threshold == threshold
+        assert gate.patience_chunks == 4
+        assert gate.expert_enter_threshold == -0.3
+        assert gate.expert_patience_chunks == 6
+        assert gate.expert_warmup_chunks == 2
+    cfg.actor_switch.enter_threshold = 0.1
+    with caplog.at_level(logging.WARNING):
+        gate = SteamRoutingGate(_FakeSteamCritic(), cfg)
+    assert gate.enter_threshold == 0.1
+    assert "actor_switch.enter_threshold" in caplog.text
+
+
+def test_prefix_runtime_terminal_history_is_source_scoped_and_nonmutating():
+    from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
+    from rlinf.data.schema.embodied_types import (
+        EnvPart,
+        EnvTransition,
+        PolicyInput,
+        TrajectoryKey,
+        TrajectorySource,
+    )
+
+    class Features:
+        z_dim = 2
+
+        def extract_prefix_obs(self, obs):
+            states = obs["states"]
+            return {
+                "z_rl": torch.zeros(len(states), 2),
+                "proprio": states,
+                "ref_chunk": torch.zeros(len(states), 1, 1),
+            }
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_type": "prefix_policy",
+                    "z_dim": 2,
+                    "proprio_dim": 1,
+                    "action_dim": 1,
+                    "num_action_chunks": 1,
+                    "actor_head": {"name": "deterministic_mlp", "hidden_dims": [4]},
+                    "critic_head": {"name": "multi_q_mlp", "hidden_dims": [4]},
+                    "state_history": {"enable": True, "steps": 3},
+                }
+            },
+            "algorithm": {},
+            "env": {"train": {"env_type": "maniskill_rlt"}},
+        }
+    )
+    policy = PrefixPolicy(
+        prefix_dim=5,
+        proprio_dim=1,
+        action_dim=1,
+        num_action_chunks=1,
+        ref_num_action_chunks=1,
+        actor_head_cfg=cfg.actor.model.actor_head,
+        critic_head_cfg=cfg.actor.model.critic_head,
+    )
+    runtime = PrefixRolloutRuntime(cfg, policy, Features())
+
+    def source(offset, size, chunk):
+        return TrajectorySource(
+            TrajectoryKey(0, 0, 3, 0, chunk), size=size, offset=offset
+        )
+
+    def request(states, sources, **kwargs):
+        return PolicyInput(
+            obs={"states": torch.tensor(states).float().reshape(-1, 1)},
+            sources=sources,
+            **kwargs,
+        )
+
+    runtime.predict(request([1, 10], [source(0, 2, 0)]))
+    runtime.predict(request([2, 20], [source(0, 2, 1)]))
+    terminal = EnvPart(
+        sources=[source(1, 1, 1)],
+        transition=EnvTransition(),
+        next_obs={"states": torch.tensor([[30.0]])},
+        requires_inference=True,
+    )
+    nonterminal = EnvPart(sources=[source(0, 1, 1)], transition=EnvTransition())
+    current = request(
+        [100, 3],
+        [source(1, 1, 2), source(0, 1, 2)],
+        dones=torch.tensor([[True], [False]]),
+        env_parts=[terminal, nonterminal],
+        request_sizes=[1, 1],
+    )
+    _, result = runtime.predict(current)
+    old = runtime.transition_obs(terminal, None, None)
+    torch.testing.assert_close(old["z_rl"][0, 2:], torch.tensor([10.0, 20.0, 30.0]))
+    new = result["forward_inputs"]["z_rl"][:, 2:]
+    torch.testing.assert_close(new, torch.tensor([[0.0, 0.0, 100.0], [1.0, 2.0, 3.0]]))
+    final_part = EnvPart(sources=[source(0, 1, 2)], transition=EnvTransition())
+    final = request([4], [], env_parts=[final_part], request_sizes=[1], is_last=True)
+    runtime.prepare_transitions(final)
+    final_features = runtime.transition_obs(final_part, None, None)
+    torch.testing.assert_close(
+        final_features["z_rl"][0, 2:], torch.tensor([2.0, 3.0, 4.0])
+    )
+    # A different-sized terminal peek and eval cannot erase the merged train rows.
+    runtime.predict(request([99, 999], [source(0, 2, 0)]), mode="eval")
+    _, result = runtime.predict(request([101, 5], [source(1, 1, 3), source(0, 1, 3)]))
+    torch.testing.assert_close(
+        result["forward_inputs"]["z_rl"][:, 2:],
+        torch.tensor([[0.0, 100.0, 101.0], [2.0, 3.0, 5.0]]),
+    )

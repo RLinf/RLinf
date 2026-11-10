@@ -1,16 +1,16 @@
 RL Token: Online Reinforcement Learning with a Compressed VLA Representation
 =============================================================================
 
-This page explains RL Token (RLT) Stage 1 representation learning, Stage 2 online training, real-robot execution, and ManiSkill routing. Read :doc:`../../extending/prefix` for the shared feature contract, ``prefix_policy``, MLP heads, and algorithm extensions.
+Train an RL Token (RLT) representation from demonstrations, then use it to train a small actor-critic online. This recipe covers Stage 1 SFT and Stage 2 execution for Franka peg insertion and ManiSkill ``PegInsertionSideWideClearance-v1`` joint-control simulation.
 
-**RL Token: Bootstrapping Online RL with Vision-Language-Action Models** trains a compact token transformer before the lightweight actor-critic. Stage 2 selects the shared worker with ``algorithm.loss_type: prefix_off_policy`` and selects AC or TD3 with ``algorithm.name``. Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_.
+RLT learns a compact token representation from the VLA's image and language features. Stage 2 freezes that representation and trains the actor and critic through the Prefix runtime. If you want to start directly from an existing VLA checkpoint without token-transformer training, use the pooling route in :doc:`../../extending/prefix`. That page also explains how to replace the feature model, heads, or algorithm.
 
-The checked-in configs cover Franka peg insertion and the ManiSkill ``PegInsertionSideWideClearance-v1`` joint-control simulation. Align demonstration fields, environment actions, state semantics, and the OpenPI data config when moving the recipe to another task.
+The method is described in **RL Token: Bootstrapping Online RL with Vision-Language-Action Models**. Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_. When adapting this recipe, align the demonstration fields, environment actions, robot state, and OpenPI data config.
 
 Overview
 --------
 
-The two RLT training stages meet at the complete Stage 1 ``actor`` checkpoint. Stage 1 learns the token representation, Stage 2 freezes it while updating the actor-critic online, and the rollout route selects the executed action chunk.
+Stage 1 jointly trains the VLA and token transformer on demonstrations. Its complete ``actor`` checkpoint supplies the frozen features and reference actions for Stage 2, where only the small actor-critic is updated. During rollout, the phase switch chooses whether to execute the VLA or actor action; expert takeover can supply intervention actions when enabled.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -23,7 +23,7 @@ The two RLT training stages meet at the complete Stage 1 ``actor`` checkpoint. S
    .. grid-item-card:: Stage 2
       :text-align: center
 
-      Frozen token feature model
+      Train actor-critic on frozen features
 
    .. grid-item-card:: Action source
       :text-align: center
@@ -38,6 +38,8 @@ The two RLT training stages meet at the complete Stage 1 ``actor`` checkpoint. S
 Provided Configuration Files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+Choose the Stage 1 and Stage 2 configs for your environment. The STEAM preset uses pooled VLA features rather than the RLT token transformer; its weights and calibration steps are documented on the Prefix page.
+
 .. list-table::
    :header-rows: 1
    :widths: 22 36 42
@@ -45,7 +47,7 @@ Provided Configuration Files
    * - Stage
      - Config
      - Purpose
-   * - Franka Stage 1 (optional)
+   * - Franka Stage 1
      - ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml``
      - SFT π₀.₅ together with the RLT token transformer on Franka demonstrations.
    * - Franka Stage 2 (RL token)
@@ -65,7 +67,7 @@ Provided Configuration Files
      - Run the simulated TD3-MLP variant with the same frozen Stage 1 feature model and replay route.
    * - ManiSkill Stage 2 (STEAM + TD3)
      - ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``
-     - Combine the TD3 algorithm and pluggable MLP heads with STEAM rollout routing.
+     - Train TD3 on pooled VLA features, with STEAM deciding when to switch to the actor.
 
 Installation
 ------------
@@ -196,9 +198,9 @@ Stage 2 feature-model config. ``openpi_data`` belongs under ``actor.model``.
 Stage 2: Train the RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Stage 2 loads the Stage 1 actor checkpoint containing ``rlt_module``. The frozen feature model emits ``{z_rl, proprio, ref_chunk}``, while Prefix policy updates only its actor and critic heads. See :doc:`../../extending/prefix` for the Prefix runtime's head, algorithm, and state contracts.
+Load the Stage 1 ``actor`` checkpoint, including ``rlt_module``, as the frozen feature model. It returns ``{z_rl, proprio, ref_chunk}`` for the trainable ``prefix_policy``. Set ``algorithm.loss_type: prefix_off_policy`` and choose AC or TD3 with ``algorithm.name``; both use chunk-reward TD targets and a weighted Q/BC actor objective.
 
-The RLT Stage 2 implementation uses chunk-reward TD targets and a ``-Q + BC`` actor objective. ``rlt_policy_switch``, STEAM, and expert takeover select the source of each executed action chunk.
+Action routing is separate from those updates. ``rlt_policy_switch`` selects the VLA or actor chunk, and expert takeover can replace it with an intervention. The STEAM variant uses a learned gate for these decisions; the common feature and policy interfaces are described in :doc:`../../extending/prefix`.
 
 During rollout:
 
@@ -662,19 +664,13 @@ This variant is currently configured only for ManiSkill simulation. It keeps
 the frozen Stage 1 features and transition replay path, while replacing the
 Stage 2 policy and update objective with a direct TD3 actor and twin-Q critic.
 
-The STEAM preset explicitly sets ``prefix.image_only: true`` to pool image tokens.
-To combine the same TD3 components with STEAM, set the feature, phase-head,
-value-model, and expert checkpoint paths in
-``maniskill_prefix_stage2_td3_mlp_steam.yaml``, then launch:
+For pooled features instead of a learned RLT representation, use ``maniskill_prefix_stage2_td3_mlp_steam.yaml``. It sets ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``, so it can use an existing SFT VLA without a trained ``rlt_module``. Download the feature, expert, STEAM value-model, and phase-head checkpoints following :doc:`../../extending/prefix`, set their local paths, then launch:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-This configuration keeps ``algorithm.name: td3``, ``deterministic_mlp``, and
-``twin_q_mlp`` unchanged. ``rollout.routing_gate.type: steam`` adds base-to-actor
-and actor-to-expert routing around that learner without introducing a separate
-TD3 worker or policy class.
+The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. The Prefix page explains the published threshold's validation limits and how to collect calibration traces.
 
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
 freezes ``rollout.prefix_feature_model`` and only synchronizes the Stage 2 MLP
@@ -823,12 +819,12 @@ Useful RLT signals:
   - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
 
-  RLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
+  Prefix schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
 
-  - ``train/rlt/ready_for_online``: whether learner ``update_step`` has passed ``warmup_post_collect_updates``.
-  - ``train/rlt/actor_updates_run``, ``train/rlt/critic_updates_run``, and ``train/rlt/pending_update_budget``: actor/critic updates executed in the step and remaining learner backlog.
-  - ``train/rlt/updates_to_run``, ``train/rlt/should_train``, and ``train/rlt/skip_reason``: scheduled training for the step and why training may be skipped.
-  - ``train/rlt/global_transitions_since_train`` and ``train/rlt/global_total_transitions_added``: global replay ingest counters since the last training burst.
+  - ``train/prefix/ready_for_online``: whether learner ``update_step`` has passed ``warmup_post_collect_updates``.
+  - ``train/prefix/actor_updates_run``, ``train/prefix/critic_updates_run``, and ``train/prefix/pending_update_budget``: actor/critic updates executed in the step and remaining learner backlog.
+  - ``train/prefix/updates_to_run``, ``train/prefix/should_train``, and ``train/prefix/skip_reason``: scheduled training for the step and why training may be skipped.
+  - ``train/prefix/global_transitions_since_train`` and ``train/prefix/global_total_transitions_added``: global replay ingest counters since the last training burst.
 
 Experimental Results
 --------------------

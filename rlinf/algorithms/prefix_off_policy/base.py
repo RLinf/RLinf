@@ -21,7 +21,9 @@ import torch.nn.functional as F
 from rlinf.algorithms.prefix_off_policy.capabilities import (
     PrefixAlgorithmRequirements,
 )
-from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
+from rlinf.algorithms.prefix_off_policy.transition import (
+    use_simulator_transition_replay,
+)
 from rlinf.models.embodiment.prefix.heads.registry import (
     get_prefix_actor_spec,
     get_prefix_critic_spec,

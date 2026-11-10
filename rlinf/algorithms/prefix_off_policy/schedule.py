@@ -21,15 +21,15 @@ from rlinf.utils.distributed import all_reduce_dict
 
 
 @dataclass(frozen=True)
-class RLTUpdatePlan:
+class PrefixUpdatePlan:
     """Update count and metrics for one learner scheduling decision."""
 
     updates: int
     metrics: dict[str, float]
 
 
-class RLTUpdateSchedule:
-    """Track replay progress and derive RLT learner update budgets."""
+class PrefixUpdateSchedule:
+    """Track replay progress and derive Prefix learner update budgets."""
 
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
@@ -68,10 +68,12 @@ class RLTUpdateSchedule:
         replay_size: int,
         demo_size: int,
         replay_metrics: dict[str, float] | None = None,
-    ) -> RLTUpdatePlan:
+    ) -> PrefixUpdatePlan:
         """Compute the number of learner updates currently due."""
         if not self.enabled:
-            raise RuntimeError("RLTUpdateSchedule.plan() requires an enabled schedule.")
+            raise RuntimeError(
+                "PrefixUpdateSchedule.plan() requires an enabled schedule."
+            )
 
         replay_cfg = self.cfg.algorithm.replay_buffer
         min_buffer_size = int(
@@ -148,32 +150,32 @@ class RLTUpdateSchedule:
         self.pending_update_budget = int(pending_updates)
 
         metrics = {
-            "rlt/update_step": float(update_step),
-            "rlt/ready_for_online": float(update_step >= warmup_required_updates),
-            "rlt/warmup_required_updates": float(warmup_required_updates),
-            "rlt/update_epoch": float(update_epoch),
-            "rlt/max_updates_per_train_step": float(max_updates),
-            "rlt/train_every_transitions": float(train_every_transitions),
-            "rlt/train_every_episodes": float(train_every_episodes),
-            "rlt/desired_total_updates": float(desired_total_updates),
-            "rlt/pending_update_budget": float(self.pending_update_budget),
-            "rlt/updates_scheduled": float(updates_scheduled),
-            "rlt/updates_to_run": float(updates_to_run),
-            "rlt/critic_updates_run": 0.0,
-            "rlt/actor_updates_run": 0.0,
-            "rlt/should_train": float(updates_to_run > 0),
-            "rlt/skip_reason": float(skip_reason),
-            "rlt/global_min_replay_size": float(counters["min_replay_size"]),
-            "rlt/min_replay_buffer_size": float(min_buffer_size),
-            "rlt/global_transitions_since_train": float(
+            "prefix/update_step": float(update_step),
+            "prefix/ready_for_online": float(update_step >= warmup_required_updates),
+            "prefix/warmup_required_updates": float(warmup_required_updates),
+            "prefix/update_epoch": float(update_epoch),
+            "prefix/max_updates_per_train_step": float(max_updates),
+            "prefix/train_every_transitions": float(train_every_transitions),
+            "prefix/train_every_episodes": float(train_every_episodes),
+            "prefix/desired_total_updates": float(desired_total_updates),
+            "prefix/pending_update_budget": float(self.pending_update_budget),
+            "prefix/updates_scheduled": float(updates_scheduled),
+            "prefix/updates_to_run": float(updates_to_run),
+            "prefix/critic_updates_run": 0.0,
+            "prefix/actor_updates_run": 0.0,
+            "prefix/should_train": float(updates_to_run > 0),
+            "prefix/skip_reason": float(skip_reason),
+            "prefix/global_min_replay_size": float(counters["min_replay_size"]),
+            "prefix/min_replay_buffer_size": float(min_buffer_size),
+            "prefix/global_transitions_since_train": float(
                 counters["transitions_since_train"]
             ),
-            "rlt/global_total_transitions_added": float(
+            "prefix/global_total_transitions_added": float(
                 counters["total_transitions_added"]
             ),
         }
         metrics.update(replay_metrics or {})
-        return RLTUpdatePlan(updates=updates_to_run, metrics=metrics)
+        return PrefixUpdatePlan(updates=updates_to_run, metrics=metrics)
 
     def finish_updates(self, updates_run: int) -> None:
         """Consume update budget and reset per-train ingestion counters."""

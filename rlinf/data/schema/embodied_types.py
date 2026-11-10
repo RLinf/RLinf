@@ -323,12 +323,42 @@ class EnvTransition:
 
 
 @dataclass(kw_only=True)
+class ActionPayload:
+    """Executable actions and optional environment feedback, batched on axis zero."""
+
+    actions: torch.Tensor
+    rollout_infos: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.actions = self.actions.detach().cpu().contiguous()
+        self.rollout_infos = put_tensor_device(self.rollout_infos, "cpu", detach=True)
+
+    def split(self, sizes: list[int]) -> list["ActionPayload"]:
+        """Split actions and feedback using the same routed batch sizes."""
+        infos = split_batch_value(self.rollout_infos, sizes)
+        return [
+            type(self)(actions=actions, rollout_infos=info)
+            for actions, info in zip(split_batch_value(self.actions, sizes), infos)
+        ]
+
+    @classmethod
+    def merge(cls, payloads: list["ActionPayload"]) -> "ActionPayload":
+        """Merge routed action fragments in batch order."""
+        return cls(
+            actions=merge_batch_values([item.actions for item in payloads]),
+            rollout_infos=merge_batch_values([item.rollout_infos for item in payloads]),
+        )
+
+
+@dataclass(kw_only=True)
 class PolicyOutput:
     """Policy inference output retained until its environment transition arrives."""
 
     # Model-ready training inputs; batched leaves are [B, ...], and ``action``
     # is normally flattened [B, D] where D = num_action_chunks * action_dim.
     forward_inputs: dict[str, Any]
+    # Diagnostics retained for tracing, never passed to model forward.
+    trajectory_infos: dict[str, Any] = field(default_factory=dict)
     # Behavior-policy log probabilities, float [B, ...]; common layouts are
     # [B, D] and [B, C, A], selected by the model/loss implementation.
     prev_logprobs: torch.Tensor | None = None
@@ -346,6 +376,9 @@ class PolicyOutput:
             self.forward_inputs,
             "cpu",
             detach=True,
+        )
+        self.trajectory_infos = put_tensor_device(
+            self.trajectory_infos, "cpu", detach=True
         )
         for field_name in (
             "prev_logprobs",
@@ -644,6 +677,8 @@ class TrajectoryStep:
     rewards: torch.Tensor | None = None
     # Actor training inputs for the current chunk; leaves start with [B, ...].
     forward_inputs: dict[str, Any] = field(default_factory=dict)
+    # Diagnostics retained for tracing, never passed to model forward.
+    trajectory_infos: dict[str, Any] = field(default_factory=dict)
     # Actor weight version for each policy statistic; shape matches prev_logprobs.
     versions: torch.Tensor | None = None
     # Current transition observation; leaves start with [B, ...].
@@ -679,7 +714,12 @@ class TrajectoryStep:
             value = getattr(self, field_name)
             if value is not None:
                 setattr(self, field_name, value.cpu().contiguous())
-        for field_name in ("forward_inputs", "curr_obs", "next_obs"):
+        for field_name in (
+            "forward_inputs",
+            "curr_obs",
+            "next_obs",
+            "trajectory_infos",
+        ):
             value = getattr(self, field_name)
             if value:
                 setattr(self, field_name, put_tensor_device(value, "cpu"))
@@ -696,7 +736,7 @@ class TrajectoryStep:
         rewards: torch.Tensor | None,
         collect_prev_infos: bool,
         collect_transitions: bool,
-        enable_rlt: bool,
+        enable_prefix: bool,
         include_final_value: bool,
     ) -> "TrajectoryStep":
         """Resolve one joined policy/env pair into self-contained step data.
@@ -719,6 +759,10 @@ class TrajectoryStep:
             terminations=env.transition.terminations,
             rewards=rewards,
             forward_inputs=dict(output.forward_inputs),
+            trajectory_infos={
+                **output.trajectory_infos,
+                **(env.transition.trajectory_infos or {}),
+            },
             versions=output.versions,
             initial_dones=initial.dones if initial is not None else None,
             initial_truncations=(initial.truncations if initial is not None else None),
@@ -731,8 +775,6 @@ class TrajectoryStep:
                 else None
             ),
         )
-        if env.transition.trajectory_infos:
-            step.forward_inputs.update(env.transition.trajectory_infos)
         if env.transition.executed_mask is not None:
             mask = env.transition.executed_mask
             if step.prev_logprobs is not None:
@@ -756,7 +798,7 @@ class TrajectoryStep:
             policy,
             env,
             collect_transitions=collect_transitions,
-            enable_rlt=enable_rlt,
+            enable_prefix=enable_prefix,
         )
         return step
 
@@ -809,19 +851,19 @@ class TrajectoryStep:
         env: EnvPart,
         *,
         collect_transitions: bool,
-        enable_rlt: bool,
+        enable_prefix: bool,
     ) -> None:
         """Extract the transition representation required by the algorithm."""
-        if enable_rlt:
-            from rlinf.algorithms.rlt.transition import (
-                apply_rlt_interventions,
-                extract_rlt_obs_from_forward_inputs,
+        if enable_prefix:
+            from rlinf.algorithms.prefix_off_policy.transition import (
+                apply_prefix_interventions,
+                extract_prefix_obs_from_forward_inputs,
             )
 
             if env.next_rlt_obs is None:
                 raise ValueError("RLT transitions require next-state features.")
-            current_obs = extract_rlt_obs_from_forward_inputs(self.forward_inputs)
-            apply_rlt_interventions(
+            current_obs = extract_prefix_obs_from_forward_inputs(self.forward_inputs)
+            apply_prefix_interventions(
                 current_obs,
                 env.transition.intervene_actions,
                 env.transition.intervene_flags,
@@ -872,6 +914,8 @@ class Trajectory:
     forward_inputs: dict[str, Any] = field(default_factory=dict)
     curr_obs: dict[str, Any] = field(default_factory=dict)
     next_obs: dict[str, Any] = field(default_factory=dict)
+    # Diagnostics retained for tracing, never passed to model forward.
+    trajectory_infos: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_steps(
@@ -931,7 +975,7 @@ class Trajectory:
         if values:
             trajectory.prev_values = torch.stack(values, dim=0).cpu().contiguous()
 
-        for name in ("forward_inputs", "curr_obs", "next_obs"):
+        for name in ("forward_inputs", "curr_obs", "next_obs", "trajectory_infos"):
             values = [getattr(step, name) for step in steps if getattr(step, name)]
             if values:
                 setattr(
@@ -997,7 +1041,12 @@ class Trajectory:
             return {}
 
         batch: dict[str, Any] = {}
-        for field_name in ("curr_obs", "next_obs", "forward_inputs"):
+        for field_name in (
+            "curr_obs",
+            "next_obs",
+            "forward_inputs",
+            "trajectory_infos",
+        ):
             all_keys = {
                 key
                 for trajectory in trajectories
@@ -1085,6 +1134,7 @@ class Trajectory:
                     prev_logprobs=prev_logprobs,
                     prev_values=prev_values,
                     forward_inputs=forward_inputs,
+                    trajectory_infos=apply_mask_to_dict(self.trajectory_infos, i),
                     curr_obs=curr_obs,
                     next_obs=next_obs,
                 )
@@ -1942,6 +1992,8 @@ def get_model_weights_id(versions: torch.Tensor) -> str:
 
 def split_batch_value(value: Any, split_sizes: list[int]) -> list[Any]:
     """Split a recursively nested batch on its leading dimension."""
+    if isinstance(value, ActionPayload):
+        return value.split(split_sizes)
     if value is None:
         return [None] * len(split_sizes)
     if isinstance(value, torch.Tensor):
@@ -1977,6 +2029,8 @@ def merge_batch_values(values: list[Any]) -> Any:
         raise ValueError("Cannot merge present and absent batch values.")
 
     first = values[0]
+    if isinstance(first, ActionPayload):
+        return ActionPayload.merge(values)
     if isinstance(first, torch.Tensor):
         return torch.cat(values, dim=0)
     if isinstance(first, np.ndarray):

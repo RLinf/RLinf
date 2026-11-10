@@ -98,7 +98,8 @@ env:
     ref_num_action_chunks: 10
     rlt_policy_switch:
       expert_takeover:
-        enable: False
+        # Cover reset with takeover enabled; this short run never reaches a stall.
+        enable: True
   eval:
     rollout_epoch: 1
     total_num_envs: 8

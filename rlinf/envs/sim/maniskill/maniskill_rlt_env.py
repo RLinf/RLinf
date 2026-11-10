@@ -280,6 +280,14 @@ class ManiskillRLTEnv(ManiskillEnv):
             for key in self._RLT_GATE_INFO_KEYS
         }
 
+    def trajectory_info_spec(self) -> dict[str, torch.dtype]:
+        """Declare environment-owned labels used by offline gate calibration."""
+        return {
+            "geometry_critical_active": torch.bool,
+            "rlt_oracle_expert_active": torch.bool,
+            "success_current": torch.bool,
+        }
+
     def set_rollout_infos(self, rollout_infos: dict[str, torch.Tensor]) -> None:
         """Store rollout-owned gate diagnostics for the next action chunk."""
         if self._rlt_switch_state is None:
@@ -973,12 +981,12 @@ class ManiskillRLTEnv(ManiskillEnv):
                     ].clone()
         return infos
 
-    def _attach_rlt_switch_info(self, infos):
+    def _attach_rlt_switch_info(self, infos, *, after_reset: bool = False):
         if self._rlt_switch_state is None:
             return
+        # Reset has no step-only success/progress diagnostics.
         switch_info = self._export_rlt_switch_info(
-            device=self.device,
-            infos=infos,
+            device=self.device, infos=None if after_reset else infos
         )
         if self._rlt_route_from_environment():
             for key in ("rlt_switch_flags", "intervene_flag"):
@@ -1021,7 +1029,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         self._reset_rlt_switch(options.get("env_idx"))
         self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
-        self._attach_rlt_switch_info(infos)
+        self._attach_rlt_switch_info(infos, after_reset=True)
         return extracted_obs, infos
 
     def step(

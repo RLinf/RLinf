@@ -1,131 +1,134 @@
 Prefix Fine-Tune: Frozen VLA Features and Pluggable Policies
 ============================================================
 
-Prefix Fine-Tune trains a pluggable compact policy on frozen VLA features. This page follows the rollout, policy, and algorithm call path through the current implementation, then shows how to add a VLA adapter, MLP head, or off-policy algorithm. Read :doc:`../examples/embodied/rlt` for the RL Token Stage 1 transformer and task workflow.
+Use Prefix Fine-Tune to train a small off-policy actor-critic from an existing VLA checkpoint. Start with the ManiSkill example below, then adapt its feature representation, policy heads, or update algorithm to your task.
 
-Prefix Fine-Tune gives the VLA representation and the online RL policy separate lifecycles. The rollout worker loads a frozen VLA feature model, while the actor worker trains only compact actor and critic heads. The workers meet through the fixed ``{z_rl, proprio, ref_chunk}`` contract, so the vision-language encoder, policy heads, and update algorithm can be replaced independently.
+Here, *prefix* means the image and language hidden states that the VLA computes before generating actions. The VLA stays frozen during online RL. A separate actor learns to use those features, the robot state, and the VLA's reference actions to produce an action chunk.
 
 Overview
 --------
 
-One Prefix policy step follows this path:
+The main choice is whether to use the VLA's existing features directly or first learn an RL-specific representation. With ``prefix.pool: masked_mean``, you can start from a base or SFT VLA checkpoint and average its valid prefix tokens into ``z_rl``. The RL Token route instead uses ``prefix.pool: rlt_token`` and needs the token transformer trained in Stage 1. Follow :doc:`../examples/embodied/rlt` if you want that learned representation; both routes use the same actor-critic training path.
 
-1. The environment provides images, language, state, and task metadata.
-2. ``rollout.prefix_feature_model`` calls the VLA's ``extract_prefix_obs`` method.
-3. The VLA returns ``z_rl``, ``proprio``, and ``ref_chunk``.
-4. The rollout ``prefix_policy`` builds the state and calls the registered actor head to produce an action chunk.
-5. The learner ``prefix_off_policy`` worker receives transitions, writes them to replay, computes critic targets and the actor objective, and synchronizes the rollout policy.
+Online updates train only the actor and critic heads, rather than backpropagating through the VLA. Replay stores ``{z_rl, proprio, ref_chunk}`` instead of the image observations, so learner batches reuse the extracted features. The VLA still runs during rollout to extract features and generate the reference action chunk; freezing it does not remove that inference work.
 
-The default ``z_rl`` is the masked mean of the VLM prefix hidden states. ``prefix.pool: mean``, ``last``, and ``rlt_token`` provide other representation paths. ``rlt_token`` reads the token transformer trained in Stage 1; its training procedure is documented in :doc:`../examples/embodied/rlt`.
+The RLT-specific AC and TD3 policy/worker implementations are replaced by one ``prefix_policy`` model and one ``prefix_off_policy`` worker. Choose the actor head, critic head, and algorithm separately in the config. Chunk-reward discounting, BC targets, and weight schedules are shared by AC and TD3. This is useful when comparing a new representation or head without copying the training loop. Evaluate pooled and learned features on your task before choosing between them.
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+Training and Running
+--------------------
 
-   .. grid-item-card:: Frozen feature model
-      :text-align: center
+The ManiSkill peg-insertion preset is a complete example: ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``. It trains TD3 with ``deterministic_mlp`` and ``twin_q_mlp`` on frozen, masked-mean VLA features. A separate STEAM value model decides when to switch from the base VLA to the learned actor. Activate the OpenPI and ManiSkill environment described in :doc:`../examples/embodied/rlt` and run the commands from the repository root.
 
-      ``PrefixFeatureModel`` contract
+Download the Checkpoints
+^^^^^^^^^^^^^^^^^^^^^^^^
 
-   .. grid-item-card:: Prefix observation
-      :text-align: center
-
-      ``z_rl``, ``proprio``, ``ref_chunk``
-
-   .. grid-item-card:: Trainable policy
-      :text-align: center
-
-      ``PrefixPolicy`` and registered heads
-
-   .. grid-item-card:: Update runtime
-      :text-align: center
-
-      ``prefix_off_policy`` worker
-
-Current Implementation
-----------------------
-
-How the frozen VLA creates a Prefix observation
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-``rlinf.models.embodiment.prefix.contracts`` defines the smallest feature-model interface:
-
-.. code:: python
-
-   from typing import Any, Protocol
-   from rlinf.models.embodiment.prefix.types import PrefixObs
-
-   class PrefixFeatureModel(Protocol):
-       @property
-       def z_dim(self) -> int: ...
-
-       def extract_prefix_obs(
-           self, env_obs: dict[str, Any]
-       ) -> PrefixObs: ...
-
-``PrefixObs`` is a TypedDict with three batch-first tensors. Here ``z_dim`` is the original feature-model output width; rollout appends proprio history to ``z_rl`` when state history is enabled.
+The preset uses a base VLA, an expert VLA, a STEAM value model, and a calibrated phase head. Download each resource to the local path used by its config field:
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 36 40
+   :widths: 20 40 40
 
-   * - key
-     - shape
-     - meaning
-   * - ``z_rl``
-     - ``[B, z_dim]``
-     - Frozen VLA Prefix representation.
-   * - ``proprio``
-     - ``[B, proprio_dim]``
-     - Current robot or simulator state used by the policy.
-   * - ``ref_chunk``
-     - ``[B, ref_num_action_chunks, action_dim]``
-     - Reference action chunk sampled from the frozen VLA and passed to the actor as a condition.
+   * - Resource
+     - Hugging Face Repository
+     - Preset Field
+   * - Base / feature SFT, step 1000
+     - `ChikaYokoyama/maniskill_rlt_1000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_1000_new>`_
+     - ``rollout.prefix_feature_model.model_path``
+   * - Expert SFT, step 3000
+     - `ChikaYokoyama/maniskill_rlt_3000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_3000_new>`_
+     - ``rollout.expert_model.model_path``
+   * - STEAM value model, step 5000
+     - `ChikaYokoyama/rlt_steam_value_model_sft_step_5000 <https://huggingface.co/ChikaYokoyama/rlt_steam_value_model_sft_step_5000>`_
+     - ``rollout.routing_gate.model.model_path``
+   * - Phase head and gate recommendation
+     - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
+     - ``rollout.routing_gate.actor_switch.phase_head_path``
 
-OpenPI's ``Pi0Eval.extract_prefix_obs`` is the current implementation. It converts environment inputs to an OpenPI observation, runs the image and language Prefix through ``build_prefix_cache``, and lets ``_encode_stage2_z`` select pooling or the RLT token path. ``_sample_actions_from_prefix_cache`` produces the reference chunk, and the configured state becomes ``proprio``. The rollout worker puts this model in ``eval`` mode and disables gradients during initialization.
+Choose a local checkpoint directory for the weights, normalization statistics, and processor files. For hf-mirror, first run ``export HF_ENDPOINT=https://hf-mirror.com``.
 
-Prefix pooling
-^^^^^^^^^^^^^^
+.. code:: bash
 
-``rlinf.models.embodiment.prefix.pool.pool_prefix`` accepts ``hidden`` (``[B, T, D]``) and an optional boolean mask, then returns ``[B, D]``:
+   CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
 
-* ``masked_mean`` averages valid tokens and is the default for Prefix Fine-Tune.
-* ``mean`` averages the complete token sequence.
-* ``last`` reads the last valid token; without a mask it reads the final sequence position.
-* ``rlt_token`` is a configuration marker. OpenPI routes it to ``rlt_module.encode_flat`` instead of calling ``pool_prefix`` directly.
+   hf download ChikaYokoyama/maniskill_rlt_1000_new \
+     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+     --exclude '*/dcp_checkpoint/*'
+   hf download ChikaYokoyama/maniskill_rlt_3000_new \
+     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
+     --exclude '*/dcp_checkpoint/*'
+   hf download ChikaYokoyama/rlt_steam_value_model_sft_step_5000 \
+     --local-dir "$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
+     --exclude 'dcp_checkpoint/*'
+   hf download ChikaYokoyama/rlt_steam_phase_head \
+     --local-dir "$CHECKPOINT_ROOT"
 
-``prefix.pool`` and ``prefix.image_only`` sit beside the ``openpi`` block of the OpenPI model config. When ``prefix.pool`` is unset, ``resolve_prefix_pool`` returns ``rlt_token`` if ``openpi.use_rlt`` is true and ``masked_mean`` otherwise. ``prefix.image_only`` defaults to true and keeps only image tokens before pooling or RLT encoding. Set both fields explicitly so the representation source can be inspected in both Stage 1 and Stage 2 configurations. The rollout worker checks at startup that the feature model's ``z_dim`` equals ``actor.model.z_dim``. Each ``extract_prefix_obs`` call also checks the last dimension of ``z_rl`` against the feature model's ``z_dim``.
+   hf download google/siglip-so400m-patch14-384 \
+     --local-dir "$CHECKPOINT_ROOT/siglip-so400m-patch14-384"
+   hf download google/gemma-3-270m \
+     --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
 
-State history
-^^^^^^^^^^^^^
+The first two repositories include ``global_step_1000/actor`` and ``global_step_3000/actor`` in their paths. The STEAM repository has the actor directory's contents at its root, so its download target includes ``global_step_5000/actor``. These commands skip distributed training state and retain the files used for inference.
 
-With ``actor.model.state_history.enable: true``, ``StateHistoryBuffer`` keeps the latest ``steps`` proprio values at the policy decision rate and appends the flattened history to ``z_rl``. ``pad`` accepts ``zero`` and ``repeat``. Episode reset clears history for the selected environments. ``get_prefix_feature_dim`` computes the policy width:
+Replace ``/path/to`` in the preset's four checkpoint paths with the expanded absolute value of ``CHECKPOINT_ROOT``. Keep ``openpi_data.repo_id: maniskill_peginsertionside_joint`` and ``norm_stats_path: null`` so each OpenPI checkpoint uses its own ``<model_path>/<repo_id>/norm_stats.json``.
+
+The STEAM checkpoint also records local backbone paths. Edit ``$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json``: set ``vision_repo_id`` to the expanded absolute path of ``$CHECKPOINT_ROOT/siglip-so400m-patch14-384`` and ``language_repo_id`` to that of ``$CHECKPOINT_ROOT/gemma-3-270m``. Keep the tokenizer and image-processor files alongside the STEAM weights; the gate loads them from that directory.
+
+.. warning::
+
+   Leave the preset's phase/expert threshold, patience, and expert warmup fields at ``null`` to use the loaded phase head's metadata. The published head recommends ``enter_threshold: 0.940951`` and ``patience_chunks: 1``. Explicit values override metadata and log a warning when they disagree. The expert candidate threshold ``-0.568753`` produced zero predicted takeovers and zero oracle-stall recall on the validation split. Keep expert takeover in ``shadow`` mode: it records decisions without executing them. Calibrate and validate the expert threshold on actor-controlled episodes before switching to ``active``. If you use ``steam_gate_recommendation.yaml``, replace its source-machine phase-head path and retain shadow mode.
+
+Run Training
+^^^^^^^^^^^^
+
+After updating those paths, launch the preset:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
+
+This starts the actor, rollout, and environment workers. The feature model uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Only image tokens enter ``z_rl``; language still conditions the reference actions. STEAM controls the base-to-actor switch, while expert takeover remains in shadow mode. ``rollout.routing_gate.cameras`` maps STEAM processor camera keys to the corresponding environment observation keys.
+
+Collect Calibration Traces
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To fit a phase head for your setup, use the collection preset. It sets ``rollout.routing_gate.actor_switch.collect_phase_features: true`` to return STEAM features and ``algorithm.rlt_gate_calibration.enable: true`` to save them with geometry labels and gate diagnostics. It clears the phase-head path, uses the environment geometry gate for routing, and keeps expert takeover in shadow mode.
+
+.. code:: bash
+
+   STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
+
+The learner writes ``trace_*.pt`` under ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/``. Each launch creates its run directory under ``logs/``; change ``algorithm.rlt_gate_calibration.save_path`` to save elsewhere. These 20 rollout rounds check collection. If both geometry labels occur, they can also supply an initial phase head, but they do not finish the preset's 30,000-update warmup or validate expert takeover.
+
+Point ``TRACE_DIR`` at that run's trace directory and fit the initial head without a minimum-version filter:
+
+.. code:: bash
+
+   TRACE_DIR=/path/to/run_log_dir/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration
+   python toolkits/rlt/calibrate_steam_gates.py "$TRACE_DIR" \
+     --phase-head-output "$CHECKPOINT_ROOT/steam_phase_head.pt" \
+     --yaml-output "$CHECKPOINT_ROOT/steam_gate_recommendation.yaml" --device cpu
+
+The tool writes ``steam_phase_head.pt`` and ``steam_gate_recommendation.yaml`` outside the training loop. Check the validation metrics, then set the training preset's phase-head path to the new output. Leave the gate settings at ``null`` to read that checkpoint's recommendations. Deployment expert thresholds need later, actor-controlled episodes. Use the training preset for normal runs; it keeps both collection flags false.
+
+Replay and Updates
+^^^^^^^^^^^^^^^^^^
+
+Routing may execute a base, actor, or expert action. Its ``ActionPayload`` carries the executable actions and optional feedback. The gate declares the feedback keys in ``rollout_info_keys``; a gate-enabled environment must implement ``RolloutInfoReceiver.set_rollout_infos``, which the env worker checks at startup.
+
+An environment declares calibration labels through ``TrajectoryInfoProvider.trajectory_info_spec``. Those labels and gate diagnostics travel in ``Trajectory.trajectory_infos``, separate from ``forward_inputs``. The trace writer reads them before replay drops them. Replay pairs the action actually sent to the environment with its current and next feature observations:
 
 .. code:: text
 
-   runtime_z_dim = z_dim + steps * proprio_dim  # state_history.enable=true
-   runtime_z_dim = z_dim                         # state_history.enable=false
+   curr_obs = {z_rl, proprio, ref_chunk}
+   action   = action chunk actually sent to the environment
+   next_obs = {next_z_rl, next_proprio, next_ref_chunk}
 
-Rollout and actor use the same ``actor.model.state_history`` configuration, which keeps the feature width identical.
-
-PrefixPolicy forward contract
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-``rlinf.models.embodiment.prefix.policy.PrefixPolicy`` inherits ``BasePolicy`` and exposes semantic actor and critic forwards:
-
-* ``PrefixForwardType.ACTOR`` calls the actor head and returns ``actions, logprobs, None``.
-* ``PrefixForwardType.CRITIC`` returns ``current_q, next_q``, with one value per Q head. ``next_q`` is ``None`` for a non-joint critic.
-* ``predict_action_batch`` reshapes flat actions to ``[B, num_action_chunks, action_dim]`` and returns the action and Prefix observation in ``forward_inputs``.
-
-``PrefixPolicy`` selects the standard or joint CrossQ critic internally. Algorithms use the same semantic interface for either backend, and training calls pass through the FSDP-wrapped ``forward``.
-
-The policy state is ``concat(flatten(z_rl), flatten(proprio))``. The reference is reshaped by action dimension and truncated to ``num_action_chunks`` before it conditions the actor and supplies the BC target. ``ref_num_action_chunks`` may exceed the executed ``num_action_chunks``, so the feature model can expose a longer reference window.
-
-PrefixPolicy does not own VLA parameters. The rollout worker owns the VLA, while PrefixPolicy contains the actor and critic heads. The FSDP worker identifies critic parameters through the stable ``q_head`` path.
+The critic discounts rewards within each chunk by ``gamma`` and bootstraps the next-state Q with ``gamma ** chunk_horizon``. The actor objective is ``-q_weight * Q + bc_weight * BC``. BC normally targets ``ref_chunk``; steps marked as interventions use the executed intervention action.
 
 Minimal Configuration
 ---------------------
 
-The following fragment uses an OpenPI masked-mean feature model, a stochastic MLP actor, and a twin-Q critic. Fill in paths and environment fields for the selected task.
+When adapting the example, keep the frozen VLA under ``rollout.prefix_feature_model`` and the trainable heads under ``actor.model``. The fragment below shows that split for AC with a stochastic MLP actor and twin-Q critic. Add the task's environment, placement, optimizer, and rollout settings from a complete preset before launching it.
 
 .. code:: yaml
 
@@ -171,19 +174,104 @@ The following fragment uses an OpenPI masked-mean feature model, a stochastic ML
          name: twin_q_mlp
          hidden_dims: [256, 256, 256]
 
-``actor.model.z_dim`` must equal the base ``z_rl`` width produced by the feature model. State history adds its width automatically. Keep ``actor.model.proprio_dim``, ``action_dim``, ``num_action_chunks``, and the feature-model and environment action contracts aligned.
+``actor.model.z_dim`` is the feature model's output width before state history is added. Match ``proprio_dim`` to the returned robot state, ``action_dim`` to one environment action, and ``num_action_chunks`` to the executed chunk length. The reference must cover at least that many actions; ``ref_num_action_chunks`` may be longer.
 
-``rlinf/config.py`` validates the training path. ``loss_type: prefix_off_policy`` requires ``actor.model.model_type: prefix_policy``, both head names, and a registered ``algorithm.name``. The validation rejects incompatible actor distributions, action-noise capabilities, and Q-head counts before the worker starts.
+Config validation requires ``loss_type: prefix_off_policy``, ``actor.model.model_type: prefix_policy``, both registered head names, and a registered ``algorithm.name``. It checks the actor distribution, action-noise support, and Q-head count before workers start.
+
+Current Implementation
+----------------------
+
+The frozen VLA and the trainable policy meet at a three-tensor observation. This section follows that observation from feature extraction to actor and critic calls; use the same shapes when adding another VLA or head.
+
+How the Frozen VLA Creates a Prefix Observation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The rollout worker passes raw environment observations to ``extract_prefix_obs``. The feature model reports its output width as ``z_dim`` and returns a ``PrefixObs``. This interface is defined in ``rlinf.models.embodiment.prefix.contracts``:
+
+.. code:: python
+
+   from typing import Any, Protocol
+   from rlinf.models.embodiment.prefix.types import PrefixObs
+
+   class PrefixFeatureModel(Protocol):
+       @property
+       def z_dim(self) -> int: ...
+
+       def extract_prefix_obs(
+           self, env_obs: dict[str, Any]
+       ) -> PrefixObs: ...
+
+``PrefixObs`` contains three batch-first tensors. The table shows the feature model's output, before rollout appends state history:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 36 40
+
+   * - key
+     - shape
+     - meaning
+   * - ``z_rl``
+     - ``[B, z_dim]``
+     - Frozen VLA Prefix representation.
+   * - ``proprio``
+     - ``[B, proprio_dim]``
+     - Current robot or simulator state used by the policy.
+   * - ``ref_chunk``
+     - ``[B, ref_num_action_chunks, action_dim]``
+     - Reference action chunk sampled from the frozen VLA and passed to the actor as a condition.
+
+OpenPI's ``Pi0Eval`` implements this interface through ``OpenPiPrefixMixin``, which adds no parameters or checkpoint keys. It converts the environment input to an OpenPI observation, computes the image and language prefix once, then uses that cache for both ``z_rl`` and reference action generation. The selected robot state becomes ``proprio``. ``PrefixRolloutRuntime`` puts the feature model in ``eval`` mode and disables its gradients.
+
+Prefix Pooling
+^^^^^^^^^^^^^^
+
+Choose which tokens contribute to ``z_rl`` before choosing how to reduce them. ``prefix.image_only: true`` selects image tokens; ``false`` retains image and language tokens. Set ``prefix.pool`` beside it, at the same level as the model's ``openpi`` block:
+
+* ``masked_mean`` averages valid tokens and is the default when ``openpi.use_rlt`` is false.
+* ``mean`` averages the complete selected token sequence, including masked positions.
+* ``last`` reads the last valid token, or the final sequence position if no mask is supplied.
+* ``rlt_token`` runs the Stage 1 ``rlt_module.encode_flat`` instead of pooling.
+
+``pool_prefix`` accepts ``hidden`` with shape ``[B, T, D]`` and an optional boolean mask; the three pooling modes return ``[B, D]``. When ``prefix.pool`` is unset, ``resolve_prefix_pool`` chooses ``rlt_token`` if ``openpi.use_rlt`` is true and ``masked_mean`` otherwise. ``prefix.image_only`` defaults to true. Set both fields explicitly when comparing representations.
+
+At startup, rollout checks the feature model's ``z_dim`` against ``actor.model.z_dim``. It also checks each extracted ``z_rl`` width against the feature model's declared width.
+
+State History
+^^^^^^^^^^^^^
+
+For a policy that needs recent motion as well as the current observation, set ``actor.model.state_history.enable: true``. ``StateHistoryBuffer`` saves the most recent ``steps`` proprio observations at the policy decision rate and appends their flattened values to ``z_rl``. ``pad`` selects ``zero`` or ``repeat`` padding, and an episode reset clears that environment's history.
+
+.. code:: text
+
+   runtime_z_dim = z_dim + steps * proprio_dim  # state_history.enable=true
+   runtime_z_dim = z_dim                         # state_history.enable=false
+
+``get_prefix_feature_dim`` computes this runtime width. Rollout and actor both use ``actor.model.state_history``, so leave ``actor.model.z_dim`` at the original feature-model width.
+
+History is indexed by mode, environment rank, pipeline stage, and source-row offset. Terminal observations read the preceding episode's history before current observations reset or advance it. Terminal reads do not commit history, and evaluation keeps its history separate from training.
+
+PrefixPolicy Forward Contract
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``PrefixPolicy`` concatenates the flattened ``z_rl`` and ``proprio`` into the policy state. It truncates ``ref_chunk`` to the executed ``num_action_chunks`` and flattens it for the actor's reference input and BC target. It contains the actor and critic heads. ``PrefixRolloutRuntime`` owns the frozen VLA, optional expert and gate, and train/eval history. The FSDP worker identifies critic parameters through ``q_head``.
+
+Calls through its ``BasePolicy`` interface return:
+
+* ``PrefixForwardType.ACTOR``: ``actions, logprobs, None`` from the actor head.
+* ``PrefixForwardType.CRITIC``: ``current_q, next_q``, with one value per Q head. ``next_q`` is ``None`` for a non-joint critic.
+* ``predict_action_batch``: actions reshaped to ``[B, num_action_chunks, action_dim]``, with the action and feature observation in ``forward_inputs``.
+
+``PrefixPolicy`` selects the ordinary-Q or joint CrossQ critic internally. Algorithms make the same actor and critic requests for either backend. All training calls go through the FSDP-wrapped ``forward``.
 
 Extending the BaseVLA Feature Model
 -----------------------------------
 
-Use the feature-model contract when adding a VLA. BaseVLA here refers to an existing VLA base or vendor model; RLinf currently has no common class with that name. The ``PrefixFeatureModel`` Protocol fixes the boundary with the rollout worker. The concrete object must support ``eval``, ``requires_grad_``, ``to``, and ``extract_prefix_obs``. A route that executes base VLA actions also needs the policy's action API.
+To use another VLA, adapt its observations and outputs to ``PrefixObs``. The existing OpenPI adapter is one implementation, not a requirement of the policy heads. Here, BaseVLA means your vendor or base model, not an RLinf base class. The concrete adapter must support ``eval``, ``requires_grad_``, ``to``, and ``extract_prefix_obs``; routes that call the VLA's action API also need that API.
 
-Implement an adapter
+Implement an Adapter
 ^^^^^^^^^^^^^^^^^^^^
 
-An adapter converts ``env_obs`` to VLA inputs, runs the Prefix encoder, samples the reference action chunk, and returns three float32 batch tensors. The skeleton uses illustrative preprocessing, encoding, and action-sampling methods; implement those operations against the vendor's actual API.
+The skeleton below extracts prefix features and a reference chunk from one observation. Its preprocessing, encoding, and sampling methods are illustrative: implement those calls with your VLA's actual API.
 
 .. code:: python
 
@@ -209,24 +297,24 @@ An adapter converts ``env_obs`` to VLA inputs, runs the Prefix encoder, samples 
                "ref_chunk": ref_chunk.float(),
            }
 
-The ``env_obs`` input is defined by the environment wrapper, while the returned keys must stay equal to ``PREFIX_OBS_KEYS``. The last dimension of ``ref_chunk`` must match the environment action dimension, and its length must cover ``num_action_chunks``. Keep proprio semantics and normalization aligned with ``actor.model.proprio_dim`` and the training data.
+``extract_prefix_obs`` accepts the observation dictionary supplied by the environment wrapper and returns the three ``PREFIX_OBS_KEYS`` as float32 batch tensors. The example pools ``hidden`` with its mask for ``z_rl``, samples actions for ``ref_chunk``, and reads the state for ``proprio``. Check the reference action dimension and horizon against the environment, and keep state normalization consistent with the training data.
 
-Connect the model factory
+Connect the Model Factory
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The rollout worker constructs ``rollout.prefix_feature_model`` through ``get_model``. A custom adapter needs a lazy builder in ``rlinf/models/__init__.py``, a model type in ``SupportedModel`` in ``rlinf/config.py``, and embodied-model validation there. The returned object must satisfy both the rollout PyTorch-module lifecycle and the Prefix feature contract. A route that executes base VLA actions also needs the policy's action API.
+The rollout worker creates ``rollout.prefix_feature_model`` through ``get_model``. Register a builder with ``register_model`` from ``rlinf.models`` and set ``category="embodied"``. The builder receives the model config and ``torch_dtype`` and returns your adapter. Registration also adds the model type to config validation.
 
-After connecting the adapter, reuse the existing ``prefix_policy``, ``prefix_off_policy`` worker, and replay schema. Test batch size, device and dtype, reset-time state semantics, and action-chunk shapes.
+Make the registration run in every worker process: import in-tree builders from ``rlinf/models/__init__.py`` or load an external registration module with ``RLINF_EXT_MODULE``. See :doc:`new_model_fsdp` for the model registration workflow. You can then keep the existing ``prefix_policy``, algorithm, and replay format. Test the adapter's batch shapes, device and dtype, reset behavior, and action chunks through that rollout path.
 
 Extending MLP Actor and Critic Heads
 ------------------------------------
 
-Prefix heads receive the assembled state and reference/action tensors. An actor's ``forward`` returns flat actions and per-dimension log probabilities, while ``mean_action`` returns the noise-free action used by BC. A critic returns ``[..., num_q_heads]``; a CrossQ critic can also return next-state Q values.
+Replace a head when you want a different network over the same features. The actor receives the assembled state and reference; its ``forward`` returns flat actions and per-dimension log probabilities, while ``mean_action`` returns a noise-free prediction for supervised forwards. The critic receives state and flat actions, and returns one value per Q head. A joint CrossQ critic also returns next-state Q values.
 
-Register an actor head
+Register an Actor Head
 ^^^^^^^^^^^^^^^^^^^^^^
 
-Subclass ``PrefixActorHead``, declare ``ActorHeadCapabilities``, and use ``register_prefix_actor``. The builder arguments are ``state_dim``, ``reference_dim``, ``action_dim``, and the head's Hydra config.
+Subclass ``PrefixActorHead`` and declare its behavior in ``ActorHeadCapabilities``. The registry passes ``state_dim``, ``reference_dim``, ``action_dim``, and the head config to the builder. This example registers a deterministic MLP with reference dropout and action noise:
 
 .. code:: python
 
@@ -274,12 +362,12 @@ Subclass ``PrefixActorHead``, declare ``ActorHeadCapabilities``, and use ``regis
    def make_custom_mlp_actor(state_dim, reference_dim, action_dim, cfg):
        return CustomMLPActor(state_dim, reference_dim, action_dim, cfg)
 
-Built-in actor names are ``fixed_std_mlp`` and ``deterministic_mlp``. AC requires a stochastic actor. TD3 requires a deterministic actor with action-noise support. Capability metadata keeps validation and algorithm composition consistent.
+``register_prefix_actor`` makes ``custom_mlp`` available to the model builder. Its ``mean_action`` supplies the noise-free prediction used by the policy's SFT forward; ``forward`` applies the requested dropout and exploration behavior before returning actions and log probabilities. Built-in actors are ``fixed_std_mlp`` for AC and ``deterministic_mlp`` for TD3. AC requires a stochastic actor; TD3 requires a deterministic actor with action-noise support.
 
-Register a critic head
+Register a Critic Head
 ^^^^^^^^^^^^^^^^^^^^^^
 
-Subclass ``PrefixCriticHead``, set ``CriticHeadCapabilities`` and ``num_q_heads``, and use ``register_prefix_critic``. ``multi_q_mlp`` supports a configurable number of Q estimates, ``twin_q_mlp`` fixes two independent Q networks, and ``cross_q_mlp`` adds CrossQ evaluation.
+A critic declares ``CriticHeadCapabilities`` and ``num_q_heads``. The example below evaluates two independent Q networks on the same state-action input and registers them as ``custom_twin``:
 
 .. code:: python
 
@@ -317,7 +405,9 @@ Subclass ``PrefixCriticHead``, set ``CriticHeadCapabilities`` and ``num_q_heads`
    def make_custom_twin_critic(state_dim, action_dim, cfg):
        return CustomTwinCritic(state_dim, action_dim, cfg)
 
-Place the new head in ``rlinf.models.embodiment.prefix.heads`` and import it from the registry's ``_load_builtin_heads``. Configuration uses the registered name:
+Its ``forward`` returns ``[B, 2]``. The built-in ``multi_q_mlp`` allows a configurable head count, ``twin_q_mlp`` fixes it at two, and ``cross_q_mlp`` supports joint current/next-state evaluation. Choose a head whose capabilities satisfy the algorithm.
+
+Import in-tree heads from the registry's ``_load_builtin_heads`` so each worker process registers them. Select the registered names in the config:
 
 .. code:: yaml
 
@@ -328,12 +418,14 @@ Place the new head in ``rlinf.models.embodiment.prefix.heads`` and import it fro
        critic_head:
          name: custom_twin
 
+This replaces the two networks while retaining the feature model and training worker. Both AC and TD3 can use ``multi_q_mlp`` when its Q-head count meets their requirements.
+
 Extending the Prefix Algorithm
 ------------------------------
 
-The algorithm contract has three entry points: ``critic_loss``, ``actor_loss``, and ``target_actions``. Declare the required head capabilities in ``requirements`` and register the subclass with ``register_prefix_off_policy_algorithm``. The base class provides a chunk-discounted Bellman critic loss; inherit it unless the algorithm needs a different target or critic objective. Implement ``actor_loss`` and ``target_actions`` for the new algorithm.
+Change the algorithm when the actor objective, critic target, or next-action rule changes. The three entry points are ``critic_loss``, ``actor_loss``, and ``target_actions``. The base ``critic_loss`` already handles chunk-discounted Bellman targets and critic MSE; inherit it unless those rules differ. Declare the required head behavior in ``requirements`` and register the subclass.
 
-The example below reuses the shared BC/Q actor objective with minimum-Q aggregation. It sends semantic actor requests through ``context.target_model(...)``; the worker-owned FSDP wrapper still runs its ``forward`` hooks. ``PrefixPolicy`` dispatches actor calls and selects the ordinary-Q or CrossQ critic backend. Algorithms do not select SAC or CrossQ forward types.
+This example reuses the shared BC/Q objective with minimum-Q aggregation and gets bootstrap actions from the target actor:
 
 .. code:: python
 
@@ -367,121 +459,16 @@ The example below reuses the shared BC/Q actor objective with minimum-Q aggregat
            )
            return actions
 
-``PrefixOffPolicyAlgorithm`` keeps chunk-reward discounting, termination bootstrap, and critic MSE in ``critic_loss``. Its optional ``_actor_loss`` helper shares BC targets, human-intervention masks, BC/Q weight schedules, and Q aggregation across AC and TD3. A different actor objective can implement ``actor_loss`` directly without using that helper. Import the module from the registry's ``_load_builtin_algorithms``; select it with ``algorithm.name: my_algorithm`` while keeping ``loss_type: prefix_off_policy``.
+``actor_loss`` returns the shared helper's loss, entropy statistic, and metrics. ``target_actions`` passes ``next_obs`` to the worker-owned ``context.target_model`` and returns the flat actions for the critic target. Both it and ``context.model`` are wrapped training models: call them through ``forward`` as shown, rather than bypassing FSDP via ``.module``. ``PrefixPolicy`` handles the ordinary-Q or CrossQ backend.
 
-The built-in ``ac`` uses a stochastic actor and Q1 aggregation; ``algorithm.actor_agg_q`` may only be ``q1``. ``td3`` uses a deterministic actor, a target actor, action noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. The critic target always bootstraps from the minimum of the first two Q heads, so ``algorithm.agg_q`` must be ``min`` or unset; extra ``multi_q_mlp`` heads regress to that same target. Prefix algorithms do not train an entropy temperature and require ``algorithm.entropy_tuning.alpha_type: fixed_alpha``. These settings and the head capabilities are checked when the algorithm is built.
+The optional ``_actor_loss`` helper shares intervention-aware BC targets, BC/Q weight schedules, and Q aggregation between AC and TD3. Implement ``actor_loss`` directly for a different objective. Import the algorithm module from the registry's ``_load_builtin_algorithms`` and select ``algorithm.name: my_algorithm`` with ``loss_type: prefix_off_policy``.
 
-Training and Running
---------------------
-
-Use ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` to run Prefix Fine-Tune on ManiSkill peg insertion. The preset combines masked-mean VLM Prefix features, ``deterministic_mlp``, ``twin_q_mlp``, and ``algorithm.name: td3``. Start from the repository root with the OpenPI and ManiSkill environment described in :doc:`../examples/embodied/rlt` activated.
-
-Download the Checkpoints
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-The preset keeps the four checkpoint paths and gate thresholds in one YAML file. Download the published resources for these fields:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 40 40
-
-   * - Resource
-     - Hugging Face Repository
-     - Preset Field
-   * - Base / feature SFT, step 1000
-     - `ChikaYokoyama/maniskill_rlt_1000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_1000_new>`_
-     - ``rollout.prefix_feature_model.model_path``
-   * - Expert SFT, step 3000
-     - `ChikaYokoyama/maniskill_rlt_3000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_3000_new>`_
-     - ``rollout.expert_model.model_path``
-   * - STEAM value model, step 5000
-     - `ChikaYokoyama/rlt_steam_value_model_sft_step_5000 <https://huggingface.co/ChikaYokoyama/rlt_steam_value_model_sft_step_5000>`_
-     - ``rollout.routing_gate.model.model_path``
-   * - Phase head and gate recommendation
-     - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
-     - ``rollout.routing_gate.actor_switch.phase_head_path``
-
-Choose a local checkpoint directory and download the inference weights, normalization statistics, and processor assets. To use hf-mirror, first run ``export HF_ENDPOINT=https://hf-mirror.com``.
-
-.. code:: bash
-
-   CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
-
-   hf download ChikaYokoyama/maniskill_rlt_1000_new \
-     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
-     --exclude '*/dcp_checkpoint/*'
-   hf download ChikaYokoyama/maniskill_rlt_3000_new \
-     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
-     --exclude '*/dcp_checkpoint/*'
-   hf download ChikaYokoyama/rlt_steam_value_model_sft_step_5000 \
-     --local-dir "$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
-     --exclude 'dcp_checkpoint/*'
-   hf download ChikaYokoyama/rlt_steam_phase_head \
-     --local-dir "$CHECKPOINT_ROOT"
-
-   hf download google/siglip-so400m-patch14-384 \
-     --local-dir "$CHECKPOINT_ROOT/siglip-so400m-patch14-384"
-   hf download google/gemma-3-270m \
-     --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
-
-The SFT repositories include ``global_step_1000/actor`` and ``global_step_3000/actor`` in their file paths. The STEAM repository contains the actor directory's contents at its root, so download it directly into the local ``global_step_5000/actor`` directory as shown above. The commands omit distributed training state while preserving the assets used for inference.
-
-In the preset, replace ``/path/to`` in the four checkpoint paths with the expanded absolute value of ``CHECKPOINT_ROOT``. Keep ``openpi_data.repo_id: maniskill_peginsertionside_joint`` and ``norm_stats_path: null``: each OpenPI model loads its own ``<model_path>/<repo_id>/norm_stats.json``.
-
-The downloaded STEAM ``config.json`` also contains local backbone paths. In ``$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json``, set ``vision_repo_id`` to the expanded absolute path of ``$CHECKPOINT_ROOT/siglip-so400m-patch14-384`` and ``language_repo_id`` to that of ``$CHECKPOINT_ROOT/gemma-3-270m``. Keep the tokenizer and image-processor files alongside the weights; the gate loads them from that checkpoint directory.
-
-.. warning::
-
-   The published phase head uses ``enter_threshold: 0.940951`` and ``patience_chunks: 1``. The expert candidate threshold ``-0.568753`` produced zero predicted takeovers and zero oracle-stall recall on the validation split. The preset therefore keeps expert takeover in ``shadow`` mode. Validate a new expert threshold on actor-controlled episodes before switching to ``active``. When using ``steam_gate_recommendation.yaml``, replace its source-machine phase-head path and retain the preset's shadow mode.
-
-Run Training
-^^^^^^^^^^^^
-
-After setting the local paths, launch the training preset:
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
-
-The frozen feature model explicitly uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Its ``z_rl`` pools only VLM image tokens; language still conditions the reference actions. STEAM controls the base-to-actor switch and records expert-takeover decisions in shadow mode. ``rollout.routing_gate.cameras`` maps each STEAM processor camera key to the env observation key that supplies it.
-
-Collect Calibration Traces
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-To fit a head for your own setup, use the collection preset. It clears the phase-head path, routes with the environment geometry gate, and keeps expert takeover in shadow mode:
-
-.. code:: bash
-
-   STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
-
-The preset enables ``rollout.routing_gate.actor_switch.collect_phase_features`` to emit STEAM features and ``algorithm.rlt_gate_calibration.enable`` to save them with geometry labels and gate diagnostics. Each launch creates a run directory under ``logs/``; the learner writes ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``. The save directory is configured by ``algorithm.rlt_gate_calibration.save_path``.
-
-The 20 rollout rounds check collection and can supply an initial phase head if both geometry labels occur. They do not complete the preset's 30,000-update warmup; calibrate deployment expert thresholds on later, actor-controlled episodes. Set ``TRACE_DIR`` to the collected run's trace directory and fit the initial head without a minimum-version filter:
-
-.. code:: bash
-
-   TRACE_DIR=/path/to/run_log_dir/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration
-   python toolkits/rlt/calibrate_steam_gates.py "$TRACE_DIR" \
-     --phase-head-output "$CHECKPOINT_ROOT/steam_phase_head.pt" \
-     --yaml-output "$CHECKPOINT_ROOT/steam_gate_recommendation.yaml" --device cpu
-
-Check the validation metrics before copying thresholds into the training preset, and set the phase-head path to your local output. The calibration tool runs offline, separately from training updates. Use the training preset for normal runs, with both collection flags false.
-
-Replay and Updates
-^^^^^^^^^^^^^^^^^^
-
-Stage 2 replay uses a fixed observation contract:
-
-.. code:: text
-
-   curr_obs = {z_rl, proprio, ref_chunk}
-   action   = action chunk actually sent to the environment
-   next_obs = {next_z_rl, next_proprio, next_ref_chunk}
-
-The critic discounts rewards inside a chunk with ``gamma`` and bootstraps the next-state Q with ``gamma ** chunk_horizon``. The actor uses ``-q_weight * Q + bc_weight * BC``. The default BC target is ``ref_chunk``; a step marked with an intervention flag uses the executed human action.
+The built-in ``ac`` uses the online stochastic actor for next actions and requires ``algorithm.actor_agg_q: q1``. ``td3`` uses a deterministic target actor, action noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. The critic target in either algorithm is the minimum of the first two Q heads. Extra ``multi_q_mlp`` heads regress to the same target, so leave ``algorithm.agg_q`` unset or set it to ``min``. Both algorithms require ``algorithm.entropy_tuning.alpha_type: fixed_alpha``; they do not train an entropy temperature. These settings are checked when the algorithm is built.
 
 Implementation and Checkpoints
 ------------------------------
+
+Use these files to trace a config choice to its implementation:
 
 .. list-table::
    :header-rows: 1
@@ -499,7 +486,11 @@ Implementation and Checkpoints
      - ``rlinf/models/embodiment/prefix/heads/``
    * - off-policy algorithms
      - ``rlinf/algorithms/prefix_off_policy/``
+   * - Rollout lifecycle and replay/scheduling
+     - ``rlinf/algorithms/prefix_off_policy/rollout.py``, ``replay.py``, ``schedule.py``
+   * - OpenPI feature mixin
+     - ``rlinf/models/embodiment/openpi/prefix.py``
    * - FSDP actor worker
      - ``rlinf/workers/actor/fsdp_prefix_off_policy_worker.py``
 
-When debugging, compare the feature model ``z_dim``, the policy width ``z_dim + history.extra_dim``, and the environment width ``num_action_chunks * action_dim``. Then check that Stage 1 and Stage 2 use the same OpenPI dataconfig and ``norm_stats.json``. An RLT-token checkpoint must include the complete ``rlt_module``; its configuration and run steps are in :doc:`../examples/embodied/rlt`.
+For shape errors, compare the feature model's ``z_dim``, the policy's runtime width ``z_dim + history.extra_dim``, and the environment's flat action width ``num_action_chunks * action_dim``. For action-scale errors, check the OpenPI data config and ``norm_stats.json`` used by each checkpoint. An RLT-token feature model must also load the complete ``rlt_module`` from its Stage 1 checkpoint; see :doc:`../examples/embodied/rlt`.

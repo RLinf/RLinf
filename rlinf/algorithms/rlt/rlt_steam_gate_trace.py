@@ -97,7 +97,7 @@ class RLTGateTraceWriter:
         return value.reshape(steps, batch, -1).to(torch.bool).any(dim=-1)
 
     def _build_trace(self, trajectory: Trajectory) -> dict[str, Any] | None:
-        forward_inputs = trajectory.forward_inputs
+        forward_inputs = trajectory.trajectory_infos
         score = forward_inputs.get("rlt_gate_score_min")
         if not isinstance(score, torch.Tensor) or score.ndim < 2:
             return None

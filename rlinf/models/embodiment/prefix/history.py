@@ -54,6 +54,7 @@ class StateHistoryBuffer:
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
         mask: torch.Tensor | None = None,
+        indices: torch.Tensor | None = None,
     ) -> None:
         """Clear all history or only environments selected by ``mask``."""
         if not self.enabled:
@@ -62,13 +63,19 @@ class StateHistoryBuffer:
             if self._buffer is None or self._seen is None:
                 return
             done = mask.to(device=self._buffer.device, dtype=torch.bool).reshape(-1)
-            if done.numel() != self._buffer.shape[0]:
+            rows = (
+                torch.arange(self._buffer.shape[0], device=self._buffer.device)
+                if indices is None
+                else indices.to(self._buffer.device)
+            )
+            if done.numel() != rows.numel():
                 raise ValueError(
-                    f"history reset mask length {done.numel()} != buffer batch "
-                    f"{self._buffer.shape[0]}."
+                    f"history reset expected {rows.numel()} flags, got {done.numel()}."
                 )
-            self._buffer[done] = 0
-            self._seen[done] = False
+            rows = rows[done]
+            rows = rows[rows < self._buffer.shape[0]]
+            self._buffer[rows] = 0
+            self._seen[rows] = False
             return
 
         if batch_size is None or device is None or dtype is None:
@@ -77,7 +84,13 @@ class StateHistoryBuffer:
             return
         self._allocate(batch_size, device, dtype)
 
-    def fuse(self, obs: PrefixObs, *, commit: bool = True) -> PrefixObs:
+    def fuse(
+        self,
+        obs: PrefixObs,
+        *,
+        commit: bool = True,
+        indices: torch.Tensor | None = None,
+    ) -> PrefixObs:
         """Append state history to ``z_rl`` and optionally advance the buffer."""
         if not self.enabled:
             return obs
@@ -91,8 +104,37 @@ class StateHistoryBuffer:
             z_rl = z_rl.unsqueeze(0)
 
         batch_size = proprio.shape[0]
-        self._ensure_buffer(batch_size, proprio.device, proprio.dtype)
-        history = self._next_history(proprio, commit=commit)
+        rows = (
+            torch.arange(batch_size, device=proprio.device)
+            if indices is None
+            else indices.to(device=proprio.device, dtype=torch.long)
+        )
+        if rows.numel() != batch_size:
+            raise ValueError(f"Expected {batch_size} history rows, got {rows.numel()}.")
+        size = max(
+            int(rows.max().item()) + 1,
+            self._buffer.shape[0] if self._buffer is not None else 0,
+        )
+        buffer = torch.zeros(
+            size,
+            self.steps,
+            self.proprio_dim,
+            device=proprio.device,
+            dtype=proprio.dtype,
+        )
+        seen = torch.zeros(size, device=proprio.device, dtype=torch.bool)
+        if self._buffer is not None:
+            buffer[: self._buffer.shape[0]] = self._buffer.to(proprio)
+            seen[: self._seen.shape[0]] = self._seen.to(proprio.device)
+        history = torch.roll(buffer[rows], shifts=-1, dims=1)
+        history[:, -1] = proprio
+        if self.pad == "repeat":
+            first = ~seen[rows]
+            history[first] = proprio[first, None, :].expand(-1, self.steps, -1)
+        if commit:
+            buffer[rows] = history
+            seen[rows] = True
+            self._buffer, self._seen = buffer, seen
         fused = torch.cat([z_rl, history.reshape(batch_size, -1)], dim=-1)
         return {
             "z_rl": fused,
@@ -115,37 +157,11 @@ class StateHistoryBuffer:
         )
         self._seen = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
-    def _ensure_buffer(
-        self,
-        batch_size: int,
-        device: torch.device,
-        dtype: torch.dtype,
-    ) -> None:
-        if (
-            self._buffer is None
-            or self._seen is None
-            or self._buffer.shape[0] != batch_size
-            or self._buffer.shape[-1] != self.proprio_dim
-        ):
-            self._allocate(batch_size, device, dtype)
-            return
-        if self._buffer.device != device or self._buffer.dtype != dtype:
-            self._buffer = self._buffer.to(device=device, dtype=dtype)
-            self._seen = self._seen.to(device=device)
-
-    def _next_history(self, proprio: torch.Tensor, *, commit: bool) -> torch.Tensor:
-        if self._buffer is None or self._seen is None:
-            raise RuntimeError("State history must be allocated before it is updated.")
-        first = ~self._seen
-        rolled = torch.roll(self._buffer, shifts=-1, dims=1)
-        rolled[:, -1] = proprio
-        if self.pad == "repeat" and first.any():
-            rolled[first] = proprio[first].unsqueeze(1).expand(-1, self.steps, -1)
-        if commit:
-            self._buffer = rolled
-            self._seen[first] = True
-            return self._buffer
-        return rolled
+    def to(self, device: torch.device | str) -> None:
+        """Move retained state with its owning rollout runtime."""
+        if self._buffer is not None:
+            self._buffer = self._buffer.to(device)
+            self._seen = self._seen.to(device)
 
 
 def _flatten_proprio(proprio: torch.Tensor) -> torch.Tensor:

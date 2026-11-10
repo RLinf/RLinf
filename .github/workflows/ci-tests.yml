@@ -176,6 +176,9 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              # Prefix and its OpenPI mixin have CPU model regression coverage.
+              - 'rlinf/models/embodiment/prefix/**'
+              - 'rlinf/models/embodiment/openpi/prefix.py'
               - 'examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam*.yaml'
               - 'rlinf/robotics/**'
               # Unit tests import env modules directly (robot task envs, the

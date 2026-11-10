@@ -18,8 +18,11 @@ from typing import Any
 import torch
 
 from rlinf.algorithms.prefix_off_policy import build_prefix_off_policy_algorithm
-from rlinf.algorithms.rlt.replay import RLTReplayService
-from rlinf.algorithms.rlt.schedule import RLTUpdatePlan, RLTUpdateSchedule
+from rlinf.algorithms.prefix_off_policy.replay import PrefixReplayService
+from rlinf.algorithms.prefix_off_policy.schedule import (
+    PrefixUpdatePlan,
+    PrefixUpdateSchedule,
+)
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
@@ -35,8 +38,14 @@ class PrefixOffPolicyRuntime:
 
     def _init_prefix_runtime(self, cfg: Any) -> None:
         self.algorithm_component = build_prefix_off_policy_algorithm(cfg)
-        self.replay_service = RLTReplayService(cfg, rank=self._rank)
-        self.update_schedule = RLTUpdateSchedule(cfg)
+        trace_cfg = cfg.algorithm.get("rlt_gate_calibration", {}) or {}
+        trace_writer = None
+        if bool(trace_cfg.get("enable", False)):
+            from rlinf.algorithms.rlt.rlt_steam_gate_trace import RLTGateTraceWriter
+
+            trace_writer = RLTGateTraceWriter(trace_cfg, rank=self._rank)
+        self.replay_service = PrefixReplayService(cfg, trace_writer=trace_writer)
+        self.update_schedule = PrefixUpdateSchedule(cfg)
         self._last_replay_metrics: dict[str, float] = {}
 
     def get_rollout_sync_version(self) -> int:
@@ -47,10 +56,18 @@ class PrefixOffPolicyRuntime:
         )
 
     def setup_sac_components(self) -> None:
-        """Initialize shared replay storage, then attach RLT services."""
+        """Initialize shared replay storage, then attach Prefix services."""
         super().setup_sac_components()
         self.replay_service.bind_buffers(self.replay_buffer, self.demo_buffer)
         self.update_schedule.configure_buffer_dataset(self.buffer_dataset)
+
+    def clip_optimizer_grad_norm(self, optimizer, max_norm):
+        """Exclude gradients outside this optimizer from the FSDP global norm."""
+        owned = {id(p) for group in optimizer.param_groups for p in group["params"]}
+        for parameter in self.model.parameters():
+            if id(parameter) not in owned:
+                parameter.grad = None
+        return self.model.clip_grad_norm_(max_norm=max_norm)
 
     def before_actor_update(self) -> None:
         """Keep critic optimizer state out of actor gradient accumulation."""
@@ -88,7 +105,7 @@ class PrefixOffPolicyRuntime:
             completed_episodes=result.completed_episodes,
         )
 
-    def _plan_updates(self) -> RLTUpdatePlan:
+    def _plan_updates(self) -> PrefixUpdatePlan:
         demo_size = 0 if self.demo_buffer is None else self.demo_buffer.total_samples
         return self.update_schedule.plan(
             update_step=self.update_step,
@@ -114,14 +131,14 @@ class PrefixOffPolicyRuntime:
         self,
         *,
         metrics: dict[str, Any],
-        plan: RLTUpdatePlan,
+        plan: PrefixUpdatePlan,
         critic_updates_run: int,
         actor_updates_run: int,
     ) -> dict[str, Any]:
-        plan.metrics["rlt/critic_updates_run"] = float(critic_updates_run)
-        plan.metrics["rlt/actor_updates_run"] = float(actor_updates_run)
+        plan.metrics["prefix/critic_updates_run"] = float(critic_updates_run)
+        plan.metrics["prefix/actor_updates_run"] = float(actor_updates_run)
         self.update_schedule.finish_updates(critic_updates_run)
-        plan.metrics["rlt/pending_update_budget"] = float(
+        plan.metrics["prefix/pending_update_budget"] = float(
             self.update_schedule.pending_update_budget
         )
         append_to_dict(metrics, plan.metrics)
@@ -129,7 +146,7 @@ class PrefixOffPolicyRuntime:
         self._synchronize_after_training()
         return mean_metrics
 
-    def _finish_idle_training(self, plan: RLTUpdatePlan) -> dict[str, Any]:
+    def _finish_idle_training(self, plan: PrefixUpdatePlan) -> dict[str, Any]:
         mean_metrics = self.process_train_metrics(plan.metrics)
         self._synchronize_after_training()
         return mean_metrics
@@ -161,7 +178,7 @@ class PrefixOffPolicyFSDPPolicy(PrefixOffPolicyRuntime, EmbodiedSACFSDPPolicy):
         self._ingest_rollout_trajectories(trajectories)
 
     def run_training(self):
-        """Run shared SAC training or an RLT-scheduled update batch."""
+        """Run shared SAC training or a Prefix-scheduled update batch."""
         if not self.update_schedule.enabled:
             mean_metrics = super().run_training()
             if self._last_replay_metrics:
@@ -220,7 +237,7 @@ class AsyncPrefixOffPolicyFSDPPolicy(
             self._ingest_rollout_trajectories(trajectories)
 
     async def run_training(self):
-        """Drain rollout data while running RLT-scheduled learner updates."""
+        """Drain rollout data while running Prefix-scheduled learner updates."""
         import asyncio
 
         if not self.update_schedule.enabled:

@@ -288,8 +288,9 @@ rollout:
       enable: True
       mode: active
       phase_head_path: "/path/to/steam_phase_head.pt"
-      enter_threshold: 0.940951
-      patience_chunks: 1
+      # Null values follow this checkpoint's calibration metadata.
+      enter_threshold: null
+      patience_chunks: null
       # Enable only while collecting traces for phase-head calibration.
       collect_phase_features: False
     chunk_size: 10
@@ -303,9 +304,9 @@ rollout:
       enable: True
       # Validate this candidate threshold on actor-controlled traces first.
       mode: shadow
-      warmup_chunks: 4
-      patience_chunks: 6
-      enter_threshold: -0.568753
+      warmup_chunks: null
+      patience_chunks: null
+      enter_threshold: null
       latch_until_done: True
     model:
       model_type: "steam_value_model"

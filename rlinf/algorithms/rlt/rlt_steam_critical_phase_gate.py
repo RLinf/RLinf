@@ -29,6 +29,9 @@ from rlinf.algorithms.rlt.routing_gate import (
 )
 from rlinf.data.datasets.steam import BinaryPairDataCollator
 from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 @dataclass
@@ -73,6 +76,8 @@ class SteamRoutingGate:
         "chunk_index",
     )
 
+    rollout_info_keys = RLT_GATE_INFO_KEYS
+
     def __init__(self, model: Any, cfg: Any) -> None:
         self.model = model
         actor_cfg = cfg.get("actor_switch", {}) or {}
@@ -84,14 +89,6 @@ class SteamRoutingGate:
             )
         self.chunk_size = int(cfg.get("chunk_size", 10))
         self.lookback_chunks = int(cfg.get("lookback_chunks", 3))
-        configured_patience = actor_cfg.get("patience_chunks", None)
-        configured_threshold = actor_cfg.get("enter_threshold", None)
-        self.patience_chunks = int(
-            2 if configured_patience is None else configured_patience
-        )
-        self.enter_threshold = float(
-            0.0 if configured_threshold is None else configured_threshold
-        )
         self.latch_until_done = bool(cfg.get("latch_until_done", True))
         self.emit_phase_features = bool(actor_cfg.get("collect_phase_features", False))
         self.phase_head = None
@@ -112,21 +109,26 @@ class SteamRoutingGate:
             raise ValueError(
                 "actor_switch.enable=True requires actor_switch.phase_head_path"
             )
-        if self.phase_head is not None:
-            if configured_threshold is None:
-                self.enter_threshold = float(
-                    self.phase_head_metadata.get(
-                        "recommended_enter_threshold",
-                        0.5,
-                    )
-                )
-            if configured_patience is None:
-                self.patience_chunks = int(
-                    self.phase_head_metadata.get(
-                        "recommended_patience_chunks",
-                        1,
-                    )
-                )
+        self.enter_threshold = float(
+            self._calibrated_value(
+                actor_cfg,
+                "enter_threshold",
+                self.phase_head_metadata,
+                "recommended_enter_threshold",
+                0.5 if self.phase_head is not None else 0.0,
+                "actor_switch",
+            )
+        )
+        self.patience_chunks = int(
+            self._calibrated_value(
+                actor_cfg,
+                "patience_chunks",
+                self.phase_head_metadata,
+                "recommended_patience_chunks",
+                1 if self.phase_head is not None else 2,
+                "actor_switch",
+            )
+        )
         legacy_camera_keys = [
             key for key in ("main_image_key", "wrist_image_key") if key in cfg
         ]
@@ -153,11 +155,39 @@ class SteamRoutingGate:
             raise ValueError(
                 "critical phase gate expert_takeover.mode must be 'active' or 'shadow'"
             )
-        self.expert_enter_threshold = float(expert_cfg.get("enter_threshold", 0.0))
-        self.expert_warmup_chunks = int(
-            expert_cfg.get("warmup_chunks", self.lookback_chunks)
+        expert_metadata = (
+            self.phase_head_metadata.get("recommended_expert_gate", {}) or {}
         )
-        self.expert_patience_chunks = int(expert_cfg.get("patience_chunks", 3))
+        self.expert_enter_threshold = float(
+            self._calibrated_value(
+                expert_cfg,
+                "enter_threshold",
+                expert_metadata,
+                "enter_threshold",
+                0.0,
+                "expert_takeover",
+            )
+        )
+        self.expert_warmup_chunks = int(
+            self._calibrated_value(
+                expert_cfg,
+                "warmup_chunks",
+                expert_metadata,
+                "warmup_chunks",
+                self.lookback_chunks,
+                "expert_takeover",
+            )
+        )
+        self.expert_patience_chunks = int(
+            self._calibrated_value(
+                expert_cfg,
+                "patience_chunks",
+                expert_metadata,
+                "patience_chunks",
+                3,
+                "expert_takeover",
+            )
+        )
         self.expert_latch_until_done = bool(expert_cfg.get("latch_until_done", True))
         if self.chunk_size < 1 or self.lookback_chunks < 1:
             raise ValueError("chunk_size and lookback_chunks must be positive")
@@ -192,6 +222,29 @@ class SteamRoutingGate:
                 f"{sorted(missing_keys)} in {self.camera_mapping}."
             )
         self._states: dict[tuple[str, int], _GateState] = {}
+
+    @staticmethod
+    def _calibrated_value(
+        cfg: Any,
+        key: str,
+        metadata: dict[str, Any],
+        metadata_key: str,
+        default: float | int,
+        scope: str,
+    ) -> float | int:
+        configured = cfg.get(key)
+        recommended = metadata.get(metadata_key, default)
+        if configured is None:
+            return recommended
+        if metadata_key in metadata and configured != recommended:
+            logger.warning(
+                "routing_gate.%s.%s=%s overrides checkpoint recommendation %s",
+                scope,
+                key,
+                configured,
+                recommended,
+            )
+        return configured
 
     @property
     def device(self) -> torch.device:
@@ -599,7 +652,7 @@ class SteamRoutingGate:
                 state.expert_latched | expert_enter_now
             ) & expert_low_progress
         # Preserve the critical-phase signal during learner warmup so those
-        # chunks enter replay. SimulatorRLTRoute independently prevents actor
+        # chunks enter replay. SimulatorPrefixRoute independently prevents actor
         # execution until the warmup updates are complete.
         route_flags = critical_phase_active
         route_expert_flags = (
