@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import multiprocessing
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any
 
@@ -50,14 +50,19 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
         sample_transform: Callable[[dict[str, Any]], dict[str, Any]],
         *,
         num_frames: int,
+        action_keys: Sequence[str],
     ) -> None:
         self.dataset = dataset
-        self.timestamps = dataset.hf_dataset.select_columns("timestamp").with_format(
-            None
+        self.timestamps = np.asarray(
+            dataset.hf_dataset.select_columns("timestamp").with_format("numpy")[
+                "timestamp"
+            ],
+            dtype=np.float32,
         )
         self.frame_transform = frame_transform
         self.sample_transform = sample_transform
         self.num_frames = num_frames
+        self.action_keys = action_keys
 
     def __len__(self) -> int:
         return len(self.dataset)
@@ -71,6 +76,14 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
                 frames.append(None)
                 continue
             frame = dict(raw)
+            # Delta-action transforms may modify their inputs in place.
+            for key in self.action_keys:
+                actions = raw[key]
+                frame[key] = (
+                    actions.clone()
+                    if isinstance(actions, torch.Tensor)
+                    else actions.copy()
+                )
             frame["index"] = raw["index"][position]
             for key in self.dataset.meta.camera_keys:
                 # LeRobot squeezes singleton histories for video-backed cameras.
@@ -78,17 +91,15 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
             frames.append(self.frame_transform(frame))
 
         current = self.sample_transform(frames[-1])
-        current["image"] = {
-            key: np.stack(
-                [
-                    np.zeros_like(image)
-                    if frame is None
-                    else np.asarray(frame["image"][key])
-                    for frame in frames
-                ]
-            )
-            for key, image in current["image"].items()
-        }
+        images = {}
+        for key, image in current["image"].items():
+            image = np.asarray(image)
+            history = np.zeros((self.num_frames, *image.shape), dtype=image.dtype)
+            for position, frame in enumerate(frames):
+                if frame is not None:
+                    history[position] = frame["image"][key]
+            images[key] = history
+        current["image"] = images
         current["image_mask"] = {
             key: np.asarray(
                 [
@@ -102,17 +113,14 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
         # Querying timestamp through delta_timestamps would replace its scalar
         # value, which LeRobot's video decoder needs for the current frame.
         timestamp_indices = raw["index"] - raw["index"][-1] + index
-        timestamps = np.asarray(
-            self.timestamps[timestamp_indices.tolist()]["timestamp"],
-            dtype=np.float32,
-        ).reshape(self.num_frames)
+        timestamps = self.timestamps[timestamp_indices.tolist()]
         current["history_time_offsets"] = np.where(
             valid, timestamps - timestamps[-1], 0.0
-        ).astype(np.float32)
+        )
         return current
 
 
-def collate_short_memory_items(
+def collate_fn(
     items: list[dict[str, Any]],
     *,
     include_history: bool = True,
@@ -130,7 +138,7 @@ def collate_short_memory_items(
     return Observation.from_dict(batch), batch["actions"]
 
 
-def build_short_memory_sft_dataloader(
+def build_dataloader(
     cfg: Any,
     world_size: int,
     rank: int,
@@ -201,6 +209,7 @@ def build_short_memory_sft_dataloader(
         frame_transform,
         sample_transform,
         num_frames=num_frames,
+        action_keys=data_config.action_sequence_keys,
     )
     sampler = DistributedSampler(
         dataset,
@@ -219,7 +228,7 @@ def build_short_memory_sft_dataloader(
             multiprocessing.get_context("spawn") if train_config.num_workers else None
         ),
         persistent_workers=train_config.num_workers > 0,
-        collate_fn=partial(collate_short_memory_items, include_history=include_history),
+        collate_fn=partial(collate_fn, include_history=include_history),
         drop_last=True,
         generator=torch.Generator().manual_seed(train_config.seed + rank),
     )

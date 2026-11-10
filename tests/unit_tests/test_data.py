@@ -865,12 +865,15 @@ def test_libero_data_config_preserves_camera_state_and_action_targets(
 
 
 @pytest.mark.parametrize("num_frames", [1, 3])
-def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_frames):
+@pytest.mark.parametrize("image_dtype", [np.uint8, np.float32])
+def test_short_memory_dataset_keeps_current_targets_and_episode_padding(
+    num_frames, image_dtype
+):
     from datasets import Dataset
 
-    from rlinf.data.datasets.openpi.short_memory_sft_data_loader import (
+    from rlinf.data.datasets.openpi.short_memory import (
         ShortMemoryDataset,
-        collate_short_memory_items,
+        collate_fn,
     )
 
     # A LeRobot episode subset retains global indices, with clamped pad frames.
@@ -889,14 +892,14 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_fram
     lerobot.meta.camera_keys = ["camera"]
     lerobot.hf_dataset = Dataset.from_dict(
         {"timestamp": [10.0, 10.051, 10.102, 10.155, 10.207]}
-    )
+    ).with_format("torch")
     lerobot.__getitem__.return_value = raw
     transformed_indices, tokenized_prompts = [], []
 
     def frame_transform(frame):
         transformed_indices.append(int(frame["index"]))
         return {
-            "image": {"base_0_rgb": np.asarray(frame["camera"])},
+            "image": {"base_0_rgb": np.asarray(frame["camera"], dtype=image_dtype)},
             "image_mask": {"base_0_rgb": True},
             "state": frame["state"],
             "prompt": frame["prompt"],
@@ -910,7 +913,11 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_fram
         return frame
 
     dataset = ShortMemoryDataset(
-        lerobot, frame_transform, sample_transform, num_frames=num_frames
+        lerobot,
+        frame_transform,
+        sample_transform,
+        num_frames=num_frames,
+        action_keys=("actions",),
     )
     sample = dataset[3]
 
@@ -919,6 +926,8 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_fram
     np.testing.assert_array_equal(sample["state"], raw["state"])
     np.testing.assert_array_equal(sample["actions"], raw["actions"])
     np.testing.assert_array_equal(sample["image_mask"]["base_0_rgb"], ~padding)
+    assert sample["image"]["base_0_rgb"].dtype == image_dtype
+    assert sample["history_time_offsets"].dtype == np.float32
     np.testing.assert_array_equal(
         sample["image"]["base_0_rgb"][:, 0, 0, 0],
         [104] if num_frames == 1 else [0, 102, 104],
@@ -928,16 +937,14 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_fram
         [0.0] if num_frames == 1 else [0.0, -0.104, 0.0],
         atol=1e-6,
     )
-    observation, actions = collate_short_memory_items([sample])
+    observation, actions = collate_fn([sample])
     torch.testing.assert_close(observation.state, torch.from_numpy(raw["state"])[None])
     torch.testing.assert_close(actions, torch.from_numpy(raw["actions"])[None])
     torch.testing.assert_close(
         observation.history_time_offsets,
         torch.from_numpy(sample["history_time_offsets"])[None],
     )
-    baseline, baseline_actions = collate_short_memory_items(
-        [sample], include_history=False
-    )
+    baseline, baseline_actions = collate_fn([sample], include_history=False)
     assert baseline.images["base_0_rgb"].shape == (1, 2, 2, 3)
     assert baseline.image_masks["base_0_rgb"].shape == (1,)
     assert baseline.history_time_offsets is None
@@ -953,6 +960,60 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(num_fram
             getattr(baseline, field), getattr(observation, field)
         )
     torch.testing.assert_close(baseline_actions, actions)
+
+
+@pytest.mark.parametrize("action_key", ["actions", "action"])
+@pytest.mark.parametrize("tensor_actions", [False, True])
+def test_short_memory_dataset_isolates_in_place_action_transforms(
+    action_key, tensor_actions
+):
+    from datasets import Dataset
+
+    from rlinf.data.datasets.openpi.short_memory import ShortMemoryDataset
+
+    original_actions = np.array([[5.0], [7.0]], dtype=np.float32)
+    raw = {
+        "index": torch.tensor([0, 1, 2]),
+        "index_is_pad": torch.tensor([False, False, False]),
+        "camera": np.zeros((3, 2, 2, 3), dtype=np.uint8),
+        "state": np.array([2.0], dtype=np.float32),
+        action_key: (
+            torch.from_numpy(original_actions.copy())
+            if tensor_actions
+            else original_actions.copy()
+        ),
+    }
+    lerobot = mock.MagicMock()
+    lerobot.meta.camera_keys = ["camera"]
+    lerobot.hf_dataset = Dataset.from_dict({"timestamp": [0.0, 0.1, 0.2]})
+    lerobot.__getitem__.return_value = raw
+    transformed_actions = []
+
+    def frame_transform(frame):
+        actions = np.asarray(frame[action_key])
+        actions -= frame["state"]
+        transformed_actions.append(actions.copy())
+        return {
+            "image": {"base_0_rgb": frame["camera"]},
+            "image_mask": {"base_0_rgb": True},
+            "actions": actions,
+        }
+
+    dataset = ShortMemoryDataset(
+        lerobot,
+        frame_transform,
+        lambda frame: frame,
+        num_frames=3,
+        action_keys=(action_key,),
+    )
+    for _ in range(2):
+        sample = dataset[2]
+        np.testing.assert_array_equal(
+            sample["actions"], original_actions - raw["state"]
+        )
+        np.testing.assert_array_equal(raw[action_key], original_actions)
+    for actions in transformed_actions:
+        np.testing.assert_array_equal(actions, original_actions - raw["state"])
 
 
 # Skip codec round-trip tests when the optional backends are not installed.
