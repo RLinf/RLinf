@@ -183,6 +183,50 @@ Furthermore, in LLM reasoning tasks, we use an independent critic model rather t
       ...
 
 
+3.3. Multi-Turn Agent Tasks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For an agent that alternates generation with tool calls, compute GAE over the
+action tokens of a complete episode. Tool responses remain in the observation
+context, while masks exclude them from actor and critic losses. The
+:doc:`Search-R1 PPO recipe </rst_source/examples/agentic/searchr1/ppo>` configures
+this training path.
+
+Training Flow
+^^^^^^^^^^^^^
+
+Each iteration uses one fixed rollout policy and completes both model updates
+before starting the next rollout batch:
+
+1. Generate all episodes in the batch using the current actor weights.
+2. Predict old values with the critic and compute fixed advantages and returns.
+3. Update the critic against those returns, then update the actor using the fixed
+   advantages and old-policy log probabilities.
+4. Install the updated actor weights before generating the next batch.
+
+Implementation Notes
+^^^^^^^^^^^^^^^^^^^^
+
+The multi-turn implementation registers ``algorithm.adv_type: gae_dynamic``.
+It orders turns within an episode by prompt length, joins their generated action
+positions, and applies the final answer reward once at the last action. It then
+calls the existing GAE implementation and restores the original turn layout.
+Discounting advances per generated action token. Completed episodes, including
+those stopped by turn or token limits, bootstrap with zero future value.
+
+The critic worker computes the targets before its update and normalizes
+advantages over valid action tokens across data-parallel ranks. Returns retain
+their original scale. Only fixed advantages are sent to the actor; old values
+and returns remain on the critic for value training.
+
+The current Search-R1 integration uses Megatron actor/critic TP=PP=CP=1 and SGLang,
+with actor, critic, and rollout sharing identical GPUs. Offloading the rollout
+engine before training frees memory for the two training models. This is a
+memory-management choice for shared placement; synchronous PPO requires that
+updates and weight installation finish before the next batch. Training-state
+residency is controlled by ``offload_weight``, ``offload_grad``, and
+``offload_optimizer`` on each role.
+
 4. Notes
 ---------
 

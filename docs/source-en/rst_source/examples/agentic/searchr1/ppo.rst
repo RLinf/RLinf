@@ -1,16 +1,17 @@
-Synchronous PPO for Search-R1
-=================================
+PPO Training
+============
 
-Train Qwen2.5-3B-Instruct with synchronous PPO and an independent critic. Prepare
-the retrieval service in :doc:`index`, download the model and question dataset,
-then launch the configuration below. The GRPO recipes are described in :doc:`qwen2.5`.
+Train Qwen2.5-3B-Instruct on Search-R1 with PPO and an independent critic.
+Prepare the RLinf environment and local wiki retrieval server in :doc:`index`,
+then configure the paths below and launch training. See
+:doc:`/rst_source/reference/algorithms/ppo` for the multi-turn PPO training flow
+and implementation details.
 
 Overview
-------------
+--------
 
-PPO reuses the multi-turn agent and search-tool interface. Each training step
-finishes a complete rollout batch, computes fixed predictions and targets, and
-updates the actor and critic before generating the next batch.
+This recipe trains the model to retrieve wiki passages before answering a
+question, using one final answer reward for each complete episode.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -23,143 +24,46 @@ updates the actor and critic before generating the next batch.
    .. grid-item-card:: Algorithm
       :text-align: center
 
-      Synchronous PPO with GAE
+      PPO with GAE and an independent critic
 
    .. grid-item-card:: Tools
       :text-align: center
 
-      FAISS or Qdrant wiki retrieval
+      FAISS or Qdrant local wiki server
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      8 NVIDIA A800 80 GB GPUs; Megatron and SGLang
+      Reference run on 8×A800 80 GB
 
-Tasks
-~~~~~~~~~
-
-The model can retrieve wiki passages before answering a question. Training uses
-one terminal answer reward per complete episode.
-
-.. list-table:: Search-R1 Task
-   :header-rows: 1
-   :widths: 25 75
-
-   * - Item
-     - Recipe
-   * - Dataset
-     - `RLinf/Search-R1-Data <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__
-   * - Training unit
-     - A complete multi-turn episode
-   * - PPO batch
-     - 1024 prompts, one trajectory per prompt, one minibatch
-
-Observation and Action
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Each turn appends generated tokens and any retrieved passages to the conversation.
-Only generated action tokens contribute to PPO losses.
-
-.. list-table:: Agent Interface
-   :header-rows: 1
-   :widths: 25 75
-
-   * - Component
-     - Meaning
-   * - Observation
-     - Question, previous turns, and retrieved passages
-   * - Action
-     - Reasoning, a ``<search>...</search>`` query, or an ``<answer>...</answer>`` response
-   * - Limits
-     - Two turns, 7096 total tokens, and at most 500 tokens per tool response
-
-Installation
-----------------
-
-Install the Megatron training stack with SGLang following
-:doc:`/rst_source/start/installation`:
-
-.. code-block:: bash
-
-   bash requirements/install.sh agentic --engine sglang
-   source .venv/bin/activate
-
-PPO currently requires Megatron TP=PP=CP=1 and fully shared actor, critic, and
-rollout GPUs. The configuration uses SGLang's HTTP server backend with TP=PP=1.
-Manage retrieval resources separately from the eight training GPUs; see
-:doc:`index` for retrieval setup.
-
-Download the Model
+Training on 8×A800
 ----------------------
 
-Download the actor/critic initialization model and training dataset:
+Set the model directory and Search-R1-format training JSONL in
+``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``. The
+`Search-R1 training dataset <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__
+uses this format:
 
-.. code-block:: bash
+.. code-block:: yaml
 
-   hf download Qwen/Qwen2.5-3B-Instruct --local-dir /path/to/model/Qwen2.5-3B-Instruct
-   hf download RLinf/Search-R1-Data --repo-type dataset --local-dir /path/to/data/searchr1
+   rollout:
+     model:
+       model_path: /path/to/model/Qwen2.5-3B-Instruct
+   data:
+     train_data_paths: ["/path/to/train.jsonl"]
+   tools:
+     search:
+       server_addr: 127.0.0.1:8000
 
-Set ``rollout.model.model_path`` and ``data.train_data_paths`` in
-``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` to the model directory and
-training JSONL file. Set
-``tools.search.server_addr`` to the retrieval service's reachable address.
+Point ``tools.search.server_addr`` at the retrieval service prepared in
+:doc:`index`. The recipe uses SGLang's server backend and shares GPUs 0–7 among
+rollout, actor, and critic, with Megatron TP=PP=CP=1. Each step completes a rollout
+batch and updates both models before generating the next batch. Releasing rollout
+GPU memory between stages makes room for critic and actor training in this shared
+placement.
 
-Run It
-----------
-
-Set ``runner.max_steps: 200`` and ``runner.max_epochs: 200`` in the configuration
-to train for up to 200 batches. The epoch setting allows the dataloader to provide
-enough batches. The configuration shares GPUs 0–7 between rollout, actor, and
-critic and uses ``rollout.sglang.backend_type: server``.
-
-Pass the configuration name without ``.yaml`` to the launcher:
-
-.. code-block:: bash
-
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
-
-The default configuration trains for one dataset epoch. It saves checkpoints
-every 25 batches and at the final batch.
-
-Rollout and Training Order
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-At each step, the runner publishes actor weights and waits for all episodes in the
-batch to finish, then offloads the rollout engine before critic inference. The critic predicts old values; the registered ``gae_dynamic`` algorithm computes fixed
-returns and normalizes advantages over all action tokens in the rollout batch.
-The critic worker computes these targets before updating its model and sends only
-fixed advantages to the actor. Old values and returns stay on the critic. Normalization reduces action statistics across critic DP ranks.
-Tool text and padding are excluded, and the terminal answer reward is applied once.
-Turn and token limits also terminate the episode with zero future value. Prompt
-lengths determine turn order within each episode, independently of channel arrival
-order.
-
-The runner trains the critic first and offloads its state before actor inference
-and training. The configuration enables ``offload_weight``, ``offload_grad``, and
-``offload_optimizer`` on both roles. These flags control which state moves to CPU
-between roles. The runner stops the rollout engines when training ends.
-
-The actor uses PPO clipping and the critic uses clipped Huber loss. With
-``algorithm.n_minibatches=1``, each rollout batch produces one actor optimizer
-update and one critic optimizer update. Megatron microbatches accumulate gradients
-within each update. Actor learning rate is ``1e-6``; critic learning rate is
-``5e-6`` with 10 warmup updates. ``critic.value_head_init`` selects ``normal`` or
-``zero`` initialization for the independent value head.
-
-``actor.pack_traj=true`` packs compatible turns while preserving every action
-token's targets and behavior probability. ``algorithm.use_valid_token_scale=true``
-compensates for microbatch and data-parallel averaging to keep a global action-token
-mean loss. ``runner.max_tokens_per_mbs=8192`` bounds each training microbatch's token
-budget. Set ``actor.pack_traj=false`` to train without packing.
-
-Preserve Generated Tokens
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``agentloop.truncate_response`` defaults to ``true`` and trims the generated token
-prefix at the closing search tag using the model-aware tokenizer. The PPO configuration
-selects ``false`` to train on every generated token within the remaining response
-budget, including any tokens emitted after the closing search tag. Those tokens
-also remain in the next turn's prompt:
+The recipe uses rollout logprobs directly. It keeps every generated token within
+the response budget, including any suffix after the closing search tag:
 
 .. code-block:: yaml
 
@@ -170,32 +74,74 @@ also remain in the next turn's prompt:
    rollout:
      return_logprobs: true
 
-Both truncation settings keep token IDs and behavior logprobs aligned, so either
-can use rollout logprobs without actor inference. Set ``truncate_response=true``
-to exclude tokens after the closing search tag from training and subsequent prompts.
+Set ``agentloop.truncate_response=true`` to exclude that suffix from training and
+subsequent prompts. Both settings keep token IDs aligned with their logprobs.
 
-The remaining response-token budget always applies, regardless of the truncation
-flag. Tokens beyond that cap and their logprobs are removed together. The retained
-tokens are never decoded and re-encoded; decoding supplies text for tool parsing
-and rewards. Using rollout logprobs skips the extra actor inference pass.
-To recompute them instead, set ``algorithm.recompute_logprobs=true`` and
-``rollout.return_logprobs=false``.
+Launch the recipe with its configuration name:
 
-Resume and Evaluate
-~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: bash
 
-Set ``runner.resume_dir`` to a complete ``checkpoints/global_step_N`` directory to
-restore the actor, critic, optimizers, and dataloader state. Keep the original
-actor and critic checkpoint-conversion caches. When changing the experiment name,
-point both ``megatron.ckpt_convertor.save_path`` fields to their original locations.
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
-Export the actor checkpoint and run evaluation using the Megatron instructions in
-:doc:`qwen2.5`. The critic is used only during training.
+The default batch contains 1024 prompts with one trajectory per prompt and one
+minibatch. Each batch produces one actor update and one critic update. The
+comparison below used these runner limits:
 
-Training Metrics and Validation
------------------------------------
+.. code-block:: yaml
 
-Monitor ``rollout/reward_scores_traj`` in TensorBoard. ``Global Step`` advances once
-per completed rollout batch; training metrics use optimizer-step indices. With one
-minibatch these counts match. See :doc:`/rst_source/reference/metrics` for the shared
-metric conventions.
+   runner:
+     max_epochs: 20
+     max_steps: 200
+
+Checkpoint Export and Evaluation
+--------------------------------
+
+Training saves actor and critic checkpoints every 25 steps and at the last step.
+Set ``runner.resume_dir`` to a complete ``checkpoints/global_step_N`` directory
+to restore both models, optimizers, and dataloader state. Keep the original
+actor/critic checkpoint-conversion caches when resuming.
+
+Export the actor and evaluate it using the Megatron instructions in
+:doc:`qwen2.5`. The critic supplies values during training.
+
+Visualization and Results
+-------------------------
+
+Monitor ``rollout/reward_scores_traj`` in TensorBoard; see
+:doc:`/rst_source/reference/metrics` for metric definitions. The figure compares
+GRPO and PPO training rewards for Qwen2.5-3B-Instruct:
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Search-R1 training reward: GRPO in orange and PPO in blue" style="width: 100%; max-width: 410px;"/>
+     <p><em>Orange: GRPO; blue: PPO. Horizontal axis: training step; vertical axis: trajectory reward. TensorBoard smoothing: 0.6.</em></p>
+   </div>
+
+Both runs used 8 A800 80 GB GPUs, 20,000 WideSeek training examples, wiki retrieval,
+200 training steps, one minibatch, and effective batch size 1024. GRPO used
+``256 × 4`` prompts/trajectories; PPO used ``1024 × 1``. Both used seed 1234,
+actor learning rate ``1e-6`` without warmup, two turns, sequence length 7096,
+temperature 1.0, zero KL coefficient, SGLang server rollouts, and
+``agentloop.truncate_response=false``.
+
+.. list-table:: Mean Training Reward
+   :header-rows: 1
+   :widths: 20 25 25 30
+
+   * - Algorithm
+     - First 10 Points
+     - Last 10 Points
+     - Recorded Points
+   * - GRPO
+     - 0.0734
+     - 0.3397
+     - 199
+   * - PPO
+     - 0.0492
+     - 0.3240
+     - 200
+
+The table averages the raw scalars from one seed. These curves were recorded at
+revision ``4910b58c`` before the latest runner cleanup. Both runs completed step
+200; the earlier GRPO logger omitted its final point.

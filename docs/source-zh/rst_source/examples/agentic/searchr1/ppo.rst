@@ -1,12 +1,12 @@
-Search-R1 的同步 PPO 训练
-=============================
+PPO 训练
+========
 
-使用同步 PPO 和独立 critic 训练 Qwen2.5-3B-Instruct。先按 :doc:`index` 配置检索服务，下载模型和问答数据集，再启动本页配置。GRPO 配置见 :doc:`qwen2.5`。
+使用 PPO 和独立 critic 训练 Qwen2.5-3B-Instruct 完成 Search-R1 搜索问答。先按照 :doc:`index` 准备 RLinf 环境和本地 wiki 检索服务，再配置路径并启动训练。多轮 PPO 的通用训练流程与实现说明见 :doc:`/rst_source/reference/algorithms/ppo`。
 
-概述
---------
+概览
+----
 
-PPO 复用已有的多轮 agent 和搜索工具接口。每个训练 step 先完成整个 rollout batch，计算固定的预测值和目标，再更新 actor 与 critic，最后开始下一批生成。
+该配置训练模型在回答问题前检索 wiki 文本，每个完整 episode 使用一次最终答案 reward。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -19,106 +19,37 @@ PPO 复用已有的多轮 agent 和搜索工具接口。每个训练 step 先完
    .. grid-item-card:: 算法
       :text-align: center
 
-      同步 PPO 与 GAE
+      PPO、GAE 与独立 critic
 
    .. grid-item-card:: 工具
       :text-align: center
 
-      FAISS 或 Qdrant wiki 检索
+      FAISS 或 Qdrant 本地 wiki 服务
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      8 张 NVIDIA A800 80 GB GPU；Megatron 和 SGLang
+      参考实验使用 8×A800 80 GB
 
-任务
-~~~~~~~~
+在 8×A800 上训练
+----------------
 
-模型可以先检索 wiki 段落，再回答问题。每个完整 episode 在结束时计算一次答案 reward。
+在 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中填写模型目录和 Search-R1 格式的训练 JSONL。`Search-R1 训练数据集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__ 使用这一格式：
 
-.. list-table:: Search-R1 任务
-   :header-rows: 1
-   :widths: 25 75
+.. code-block:: yaml
 
-   * - 项目
-     - 配置
-   * - 数据集
-     - `RLinf/Search-R1-Data <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__
-   * - 训练单元
-     - 完整的多轮 episode
-   * - PPO batch
-     - 1024 个 prompt，每个 prompt 一条轨迹，一个 minibatch
+   rollout:
+     model:
+       model_path: /path/to/model/Qwen2.5-3B-Instruct
+   data:
+     train_data_paths: ["/path/to/train.jsonl"]
+   tools:
+     search:
+       server_addr: 127.0.0.1:8000
 
-观测与动作
-~~~~~~~~~~~~~~
+将 ``tools.search.server_addr`` 指向 :doc:`index` 中启动的检索服务。配置使用 SGLang server，让 rollout、actor 和 critic 共用 GPU 0–7，Megatron TP=PP=CP=1。每个 step 先完成 rollout batch，再更新两个模型，随后才生成下一个 batch。角色切换时释放 rollout 显存，为这种共享 placement 下的 critic 和 actor 训练腾出空间。
 
-每轮对话追加模型生成的 token 和检索到的段落。只有生成的 action token 参与 PPO loss。
-
-.. list-table:: Agent 接口
-   :header-rows: 1
-   :widths: 25 75
-
-   * - 组成
-     - 含义
-   * - 观测
-     - 问题、历史对话和检索段落
-   * - 动作
-     - 推理文本、``<search>...</search>`` 查询或 ``<answer>...</answer>`` 答案
-   * - 长度限制
-     - 最多两轮、总长度 7096 个 token，每次工具响应最多 500 个 token
-
-安装
---------
-
-按照 :doc:`/rst_source/start/installation` 安装 Megatron 训练和 SGLang rollout 环境：
-
-.. code-block:: bash
-
-   bash requirements/install.sh agentic --engine sglang
-   source .venv/bin/activate
-
-PPO 当前要求 Megatron TP=PP=CP=1，actor、critic 和 rollout 完全共享 GPU。提供的配置使用 SGLang HTTP server backend，TP=PP=1。检索服务的资源与八张训练 GPU 分开管理，配置步骤见 :doc:`index`。
-
-下载模型
-------------
-
-下载 actor/critic 的初始化模型和训练数据集：
-
-.. code-block:: bash
-
-   hf download Qwen/Qwen2.5-3B-Instruct --local-dir /path/to/model/Qwen2.5-3B-Instruct
-   hf download RLinf/Search-R1-Data --repo-type dataset --local-dir /path/to/data/searchr1
-
-将 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml`` 中的 ``rollout.model.model_path`` 和 ``data.train_data_paths`` 设置为模型目录和训练 JSONL 文件。将 ``tools.search.server_addr`` 设置为检索服务的可访问地址。
-
-运行
---------
-
-在配置中设置 ``runner.max_steps: 200`` 和 ``runner.max_epochs: 200``，最多训练 200 个 batch。足够的 epoch 数让 dataloader 能提供所需 batch。该配置让 rollout、actor 和 critic 共用 GPU 0–7，使用 ``rollout.sglang.backend_type: server``。
-
-向启动脚本传入不带 ``.yaml`` 的配置名：
-
-.. code-block:: bash
-
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
-
-配置默认训练一个数据集 epoch，每 25 个 batch 及最后一个 batch 保存 checkpoint。
-
-Rollout 与训练顺序
-~~~~~~~~~~~~~~~~~~~~~~
-
-每个 step 开始时，runner 发布 actor 权重，并等待整个 batch 的 episode 完成。随后在 critic inference 前 offload rollout 引擎。Critic 预测 old values，注册在算法接口中的 ``gae_dynamic`` 沿 episode 的 action token 计算固定 returns，并在整个 rollout batch 的 action token 上归一化 advantages。Critic worker 在更新模型前计算这些目标，通过 DP 归约汇总 action 统计量完成归一化，仅将固定 advantages 传给 actor；old values 和 returns 留在 critic 侧。工具文本与 padding 不参与计算，最终答案 reward 只应用一次。达到轮数或 token 上限也会终止 episode，未来 value 设为零。同一 episode 内的 turn 顺序由 prompt 长度确定，不依赖 channel 的到达顺序。
-
-Runner 先训练 critic，将其状态 offload 后，再执行 actor inference 和训练。配置对两个角色都开启 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer``，分别控制角色切换时哪些状态移到 CPU。训练结束时，runner 停止 rollout 引擎。
-
-Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``algorithm.n_minibatches=1`` 时，每个 rollout batch 分别产生一次 actor 和 critic optimizer update，Megatron microbatch 在每次更新内部累积梯度。Actor 学习率为 ``1e-6``；critic 学习率为 ``5e-6``，使用 10 次更新的 warmup。``critic.value_head_init`` 支持独立 value head 的 ``normal`` 或 ``zero`` 初始化。
-
-``actor.pack_traj=true`` 合并可兼容的多轮轨迹，同时保留每个 action token 的目标和 behavior probability。``algorithm.use_valid_token_scale=true`` 补偿 microbatch 和数据并行的平均操作，使 loss 保持为全局 action token 均值。``runner.max_tokens_per_mbs=8192`` 限制每个训练 microbatch 的 token 预算。设置 ``actor.pack_traj=false`` 可关闭 packing。
-
-保留生成 Token
-~~~~~~~~~~~~~~~~~~
-
-``agentloop.truncate_response`` 默认为 ``true``，使用模型对应的 tokenizer 在搜索结束标签处截取生成 token 前缀。PPO 配置将其设为 ``false``，对剩余响应预算内的全部生成 token 训练，包括搜索结束标签之后生成的 token。这些 token 也会保留在下一轮 prompt 中：
+该配置直接使用 rollout logprobs，并保留响应预算内的全部生成 token，包括搜索结束标签之后生成的后缀：
 
 .. code-block:: yaml
 
@@ -129,18 +60,58 @@ Actor 使用 PPO clipping，critic 使用带 value clipping 的 Huber loss。``a
    rollout:
      return_logprobs: true
 
-两种截断设置都会保持 token ID 与 behavior logprob 对齐，因此都可以直接使用 rollout logprobs，跳过 actor inference。设置 ``truncate_response=true`` 可将搜索结束标签之后的 token 排除在训练和后续 prompt 之外。
+设置 ``agentloop.truncate_response=true`` 可将后缀排除在训练和后续 prompt 之外。两种设置都会保持 token ID 与 logprob 对齐。
 
-无论截断开关为何值，剩余响应 token 预算始终生效：超出上限的 token 和对应 logprobs 一起删除。保留的 token 不会经过解码再编码；解码只为工具解析和 reward 提供文本。直接使用 rollout logprobs 可以跳过额外的 actor inference。若需重算，设置 ``algorithm.recompute_logprobs=true`` 和 ``rollout.return_logprobs=false``。
+向启动脚本传入配置名：
 
-恢复与评估
-~~~~~~~~~~~~~~
+.. code-block:: bash
 
-将 ``runner.resume_dir`` 设置为完整的 ``checkpoints/global_step_N`` 目录，恢复 actor、critic、optimizer 和 dataloader 状态。保留原有的 actor 与 critic checkpoint 转换缓存；若修改实验名，将两个 ``megatron.ckpt_convertor.save_path`` 字段指向各自原来的目录。
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
-按照 :doc:`qwen2.5` 中的 Megatron 说明导出 actor checkpoint 并运行评估。Critic 仅用于训练。
+默认 batch 包含 1024 个 prompt，每个 prompt 生成一条轨迹，使用一个 minibatch；每个 batch 分别更新一次 actor 和 critic。下方对照实验使用以下 runner 上限：
 
-训练指标与验证
-------------------
+.. code-block:: yaml
 
-在 TensorBoard 中查看 ``rollout/reward_scores_traj``。``Global Step`` 每完成一个 rollout batch 增加一次，训练指标使用 optimizer step 编号。只有一个 minibatch 时，两种计数一致。通用指标说明见 :doc:`/rst_source/reference/metrics`。
+   runner:
+     max_epochs: 20
+     max_steps: 200
+
+Checkpoint 导出与评估
+---------------------
+
+训练每 25 个 step 及最后一个 step 保存 actor 和 critic checkpoint。将 ``runner.resume_dir`` 设置为完整的 ``checkpoints/global_step_N`` 目录，可恢复两个模型、optimizer 和 dataloader 状态。恢复训练时保留原有的 actor/critic checkpoint 转换缓存。
+
+按照 :doc:`qwen2.5` 中的 Megatron 说明导出 actor 并运行评估。Critic 在训练期间提供 value。
+
+可视化与结果
+------------
+
+在 TensorBoard 中查看 ``rollout/reward_scores_traj``，指标定义见 :doc:`/rst_source/reference/metrics`。下图比较 Qwen2.5-3B-Instruct 的 GRPO 和 PPO 训练 reward：
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Search-R1 训练 reward：橙色为 GRPO，蓝色为 PPO" style="width: 100%; max-width: 410px;"/>
+     <p><em>橙色：GRPO；蓝色：PPO。横轴为训练 step，纵轴为轨迹 reward。TensorBoard 平滑系数为 0.6。</em></p>
+   </div>
+
+两组实验均使用 8 张 A800 80 GB、20,000 条 WideSeek 训练数据、wiki 检索服务、200 个训练 step 和一个 minibatch，有效 batch size 均为 1024。GRPO 使用 ``256 × 4`` 个 prompt/轨迹，PPO 使用 ``1024 × 1``。两组实验的 seed 均为 1234，actor 学习率均为 ``1e-6`` 且无 warmup，最多两轮，序列长度为 7096，temperature 为 1.0，KL 系数为零，使用 SGLang server 和 ``agentloop.truncate_response=false``。
+
+.. list-table:: 平均训练 Reward
+   :header-rows: 1
+   :widths: 20 25 25 30
+
+   * - 算法
+     - 前 10 个点
+     - 后 10 个点
+     - 记录点数
+   * - GRPO
+     - 0.0734
+     - 0.3397
+     - 199
+   * - PPO
+     - 0.0492
+     - 0.3240
+     - 200
+
+表格统计单个 seed 的原始 scalar 均值。这些曲线记录于最新 runner 整理之前的 ``4910b58c`` 版本。两组实验均完成第 200 步；此前 GRPO 的 logger 未记录最后一个点。
