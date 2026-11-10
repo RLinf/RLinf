@@ -25,7 +25,6 @@ from typing import Any, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as tv_models
 from omegaconf import DictConfig
 
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
@@ -47,6 +46,7 @@ class RoboTwinT5RewardModel(BaseRewardModel):
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        import torchvision.models as tv_models
         from transformers import AutoTokenizer, T5EncoderModel
 
         self.image_size = tuple(cfg.get("image_size", (3, 224, 224)))[1:]
