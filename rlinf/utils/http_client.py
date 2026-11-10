@@ -66,6 +66,29 @@ def no_proxy_env() -> Iterator[None]:
                 os.environ[var] = val
 
 
+class HTTPStatusError(RuntimeError):
+    """An error HTTP status (400 or above) from an async POST.
+
+    Carries the status code and body text so callers can branch on them;
+    still a RuntimeError subclass with the same message format the plain
+    raise used, for backward compatibility.
+    """
+
+    def __init__(self, message: str, status: int, body: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+    def __reduce__(self):
+        """Reconstruct with every argument.
+
+        The base class pickle only preserves ``args``, which here holds
+        the message alone, so without this an unpickle would call the
+        constructor with one argument instead of three.
+        """
+        return (type(self), (self.args[0], self.status, self.body))
+
+
 class InferenceHTTPClient:
     """Thin HTTP client for an sglang router or server base URL.
 
@@ -396,6 +419,9 @@ class InferenceHTTPClient:
     ) -> dict:
         """POST ``body`` with custom headers and a total timeout.
 
+        Errors from ``_apost`` propagate: ``HTTPStatusError`` on an HTTP
+        status of 400 or above, with status and body text.
+
         Args:
             path: Path appended to the base URL.
             body: JSON request body.
@@ -405,10 +431,6 @@ class InferenceHTTPClient:
 
         Returns:
             The decoded response dict.
-
-        Raises:
-            RuntimeError: On an HTTP status of 400 or above, with status and
-                body text (the aiohttp error type is not Ray-picklable).
         """
         return await self._apost(path, body, headers=headers, timeout_s=timeout_s)
 
@@ -431,11 +453,13 @@ class InferenceHTTPClient:
             ),
         ) as resp:
             # ClientResponseError is not picklable and Ray would hide it
-            # behind "can't pickle"; raise a RuntimeError with status and
-            # body instead.
+            # behind "can't pickle"; raise HTTPStatusError (a RuntimeError
+            # subclass) with status and body instead.
             if resp.status >= 400:
                 text = await resp.text()
-                raise RuntimeError(
-                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}"
+                raise HTTPStatusError(
+                    f"POST {path} failed with HTTP {resp.status}: {text[:2000]}",
+                    status=resp.status,
+                    body=text,
                 )
             return await resp.json()
