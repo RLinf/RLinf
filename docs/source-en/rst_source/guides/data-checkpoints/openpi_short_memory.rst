@@ -4,16 +4,16 @@ Evaluate and Train OpenPI with Short Memory
 Use this guide to evaluate a short-memory π₀.₅ checkpoint on LIBERO-Mem and
 fine-tune one with FSDP1. Start with the history settings, supply your
 checkpoint and normalization statistics, then launch evaluation or SFT.
-These recipes use RLinf's native ``openpi`` model with LIBERO transforms.
+These configurations use RLinf's native ``openpi`` model with LIBERO transforms.
 Short memory supports ``openpi.task: eval`` and ``sft``; RL replay does not yet
 carry camera history.
 
 Choose the Visual History
 -------------------------
 
-Both recipes sample camera frames from the current episode, ordered from oldest
+Both configurations sample camera frames from the current episode, ordered from oldest
 to current. ``num_frames`` includes the current frame and is configurable; eight
-is the recipe default. ``stride`` counts environment control steps for evaluation
+is the configuration default. ``stride`` counts environment control steps for evaluation
 and dataset frames for SFT. In evaluation at 20 Hz, eight frames with stride 70
 span 24.5 seconds.
 
@@ -78,7 +78,7 @@ For SFT, download the public
    hf download RLinf/RLinf-Pi05-LIBERO-SFT \
      --local-dir checkpoints/RLinf-Pi05-LIBERO-SFT
 
-This supplies the initial weights for the recipe below. Compute LIBERO-Mem
+This supplies the initial weights for the configuration below. Compute LIBERO-Mem
 normalization statistics from the training dataset as described below. The
 reported paired experiment used a separate LIBERO-10 ``global_step_8000``
 checkpoint; these public weights are a starting point for training, not an
@@ -97,7 +97,7 @@ state is restored through ``runner.resume_dir``.
 Evaluate on LIBERO-Mem
 ----------------------
 
-Once the simulator and weights are ready, run the dedicated evaluation recipe
+Once the simulator and weights are ready, run the dedicated evaluation configuration
 from the repository root in the activated environment:
 
 .. code-block:: bash
@@ -139,7 +139,7 @@ at 20 Hz, with all episodes in the training split:
    hf download CollisionCode/libero_mem_lerobot_v2.1 --repo-type dataset \
      --local-dir "$HF_LEROBOT_HOME/CollisionCode/libero_mem_lerobot_v2.1"
 
-Keep ``HF_LEROBOT_HOME`` set for the following commands. The SFT recipe selects
+Keep ``HF_LEROBOT_HOME`` set for the following commands. The SFT configuration selects
 ``pi05_libero_mem``, which reads the published columns directly and maps them to
 the same LIBERO policy inputs used at evaluation:
 
@@ -197,7 +197,7 @@ For a current-frame training control, keep ``data.short_memory`` and set
 and sampler while returning only the current camera frames. Without
 ``data.short_memory``, a model with short memory disabled uses its existing loader.
 
-Launch the SFT entry point directly so that Hydra overrides reach the recipe:
+Launch the SFT entry point directly so that Hydra overrides reach the configuration:
 
 .. code-block:: bash
 
@@ -211,7 +211,7 @@ Launch the SFT entry point directly so that Hydra overrides reach the recipe:
      actor.model.openpi_data.norm_stats_path="$PWD/assets/pi05_libero_mem/CollisionCode/libero_mem_lerobot_v2.1/norm_stats.json" \
      runner.logger.log_path="$PWD/logs/libero_mem_short_memory"
 
-The recipe trains the complete model with the existing flow-matching loss,
+The configuration trains the complete model with the existing flow-matching loss,
 12,750 updates, microbatch size four per rank and global batch size 128. Adjust
 the batch sizes and update budget to your available GPUs. The history controls
 are ``data.short_memory.num_frames`` and ``data.short_memory.stride``; optional
