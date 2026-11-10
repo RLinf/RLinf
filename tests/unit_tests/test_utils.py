@@ -917,3 +917,64 @@ def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatc
     assert f"source_device={source.device}" in str(info.value)
     assert "requested_bytes=8" in str(info.value)
     assert torch.Tensor.to is original_to
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normalize):
+    values = torch.full((4, 6), 99.0)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    mask[0, 4] = mask[3, 1] = True
+    mask[1, 3:5] = mask[2, 1:3] = True
+    values[mask] = torch.tensor([0.4, 0.5, 0.6, 0.2, 0.3, 0.1])
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="gae_dynamic",
+        rewards=torch.tensor([1.0, -0.5, 1.0, -0.5]),
+        values=values,
+        loss_mask=mask,
+        idx_to_traj=[0, 1, 0, 1],
+        prompt_lengths=torch.tensor([4, 3, 1, 1]),
+        gamma=0.9,
+        gae_lambda=0.95,
+        normalize_advantages=normalize,
+    )
+    expected_advantages = torch.zeros_like(values)
+    expected_returns = torch.zeros_like(values)
+    episodes = [([(2, 1), (2, 2), (0, 4)], 1.0), ([(3, 1), (1, 3), (1, 4)], -0.5)]
+    for actions, reward in episodes:
+        gae, next_value = 0.0, 0.0
+        for step in reversed(range(len(actions))):
+            row, token = actions[step]
+            value = values[row, token]
+            terminal_reward = reward if step == len(actions) - 1 else 0.0
+            delta = terminal_reward + 0.9 * next_value - value
+            gae = delta + 0.9 * 0.95 * gae
+            expected_advantages[row, token] = gae
+            expected_returns[row, token] = gae + value
+            next_value = value
+    if normalize:
+        valid = expected_advantages[mask]
+        expected_advantages[mask] = (valid - valid.mean()) / valid.std(unbiased=False)
+        torch.testing.assert_close(
+            advantages[mask].mean(), torch.tensor(0.0), atol=1e-6, rtol=0
+        )
+        torch.testing.assert_close(
+            advantages[mask].var(unbiased=False), torch.tensor(1.0)
+        )
+    torch.testing.assert_close(advantages, expected_advantages)
+    torch.testing.assert_close(returns, expected_returns)
+
+
+def test_multiturn_gae_rejects_duplicate_prompt_lengths_in_one_episode():
+    with pytest.raises(ValueError, match="distinct prompt lengths"):
+        calculate_adv_and_returns(
+            task_type="reasoning",
+            adv_type="gae_dynamic",
+            rewards=torch.ones(2),
+            values=torch.zeros(2, 3),
+            loss_mask=torch.tensor([[False, True, False], [False, True, False]]),
+            idx_to_traj=[0, 0],
+            prompt_lengths=torch.tensor([1, 1]),
+            gamma=0.9,
+            gae_lambda=0.95,
+        )
