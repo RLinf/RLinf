@@ -387,15 +387,47 @@ class InferenceHTTPClient:
             return [InferenceHTTPClient._to_msgpackable(v) for v in value]
         return value
 
-    async def _apost(self, path: str, body: dict) -> dict:
+    async def async_post(
+        self,
+        path: str,
+        body: dict,
+        headers: Optional[dict[str, str]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> dict:
+        """POST ``body`` with custom headers and a total timeout.
+
+        Args:
+            path: Path appended to the base URL.
+            body: JSON request body.
+            headers: Extra request headers, e.g. a routing key for a router.
+            timeout_s: Total timeout for the request, connect and read
+                included; None waits indefinitely.
+
+        Returns:
+            The decoded response dict.
+
+        Raises:
+            RuntimeError: On an HTTP status of 400 or above, with status and
+                body text (the aiohttp error type is not Ray-picklable).
+        """
+        return await self._apost(path, body, headers=headers, timeout_s=timeout_s)
+
+    async def _apost(
+        self,
+        path: str,
+        body: dict,
+        headers: Optional[dict[str, str]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> dict:
         session = self._get_or_create_session()
         async with session.post(
             f"{self.base_url}{path}",
             json=body,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(
-                total=None,
+                total=timeout_s,
                 sock_connect=self.connect_timeout,
-                sock_read=None,
+                sock_read=timeout_s,
             ),
         ) as resp:
             # ClientResponseError is not picklable and Ray would hide it

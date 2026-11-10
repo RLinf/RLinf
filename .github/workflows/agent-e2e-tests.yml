@@ -23,6 +23,17 @@ jobs:
           bash requirements/install.sh agentic --engine sglang
           bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
 
+      - name: Session server integration test
+        # The file skips itself in the embodied unit-test CI environment
+        # (no fastapi there); run it for real here, in the agentic env.
+        timeout-minutes: 20
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          pytest tests/unit_tests/test_session_server.py; status=$?
+          ray stop
+          exit $status
+
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
