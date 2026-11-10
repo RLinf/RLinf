@@ -170,4 +170,3 @@ Asearcher: https://github.com/inclusionAI/ASearcher
 
    Qwen2.5-3B Search-R1 <qwen2.5>
    GLM-4.7-Flash Search-R1 <glm4.7_flash>
-   Synchronous PPO <ppo>

@@ -189,7 +189,7 @@ Furthermore, in LLM reasoning tasks, we use an independent critic model rather t
 For an agent that alternates generation with tool calls, compute GAE over the
 action tokens of a complete episode. Tool responses remain in the observation
 context, while masks exclude them from actor and critic losses. The
-:doc:`Search-R1 PPO recipe </rst_source/examples/agentic/searchr1/ppo>` configures
+:doc:`Search-R1 PPO recipe </rst_source/examples/agentic/searchr1/qwen2.5>` configures
 this training path.
 
 Training Flow
@@ -222,8 +222,8 @@ and returns remain on the critic for value training.
 The current Search-R1 integration uses Megatron actor/critic TP=PP=CP=1 and SGLang,
 with actor, critic, and rollout sharing identical GPUs. Offloading the rollout
 engine before training frees memory for the two training models. This is a
-memory-management choice for shared placement; synchronous PPO requires that
-updates and weight installation finish before the next batch. Training-state
+memory-management choice for shared placement. This training path completes
+updates and weight installation before the next batch. Training-state
 residency is controlled by ``offload_weight``, ``offload_grad``, and
 ``offload_optimizer`` on each role.
 

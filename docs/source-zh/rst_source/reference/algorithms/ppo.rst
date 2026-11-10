@@ -174,7 +174,7 @@ LLM 推理任务的配置与具身任务的配置有相似之处。
 3.3. 多轮 Agent 任务
 ~~~~~~~~~~~~~~~~~~~~
 
-Agent 在生成文本和调用工具之间交替执行时，需要沿完整 episode 的 action token 计算 GAE。工具返回的文本保留在 observation 上下文中，actor 和 critic 的 loss mask 排除这些位置。:doc:`Search-R1 PPO 配置 </rst_source/examples/agentic/searchr1/ppo>` 展示了这条训练路径。
+Agent 在生成文本和调用工具之间交替执行时，需要沿完整 episode 的 action token 计算 GAE。工具返回的文本保留在 observation 上下文中，actor 和 critic 的 loss mask 排除这些位置。:doc:`Search-R1 PPO 配置 </rst_source/examples/agentic/searchr1/qwen2.5>` 展示了这条训练路径。
 
 训练流程
 ^^^^^^^^
@@ -193,7 +193,7 @@ Agent 在生成文本和调用工具之间交替执行时，需要沿完整 epis
 
 Critic worker 在更新前计算目标，并跨数据并行 rank 汇总有效 action token 的统计量来归一化 advantages。Returns 保持原来的尺度。Actor 只接收固定 advantages；old values 和 returns 留在 critic 侧用于 value 训练。
 
-当前 Search-R1 接入使用 Megatron actor/critic TP=PP=CP=1 和 SGLang，actor、critic、rollout 共用相同 GPU。训练前 offload rollout 引擎可以腾出显存，容纳两个训练模型。这是共享 placement 的显存管理选择；同步 PPO 要求模型更新和权重安装在下一个 batch 开始前完成。各角色的 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer`` 控制训练状态的驻留。
+当前 Search-R1 接入使用 Megatron actor/critic TP=PP=CP=1 和 SGLang，actor、critic、rollout 共用相同 GPU。训练前 offload rollout 引擎可以腾出显存，容纳两个训练模型。这是共享 placement 的显存管理选择。该训练流程在下一个 batch 开始前完成模型更新和权重安装。各角色的 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer`` 控制训练状态的驻留。
 
 4. 注意事项
 -----------
