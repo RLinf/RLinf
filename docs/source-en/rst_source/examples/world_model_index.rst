@@ -25,6 +25,15 @@ This category collects examples for training and fine-tuning world models in RLi
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/bwm.html" style="display: block;"><img src="https://raw.githubusercontent.com/boundless-large-model/boundless-world-model/main/assets/images/teaser.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" data-target="animated-image.originalImage"></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/bwm.html" style="text-decoration: underline; color: blue;"><b>RL with BWM World Model</b></a><br>
+         Support BWM World Model + pi0.5 + PPO training on RoboTwin
+       </p>
+     </div>
+
    </div>
 
 .. toctree::

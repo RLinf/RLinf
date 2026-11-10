@@ -3,15 +3,70 @@
 
 本示例在 Boundless World Model（BWM，基于 Wan2.2-TI2V-5B 的动作条件视频世界模型）中，用 PPO 训练单视角 pi0.5 policy 完成 RoboTwin ``adjust_bottle`` 任务。训练过程不调用仿真器，训练后的 checkpoint 在 RoboTwin 中评测。
 
-概述
+概览
 ----
 
-- **世界模型**：在 RoboTwin ``adjust_bottle`` 成功与失败轨迹上微调过的 BWM，由 ``WorldModelEnv`` 的 ``bwm`` 后端在进程内推理。
-- **Policy**：单视角 pi0.5 SFT checkpoint（``pi05_aloha_robotwin``，RoboTwin 关节约定）。
-- **观测**：世界模型生成的一帧 640x480 头部相机图像；``states`` 为 policy 上一条关节指令（``state_from_last_action``）。
-- **动作**：每次 50 条 Aloha 关节指令（14 维）。后端用 URDF 正运动学把它们转换为 BWM 使用的归一化末端位姿；每个 chunk 对应一次 61 帧的 BWM 窗口（9 帧条件、52 帧新生成）。
-- **奖励**：冻结的 T5 成功分类器从第 51 帧起逐帧打分；若峰值达到阈值，在第 200 步给 1（``reward_mode: episode_window_max``），到时限时 episode 以终止结束（``terminate_at_max_episode_steps``）。
-- **算法**：PPO + GAE（gamma 1.0），每步 48 个环境 x 2 个 rollout epoch，共 14 步：前 4 步只训练 critic，之后 10 步联合更新。critic 读取 VLM 特征（``value_after_vlm``）。
+在 BWM 世界模型模拟的 RoboTwin ``adjust_bottle`` 上用 PPO 训练单视角 pi0.5 policy。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 环境
+      :text-align: center
+
+      BWM 世界模型 · RoboTwin（评测）
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      PPO
+
+   .. grid-item-card:: 任务
+      :text-align: center
+
+      ``adjust_bottle``
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      1 节点 · 8 GPU
+
+| **你将完成：** 在 openpi + RoboTwin 环境旁安装 BWM → 下载资产 → 启动 ``run_embodiment.sh`` → 在 RoboTwin 中评测 checkpoint。
+| **前置条件：** :doc:`RoboTwin <robotwin>` 安装 · pi0.5 SFT checkpoint · BWM 权重、奖励分类器与初始帧（见下文）。
+
+任务
+~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 24 30 24
+
+   * - 环境
+     - 任务
+     - 配置 / 权重
+     - 重点
+   * - BWM
+     - RoboTwin ``adjust_bottle``
+     - ``bwm_robotwin_adjust_bottle_ppo_openpi_pi05``、``lidavidsh/bwm-robotwin-adjust-bottle-failure-ft``
+     - 在成功与失败轨迹上微调过的 BWM，由 ``WorldModelEnv`` 的 ``bwm`` 后端在进程内推理。
+
+观测与动作
+~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38
+
+   * - 字段
+     - 说明
+   * - Observation
+     - 世界模型生成的一帧 640x480 头部相机图像；``states`` 为 policy 上一条关节指令（``state_from_last_action``）。
+   * - Action
+     - 每次 50 条 Aloha 关节指令（14 维）。后端用 URDF 正运动学把它们转换为 BWM 使用的归一化末端位姿；每个 chunk 对应一次 61 帧的 BWM 窗口（9 帧条件、52 帧新生成）。
+   * - Reward
+     - 冻结的 T5 成功分类器从第 51 帧起逐帧打分；若峰值达到阈值，在第 200 步给 1（``reward_mode: episode_window_max``），到时限时 episode 以终止结束（``terminate_at_max_episode_steps``）。
+   * - Prompt
+     - 每张初始帧附带的任务描述。
 
 安装
 ----
@@ -30,7 +85,7 @@
 
    .. code-block:: bash
 
-      pip install --no-deps --target /path/to/bwm_pydeps diffsynth==2.0.11 ftfy==6.3.1
+      pip install --no-deps --target /path/to/bwm_pydeps diffsynth==2.0.11 ftfy==6.3.1 wcwidth modelscope
       export PYTHONPATH=/path/to/bwm_pydeps:$PYTHONPATH
 
    另需与已安装 ``torch`` 版本匹配的 ``torchaudio``。
@@ -48,7 +103,7 @@
      - ``Wan-AI/Wan2.2-TI2V-5B``
      - ``env.train.model_path``、``env.train.VAE_path``
    * - 微调后的 BWM 权重
-     - ``lidavidsh/bwm-robotwin-adjust-bottle-failure-ft``（``step-750.safetensors``）
+     - ``lidavidsh/bwm-robotwin-adjust-bottle-failure-ft``\ （``step-750.safetensors``）
      - ``env.train.checkpoint_path``
    * - BWM 动作统计
      - BWM 仓库中的 ``demo/stat.json``
@@ -57,13 +112,13 @@
      - RoboTwin 资产 ``embodiments/aloha-agilex``
      - ``env.train.action_bridge.urdf_path``、``srdf_path``
    * - 奖励分类器
-     - ``lidavidsh/robotwin-adjust-bottle-t5-success-classifier``（``reward_model.pt``）与 ``google-t5/t5-base``
+     - ``lidavidsh/robotwin-adjust-bottle-t5-success-classifier``\ （``reward_model.pt``）与 ``google-t5/t5-base``
      - ``env.train.reward_model.from_pretrained``、``t5_model_name``
    * - pi0.5 SFT policy
-     - `WorldArena/WorldArena <https://huggingface.co/WorldArena/WorldArena>`__ （model 仓库，``fulldata``，归一化统计在 ``assets/robotwin_clean``）
+     - `WorldArena/WorldArena <https://huggingface.co/WorldArena/WorldArena>`__\ （model 仓库，``fulldata``，归一化统计在 ``assets/robotwin_clean``）
      - ``actor.model.model_path``、``actor.model.openpi_data.norm_stats_path``
    * - 初始帧
-     - 48 张 RoboTwin 复位观测（640x480），每张一个 ``episode_XXXXX.npy``；暂未提供导出脚本
+     - 48 张 RoboTwin 复位观测，每张一个 ``episode_XXXXX.npy``：逐帧 dict 组成的 object 数组（``np.save(..., allow_pickle=True)``），第一帧含 ``image``\ （480x640x3 ``uint8`` 头部相机图像）、``instruction`` 或 ``task``\ （任务描述）与 ``delta_action``\ （14 个值；加载器要求有这个键，BWM 不读取）。暂未提供导出脚本。
      - ``env.train.initial_image_path``
 
 BWM 微调所用的轨迹数据在 ``lidavidsh/robotwin-adjust-bottle-pi05-rollouts``。
@@ -78,7 +133,7 @@ BWM 微调所用的轨迹数据在 ``lidavidsh/robotwin-adjust-bottle-pi05-rollo
    export ROBOT_PLATFORM=ALOHA ROBOTWIN_PATH=/path/to/RoboTwin
    bash examples/embodiment/run_embodiment.sh bwm_robotwin_adjust_bottle_ppo_openpi_pi05
 
-本示例使用 FSDP ``no_shard``（openpi 的要求）。在 Triton 缺少 ``triton_key`` 的 ROCm 环境中，加上 ``actor.model.openpi.torch_compile=False``。
+本示例运行 PPO + GAE（gamma 1.0），每步 48 个环境 x 2 个 rollout epoch，共 14 步：前 4 步只训练 critic，之后 10 步联合更新。critic 读取 VLM 特征（``value_after_vlm``）。使用 FSDP ``no_shard``\ （openpi 的要求）。在 Triton 缺少 ``triton_key`` 的 ROCm 环境中，加上 ``actor.model.openpi.torch_compile=False``。
 
 在 RoboTwin 中评测
 ------------------
@@ -91,11 +146,11 @@ BWM 微调所用的轨迹数据在 ``lidavidsh/robotwin-adjust-bottle-pi05-rollo
    bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_pi05_eval \
      rollout.model.model_path=/path/to/sft runner.ckpt_path=/path/to/full_weights.pt \
      rollout.model.num_steps=4 rollout.model.openpi.task=rl rollout.model.openpi.noise_level=0.5 \
-     rollout.model.openpi.num_images_in_input=1 ++rollout.model.use_proprio=true \
      ++rollout.model.openpi.value_after_vlm=True \
      ++rollout.model.openpi.value_head_hidden_sizes=[512,256,128] \
      ++rollout.model.openpi_data.adapt_to_pi=false \
      ++rollout.model.openpi_data.norm_stats_path=/path/to/sft/assets/robotwin_clean \
+     env.eval.assets_path=/path/to/RoboTwin \
      env.eval.task_config.camera.head_camera_type=Large_D435 \
      env.eval.task_config.camera.collect_wrist_camera=false
 
