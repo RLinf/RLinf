@@ -113,8 +113,8 @@ access terms on Hugging Face before downloading that model.
       --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
 
 These commands save Diffusers checkpoints locally. Set
-``actor.model.model_path`` to the corresponding directory when launching either
-training method.
+``actor.model.model_path`` in your selected training YAML to the corresponding
+directory.
 
 .. _diffusion-ocr-dataset:
 
@@ -134,14 +134,15 @@ Download the training and test splits into one directory:
       -o /path/to/dataset/ocr/test.txt
 
 Each line is one prompt. ``env.*.dataset.split`` selects ``train.txt`` or
-``test.txt``; set ``env.train.dataset.path`` and ``env.eval.dataset.path`` to
-this directory. With the model and data in place, continue with
+``test.txt``. In your selected training YAML, set ``env.train.dataset.path``
+and ``env.eval.dataset.path`` to this directory. With the model and data in
+place, continue with
 :doc:`Diffusion-NFT <diffusion_nft>` or :doc:`DiffusionART <diffusion_art>`.
 
 .. warning::
 
-   Replace the ``/path/to/...`` placeholders with your local paths before
-   running the commands in either guide.
+   Replace the ``/path/to/...`` placeholders in the download commands and your
+   selected training YAML with local paths before launching training.
 
 .. toctree::
    :hidden:

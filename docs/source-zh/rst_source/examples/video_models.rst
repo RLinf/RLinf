@@ -21,13 +21,13 @@
       :link: diffusion_nft
       :link-type: doc
 
-      根据相对奖励构造正负速度候选，包含 SD3 图像 OCR 和 Wan2.2 图像/视频 OCR 配方。
+      根据相对奖励构造正负速度候选，包含 SD3 图像 OCR 和 Wan2.2 图像/视频 OCR 配置。
 
    .. grid-item-card:: DiffusionART
       :link: diffusion_art
       :link-type: doc
 
-      在 prompt 组内构造共享奖励引导，并向冻结的速度目标训练，包含 SD3 图像 OCR 和 Wan2.2 视频 OCR 配方。
+      在 prompt 组内构造共享奖励引导，并向冻结的速度目标训练，包含 SD3 图像 OCR 和 Wan2.2 视频 OCR 配置。
 
 Prompt、生成结果与奖励
 ----------------------
@@ -47,7 +47,7 @@ Prompt、生成结果与奖励
    * - 奖励
      - OCR 文字相似度，范围为 ``[0, 1]``，越高越好。
 
-图像 OCR 用归一化 Levenshtein 距离比较识别文字与引号内的目标文字；精确匹配子串时也计为 ``1``。视频 OCR 对各帧使用同一个 scorer：NFT 视频配方保留逐帧奖励，ART 视频配方则取帧均值，得到每个候选的单一奖励。除 reward 外，还应检查生成样本，因为 OCR 不衡量视觉质量或时序一致性。
+图像 OCR 用归一化 Levenshtein 距离比较识别文字与引号内的目标文字；精确匹配子串时也计为 ``1``。视频 OCR 对各帧使用同一个 scorer：NFT 视频配置保留逐帧奖励，ART 视频配置则取帧均值，得到每个候选的单一奖励。除 reward 外，还应检查生成样本，因为 OCR 不衡量视觉质量或时序一致性。
 
 .. _diffusion-model-setup:
 
@@ -61,9 +61,9 @@ Prompt、生成结果与奖励
    bash requirements/install.sh embodied --model diffusion
    source .venv/bin/activate
 
-安装器创建 Python 3.10 环境，安装 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU PaddlePaddle。两个 ART 配方及 SD3 NFT 配方使用 CPU OCR。需要其他环境目录时，传入 ``--venv /path/to/venv``，并激活对应环境。
+安装器创建 Python 3.10 环境，安装 Diffusers、PEFT、Transformers、PaddleOCR 和 CPU PaddlePaddle。两个 ART 配置及 SD3 NFT 配置使用 CPU OCR。需要其他环境目录时，传入 ``--venv /path/to/venv``，并激活对应环境。
 
-Wan NFT 配方设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，通过 ``--paddle-gpu`` 安装 GPU PaddlePaddle（CUDA 11.x 或 12.x），然后激活环境：
+Wan NFT 配置设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，通过 ``--paddle-gpu`` 安装 GPU PaddlePaddle（CUDA 11.x 或 12.x），然后激活环境：
 
 .. code:: bash
 
@@ -79,7 +79,7 @@ Wan NFT 配方设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，�
 下载模型
 --------
 
-下载所选配方对应的 checkpoint。SD3.5 Medium 需要先在 Hugging Face 接受模型访问条款。
+下载所选配置对应的 checkpoint。SD3.5 Medium 需要先在 Hugging Face 接受模型访问条款。
 
 .. code:: bash
 
@@ -89,7 +89,7 @@ Wan NFT 配方设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，�
    huggingface-cli download Wan-AI/Wan2.2-TI2V-5B-Diffusers \
       --local-dir /path/to/Wan2.2-TI2V-5B-Diffusers
 
-命令将 Diffusers checkpoint 保存到本地。启动任一训练方法时，将 ``actor.model.model_path`` 设为对应目录。
+命令将 Diffusers checkpoint 保存到本地。在所选训练 YAML 中，将 ``actor.model.model_path`` 设为对应目录。
 
 .. _diffusion-ocr-dataset:
 
@@ -106,11 +106,11 @@ Wan NFT 配方设置了 ``env.*.reward.use_gpu: True``。使用 GPU OCR 时，�
    curl -L https://raw.githubusercontent.com/NVlabs/DiffusionNFT/main/dataset/ocr/test.txt \
       -o /path/to/dataset/ocr/test.txt
 
-每行是一条 prompt。``env.*.dataset.split`` 选择 ``train.txt`` 或 ``test.txt``；将 ``env.train.dataset.path`` 和 ``env.eval.dataset.path`` 设为该目录。模型与数据准备完成后，继续阅读 :doc:`Diffusion-NFT <diffusion_nft>` 或 :doc:`DiffusionART <diffusion_art>`。
+每行是一条 prompt。``env.*.dataset.split`` 选择 ``train.txt`` 或 ``test.txt``。在所选训练 YAML 中，将 ``env.train.dataset.path`` 和 ``env.eval.dataset.path`` 设为该目录。模型与数据准备完成后，继续阅读 :doc:`Diffusion-NFT <diffusion_nft>` 或 :doc:`DiffusionART <diffusion_art>`。
 
 .. warning::
 
-   执行训练指南中的命令前，将 ``/path/to/...`` 占位路径替换为实际路径。
+   启动训练前，将下载命令和所选训练 YAML 中的 ``/path/to/...`` 占位路径替换为实际路径。
 
 .. toctree::
    :hidden:

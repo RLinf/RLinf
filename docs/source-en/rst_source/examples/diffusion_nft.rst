@@ -16,7 +16,10 @@ inspect rewards and generated samples.
 Overview
 --------
 
-Select the output type and matching recipe for your model.
+Select the output type and matching recipe for your model. For the objective
+and derivation, see the
+`DiffusionNFT paper <https://arxiv.org/abs/2509.16117>`_ and
+`official code <https://github.com/NVlabs/DiffusionNFT>`_.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -99,26 +102,25 @@ use GPU OCR; select the shared ``--paddle-gpu`` installation for those configs.
 Run Training
 ------------
 
-Pass a Diffusion-NFT config name to ``run_diffusion.sh`` and override the local
-model and dataset paths.
+Open the YAML matching your chosen config in ``examples/diffusion/config/``;
+for example, use ``examples/diffusion/config/sd3_nft_ocr.yaml`` for SD3.
+Set ``actor.model.model_path``, ``env.train.dataset.path``, and
+``env.eval.dataset.path`` to your downloaded directories. Check
+``cluster.num_nodes``, ``cluster.component_placement``, and the batch settings
+against your hardware before launching.
+
+After checking the YAML, run its config name from the repository root:
 
 .. code:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
-      actor.model.model_path=/path/to/stable-diffusion-3.5-medium \
-      env.train.dataset.path=/path/to/dataset/ocr \
-      env.eval.dataset.path=/path/to/dataset/ocr
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr
 
 .. code:: bash
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr \
-      actor.model.model_path=/path/to/Wan2.2-TI2V-5B-Diffusers \
-      env.train.dataset.path=/path/to/dataset/ocr \
-      env.eval.dataset.path=/path/to/dataset/ocr
+   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr
 
 The launcher generates candidates, scores them with OCR, updates LoRA
-parameters, and writes logs under ``logs/<timestamp>-<config>/``. Change the
-remaining options in ``examples/diffusion/config/*.yaml``.
+parameters, and writes logs under ``logs/<timestamp>-<config>/``.
 
 Set ``runner.resume_dir`` to a ``checkpoints/global_step_N`` directory to
 resume NFT training, including off-policy EMA rollout weights. If an older

@@ -7,12 +7,12 @@ NFT 扩散模型微调
 
    使用 Diffusion-NFT 训练的 SD3 与 Wan2.2 生成模型。
 
-使用 Diffusion-NFT 微调 SD3 或 Wan2.2，改善图像和视频中的文字渲染。训练对同一 prompt 的候选做 OCR 评分，再用相对奖励更新模型。完成 :doc:`共用准备步骤 <video_models>` 后，选择下方配方启动训练，并检查 reward 和生成样本。
+使用 Diffusion-NFT 微调 SD3 或 Wan2.2，改善图像和视频中的文字渲染。训练对同一 prompt 的候选做 OCR 评分，再用相对奖励更新模型。完成 :doc:`共用准备步骤 <video_models>` 后，选择下方配置启动训练，并检查 reward 和生成样本。
 
 概览
 ----
 
-按模型和输出类型选择配方。
+按模型和输出类型选择配置。目标函数与推导见 `DiffusionNFT 论文 <https://arxiv.org/abs/2509.16117>`_ 和 `官方代码 <https://github.com/NVlabs/DiffusionNFT>`_。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -37,13 +37,13 @@ NFT 扩散模型微调
 
       OCR / 视频 OCR
 
-| **操作流程：** 选择配方 → 启动训练 → 检查 OCR reward 和生成样本。
+| **操作流程：** 选择配置 → 启动训练 → 检查 OCR reward 和生成样本。
 | **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>`。
 
 任务
 ~~~~
 
-配方覆盖图像 OCR 与保留逐帧奖励的视频 OCR。
+配置覆盖图像 OCR 与保留逐帧奖励的视频 OCR。
 
 .. list-table::
    :header-rows: 1
@@ -87,28 +87,24 @@ NFT 扩散模型微调
 安装与资源准备
 --------------
 
-按共用步骤完成 :ref:`安装 <diffusion-model-setup>`、:ref:`下载模型 <diffusion-model-checkpoints>` 和 :ref:`下载 OCR 数据集 <diffusion-ocr-dataset>`。Wan NFT 配方使用 GPU OCR，请选择共用安装步骤中的 ``--paddle-gpu`` 命令。
+按共用步骤完成 :ref:`安装 <diffusion-model-setup>`、:ref:`下载模型 <diffusion-model-checkpoints>` 和 :ref:`下载 OCR 数据集 <diffusion-ocr-dataset>`。Wan NFT 配置使用 GPU OCR，请选择共用安装步骤中的 ``--paddle-gpu`` 命令。
 
 运行训练
 --------
 
-将 Diffusion-NFT 配置名传给 ``run_diffusion.sh``，并覆盖本地模型与数据集路径。
+在 ``examples/diffusion/config/`` 下打开所选配置对应的 YAML，例如 SD3 使用 ``examples/diffusion/config/sd3_nft_ocr.yaml``。将 ``actor.model.model_path``、``env.train.dataset.path`` 和 ``env.eval.dataset.path`` 设为下载目录，并根据实际硬件检查 ``cluster.num_nodes``、``cluster.component_placement`` 及 batch 设置。
+
+检查 YAML 后，在仓库根目录传入对应配置名启动训练：
 
 .. code:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
-      actor.model.model_path=/path/to/stable-diffusion-3.5-medium \
-      env.train.dataset.path=/path/to/dataset/ocr \
-      env.eval.dataset.path=/path/to/dataset/ocr
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr
 
 .. code:: bash
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr \
-      actor.model.model_path=/path/to/Wan2.2-TI2V-5B-Diffusers \
-      env.train.dataset.path=/path/to/dataset/ocr \
-      env.eval.dataset.path=/path/to/dataset/ocr
+   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr
 
-启动脚本将日志写入 ``logs/<timestamp>-<config>/``。其余参数在 ``examples/diffusion/config/*.yaml`` 中调整。
+启动脚本生成候选、计算 OCR 奖励并更新 LoRA 参数，日志写入 ``logs/<timestamp>-<config>/``。
 
 将 ``runner.resume_dir`` 设为 ``checkpoints/global_step_N`` 目录可恢复 NFT 训练，包括 off-policy 的 EMA rollout 权重。如果旧 checkpoint 缺少 EMA 权重，actor 会记录告警，并用恢复后的 actor 权重初始化 EMA，此时无法精确续训。
 

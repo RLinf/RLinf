@@ -273,6 +273,11 @@ class Wan22Model(torch.nn.Module, BasePolicy):
             )
         elif self.config.rl_mode == "art":
             forward_inputs["art_endpoint"] = final_latents.movedim(2, 1).detach()
+        else:
+            raise ValueError(
+                f"Unsupported Wan rl_mode: {self.config.rl_mode!r}. "
+                "Expected 'nft' or 'art'."
+            )
         if self.config.cfg:
             forward_inputs["negative_prompt_embeds"] = negative_prompt_embeds.detach()
         for key, value in denoise_info.items():

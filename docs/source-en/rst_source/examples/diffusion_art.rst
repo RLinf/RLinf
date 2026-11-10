@@ -19,9 +19,11 @@ Overview
 Both recipes use LoRA with FSDP2 and deterministic ODE generation. They split
 each prompt's candidates into two disjoint update windows that share targets
 frozen before the first update. Corrective masking suppresses updates that would
-move an already-drifted prediction farther outward. See the
-`DiffusionART paper <https://vanzll.github.io/diffusionart-project/>`_ for the
-method's derivation.
+move an already-drifted prediction farther outward. For the derivation and
+reference implementation, see the
+`DiffusionART paper <https://arxiv.org/abs/2610.12572>`_,
+`official code <https://github.com/vanzll/DiffusionART>`_, and
+`project page <https://vanzll.github.io/diffusionart-project/>`_.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -98,31 +100,29 @@ recipes set ``env.*.reward.use_gpu: False`` and use the CPU OCR installation.
 Run Training
 ------------
 
-Run the selected recipe from the repository root, replacing the model and data
-paths with the directories prepared above.
+Open ``examples/diffusion/config/sd3_art_ocr.yaml`` or
+``examples/diffusion/config/wan22_ti2v_5b_art_video_ocr.yaml`` before launching.
+In the selected YAML, set ``actor.model.model_path``,
+``env.train.dataset.path``, and ``env.eval.dataset.path`` to your downloaded
+directories. Check ``cluster.num_nodes``, ``cluster.component_placement``, and
+the batch settings against your hardware and the ART constraints below.
+
+After checking the YAML, run its config name from the repository root:
 
 .. code:: bash
 
-   bash examples/diffusion/run_diffusion.sh sd3_art_ocr \
-      actor.model.model_path=/path/to/stable-diffusion-3.5-medium \
-      env.train.dataset.path=/path/to/dataset/ocr \
-      env.eval.dataset.path=/path/to/dataset/ocr
+   bash examples/diffusion/run_diffusion.sh sd3_art_ocr
 
-   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr \
-      actor.model.model_path=/path/to/Wan2.2-TI2V-5B-Diffusers \
-      env.train.dataset.path=/path/to/dataset/ocr \
-      env.eval.dataset.path=/path/to/dataset/ocr
+   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_art_video_ocr
 
 The launcher generates and scores candidates, updates LoRA parameters, and
-writes logs under ``logs/<timestamp>-<config>/``. Add ``runner.max_steps=5`` for
-a short startup check; initialization and compilation can dominate its runtime.
-Change the remaining options in ``examples/diffusion/config/*.yaml``.
+writes logs under ``logs/<timestamp>-<config>/``.
 
 Configure the ART Update
 ------------------------
 
-Keep the checked-in batch settings for an initial run. When changing rollout
-size or placement, each actor shard must receive complete prompt groups.
+When changing rollout size or placement, each actor shard must receive
+complete prompt groups.
 ``algorithm.art_updates_per_rollout`` must be ``1`` or ``2`` and divide
 ``algorithm.group_size``; ``env.train.group_size`` must match that group size.
 
