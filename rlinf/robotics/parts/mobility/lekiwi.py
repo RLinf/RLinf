@@ -29,6 +29,7 @@ inverts the same mapping.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING
 
@@ -109,6 +110,68 @@ def limit_wheel_raw(
     return {name: round(value / scale) for name, value in raw.items()}, scale
 
 
+def make_wheel_bus(port: str) -> FeetechMotorsBus:
+    """Create a bus that talks to the three wheel servos and nothing else."""
+    from lerobot.motors import Motor, MotorNormMode
+    from lerobot.motors.feetech import FeetechMotorsBus
+
+    return FeetechMotorsBus(
+        port=port,
+        motors={
+            name: Motor(WHEEL_IDS[name], "sts3215", MotorNormMode.RANGE_M100_100)
+            for name in WHEEL_ORDER
+        },
+    )
+
+
+def start_velocity_mode(
+    bus: FeetechMotorsBus, logger: logging.Logger | None = None
+) -> None:
+    """Connect, put every wheel in velocity mode at zero, and enable torque."""
+    try:
+        bus.connect()
+        bus.disable_torque()
+        for name in WHEEL_ORDER:
+            bus.write("Operating_Mode", name, 1)
+            bus.write("Acceleration", name, 10)
+            bus.write("Goal_Velocity", name, 0, normalize=False)
+        bus.enable_torque()
+    except BaseException:
+        try:
+            if bus.is_connected:
+                stop_and_disconnect(bus, logger or get_logger())
+        finally:
+            raise
+
+
+def stop_and_disconnect(bus: FeetechMotorsBus, logger: logging.Logger) -> None:
+    """Command a stop on every wheel, drop torque, then close the serial port.
+
+    A wheel that stopped answering must not keep the other two moving or leave
+    the port open, so each write is attempted on its own.
+    """
+    try:
+        # Stop reachable wheels before waiting for any missing wheel's reply.
+        try:
+            bus.sync_write(
+                "Goal_Velocity", dict.fromkeys(WHEEL_ORDER, 0), normalize=False
+            )
+        except Exception:  # noqa: BLE001 - keep stopping the remaining wheels
+            logger.exception("Could not send the initial wheel stop")
+        for name in WHEEL_ORDER:
+            try:
+                bus.write("Goal_Velocity", name, 0, normalize=False, num_retry=2)
+            except Exception:  # noqa: BLE001 - keep stopping the remaining wheels
+                logger.exception("Could not send a stop to the %s wheel", name)
+        for name in WHEEL_ORDER:
+            try:
+                bus.disable_torque(name, num_retry=2)
+            except Exception:  # noqa: BLE001 - keep releasing the remaining wheels
+                logger.exception("Could not disable torque on the %s wheel", name)
+    finally:
+        bus.disconnect(disable_torque=False)
+
+
 @MobileBase.register("lekiwi")
 class LeKiwiBase(MobileBase):
     """LeKiwi wheel base on a Feetech serial bus, via lerobot.
@@ -153,47 +216,14 @@ class LeKiwiBase(MobileBase):
         The bus starts with torque disabled while each wheel is set to velocity
         mode, zero speed, and a gentle acceleration, then torque is enabled.
         """
-        from lerobot.motors import Motor, MotorNormMode
-        from lerobot.motors.feetech import FeetechMotorsBus
-
-        bus = FeetechMotorsBus(
-            port=self._port,
-            motors={
-                name: Motor(motor_id, "sts3215", MotorNormMode.RANGE_M100_100)
-                for name, motor_id in WHEEL_IDS.items()
-            },
-        )
-        bus.connect()
-        try:
-            bus.disable_torque()
-            for name in WHEEL_ORDER:
-                bus.write("Operating_Mode", name, 1)
-                bus.write("Acceleration", name, 10)
-                bus.write("Goal_Velocity", name, 0, normalize=False)
-            bus.enable_torque()
-        except BaseException:
-            # A bus that opened but failed to configure must still be closed.
-            try:
-                bus.disconnect(disable_torque=False)
-            finally:
-                raise
+        bus = make_wheel_bus(self._port)
+        start_velocity_mode(bus, logger=self._logger)
         self._logger.info("LeKiwi base connected on %s", self._port)
         return bus
 
     def _release(self, device: FeetechMotorsBus) -> None:
         """Stop the wheels, drop torque, and close the serial bus."""
-        try:
-            device.sync_write(
-                "Goal_Velocity", dict.fromkeys(WHEEL_ORDER, 0), normalize=False
-            )
-        except Exception:  # noqa: BLE001 - the bus may already be gone
-            self._logger.exception("Could not send the final wheel stop")
-        try:
-            device.disable_torque()
-        except Exception:  # noqa: BLE001 - the bus may already be gone
-            self._logger.exception("Could not disable torque on release")
-        finally:
-            device.disconnect(disable_torque=False)
+        stop_and_disconnect(device, self._logger)
 
     def reset(self) -> None:
         """Stop the base by commanding zero velocity on every wheel."""
