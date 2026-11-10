@@ -42,6 +42,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+import rlinf.scheduler.hardware.accelerators.amd_gpu as amd_gpu
 import rlinf.scheduler.hardware.accelerators.nvidia_gpu as nvidia_gpu
 import rlinf.utils.robosuite_compat as robosuite_compat
 from rlinf.envs.real import load_tasks
@@ -62,7 +63,8 @@ from rlinf.envs.real.wrappers.teleop.intervention import (  # noqa: E402
     TeleopSample,
 )
 from rlinf.envs.real.xsquare.base import Turtle2Env, Turtle2EnvConfig
-from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
+from rlinf.envs.sim.robotwin import robotwin_env
+from rlinf.envs.utils import partition_success_seeds
 from rlinf.robotics import (
     DualFrankaConfig,
     FrankaConfig,
@@ -70,6 +72,8 @@ from rlinf.robotics import (
     SO101Config,
 )
 from rlinf.robotics.discovery import RobotDiscovery
+from rlinf.scheduler.hardware import AcceleratorType, AcceleratorUtil
+from rlinf.scheduler.hardware.accelerators.amd_gpu import DRI_PRIME_ENV, AMDGPUManager
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import (
     EGL_DEVICE_ID_ENV_VARS,
     NvidiaGPUManager,
@@ -568,6 +572,66 @@ def test_gim_arm_reopens_the_existing_camera_after_a_stall(monkeypatch):
 
     assert camera.reopens == 1
     assert frames["wrist_1"].shape == (4, 4, 3)
+
+
+def test_so101_camera_failure_uses_camera_retry_policy():
+    """Let BaseCamera own retries instead of keeping a second stale cache."""
+    from rlinf.envs.real.so101.base import SO101Env
+
+    env = SO101Env.__new__(SO101Env)
+    env.config = SimpleNamespace(camera_max_age=0.5)
+    env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    env.observation_space = gym.spaces.Dict(
+        {
+            "frames": gym.spaces.Dict(
+                {"wrist_1": gym.spaces.Box(0, 255, shape=(4, 4, 3), dtype=np.uint8)}
+            )
+        }
+    )
+
+    class Camera:
+        name = "wrist_1"
+
+        def __init__(self):
+            self.calls = []
+
+        def get_frame(self, **kwargs):
+            self.calls.append(kwargs)
+            raise __import__("queue").Empty
+
+    camera = Camera()
+    env._cameras = [camera]
+
+    with pytest.raises(RuntimeError, match="camera_max_age=0.500s"):
+        env._get_camera_frames()
+    assert camera.calls == [{"timeout": 0.5, "attempts": 3, "max_age": 0.5}]
+
+
+def test_so101_close_keeps_robot_for_a_retry_after_cleanup_failure():
+    from rlinf.envs.real.so101.base import SO101Env
+
+    class Robot:
+        def __init__(self):
+            self.calls = 0
+
+        def disconnect(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("disconnect failed")
+
+    env = SO101Env.__new__(SO101Env)
+    env._closed = False
+    env._cameras = []
+    env.robot = Robot()
+
+    with pytest.raises(RuntimeError, match="disconnect failed"):
+        env.close()
+    assert env.robot is not None
+    assert not env._closed
+
+    env.close()
+    assert env.robot is None
+    assert env._closed
 
 
 def test_dual_franka_reads_depth_beside_each_frame():
@@ -1403,6 +1467,267 @@ def test_start_end_c_sets_success_so_collect_episode_can_flush(monkeypatch):
     assert info["success"] is True
     assert reward == 1.0
     assert terminated is True
+
+
+def test_so101_start_end_preserves_abort_lockout_and_episode_accounting(monkeypatch):
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[], ["a"], ["a"], ["a"], ["a"], ["c"]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(action)
+            return {}, 0.25, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = SO101StartEndWrapper(Env())
+    env.DEBOUNCE_S = 0.0
+    env.reset()
+
+    _, _, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "start"
+    assert not terminated
+
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] is None
+    assert not terminated
+    assert reward == 0.0
+    assert env._recording
+
+    env.ABORT_LOCKOUT_S = 0.0
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "abort"
+    assert terminated
+    assert reward == 0.0
+    assert info["pre_record"]
+    assert info["episode_discarded"] is True
+
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "start"
+    assert not terminated
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+    assert info["keyboard_event"] == "end_success"
+    assert info["success"] is True
+    assert terminated
+    assert reward == 1.0
+    assert info["pre_record"] is False
+
+
+def test_so101_hold_bypasses_inner_teleop_intervention(monkeypatch):
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Device(TeleopDevice):
+        group = SimpleNamespace(devices=())
+
+        def context_from(self, env):
+            del env
+            return {}
+
+        def read(self, env, policy_action):
+            del env, policy_action
+            return TeleopSample(np.array([9.0]), active=True)
+
+        def get_hold_action(self, env, fallback_action=None):
+            del env, fallback_action
+            return np.array([7.0])
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(np.asarray(action).copy())
+            return {}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    inner = Env()
+    wrapper = SO101StartEndWrapper(TeleopIntervention(inner, Device()))
+    wrapper.reset()
+    _, _, _, _, info = wrapper.step(np.array([1.0]))
+    np.testing.assert_array_equal(inner.actions, [[7.0]])
+    np.testing.assert_array_equal(info["intervene_action"], [7.0])
+    assert bool(info["intervene_flag"][0])
+
+
+def test_so101_idle_leader_hold_is_recorded_as_the_executed_action(monkeypatch):
+    from rlinf.data.schema.embodied_types import LeRobotFrame
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    idle_action = np.array([0.2, -0.3, 0.4, 0.5, -0.6, 0.7])
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[], ["a"], []]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Device(TeleopDevice):
+        group = SimpleNamespace(devices=())
+
+        def context_from(self, env):
+            del env
+            return {}
+
+        def read(self, env, policy_action):
+            del env, policy_action
+            return TeleopSample(
+                idle_action,
+                active=False,
+                apply_when_inactive=True,
+                info={"so101_idle_hold_action": idle_action},
+            )
+
+    class Env(gym.Env):
+        def __init__(self):
+            super().__init__()
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            return {"states": np.zeros(6), "task_descriptions": "test"}, {}
+
+        def step(self, action):
+            self.actions.append(np.asarray(action).copy())
+            return (
+                {"states": np.zeros(6), "task_descriptions": "test"},
+                0.0,
+                False,
+                False,
+                {},
+            )
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    env = Env()
+    wrapper = SO101StartEndWrapper(TeleopIntervention(env, Device()))
+    wrapper.DEBOUNCE_S = 0.0
+    wrapper.reset()
+    wrapper.step(np.zeros(6))
+    wrapper.step(np.zeros(6))
+
+    obs, _, _, _, info = wrapper.step(np.zeros(6))
+
+    np.testing.assert_array_equal(env.actions[-1], idle_action)
+    np.testing.assert_array_equal(info["intervene_action"], idle_action)
+    assert bool(info["intervene_flag"][0])
+    frame = LeRobotFrame.from_step(
+        observation=obs,
+        action=np.zeros(6),
+        info=info,
+        segment_id=0,
+        action_dim=6,
+    )
+    assert frame is not None
+    np.testing.assert_array_equal(frame.action, idle_action.astype(np.float32))
+
+
+def _so101_random_reset_stack(monkeypatch):
+    from rlinf.envs.real.so101 import SO101ReachEnv
+    from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = [[]]
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Group:
+        parts = ()
+
+        def __init__(self):
+            self.devices = (self,)
+            self.targets = []
+
+        def prepare_reset(self, context):
+            self.targets.append(np.asarray(context["reset_joint_positions"]).copy())
+
+        def reset(self, context):
+            del context
+
+        def abort_reset(self, context):
+            del context
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    inner = SO101ReachEnv(
+        {
+            "is_dummy": True,
+            "target_joint_qpos": [0.0] * 5,
+            "reset_joint_qpos": [0.2] * 5,
+            "enable_random_reset": True,
+            "random_joint_noise": 0.1,
+        }
+    )
+    group = Group()
+    teleop = ComposedTeleop(group, {})
+    wrapper = SO101StartEndWrapper(TeleopIntervention(inner, teleop))
+    return inner, wrapper, teleop, group
+
+
+def test_so101_reset_builds_teleop_context_after_random_target(monkeypatch):
+    inner, wrapper, _, group = _so101_random_reset_stack(monkeypatch)
+    original_target = list(inner.config.reset_joint_qpos)
+
+    wrapper.reset(seed=3)
+    first_target = group.targets[-1]
+    expected = np.clip(
+        np.asarray(original_target) + np.random.default_rng(3).uniform(-0.1, 0.1, 5),
+        inner.config.joint_limit_low,
+        inner.config.joint_limit_high,
+    )
+    np.testing.assert_allclose(first_target, expected[None, :])
+    assert inner.config.reset_joint_qpos == original_target
+    assert inner.config.enable_random_reset is True
+
+    wrapper.reset(seed=4)
+    assert len(group.targets) == 2
+    assert not np.allclose(group.targets[0], group.targets[1])
+    assert inner.config.reset_joint_qpos == original_target
+
+    inner.reset(seed=5)
+    assert inner.config.reset_joint_qpos == original_target
+
+
+def test_so101_random_reset_restores_config_after_context_failure(monkeypatch):
+    inner, wrapper, teleop, group = _so101_random_reset_stack(monkeypatch)
+    original_target = list(inner.config.reset_joint_qpos)
+
+    def fail_context(env):
+        del env
+        raise RuntimeError("context unavailable")
+
+    monkeypatch.setattr(teleop, "context_from", fail_context)
+    with pytest.raises(RuntimeError, match="context unavailable"):
+        wrapper.reset(seed=3)
+
+    assert group.targets == []
+    assert inner.config.reset_joint_qpos == original_target
+    assert inner.config.enable_random_reset is True
 
 
 def test_eval_control_c_sets_success_so_collect_episode_can_flush(monkeypatch):
@@ -2610,6 +2935,17 @@ def test_so101_env_runs_a_whole_episode_against_a_faked_arm():
             env.close()
 
 
+def test_so101_task_description_comes_from_task_config():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        env = _so101_env(task_description="pick up an object")
+        try:
+            assert env.task_description == "pick up an object"
+        finally:
+            env.close()
+
+
 @pytest.mark.placement
 def test_so101_env_keeps_its_action_in_radians_across_a_degree_driver():
     """The env speaks radians; only the driver may speak lerobot's units.
@@ -2694,6 +3030,15 @@ def test_so101_env_runs_without_hardware_when_dummy():
         env.step(np.zeros(6, dtype=np.float32))
     finally:
         env.close()
+
+
+def test_so101_reset_gripper_is_optional():
+    """An omitted reset gripper target leaves the current opening unchanged."""
+    from rlinf.envs.real.so101 import SO101ReachConfig
+
+    config = SO101ReachConfig(target_joint_qpos=[0.0] * 5)
+
+    assert config.reset_gripper_position is None
 
 
 def test_so101_reach_refuses_a_target_that_is_not_five_joints():
@@ -3434,6 +3779,7 @@ def test_so101_env_is_driven_by_its_leader():
             env_idx=0,
             env_cfg={
                 "teleop": [{"so101_leader": {"port": "/dev/mock-leader"}}],
+                "so101_episode_wrapper": "start_end",
                 "no_gripper": False,
                 "use_relative_frame": False,
             },
@@ -3445,6 +3791,9 @@ def test_so101_env_is_driven_by_its_leader():
         )
         try:
             env.reset()
+            leader = list(env.get_wrapper_attr("device").group.devices)[0]
+            assert leader._device.positions["shoulder_pan.pos"] == pytest.approx(0.0)
+            assert leader._device.torque_enabled
             policy_action = np.zeros(6, dtype=np.float32)
 
             observation, *_ = env.step(policy_action)
@@ -3452,7 +3801,9 @@ def test_so101_env_is_driven_by_its_leader():
                 np.zeros(5)
             )
 
-            leader = list(env.get_wrapper_attr("device").group.devices)[0]
+            # The SO-101 episode wrapper owns the pre-recording hold action;
+            # leader intervention is applied once recording has started.
+            env.set_wrapper_attr("_recording", True)
             leader._device.positions.update(
                 {"shoulder_pan.pos": 45.0, "gripper.pos": 80.0}
             )
@@ -4353,6 +4704,165 @@ def test_real_robosuite_imports_with_a_mismatched_egl_index():
     assert child.returncode == 0, child.stderr
 
 
+# ---------------------------------------------------------------------------
+# HIP -> Vulkan render device (AMD, DRI_PRIME)
+# ---------------------------------------------------------------------------
+
+# An 8x W7900D node: KFD nodes 0-1 are the CPU sockets, 2-9 the GPUs in PCI bus
+# order (gfx_target_version 110000 = gfx1100).
+_W7900D_GPU_BUSES = [0x03, 0x23, 0x43, 0x63, 0x83, 0xA3, 0xC3, 0xE3]
+
+
+@pytest.fixture
+def kfd_topology(tmp_path, monkeypatch):
+    """Build a fake KFD topology and /dev/dri, and point amd_gpu at them."""
+    nodes = tmp_path / "nodes"
+    dri = tmp_path / "dri"
+    nodes.mkdir()
+    dri.mkdir()
+
+    def make(gpu_buses, gfx_target=110000, openable=None):
+        for node_id in range(2):
+            (nodes / str(node_id)).mkdir()
+            (nodes / str(node_id) / "properties").write_text(
+                "cpu_cores_count 64\ngfx_target_version 0\nlocation_id 0\n"
+            )
+        for index, bus in enumerate(gpu_buses):
+            node = nodes / str(2 + index)
+            node.mkdir()
+            node.joinpath("properties").write_text(
+                f"gfx_target_version {gfx_target}\n"
+                f"location_id {bus << 8}\n"
+                "domain 0\n"
+                f"drm_render_minor {128 + index}\n"
+            )
+            if openable is None or index in openable:
+                (dri / f"renderD{128 + index}").write_text("")
+
+    monkeypatch.setattr(amd_gpu, "_KFD_TOPOLOGY_NODES", str(nodes))
+    monkeypatch.setattr(amd_gpu, "_DRI_DEVICE_DIR", str(dri))
+    monkeypatch.delenv("ROCR_VISIBLE_DEVICES", raising=False)
+    amd_gpu._dri_prime_by_hip_device.cache_clear()
+    yield make
+    amd_gpu._dri_prime_by_hip_device.cache_clear()
+
+
+def test_every_hip_device_renders_on_its_own_pci_slot(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    resolved = [AMDGPUManager.get_dri_prime(hip_id) for hip_id in range(8)]
+
+    assert resolved == [f"pci-0000_{bus:02x}_00_0" for bus in _W7900D_GPU_BUSES]
+
+
+def test_the_dri_prime_mapping_accepts_string_ids(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    assert AMDGPUManager.get_dri_prime("5") == "pci-0000_a3_00_0"
+
+
+def test_unknown_and_uuid_devices_have_no_dri_prime(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    assert AMDGPUManager.get_dri_prime(8) is None
+    assert AMDGPUManager.get_dri_prime("GPU-05d35c06-da01") is None
+
+
+def test_gpus_this_process_cannot_open_are_not_numbered(kfd_topology):
+    # A container given renderD130 and renderD133 only: ROCr numbers just
+    # those two, so HIP ids 0 and 1 are buses 0x43 and 0xa3.
+    kfd_topology(_W7900D_GPU_BUSES[:6], openable={2, 5})
+
+    assert AMDGPUManager.get_dri_prime(0) == "pci-0000_43_00_0"
+    assert AMDGPUManager.get_dri_prime(1) == "pci-0000_a3_00_0"
+    assert AMDGPUManager.get_dri_prime(2) is None
+
+
+def test_rocr_visible_devices_applies_before_hip_numbering(kfd_topology, monkeypatch):
+    kfd_topology(_W7900D_GPU_BUSES)
+    monkeypatch.setenv("ROCR_VISIBLE_DEVICES", "6,7")
+
+    assert AMDGPUManager.get_dri_prime(0) == "pci-0000_c3_00_0"
+    assert AMDGPUManager.get_dri_prime(1) == "pci-0000_e3_00_0"
+
+
+@pytest.mark.parametrize("rocr_visible", ["-1", "6,-1"])
+def test_a_negative_rocr_visible_index_pins_no_gpu(
+    kfd_topology, monkeypatch, rocr_visible
+):
+    # ROCr exposes no GPU for an out-of-range index, so none may be pinned; the
+    # last GPU must not be picked as Python's gpus[-1] would.
+    kfd_topology(_W7900D_GPU_BUSES)
+    monkeypatch.setenv("ROCR_VISIBLE_DEVICES", rocr_visible)
+
+    assert AMDGPUManager.get_dri_prime(0) is None
+
+
+def test_cdna_gpus_are_not_pinned(kfd_topology):
+    kfd_topology([0x0C, 0x22], gfx_target=90402)  # gfx942
+
+    assert AMDGPUManager.get_dri_prime(0) is None
+    assert AMDGPUManager.get_worker_local_env_var([0]) == {}
+
+
+def test_a_node_without_kfd_gets_no_dri_prime(kfd_topology, monkeypatch, tmp_path):
+    monkeypatch.setattr(amd_gpu, "_KFD_TOPOLOGY_NODES", str(tmp_path / "missing"))
+
+    assert AMDGPUManager.get_worker_local_env_var([3]) == {}
+
+
+def test_a_worker_renders_on_its_first_gpu(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    env_vars = AMDGPUManager.get_worker_local_env_var([5, 6])
+
+    assert env_vars == {DRI_PRIME_ENV: "pci-0000_a3_00_0"}
+
+
+def test_the_driver_leaves_the_render_device_to_the_worker(kfd_topology):
+    # The driver may run on a node with another PCI layout, so the env vars it
+    # builds for a worker carry the GPUs but not the render device.
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    env_vars = AMDGPUManager.get_accelerator_env_var(["5", "6"])
+
+    assert env_vars["HIP_VISIBLE_DEVICES"] == "5,6"
+    assert DRI_PRIME_ENV not in env_vars
+
+
+def test_only_amd_workers_resolve_a_render_device(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    amd = AcceleratorUtil.get_worker_local_env_var(AcceleratorType.AMD_GPU, [5])
+    nvidia = AcceleratorUtil.get_worker_local_env_var(AcceleratorType.NV_GPU, [5])
+
+    assert amd == {DRI_PRIME_ENV: "pci-0000_a3_00_0"}
+    assert nvidia == {}
+
+
+def test_a_worker_without_gpus_gets_no_dri_prime(kfd_topology):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    assert AMDGPUManager.get_worker_local_env_var([]) == {}
+
+
+def test_the_kfd_topology_is_read_once(kfd_topology, monkeypatch):
+    kfd_topology(_W7900D_GPU_BUSES)
+    reads = []
+    original = amd_gpu._read_kfd_node_properties
+
+    def counting_read(node_dir):
+        reads.append(node_dir)
+        return original(node_dir)
+
+    monkeypatch.setattr(amd_gpu, "_read_kfd_node_properties", counting_read)
+
+    AMDGPUManager.get_dri_prime(0)
+    AMDGPUManager.get_dri_prime(1)
+
+    assert len(reads) == 10
+
+
 class _FakeCudaTensor:
     def torch(self):
         return torch.tensor([1.0])
@@ -4867,3 +5377,114 @@ def test_record_video_skips_frames_a_chunk_did_not_render(tmp_path):
 
     assert len(env.render_images) == 1
     assert np.all(env.render_images[0] == 7)
+
+
+class _RecordingScene:
+    """Stand-in for a SAPIEN scene that records the cameras it is asked for."""
+
+    def __init__(self):
+        self.cameras = []
+        self.steps = 0
+
+    def add_camera(self, name, width, height, fovy, near, far):
+        self.cameras.append((name, near, far))
+        return name
+
+    def step(self):
+        self.steps += 1
+
+
+def _fake_robotwin_camera_class():
+    """A class shaped like RoboTwin's envs.camera.Camera, with its 0.1 m near."""
+
+    class Camera:
+        def __init__(self, bias=0, random_head_camera_dis=0, **kwags):
+            self.bias = bias
+
+        def load_camera(self, scene):
+            near, far = 0.1, 100
+            self.head = scene.add_camera(
+                name="head", width=320, height=240, fovy=1.0, near=near, far=far
+            )
+            self.left = scene.add_camera(
+                name="left", width=320, height=240, fovy=1.0, near=near, far=far
+            )
+            scene.step()
+
+    return Camera
+
+
+def test_each_robotwin_camera_uses_its_own_tasks_near_plane():
+    # A training and an evaluation env in one worker build their cameras from
+    # their own task arguments, in any order, on every reset.
+    camera_cls = _fake_robotwin_camera_class()
+    robotwin_env.install_camera_near_plane(camera_cls)
+    train_scene, eval_scene = _RecordingScene(), _RecordingScene()
+
+    train_camera = camera_cls(bias=0.1, camera_near=0.01)
+    eval_camera = camera_cls(bias=0.1, camera_near=0.05)
+    eval_camera.load_camera(eval_scene)
+    train_camera.load_camera(train_scene)
+
+    assert train_scene.cameras == [("head", 0.01, 100), ("left", 0.01, 100)]
+    assert eval_scene.cameras == [("head", 0.05, 100), ("left", 0.05, 100)]
+    assert (train_camera.head, train_camera.bias) == ("head", 0.1)
+    assert train_scene.steps == 1  # other scene calls reach the real scene
+
+
+@pytest.mark.parametrize("task_args", [{}, {"camera_near": None}])
+def test_a_robotwin_camera_without_a_near_plane_keeps_robotwins_value(task_args):
+    camera_cls = _fake_robotwin_camera_class()
+    robotwin_env.install_camera_near_plane(camera_cls)
+    robotwin_env.install_camera_near_plane(camera_cls)  # a second install is a no-op
+    scene = _RecordingScene()
+
+    camera_cls(**task_args).load_camera(scene)
+
+    assert [near for _, near, _ in scene.cameras] == [0.1, 0.1]
+
+
+@pytest.mark.parametrize(
+    ("env_cfg", "expected_near"),
+    [({}, robotwin_env.DEFAULT_CAMERA_NEAR), ({"camera_near": None}, None)],
+)
+def test_robotwin_env_passes_its_camera_near_to_robotwin(
+    monkeypatch, env_cfg, expected_near
+):
+    # Fake the RoboTwin modules RoboTwinEnv imports; capture what it hands over.
+    camera_cls = _fake_robotwin_camera_class()
+    handed_over = {}
+
+    class FakeVectorEnv:
+        def __init__(self, task_config, n_envs, env_seeds):
+            handed_over.update(task_config=task_config, n_envs=n_envs)
+
+    for name in ("envs", "robotwin", "robotwin.envs"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(
+        sys.modules, "envs.camera", types.SimpleNamespace(Camera=camera_cls)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "robotwin.envs.vector_env",
+        types.SimpleNamespace(VectorEnv=FakeVectorEnv),
+    )
+    monkeypatch.setattr(robotwin_env.mp, "set_start_method", lambda *a, **k: None)
+    monkeypatch.setenv("ASSETS_PATH", "unused")
+
+    env = robotwin_env.RoboTwinEnv.__new__(robotwin_env.RoboTwinEnv)
+    env.cfg = OmegaConf.create(
+        {
+            "assets_path": "/assets",
+            "task_config": {"task_name": "place_shoe"},
+            **env_cfg,
+        }
+    )
+    env.num_envs = 2
+    env.reset_state_ids = torch.tensor([7, 8])
+    env._init_env()
+
+    assert handed_over["task_config"]["camera_near"] == expected_near
+    assert handed_over["task_config"]["task_name"] == "place_shoe"
+    assert "camera_near" not in env.cfg.task_config  # the config is not modified
+    assert camera_cls._rlinf_camera_near_installed

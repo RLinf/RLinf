@@ -44,6 +44,7 @@ from rlinf.models.embodiment.prefix.config import (
 )
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -1078,11 +1079,12 @@ class MultiStepRolloutWorker(Worker):
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
-        self.hf_model.to("cpu")
-        if self.prefix_runtime is not None:
-            self.prefix_runtime.to("cpu")
-        if self.expert_model is not None:
-            self.expert_model.to("cpu")
+        with pinned_offload_context():
+            self.hf_model.to("cpu")
+            if self.prefix_runtime is not None:
+                self.prefix_runtime.to("cpu")
+            if self.expert_model is not None:
+                self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
