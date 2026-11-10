@@ -114,7 +114,7 @@ class Encoder1DBlock(nn.Module):
         if time_offsets is not None:
             x = (
                 x
-                + fixed_relative_time_encoding(time_offsets.to(x.dtype), shape[-1])[
+                + fixed_relative_time_encoding(time_offsets, shape[-1]).to(x.dtype)[
                     :, :, None, :
                 ]
             )
@@ -123,7 +123,7 @@ class Encoder1DBlock(nn.Module):
         norm_dtype = self.norm1.weight.dtype
         y = self.norm1(x.to(norm_dtype))
         if time_offsets is None:
-            y, _ = self.attn(y, y, y)
+            y, _ = self.attn(y, y, y, need_weights=False)
         else:
             y = factorized_space_time_attention(
                 self.attn, y.reshape(shape), frame_mask
@@ -318,6 +318,7 @@ class SigLIPViT(nn.Module):
         *,
         frame_mask: torch.Tensor | None = None,
         time_offsets: torch.Tensor | None = None,
+        current_only: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass.
 
@@ -325,6 +326,8 @@ class SigLIPViT(nn.Module):
             image: [B, H, W, 3] or [B, K, H, W, 3] in [-1, 1] float32.
             frame_mask: Valid frames [B, K] for video inputs.
             time_offsets: Relative frame times [B, K] in seconds.
+            current_only: Whether every sample has at most one valid frame;
+                inferred from the mask when omitted.
 
         Returns:
             tokens: (B, num_patches, width) - all patch tokens when pool_type="none"
@@ -333,7 +336,11 @@ class SigLIPViT(nn.Module):
         if (frame_mask is None) != (time_offsets is None):
             raise ValueError("frame_mask and time_offsets must be provided together.")
         if image.ndim == 5:
-            if image.shape[1] == 1 or torch.all(frame_mask.sum(dim=1) <= 1):
+            if image.shape[1] == 1:
+                current_only = True
+            elif current_only is None:
+                current_only = bool(torch.all(frame_mask.sum(dim=1) <= 1))
+            if current_only:
                 image = image[:, -1]
                 frame_mask = None
                 time_offsets = None

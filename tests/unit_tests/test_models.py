@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import inspect
 import logging
@@ -237,8 +238,9 @@ def short_memory_vision():
 
 
 @pytest.mark.parametrize("num_frames", [1, 3, 8])
+@pytest.mark.parametrize("precomputed", [False, True])
 def test_openpi_short_memory_current_only_matches_image_encoder(
-    short_memory_vision, num_frames
+    short_memory_vision, num_frames, precomputed
 ):
     vision = short_memory_vision.eval()
     images = torch.randn(2, num_frames, 224, 224, 3)
@@ -248,9 +250,112 @@ def test_openpi_short_memory_current_only_matches_image_encoder(
 
     with torch.no_grad():
         expected = vision(images[:, -1])[0]
-        actual, _ = vision(images, frame_mask=frame_mask, time_offsets=time_offsets)
+        actual, _ = vision(
+            images,
+            frame_mask=frame_mask,
+            time_offsets=time_offsets,
+            current_only=True if precomputed else None,
+        )
 
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_openpi_spatial_attention_preserves_outputs_and_gradients():
+    torch.manual_seed(0)
+    block = Encoder1DBlock(dim=32, num_heads=2).double().train()
+    reference = copy.deepcopy(block)
+
+    def request_weights(module, args, kwargs):
+        return args, {**kwargs, "need_weights": True}
+
+    reference.attn.register_forward_pre_hook(request_weights, with_kwargs=True)
+    inputs = torch.randn(2, 5, 32, dtype=torch.float64, requires_grad=True)
+    reference_inputs = inputs.detach().clone().requires_grad_()
+
+    actual = block(inputs)
+    expected = reference(reference_inputs)
+    torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-10)
+    actual.square().sum().backward()
+    expected.square().sum().backward()
+    torch.testing.assert_close(
+        inputs.grad, reference_inputs.grad, rtol=1e-10, atol=1e-10
+    )
+    for parameter, reference_parameter in zip(
+        block.parameters(), reference.parameters()
+    ):
+        torch.testing.assert_close(
+            parameter.grad, reference_parameter.grad, rtol=1e-10, atol=1e-10
+        )
+
+
+def test_openpi_time_encoding_keeps_fp32_timestamps_until_encoding():
+    from rlinf.models.embodiment.openpi.modules.short_memory import (
+        fixed_relative_time_encoding,
+    )
+
+    block = Encoder1DBlock(dim=32, num_heads=2).eval()
+    for parameter in block.parameters():
+        torch.nn.init.zeros_(parameter)
+    tokens = torch.zeros(1, 3, 2, 32, dtype=torch.bfloat16)
+    time_offsets = torch.tensor([[-24.57, -0.12345, 0.0]])
+
+    actual = block(
+        tokens,
+        frame_mask=torch.ones(1, 3, dtype=torch.bool),
+        time_offsets=time_offsets,
+    )
+    expected = fixed_relative_time_encoding(time_offsets, 32).to(tokens.dtype)
+    torch.testing.assert_close(
+        actual, expected[:, :, None].expand_as(tokens).float(), rtol=0, atol=0
+    )
+
+
+def test_openpi_prefix_reuses_per_camera_history_decisions(short_memory_vision):
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+
+    vision = short_memory_vision.eval()
+    images = torch.randn(2, 3, 224, 224, 3)
+    masks = {
+        "base_0_rgb": torch.tensor([[False, True, True], [False, False, True]]),
+        "left_wrist_0_rgb": torch.tensor([[False, False, True]] * 2),
+        "right_wrist_0_rgb": torch.zeros(2, 3, dtype=torch.bool),
+    }
+    observation = Observation(
+        images=dict.fromkeys(masks, images),
+        image_masks=masks,
+        state=torch.zeros(2, 8),
+        history_time_offsets=torch.tensor([[-0.2, -0.1, 0.0]] * 2),
+    )
+    policy = SimpleNamespace(
+        img=vision, _config=SimpleNamespace(short_memory=True), pcd=False
+    )
+    with torch.no_grad():
+        expected = torch.cat(
+            [
+                vision(
+                    images,
+                    frame_mask=mask,
+                    time_offsets=observation.history_time_offsets,
+                )[0]
+                for mask in masks.values()
+            ],
+            dim=1,
+        )
+        decisions = []
+
+        def record_decision(module, args, kwargs):
+            decisions.append(kwargs["current_only"])
+
+        handle = vision.register_forward_pre_hook(record_decision, with_kwargs=True)
+        actual, input_mask, _ = Pi0.embed_prefix(policy, observation)
+        handle.remove()
+
+    assert decisions == [False, True, True]
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    expected_mask = torch.cat(
+        [mask[:, -1:].expand(-1, 49) for mask in masks.values()], dim=1
+    )
+    torch.testing.assert_close(input_mask, expected_mask)
 
 
 @pytest.mark.parametrize("num_frames,gradient_checkpointing", [(3, False), (8, True)])

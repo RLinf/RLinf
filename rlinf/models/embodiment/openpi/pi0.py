@@ -213,6 +213,22 @@ class Pi0(model.BaseModel):
         # concatenates ``list(observation.images.values())``.
         image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
         image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
+        current_only_by_camera = {}
+        if self._config.short_memory:
+            history_names = [
+                name
+                for name in image_names
+                if obs.images[name].ndim == 5 and obs.images[name].shape[1] > 1
+            ]
+            if history_names:
+                # Transfer all camera decisions together instead of syncing per camera.
+                current_only = torch.stack(
+                    [
+                        (obs.image_masks[name].sum(dim=1) <= 1).all()
+                        for name in history_names
+                    ]
+                ).tolist()
+                current_only_by_camera = dict(zip(history_names, current_only))
         for name in image_names:
             image_mask = obs.image_masks[name]
             if self._config.short_memory:
@@ -220,6 +236,7 @@ class Pi0(model.BaseModel):
                     obs.images[name],
                     frame_mask=image_mask,
                     time_offsets=obs.history_time_offsets,
+                    current_only=current_only_by_camera.get(name),
                 )
                 image_mask = image_mask[:, -1]
             else:
