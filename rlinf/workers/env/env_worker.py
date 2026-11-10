@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import copy
 from collections import defaultdict
 from typing import Any
 
@@ -36,7 +37,6 @@ from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
-    copy_dict_tensor,
     update_nested_cfg,
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
@@ -581,13 +581,7 @@ class EnvWorker(Worker):
         return env_output, env_info
 
     def _build_chunk_final_obs(self, obs_list, infos_list):
-        """Build per-env terminal observations for a whole chunk.
-
-        Matches the old wrapper semantics:
-        - default to the last rollout observation for each env
-        - if an env terminated earlier in the chunk, replace that env's observation
-          with the true `final_observation` captured at that substep
-        """
+        """Copy the last observation and restore completed environments' terminal rows."""
         if not isinstance(obs_list, (list, tuple)) or len(obs_list) == 0:
             return None
 
@@ -595,7 +589,9 @@ class EnvWorker(Worker):
         if not isinstance(last_obs, dict):
             return None
 
-        def replace_terminal_rows(observation, terminal, done_mask):
+        def replace_terminal_rows(
+            observation: dict[str, Any], terminal: dict[str, Any], done_mask: np.ndarray
+        ) -> None:
             for key, value in observation.items():
                 if key not in terminal:
                     continue
@@ -611,11 +607,12 @@ class EnvWorker(Worker):
                 elif isinstance(value, np.ndarray) and isinstance(
                     final_value, np.ndarray
                 ):
-                    value = value.copy()
                     value[done_mask] = final_value[done_mask]
-                    observation[key] = value
+                elif isinstance(value, list) and isinstance(final_value, list):
+                    for index in np.flatnonzero(done_mask):
+                        value[index] = copy.deepcopy(final_value[index])
 
-        merged_final_obs = copy_dict_tensor(last_obs)
+        merged_final_obs = copy.deepcopy(last_obs)
 
         if not isinstance(infos_list, (list, tuple)):
             return merged_final_obs

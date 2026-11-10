@@ -113,7 +113,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
+        self._save_data_checkpoint(save_path)
 
+    def _save_data_checkpoint(self, save_path: str) -> None:
+        """Save per-rank data order and RNG state alongside the model checkpoint."""
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()
             state["_rlinf_data_epoch"] = self._data_epoch
@@ -136,7 +139,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
+        self._load_data_checkpoint(load_path)
 
+    def _load_data_checkpoint(self, load_path: str) -> None:
+        """Restore data order before the RNG state used by the next model forward."""
         if isinstance(self.data_loader, StatefulDataLoader):
             all_states = torch.load(
                 os.path.join(load_path, "data.pt"), weights_only=False

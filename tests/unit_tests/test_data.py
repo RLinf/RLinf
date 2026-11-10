@@ -784,7 +784,7 @@ def test_episode_boundaries_agree_across_formats(dataset_cls):
 
 
 @pytest.mark.parametrize("episodes", [[3], [4, 1]])
-def test_episode_boundaries_preserve_subset_order_after_indexing(episodes):
+def test_lerobot_subset_preserves_episode_boundaries(episodes):
     starts = [position * 3 for position in range(len(episodes))]
     ends = [start + 3 for start in starts]
     dataset = _V21Dataset(starts, ends)
@@ -831,7 +831,7 @@ def test_episode_boundaries_rejects_v30_meta_without_the_columns():
         ),
     ],
 )
-def test_libero_data_config_preserves_camera_state_and_action_targets(
+def test_openpi_libero_config_maps_dataset_fields(
     config_name, image_key, wrist_key, state_key, action_key
 ):
     pytest.importorskip("openpi")
@@ -866,9 +866,7 @@ def test_libero_data_config_preserves_camera_state_and_action_targets(
 
 @pytest.mark.parametrize("num_frames", [1, 3])
 @pytest.mark.parametrize("image_dtype", [np.uint8, np.float32])
-def test_short_memory_dataset_keeps_current_targets_and_episode_padding(
-    num_frames, image_dtype
-):
+def test_short_memory_dataset_preserves_targets_and_padding(num_frames, image_dtype):
     from datasets import Dataset
 
     from rlinf.data.datasets.openpi.short_memory import (
@@ -964,9 +962,7 @@ def test_short_memory_dataset_keeps_current_targets_and_episode_padding(
 
 @pytest.mark.parametrize("action_key", ["actions", "action"])
 @pytest.mark.parametrize("tensor_actions", [False, True])
-def test_short_memory_dataset_isolates_in_place_action_transforms(
-    action_key, tensor_actions
-):
+def test_short_memory_dataset_isolates_action_updates(action_key, tensor_actions):
     from datasets import Dataset
 
     from rlinf.data.datasets.openpi.short_memory import ShortMemoryDataset
@@ -1224,7 +1220,7 @@ def test_env_output_composes_one_transition_object():
     }
 
 
-def test_env_output_transports_current_and_terminal_visual_history():
+def test_env_output_preserves_nested_observations():
     def observation(value):
         return {
             "states": torch.full((2, 3), value),
@@ -1256,35 +1252,126 @@ def test_env_output_transports_current_and_terminal_visual_history():
 
 
 @pytest.mark.parametrize("array_type", [torch.tensor, np.array])
-def test_env_chunk_terminal_observation_merges_nested_history(array_type):
+@pytest.mark.parametrize("later_reset", [False, True])
+def test_env_worker_restores_terminal_observations(array_type, later_reset):
     def observation(value):
         return {
             "states": array_type([[value], [value + 1]]),
+            "task_descriptions": [f"task {value}", f"task {value + 1}"],
             "history": {
                 "main_images": array_type([[[value]], [[value + 1]]]),
                 "frame_mask": array_type([[False, True], [True, True]]),
-                "time_offsets": array_type([[0.0, -0.1], [-0.2, 0.0]]),
+                "time_offsets": array_type([[0.0, -value / 10], [-value / 10, 0.0]]),
             },
         }
 
     current, terminal = observation(1), observation(7)
     original = copy.deepcopy(current)
-    worker = object.__new__(EnvWorker)
-    merged = worker._build_chunk_final_obs(
-        [current],
-        [
+    infos = [
+        {
+            "final_observation": terminal,
+            "_final_observation": array_type([[True], [False]]),
+        }
+    ]
+    if later_reset:
+        infos.append(
             {
-                "final_observation": terminal,
-                "_final_observation": array_type([[True], [False]]),
+                "final_observation": observation(11),
+                "_final_observation": array_type([[False], [True]]),
             }
-        ],
-    )
+        )
+    worker = object.__new__(EnvWorker)
+    merged = worker._build_chunk_final_obs([current], infos)
 
-    np.testing.assert_array_equal(merged["states"], [[7], [2]])
-    np.testing.assert_array_equal(merged["history"]["main_images"], [[[7]], [[2]]])
-    torch.testing.assert_close(current, original)
+    expected = observation(7)
+    second = observation(11 if later_reset else 1)
+    expected["states"][1] = second["states"][1]
+    expected["task_descriptions"][1] = second["task_descriptions"][1]
+    for key in expected["history"]:
+        expected["history"][key][1] = second["history"][key][1]
+    for key in ("states", "history"):
+        torch.testing.assert_close(merged[key], expected[key])
+        torch.testing.assert_close(current[key], original[key])
+    assert merged["task_descriptions"] == expected["task_descriptions"]
+    assert current["task_descriptions"] == original["task_descriptions"]
     merged["history"]["main_images"][0] = 100
+    merged["task_descriptions"][0] = "changed"
     np.testing.assert_array_equal(terminal["history"]["main_images"], [[[7]], [[8]]])
+    assert terminal["task_descriptions"] == ["task 7", "task 8"]
+
+
+def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
+    from torch.utils.data.distributed import DistributedSampler
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.datasets.common.epoch import forward_set_epoch
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    def gather_object(gathered, state):
+        gathered[0] = state
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_object)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    def make_worker():
+        dataset = torch.arange(40)
+        sampler = DistributedSampler(
+            dataset, num_replicas=1, rank=0, shuffle=True, seed=19
+        )
+        worker = object.__new__(FSDPVlaSftWorker)
+        worker._rank = 0
+        worker._world_size = 1
+        worker._data_epoch = 0
+        worker.data_loader = StatefulDataLoader(
+            dataset,
+            batch_size=4,
+            sampler=sampler,
+        )
+        worker.data_iter = iter(worker.data_loader)
+        return worker
+
+    original_rng = get_rng_state()
+    try:
+        uninterrupted = make_worker()
+        uninterrupted._data_epoch = 2
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        uninterrupted.data_iter = iter(uninterrupted.data_loader)
+        for _ in range(3):
+            next(uninterrupted.data_iter)
+        uninterrupted._save_data_checkpoint(str(tmp_path))
+
+        expected_torch = torch.rand(3)
+        expected_numpy = np.random.random(3)
+        expected_python = random.random()
+        expected_remaining = torch.cat(list(uninterrupted.data_iter))
+        uninterrupted._data_epoch += 1
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        expected_next_epoch = torch.cat(list(uninterrupted.data_loader))
+
+        resumed = make_worker()
+        torch.manual_seed(101)
+        np.random.seed(101)
+        random.seed(101)
+        resumed._load_data_checkpoint(str(tmp_path))
+
+        assert resumed._data_epoch == 2
+        torch.testing.assert_close(torch.rand(3), expected_torch, rtol=0, atol=0)
+        np.testing.assert_array_equal(np.random.random(3), expected_numpy)
+        assert random.random() == expected_python
+        first_batch = next(resumed.data_iter)
+        torch.testing.assert_close(first_batch, expected_remaining[:4], rtol=0, atol=0)
+        actual_remaining = torch.cat([first_batch, *list(resumed.data_iter)])
+        torch.testing.assert_close(actual_remaining, expected_remaining, rtol=0, atol=0)
+
+        resumed._data_epoch += 1
+        forward_set_epoch(resumed.data_loader, resumed._data_epoch)
+        actual_next_epoch = torch.cat(list(resumed.data_loader))
+        torch.testing.assert_close(
+            actual_next_epoch, expected_next_epoch, rtol=0, atol=0
+        )
+    finally:
+        set_rng_state(original_rng)
 
 
 def test_removed_duplicate_types_are_not_schema_api():

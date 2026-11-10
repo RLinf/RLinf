@@ -27,7 +27,7 @@ from rlinf.envs.sim.libero.utils import get_libero_image, get_libero_wrist_image
 
 @pytest.mark.parametrize("extract_image", [get_libero_image, get_libero_wrist_image])
 @pytest.mark.parametrize("is_libero_mem", [False, True])
-def test_camera_orientation_matches_demonstrations(extract_image, is_libero_mem):
+def test_libero_camera_orientation(extract_image, is_libero_mem):
     image = np.arange(3 * 4 * 3, dtype=np.uint8).reshape(3, 4, 3)
     obs = {"agentview_image": image, "robot0_eye_in_hand_image": image}
 
@@ -39,7 +39,7 @@ def test_camera_orientation_matches_demonstrations(extract_image, is_libero_mem)
 
 
 @pytest.fixture(params=[torch.uint8, torch.float32])
-def history_env(request):
+def libero_history_env(request):
     pytest.importorskip("libero.libero.envs")
     from rlinf.envs.sim.libero.libero_env import LiberoEnv
 
@@ -65,11 +65,9 @@ def history_env(request):
 
 
 @pytest.mark.parametrize("history_length", [1, 3])
-def test_history_samples_oldest_to_current_after_buffer_rollover(
-    history_env, history_length
-):
-    history_env.history_length = history_length
-    history = history_env._get_history_obs()
+def test_libero_history_sampling_after_rollover(libero_history_env, history_length):
+    libero_history_env.history_length = history_length
+    history = libero_history_env._get_history_obs()
     expected_steps = [6] if history_length == 1 else [2, 4, 6]
     expected_offsets = [0.0] if history_length == 1 else [-0.2, -0.1, 0.0]
 
@@ -83,14 +81,15 @@ def test_history_samples_oldest_to_current_after_buffer_rollover(
     )
     assert all(value.is_contiguous() for value in history.values())
     assert (
-        history["main_images"].dtype == history_env._observation_history[0][-1][0].dtype
+        history["main_images"].dtype
+        == libero_history_env._observation_history[0][-1][0].dtype
     )
     history["main_images"].zero_()
-    assert history_env._observation_history[0][-1][0][0, 0, 0] == 6
+    assert libero_history_env._observation_history[0][-1][0][0, 0, 0] == 6
 
 
-def test_partial_reset_clears_only_the_reset_environment_history(history_env):
-    env = history_env
+def test_libero_partial_reset_preserves_other_histories(libero_history_env):
+    env = libero_history_env
     env._is_start = False
     env.is_eval = True
     env.is_libero_mem = True
@@ -151,9 +150,7 @@ def test_partial_reset_clears_only_the_reset_environment_history(history_env):
         ("plus", "libero.libero", ["liberoplus.liberoplus", "libero.libero"]),
     ],
 )
-def test_libero_module_selection_preserves_variant_order(
-    monkeypatch, variant, available, packages
-):
+def test_libero_import_uses_variant_order(monkeypatch, variant, available, packages):
     from types import ModuleType
 
     from rlinf.envs.sim.libero import utils
@@ -182,9 +179,7 @@ def test_libero_module_selection_preserves_variant_order(
         ("plus", ["liberoplus.liberoplus", "libero.libero"]),
     ],
 )
-def test_libero_module_selection_stops_after_allowed_fallbacks(
-    monkeypatch, variant, packages
-):
+def test_libero_import_limits_fallbacks(monkeypatch, variant, packages):
     from rlinf.envs.sim.libero import utils
 
     attempted = []

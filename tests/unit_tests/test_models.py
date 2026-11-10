@@ -171,7 +171,7 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
         (True, {"num_frames": 8, "stride": 70}, True, "requires the RLT loader"),
     ],
 )
-def test_openpi_short_memory_sft_configuration(
+def test_openpi_sft_validates_history_config(
     memory_enabled, history_config, use_rlt, error
 ):
     from rlinf.config import validate_sft_cfg
@@ -199,7 +199,7 @@ def test_openpi_short_memory_sft_configuration(
             validate_sft_cfg(cfg)
 
 
-def test_openpi_short_memory_eval_requires_environment_history():
+def test_openpi_eval_requires_history():
     cfg = OmegaConf.create(
         {
             "runner": {"task_type": "embodied_eval"},
@@ -223,7 +223,7 @@ def test_openpi_short_memory_eval_requires_environment_history():
 
 
 @pytest.fixture
-def short_memory_vision():
+def siglip_with_history():
     torch.manual_seed(0)
     vision = SigLIPViT(variant="mu/32", pool_type="none")
     vision.encoder = Encoder(
@@ -239,10 +239,10 @@ def short_memory_vision():
 
 @pytest.mark.parametrize("num_frames", [1, 3, 8])
 @pytest.mark.parametrize("precomputed", [False, True])
-def test_openpi_short_memory_current_only_matches_image_encoder(
-    short_memory_vision, num_frames, precomputed
+def test_siglip_current_only_matches_single_frame(
+    siglip_with_history, num_frames, precomputed
 ):
-    vision = short_memory_vision.eval()
+    vision = siglip_with_history.eval()
     images = torch.randn(2, num_frames, 224, 224, 3)
     frame_mask = torch.zeros(2, num_frames, dtype=torch.bool)
     frame_mask[:, -1] = True
@@ -260,7 +260,7 @@ def test_openpi_short_memory_current_only_matches_image_encoder(
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
-def test_openpi_spatial_attention_preserves_outputs_and_gradients():
+def test_siglip_attention_preserves_outputs_and_gradients():
     torch.manual_seed(0)
     block = Encoder1DBlock(dim=32, num_heads=2).double().train()
     reference = copy.deepcopy(block)
@@ -269,11 +269,16 @@ def test_openpi_spatial_attention_preserves_outputs_and_gradients():
         return args, {**kwargs, "need_weights": True}
 
     reference.attn.register_forward_pre_hook(request_weights, with_kwargs=True)
+    returned_weights = []
+    block.attn.register_forward_hook(
+        lambda module, args, output: returned_weights.append(output[1])
+    )
     inputs = torch.randn(2, 5, 32, dtype=torch.float64, requires_grad=True)
     reference_inputs = inputs.detach().clone().requires_grad_()
 
     actual = block(inputs)
     expected = reference(reference_inputs)
+    assert returned_weights == [None]
     torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-10)
     actual.square().sum().backward()
     expected.square().sum().backward()
@@ -288,7 +293,79 @@ def test_openpi_spatial_attention_preserves_outputs_and_gradients():
         )
 
 
-def test_openpi_time_encoding_keeps_fp32_timestamps_until_encoding():
+def _reference_space_time_attention(attention, tokens, frame_mask):
+    """Compute S(TV) with explicit frame, patch, and head indexing."""
+    batch_size, num_frames, num_patches, width = tokens.shape
+    num_heads = attention.num_heads
+    head_dim = width // num_heads
+    projected = tokens @ attention.in_proj_weight.T + attention.in_proj_bias
+    queries, keys, values = projected.chunk(3, dim=-1)
+    temporal_values = torch.zeros_like(tokens)
+    mixed_values = torch.zeros_like(tokens)
+    for batch in range(batch_size):
+        for frame_index in range(num_frames):
+            valid_times = [
+                past for past in range(frame_index + 1) if frame_mask[batch, past]
+            ]
+            for patch in range(num_patches):
+                for head in range(num_heads):
+                    channels = slice(head * head_dim, (head + 1) * head_dim)
+                    query = queries[batch, frame_index, patch, channels]
+                    if valid_times:
+                        scores = torch.stack(
+                            [
+                                query @ keys[batch, past, patch, channels]
+                                for past in valid_times
+                            ]
+                        ) / math.sqrt(head_dim)
+                        weights = scores.softmax(dim=0)
+                        temporal_values[batch, frame_index, patch, channels] = sum(
+                            weight * values[batch, past, patch, channels]
+                            for weight, past in zip(weights, valid_times)
+                        )
+        for frame_index in range(num_frames):
+            for patch in range(num_patches):
+                for head in range(num_heads):
+                    channels = slice(head * head_dim, (head + 1) * head_dim)
+                    query = queries[batch, frame_index, patch, channels]
+                    scores = torch.stack(
+                        [
+                            query @ keys[batch, frame_index, other, channels]
+                            for other in range(num_patches)
+                        ]
+                    ) / math.sqrt(head_dim)
+                    weights = scores.softmax(dim=0)
+                    mixed_values[batch, frame_index, patch, channels] = sum(
+                        weights[other]
+                        * temporal_values[batch, frame_index, other, channels]
+                        for other in range(num_patches)
+                    )
+    return mixed_values @ attention.out_proj.weight.T + attention.out_proj.bias
+
+
+def test_siglip_attention_matches_space_time_reference():
+    from rlinf.models.embodiment.openpi.modules.short_memory import (
+        factorized_space_time_attention,
+    )
+
+    torch.manual_seed(0)
+    batch_size, num_frames, num_patches, width, num_heads = 3, 3, 2, 4, 2
+    attention = torch.nn.MultiheadAttention(width, num_heads).double().eval()
+    torch.nn.init.normal_(attention.in_proj_bias)
+    torch.nn.init.normal_(attention.out_proj.bias)
+    tokens = torch.randn(
+        batch_size, num_frames, num_patches, width, dtype=torch.float64
+    )
+    frame_mask = torch.tensor([[False, True, True], [True, True, True], [False] * 3])
+
+    with torch.no_grad():
+        expected = _reference_space_time_attention(attention, tokens, frame_mask)
+        actual = factorized_space_time_attention(attention, tokens, frame_mask)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_siglip_time_encoding_preserves_timestamp_precision():
     from rlinf.models.embodiment.openpi.modules.short_memory import (
         fixed_relative_time_encoding,
     )
@@ -310,18 +387,17 @@ def test_openpi_time_encoding_keeps_fp32_timestamps_until_encoding():
     )
 
 
-def test_openpi_prefix_reuses_per_camera_history_decisions(short_memory_vision):
+def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
     from rlinf.models.embodiment.openpi.pi0 import Pi0
 
-    vision = short_memory_vision.eval()
-    images = torch.randn(2, 3, 224, 224, 3)
+    vision = siglip_with_history.eval()
     masks = {
         "base_0_rgb": torch.tensor([[False, True, True], [False, False, True]]),
         "left_wrist_0_rgb": torch.tensor([[False, False, True]] * 2),
         "right_wrist_0_rgb": torch.zeros(2, 3, dtype=torch.bool),
     }
     observation = Observation(
-        images=dict.fromkeys(masks, images),
+        images={key: torch.randn(2, 3, 224, 224, 3) for key in masks},
         image_masks=masks,
         state=torch.zeros(2, 8),
         history_time_offsets=torch.tensor([[-0.2, -0.1, 0.0]] * 2),
@@ -333,11 +409,11 @@ def test_openpi_prefix_reuses_per_camera_history_decisions(short_memory_vision):
         expected = torch.cat(
             [
                 vision(
-                    images,
+                    observation.images[name],
                     frame_mask=mask,
                     time_offsets=observation.history_time_offsets,
                 )[0]
-                for mask in masks.values()
+                for name, mask in masks.items()
             ],
             dim=1,
         )
@@ -358,12 +434,13 @@ def test_openpi_prefix_reuses_per_camera_history_decisions(short_memory_vision):
     torch.testing.assert_close(input_mask, expected_mask)
 
 
-@pytest.mark.parametrize("num_frames,gradient_checkpointing", [(3, False), (8, True)])
-def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
-    short_memory_vision, num_frames, gradient_checkpointing
+@pytest.mark.parametrize("num_frames", [3, 8])
+def test_siglip_checkpoint_preserves_outputs_and_gradients(
+    siglip_with_history, num_frames
 ):
-    vision = short_memory_vision.train()
-    vision.encoder.gradient_checkpointing = gradient_checkpointing
+    vision = siglip_with_history.train()
+    reference = copy.deepcopy(vision)
+    vision.encoder.gradient_checkpointing = True
     images = torch.randn(3, num_frames, 224, 224, 3, requires_grad=True)
     frame_mask = torch.ones(3, num_frames, dtype=torch.bool)
     frame_mask[0, :-1] = False
@@ -380,7 +457,7 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
     for handle in handles:
         handle.remove()
 
-    # FSDP hooks must see one shared call path even when batch histories differ.
+    # Mixed histories must preserve the vision encoder's module boundaries.
     assert calls == list(zip(owners, [5, 4, 4, 4, 4, 3]))
     assert tokens.shape == (3, 49, vision.width)
     assert torch.isfinite(tokens).all()
@@ -396,7 +473,27 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
         )
     torch.testing.assert_close(changed_tokens, tokens, rtol=0, atol=0)
 
-    (tokens * torch.randn_like(tokens)).sum().backward()
+    reference_images = images.detach().clone().requires_grad_()
+    reference_tokens, _ = reference(
+        reference_images, frame_mask=frame_mask, time_offsets=time_offsets
+    )
+    torch.testing.assert_close(tokens, reference_tokens, rtol=0, atol=0)
+    recomputed = []
+    handles = [
+        layer.register_forward_pre_hook(lambda module, args: recomputed.append(module))
+        for layer in vision.encoder.layers
+    ]
+    upstream_gradient = torch.randn_like(tokens)
+    (tokens * upstream_gradient).sum().backward()
+    for handle in handles:
+        handle.remove()
+    (reference_tokens * upstream_gradient).sum().backward()
+    assert set(recomputed) == set(vision.encoder.layers)
+    torch.testing.assert_close(images.grad, reference_images.grad)
+    reference_parameters = dict(reference.named_parameters())
+    for name, parameter in vision.named_parameters():
+        assert parameter.grad is not None, name
+        torch.testing.assert_close(parameter.grad, reference_parameters[name].grad)
     assert torch.isfinite(images.grad).all()
     assert torch.count_nonzero(images.grad[~frame_mask]) == 0
     assert images.grad[1, 1:-1].abs().sum() > 0
@@ -404,19 +501,17 @@ def test_openpi_short_memory_preserves_module_calls_and_history_gradients(
 
 
 @pytest.mark.parametrize("missing", ["frame_mask", "time_offsets"])
-def test_openpi_short_memory_requires_mask_and_time_together(
-    short_memory_vision, missing
-):
+def test_siglip_history_requires_mask_and_time(siglip_with_history, missing):
     inputs = {
         "frame_mask": torch.ones(1, 3, dtype=torch.bool),
         "time_offsets": torch.tensor([[-2.0, -1.0, 0.0]]),
     }
     inputs.pop(missing)
     with pytest.raises(ValueError, match="must be provided together"):
-        short_memory_vision(torch.randn(1, 3, 224, 224, 3), **inputs)
+        siglip_with_history(torch.randn(1, 3, 224, 224, 3), **inputs)
 
 
-def test_openpi_short_memory_temporal_attention_cannot_read_future_frames():
+def test_siglip_temporal_attention_is_causal():
     torch.manual_seed(0)
     block = Encoder1DBlock(dim=32, num_heads=2).eval()
     tokens = torch.randn(1, 4, 3, 32)
@@ -435,7 +530,7 @@ def test_openpi_short_memory_temporal_attention_cannot_read_future_frames():
     assert not torch.allclose(changed[:, -1], original[:, -1])
 
 
-def test_openpi_short_memory_augmentation_keeps_frames_aligned():
+def test_openpi_augmentation_aligns_history_frames():
     generator = torch.Generator().manual_seed(0)
     image_keys = ("base_0_rgb", "left_wrist_0_rgb")
     images = {
@@ -469,7 +564,7 @@ def test_openpi_short_memory_augmentation_keeps_frames_aligned():
     torch.testing.assert_close(outputs[1].history_time_offsets, time_offsets)
 
 
-def test_openpi_reads_nested_environment_history():
+def test_openpi_env_io_reads_history():
     from rlinf.models.embodiment.openpi.env_io import EnvIO
 
     def frame_transform(sample):
