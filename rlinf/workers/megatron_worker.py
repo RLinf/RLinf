@@ -267,6 +267,16 @@ class MegatronWorker(MegatronModelManager, Worker):
         self._offload_weight_and_optimizer()
         torch.distributed.barrier()
 
+    def _receive_rollout_result(
+        self, channel: Channel
+    ) -> RolloutResult | DynamicRolloutResult:
+        """Fetch one rollout result from ``channel``.
+
+        A subclass may override this to transform the result on the
+        fetching rank before get_batch broadcasts it.
+        """
+        return channel.get()
+
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
     ) -> tuple[dict[str, torch.Tensor], RolloutResult | DynamicRolloutResult]:
@@ -276,10 +286,10 @@ class MegatronWorker(MegatronModelManager, Worker):
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
-            result: RolloutResult = channel.get()
+            result: RolloutResult = self._receive_rollout_result(channel)
         else:
             if self.is_data_io_rank:
-                result: RolloutResult = channel.get()
+                result: RolloutResult = self._receive_rollout_result(channel)
             else:
                 result = None
             result = self.broadcast(

@@ -33,7 +33,11 @@ from rlinf.algorithms.registry import (
 )
 from rlinf.algorithms.utils import kl_penalty
 from rlinf.data.schema.reasoning_requests import get_seq_length
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.data.schema.reasoning_results import (
+    DynamicRolloutResult,
+    GroupDelivery,
+    RolloutResult,
+)
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -65,6 +69,11 @@ from rlinf.utils.utils import (
 from rlinf.workers.actor.megatron_actor_worker import (
     MegatronActor,
 )
+from rlinf.workers.rollout.session_server.assembly import (
+    assemble_group_payload,
+    verify_group_assembly,
+)
+from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
 
 class MAMegatronActor(MegatronActor):
@@ -75,6 +84,9 @@ class MAMegatronActor(MegatronActor):
     ):
         super().__init__(cfg, placement)
         self._init_auto_scheduler(role)
+        # Held by run_training for the duration of a training call;
+        # _assemble_delivery reads them for payload-ref groups.
+        self._payload_channels: Optional[list[Channel]] = None
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
         assert self.enable_dp_load_balance, (
@@ -92,6 +104,58 @@ class MAMegatronActor(MegatronActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+
+    def _receive_rollout_result(
+        self, channel: Channel
+    ) -> RolloutResult | DynamicRolloutResult:
+        """Fetch one rollout result, assembling delivered groups.
+
+        Overrides MegatronWorker's hook (plain channel.get): when the
+        buffer delivers a GroupDelivery, the group's data sits behind its
+        payload ref, fetched and assembled here, before get_batch
+        broadcasts the result to the other ranks.
+        """
+        result = channel.get()
+        if isinstance(result, GroupDelivery):
+            result = self._assemble_delivery(result)
+        return result
+
+    def _assemble_delivery(self, delivery: GroupDelivery) -> DynamicRolloutResult:
+        """Fetch and assemble the payload one delivered group points to.
+
+        Args:
+            delivery: The group reference the rollout buffer put on the
+                channel when the group's data stayed behind its payload
+                ref instead of riding the result.
+
+        Returns:
+            The assembled result, carrying the group identity of the
+            delivery, checked against the agent-side reference when the
+            finalize part brought one.
+        """
+        assert self._payload_channels is not None, (
+            "a group arrived as a payload ref but this actor has no "
+            "payload channels: run_training must receive them on the "
+            "session server path."
+        )
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, self._payload_channels
+        )
+        payload = channel.get(key=delivery.payload_ref.key)
+        # A keyed get leaves the now-empty queue behind; without this the
+        # payload channel accumulates one empty queue per trained group.
+        # Same-key operations run in issue order, so this remove trails
+        # the get; a group is delivered once, so no reader is left behind.
+        channel.remove_key(key=delivery.payload_ref.key, async_op=True)
+        result = assemble_group_payload(
+            payload, not self.cfg.algorithm.recompute_logprobs
+        )
+        result.group_id = delivery.group_id
+        result.task_name = delivery.task_name
+        verify = next(part.verify for part in payload.parts if part.last)
+        if verify is not None:
+            verify_group_assembly(result, verify, self.cfg)
+        return result
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -373,7 +437,12 @@ class MAMegatronActor(MegatronActor):
         )
         return batch
 
-    def run_training(self, input_channel: Channel, version: Optional[int] = None):
+    def run_training(
+        self,
+        input_channel: Channel,
+        version: Optional[int] = None,
+        payload_channels: Optional[list[Channel]] = None,
+    ):
         """Run the training loop for the actor.
 
         Args:
@@ -381,7 +450,11 @@ class MAMegatronActor(MegatronActor):
             version: Weight version the actor had loaded at step start, used
                 for staleness statistics; None skips them (synchronous
                 training passes no version).
+            payload_channels: The payload channels for groups delivered as
+                payload refs instead of inline results; held for the
+                duration of this call, where _assemble_delivery reads them.
         """
+        self._payload_channels = payload_channels
 
         # Get all batches for this DP
         batches = []
