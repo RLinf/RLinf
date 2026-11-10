@@ -17,11 +17,13 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import math
 import os
 import subprocess
 import sys
 import textwrap
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,10 +31,14 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.algorithms.registry import calculate_adv_and_returns
-from rlinf.algorithms.utils import compute_entropy_loss
+from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
+from rlinf.algorithms.utils import (
+    apply_importance_sampling_correction,
+    compute_entropy_loss,
+)
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
@@ -294,6 +300,226 @@ def test_reinpp_baseline_leaves_the_caller_rewards_unchanged():
     _reinpp_advantages(rewards, use_reinpp_baseline=True)
 
     assert rewards.tolist() == [1.0, 0.0, 1.0, 1.0]
+
+
+# Importance-sampling correction: the actor rescores rollout actions, and
+# each advantage is scaled by the clipped actor/rollout probability ratio.
+
+
+class _ReplayModel:
+    def __init__(self, offset: float = 0.25) -> None:
+        self.batch_sizes = []
+        self.kwargs = []
+        self.offset = offset
+
+    def __call__(self, *, forward_inputs, **kwargs):
+        expected = forward_inputs["expected_logprobs"]
+        self.batch_sizes.append(expected.shape[0])
+        self.kwargs.append(kwargs)
+        return {"logprobs": expected + self.offset}
+
+
+def test_importance_sampling_correction_scales_advantages_by_clipped_weight():
+    advantages = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    rollout_logprobs = torch.zeros(2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [math.log(2.0), math.log(4.0)], dtype=torch.float32
+    )
+
+    corrected, weights, log_ratios = apply_importance_sampling_correction(
+        advantages,
+        recomputed_logprobs,
+        rollout_logprobs,
+        clip=3.0,
+    )
+
+    torch.testing.assert_close(corrected, torch.tensor([2.0, 6.0]))
+    torch.testing.assert_close(weights, torch.tensor([2.0, 4.0]))
+    torch.testing.assert_close(log_ratios, recomputed_logprobs)
+
+
+@pytest.mark.parametrize("importance_sampling_fix", [False, True])
+def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
+    monkeypatch, importance_sampling_fix
+):
+    monkeypatch.setattr(
+        "rlinf.workers.actor.embodied_fsdp_actor_worker.clear_memory", lambda: None
+    )
+    worker = object.__new__(EmbodiedFSDPActor)
+    worker.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "micro_batch_size": 3,
+                "model": {"model_type": "openpi"},
+            },
+            "algorithm": {"importance_sampling_fix": importance_sampling_fix},
+            "rollout": {},
+        }
+    )
+    worker.device = torch.device("cpu")
+    worker.amp_context = nullcontext()
+    worker.is_weight_offloaded = False
+    worker.model = _ReplayModel()
+    expected = torch.arange(24, dtype=torch.float32).reshape(6, 2, 2)
+    behavior = torch.zeros_like(expected)
+    worker.rollout_batch = {
+        "prev_logprobs": behavior,
+        "forward_inputs": {"expected_logprobs": expected},
+    }
+
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(
+        worker, batch_size_per_rank=3
+    )
+
+    assert worker.model.batch_sizes == [3, 3]
+    assert all("temperature" not in kwargs for kwargs in worker.model.kwargs)
+    assert all("top_k" not in kwargs for kwargs in worker.model.kwargs)
+    if importance_sampling_fix:
+        assert worker.rollout_batch["rollout_logprobs"] is behavior
+    else:
+        assert "rollout_logprobs" not in worker.rollout_batch
+    assert torch.equal(worker.rollout_batch["prev_logprobs"], expected + 0.25)
+    assert metrics["actor/rollout_train_logprob_gap"] == pytest.approx(11.75)
+    assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(87.0)
+
+
+def test_lingbot_recompute_restores_action_layout_before_masking(monkeypatch):
+    monkeypatch.setattr(
+        "rlinf.workers.actor.embodied_fsdp_actor_worker.clear_memory", lambda: None
+    )
+    worker = object.__new__(EmbodiedFSDPActor)
+    worker.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "micro_batch_size": 3,
+                "model": {"model_type": "lingbotvlav2", "action_dim": 2},
+            },
+            "algorithm": {"max_recompute_logprob_gap": 1.0e-3},
+            "rollout": {},
+        }
+    )
+    worker.device = torch.device("cpu")
+    worker.amp_context = nullcontext()
+    worker.is_weight_offloaded = False
+    worker.model = _ReplayModel(offset=0.0)
+
+    recomputed = torch.zeros(6, 4, dtype=torch.float32)
+    per_action_gap = torch.linspace(5.0e-5, 2.0e-4, 6).unsqueeze(-1)
+    rollout = recomputed - per_action_gap
+    worker.rollout_batch = {
+        "prev_logprobs": rollout,
+        "forward_inputs": {"expected_logprobs": recomputed},
+        "loss_mask": torch.ones(6, 1, dtype=torch.bool),
+    }
+
+    metrics = inspect.unwrap(EmbodiedFSDPActor.recompute_prev_logprobs)(
+        worker, batch_size_per_rank=3
+    )
+
+    assert metrics["actor/rollout_train_joint_logprob_gap_max"] == pytest.approx(8.0e-4)
+
+
+@pytest.mark.parametrize(
+    (
+        "logprob_type",
+        "expected_loss",
+        "mean_weight",
+        "max_weight",
+        "clip_fraction",
+        "log_gap",
+    ),
+    [
+        ("token_level", -2.5, 2.5, 3.0, 0.0, math.log(6.0) / 2),
+        ("action_level", -4.5, 6.5, 9.0, 0.5, math.log(6.0)),
+        ("chunk_level", -5.0, 36.0, 36.0, 1.0, math.log(36.0)),
+    ],
+)
+def test_embodied_importance_sampling_uses_loss_logprob_granularity(
+    logprob_type, expected_loss, mean_weight, max_weight, clip_fraction, log_gap
+):
+    rollout_logprobs = torch.zeros(2, 2, 2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [[[math.log(2.0)] * 2, [math.log(3.0)] * 2]] * 2,
+        dtype=torch.float32,
+    )
+
+    loss, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type=logprob_type,
+        reward_type="chunk_level",
+        single_action_dim=2,
+        logprobs=recomputed_logprobs.clone(),
+        old_logprobs=recomputed_logprobs,
+        rollout_logprobs=rollout_logprobs,
+        advantages=torch.ones(2, dtype=torch.float32),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        importance_sampling_clip=5.0,
+    )
+
+    assert loss.item() == pytest.approx(expected_loss)
+    assert metrics["actor/ratio"] == pytest.approx(1.0)
+    assert metrics["actor/importance_sampling_weight"] == pytest.approx(mean_weight)
+    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(max_weight)
+    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(
+        clip_fraction
+    )
+    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(log_gap)
+
+
+def test_embodied_importance_sampling_metrics_broadcast_loss_mask():
+    rollout_logprobs = torch.zeros(1, 2, 2, dtype=torch.float32)
+    recomputed_logprobs = torch.tensor(
+        [[[math.log(2.0), math.log(4.0)], [math.log(128.0), math.log(256.0)]]],
+        dtype=torch.float32,
+    )
+
+    _, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type="token_level",
+        reward_type="action_level",
+        single_action_dim=2,
+        logprobs=recomputed_logprobs.clone(),
+        old_logprobs=recomputed_logprobs,
+        rollout_logprobs=rollout_logprobs,
+        advantages=torch.ones(1, 2, dtype=torch.float32),
+        loss_mask=torch.tensor([[True, False]]),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        importance_sampling_clip=3.0,
+    )
+
+    assert metrics["actor/importance_sampling_weight"] == pytest.approx(3.0)
+    assert metrics["actor/importance_sampling_weight_max"] == pytest.approx(4.0)
+    assert metrics["actor/importance_sampling_clip_fraction"] == pytest.approx(0.5)
+    assert metrics["actor/recomputed_logprob_abs_diff"] == pytest.approx(
+        math.log(8.0) / 2
+    )
+
+
+def test_embodied_loss_is_unchanged_without_importance_sampling():
+    logprobs = torch.tensor([[[0.2, -0.1]]], dtype=torch.float32)
+    old_logprobs = torch.tensor([[[0.1, -0.2]]], dtype=torch.float32)
+
+    loss, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type="token_level",
+        reward_type="chunk_level",
+        single_action_dim=2,
+        logprobs=logprobs,
+        old_logprobs=old_logprobs,
+        advantages=torch.ones(1, 1, dtype=torch.float32),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+    )
+
+    expected_ratio = torch.exp(logprobs - old_logprobs)
+    assert loss.item() == pytest.approx(-expected_ratio.mean().item())
+    assert metrics["actor/ratio"] == pytest.approx(expected_ratio.mean().item())
+    assert "actor/importance_sampling_weight" not in metrics
 
 
 def _load_checkpoint_utils():
@@ -594,3 +820,100 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_pinned_offload_context_restores_after_overlapping_exits():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    original_to = torch.Tensor.to
+    first = pinned_offload_context()
+    second = pinned_offload_context()
+    first_active = True
+    first.__enter__()
+    second.__enter__()
+    try:
+        patched_to = torch.Tensor.to
+        assert patched_to is not original_to
+
+        tensor = torch.ones(2)
+        assert tensor.to(torch.float64).dtype == torch.float64
+        torch.testing.assert_close(tensor.to(torch.zeros(2)), tensor)
+
+        first.__exit__(None, None, None)
+        first_active = False
+        assert torch.Tensor.to is patched_to
+    finally:
+        if first_active:
+            first.__exit__(None, None, None)
+        second.__exit__(None, None, None)
+
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize(
+    "source_format", [torch.contiguous_format, torch.channels_last]
+)
+@pytest.mark.parametrize(
+    "memory_format",
+    [torch.preserve_format, torch.contiguous_format, torch.channels_last],
+)
+def test_pinned_offload_preserves_cuda_tensor_values_and_layout(
+    dtype, source_format, memory_format
+):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.randn(2, 3, 8, 8, device="cuda", dtype=dtype).contiguous(
+        memory_format=source_format
+    )
+    expected = source.to("cpu", memory_format=memory_format)
+    original_to = torch.Tensor.to
+    with pinned_offload_context():
+        result = source.to("cpu", None, False, memory_format=memory_format)
+        assert result.is_pinned()
+        assert result.device.type == "cpu"
+        assert result.dtype == source.dtype
+        assert result.stride() == expected.stride()
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result.to(source.device), source)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_restores_after_cuda_copy_and_exception():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda")
+    original_to = torch.Tensor.to
+    with pytest.raises(RuntimeError, match="abort offload"):
+        with pinned_offload_context():
+            assert source.to(device=torch.device("cpu")).is_pinned()
+            raise RuntimeError("abort offload")
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda", dtype=torch.float32)
+    original_to = torch.Tensor.to
+    allocator_error = RuntimeError("pinned allocator exhausted")
+
+    def fail_allocation(*args, **kwargs):
+        assert kwargs["pin_memory"] is True
+        raise allocator_error
+
+    monkeypatch.setattr(torch, "empty_like", fail_allocation)
+    with pytest.raises(
+        RuntimeError, match="Failed to allocate pinned CPU memory"
+    ) as info:
+        with pinned_offload_context():
+            source.to("cpu")
+    assert info.value.__cause__ is allocator_error
+    assert "shape=(2,)" in str(info.value)
+    assert "dtype=torch.float32" in str(info.value)
+    assert f"source_device={source.device}" in str(info.value)
+    assert "requested_bytes=8" in str(info.value)
+    assert torch.Tensor.to is original_to

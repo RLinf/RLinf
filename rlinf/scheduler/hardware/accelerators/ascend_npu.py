@@ -106,6 +106,7 @@ class AscendNPUManager(AcceleratorManager):
     def get_torch_platform():
         """Get the PyTorch platform module."""
         import torch
+        import torch_npu  # noqa: F401
 
         # torch.cuda.ipc_collect() exists for inter-process CUDA tensor cleanup;
         # torch_npu doesn't expose it (NPU has no equivalent IPC mechanism).
