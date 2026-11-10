@@ -36,7 +36,7 @@ runner:
     log_path: "../results/libero_spatial_ppo_openpi"
     project_name: rlinf
     experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 2
   max_steps: -1
@@ -78,7 +78,7 @@ env:
 
   # Override the default values in env/libero_spatial
   train:
-    rollout_epoch: 2
+    rollout_epoch: 1
     total_num_envs: 8
     max_episode_steps: 5
     max_steps_per_rollout_epoch: 5
