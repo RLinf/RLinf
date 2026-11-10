@@ -79,6 +79,8 @@ env:
     rollout_epoch: 2
     dataset:
       type: "visual.ocr_dataset"
+      # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
+      # The directory should contain train.txt and test.txt.
       path: /path/to/dataset/ocr
       split: "train"
     reward:
@@ -96,6 +98,8 @@ env:
     rollout_epoch: 1
     dataset:
       type: "visual.ocr_dataset"
+      # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
+      # The directory should contain train.txt and test.txt.
       path: /path/to/dataset/ocr
       split: "test"
     reward:
@@ -125,6 +129,7 @@ actor:
   seed: 42
   enable_offload: False
   model:
+    # Download from https://huggingface.co/stabilityai/stable-diffusion-3.5-medium.
     model_path: /path/to/stable-diffusion-3.5-medium
     precision: "bf16"
     sd3:

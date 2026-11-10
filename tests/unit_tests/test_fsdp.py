@@ -1223,3 +1223,52 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert output.dtype == torch.bfloat16
     assert after.dtype == torch.float32
     assert (after != before).all()
+
+
+@pytest.mark.parametrize("all_inactive", [False, True])
+def test_art_metrics_weight_active_samples_across_microbatches(
+    tmp_path, monkeypatch, all_inactive
+):
+    from rlinf.algorithms.diffusion.art import compute_art_loss
+    from rlinf.utils.metric_utils import append_to_dict
+    from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
+
+    monkeypatch.setattr(Worker, "torch_platform", torch.cpu)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'init'}", rank=0, world_size=1
+    )
+    try:
+        current = torch.tensor(
+            [[-0.25, -0.25], [0.5, 0.5], [0.25, 0.25], [0.5, 0.5]]
+        ).repeat(2, 1)
+        magnitude = (
+            torch.zeros(8)
+            if all_inactive
+            else torch.tensor([1.0, 0.0, 2.0, 0.0, 1.0, 2.0, 0.0, 0.0])
+        )
+        config = OmegaConf.create(
+            {"art_mask_metric": "fixed_mse", "art_mask_threshold": 0.01}
+        )
+        results = []
+        for micro_batch_size in (1, 2, 4, 8):
+            metrics = {}
+            for start in range(0, 8, micro_batch_size):
+                velocity = current[start : start + micro_batch_size]
+                _, step_metrics = compute_art_loss(
+                    velocity,
+                    torch.zeros_like(velocity),
+                    torch.full((micro_batch_size,), 0.5),
+                    torch.full((micro_batch_size,), 0.25),
+                    torch.ones_like(velocity),
+                    magnitude[start : start + micro_batch_size],
+                    config=config,
+                )
+                append_to_dict(metrics, step_metrics)
+            results.append(EmbodiedARTFSDPPolicy._reduce_training_metrics(metrics))
+        assert results[0] == pytest.approx(results[1])
+        assert results[0] == pytest.approx(results[2])
+        assert results[0] == pytest.approx(results[3])
+        assert results[0]["actor/mask_frac"] == (0.0 if all_inactive else 0.5)
+        assert "actor/active_count" not in results[0]
+    finally:
+        dist.destroy_process_group()

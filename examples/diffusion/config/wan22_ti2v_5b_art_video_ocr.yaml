@@ -72,6 +72,7 @@ env:
   group_name: "EnvGroup"
   enable_offload: False
   train:
+    # For 8 GPU shards, set total_num_envs=64 and actor.global_batch_size=64.
     total_num_envs: 32
     group_size: ${algorithm.group_size}
     max_episode_steps: 1
@@ -81,6 +82,8 @@ env:
       save_video: False
     dataset:
       type: "visual.ocr_dataset"
+      # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
+      # The directory should contain train.txt and test.txt.
       path: /path/to/dataset/ocr
       split: "train"
     reward:
@@ -100,6 +103,8 @@ env:
     rollout_epoch: 1
     dataset:
       type: "visual.ocr_dataset"
+      # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
+      # The directory should contain train.txt and test.txt.
       path: /path/to/dataset/ocr
       split: "test"
     reward:
@@ -131,6 +136,7 @@ actor:
   seed: 42
   enable_offload: False
   model:
+    # Download from https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers.
     model_path: /path/to/Wan2.2-TI2V-5B-Diffusers
     precision: "bf16"
     num_action_chunks: 2

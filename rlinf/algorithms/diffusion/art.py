@@ -97,7 +97,7 @@ def prepare_art_training_inputs(
             torch.randperm(timestep_pool, generator=generator)[:train_timestep_count]
             for _ in range(row_count)
         ]
-    )
+    ).to(states.device)
     latent_indices = selected.view(
         row_count,
         train_timestep_count,
@@ -156,7 +156,8 @@ def compute_art_loss(
         config: Algorithm settings for loss weighting and the corrective mask.
 
     Returns:
-        The differentiable scalar loss and detached actor metrics.
+        The differentiable scalar loss and detached actor metrics. Weight
+        active-only metrics by ``actor/active_count`` when aggregating batches.
     """
     terms = art_loss(
         current_velocity,
@@ -173,16 +174,19 @@ def compute_art_loss(
     )
     loss = terms["per_item_loss"].mean()
     active = terms["active"]
-    active_count = active.sum().clamp_min(1)
+    active_count = active.sum()
+    active_denominator = active_count.clamp_min(1)
     metrics = {
+        "actor/active_count": active_count.item(),
         "actor/art_loss": loss.detach().item(),
         "actor/total_loss": loss.detach().item(),
         "actor/unmasked_loss": (
-            (terms["per_item_unmasked_loss"] * active).sum() / active_count
+            (terms["per_item_unmasked_loss"] * active).sum() / active_denominator
         ).item(),
-        "actor/mask_frac": (terms["masked"].float().sum() / active_count).item(),
+        "actor/mask_frac": (terms["masked"].float().sum() / active_denominator).item(),
         "actor/outward_frac": (
-            ((terms["outward_alignment"] > 0) & active).float().sum() / active_count
+            ((terms["outward_alignment"] > 0) & active).float().sum()
+            / active_denominator
         ).item(),
         "actor/old_deviate": terms["movement_energy"].mean().item(),
         "actor/movement_score": terms["movement_score"].mean().item(),

@@ -246,6 +246,7 @@ def test_art_objective_freezes_targets_and_masks_only_active_outward_movement(
     torch.testing.assert_close(loss, expected)
     loss.backward()
     assert metrics["actor/art_loss"] == pytest.approx(expected.item())
+    assert metrics["actor/active_count"] == 2
     assert metrics["actor/unmasked_loss"] == pytest.approx(unmasked[:2].mean().item())
     assert metrics["actor/mask_frac"] == (0.5 if mask_enabled else 0)
     assert torch.count_nonzero(current.grad[2]) == 0

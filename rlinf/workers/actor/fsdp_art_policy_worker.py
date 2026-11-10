@@ -152,7 +152,6 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
 
             self.torch_platform.empty_cache()
             grad_norm, lr_list = self.optimizer_step()
-            self.lr_scheduler.step()
             append_to_dict(
                 metrics,
                 {
@@ -161,10 +160,38 @@ class EmbodiedARTFSDPPolicy(EmbodiedFSDPActor):
                 },
             )
 
+        self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()
-        mean_metrics = {key: np.mean(value) for key, value in metrics.items()}
-        return all_reduce_dict(mean_metrics, op=torch.distributed.ReduceOp.AVG)
+        return self._reduce_training_metrics(metrics)
+
+    @staticmethod
+    def _reduce_training_metrics(metrics: dict[str, list[float]]) -> dict[str, float]:
+        """Weight active-only metrics across micro-batches and actor ranks."""
+        active_counts = metrics.pop("actor/active_count")
+        active_metric_sums = {
+            key: sum(
+                value * count
+                for value, count in zip(metrics.pop(key), active_counts, strict=True)
+            )
+            for key in (
+                "actor/unmasked_loss",
+                "actor/mask_frac",
+                "actor/outward_frac",
+            )
+        }
+        local_metrics = {key: np.mean(values) for key, values in metrics.items()}
+        local_metrics.update(active_metric_sums)
+        local_metrics["actor/active_count"] = sum(active_counts)
+        reduced_metrics = all_reduce_dict(
+            local_metrics, op=torch.distributed.ReduceOp.SUM
+        )
+        active_count = max(reduced_metrics.pop("actor/active_count"), 1)
+        world_size = torch.distributed.get_world_size()
+        return {
+            key: value / (active_count if key in active_metric_sums else world_size)
+            for key, value in reduced_metrics.items()
+        }
 
     @torch.no_grad()
     def _precompute_old_velocities(self) -> None:

@@ -1496,6 +1496,9 @@ def validate_embodied_cfg(cfg):
         )
 
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert not algorithm_cfg.get("filter_rewards", False), (
+            "DiffusionART requires algorithm.filter_rewards=False; got True."
+        )
         assert model_type in DIFFUSION_MODELS, (
             "algorithm.loss_type='embodied_art' requires a diffusion model."
         )
