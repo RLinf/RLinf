@@ -415,18 +415,20 @@ def masked_reduce(
     return torch.where(mask.any(), value, empty_value)
 
 
-def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1)  # token-sum
-    loss = torch.mean(seq_losses)  # seq-mean
-    return loss
+def seq_mean_token_sum(
+    values: torch.Tensor, mask: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
+    """Average token sums over sequences with at least one valid token."""
+    seq_losses = torch.sum(values * mask, dim=-1)
+    return masked_mean(seq_losses, mask.any(dim=-1))
 
 
-def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(mask, dim=-1).clamp_min(
-        1
-    )  # token-mean
-    loss = torch.mean(seq_losses)  # seq-mean
-    return loss
+def seq_mean_token_mean(
+    values: torch.Tensor, mask: torch.Tensor, dim: int = -1
+) -> torch.Tensor:
+    """Average token means over sequences with at least one valid token."""
+    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(mask, dim=-1).clamp_min(1)
+    return masked_mean(seq_losses, mask.any(dim=-1))
 
 
 def masked_mean_ratio(
