@@ -145,7 +145,6 @@ jobs:
               - 'examples/agent/**'
               - 'examples/reasoning/**'
               - 'tests/e2e_tests/agent/**'
-              - 'tests/unit_tests/test_ma_megatron_critic.py'
               - 'tests/e2e_tests/agentlightning/**'
               - 'tests/e2e_tests/reasoning/**'
               - '.github/workflows/agent-e2e-tests.yml'

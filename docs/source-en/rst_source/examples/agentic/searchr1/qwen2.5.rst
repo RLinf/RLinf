@@ -136,6 +136,11 @@ HuggingFace model:
    shopt -s extglob
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
 
+A PPO run saves an ``actor`` and a ``critic`` directory under each
+``global_step_xxx``. Export the ``actor`` directory with the commands above.
+To resume training, set ``runner.resume_dir`` to the ``global_step_xxx``
+directory; RLinf restores both the actor and the critic.
+
 For FSDP, use the built-in FSDP converter rather than the Megatron
 commands above. Point it at the saved FSDP checkpoint and the matching resolved
 training configuration, then write the exported HuggingFace model to a new

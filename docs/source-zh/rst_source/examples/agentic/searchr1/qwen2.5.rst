@@ -123,6 +123,8 @@ checkpoint 的导出方式取决于训练后端。
    shopt -s extglob
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
 
+PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` 两个目录。导出模型时，用上面的命令转换 ``actor`` 目录。恢复训练时，将 ``runner.resume_dir`` 设为该 ``global_step_xxx`` 目录，RLinf 会同时恢复 actor 和 critic。
+
 对于 FSDP，请使用内置的 FSDP 转换器，而不是上面的 Megatron 转换命令。将保存的 FSDP checkpoint 与对应训练运行生成的解析后配置文件传入转换器，并指定 HuggingFace 模型输出目录：
 
 .. code-block:: bash

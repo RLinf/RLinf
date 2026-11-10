@@ -439,7 +439,7 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$PYTHONPATH
           source .venv/bin/activate
-          python -m pytest -q tests/unit_tests/test_ma_megatron_critic.py
+          python -m pytest -q tests/unit_tests/test_utils.py -k "valid_token_scaling or critic_packing"
 
       - name: Train PPO with SGLang Megatron Collocated mode
         timeout-minutes: 20
