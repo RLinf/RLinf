@@ -174,26 +174,35 @@ LLM 推理任务的配置与具身任务的配置有相似之处。
 3.3. 多轮 Agent 任务
 ~~~~~~~~~~~~~~~~~~~~
 
-Agent 在生成文本和调用工具之间交替执行时，需要沿完整 episode 的 action token 计算 GAE。工具返回的文本保留在 observation 上下文中，actor 和 critic 的 loss mask 排除这些位置。:doc:`Search-R1 PPO 配置 </rst_source/examples/agentic/searchr1/qwen2.5>` 展示了这条训练路径。
+模型和数据准备参见 :doc:`Search-R1 训练 </rst_source/examples/agentic/searchr1/qwen2.5>`。使用 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``，关键配置如下：
 
-训练流程
-^^^^^^^^
+.. code-block:: yaml
 
-每个迭代使用固定的 rollout policy，两个模型完成更新后才开始下一个 rollout batch：
+   runner:
+     synchronous: true
 
-1. 使用当前 actor 权重生成整个 batch 的 episode。
-2. Critic 预测 old values，计算固定 advantages 和 returns。
-3. Critic 使用这些 returns 更新，随后 actor 使用固定 advantages 和 old-policy logprobs 更新。
-4. 安装更新后的 actor 权重，再生成下一个 batch。
+   algorithm:
+     group_size: 1
+     adv_type: gae_dynamic
+     gamma: 1.0
+     gae_lambda: 1.0
+     normalize_advantages: true
+     use_valid_token_scale: true
+     kl_beta: 0.0
+     loss_scales: []
+     recompute_logprobs: false
 
-实现说明
-^^^^^^^^
+   critic:
+     use_critic_model: true
 
-多轮实现注册为 ``algorithm.adv_type: gae_dynamic``。它按照 prompt 长度排列同一 episode 的 turn，将各轮生成的 action 位置连接起来，仅在最后一个 action 应用一次最终答案 reward，再调用已有 GAE 实现，将结果还原到原来的 turn 布局。折扣按生成的 action token 推进。完整 episode 以及因轮数或 token 上限而结束的 episode，未来 bootstrap value 均为零。
+   rollout:
+     return_logprobs: true
 
-Critic worker 在更新前计算目标，并跨数据并行 rank 汇总有效 action token 的统计量来归一化 advantages。Returns 保持原来的尺度。Actor 只接收固定 advantages；old values 和 returns 留在 critic 侧用于 value 训练。
+通过 Search-R1 训练脚本启动 PPO：
 
-当前 Search-R1 接入使用 Megatron actor/critic TP=PP=CP=1 和 SGLang，actor、critic、rollout 共用相同 GPU。训练前 offload rollout 引擎可以腾出显存，容纳两个训练模型。这是共享 placement 的显存管理选择。该训练流程在下一个 batch 开始前完成模型更新和权重安装。各角色的 ``offload_weight``、``offload_grad`` 和 ``offload_optimizer`` 控制训练状态的驻留。
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
 4. 注意事项
 -----------

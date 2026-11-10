@@ -184,48 +184,39 @@ Furthermore, in LLM reasoning tasks, we use an independent critic model rather t
 
 
 3.3. Multi-Turn Agent Tasks
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For an agent that alternates generation with tool calls, compute GAE over the
-action tokens of a complete episode. Tool responses remain in the observation
-context, while masks exclude them from actor and critic losses. The
-:doc:`Search-R1 PPO recipe </rst_source/examples/agentic/searchr1/qwen2.5>` configures
-this training path.
+See :doc:`Search-R1 training </rst_source/examples/agentic/searchr1/qwen2.5>` for model and data
+setup. Use ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``
+with these key settings:
 
-Training Flow
-^^^^^^^^^^^^^
+.. code-block:: yaml
 
-Each iteration uses one fixed rollout policy and completes both model updates
-before starting the next rollout batch:
+   runner:
+     synchronous: true
 
-1. Generate all episodes in the batch using the current actor weights.
-2. Predict old values with the critic and compute fixed advantages and returns.
-3. Update the critic against those returns, then update the actor using the fixed
-   advantages and old-policy log probabilities.
-4. Install the updated actor weights before generating the next batch.
+   algorithm:
+     group_size: 1
+     adv_type: gae_dynamic
+     gamma: 1.0
+     gae_lambda: 1.0
+     normalize_advantages: true
+     use_valid_token_scale: true
+     kl_beta: 0.0
+     loss_scales: []
+     recompute_logprobs: false
 
-Implementation Notes
-^^^^^^^^^^^^^^^^^^^^
+   critic:
+     use_critic_model: true
 
-The multi-turn implementation registers ``algorithm.adv_type: gae_dynamic``.
-It orders turns within an episode by prompt length, joins their generated action
-positions, and applies the final answer reward once at the last action. It then
-calls the existing GAE implementation and restores the original turn layout.
-Discounting advances per generated action token. Completed episodes, including
-those stopped by turn or token limits, bootstrap with zero future value.
+   rollout:
+     return_logprobs: true
 
-The critic worker computes the targets before its update and normalizes
-advantages over valid action tokens across data-parallel ranks. Returns retain
-their original scale. Only fixed advantages are sent to the actor; old values
-and returns remain on the critic for value training.
+Launch PPO with the Search-R1 training script:
 
-The current Search-R1 integration uses Megatron actor/critic TP=PP=CP=1 and SGLang,
-with actor, critic, and rollout sharing identical GPUs. Offloading the rollout
-engine before training frees memory for the two training models. This is a
-memory-management choice for shared placement. This training path completes
-updates and weight installation before the next batch. Training-state
-residency is controlled by ``offload_weight``, ``offload_grad``, and
-``offload_optimizer`` on each role.
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
 4. Notes
 ---------
