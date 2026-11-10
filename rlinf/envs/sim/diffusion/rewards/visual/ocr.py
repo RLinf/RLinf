@@ -14,6 +14,10 @@
 
 from __future__ import annotations
 
+import fcntl
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -22,6 +26,19 @@ from PIL import Image
 
 from rlinf.envs.sim.diffusion.rewards import ImageRewardBackendBase
 from rlinf.envs.sim.diffusion.utils import cfg_get, extract_quoted_text
+
+
+@contextmanager
+def _paddleocr_init_lock() -> Iterator[None]:
+    """Serialize PaddleOCR model downloads that share the user cache."""
+    cache_dir = Path.home() / ".paddleocr"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with (cache_dir / ".rlinf-init.lock").open("a") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 class OCRScorer:
@@ -39,12 +56,13 @@ class OCRScorer:
             ) from exc
 
         self.distance = distance
-        self.ocr = PaddleOCR(
-            use_angle_cls=False,
-            lang=str(lang),
-            use_gpu=bool(use_gpu),
-            show_log=False,
-        )
+        with _paddleocr_init_lock():
+            self.ocr = PaddleOCR(
+                use_angle_cls=False,
+                lang=str(lang),
+                use_gpu=bool(use_gpu),
+                show_log=False,
+            )
 
     @classmethod
     def from_config(cls, cfg: Any) -> "OCRScorer":
