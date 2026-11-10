@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import copy
 import glob
 import importlib
@@ -19,12 +21,14 @@ import os
 import re
 import sys
 from collections import deque
-from typing import Optional, Union
+from collections.abc import Callable, Iterable
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 import gym
 import numpy as np
 import torch
-from omegaconf.omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.envs.sim.libero.utils import (
     build_interleaved_eval_reset_state_ids,
@@ -44,8 +48,11 @@ from rlinf.envs.utils import (
 )
 from rlinf.utils.logging import get_logger
 
+if TYPE_CHECKING:
+    from rlinf.scheduler import WorkerInfo
 
-def _repoint_libero_config(libero_module) -> None:
+
+def _repoint_libero_config(libero_module: ModuleType) -> None:
     """Point LIBERO's cached config at the package that is actually installed.
 
     LIBERO writes absolute paths into a config file under ``$HOME`` the first
@@ -65,10 +72,12 @@ def _repoint_libero_config(libero_module) -> None:
 logger = get_logger()
 
 
-def _read_bddl_language_and_goal(bddl_path: str):
+def _read_bddl_language_and_goal(
+    bddl_path: str,
+) -> tuple[str | None, str | None]:
     """Parse (:language ...) and a compact (:goal ...) summary from a BDDL file."""
     try:
-        with open(bddl_path, "r", encoding="utf-8") as f:
+        with open(bddl_path, encoding="utf-8") as f:
             bddl_text = f.read()
     except OSError:
         return None, None
@@ -112,9 +121,7 @@ if libero_type in ["pro", "plus"]:
         sys.modules["libero.libero.benchmark"] = real_libero_benchmark
         sys.modules["libero.libero.envs"] = real_libero_envs
     except ImportError as e:
-        print(
-            f"[Main Process Routing Error] Failed to import '{LIBERO_MAIN_MODULE_PATH}'. Error: {e}"
-        )
+        logger.error("Failed to import %s: %s", LIBERO_MAIN_MODULE_PATH, e)
 
 if libero_type == "pro":
     import liberopro.liberopro as _libero_core
@@ -132,7 +139,16 @@ _repoint_libero_config(_libero_core)
 
 
 class LiberoEnv(gym.Env):
-    def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
+    """Batched LIBERO simulation with task scheduling and episode-local history."""
+
+    def __init__(
+        self,
+        cfg: DictConfig,
+        num_envs: int,
+        seed_offset: int,
+        total_num_processes: int,
+        worker_info: WorkerInfo,
+    ) -> None:
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.is_libero_mem = cfg.task_suite_name.lower() == "libero_mem"
@@ -188,7 +204,7 @@ class LiberoEnv(gym.Env):
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
 
-    def _init_history(self):
+    def _init_history(self) -> None:
         self.short_memory = self.cfg.get("short_memory")
         if self.short_memory is not None:
             self.history_length = int(self.short_memory.num_frames)
@@ -212,7 +228,7 @@ class LiberoEnv(gym.Env):
                 deque(maxlen=capacity) for _ in range(self.num_envs)
             ]
 
-    def _log_evaluation_mode(self):
+    def _log_evaluation_mode(self) -> None:
         """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
         libero_type = get_libero_type()
         if libero_type == "pro":
@@ -226,11 +242,12 @@ class LiberoEnv(gym.Env):
         else:
             logger.info("Evaluation Mode: Standard LIBERO")
 
-    def _init_env(self):
+    def _init_env(self) -> None:
         env_fns = self.get_env_fns()
         self.env = ReconfigureSubprocEnv(env_fns, is_libero_mem=self.is_libero_mem)
 
-    def get_env_fns(self):
+    def get_env_fns(self) -> list[Callable[[], gym.Env]]:
+        """Return simulator constructors for the current task assignments."""
         env_fn_params = self.get_env_fn_params()
         env_fns = []
 
@@ -238,7 +255,10 @@ class LiberoEnv(gym.Env):
 
         for env_fn_param in env_fn_params:
 
-            def env_fn(param=env_fn_param, _type_val=current_type_val):
+            def env_fn(
+                param: dict[str, Any] = env_fn_param,
+                _type_val: str = current_type_val,
+            ) -> gym.Env:
                 os.environ["LIBERO_TYPE"] = _type_val
                 seed = param.pop("seed")
 
@@ -273,8 +293,10 @@ class LiberoEnv(gym.Env):
                         WorkerEnv = real_envs.OffScreenRenderEnv
 
                     except ImportError as e:
-                        print(f"[Worker Env Error] {e}")
-                        raise e
+                        logger.error(
+                            "Failed to import LIBERO worker environment: %s", e
+                        )
+                        raise
                 else:
                     from libero.libero.envs import OffScreenRenderEnv as WorkerEnv
 
@@ -285,7 +307,10 @@ class LiberoEnv(gym.Env):
             env_fns.append(env_fn)
         return env_fns
 
-    def get_env_fn_params(self, env_idx=None):
+    def get_env_fn_params(
+        self, env_idx: list[int] | np.ndarray | None = None
+    ) -> list[dict[str, Any]]:
+        """Build simulator arguments and update prompts for selected environments."""
         env_fn_params = []
         base_env_args = OmegaConf.to_container(self.cfg.init_params, resolve=True)
 
@@ -506,7 +531,7 @@ class LiberoEnv(gym.Env):
         self._pert_init_folders = pert_init_folders
         return env_fn_params
 
-    def _compute_total_num_group_envs(self):
+    def _compute_total_num_group_envs(self) -> None:
         self.total_num_group_envs = 0
         self.trial_id_bins = []
         for task_id in range(self.task_suite.get_num_tasks()):
@@ -542,19 +567,20 @@ class LiberoEnv(gym.Env):
         else:
             self._valid_reset_state_ids = None
 
-    def update_reset_state_ids(self):
+    def update_reset_state_ids(self) -> None:
+        """Assign one reset state per group, shared by its environments."""
         if self.is_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
             reset_state_ids = self._get_random_reset_state_ids(self.num_group)
         self.reset_state_ids = reset_state_ids.repeat(self.group_size)
 
-    def _init_task_and_trial_ids(self):
+    def _init_task_and_trial_ids(self) -> None:
         self.task_ids, self.trial_ids = (
             self._get_task_and_trial_ids_from_reset_state_ids(self.reset_state_ids)
         )
 
-    def _get_random_reset_state_ids(self, num_reset_states):
+    def _get_random_reset_state_ids(self, num_reset_states: int) -> np.ndarray:
         if self.specific_reset_id is not None:
             reset_state_ids = self.specific_reset_id * np.ones(
                 (num_reset_states,), dtype=int
@@ -570,7 +596,8 @@ class LiberoEnv(gym.Env):
             )
         return reset_state_ids
 
-    def get_reset_state_ids_all(self):
+    def get_reset_state_ids_all(self) -> np.ndarray:
+        """Distribute reset states across environment processes."""
         if self.is_eval:
             if self._valid_reset_state_ids is not None:
                 reset_state_ids = self._valid_reset_state_ids.copy()
@@ -601,7 +628,7 @@ class LiberoEnv(gym.Env):
         reset_state_ids = reset_state_ids.reshape(self.total_num_processes, -1)
         return reset_state_ids
 
-    def _get_ordered_reset_state_ids(self, num_reset_states):
+    def _get_ordered_reset_state_ids(self, num_reset_states: int) -> np.ndarray:
         if self.specific_reset_id is not None:
             return self.specific_reset_id * np.ones((num_reset_states,), dtype=int)
 
@@ -626,7 +653,9 @@ class LiberoEnv(gym.Env):
         self.start_idx = self.start_idx + num_reset_states
         return reset_state_ids
 
-    def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
+    def _get_task_and_trial_ids_from_reset_state_ids(
+        self, reset_state_ids: list[int] | np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
         task_ids = []
         trial_ids = []
         # get task id and trial id from reset state ids
@@ -641,7 +670,9 @@ class LiberoEnv(gym.Env):
 
         return np.array(task_ids), np.array(trial_ids)
 
-    def _get_reset_states(self, env_idx):
+    def _get_reset_states(
+        self, env_idx: list[int] | np.ndarray | None
+    ) -> list[np.ndarray | torch.Tensor]:
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
 
@@ -720,22 +751,22 @@ class LiberoEnv(gym.Env):
         return init_state
 
     @property
-    def elapsed_steps(self):
+    def elapsed_steps(self) -> np.ndarray:
         return self._elapsed_steps
 
     @property
-    def info_logging_keys(self):
+    def info_logging_keys(self) -> list[str]:
         return []
 
     @property
-    def is_start(self):
+    def is_start(self) -> bool:
         return self._is_start
 
     @is_start.setter
-    def is_start(self, value):
+    def is_start(self, value: bool) -> None:
         self._is_start = value
 
-    def _init_metrics(self):
+    def _init_metrics(self) -> None:
         self.success_once = np.zeros(self.num_envs, dtype=bool)
         self.fail_once = np.zeros(self.num_envs, dtype=bool)
         self.returns = np.zeros(self.num_envs)
@@ -743,7 +774,7 @@ class LiberoEnv(gym.Env):
         self._task_success_stats: dict[int, dict[str, int]] = {}
         self._eval_seen_trials: set[tuple[int, int]] = set()
 
-    def _reset_metrics(self, env_idx=None):
+    def _reset_metrics(self, env_idx: list[int] | np.ndarray | None = None) -> None:
         if env_idx is not None:
             mask = np.zeros(self.num_envs, dtype=bool)
             mask[env_idx] = True
@@ -761,7 +792,12 @@ class LiberoEnv(gym.Env):
             self.success_episode_len[:] = 0
             self._elapsed_steps[:] = 0
 
-    def _record_metrics(self, step_reward, terminations, infos):
+    def _record_metrics(
+        self,
+        step_reward: np.ndarray,
+        terminations: np.ndarray,
+        infos: dict[str, Any],
+    ) -> dict[str, Any]:
         episode_info = {}
         # Only accumulate returns while not yet succeeded
         self.returns += step_reward * (~self.success_once)
@@ -787,7 +823,9 @@ class LiberoEnv(gym.Env):
         infos["episode"] = to_tensor(episode_info)
         return infos
 
-    def _extract_image_and_state(self, obs):
+    def _extract_image_and_state(
+        self, obs: dict[str, np.ndarray]
+    ) -> dict[str, np.ndarray]:
         return {
             "full_image": get_libero_image(obs, is_libero_mem=self.is_libero_mem),
             "wrist_image": get_libero_wrist_image(
@@ -802,7 +840,7 @@ class LiberoEnv(gym.Env):
             ),
         }
 
-    def _wrap_obs(self, obs_list):
+    def _wrap_obs(self, obs_list: Iterable[dict[str, np.ndarray]]) -> dict[str, Any]:
         images_and_states_list = []
         for obs in obs_list:
             images_and_states = self._extract_image_and_state(obs)
@@ -822,7 +860,7 @@ class LiberoEnv(gym.Env):
         }
         return obs
 
-    def _append_history(self, obs, env_idx):
+    def _append_history(self, obs: dict[str, Any], env_idx: Iterable[int]) -> None:
         for index in env_idx:
             self._observation_history[index].append(
                 (
@@ -832,7 +870,7 @@ class LiberoEnv(gym.Env):
                 )
             )
 
-    def _get_history_obs(self):
+    def _get_history_obs(self) -> dict[str, torch.Tensor]:
         """Sample oldest to current frames, with masked left padding."""
         main_image, wrist_image, _ = self._observation_history[0][-1]
         batch_shape = (self.num_envs, self.history_length)
@@ -864,7 +902,11 @@ class LiberoEnv(gym.Env):
             )
         return history
 
-    def _reconfigure(self, reset_state_ids, env_idx):
+    def _reconfigure(
+        self,
+        reset_state_ids: list[int] | np.ndarray,
+        env_idx: list[int] | np.ndarray,
+    ) -> None:
         reconfig_env_idx = []
         task_ids, trial_ids = self._get_task_and_trial_ids_from_reset_state_ids(
             reset_state_ids
@@ -892,9 +934,10 @@ class LiberoEnv(gym.Env):
 
     def reset(
         self,
-        env_idx: Optional[Union[int, list[int], np.ndarray]] = None,
-        reset_state_ids=None,
-    ):
+        env_idx: list[int] | np.ndarray | None = None,
+        reset_state_ids: list[int] | np.ndarray | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Reset selected environments and return observations for the full batch."""
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
 
@@ -945,7 +988,7 @@ class LiberoEnv(gym.Env):
 
     def get_camera_meta(
         self, camera_name: str = "agentview", height: int = 256, width: int = 256
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Fetch camera intrinsics/extrinsics and depth planes.
 
         Returns camera calibration from worker 0's robosuite sim: intrinsic
@@ -978,12 +1021,14 @@ class LiberoEnv(gym.Env):
 
     def step(
         self,
-        actions=None,
-        auto_reset=True,
-        _skip_obs_wrap=False,
+        actions: np.ndarray | torch.Tensor | None = None,
+        auto_reset: bool = True,
+        _skip_obs_wrap: bool = False,
         *,
-        _include_history=True,
-    ):
+        _include_history: bool = True,
+    ) -> tuple[
+        dict[str, Any] | None, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]
+    ]:
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
@@ -1028,8 +1073,16 @@ class LiberoEnv(gym.Env):
             infos,
         )
 
-    def chunk_step(self, chunk_actions):
-        # chunk_actions: [num_envs, chunk_step, action_dim]
+    def chunk_step(
+        self, chunk_actions: np.ndarray | torch.Tensor
+    ) -> tuple[
+        list[dict[str, Any] | None],
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        list[dict[str, Any]],
+    ]:
+        """Execute actions shaped [num_envs, chunk_steps, action_dim]."""
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
@@ -1100,7 +1153,7 @@ class LiberoEnv(gym.Env):
             valid_action_counts, chunk_size
         )
 
-        # eval_count_mask: per-env bool, True if this completion counts toward eval metrics.
+        # Count only completed trials admitted by the evaluation schedule.
         eval_count_mask = None
         if past_dones.any() and self.auto_reset:
             obs_list[-1], infos_list[-1], eval_count_mask = self._handle_auto_reset(
@@ -1135,13 +1188,23 @@ class LiberoEnv(gym.Env):
             infos_list,
         )
 
-    def _handle_auto_reset(self, dones, _final_obs, infos):
+    def _handle_auto_reset(
+        self,
+        dones: np.ndarray,
+        _final_obs: dict[str, Any],
+        infos: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], np.ndarray | None]:
         if self.is_eval:
             return self._handle_eval_auto_reset(dones, _final_obs, infos)
         obs, infos = self._handle_train_auto_reset(dones, _final_obs, infos)
         return obs, infos, None
 
-    def _handle_eval_auto_reset(self, dones, _final_obs, infos):
+    def _handle_eval_auto_reset(
+        self,
+        dones: np.ndarray,
+        _final_obs: dict[str, Any],
+        infos: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], np.ndarray]:
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
@@ -1177,7 +1240,12 @@ class LiberoEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos, count_mask
 
-    def _handle_train_auto_reset(self, dones, _final_obs, infos):
+    def _handle_train_auto_reset(
+        self,
+        dones: np.ndarray,
+        _final_obs: dict[str, Any],
+        infos: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
@@ -1198,7 +1266,7 @@ class LiberoEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
-    def _calc_step_reward(self, terminations):
+    def _calc_step_reward(self, terminations: np.ndarray) -> np.ndarray:
         step_penalty = -1 if self.use_step_penalty else 0
         termination_bonus = self.cfg.reward_coef * terminations
         reward = step_penalty + termination_bonus
