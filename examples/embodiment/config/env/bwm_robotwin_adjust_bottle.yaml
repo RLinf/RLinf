@@ -21,7 +21,7 @@ success_reward_threshold: 0.9082576036453247
 
 # The RoboTwin pi0.5 policies read their own last joint command as proprio.
 state_from_last_action: True
-# RoboTwin's reset pose: arms at zero, grippers closed.
+# RoboTwin's reset pose: arms at zero, grippers open.
 rest_action: [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]
 
 is_eval: False

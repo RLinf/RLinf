@@ -104,7 +104,6 @@ actor:
     num_steps: 4
     openpi:
       config_name: "pi05_aloha_robotwin"
-      num_images_in_input: 1
       value_after_vlm: True
       # The width this recipe was tuned with; the value_after_vlm default is 1024/512/256.
       value_head_hidden_sizes: [512, 256, 128]

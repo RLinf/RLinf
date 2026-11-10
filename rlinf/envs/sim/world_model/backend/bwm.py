@@ -31,8 +31,7 @@ __all__ = ["BwmBackend"]
 _HISTORY = 9
 _CHUNK = 50
 _FUTURE = 52
-# Training noises history latents as (1 - s) z + s eps; BWM's inference applies it at
-# sigma = 1 for 50 steps, which replaces the history with noise.
+# Noise scale applied to history condition latents (frames 1..8) before denoising.
 _HISTORY_SIGMA = 0.2083
 
 
