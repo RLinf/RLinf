@@ -364,6 +364,64 @@ def test_openpi_short_memory_augmentation_keeps_frames_aligned():
     torch.testing.assert_close(outputs[1].history_time_offsets, time_offsets)
 
 
+def test_openpi_reads_nested_environment_history():
+    from rlinf.models.embodiment.openpi.env_io import EnvIO
+
+    def frame_transform(sample):
+        return {
+            "image": {
+                "base_0_rgb": sample["observation/image"],
+                "left_wrist_0_rgb": sample["observation/wrist_image"],
+            },
+            "image_mask": {"base_0_rgb": True, "left_wrist_0_rgb": True},
+            "state": sample["observation/state"],
+            "prompt": sample["prompt"],
+        }
+
+    tokenized_prompts = []
+
+    def sample_transform(sample):
+        tokenized_prompts.append(sample.pop("prompt"))
+        sample["tokenized_prompt"] = np.array([1, 2])
+        sample["tokenized_prompt_mask"] = np.array([True, True])
+        return sample
+
+    adapter = EnvIO()
+    adapter.config_name = "pi05_libero"
+    adapter.state_indices = ()
+    adapter.device = torch.device("cpu")
+    adapter._frame_transform = frame_transform
+    adapter._sample_transform = sample_transform
+    images = torch.arange(6, dtype=torch.float32).reshape(2, 3, 1, 1, 1)
+    history = {
+        "main_images": images.expand(-1, -1, 2, 2, 3),
+        "wrist_images": (images + 10).expand(-1, -1, 2, 2, 3),
+        "frame_mask": torch.tensor([[False, True, True], [False, False, True]]),
+        "time_offsets": torch.tensor([[0.0, -0.1, 0.0], [0.0, 0.0, 0.0]]),
+    }
+    states = torch.arange(8, dtype=torch.float32).reshape(2, 4)
+
+    observation = adapter._history_to_observation(
+        {
+            "history": history,
+            "states": states,
+            "task_descriptions": ["first task", "second task"],
+        }
+    )
+
+    assert sorted(tokenized_prompts) == ["first task", "second task"]
+    torch.testing.assert_close(observation.images["base_0_rgb"], history["main_images"])
+    torch.testing.assert_close(
+        observation.images["left_wrist_0_rgb"], history["wrist_images"]
+    )
+    for mask in observation.image_masks.values():
+        torch.testing.assert_close(mask, history["frame_mask"])
+    torch.testing.assert_close(observation.state, states)
+    torch.testing.assert_close(
+        observation.history_time_offsets, history["time_offsets"]
+    )
+
+
 def _make_model(*, prefix_seq_len: int = 5) -> RLTTokenTransformer:
     torch.manual_seed(0)
     return RLTTokenTransformer(

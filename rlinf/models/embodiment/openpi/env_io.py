@@ -148,11 +148,12 @@ class EnvIO:
 
     def _history_to_observation(self, env_obs: dict[str, Any]) -> Observation:
         """Transform camera history framewise, keeping the current state and prompt."""
-        main_images = env_obs["history_main_images"]
+        history = env_obs["history"]
+        main_images = history["main_images"]
         batch_size, num_frames = main_images.shape[:2]
         history_obs = {
             "main_images": main_images.flatten(0, 1),
-            "wrist_images": env_obs["history_wrist_images"].flatten(0, 1),
+            "wrist_images": history["wrist_images"].flatten(0, 1),
             "states": env_obs["states"].repeat_interleave(num_frames, dim=0),
             "task_descriptions": [
                 prompt
@@ -172,7 +173,7 @@ class EnvIO:
         current = tree_map(lambda value: value[num_frames - 1 :: num_frames], processed)
         current["prompt"] = prompts[num_frames - 1 :: num_frames]
         current = apply_input_transform(self._sample_transform, current)
-        frame_mask = env_obs["history_frame_mask"].bool()
+        frame_mask = history["frame_mask"].bool()
         current["image"] = {
             key: value.reshape(batch_size, num_frames, *value.shape[1:])
             for key, value in processed["image"].items()
@@ -181,7 +182,7 @@ class EnvIO:
             key: value.reshape(batch_size, num_frames).bool() & frame_mask
             for key, value in processed["image_mask"].items()
         }
-        current["history_time_offsets"] = env_obs["history_time_offsets"]
+        current["history_time_offsets"] = history["time_offsets"]
         return self._observation_dict_to_device(current)
 
     def _predict_eval(

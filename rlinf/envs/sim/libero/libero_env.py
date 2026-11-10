@@ -835,10 +835,10 @@ class LiberoEnv(gym.Env):
     def _get_history_obs(self):
         """Sample oldest to current frames, with masked left padding."""
         history = {
-            "history_main_images": [],
-            "history_wrist_images": [],
-            "history_frame_mask": [],
-            "history_time_offsets": [],
+            "main_images": [],
+            "wrist_images": [],
+            "frame_mask": [],
+            "time_offsets": [],
         }
         for frames in self._observation_history:
             selected = list(frames)[:: -self.history_stride][: self.history_length]
@@ -846,17 +846,17 @@ class LiberoEnv(gym.Env):
             missing = self.history_length - len(selected)
             current = selected[-1]
             for key, image_index in (
-                ("history_main_images", 0),
-                ("history_wrist_images", 1),
+                ("main_images", 0),
+                ("wrist_images", 1),
             ):
                 padding = [torch.zeros_like(current[image_index])] * missing
                 history[key].append(
                     torch.stack(padding + [frame[image_index] for frame in selected])
                 )
-            history["history_frame_mask"].append(
+            history["frame_mask"].append(
                 torch.tensor([False] * missing + [True] * len(selected))
             )
-            history["history_time_offsets"].append(
+            history["time_offsets"].append(
                 torch.tensor(
                     [0.0] * missing
                     + [
@@ -942,7 +942,7 @@ class LiberoEnv(gym.Env):
             for index in env_idx:
                 self._observation_history[index].clear()
             self._append_history(obs, env_idx)
-            obs.update(self._get_history_obs())
+            obs["history"] = self._get_history_obs()
         infos = {}
         return obs, infos
 
@@ -1000,7 +1000,7 @@ class LiberoEnv(gym.Env):
         if self.short_memory is not None:
             self._append_history(obs, range(self.num_envs))
             if _include_history:
-                obs.update(self._get_history_obs())
+                obs["history"] = self._get_history_obs()
 
         step_reward = self._calc_step_reward(terminations)
 

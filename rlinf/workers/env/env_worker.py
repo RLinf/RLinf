@@ -595,6 +595,26 @@ class EnvWorker(Worker):
         if not isinstance(last_obs, dict):
             return None
 
+        def replace_terminal_rows(observation, terminal, done_mask):
+            for key, value in observation.items():
+                if key not in terminal:
+                    continue
+                final_value = terminal[key]
+                if isinstance(value, dict) and isinstance(final_value, dict):
+                    replace_terminal_rows(value, final_value, done_mask)
+                elif isinstance(value, torch.Tensor) and isinstance(
+                    final_value, torch.Tensor
+                ):
+                    dst_mask = torch.as_tensor(done_mask, device=value.device)
+                    src_mask = dst_mask.to(device=final_value.device)
+                    value[dst_mask] = final_value[src_mask]
+                elif isinstance(value, np.ndarray) and isinstance(
+                    final_value, np.ndarray
+                ):
+                    value = value.copy()
+                    value[done_mask] = final_value[done_mask]
+                    observation[key] = value
+
         merged_final_obs = copy_dict_tensor(last_obs)
 
         if not isinstance(infos_list, (list, tuple)):
@@ -626,21 +646,7 @@ class EnvWorker(Worker):
             if not done_mask.any():
                 continue
 
-            for key, value in merged_final_obs.items():
-                if key not in final_obs:
-                    continue
-
-                final_value = final_obs[key]
-                if isinstance(value, torch.Tensor) and isinstance(
-                    final_value, torch.Tensor
-                ):
-                    dst_mask = torch.as_tensor(done_mask, device=value.device)
-                    src_mask = dst_mask.to(device=final_value.device)
-                    merged_final_obs[key][dst_mask] = final_value[src_mask]
-                elif isinstance(value, np.ndarray) and isinstance(
-                    final_value, np.ndarray
-                ):
-                    merged_final_obs[key][done_mask] = final_value[done_mask]
+            replace_terminal_rows(merged_final_obs, final_obs, done_mask)
 
         return merged_final_obs
 

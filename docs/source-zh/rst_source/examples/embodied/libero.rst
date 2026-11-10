@@ -481,7 +481,7 @@ LIBERO-Mem 用于评测需要记住先前交互、按顺序完成子目标的操
 
 历史按从旧到新的顺序排列，最后一帧为当前帧。历史不足时在左侧填充零图像，并将这些位置标记为无效。重置某个环境只清空该环境的历史。启用历史时保持 ``skip_intermediate_renders: False``，以获取中间控制步的相机观测。
 
-除当前图像、状态和任务描述外，观测还包含以下字段。其中 ``B`` 表示环境数量，``K`` 为 ``num_frames``：
+观测通过 ``history`` 字典组织历史帧，与当前图像、状态和任务描述一同传递。其中 ``B`` 表示环境数量，``K`` 为 ``num_frames``：
 
 .. list-table::
    :header-rows: 1
@@ -490,16 +490,16 @@ LIBERO-Mem 用于评测需要记住先前交互、按顺序完成子目标的操
    * - 字段
      - Shape
      - 含义
-   * - ``history_main_images``
+   * - ``history.main_images``
      - ``[B, K, H, W, 3]``
      - 第三人称相机 RGB 历史帧。
-   * - ``history_wrist_images``
+   * - ``history.wrist_images``
      - ``[B, K, H, W, 3]``
      - 腕部相机 RGB 历史帧。
-   * - ``history_frame_mask``
+   * - ``history.frame_mask``
      - ``[B, K]``
      - 实际观测帧为 ``True``，填充位置为 ``False``。
-   * - ``history_time_offsets``
+   * - ``history.time_offsets``
      - ``[B, K]``
      - 相对当前帧的秒数，当前帧为零。填充位置也使用零，由 mask 排除。
 

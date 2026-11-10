@@ -65,11 +65,11 @@ def history_env():
 def test_history_samples_oldest_to_current_after_buffer_rollover(history_env):
     history = history_env._get_history_obs()
 
-    assert history["history_main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
-    assert history["history_wrist_images"][0, :, 0, 0, 0].tolist() == [12, 14, 16]
-    assert history["history_frame_mask"].tolist() == [[True, True, True]] * 2
+    assert history["main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
+    assert history["wrist_images"][0, :, 0, 0, 0].tolist() == [12, 14, 16]
+    assert history["frame_mask"].tolist() == [[True, True, True]] * 2
     torch.testing.assert_close(
-        history["history_time_offsets"], torch.tensor([[-0.2, -0.1, 0.0]] * 2)
+        history["time_offsets"], torch.tensor([[-0.2, -0.1, 0.0]] * 2)
     )
 
 
@@ -103,9 +103,12 @@ def test_partial_reset_clears_only_the_reset_environment_history(history_env):
     before = env._get_history_obs()
     obs, _ = env.reset(env_idx=[0], reset_state_ids=[0])
 
-    assert obs["history_frame_mask"][0].tolist() == [False, False, True]
-    assert obs["history_main_images"][0, :, 0, 0, 0].tolist() == [0, 0, 9]
-    assert obs["history_wrist_images"][0, :, 0, 0, 0].tolist() == [0, 0, 19]
-    torch.testing.assert_close(obs["history_time_offsets"][0], torch.zeros(3))
+    assert obs["history"]["frame_mask"][0].tolist() == [False, False, True]
+    assert obs["history"]["main_images"][0, :, 0, 0, 0].tolist() == [0, 0, 9]
+    assert obs["history"]["wrist_images"][0, :, 0, 0, 0].tolist() == [0, 0, 19]
+    torch.testing.assert_close(obs["history"]["time_offsets"][0], torch.zeros(3))
     for key in before:
-        torch.testing.assert_close(obs[key][1], before[key][1])
+        torch.testing.assert_close(obs["history"][key][1], before[key][1])
+
+    assert before["main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
+    assert before["frame_mask"][0].tolist() == [True, True, True]

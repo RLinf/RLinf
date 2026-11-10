@@ -523,9 +523,9 @@ pads on the left with zero images and marks those slots invalid. Resetting an
 environment clears only its history. Keep ``skip_intermediate_renders: False``
 when history is enabled so the intermediate camera observations are available.
 
-The observation carries these fields in addition to the current images, state,
-and task description. Here ``B`` is the number of environments and ``K`` is
-``num_frames``:
+The observation groups past frames under ``history``, alongside the current
+images, state, and task description. Here ``B`` is the number of environments
+and ``K`` is ``num_frames``:
 
 .. list-table::
    :header-rows: 1
@@ -534,16 +534,16 @@ and task description. Here ``B`` is the number of environments and ``K`` is
    * - Field
      - Shape
      - Meaning
-   * - ``history_main_images``
+   * - ``history.main_images``
      - ``[B, K, H, W, 3]``
      - Third-person RGB frames.
-   * - ``history_wrist_images``
+   * - ``history.wrist_images``
      - ``[B, K, H, W, 3]``
      - Wrist RGB frames.
-   * - ``history_frame_mask``
+   * - ``history.frame_mask``
      - ``[B, K]``
      - ``True`` for observed frames; ``False`` for padding.
-   * - ``history_time_offsets``
+   * - ``history.time_offsets``
      - ``[B, K]``
      - Seconds relative to the current frame, whose offset is zero. Padding also uses zero and is excluded by the mask.
 

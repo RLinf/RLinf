@@ -1228,10 +1228,14 @@ def test_env_output_transports_current_and_terminal_visual_history():
     def observation(value):
         return {
             "states": torch.full((2, 3), value),
-            "history_main_images": torch.full((2, 3, 2, 2, 3), value),
-            "history_wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
-            "history_frame_mask": torch.tensor([[False, True, True]] * 2),
-            "history_time_offsets": torch.tensor([[0.0, -3.5, 0.0]] * 2),
+            "depth_images": torch.full((2, 2, 2), value),
+            "reset_mask": torch.tensor([False, True]),
+            "history": {
+                "main_images": torch.full((2, 3, 2, 2, 3), value),
+                "wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
+                "frame_mask": torch.tensor([[False, True, True]] * 2),
+                "time_offsets": torch.tensor([[0.0, -3.5, 0.0]] * 2),
+            },
         }
 
     output = EnvOutput(obs=observation(1), final_obs=observation(7))
@@ -1240,10 +1244,47 @@ def test_env_output_transports_current_and_terminal_visual_history():
     for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
         for key, value in original.items():
             torch.testing.assert_close(payload[name][key], value)
-    assert not any(
-        key.startswith("history_")
-        for key in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
+    assert (
+        "history" not in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
     )
+    shards = PolicyInput(obs=payload["obs"]).split([1, 1])
+    for index, shard in enumerate(shards):
+        torch.testing.assert_close(
+            shard.obs["history"]["main_images"],
+            output.obs["history"]["main_images"][index : index + 1],
+        )
+
+
+@pytest.mark.parametrize("array_type", [torch.tensor, np.array])
+def test_env_chunk_terminal_observation_merges_nested_history(array_type):
+    def observation(value):
+        return {
+            "states": array_type([[value], [value + 1]]),
+            "history": {
+                "main_images": array_type([[[value]], [[value + 1]]]),
+                "frame_mask": array_type([[False, True], [True, True]]),
+                "time_offsets": array_type([[0.0, -0.1], [-0.2, 0.0]]),
+            },
+        }
+
+    current, terminal = observation(1), observation(7)
+    original = copy.deepcopy(current)
+    worker = object.__new__(EnvWorker)
+    merged = worker._build_chunk_final_obs(
+        [current],
+        [
+            {
+                "final_observation": terminal,
+                "_final_observation": array_type([[True], [False]]),
+            }
+        ],
+    )
+
+    np.testing.assert_array_equal(merged["states"], [[7], [2]])
+    np.testing.assert_array_equal(merged["history"]["main_images"], [[[7]], [[2]]])
+    torch.testing.assert_close(current, original)
+    merged["history"]["main_images"][0] = 100
+    np.testing.assert_array_equal(terminal["history"]["main_images"], [[[7]], [[8]]])
 
 
 def test_removed_duplicate_types_are_not_schema_api():
