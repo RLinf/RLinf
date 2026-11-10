@@ -350,6 +350,100 @@ def test_evo_mask_padded_language_attention_zeros_masked_query_rows():
     torch.testing.assert_close(out[:, 2], torch.full((1, 4), 2.0))
 
 
+def test_evo_action_head_graph_capture_failure_falls_back_to_eager(monkeypatch):
+    from rlinf.models.embodiment.evo1 import evo1_rl_head as head_ops
+    from rlinf.models.embodiment.evo1.evo1_action_model import (
+        Evo1ForRLActionPrediction,
+    )
+    from rlinf.models.embodiment.evo1.utils.normalizer import Normalizer
+
+    class ActionHead(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.horizon = 2
+            self.per_action_dim = 3
+            self.dtype = torch.float32
+            self.state_encoder = None
+            self.transformer_blocks = torch.nn.ModuleList()
+            self.action_projection = torch.nn.Linear(3, 8)
+            self.norm_out = torch.nn.LayerNorm(8)
+            self.seq_pool_proj = torch.nn.Linear(16, 8)
+            self.output_projection = torch.nn.Linear(8, 6)
+            self.register_buffer("time_embedding", torch.zeros(1, 1000, 8))
+
+        def time_pos_enc(self, length):
+            return self.time_embedding[:, :length]
+
+        def _project_actions(self, actions, embodiment_id):
+            return self.action_projection(actions)
+
+        def mlp_head(self, features, embodiment_id):
+            return self.output_projection(features)
+
+    class DummyEvo1(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.action_head = ActionHead()
+            self.horizon = 2
+            self.per_action_dim = 3
+
+    class FailingGraphManager:
+        def __init__(self, device):
+            self.device = device
+            self.graphs = {}
+            self.capture_calls = 0
+
+        def capture(self, spec):
+            self.capture_calls += 1
+            raise RuntimeError("capture unsupported")
+
+    monkeypatch.setattr(
+        "rlinf.models.embodiment.evo1.evo1_action_model.CUDAGraphManager",
+        FailingGraphManager,
+    )
+    evo1 = DummyEvo1()
+    normalizer = Normalizer(
+        {
+            "arm": {
+                "ds": {
+                    "state": {"min": [-1.0] * 3, "max": [1.0] * 3},
+                    "action": {"min": [-1.0] * 3, "max": [1.0] * 3},
+                }
+            }
+        }
+    )
+    policy = Evo1ForRLActionPrediction(
+        evo1,
+        normalizer,
+        action_dim=3,
+        num_action_chunks=2,
+        arm_key="arm",
+        dataset_key="ds",
+    )
+    policy.capture_cuda_graph(train_batch_size=2, eval_batch_size=1)
+
+    context = torch.randn(2, 4, 8)
+    action_tokens = torch.randn(2, 2, 8)
+    time_emb = torch.randn(2, 8)
+    embodiment = torch.zeros(2, dtype=torch.long)
+
+    with torch.no_grad():
+        expected = head_ops.flow_velocity_from_embeddings(
+            evo1.action_head, context, action_tokens, time_emb, embodiment
+        )
+        first = policy._action_head_forward(
+            evo1.action_head, context, action_tokens, time_emb, embodiment
+        )
+        second = policy._action_head_forward(
+            evo1.action_head, context, action_tokens, time_emb, embodiment
+        )
+
+    assert policy.cuda_graph_manager.capture_calls == 1
+    assert len(policy._failed_graphs) == 1
+    torch.testing.assert_close(first, expected, rtol=0, atol=0)
+    torch.testing.assert_close(second, expected, rtol=0, atol=0)
+
+
 def test_evo_chunked_vision_preserves_actions_replay_gradients_and_rng(monkeypatch):
     """Compare the real NPU checkpoint using captured rollout observations."""
     observation_path = os.environ.get("RLINF_EVO_TEST_OBSERVATIONS")

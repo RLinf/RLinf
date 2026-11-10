@@ -74,7 +74,7 @@ Scope and Measured Contribution
 
 The GR00T N1.5/N1.6 comparisons keep batch size fixed and toggle the metadata cache. GR00T N1.6 B16 action latency falls from 4.249 s to 1.122 s, improving sample throughput by 278.62%. GR00T N1.5 falls from 1.067 s to 0.361 s, a 195.52% improvement. Their four-rank training-call gains are 37.01%–39.04% and 41.76%–42.32%, respectively. Repeated metadata preparation accounted for a substantial part of the original complete-call cost.
 
-OpenVLA's reference already contains its earlier mask cache. Checking storage, shape, stride, offset, dtype, device, and version before reusing a verdict for views of the same underlying data improves B64 action throughput by 3.51% and bootstrap by 1.15%. The available saving depends on the repeated work left in each baseline; the GR00T gains are not predictions for OpenVLA or another Transformers version.
+OpenVLA's reference already contains its earlier mask cache. A measured prototype that also checks storage, shape, stride, offset, dtype, device, and version before reusing a verdict for views of the same data improves B64 action throughput by 3.51% and bootstrap by 1.15%. That prototype is stricter than the tensor-object cache in this repository. The available saving depends on the repeated work left in each baseline; the GR00T gains are not predictions for OpenVLA or another Transformers version.
 
 Overlap Sharded Parameter Communication with Compute
 ----------------------------------------------------

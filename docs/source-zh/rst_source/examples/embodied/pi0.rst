@@ -441,7 +441,7 @@ OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``。
 
 NVIDIA 使用上面的安装与启动流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都通过共用平台安装器与 scheduler 设备 API 支持 OpenPI π₀ / π₀.₅ 系列在 LIBERO 和 ManiSkill 上运行。非 CUDA 后端上的 ManiSkill 使用 CPU simulation；MUSA 还需要厂商模拟器包。
 
-OpenPI 可以通过 ``torch.compile`` 编译激活函数、旋转位置编码和门控残差更新等计算。省略 ``actor.model.openpi.torch_compile`` 时，RLinf 根据当前 Python 环境中是否存在 ``triton`` 模块决定是否启用编译；显式配置优先于自动检测。π₀.₅ 模板已将该项设为 ``True``，因此在缺少兼容 Triton/Inductor 环境的后端上，需要在实验 YAML 中添加以下配置，改用 eager 执行：
+OpenPI 可以通过 ``torch.compile`` 编译激活函数、旋转位置编码和门控残差更新等计算。仅当 ``actor.model.openpi.torch_compile`` 为 ``True`` 且当前 Python 环境包含 ``triton`` 模块时才会启用编译。π₀.₅ 模板将该项设为 ``True``，因此未安装 Triton 的后端会保持 eager 执行。若已安装 Triton 但 Inductor 无法运行（例如使用 Isaac Sim 时），可在实验 YAML 中添加以下配置将其设为 ``False``：
 
 .. code-block:: yaml
 

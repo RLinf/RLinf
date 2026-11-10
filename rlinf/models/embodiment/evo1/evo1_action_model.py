@@ -106,6 +106,7 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
             )
         self.normalizer = normalizer
         self.cuda_graph_manager: CUDAGraphManager | None = None
+        self._failed_graphs: set[str] = set()
 
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
@@ -155,6 +156,7 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         time/action embedding preparation run eagerly. Release graphs before
         moving model weights to another device.
         """
+        self._failed_graphs = set()
         if self.cuda_graph_manager is None:
             self.cuda_graph_manager = CUDAGraphManager(
                 device=next(self.parameters()).device
@@ -180,20 +182,33 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         }
         name = f"velocity_{graph_signature(inputs)}"
         if name not in self.cuda_graph_manager.graphs:
+            if name in self._failed_graphs:
+                return rlh.flow_velocity_from_embeddings(
+                    action_head, context_tokens, action_tokens, time_emb, embodiment_id
+                )
 
             def head_call(data):
                 return {
                     "velocity": rlh.flow_velocity_from_embeddings(action_head, **data)
                 }
 
-            graph_spec = self.cuda_graph_manager.capture(
-                GraphCaptureSpec(
-                    name=name,
-                    func=head_call,
-                    inputs=clone_tensor_tree(inputs),
-                    external_inputs=set(inputs),
+            try:
+                graph_spec = self.cuda_graph_manager.capture(
+                    GraphCaptureSpec(
+                        name=name,
+                        func=head_call,
+                        inputs=clone_tensor_tree(inputs),
+                        external_inputs=set(inputs),
+                    )
                 )
-            )
+            except Exception as error:
+                self._failed_graphs.add(name)
+                get_logger().warning(
+                    f"Evo-1 action-head graph capture failed ({error}); staying eager"
+                )
+                return rlh.flow_velocity_from_embeddings(
+                    action_head, context_tokens, action_tokens, time_emb, embodiment_id
+                )
             return graph_spec.outputs["velocity"].clone()
         # The next denoising step overwrites the graph's output buffer.
         return self.cuda_graph_manager.replay(name, inputs)["velocity"].clone()
