@@ -267,9 +267,21 @@ config uses ``algorithm.adv_type: grpo`` and ``algorithm.loss_type: actor`` with
     bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvlav2
 
 Export the RoboTwin variables from `Launch Commands`_ before running this command.
-Check that grouped rollouts produce different returns and nonzero advantages;
-equal returns within a group provide no policy learning signal. Compare PPO and
+Check that grouped rollouts produce different returns and nonzero advantages:
+the policy update comes from these within-group differences. Compare PPO and
 GRPO checkpoints with the same evaluation seeds and trajectory count.
+
+To start GRPO from an SFT checkpoint, set ``runner.ckpt_path`` in the GRPO config
+to the SFT full weights file. SFT saves it under the experiment directory inside
+the log path:
+
+.. code-block:: yaml
+
+    runner:
+      ckpt_path: logs/<timestamp>-robotwin_sft_lingbotvlav2/robotwin_sft_lingbotvlav2/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+
+SFT and GRPO both build the model with ``add_value_head: false``, so the actor
+and the rollout load these weights strictly.
 
 Launch Commands
 ~~~~~~~~~~~~~~~

@@ -224,7 +224,16 @@ GRPO 在每组八条 rollout 内比较回报。配置使用 ``algorithm.adv_type
 
     bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvlav2
 
-执行前，先导出 `启动命令`_ 中的 RoboTwin 环境变量。检查组内 rollout 是否产生不同回报和非零 advantage；组内回报相同时无法提供 policy 学习信号。比较 PPO 与 GRPO checkpoint 时，使用相同的评测 seeds 和轨迹数量。
+执行前，先导出 `启动命令`_ 中的 RoboTwin 环境变量。检查组内 rollout 是否产生不同回报和非零 advantage：policy 更新来自组内回报的差异。比较 PPO 与 GRPO checkpoint 时，使用相同的评测 seeds 和轨迹数量。
+
+从 SFT checkpoint 开始 GRPO 时，在 GRPO 配置中将 ``runner.ckpt_path`` 设为 SFT 保存的完整权重文件。SFT 将它保存在日志路径下的 experiment 目录中：
+
+.. code-block:: yaml
+
+    runner:
+      ckpt_path: logs/<timestamp>-robotwin_sft_lingbotvlav2/robotwin_sft_lingbotvlav2/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+
+SFT 与 GRPO 都以 ``add_value_head: false`` 构建模型，因此 actor 和 rollout 均可严格加载这份权重。
 
 启动命令
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
