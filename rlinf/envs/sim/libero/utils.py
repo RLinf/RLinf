@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import math
 import os
+from importlib import import_module
+from types import ModuleType
 from typing import TYPE_CHECKING, Union
 
 import numpy as np
@@ -37,6 +39,29 @@ def get_libero_type() -> str:
 
 
 libero_type = get_libero_type()
+
+
+def import_libero_module(module_name: str) -> ModuleType:
+    """Import a LIBERO module using the selected variant's fallback order."""
+    if libero_type in ("pro", "plus"):
+        variant = f"libero{libero_type}"
+        packages = (f"{variant}.{variant}", "libero.libero")
+    else:
+        packages = ("libero.libero", "liberopro.liberopro", "liberoplus.liberoplus")
+
+    for package in packages:
+        try:
+            return import_module(f"{package}.{module_name}")
+        except ImportError as error:
+            if package == packages[-1]:
+                raise ImportError(
+                    f"Cannot import LIBERO {module_name}; tried {', '.join(packages)}."
+                ) from error
+            if libero_type in ("pro", "plus"):
+                get_logger().warning(
+                    f"LIBERO_TYPE={libero_type}: failed to import "
+                    f"{package}.{module_name} ({error}); falling back to libero.libero."
+                )
 
 
 def get_libero_image(
@@ -121,44 +146,8 @@ def get_benchmark_overridden(benchmark_name: str) -> type[Benchmark]:
     Returns:
         Benchmark class
     """
-    if libero_type == "pro":
-        try:
-            import liberopro.liberopro.benchmark as benchmark
-            from liberopro.liberopro.benchmark import Benchmark
-        except ImportError:
-            print(
-                "[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'."
-            )
-            import libero.libero.benchmark as benchmark
-            from libero.libero.benchmark import Benchmark
-
-    elif libero_type == "plus":
-        try:
-            import liberoplus.liberoplus.benchmark as benchmark
-            from liberoplus.liberoplus.benchmark import Benchmark
-        except ImportError:
-            print(
-                "[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'."
-            )
-            import libero.libero.benchmark as benchmark
-            from libero.libero.benchmark import Benchmark
-
-    else:
-        try:
-            import libero.libero.benchmark as benchmark
-            from libero.libero.benchmark import Benchmark
-        except ImportError:
-            try:
-                import liberopro.liberopro.benchmark as benchmark
-                from liberopro.liberopro.benchmark import Benchmark
-            except ImportError:
-                try:
-                    import liberoplus.liberoplus.benchmark as benchmark
-                    from liberoplus.liberoplus.benchmark import Benchmark
-                except ImportError:
-                    raise ImportError(
-                        "No valid LIBERO package (libero, liberopro, or liberoplus) found."
-                    )
+    benchmark = import_libero_module("benchmark")
+    Benchmark = benchmark.Benchmark
 
     name = str(benchmark_name).lower()
     if name == "libero_mem" and name not in benchmark.BENCHMARK_MAPPING:

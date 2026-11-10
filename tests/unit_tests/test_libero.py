@@ -38,8 +38,8 @@ def test_camera_orientation_matches_demonstrations(extract_image, is_libero_mem)
     np.testing.assert_array_equal(extract_image(obs), image[::-1, ::-1])
 
 
-@pytest.fixture
-def history_env():
+@pytest.fixture(params=[torch.uint8, torch.float32])
+def history_env(request):
     pytest.importorskip("libero.libero.envs")
     from rlinf.envs.sim.libero.libero_env import LiberoEnv
 
@@ -54,23 +54,39 @@ def history_env():
         env._elapsed_steps[:] = step
         env._append_history(
             {
-                "main_images": torch.full((2, 2, 2, 3), step),
-                "wrist_images": torch.full((2, 2, 2, 3), step + 10),
+                "main_images": torch.full((2, 2, 2, 3), step, dtype=request.param),
+                "wrist_images": torch.full(
+                    (2, 2, 2, 3), step + 10, dtype=request.param
+                ),
             },
             range(2),
         )
     return env
 
 
-def test_history_samples_oldest_to_current_after_buffer_rollover(history_env):
+@pytest.mark.parametrize("history_length", [1, 3])
+def test_history_samples_oldest_to_current_after_buffer_rollover(
+    history_env, history_length
+):
+    history_env.history_length = history_length
     history = history_env._get_history_obs()
+    expected_steps = [6] if history_length == 1 else [2, 4, 6]
+    expected_offsets = [0.0] if history_length == 1 else [-0.2, -0.1, 0.0]
 
-    assert history["main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
-    assert history["wrist_images"][0, :, 0, 0, 0].tolist() == [12, 14, 16]
-    assert history["frame_mask"].tolist() == [[True, True, True]] * 2
+    assert history["main_images"][0, :, 0, 0, 0].tolist() == expected_steps
+    assert history["wrist_images"][0, :, 0, 0, 0].tolist() == [
+        step + 10 for step in expected_steps
+    ]
+    assert history["frame_mask"].tolist() == [[True] * history_length] * 2
     torch.testing.assert_close(
-        history["time_offsets"], torch.tensor([[-0.2, -0.1, 0.0]] * 2)
+        history["time_offsets"], torch.tensor([expected_offsets] * 2)
     )
+    assert all(value.is_contiguous() for value in history.values())
+    assert (
+        history["main_images"].dtype == history_env._observation_history[0][-1][0].dtype
+    )
+    history["main_images"].zero_()
+    assert history_env._observation_history[0][-1][0][0, 0, 0] == 6
 
 
 def test_partial_reset_clears_only_the_reset_environment_history(history_env):
@@ -87,9 +103,10 @@ def test_partial_reset_clears_only_the_reset_environment_history(history_env):
     env.task_descriptions = ["task", "task"]
     env.prev_step_reward = np.zeros(2)
     env._init_metrics()
+    image_dtype = env._observation_history[0][-1][0].numpy().dtype
     raw_obs = {
-        "agentview_image": np.full((2, 2, 3), 9, dtype=np.uint8),
-        "robot0_eye_in_hand_image": np.full((2, 2, 3), 19, dtype=np.uint8),
+        "agentview_image": np.full((2, 2, 3), 9, dtype=image_dtype),
+        "robot0_eye_in_hand_image": np.full((2, 2, 3), 19, dtype=image_dtype),
         "robot0_eef_pos": np.zeros(3),
         "robot0_eef_quat": np.array([0.0, 0.0, 0.0, 1.0]),
         "robot0_gripper_qpos": np.zeros(2),
@@ -112,3 +129,73 @@ def test_partial_reset_clears_only_the_reset_environment_history(history_env):
 
     assert before["main_images"][0, :, 0, 0, 0].tolist() == [2, 4, 6]
     assert before["frame_mask"][0].tolist() == [True, True, True]
+
+
+@pytest.mark.parametrize(
+    "variant,available,packages",
+    [
+        ("standard", "libero.libero", ["libero.libero"]),
+        (
+            "standard",
+            "liberopro.liberopro",
+            ["libero.libero", "liberopro.liberopro"],
+        ),
+        (
+            "standard",
+            "liberoplus.liberoplus",
+            ["libero.libero", "liberopro.liberopro", "liberoplus.liberoplus"],
+        ),
+        ("pro", "liberopro.liberopro", ["liberopro.liberopro"]),
+        ("pro", "libero.libero", ["liberopro.liberopro", "libero.libero"]),
+        ("plus", "liberoplus.liberoplus", ["liberoplus.liberoplus"]),
+        ("plus", "libero.libero", ["liberoplus.liberoplus", "libero.libero"]),
+    ],
+)
+def test_libero_module_selection_preserves_variant_order(
+    monkeypatch, variant, available, packages
+):
+    from types import ModuleType
+
+    from rlinf.envs.sim.libero import utils
+
+    selected = ModuleType(f"{available}.benchmark")
+    attempted = []
+
+    def import_module(name):
+        attempted.append(name)
+        if name != selected.__name__:
+            raise ImportError(name)
+        return selected
+
+    monkeypatch.setattr(utils, "libero_type", variant)
+    monkeypatch.setattr(utils, "import_module", import_module)
+
+    assert utils.import_libero_module("benchmark") is selected
+    assert attempted == [f"{package}.benchmark" for package in packages]
+
+
+@pytest.mark.parametrize(
+    "variant,packages",
+    [
+        ("standard", ["libero.libero", "liberopro.liberopro", "liberoplus.liberoplus"]),
+        ("pro", ["liberopro.liberopro", "libero.libero"]),
+        ("plus", ["liberoplus.liberoplus", "libero.libero"]),
+    ],
+)
+def test_libero_module_selection_stops_after_allowed_fallbacks(
+    monkeypatch, variant, packages
+):
+    from rlinf.envs.sim.libero import utils
+
+    attempted = []
+
+    def import_module(name):
+        attempted.append(name)
+        raise ImportError(name)
+
+    monkeypatch.setattr(utils, "libero_type", variant)
+    monkeypatch.setattr(utils, "import_module", import_module)
+
+    with pytest.raises(ImportError, match="Cannot import LIBERO envs"):
+        utils.import_libero_module("envs")
+    assert attempted == [f"{package}.envs" for package in packages]

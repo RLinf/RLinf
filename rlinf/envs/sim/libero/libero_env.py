@@ -834,13 +834,15 @@ class LiberoEnv(gym.Env):
 
     def _get_history_obs(self):
         """Sample oldest to current frames, with masked left padding."""
+        main_image, wrist_image, _ = self._observation_history[0][-1]
+        batch_shape = (self.num_envs, self.history_length)
         history = {
-            "main_images": [],
-            "wrist_images": [],
-            "frame_mask": [],
-            "time_offsets": [],
+            "main_images": main_image.new_empty((*batch_shape, *main_image.shape)),
+            "wrist_images": wrist_image.new_empty((*batch_shape, *wrist_image.shape)),
+            "frame_mask": torch.zeros(batch_shape, dtype=torch.bool),
+            "time_offsets": torch.zeros(batch_shape, dtype=torch.float32),
         }
-        for frames in self._observation_history:
+        for env_index, frames in enumerate(self._observation_history):
             selected = list(frames)[:: -self.history_stride][: self.history_length]
             selected.reverse()
             missing = self.history_length - len(selected)
@@ -849,23 +851,18 @@ class LiberoEnv(gym.Env):
                 ("main_images", 0),
                 ("wrist_images", 1),
             ):
-                padding = [torch.zeros_like(current[image_index])] * missing
-                history[key].append(
-                    torch.stack(padding + [frame[image_index] for frame in selected])
+                images = history[key][env_index]
+                images[:missing].zero_()
+                torch.stack(
+                    [frame[image_index] for frame in selected],
+                    out=images[missing:],
                 )
-            history["frame_mask"].append(
-                torch.tensor([False] * missing + [True] * len(selected))
+            history["frame_mask"][env_index, missing:] = True
+            history["time_offsets"][env_index, missing:] = torch.tensor(
+                [(frame[2] - current[2]) / self.history_fps for frame in selected],
+                dtype=torch.float32,
             )
-            history["time_offsets"].append(
-                torch.tensor(
-                    [0.0] * missing
-                    + [
-                        (frame[2] - current[2]) / self.history_fps for frame in selected
-                    ],
-                    dtype=torch.float32,
-                )
-            )
-        return {key: torch.stack(value) for key, value in history.items()}
+        return history
 
     def _reconfigure(self, reset_state_ids, env_idx):
         reconfig_env_idx = []
