@@ -102,9 +102,10 @@ Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Mode
 
 .. code-block:: bibtex
 
-    @article{shi2026rlinf,
-      title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models},
-      author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zhang, Hongzhi and Zhang, Weinan and Yu, Chao and Wang, Yu},
-      journal={arXiv preprint arXiv:2602.12628},
-      year={2026}
-    }
+   @article{shi2026rlinf,
+     title={Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models},
+     author={Shi, Liangzhi and Chen, Shuaihang and Gao, Feng and Chen, Yinuo and Chen, Kang and Zhang, Tonghe and Zang, Hongzhi and Zhou, Jiakai and Zhang, Weinan and Yu, Chao and Wang, Yu},
+     journal={arXiv preprint arXiv:2602.12628},
+     year={2026},
+     url={https://arxiv.org/abs/2602.12628},
+   }

@@ -608,6 +608,45 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _StreamingScalarFeatureDataset(_LegacyDataset):
+    """Mimic a streaming LeRobot dataset with scalar HF features."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "is_success": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {
+            "done": [],
+            "is_success": [],
+            "segment_id": [],
+            "size": 0,
+        }
+        self.image_writer = None
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["is_success"].append(frame["is_success"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+        self.episode_buffer["size"] += 1
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, bool) for value in self.episode_buffer["is_success"]
+        )
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -635,6 +674,28 @@ def test_current_dataset_gets_task_as_argument():
     assert dataset.tasks == ["pick up the cube"] * 2
     assert all("task" not in f for f in dataset.frames)
     assert dataset.frames[0]["state"] == 0
+    assert dataset.saved_episodes == 1
+
+
+def test_streaming_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _StreamingScalarFeatureDataset()
+    writer = _make_writer(dataset)
+    writer.add_frame(
+        {
+            "done": np.array([False], dtype=bool),
+            "is_success": np.array([False], dtype=bool),
+            "segment_id": np.array([3], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+    )
+
+    assert writer.save_episode(is_success=True) == 1
+    assert dataset.episode_buffer == {
+        "done": [True],
+        "is_success": [True],
+        "segment_id": [3],
+        "size": 1,
+    }
     assert dataset.saved_episodes == 1
 
 
@@ -2866,6 +2927,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
@@ -3178,6 +3240,7 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3232,6 +3295,7 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(
