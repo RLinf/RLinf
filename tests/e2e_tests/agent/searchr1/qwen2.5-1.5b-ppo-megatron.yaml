@@ -15,6 +15,7 @@ algorithm:
   adv_type: gae_dynamic
   gamma: 1.0
   gae_lambda: 1.0
+  value_cliprange: 0.5
   kl_beta: 0.0
   loss_scales: []
   normalize_advantages: true
