@@ -47,6 +47,7 @@ import rlinf.scheduler.hardware.accelerators.nvidia_gpu as nvidia_gpu
 import rlinf.utils.robosuite_compat as robosuite_compat
 from rlinf.envs.real import load_tasks
 from rlinf.envs.real.dosw1.base import DOSW1Env, DOSW1EnvConfig
+from rlinf.envs.real.dosw1.pick import PickEnv
 from rlinf.envs.real.franka.base import FrankaEnv
 from rlinf.envs.real.franka.dual_franka_joint import (
     DualFrankaJointEnv,
@@ -124,6 +125,7 @@ def _assert_legacy_transition(env) -> None:
             {"step_frequency": 10000.0},
         ),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
+        ("rlinf.envs.real.ur5", "UR5ReachEnv", {}),
     ],
 )
 def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, override):
@@ -166,6 +168,412 @@ def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, overri
 
     assert np.array_equal(observe(7), observe(7)), "the same seed must repeat"
     assert not np.array_equal(observe(7), observe(8)), "a different seed must differ"
+
+
+def test_ur5_reach_env_automatic_resets_continue_the_seeded_stream():
+    """An automatic reset must continue the seeded RNG, not start a fresh one.
+
+    An automatic reset (``seed=None``) following a seeded one must draw from
+    the same RNG stream the explicit seed started, so the same sequence of
+    reset calls reproduces the same perturbed poses across runs.
+    """
+    from robot_mocks import mocked_sdks
+
+    def run():
+        with mocked_sdks():
+            from rlinf.envs.real.ur5 import UR5ReachEnv
+
+            env = UR5ReachEnv(
+                override_cfg={
+                    "is_dummy": True,
+                    "enable_camera_player": False,
+                    "target_joint_qpos": [0.0] * 6,
+                    "enable_random_reset": True,
+                    "random_joint_noise": 0.05,
+                },
+                worker_info=None,
+                env_idx=0,
+                robot_info=None,
+            )
+            try:
+                env.reset(seed=5)
+                env.reset()  # automatic reset: must continue the seeded stream
+                env.reset()
+                return list(env.config.reset_joint_qpos)
+            finally:
+                env.close()
+
+    assert run() == run(), (
+        "the same seed followed by automatic resets must reproduce the "
+        "same perturbed poses every time"
+    )
+
+
+def test_ur5_step_reports_success_explicitly_for_dense_reward():
+    """A dense reward rarely lands on 1.0, so success must not infer from it.
+
+    ``_calc_step_reward`` scores proximity to the target, but
+    ``info["success"]`` is what ``RealWorldEnv.step`` consults so a
+    dense-reward UR5 run can still detect a hit.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    env = UR5ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "use_dense_reward": True,
+            "target_joint_qpos": [0.0] * 6,
+            "reward_threshold": 0.05,
+        },
+        worker_info=None,
+        env_idx=0,
+        robot_info=None,
+    )
+    try:
+        env.reset(seed=0)
+        hit_obs = env.observation_space.sample()
+        hit_obs["state"]["arm_joint_position"] = np.zeros(6, dtype=np.float32)
+        miss_obs = env.observation_space.sample()
+        miss_obs["state"]["arm_joint_position"] = np.full(6, 10.0, dtype=np.float32)
+
+        env._get_observation = lambda: hit_obs
+        _, reward, _, _, info = env.step(np.zeros(6, dtype=np.float32))
+        assert not np.isclose(reward, 1.0), "dense reward must not read as 1.0"
+        assert info["success"] is True
+
+        env._get_observation = lambda: miss_obs
+        _, _, _, _, info = env.step(np.zeros(6, dtype=np.float32))
+        assert info["success"] is False
+    finally:
+        env.close()
+
+
+def test_ur5_step_rejects_a_non_finite_action_before_clipping():
+    """A non-finite policy action must raise, not be laundered by clipping.
+
+    ``step`` must check the raw policy action for finiteness before clipping
+    it to the action space, since ``nan`` survives ``np.clip`` unchanged and
+    ``inf``/``-inf`` clip to an extreme-but-finite-looking target that would
+    otherwise reach the arm looking valid.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    env = UR5ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "target_joint_qpos": [0.0] * 6,
+        },
+        worker_info=None,
+        env_idx=0,
+        robot_info=None,
+    )
+    try:
+        env.reset(seed=0)
+        bad_action = np.zeros(6, dtype=np.float32)
+        bad_action[2] = np.inf
+        with pytest.raises(ValueError, match="finite"):
+            env.step(bad_action)
+        with pytest.raises(ValueError, match="shape"):
+            env.step(np.zeros(5, dtype=np.float32))
+    finally:
+        env.close()
+
+
+def test_ur5_reach_env_rejects_a_reset_pose_outside_the_joint_limits():
+    """A reset pose outside the configured joint limits must raise early.
+
+    The arm clips motion to its own hardware limits, not the task's bounds,
+    so construction must reject a ``reset_joint_qpos`` outside the task's
+    ``joint_limit_low``/``joint_limit_high`` before any hardware connects.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="reset_joint_qpos"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "reset_joint_qpos": [10.0] * 6,
+                "joint_limit_low": [-1.0] * 6,
+                "joint_limit_high": [1.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_env_rejects_task_joint_limits_outside_the_arm_drivers_travel():
+    """Task joint limits wider than the arm driver's travel must raise early.
+
+    Both UR5 backends clip commanded positions to a fixed hardware range
+    regardless of the task's own ``joint_limit_low``/``joint_limit_high``,
+    so construction must reject task bounds wider than that range instead
+    of accepting a restriction that would never actually constrain motion.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="joint_limit_low"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "joint_limit_low": [-4.0] * 6,
+                "joint_limit_high": [1.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_env_rejects_joint_limit_arrays_with_the_wrong_length():
+    """A 'joint_limit_low'/'joint_limit_high' of the wrong length must raise.
+
+    ``UR5EnvConfig.__post_init__`` must check that these two fields match
+    the arm's DOF, so a mismatched-length array is rejected at construction
+    instead of silently broadcasting through later bounds comparisons and
+    the per-step clip.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="6 arm joints"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "joint_limit_low": [-1.0],
+                "joint_limit_high": [1.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_env_rejects_non_finite_joint_limits():
+    """A ``nan``/``inf`` in 'joint_limit_low'/'joint_limit_high' must raise early."""
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="joint_limit_low"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "joint_limit_low": [float("nan")] * 6,
+                "joint_limit_high": [1.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_env_rejects_inverted_joint_limits():
+    """A 'joint_limit_low' exceeding 'joint_limit_high' must raise early."""
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "joint_limit_low": [1.0] * 6,
+                "joint_limit_high": [-1.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_env_rejects_a_reset_joint_qpos_of_the_wrong_length():
+    """A 'reset_joint_qpos' of the wrong length must raise, not broadcast silently."""
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="reset_joint_qpos must have 6 values"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "reset_joint_qpos": [0.0] * 5,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_env_rejects_a_non_finite_reset_joint_qpos():
+    """A ``nan``/``inf`` in 'reset_joint_qpos' must raise at construction."""
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="reset_joint_qpos must be finite"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0] * 6,
+                "reset_joint_qpos": [0.0, 0.0, 0.0, 0.0, 0.0, float("inf")],
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_reach_env_rejects_a_non_finite_target():
+    """A non-finite 'target_joint_qpos' must raise at construction.
+
+    Construction must reject a ``nan``/``inf`` target up front, the same as
+    a non-finite action, rather than let it reach runtime where it would
+    only produce an unreachable goal or an invalid reward.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="finite"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [0.0, 0.0, 0.0, 0.0, 0.0, float("nan")],
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_reach_env_rejects_a_target_outside_the_joint_limits():
+    """A 'target_joint_qpos' outside the task's own bounds must raise early.
+
+    Every command is clipped to ``joint_limit_low``/``joint_limit_high``,
+    so construction must reject a target outside those bounds instead of
+    letting it surface only as a runtime reward/convergence failure.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+
+    with pytest.raises(ValueError, match="target_joint_qpos"):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": True,
+                "target_joint_qpos": [2.0] * 6,
+                "joint_limit_low": [-1.0] * 6,
+                "joint_limit_high": [1.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=None,
+        )
+
+
+def test_ur5_camera_failure_uses_the_camera_retry_policy_not_recursion():
+    """A stalled camera must raise after bounded attempts, not recurse.
+
+    ``BaseCamera.get_frame`` already reopens a stalled camera and retries,
+    bounded by ``attempts``; ``_get_camera_frames`` must surface that
+    exhaustion as an error, not reopen and call itself again with no bound.
+    """
+    from rlinf.envs.real.ur5.base import UR5Env
+
+    env = UR5Env.__new__(UR5Env)
+    env._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    env.observation_space = gym.spaces.Dict(
+        {
+            "frames": gym.spaces.Dict(
+                {"wrist_1": gym.spaces.Box(0, 255, shape=(4, 4, 3), dtype=np.uint8)}
+            )
+        }
+    )
+
+    class Camera:
+        name = "wrist_1"
+
+        def __init__(self):
+            self.calls = []
+
+        def get_frame(self, **kwargs):
+            self.calls.append(kwargs)
+            raise __import__("queue").Empty
+
+    camera = Camera()
+    env._cameras = [camera]
+
+    with pytest.raises(RuntimeError, match="did not produce a frame after 3"):
+        env._get_camera_frames()
+    assert camera.calls == [{"timeout": 0.5, "attempts": 3}]
+
+
+def test_ur5_env_init_disconnects_the_robot_if_setup_fails_afterward(monkeypatch):
+    """A failure while composing hardware must still disconnect the robot.
+
+    The rollback that disconnects the robot on setup failure must also
+    cover failures inside ``_setup_hardware()`` itself, such as the robot
+    connecting but exposing no "arm" child, not just failures after it
+    returns.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+    from rlinf.robotics import RobotInfo, UR5Config
+    from rlinf.robotics.robots.ur5 import UR5Robot
+
+    disconnected = []
+
+    class _BuiltRobot:
+        def connect(self):
+            pass
+
+        def disconnect(self):
+            disconnected.append(True)
+
+        def child(self, name):
+            raise KeyError(name)
+
+    monkeypatch.setattr(UR5Robot, "build", lambda **kwargs: _BuiltRobot())
+
+    with pytest.raises(KeyError):
+        UR5ReachEnv(
+            override_cfg={
+                "is_dummy": False,
+                "target_joint_qpos": [0.0] * 6,
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=RobotInfo(
+                type="UR5",
+                model="UR5",
+                config=UR5Config(node_rank=0, camera_serials=[]),
+            ),
+        )
+
+    assert disconnected, (
+        "a failure while setting up hardware must still disconnect the "
+        "robot it already connected, not leak the connection"
+    )
+
+
+def test_resolve_success_current_step_prefers_the_reported_signal():
+    """Mirrors UR5's dense-reward info["success"] against the shared mixer."""
+    from rlinf.envs.real.env import _resolve_success_current_step
+
+    step_reward = np.array([-0.8, -0.1, 1.0], dtype=np.float32)
+
+    # No env in the batch reports "success": fall back to isclose entirely.
+    assert np.array_equal(
+        _resolve_success_current_step({}, step_reward, num_envs=3),
+        [False, False, True],
+    )
+
+    # Env 0 explicitly reports a hit despite a reward far from 1.0; env 1
+    # didn't report this step (mask False) so it still falls back; env 2
+    # reports no-hit, overriding what isclose would have said.
+    infos = {
+        "success": np.array([True, False, False]),
+        "_success": np.array([True, False, True]),
+    }
+    assert np.array_equal(
+        _resolve_success_current_step(infos, step_reward, num_envs=3),
+        [True, False, False],
+    )
 
 
 def test_a_franka_observation_comes_from_one_snapshot():
@@ -311,6 +719,26 @@ def test_depth_reaches_the_policy_split_like_the_frames_beside_it():
     assert torch.allclose(observation["extra_view_depths"], torch.tensor(1.5))
 
 
+def test_wrap_obs_omits_images_for_a_camera_free_robot():
+    """A robot with no cameras, like UR5 against URSim, must not need a camera.
+
+    A state-only reading omits "frames" entirely rather than reporting an
+    empty dict; _wrap_obs must not dereference main_image_key in that case,
+    or every camera-free env fails on its first reset.
+    """
+    from rlinf.envs.real.env import RealWorldEnv
+
+    env = RealWorldEnv.__new__(RealWorldEnv)
+    env.main_image_key = "wrist_1"
+    env.task_descriptions = ["reach a joint configuration"]
+
+    state = {"arm_joint_position": np.zeros((1, 6), dtype=np.float32)}
+    observation = env._wrap_obs({"state": state})
+
+    assert "main_images" not in observation
+    assert "extra_view_images" not in observation
+
+
 def test_franka_dummy_preserves_legacy_policy_schema():
     env = FrankaEnv(
         override_cfg={
@@ -380,6 +808,35 @@ def test_dosw1_dummy_preserves_legacy_policy_schema():
     assert env.action_space.shape == (14,)
     assert env.robot is None
     _assert_legacy_transition(env)
+
+
+def test_pick_env_reports_an_automatic_lift_success():
+    """task_success (set by _calc_step_reward's lift phase) must reach info.
+
+    DOSW1Env.step() only ever reports success from manual_done; PickEnv must
+    fold its own task_success flag in, or an automatic (non-manual) success
+    is invisible to a caller that trusts info["success"] over the reward.
+    """
+    env = PickEnv(
+        override_cfg={
+            "is_dummy": True,
+            "camera_names": [],
+            "enable_camera_player": False,
+            "step_frequency": 10000.0,
+        },
+        worker_info=None,
+        robot_info=None,
+        env_idx=0,
+    )
+    env.reset()
+    action = np.zeros(14, dtype=np.float64)
+
+    _, _, _, _, info = env.step(action)
+    assert info["success"] is False
+
+    env.task_success = True
+    _, _, _, _, info = env.step(action)
+    assert info["success"] is True
 
 
 def test_turtle2_dummy_preserves_legacy_policy_schema():
@@ -1880,6 +2337,95 @@ def test_eval_control_idle_wait_sleeps_when_hold_raises(monkeypatch):
     assert env._running is True
 
 
+class _FakeKeyListener:
+    """A KeyboardListener fake exposing only the held-key the reward wrappers read."""
+
+    def __init__(self, device=None):
+        self.key = None
+
+    def get_key(self):
+        return self.key
+
+    def pop_pressed_keys(self):
+        return []
+
+
+def _keyboard_reward_env(reported_success):
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = gym.spaces.Box(-1, 1, shape=(1,), dtype=np.float32)
+
+        def reset(self, seed=None, options=None):
+            return {"pose": 0}, {}
+
+        def step(self, action):
+            return {"pose": 0}, 0.0, False, False, {"success": reported_success}
+
+    return Env()
+
+
+def test_keyboard_reward_wrapper_marks_success_on_a_success_rating(monkeypatch):
+    """Pressing "c" must flip info["success"] even if the inner env reported a miss.
+
+    Regression test: the wrapper replaced the reward but left the inner env's
+    info untouched, so _resolve_success_current_step's preference for
+    info["success"] could contradict the operator's rating.
+    """
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.reward_done import KeyboardRewardDoneWrapper
+
+    monkeypatch.setattr(session_module, "KeyboardListener", _FakeKeyListener)
+
+    env = KeyboardRewardDoneWrapper(_keyboard_reward_env(reported_success=False))
+    env.reset()
+    env.listener.key = "c"
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+
+    assert reward == 1
+    assert terminated is True
+    assert info["success"] is True
+
+
+def test_keyboard_reward_wrapper_clears_success_on_a_failing_rating(monkeypatch):
+    """Pressing "a" must clear info["success"] even if the inner env reported a hit."""
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.reward_done import KeyboardRewardDoneWrapper
+
+    monkeypatch.setattr(session_module, "KeyboardListener", _FakeKeyListener)
+
+    env = KeyboardRewardDoneWrapper(_keyboard_reward_env(reported_success=True))
+    env.reset()
+    env.listener.key = "a"
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+
+    assert reward == -1
+    assert terminated is True
+    assert info["success"] is False
+
+
+def test_keyboard_reward_multi_stage_wrapper_marks_success_on_the_final_stage(
+    monkeypatch,
+):
+    """The multi-stage wrapper must apply the same success/reward consistency."""
+    from rlinf.envs.real.wrappers.episode import session as session_module
+    from rlinf.envs.real.wrappers.episode.reward_done import (
+        KeyboardRewardDoneMultiStageWrapper,
+    )
+
+    monkeypatch.setattr(session_module, "KeyboardListener", _FakeKeyListener)
+
+    env = KeyboardRewardDoneMultiStageWrapper(
+        _keyboard_reward_env(reported_success=False)
+    )
+    env.reset()
+    env.listener.key = "c"
+    _, reward, terminated, _, info = env.step(np.zeros(1))
+
+    assert reward == 1
+    assert terminated is True
+    assert info["success"] is True
+
+
 def test_every_keyboard_wrapper_shares_the_session(monkeypatch):
     from rlinf.envs.real.wrappers.episode import (
         KeyboardEvalControlWrapper,
@@ -1944,6 +2490,65 @@ def test_euler_conversion_is_one_wrapper_for_any_arm_count():
 
     both = dual.observation({"state": {"tcp_pose": np.concatenate([one, one])}})
     assert np.allclose(both["state"]["tcp_pose"], [1.0, 2.0, 3.0, 0, 0, 0] * 2)
+
+
+def test_normalize_action_rescales_the_unit_interval_onto_the_inner_bounds():
+    from rlinf.envs.real.wrappers.transforms import NormalizeAction
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = gym.spaces.Box(
+                np.array([-2.0, 0.0]), np.array([2.0, 10.0])
+            )
+
+    wrapped = NormalizeAction(Env())
+
+    assert wrapped.action_space.low.tolist() == [-1.0, -1.0]
+    assert wrapped.action_space.high.tolist() == [1.0, 1.0]
+    assert np.allclose(wrapped.action(np.array([-1.0, -1.0])), [-2.0, 0.0])
+    assert np.allclose(wrapped.action(np.array([1.0, 1.0])), [2.0, 10.0])
+    assert np.allclose(wrapped.action(np.array([0.0, 0.0])), [0.0, 5.0])
+
+
+def test_normalize_action_rejects_a_non_finite_action_space():
+    from rlinf.envs.real.wrappers.transforms import NormalizeAction
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = gym.spaces.Box(-np.inf, np.inf, shape=(2,))
+
+    with pytest.raises(ValueError, match="finite Box"):
+        NormalizeAction(Env())
+
+
+def test_normalize_action_rejects_a_non_finite_action():
+    """``np.clip`` alone would map +/-inf to a finite-looking bound instead."""
+    from rlinf.envs.real.wrappers.transforms import NormalizeAction
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = gym.spaces.Box(
+                np.array([-2.0, 0.0]), np.array([2.0, 10.0])
+            )
+
+    wrapped = NormalizeAction(Env())
+    with pytest.raises(ValueError, match="finite"):
+        wrapped.action(np.array([1.0, np.inf]))
+
+
+def test_normalize_action_rejects_a_shape_that_would_silently_broadcast():
+    """A scalar or one-element action must not broadcast across every joint."""
+    from rlinf.envs.real.wrappers.transforms import NormalizeAction
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = gym.spaces.Box(
+                np.array([-2.0, 0.0]), np.array([2.0, 10.0])
+            )
+
+    wrapped = NormalizeAction(Env())
+    with pytest.raises(ValueError, match="shape"):
+        wrapped.action(np.array([0.5]))
 
 
 # Full wrapper stacks built through the production builders
@@ -2061,6 +2666,98 @@ def test_gim_arm_keeps_the_unwrapped_legacy_action_and_observation_schema():
     assert wrapped is env
     assert wrapped.action_space.shape == (7,)
     assert wrapped.observation_space["state"]["tcp_pose"].shape == (7,)
+    wrapped.close()
+
+
+def test_ur5_normalize_actions_rescales_the_policys_unit_action_to_joint_bounds():
+    """normalize_actions must expose [-1, 1] and rescale it to the task's bounds.
+
+    A tanh-squashed SAC policy always outputs actions in (-1, 1); without this
+    wrapper, that range is clipped to whatever of the env's absolute-radian
+    bounds falls inside it, so most of the configured travel is unreachable.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+    from rlinf.envs.real.wrappers import build_stack
+
+    env = UR5ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "target_joint_qpos": [0.0] * 6,
+            "joint_limit_low": [-3.0] * 6,
+            "joint_limit_high": [3.0] * 6,
+        },
+        worker_info=None,
+        env_idx=0,
+        robot_info=None,
+    )
+    wrapped = build_stack(env, {"teleop": "none", "normalize_actions": True})
+
+    assert "NormalizeAction" in _chain(wrapped)
+    assert wrapped.action_space.low.tolist() == [-1.0] * 6
+    assert wrapped.action_space.high.tolist() == [1.0] * 6
+    assert np.allclose(wrapped.action(np.full(6, -1.0)), [-3.0] * 6)
+    assert np.allclose(wrapped.action(np.full(6, 1.0)), [3.0] * 6)
+    assert np.allclose(wrapped.action(np.zeros(6)), [0.0] * 6)
+    wrapped.close()
+
+
+def test_ur5_normalize_actions_rejects_an_invalid_action_through_the_stack():
+    """A malformed policy action must raise through the normalized stack too.
+
+    Clipping to [-1, 1] alone would map +/-inf to a finite bound, and
+    rescaling alone would broadcast a scalar or one-element action across
+    all six joints -- both would silently turn an invalid action into a
+    plausible one instead of raising.
+    """
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+    from rlinf.envs.real.wrappers import build_stack
+
+    env = UR5ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "target_joint_qpos": [0.0] * 6,
+            "joint_limit_low": [-3.0] * 6,
+            "joint_limit_high": [3.0] * 6,
+        },
+        worker_info=None,
+        env_idx=0,
+        robot_info=None,
+    )
+    wrapped = build_stack(env, {"teleop": "none", "normalize_actions": True})
+    try:
+        wrapped.reset(seed=0)
+        bad_action = np.zeros(6, dtype=np.float32)
+        bad_action[2] = np.inf
+        with pytest.raises(ValueError, match="finite"):
+            wrapped.step(bad_action)
+        with pytest.raises(ValueError, match="shape"):
+            wrapped.step(np.zeros(1, dtype=np.float32))
+    finally:
+        wrapped.close()
+
+
+def test_ur5_env_defaults_to_the_absolute_radian_action_contract():
+    """Without normalize_actions, the policy must command absolute radians."""
+    from rlinf.envs.real.ur5 import UR5ReachEnv
+    from rlinf.envs.real.wrappers import build_stack
+
+    env = UR5ReachEnv(
+        override_cfg={
+            "is_dummy": True,
+            "enable_camera_player": False,
+            "target_joint_qpos": [0.0] * 6,
+        },
+        worker_info=None,
+        env_idx=0,
+        robot_info=None,
+    )
+    wrapped = build_stack(env, {"teleop": "none"})
+
+    assert "NormalizeAction" not in _chain(wrapped)
+    assert np.allclose(wrapped.action_space.low, -np.pi)
+    assert np.allclose(wrapped.action_space.high, np.pi)
     wrapped.close()
 
 
@@ -3947,6 +4644,13 @@ def test_shipped_realworld_task_overrides_contain_no_hardware_fields():
             14,
         ),
         ("Turtle2", "ButtonEnv-v1", {"camera_ids": [0, 2]}, ["wrist_1", "wrist_2"], 7),
+        (
+            "UR5",
+            "UR5ReachEnv-v1",
+            {"camera_serials": []},
+            [],
+            6,
+        ),
     ],
 )
 def test_task_schema_uses_enumerated_hardware_without_changing_it(

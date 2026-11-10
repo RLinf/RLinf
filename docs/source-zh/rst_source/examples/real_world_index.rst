@@ -1,7 +1,7 @@
 真实机器人强化学习
 ========================================
 
-按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper 和 SO101 请进入对应页面。
+按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、Universal Robots UR5、AgileX Piper 和 SO101 请进入对应页面。
 
 根据硬件检查、遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 的需求，选择相应指南。
 
@@ -67,6 +67,11 @@ YAM
 
 进入 :doc:`YAM 页面 <embodied/yam_index>`，查看双臂配置与数据采集指南。
 
+UR5
+---
+
+进入 :doc:`UR5 页面 <embodied/ur5>`，连接 ``ur_rtde`` 或 ``ur_ros2`` 后端、运行硬件检查，并使用 SAC 训练关节 reach 任务。
+
 Piper 与 SO101 配置
 --------------------------------
 
@@ -97,5 +102,6 @@ Piper 与 SO101 配置
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
+   UR5 <embodied/ur5>
    Piper <embodied/piper>
    SO101 <embodied/so101>
