@@ -47,7 +47,7 @@ PPO 训练
      search:
        server_addr: 127.0.0.1:8000
 
-将 ``tools.search.server_addr`` 指向 :doc:`index` 中启动的检索服务。配置使用 SGLang server，让 rollout、actor 和 critic 共用 GPU 0–7，Megatron TP=PP=CP=1。每个 step 先完成 rollout batch，再更新两个模型，随后才生成下一个 batch。角色切换时释放 rollout 显存，为这种共享 placement 下的 critic 和 actor 训练腾出空间。
+将 ``tools.search.server_addr`` 指向 :doc:`index` 中启动的检索服务。
 
 该配置直接使用 rollout logprobs，并保留响应预算内的全部生成 token，包括搜索结束标签之后生成的后缀：
 
@@ -68,20 +68,7 @@ PPO 训练
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
-默认 batch 包含 1024 个 prompt，每个 prompt 生成一条轨迹，使用一个 minibatch；每个 batch 分别更新一次 actor 和 critic。下方对照实验使用以下 runner 上限：
-
-.. code-block:: yaml
-
-   runner:
-     max_epochs: 20
-     max_steps: 200
-
-Checkpoint 导出与评估
----------------------
-
-训练每 25 个 step 及最后一个 step 保存 actor 和 critic checkpoint。将 ``runner.resume_dir`` 设置为完整的 ``checkpoints/global_step_N`` 目录，可恢复两个模型、optimizer 和 dataloader 状态。恢复训练时保留原有的 actor/critic checkpoint 转换缓存。
-
-按照 :doc:`qwen2.5` 中的 Megatron 说明导出 actor 并运行评估。Critic 在训练期间提供 value。
+默认 batch 包含 1024 个 prompt，每个 prompt 生成一条轨迹，使用一个 minibatch；每个 batch 分别更新一次 actor 和 critic。
 
 可视化与结果
 ------------
@@ -96,22 +83,3 @@ Checkpoint 导出与评估
    </div>
 
 两组实验均使用 8 张 A800 80 GB、20,000 条 WideSeek 训练数据、wiki 检索服务、200 个训练 step 和一个 minibatch，有效 batch size 均为 1024。GRPO 使用 ``256 × 4`` 个 prompt/轨迹，PPO 使用 ``1024 × 1``。两组实验的 seed 均为 1234，actor 学习率均为 ``1e-6`` 且无 warmup，最多两轮，序列长度为 7096，temperature 为 1.0，KL 系数为零，使用 SGLang server 和 ``agentloop.truncate_response=false``。
-
-.. list-table:: 平均训练 Reward
-   :header-rows: 1
-   :widths: 20 25 25 30
-
-   * - 算法
-     - 前 10 个点
-     - 后 10 个点
-     - 记录点数
-   * - GRPO
-     - 0.0734
-     - 0.3397
-     - 199
-   * - PPO
-     - 0.0492
-     - 0.3240
-     - 200
-
-表格统计单个 seed 的原始 scalar 均值。这些曲线记录于最新 runner 整理之前的 ``4910b58c`` 版本。两组实验均完成第 200 步；此前 GRPO 的 logger 未记录最后一个点。

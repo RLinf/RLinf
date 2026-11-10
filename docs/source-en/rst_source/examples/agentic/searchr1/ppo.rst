@@ -56,11 +56,7 @@ uses this format:
        server_addr: 127.0.0.1:8000
 
 Point ``tools.search.server_addr`` at the retrieval service prepared in
-:doc:`index`. The recipe uses SGLang's server backend and shares GPUs 0–7 among
-rollout, actor, and critic, with Megatron TP=PP=CP=1. Each step completes a rollout
-batch and updates both models before generating the next batch. Releasing rollout
-GPU memory between stages makes room for critic and actor training in this shared
-placement.
+:doc:`index`.
 
 The recipe uses rollout logprobs directly. It keeps every generated token within
 the response budget, including any suffix after the closing search tag:
@@ -84,25 +80,7 @@ Launch the recipe with its configuration name:
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
 The default batch contains 1024 prompts with one trajectory per prompt and one
-minibatch. Each batch produces one actor update and one critic update. The
-comparison below used these runner limits:
-
-.. code-block:: yaml
-
-   runner:
-     max_epochs: 20
-     max_steps: 200
-
-Checkpoint Export and Evaluation
---------------------------------
-
-Training saves actor and critic checkpoints every 25 steps and at the last step.
-Set ``runner.resume_dir`` to a complete ``checkpoints/global_step_N`` directory
-to restore both models, optimizers, and dataloader state. Keep the original
-actor/critic checkpoint-conversion caches when resuming.
-
-Export the actor and evaluate it using the Megatron instructions in
-:doc:`qwen2.5`. The critic supplies values during training.
+minibatch. Each batch produces one actor update and one critic update.
 
 Visualization and Results
 -------------------------
@@ -124,24 +102,3 @@ Both runs used 8 A800 80 GB GPUs, 20,000 WideSeek training examples, wiki retrie
 actor learning rate ``1e-6`` without warmup, two turns, sequence length 7096,
 temperature 1.0, zero KL coefficient, SGLang server rollouts, and
 ``agentloop.truncate_response=false``.
-
-.. list-table:: Mean Training Reward
-   :header-rows: 1
-   :widths: 20 25 25 30
-
-   * - Algorithm
-     - First 10 Points
-     - Last 10 Points
-     - Recorded Points
-   * - GRPO
-     - 0.0734
-     - 0.3397
-     - 199
-   * - PPO
-     - 0.0492
-     - 0.3240
-     - 200
-
-The table averages the raw scalars from one seed. These curves were recorded at
-revision ``4910b58c`` before the latest runner cleanup. Both runs completed step
-200; the earlier GRPO logger omitted its final point.
