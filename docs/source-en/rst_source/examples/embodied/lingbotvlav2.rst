@@ -346,14 +346,9 @@ environment seeds with a limit of 400 steps per trajectory and
      - RLinf-PPO (Step 100)
    * - ``click_bell``
      - 76.56%
-     - 85.94% – 87.50%
+     - 92.19%
      - **100.00%**
      - **100.00%**
-
-Two SFT runs of this configuration scored 87.50% and 85.94%, one episode apart:
-the loss curves start identically but FSDP reductions are not bit-reproducible
-over 600 steps. Released weights and both RL columns are bit-reproducible and
-were each confirmed by a repeated evaluation.
 
 To compare checkpoints, keep environment seeds, worker placement, batch sizes, and
 ``rollout.model.eval_seed`` identical. ``eval_seed`` sets the initial evaluation

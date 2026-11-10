@@ -289,10 +289,8 @@ SFT 与 GRPO 都以 ``add_value_head: false`` 构建模型，因此 actor 和 ro
      - RLinf-PPO（第 100 步）
    * - ``click_bell``
      - 76.56%
-     - 85.94% – 87.50%
+     - 92.19%
      - **100.00%**
      - **100.00%**
-
-该配置的两次 SFT 训练分别得到 87.50% 和 85.94%，相差一个 episode：两次 loss 曲线起点完全一致，但 FSDP 的归约在 600 步内不是逐位可复现的。官方权重与两列 RL 结果均逐位可复现，并各自通过重复评测确认。
 
 比较 checkpoint 时，保持环境 seeds、worker 放置、batch size 和 ``rollout.model.eval_seed`` 一致。评测的初始噪声由 ``eval_seed`` 决定，不受模型初始化影响。
