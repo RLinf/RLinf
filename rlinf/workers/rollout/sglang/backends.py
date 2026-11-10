@@ -355,6 +355,23 @@ class SGLangServerBackend(RolloutBackend):
             obj=io_struct.SyncHFWeightInput(pause_mode=pause_mode)
         )
 
+    async def update_weight_version(self, version: int) -> None:
+        """Tell the engine which weight version it now serves.
+
+        Point-to-point on the loopback control URL, never via the router.
+        The engine's `abort_all_requests` defaults to true and would kill
+        every in-flight generate - under retract exactly the queued
+        requests of a just-paused instance - so it is passed as false
+        explicitly.
+        """
+        await self.http_client.async_post(
+            "/update_weight_version",
+            # Field name and type per sglang's UpdateWeightVersionReqInput
+            # (new_version: str); the session server parses it back with
+            # int().
+            {"new_version": str(version), "abort_all_requests": False},
+        )
+
     async def offload(self, tags: Optional[list[str]] = None) -> None:
         await self.http_client.async_release_memory_occupation(tags=tags)
 

@@ -181,6 +181,8 @@ class AgentLoopWorker(Worker):
         tool_worker_output_channel: Channel,
         solid_generate_input_channels: dict[str, Channel] = {},
         session_server_urls: Optional[list[str]] = None,
+        session_server_generate_timeout_s: Optional[float] = None,
+        session_server_keepalive_timeout_s: Optional[float] = None,
     ):
         self.generate_input_channel = generate_input_channel
         self.generate_output_channel = generate_output_channel
@@ -191,20 +193,27 @@ class AgentLoopWorker(Worker):
         self.tool_worker_output_channel = tool_worker_output_channel
         # for calling another llm without training.
         self.solid_generate_input_channels = solid_generate_input_channels
-        # With URLs, generate goes over HTTP to the session servers.
+        # With URLs, generate goes over HTTP to the session servers. The
+        # runner computes the timeout (it must outlast the session
+        # server's own forward and payload-put timeouts).
         self.session_server_client = None
         if session_server_urls:
-            session_server_cfg = self.cfg.get("session_server", {}) or {}
+            assert session_server_generate_timeout_s is not None, (
+                "session_server_urls requires the runner-computed "
+                "session_server_generate_timeout_s."
+            )
+            assert session_server_keepalive_timeout_s is not None, (
+                "session_server_urls requires the runner-computed "
+                "session_server_keepalive_timeout_s."
+            )
             self.session_server_client = SessionServerClient(
                 session_server_urls,
-                generate_timeout_s=float(
-                    session_server_cfg.get("generate_timeout_s", 600)
-                ),
-                keepalive_timeout_s=float(
-                    session_server_cfg.get("keep_alive_s", 5)
-                )
-                - 1.0,
+                generate_timeout_s=session_server_generate_timeout_s,
+                keepalive_timeout_s=session_server_keepalive_timeout_s,
             )
+            # The block is complete here (validate_session_server_cfg
+            # filled it); runs without session servers never read this value.
+            self._verify_assembly = bool(self.cfg.session_server.verify_assembly)
 
     async def generate(
         self,
@@ -725,8 +734,6 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         self.extra_keys_turn = None
         self.extra_keys_traj = None
         self.is_eval = self.cfg.runner.task_type == "reasoning_eval"
-        session_server_cfg = cfg.get("session_server", {}) or {}
-        self._verify_assembly = bool(session_server_cfg.get("verify_assembly", False))
 
     async def run_agentloop_rollout_group(
         self,

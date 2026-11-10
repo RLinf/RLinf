@@ -34,6 +34,9 @@ from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
+from rlinf.workers.rollout.session_server.payload import create_payload_channels
+from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
+from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 if typing.TYPE_CHECKING:
@@ -53,6 +56,12 @@ class AsyncAgentRunner(AgentRunner):
     prompts from its own dataloader while the rollout capacity and the buffer
     allow, and releases the oldest finished groups when the runner asks for
     a batch.
+
+    With `session_servers` the data plane changes: the agent loop generates
+    over HTTP against the session servers, which forward to the engines
+    through the router and write the payload themselves, so no
+    `rollout_serverless` loop runs and the buffer worker and actor consume
+    payload channels instead of inline results.
     """
 
     def __init__(
@@ -69,6 +78,8 @@ class AsyncAgentRunner(AgentRunner):
         rollout_buffer: RolloutBufferWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
+        session_servers: Optional[list[SessionServerWorker]] = None,
+        session_router: Optional[SGLangRouterWorker] = None,
     ):
         assert placement.is_disaggregated, (
             "AsyncAgentRunner: rollout and actor must be deployed "
@@ -99,6 +110,25 @@ class AsyncAgentRunner(AgentRunner):
         )
         self.rollout_buffer = rollout_buffer
         self.pause_mode = cfg.rollout.pause_mode
+        # Session-server path: the entry script (which owns placement)
+        # launches one worker group per server instance plus the router
+        # group. Each server gets its payload channels on its own node,
+        # one process per shard.
+        self._session_servers = session_servers
+        self._session_router = session_router
+        self._session_payload_channels: list[list[Channel]] = []
+        if session_servers is not None:
+            for server_index, server in enumerate(session_servers):
+                self._session_payload_channels.append(
+                    create_payload_channels(
+                        f"SessionPayload-{server_index}",
+                        num_shards=cfg.session_server.payload_shards,
+                        producer=server,
+                    )
+                )
+        # Resident serve() handles, filled by _start_session_servers and
+        # watched by _wait_actor for session server death.
+        self._session_serve_handles: list[Handle] = []
         # Per-group agent metrics arrive here from the continuous agent loop.
         self.agent_metric_channel = Channel.create("AgentMetric")
         # Finished groups from the agent loop arrive here and are buffered
@@ -169,6 +199,61 @@ class AsyncAgentRunner(AgentRunner):
         if instance_ids is None:
             return set(self._rollout_loaded_versions)
         return instance_ids
+
+    def _start_session_servers(
+        self,
+    ) -> tuple[Optional[list[str]], Optional[float], Optional[float]]:
+        """Start the router, register the rollout instances, start serving.
+
+        Runs once the rollout engines are up: the router comes up empty,
+        every instance's entry URL is registered with it, and each session
+        server starts serving behind the router's URL. The returned URLs
+        go to the agent loop's transport, with the generate timeout and
+        the keepalive (server keep-alive minus 1) for its HTTP client.
+        """
+        if self._session_servers is None:
+            return None, None, None
+        self._session_router.init_router().wait()
+        instance_urls = [
+            url for url in self.rollout.get_server_url().wait() if url is not None
+        ]
+        assert instance_urls, (
+            "no rollout instance advertised a server URL: the session "
+            "server path requires rollout.sglang.backend_type 'server'."
+        )
+        for url in instance_urls:
+            self._session_router.register_server(url).wait()
+        router_url = self._session_router.get_router_url().wait()[0]
+        session_urls = []
+        for server, payload_channels in zip(
+            self._session_servers, self._session_payload_channels
+        ):
+            # serve is resident: dispatch it and hold the handle for
+            # _wait_actor instead of waiting. Serving is awaited to listen
+            # before the URL is handed out, so a startup failure (the
+            # port is fixed per server) surfaces here.
+            self._session_serve_handles.append(
+                server.serve(router_url, self.agent_output_channel, payload_channels)
+            )
+            server.wait_until_serving().wait()
+            session_urls.append(f"http://{server.get_server_address().wait()[0]}")
+        session_cfg = self.cfg.session_server
+        generate_timeouts = [float(session_cfg.generate_timeout_s)]
+        generate_timeouts += [
+            float(settings.generate_timeout_s)
+            for settings in session_cfg.per_task.values()
+        ]
+        client_timeout_s = max(generate_timeouts) + float(
+            session_cfg.payload_put_timeout_s
+        )
+        # Slack for the session server's own overhead between the router
+        # response and returning to the client.
+        client_timeout_s += 30.0
+        # One second below the server's uvicorn keep-alive so the client
+        # never reuses a connection the server is about to close (an
+        # ECONNRESET race).
+        keepalive_timeout_s = float(session_cfg.keep_alive_s) - 1.0
+        return session_urls, client_timeout_s, keepalive_timeout_s
 
     def _wait_actor(
         self,
@@ -262,17 +347,31 @@ class AsyncAgentRunner(AgentRunner):
         self.run_timer.start_time()
 
         # First weight sync, with the version at the resume point. No
-        # pause/continue: the rollout serverless loop has not started yet.
-        # Its timing is discarded so it does not add to the first step's.
+        # pause/continue: neither the rollout serverless loop nor the
+        # session servers have started yet, so there is no generation to
+        # pause. Its timing is discarded so it does not add to the first
+        # step's.
         self._sync_weights_for_instances(
             version=self.global_steps, pause_generation=False
         )
         self.rollout_buffer.set_loaded_versions(self._rollout_loaded_versions).wait()
+        self._push_loaded_versions_to_session_servers()
         self.timer.consume_durations()
 
-        rollout_handle: Handle = self.rollout.rollout_serverless(
-            self.generate_input_channel, self.generate_output_channel
-        )
+        # The session server path keeps the rollout workers off the data
+        # plane: the engines serve the session servers over HTTP, so no
+        # rollout_serverless loop runs and the serve handles replace its
+        # handle in _wait_actor.
+        rollout_handle: Optional[Handle] = None
+        if self._session_servers is None:
+            rollout_handle = self.rollout.rollout_serverless(
+                self.generate_input_channel, self.generate_output_channel
+            )
+        payload_channels = [
+            channel
+            for server_channels in self._session_payload_channels
+            for channel in server_channels
+        ]
         for solid_rollout_name, solid_rollout in self.solid_rollouts.items():
             solid_rollout.rollout_serverless(
                 self.solid_generate_input_channels[solid_rollout_name],
@@ -293,6 +392,7 @@ class AsyncAgentRunner(AgentRunner):
                 agent_output_channel=self.agent_output_channel,
                 dataloader_channel=self.dataloader_channel,
                 rollout_channel=self.rollout_channel,
+                payload_channels=payload_channels,
             )
             while self.global_steps < self.max_steps:
                 with self.timer("step"):
@@ -304,11 +404,20 @@ class AsyncAgentRunner(AgentRunner):
                     actor_handle: Handle = self.actor.run_training(
                         input_channel=self.rollout_channel,
                         version=self.global_steps,
+                        payload_channels=payload_channels,
                     )
                     step_start = time.perf_counter()
-                    metrics = self._wait_actor(
-                        actor_handle, [agent_handle, buffer_handle, rollout_handle]
-                    )
+                    if self._session_servers is None:
+                        watched_handles = [agent_handle, buffer_handle, rollout_handle]
+                    else:
+                        # The serve handles replace the rollout serverless
+                        # handle: a dead session server must end the run.
+                        watched_handles = [
+                            agent_handle,
+                            buffer_handle,
+                            *self._session_serve_handles,
+                        ]
+                    metrics = self._wait_actor(actor_handle, watched_handles)
                     actor_wait_time = time.perf_counter() - step_start
 
                     actor_rollout_metrics = metrics[0][0]
@@ -334,6 +443,36 @@ class AsyncAgentRunner(AgentRunner):
                         self.rollout_buffer.set_loaded_versions(
                             self._rollout_loaded_versions
                         ).wait()
+                        self._push_loaded_versions_to_session_servers()
+                    # Called every step: the session server expires its
+                    # discard records on this call, and its metrics join
+                    # the step's rollout metrics. Every server-side value
+                    # is a count, a total, or the pending-bytes gauge, so
+                    # they are summed across servers and the average
+                    # forward time is derived from the summed totals. The
+                    # counts cover this step's window (get_metrics drains
+                    # them), so forward_time_avg_s is the step's average
+                    # forward time.
+                    session_server_metrics: dict = {}
+                    if self._session_servers is not None:
+                        per_server_metrics = [
+                            server.get_metrics().wait()[0]
+                            for server in self._session_servers
+                        ]
+                        session_server_metrics = {
+                            key: sum(metrics[key] for metrics in per_server_metrics)
+                            for key in per_server_metrics[0]
+                        }
+                        forward_count = session_server_metrics[
+                            "session_server/forward_count"
+                        ]
+                        forward_time_total_s = session_server_metrics[
+                            "session_server/forward_time_total_s"
+                        ]
+                        if forward_count:
+                            session_server_metrics[
+                                "session_server/forward_time_avg_s"
+                            ] = forward_time_total_s / forward_count
 
                     run_time_exceeded = self.run_timer.is_finished()
                     _, save_model, is_train_end = check_progress(
@@ -410,6 +549,31 @@ class AsyncAgentRunner(AgentRunner):
                 loaded_versions = list(self._rollout_loaded_versions.values())
                 rollout_metrics["rollout/loaded_version_min"] = min(loaded_versions)
                 rollout_metrics["rollout/loaded_version_max"] = max(loaded_versions)
+                # Queued payload state, summed over every payload channel.
+                # With no leak this is at or slightly above the same
+                # step's rollout/buffer/size (the difference: groups
+                # whose metadata is still in flight to the buffer worker);
+                # a gap that grows with steps is a payload leak.
+                if self._session_payload_channels:
+                    queued_groups = 0
+                    queued_bytes = 0
+                    for server_channels in self._session_payload_channels:
+                        for channel in server_channels:
+                            items, weight = channel.queued_summary()
+                            queued_groups += items
+                            queued_bytes += weight
+                    rollout_metrics["rollout/session_server/payload_queued_groups"] = (
+                        queued_groups
+                    )
+                    rollout_metrics["rollout/session_server/payload_queued_bytes"] = (
+                        queued_bytes
+                    )
+                rollout_metrics.update(
+                    {
+                        f"rollout/{key}": value
+                        for key, value in session_server_metrics.items()
+                    }
+                )
                 self.metric_logger.log(rollout_metrics, logging_steps)
                 for i in range(self.cfg.algorithm.n_minibatches):
                     training_metrics = {
@@ -461,6 +625,15 @@ class AsyncAgentRunner(AgentRunner):
                 logging.error(f"Closing the progress bar failed: {e}")
             self.metric_logger.finish()
 
+    def _push_loaded_versions_to_session_servers(self):
+        """Send the loaded versions to every session server.
+
+        The session server records the minimum as the conservative
+        `version_start` lower bound of the generates it forwards.
+        """
+        for server in self._session_servers or []:
+            server.set_loaded_versions(self._rollout_loaded_versions).wait()
+
     def _stop_resident_workers(
         self,
         agent_handle: Optional[Handle],
@@ -475,3 +648,18 @@ class AsyncAgentRunner(AgentRunner):
         if buffer_handle is not None:
             buffer_handle.wait()
             logging.info("Rollout buffer worker stopped")
+
+    def _stop_rollouts(self):
+        """Stop the session server path, then the rollout engines.
+
+        The session servers stop before the router: once serving has
+        ended no request can be in flight through the router. The serve
+        handles are awaited so a failing stop surfaces here.
+        """
+        if self._session_servers is not None:
+            for server in self._session_servers:
+                server.stop().wait()
+            for serve_handle in self._session_serve_handles:
+                serve_handle.wait()
+            self._session_router.stop().wait()
+        super()._stop_rollouts()

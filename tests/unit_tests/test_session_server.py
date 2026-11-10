@@ -56,6 +56,7 @@ import requests  # noqa: E402
 from mock_sglang_server import MockSGLangServer, find_available_port  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
 
+from rlinf.config import validate_session_server_cfg  # noqa: E402
 from rlinf.data.schema.reasoning_results import GroupDelivery  # noqa: E402
 from rlinf.scheduler import (  # noqa: E402
     Channel,
@@ -129,10 +130,29 @@ def env(cluster):
                 "group_size": GROUP_SIZE,
                 "sampling_params": {"do_sample": False, "max_new_tokens": 8},
             },
-            "rollout": {"return_logprobs": True},
-            "session_server": {"host": "127.0.0.1", "port": find_available_port()},
+            "rollout": {
+                "return_logprobs": True,
+                "router": {"max_idle_secs": 600.0},
+            },
+            # Only the values this test needs to pick explicitly; the rest
+            # of the session_server block is filled by config below, so
+            # keys added there reach the worker without this file
+            # drifting. Validation runs with enable still false (defaults
+            # only), then the flag flips for the worker itself.
+            "session_server": {
+                "enable": False,
+                "host": "127.0.0.1",
+                "port": find_available_port(),
+                "payload_put_timeout_s": 300.0,
+                "max_pending_payload_bytes": 512 * 1024 * 1024,
+                "generate_timeout_s": 600.0,
+                "per_task": {},
+                "verify_assembly": False,
+            },
         }
     )
+    server_cfg = validate_session_server_cfg(server_cfg)
+    server_cfg.session_server.enable = True
     # The buffer's config: one group per training batch, the dataset
     # under admission, equal-reward rejection on (the normal scenario
     # scores its trajectories differently to survive it), and no actor
@@ -718,4 +738,7 @@ class TestFinalizePutFailure:
         assert poll_channel(env.rollout, timeout_s=2) is None
 
         server_metrics = env.server.get_metrics().wait()[0]
-        assert server_metrics["session_server/payload_write_failed"] == 2
+        # get_metrics drains per window: the failure above landed after
+        # the last read (the pending-drain poll), so this window's count
+        # is the one failure of this scenario alone.
+        assert server_metrics["session_server/payload_write_failed"] == 1

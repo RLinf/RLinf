@@ -160,29 +160,25 @@ class SessionServerWorker(Worker):
     :meth:`serve` and holds the returned handle for liveness monitoring.
     """
 
-    def __init__(self, cfg: DictConfig, server_index: int = 0):
+    def __init__(self, cfg: DictConfig, server_index: int):
         super().__init__()
         self._cfg = cfg
         self._server_index = server_index
 
-        session_server_cfg = cfg.get("session_server", {}) or {}
-        self._host = str(session_server_cfg.get("host", "0.0.0.0"))
-        self._port = int(session_server_cfg.get("port", 8030)) + server_index
-        self._payload_put_timeout_s = float(
-            session_server_cfg.get("payload_put_timeout_s", 300)
-        )
+        # Defaults live in rlinf.config.validate_session_server_cfg; a cfg
+        # reaching here always carries the full block.
+        session_server_cfg = cfg.session_server
+        self._host = str(session_server_cfg.host)
+        self._port = int(session_server_cfg.port) + server_index
+        self._payload_put_timeout_s = float(session_server_cfg.payload_put_timeout_s)
         self._max_pending_payload_bytes = int(
-            session_server_cfg.get("max_pending_payload_bytes", 512 * 1024 * 1024)
+            session_server_cfg.max_pending_payload_bytes
         )
-        self._generate_timeout_s = float(
-            session_server_cfg.get("generate_timeout_s", 600)
-        )
-        self._keep_alive_s = int(session_server_cfg.get("keep_alive_s", 5))
+        self._generate_timeout_s = float(session_server_cfg.generate_timeout_s)
+        self._keep_alive_s = int(session_server_cfg.keep_alive_s)
         self._per_task_generate_timeout_s = {
-            str(task_name): float(settings.get("generate_timeout_s"))
-            for task_name, settings in (
-                session_server_cfg.get("per_task", {}) or {}
-            ).items()
+            str(task_name): float(settings.generate_timeout_s)
+            for task_name, settings in session_server_cfg.per_task.items()
         }
 
         self._expected_group_size = int(cfg.algorithm.group_size)
@@ -191,13 +187,11 @@ class SessionServerWorker(Worker):
         # changes, the runner must hand this server the same block.
         self._sampling_params = SGLangWorker.get_default_sampling_params(cfg)
         self._return_logprob = bool(cfg.rollout.return_logprobs)
-        rollout_cfg = cfg.get("rollout", {}) or {}
-        router_cfg = rollout_cfg.get("router", {}) or {}
-        self._discard_record_ttl_s = float(router_cfg.get("max_idle_secs", 600))
+        self._discard_record_ttl_s = float(cfg.rollout.router.max_idle_secs)
         # Assembly verification: the agent's close carries a reference
         # result, the generate responses carry logprobs, and the finalize
         # part carries both sides' sampling params.
-        self._verify_assembly = bool(session_server_cfg.get("verify_assembly", False))
+        self._verify_assembly = bool(session_server_cfg.verify_assembly)
 
         self._groups: dict[int, _GroupState] = {}
         self._sessions: dict[str, _SessionState] = {}
@@ -208,6 +202,11 @@ class SessionServerWorker(Worker):
         self._payload_channels: list[Channel] = []
         self._http_server: Optional[uvicorn.Server] = None
         self._http_server_task: Optional[asyncio.Task] = None
+        # Set when serving has ended (normally or not), with the exception
+        # serve() re-raised, if any: wait_until_serving reports an early
+        # end instead of hanging on a server that never listened.
+        self._serve_ended = False
+        self._serve_error: Optional[BaseException] = None
         self._background_tasks: set[asyncio.Task] = set()
         # Reported groups, most recent last, bounded; a late abort for one of
         # them must not produce a second record for the buffer worker.
@@ -313,19 +312,40 @@ class SessionServerWorker(Worker):
         self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
         self._agent_output_channel = agent_output_channel
         self._payload_channels = list(payload_channels)
-        self._http_server_task = asyncio.create_task(self._http_server.serve())
+        self._http_server_task = asyncio.create_task(self._run_http_server())
         self.log_info(
             f"Session server {self._server_index} serving on {self._host}:{self._port}"
         )
         try:
             await self._http_server_task
+        except BaseException as exc:
+            self._serve_error = exc
+            raise
         finally:
             self._http_server_task = None
+            self._serve_ended = True
         if self._fatal_error is not None:
             # Component death (an agent_output_channel we cannot write to)
             # ends serving; re-raise so the runner's liveness monitor ends
             # the run instead of leaking admission slots.
             raise self._fatal_error
+
+    async def _run_http_server(self) -> None:
+        """Run uvicorn, turning its process-exit startup failures into errors.
+
+        uvicorn calls ``sys.exit`` when it cannot bind (the port is taken),
+        and a ``SystemExit`` escaping a task is not delivered to whoever
+        awaits it: it unwinds the event loop instead, killing the actor and
+        leaving the failure unattributable. Catching it inside the coroutine
+        keeps it on the ordinary exception path.
+        """
+        try:
+            await self._http_server.serve()
+        except SystemExit as exc:
+            raise RuntimeError(
+                f"session server {self._server_index} failed to start on "
+                f"{self._host}:{self._port} (see the uvicorn error above)"
+            ) from exc
 
     async def stop(self) -> None:
         """Stop the HTTP server and the background put settlements."""
@@ -333,6 +353,7 @@ class SessionServerWorker(Worker):
             self._http_server.should_exit = True
             await self._http_server_task
             self._http_server_task = None
+            self._serve_ended = True
         for task in list(self._background_tasks):
             task.cancel()
         await asyncio.gather(*self._background_tasks, return_exceptions=True)
@@ -340,6 +361,23 @@ class SessionServerWorker(Worker):
         if self._router_client is not None:
             await self._router_client.aclose()
             self._router_client = None
+
+    async def wait_until_serving(self) -> None:
+        """Wait until the HTTP server accepts connections.
+
+        Raises when serving ends before that, chaining serve()'s exception
+        if it had one: a startup failure such as the fixed port already
+        being taken must surface here, not as the agent loop's
+        connection-refused error after the URLs were handed out. Call
+        only after serve() has been dispatched.
+        """
+        while not self._http_server.started:
+            if self._serve_ended:
+                raise RuntimeError(
+                    f"session server {self._server_index} stopped serving "
+                    f"before accepting connections on {self._host}:{self._port}"
+                ) from self._serve_error
+            await asyncio.sleep(0.05)
 
     def get_server_address(self) -> str:
         """Return the ``host:port`` agents reach this server on."""
@@ -359,13 +397,18 @@ class SessionServerWorker(Worker):
         self._loaded_versions = list(versions.values())
 
     async def get_metrics(self) -> dict:
-        """Return the metrics under the ``session_server/`` prefix."""
+        """Drain the per-step counters under the ``session_server/`` prefix.
+
+        The runner reads once per training step, so every count and total
+        covers the window since its previous call (the buffer's
+        get_step_metrics drains the same way). The pending-bytes gauge is
+        instantaneous and read separately below.
+        """
         self._expire_discard_records()
         metrics = dict(self._metrics)
+        for key in self._metrics:
+            self._metrics[key] = 0
         metrics["session_server/pending_payload_bytes"] = self._pending_payload_bytes
-        count = self._metrics["session_server/forward_count"]
-        total = self._metrics["session_server/forward_time_total_s"]
-        metrics["session_server/forward_time_avg_s"] = total / count if count else 0.0
         return metrics
 
     def _expire_discard_records(self) -> None:

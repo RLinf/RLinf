@@ -123,10 +123,13 @@ class SGLangRouterWorker(Worker):
             replaced by dashes); keys MUST match :class:`RouterArgs` field
             names. Typically ``config.rollout.router`` when used inside a
             rollout, but any compatible block works (the router isn't tied
-            to the rollout pipeline). The ``host`` and ``port`` keys
-            control the router's bind address; if ``port`` is missing or
-            ``None``, a free port is grabbed via the worker's PortLock at
-            :meth:`init_router` time. ``host`` defaults to ``0.0.0.0``.
+            to the rollout pipeline). Of the RLinf-side keys, ``host``
+            reaches the CLI as a RouterArgs field (default ``0.0.0.0``);
+            ``port`` never does — it is passed to the subprocess
+            separately, and a missing or ``None`` port grabs a free one
+            via the worker's PortLock at :meth:`init_router` time — and
+            ``type``, the selector of whether a router runs at all, is
+            popped before CLI assembly.
     """
 
     def __init__(
@@ -164,6 +167,9 @@ class SGLangRouterWorker(Worker):
 
         router_cfg = OmegaConf.to_container(self._router_cfg, resolve=True)
         self._port = router_cfg.pop("port", self.acquire_free_port())
+        # RLinf-side selector of whether a router runs at all; not a
+        # RouterArgs field, so it never reaches the CLI.
+        router_cfg.pop("type", None)
 
         cmd = [
             sys.executable,
@@ -188,13 +194,16 @@ class SGLangRouterWorker(Worker):
         # PDEATHSIG fires when the thread that spawned the router exits,
         # not when the whole actor process exits: on a thread-pool thread
         # (max_concurrency > 1) it would kill the router while the actor
-        # is still alive, so only the main thread may spawn it.
-        assert threading.current_thread() is threading.main_thread(), (
-            f"init_router must run on the actor's main thread, got "
-            f"{threading.current_thread().name!r}: PR_SET_PDEATHSIG fires "
-            f"when the spawning thread exits and would kill the router "
-            f"while the actor is alive."
-        )
+        # is still alive, so only the main thread may spawn it. A raise,
+        # not an assert: -O strips asserts and the violation would then
+        # kill a live router silently.
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError(
+                f"init_router must run on the actor's main thread, got "
+                f"{threading.current_thread().name!r}: PR_SET_PDEATHSIG "
+                f"fires when the spawning thread exits and would kill the "
+                f"router while the actor is alive."
+            )
         with no_proxy_env():
             # start_new_session=True makes the child a session leader, so a
             # SIGTERM to it doesn't propagate to the Ray actor (and vice

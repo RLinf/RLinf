@@ -156,6 +156,11 @@ class AgentRunner(ReasoningRunner):
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
+        # Session server URLs exist only on the async runner's session
+        # server path.
+        session_server_urls, session_server_generate_timeout_s, session_keepalive = (
+            self._start_session_servers()
+        )
         self.agent_loop.init_worker(
             self.generate_input_channel,
             self.generate_output_channel,
@@ -163,7 +168,22 @@ class AgentRunner(ReasoningRunner):
             self.tool_name_map,
             self.tool_output_channel,
             self.solid_generate_input_channels,
+            session_server_urls=session_server_urls,
+            session_server_generate_timeout_s=session_server_generate_timeout_s,
+            session_server_keepalive_timeout_s=session_keepalive,
         ).wait()
+
+    def _start_session_servers(
+        self,
+    ) -> tuple[Optional[list[str]], Optional[float], Optional[float]]:
+        """Start the session servers, if this runner has any.
+
+        Returns the URLs the agent loop's transport connects to, the
+        generate timeout for its HTTP client, and its keepalive timeout,
+        or ``(None, None, None)`` when the run uses the generate channel
+        pair instead.
+        """
+        return None, None, None
 
     def _sync_weights(self):
         super()._sync_weights()

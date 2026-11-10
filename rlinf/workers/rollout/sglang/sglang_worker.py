@@ -19,7 +19,7 @@ import sys
 import traceback
 from typing import Any, Literal, Optional
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
@@ -88,6 +88,12 @@ class SGLangWorker(Worker):
         self._dispatch_gate.set()
         # In-flight generate_and_send tasks of rollout_serverless.
         self._inflight_generates: set[asyncio.Task] = set()
+        # The session-server data plane reads the weight version the
+        # engines advertise in their responses, so every sync must also
+        # write it to the engine.
+        self._session_server_enabled = bool(
+            OmegaConf.select(config, "session_server.enable", default=False)
+        )
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._cfg_rollout.model.model_path,
@@ -542,6 +548,21 @@ class SGLangWorker(Worker):
         await self._backend.sync_weights(pause_mode=self._pause_mode)
         if version is not None:
             self._weight_version = version
+            if self._session_server_enabled:
+                await self._backend.update_weight_version(version)
+
+    async def get_server_url(self) -> Optional[str]:
+        """The advertised URL of this instance's engine (or None).
+
+        The address the router reaches this instance on, for registration
+        from the driver. Only entry workers of the server backend have an
+        HTTP frontend to advertise; the engine backend serves no HTTP.
+        """
+        if not self._is_model_instance_entry:
+            return None
+        if self._cfg_rollout.sglang.get("backend_type", "engine") != "server":
+            return None
+        return self._backend.server_url
 
     async def pause_generation(self, mode: str):
         """Pause this instance's generation for an async weight sync.

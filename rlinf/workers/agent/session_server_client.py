@@ -90,8 +90,8 @@ class SessionServerClient:
     def __init__(
         self,
         base_urls: list[str],
-        generate_timeout_s: float = 600.0,
-        keepalive_timeout_s: float = 4.0,
+        generate_timeout_s: float,
+        keepalive_timeout_s: float,
     ):
         assert base_urls, "the session server transport needs at least one URL"
         # keepalive_timeout must be shorter than the server's keep-alive
