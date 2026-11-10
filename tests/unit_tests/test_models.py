@@ -564,6 +564,46 @@ def test_openpi_augmentation_aligns_history_frames():
     torch.testing.assert_close(outputs[1].history_time_offsets, time_offsets)
 
 
+def test_hf_rollout_merges_nested_observations():
+    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+    def observation(values):
+        values = torch.tensor(values, dtype=torch.float32)
+        return {
+            "states": values[:, None],
+            "task_descriptions": [f"task {value}" for value in values.tolist()],
+            "history": {
+                "main_images": values[:, None, None, None, None].expand(-1, 3, 2, 2, 3),
+                "wrist_images": (values + 10)[:, None, None, None, None].expand(
+                    -1, 3, 2, 2, 3
+                ),
+                "frame_mask": torch.tensor([[False, True, True]] * len(values)),
+                "time_offsets": torch.tensor([[0.0, -0.1, 0.0]] * len(values)),
+            },
+        }
+
+    first, second, terminal = observation([1, 2]), observation([3]), observation([7])
+    worker = object.__new__(MultiStepRolloutWorker)
+    merged = worker._merge_obs_batches(
+        [
+            {"obs": first, "final_obs": None},
+            {"obs": second, "final_obs": terminal, "eval_epoch_done": True},
+        ]
+    )
+
+    expected = observation([1, 2, 3])
+    expected_terminal = observation([1, 2, 7])
+    for key in ("states", "history"):
+        torch.testing.assert_close(merged["obs"][key], expected[key])
+        torch.testing.assert_close(merged["final_obs"][key], expected_terminal[key])
+    assert merged["obs"]["task_descriptions"] == expected["task_descriptions"]
+    assert (
+        merged["final_obs"]["task_descriptions"]
+        == expected_terminal["task_descriptions"]
+    )
+    assert merged["eval_epoch_done"] is True
+
+
 def test_openpi_env_io_reads_history():
     from rlinf.models.embodiment.openpi.env_io import EnvIO
 

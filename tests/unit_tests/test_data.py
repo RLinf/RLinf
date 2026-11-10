@@ -866,8 +866,13 @@ def test_openpi_libero_config_maps_dataset_fields(
 
 @pytest.mark.parametrize("num_frames", [1, 3])
 @pytest.mark.parametrize("image_dtype", [np.uint8, np.float32])
-def test_short_memory_dataset_preserves_targets_and_padding(num_frames, image_dtype):
+def test_short_memory_dataset_preserves_targets_and_padding(
+    num_frames, image_dtype, monkeypatch
+):
     from datasets import Dataset
+
+    torchvision = pytest.importorskip("torchvision")
+    monkeypatch.delattr(torchvision.io, "VideoReader", raising=False)
 
     from rlinf.data.datasets.openpi.short_memory import (
         ShortMemoryDataset,

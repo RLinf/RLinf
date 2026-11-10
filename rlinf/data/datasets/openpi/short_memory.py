@@ -54,7 +54,7 @@ class ShortMemoryDataset(torch.utils.data.Dataset):
     ) -> None:
         self.dataset = dataset
         self.timestamps = np.asarray(
-            dataset.hf_dataset.select_columns("timestamp").with_format("numpy")[
+            dataset.hf_dataset.select_columns("timestamp").with_format(None)[
                 "timestamp"
             ],
             dtype=np.float32,
