@@ -38,7 +38,7 @@ runner:
     experiment_name: "test_openpi"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
-  max_epochs: 1
+  max_epochs: 2
   max_steps: -1
 
   only_eval: False
@@ -101,7 +101,7 @@ rollout:
   generation_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: libero_10
-  enable_offload: False
+  enable_offload: True
   pipeline_stage_num: 1
 
   model:
