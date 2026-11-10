@@ -2436,6 +2436,31 @@ def test_lingbotvlav2_rl_trains_the_action_expert_but_not_its_routers():
     )
 
 
+def test_lingbotvlav2_sft_masks_padded_action_steps():
+    from rlinf.models.embodiment.lingbotvlav2.utils import mask_padded_actions
+
+    joint_mask = torch.ones(2, 4, 3, dtype=torch.bool)
+    action_is_pad = torch.tensor(
+        [[False, False, True, True], [False, True, False, True]]
+    )
+    masked = mask_padded_actions(joint_mask, action_is_pad)
+
+    assert masked is not None
+    assert masked.shape == joint_mask.shape
+    assert masked[0, :2].all() and not masked[0, 2:].any()
+    assert masked[1, 0].all() and not masked[1, 1].any()
+    assert masked[1, 2].all() and not masked[1, 3].any()
+
+
+def test_lingbotvlav2_sft_loads_one_complete_training_config(tmp_path):
+    from rlinf.models.embodiment.lingbotvlav2.utils import load_training_config
+
+    config_path = tmp_path / "lingbotvla_cli.yaml"
+    config_path.write_text("model: {}\ntrain: {}\ndata: {}\n", encoding="utf-8")
+
+    assert load_training_config(config_path) == {"model": {}, "train": {}, "data": {}}
+
+
 def _lingbotvlav2_ppo_cfg(overrides: dict):
     """The PPO settings LingBot-VLA V2 accepts, with dotted-key overrides."""
     cfg = OmegaConf.create(

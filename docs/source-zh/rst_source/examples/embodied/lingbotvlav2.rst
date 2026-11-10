@@ -231,6 +231,49 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+监督微调
+----------------------------------------
+
+RLinf 提供了同一适配器的 RoboTwin SFT 入口。训练和评测必须使用相同的
+``attention_implementation``；SFT 配置使用上游的 ``flex_cached``，评测配置也
+使用相同值。
+这个只训练动作的配方会关闭辅助对齐损失，同时保留 checkpoint 中的 query 模块。
+SFT 使用与 RL 共用的可训练范围更新动作专家和投影层，Qwen-VL 主干及 MoE
+路由器保持冻结。评测使用 BF16，与 rollout 配置一致。
+
+转换数据前先设置模型、源码和数据路径：
+
+.. code-block:: bash
+
+    export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
+    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
+    export LINGBOT_VLA_V2_CHECKPOINT=$LINGBOT_VLA_V2_MODEL_ROOT/checkpoints/global_step_50000/hf_ckpt
+    export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
+    export LINGBOT_VLA_SFT_DATASET=/path/to/robotwin2_lerobot/click_bell_clean_50
+
+转换一个或多个解压后的 RoboTwin 数据集。每个输入目录需要包含
+``data/episode<i>.hdf5`` 和 ``instructions/episode<i>.json``：
+
+.. code-block:: bash
+
+    python toolkits/lerobot/convert_robotwin_to_lerobot.py \
+      --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
+      --output-root "$LINGBOT_VLA_SFT_DATASET"
+
+使用 RLinf 配置启动 SFT：
+
+.. code-block:: bash
+
+    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+
+发布的 checkpoint 仍作为评测基线。评测 RLinf SFT checkpoint 时，在 RoboTwin
+评测配置中传入完整权重文件：
+
+.. code-block:: bash
+
+    bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
+      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+
 可视化与结果
 ----------------------------------------
 
