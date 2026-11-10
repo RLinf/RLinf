@@ -42,7 +42,7 @@ SFT 可以从公开的 `RLinf-Pi05-LIBERO-SFT 权重 <https://huggingface.co/RLi
    hf download RLinf/RLinf-Pi05-LIBERO-SFT \
      --local-dir checkpoints/RLinf-Pi05-LIBERO-SFT
 
-该命令下载下方训练配置使用的初始权重。LIBERO-Mem 的归一化统计量需要按下文步骤从训练数据计算。已报告的成对实验使用了另一份 LIBERO-10 ``global_step_8000`` checkpoint；这里的公开权重用于启动训练，不代表与原实验权重具有相同 lineage。
+该命令下载下方训练配置使用的初始权重。LIBERO-Mem 的归一化统计量需要按下文步骤从训练数据计算。
 
 评测时，准备微调后的 checkpoint 及其 OpenPI ``norm_stats.json``。配置中的 ``/path/to/...`` 都需要替换成实际路径。``model_path`` 可以指向 safetensors checkpoint 目录，或包含 ``actor/model_state_dict/full_weights.pt`` 的 RLinf checkpoint，也可以指向后者的 ``actor`` 或 ``model_state_dict`` 目录。直接传入 safetensors 或 ``.pt`` 权重文件也受支持。模型形状与 transforms 由 YAML 配置决定，因此 LIBERO transforms、action horizon 和归一化统计量应与权重一致。单独加载权重会开始新的训练；恢复完整训练状态需要 ``runner.resume_dir``。
 
@@ -64,7 +64,7 @@ SFT 可以从公开的 `RLinf-Pi05-LIBERO-SFT 权重 <https://huggingface.co/RLi
 
 如需调整帧数与间隔，可在命令后添加 ``env.eval.short_memory.num_frames=3 env.eval.short_memory.stride=35``。比较评测结果时，应采用 checkpoint 训练时的历史配置。输出说明见 :doc:`LIBERO 评测 </rst_source/evaluations/guides/libero>`，LIBERO-Mem 成功条件见 LIBERO 页面。
 
-历史帧会增加视觉编码器的计算量，虽然语言模型接收的视觉 token 数保持不变。Reviewer 在单张 RTX PRO 5000 上测得：使用八帧时，``predict_action_batch`` 在 batch size 为一时耗时 174.0 ms，单帧模型为 141.6 ms；batch size 为 20 时分别为 1641.7 ms 和 859.2 ms。选择历史长度时，应在实际 batch size 与硬件上测量开销。
+历史帧会增加视觉编码器的计算量，虽然语言模型接收的视觉 token 数保持不变。选择历史长度时，应在实际 batch size 与硬件上测量开销。
 
 准备训练数据
 ------------

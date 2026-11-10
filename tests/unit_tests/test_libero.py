@@ -40,7 +40,6 @@ def test_libero_camera_orientation(extract_image, is_libero_mem):
 
 @pytest.fixture(params=[torch.uint8, torch.float32])
 def libero_history_env(request):
-    pytest.importorskip("libero.libero.envs")
     from rlinf.envs.sim.libero.libero_env import LiberoEnv
 
     env = LiberoEnv.__new__(LiberoEnv)

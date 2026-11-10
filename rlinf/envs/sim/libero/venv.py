@@ -31,9 +31,6 @@ from rlinf.envs.venv import (
     _setup_buf,
 )
 
-OffScreenRenderEnv = import_libero_module("envs").OffScreenRenderEnv
-
-
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
@@ -162,6 +159,7 @@ def _worker(
                 obs = env.set_init_state(data)
                 p.send(obs)
             elif cmd == "reconfigure":
+                OffScreenRenderEnv = import_libero_module("envs").OffScreenRenderEnv
                 env.close()
                 seed = data.pop("seed")
                 env = OffScreenRenderEnv(**data)

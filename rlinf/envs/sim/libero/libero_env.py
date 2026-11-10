@@ -49,6 +49,8 @@ from rlinf.envs.utils import (
 from rlinf.utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from libero.libero.benchmark import Benchmark
+
     from rlinf.scheduler import WorkerInfo
 
 
@@ -90,52 +92,49 @@ def _read_bddl_language_and_goal(
     return language, goal
 
 
-libero_type = get_libero_type()
+def _init_libero() -> None:
+    """Load the selected simulator and configure its asset paths."""
+    libero_type = get_libero_type()
 
-if libero_type in ["pro", "plus"]:
-    sys.path[:] = [p for p in sys.path if "opt/libero" not in p]
-    LIBERO_PKG_NAME = f"libero{libero_type}"
-    LIBERO_MAIN_MODULE_PATH = f"{LIBERO_PKG_NAME}.{LIBERO_PKG_NAME}"
-    try:
-        real_libero_pkg = importlib.import_module(LIBERO_PKG_NAME)
-        real_libero_core = importlib.import_module(LIBERO_MAIN_MODULE_PATH)
-
+    if libero_type in ["pro", "plus"]:
+        sys.path[:] = [p for p in sys.path if "opt/libero" not in p]
+        package_name = f"libero{libero_type}"
+        module_path = f"{package_name}.{package_name}"
         try:
-            real_libero_benchmark = importlib.import_module(
-                f"{LIBERO_MAIN_MODULE_PATH}.benchmark"
-            )
-        except ImportError:
-            real_libero_benchmark = importlib.import_module(
-                f"{LIBERO_PKG_NAME}.benchmark"
-            )
+            real_libero_pkg = importlib.import_module(package_name)
+            real_libero_core = importlib.import_module(module_path)
 
-        try:
-            real_libero_envs = importlib.import_module(
-                f"{LIBERO_MAIN_MODULE_PATH}.envs"
-            )
-        except ImportError:
-            real_libero_envs = importlib.import_module(f"{LIBERO_PKG_NAME}.envs")
+            try:
+                real_libero_benchmark = importlib.import_module(
+                    f"{module_path}.benchmark"
+                )
+            except ImportError:
+                real_libero_benchmark = importlib.import_module(
+                    f"{package_name}.benchmark"
+                )
 
-        sys.modules["libero"] = real_libero_pkg
-        sys.modules["libero.libero"] = real_libero_core
-        sys.modules["libero.libero.benchmark"] = real_libero_benchmark
-        sys.modules["libero.libero.envs"] = real_libero_envs
-    except ImportError as e:
-        logger.error("Failed to import %s: %s", LIBERO_MAIN_MODULE_PATH, e)
+            try:
+                real_libero_envs = importlib.import_module(f"{module_path}.envs")
+            except ImportError:
+                real_libero_envs = importlib.import_module(f"{package_name}.envs")
 
-if libero_type == "pro":
-    import liberopro.liberopro as _libero_core
-    from liberopro.liberopro.benchmark import Benchmark
-elif libero_type == "plus":
-    import liberoplus.liberoplus as _libero_core
-    from liberoplus.liberoplus.benchmark import Benchmark
-else:
-    import libero.libero as _libero_core
-    from libero.libero.benchmark import Benchmark
+            sys.modules["libero"] = real_libero_pkg
+            sys.modules["libero.libero"] = real_libero_core
+            sys.modules["libero.libero.benchmark"] = real_libero_benchmark
+            sys.modules["libero.libero.envs"] = real_libero_envs
+        except ImportError as e:
+            logger.error("Failed to import %s: %s", module_path, e)
 
-# Must run before any benchmark lookup: get_task_init_states() reads the cached
-# config, so repointing it later (e.g. when resolving bddl_files) is too late.
-_repoint_libero_config(_libero_core)
+    if libero_type == "pro":
+        import liberopro.liberopro as _libero_core
+    elif libero_type == "plus":
+        import liberoplus.liberoplus as _libero_core
+    else:
+        import libero.libero as _libero_core
+
+    # Must run before any benchmark lookup: get_task_init_states() reads the cached
+    # config, so repointing it later (e.g. when resolving bddl_files) is too late.
+    _repoint_libero_config(_libero_core)
 
 
 class LiberoEnv(gym.Env):
@@ -149,6 +148,7 @@ class LiberoEnv(gym.Env):
         total_num_processes: int,
         worker_info: WorkerInfo,
     ) -> None:
+        _init_libero()
         self.seed_offset = seed_offset
         self.cfg = cfg
         self.is_libero_mem = cfg.task_suite_name.lower() == "libero_mem"

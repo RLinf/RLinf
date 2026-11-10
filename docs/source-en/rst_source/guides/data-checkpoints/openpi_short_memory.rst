@@ -79,10 +79,7 @@ For SFT, download the public
      --local-dir checkpoints/RLinf-Pi05-LIBERO-SFT
 
 This supplies the initial weights for the configuration below. Compute LIBERO-Mem
-normalization statistics from the training dataset as described below. The
-reported paired experiment used a separate LIBERO-10 ``global_step_8000``
-checkpoint; these public weights are a starting point for training, not an
-assertion of identical experiment lineage.
+normalization statistics from the training dataset as described below.
 
 For evaluation, supply your fine-tuned checkpoint and its OpenPI
 ``norm_stats.json``. All ``/path/to/...`` values are placeholders.
@@ -120,10 +117,8 @@ See :doc:`LIBERO Evaluation </rst_source/evaluations/guides/libero>` for evaluat
 outputs and the LIBERO page for LIBERO-Mem success semantics.
 
 History increases vision computation even though the language model receives
-the same number of visual tokens. In a reviewer measurement on one RTX PRO 5000,
-``predict_action_batch`` with eight frames took 174.0 ms versus 141.6 ms for the
-current-frame model at batch size one, and 1641.7 ms versus 859.2 ms at batch size
-20. Measure with your own batch size and hardware when choosing history length.
+the same number of visual tokens. Measure with your own batch size and hardware
+when choosing history length.
 
 Prepare the Training Data
 -------------------------
