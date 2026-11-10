@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Callable, Optional, Union
 import torch
 from omegaconf import DictConfig
 
+from rlinf.data.schema.actor_batch import DynamicActorBatch, TokenRows
 from rlinf.scheduler import Worker
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
@@ -818,10 +819,9 @@ class RolloutResult:
 
 @dataclass(kw_only=True)
 class DynamicRolloutResult:
-    """
-    Dynamic Rollout Result
-    For dynamic batch size of one trajectory. Used in multi-turn agent.
-    Only supports right padding
+    """Grouped multi-turn rollouts with real-length token sequences.
+
+    Both Megatron and FSDP consume the same DynamicActorBatch conversion.
     """
 
     num_sequence: int
@@ -835,13 +835,13 @@ class DynamicRolloutResult:
     # size of belows are num_sequence
     input_ids: list[list[int]]
     rollout_logprobs: Optional[list[list[float]]] = None
-    recomputed_logprobs: Optional[torch.Tensor] = None
-    ref_logprobs: Optional[torch.Tensor] = None
+    recomputed_logprobs: Optional[TokenRows] = None
+    ref_logprobs: Optional[TokenRows] = None
     prompt_lengths: list[int]
     response_lengths: list[int]
     is_end: list[bool]
     rewards: Optional[torch.Tensor | list[float]] = None
-    advantages: Optional[torch.Tensor] = None
+    advantages: Optional[TokenRows] = None
 
     # extra fields used in training for custom process
     extra_fields_train: dict[str, list] = field(default_factory=dict)
@@ -851,207 +851,71 @@ class DynamicRolloutResult:
     extra_fields_traj: Optional[dict] = None  # [group_size]
     extra_fields_group: Optional[dict] = None  # [1]
 
-    @staticmethod
-    def _get_attention_masks_and_position_ids(
-        prompt_lengths: torch.Tensor,
-        response_lengths: torch.Tensor,
-        total_len: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        B = prompt_lengths.size(0)
-        arange_ids = torch.arange(total_len).unsqueeze(0).expand(B, -1)
-
-        prompt_end = prompt_lengths
-        response_end = prompt_lengths + response_lengths
-
-        prompt_end = prompt_end.unsqueeze(1)
-        response_end = response_end.unsqueeze(1)
-        attention_mask = arange_ids < response_end
-        response_mask = (arange_ids >= prompt_end) & (arange_ids < response_end)
-
-        position_ids = torch.zeros_like(arange_ids)
-        for i in range(B):
-            position_ids[i, 0:] = torch.arange(total_len)
-
-        return attention_mask, response_mask, position_ids
-
-    def to_actor_batch(
-        self,
-        seq_length: int,
-        pad_token: int,
-    ) -> dict[str, torch.Tensor]:
-        """
-        Transform the rollout result into a format suitable for the actor.
-
-        Args:
-            seq_length (int): Total sequence length for training, e.g., 8192.
-            pad_token (int): Token used for padding, e.g., `tokenizer.pad_token_id`.
-
-        Returns:
-            Dict[str, torch.Tensor]: A dictionary with keys:
-
-            input_ids (torch.Tensor):
-                Concatenated prompt and response token IDs,
-                shape ``[num_sequence, seq_length]``.
-
-            attention_mask (torch.Tensor):
-                Attention mask for the input sequence,
-                shape ``[num_sequence, seq_length]``.
-
-            is_end (torch.Tensor):
-                Boolean tensor indicating whether the sequence ends,
-                shape ``[num_sequence]``.
-
-            position_ids (torch.Tensor):
-                Position IDs for the input sequence,
-                shape ``[num_sequence, seq_length]``.
-
-            prompt_lengths (torch.Tensor):
-                Lengths of the prompt sequences,
-                shape ``[num_sequence]``.
-
-            response_lengths (torch.Tensor):
-                Lengths of the response sequences,
-                shape ``[num_sequence]``.
-
-            advantages (torch.Tensor), optional:
-                Advantage values for the responses,
-                shape ``[num_sequence, seq_length]``.
-        """
-
-        # len = seq_length: input_ids, attention_mask, position_ids
-        #           [prompt_ids,    response_ids, ..., response_padding]
-        #           |<-- pmp len -->|<-- resp len --->|<-- padding --->|
-        #           |<------------------ cfg.runner.seq_length ------->|
-
-        # len = seq_length: advantage, recomputed_logprobs/rollout_logprobs, ref_logprobs
-        #           [mask or response_ids, ...,        , response_padding]
-        #           |<----- true response length ----->|<--- padding --->|
-        #           |<------------------ cfg.runner.seq_length --------->|
-
-        prompt_lengths = torch.tensor(self.prompt_lengths, dtype=torch.int32)
-        response_lengths = torch.tensor(self.response_lengths, dtype=torch.int32)
-        is_end = torch.tensor(self.is_end, dtype=torch.bool)
-
-        attention_mask, response_mask, position_ids = (
-            self._get_attention_masks_and_position_ids(
-                prompt_lengths=prompt_lengths,
-                response_lengths=response_lengths,
-                total_len=seq_length,
-            )
-        )
-
-        input_ids = batch_pad_to_fixed_len(
-            [torch.as_tensor(ids, dtype=torch.long) for ids in self.input_ids],
-            max_batch_len=seq_length,
-            pad_token=pad_token,
-        )
-
-        batch = {
-            "idx_to_traj": self.idx_to_traj,
-            "input_ids": input_ids.cuda(),
-            "attention_mask": attention_mask.cuda(),
-            "response_mask": response_mask.cuda(),
-            "position_ids": position_ids.cuda(),
-            "is_end": is_end.cuda(),
-            "prompt_lengths": prompt_lengths.cuda(),
-            "response_lengths": response_lengths.cuda(),
+    def to_actor_batch(self) -> DynamicActorBatch:
+        """Build CPU rows with token fields indexed by absolute token position."""
+        lengths = [p + r for p, r in zip(self.prompt_lengths, self.response_lengths)]
+        batch: DynamicActorBatch = {
+            "idx_to_traj": list(self.idx_to_traj),
+            "input_ids": [
+                torch.as_tensor(ids, dtype=torch.long) for ids in self.input_ids
+            ],
+            "attention_mask": [torch.ones(n, dtype=torch.bool) for n in lengths],
+            "response_mask": [
+                torch.arange(n) >= p for n, p in zip(lengths, self.prompt_lengths)
+            ],
+            "position_ids": [torch.arange(n) for n in lengths],
+            "prompt_lengths": torch.tensor(self.prompt_lengths, dtype=torch.int32),
+            "response_lengths": torch.tensor(self.response_lengths, dtype=torch.int32),
+            "is_end": torch.tensor(self.is_end, dtype=torch.bool),
             **{
-                f"extra:{k}": torch.as_tensor(v).cuda()
+                f"extra:{k}": torch.as_tensor(v).cpu()
                 for k, v in self.extra_fields_train.items()
             },
         }
-
-        if self.advantages is not None:
-            batch["advantages"] = self.advantages.cuda()
-
         if self.rewards is not None:
-            if isinstance(self.rewards, torch.Tensor):
-                batch["rewards"] = self.rewards.cuda()
-            else:
-                batch["rewards"] = (
-                    torch.as_tensor(self.rewards, dtype=torch.float).cuda().flatten()
-                )
-
+            batch["rewards"] = (
+                self.rewards.detach().cpu()
+                if torch.is_tensor(self.rewards)
+                else torch.as_tensor(self.rewards, dtype=torch.float32)
+            ).flatten()
         if self.rollout_logprobs is not None:
-            logprobs = batch_pad_to_fixed_len(
-                [
-                    torch.as_tensor([0] * prompt_length + logprobs, dtype=torch.float)
-                    for prompt_length, logprobs in zip(
-                        self.prompt_lengths, self.rollout_logprobs
-                    )
-                ],
-                max_batch_len=seq_length,
-                pad_token=0,
-            )
-            batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
-
-        if self.recomputed_logprobs is not None:
-            batch["recomputed_logprobs"] = self.recomputed_logprobs.cuda()
-        if self.ref_logprobs is not None:
-            batch["ref_logprobs"] = self.ref_logprobs.cuda()
-
+            batch["rollout_logprobs"] = [
+                torch.cat((torch.zeros(p), torch.as_tensor(row, dtype=torch.float32)))
+                for p, row in zip(self.prompt_lengths, self.rollout_logprobs)
+            ]
+        for key in ("recomputed_logprobs", "ref_logprobs", "advantages"):
+            values = getattr(self, key)
+            if values is not None:
+                batch[key] = [
+                    row[:n].detach().cpu().clone() for row, n in zip(values, lengths)
+                ]
         return batch
 
-    def get_batch_pad(
-        seq_length: int,
-        available_keys: list[str],
-    ) -> dict[str, torch.Tensor]:
-        """Get the batch pad for the dynamic rollout result."""
-
-        pad_seq_shape = (1, seq_length)
-        attention_mask = torch.zeros(
-            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
-        )
-        attention_mask[:, :1] = True
-        batch_pad = {
-            "input_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
-            ),
-            "attention_mask": attention_mask,
-            "response_mask": torch.zeros(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
-            "position_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
-            ),
-            "is_end": torch.zeros(
-                1, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
-            "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
-            ),
-            "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
-            ),
-            "ref_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "recomputed_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "rollout_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "rewards": torch.zeros(
-                1, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "advantages": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-            "loss_scales": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
-        }
-        batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}
-        return batch_pad
+    @staticmethod
+    def materialize_actor_batch(
+        batch: dict, seq_length: int, pad_token: int, device: torch.device | str = "cpu"
+    ) -> dict:
+        """Pad one microbatch for the existing loss contract."""
+        result = {}
+        for key, value in batch.items():
+            if isinstance(value, list) and value and torch.is_tensor(value[0]):
+                padded = batch_pad_to_fixed_len(
+                    value, seq_length, pad_token if key == "input_ids" else 0
+                )
+                result[key] = padded.to(device)
+            elif torch.is_tensor(value):
+                result[key] = value.to(device)
+            else:
+                result[key] = value
+        return result
 
     @staticmethod
     def merge_batches(
-        batches: list[dict[str, torch.Tensor]],
+        batches: list[DynamicActorBatch],
         group_size: int | None = None,
         adjust_traj_indices: bool = True,
         return_num_sequence_per_group: bool = False,
-    ) -> dict[str, torch.Tensor] | tuple[dict[str, torch.Tensor], list[int]]:
+    ) -> DynamicActorBatch | tuple[DynamicActorBatch, list[int]]:
         """
         Merge multiple batches into one batch.
 
@@ -1118,8 +982,8 @@ class DynamicRolloutResult:
     @staticmethod
     def pack_traj_batch(
         context: dict,
-        batch: dict[str, torch.Tensor],
-    ) -> dict:
+        batch: DynamicActorBatch,
+    ) -> DynamicActorBatch:
         """Pack multi-turn samples from the same trajectory into fewer sequences.
 
         This function detects prefix/suffix relationships among turns that belong
@@ -1133,6 +997,7 @@ class DynamicRolloutResult:
         Returns:
             Packed batch with updated tensors and `idx_to_traj` mapping.
         """
+
         # calculate pack map
         traj_to_idx = {}
         for idx, traj in enumerate(batch["idx_to_traj"]):
@@ -1151,9 +1016,11 @@ class DynamicRolloutResult:
                     if right in passed_as_suffix:
                         continue
                     # Skip overlapping response spans to avoid mixing turns.
+                    left_mask = batch["response_mask"][left]
+                    right_mask = batch["response_mask"][right]
+                    common_length = min(left_mask.numel(), right_mask.numel())
                     mask_overlap = torch.logical_and(
-                        batch["response_mask"][left],
-                        batch["response_mask"][right],
+                        left_mask[:common_length], right_mask[:common_length]
                     )
                     if mask_overlap.sum().item() > 1:
                         continue
@@ -1187,12 +1054,27 @@ class DynamicRolloutResult:
             "loss_scales",
             *(k for k in batch.keys() if k.startswith("extra:")),
         ]
+        token_keys = {
+            "input_ids",
+            "attention_mask",
+            "response_mask",
+            "position_ids",
+            "recomputed_logprobs",
+            "rollout_logprobs",
+            "ref_logprobs",
+            "advantages",
+            "loss_scales",
+        }
         custom_keys = [
             "idx_to_traj",
         ]
         for k, v in batch.items():
             if k in tensor_keys:
-                split_params[k] = list(torch.chunk(v.clone(), num_sequence, dim=0))
+                split_params[k] = (
+                    [row.clone().unsqueeze(0) for row in v]
+                    if k in token_keys
+                    else list(torch.chunk(v.clone(), num_sequence, dim=0))
+                )
             else:
                 assert k in custom_keys, f"bad key {k}"
 
@@ -1201,6 +1083,23 @@ class DynamicRolloutResult:
             idxes = [*prefixes, suffix]
             assert len(idxes) >= 2
             assert len({split_params["rewards"][idx].item() for idx in idxes}) == 1
+
+            target_length = split_params["input_ids"][suffix].shape[1]
+            for key in (
+                "response_mask",
+                "recomputed_logprobs",
+                "rollout_logprobs",
+                "advantages",
+                "loss_scales",
+            ):
+                if key in split_params:
+                    rows = batch_pad_to_fixed_len(
+                        [split_params[key][idx].squeeze(0) for idx in idxes],
+                        target_length,
+                        0,
+                    )
+                    for idx, row in zip(idxes, rows):
+                        split_params[key][idx] = row.unsqueeze(0)
 
             # Merge additive token-level stats over response tokens only.
             for key in ["recomputed_logprobs", "rollout_logprobs", "advantages"]:
@@ -1256,12 +1155,19 @@ class DynamicRolloutResult:
         packed_batch = {}
         for k, v in pack_params.items():
             assert k in tensor_keys, k
-            packed_batch[k] = torch.cat(v, dim=0)
+            packed_batch[k] = (
+                [row.squeeze(0) for row in v]
+                if k in token_keys
+                else torch.cat(v, dim=0)
+            )
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context["folding_scale"]
         if "group_level" in folding_scale:
-            packed_batch["loss_scales"] *= num_sequence_after / num_sequence
+            ratio = num_sequence_after / num_sequence
+            packed_batch["loss_scales"] = [
+                row * ratio for row in packed_batch["loss_scales"]
+            ]
 
         return packed_batch
 
@@ -1310,14 +1216,12 @@ class DynamicRolloutResult:
                 ) + list(res.rollout_logprobs)
 
             # Merge tensor fields (size: num_sequence)
-            if res.recomputed_logprobs is not None:
-                merged_result.recomputed_logprobs = merge_tensor(
-                    merged_result.recomputed_logprobs, res.recomputed_logprobs
-                )
-            if res.ref_logprobs is not None:
-                merged_result.ref_logprobs = merge_tensor(
-                    merged_result.ref_logprobs, res.ref_logprobs
-                )
+            for key in ("recomputed_logprobs", "ref_logprobs"):
+                value = getattr(res, key)
+                if value is None:
+                    continue
+                previous = getattr(merged_result, key)
+                setattr(merged_result, key, (previous or []) + value)
 
             if res.rewards is not None:
                 if isinstance(res.rewards, list):
@@ -1332,12 +1236,9 @@ class DynamicRolloutResult:
                     raise ValueError(f"Wrong type of rewards {type(res.rewards)}")
 
             if res.advantages is not None:
-                if isinstance(res.advantages, torch.Tensor):
-                    merged_result.advantages = merge_tensor(
-                        merged_result.advantages, res.advantages
-                    )
-                else:
-                    raise ValueError(f"Wrong type of advantages {type(res.advantages)}")
+                merged_result.advantages = (
+                    merged_result.advantages or []
+                ) + res.advantages
 
             for k, v in res.extra_fields_train.items():
                 if v is not None:

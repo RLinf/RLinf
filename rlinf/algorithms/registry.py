@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import wraps
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import torch
 
@@ -26,6 +28,9 @@ from rlinf.algorithms.utils import (
     preprocess_loss_inputs,
     preprocess_reasoning_advantages_inputs,
 )
+
+if TYPE_CHECKING:
+    from rlinf.data.schema.actor_batch import TokenRows
 
 ADV_REGISTRY: dict[str, Callable] = {}
 
@@ -92,11 +97,14 @@ def policy_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     return loss, metrics_data
 
 
-def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+def calculate_adv_and_returns(
+    **kwargs,
+) -> tuple[torch.Tensor | TokenRows, Optional[torch.Tensor | TokenRows]]:
     """
     Unified entry for advantage + return computation.
     Accepts variable keyword arguments, preprocesses them, then dispatches
-    to specific algorithm via registry.
+    to specific algorithm via registry. ``grpo_dynamic`` returns TokenRows;
+    other reasoning algorithms return dense [batch, sequence] tensors.
     """
     adv_type = kwargs["adv_type"]
     fn = get_adv_and_returns(adv_type)
@@ -118,9 +126,14 @@ def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Te
             )
     else:
         # reasoning tasks
-        kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
-        advantages, returns = fn(**kwargs)
-        res = postprocess_reasoning_advantages_outputs(advantages, returns)
+        if adv_type == "grpo_dynamic":
+            # Multi-turn actors pass TokenRows and keep absolute token positions.
+            kwargs["rewards"] = kwargs["rewards"].reshape(-1, 1)
+            res = fn(**kwargs)
+        else:
+            kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
+            advantages, returns = fn(**kwargs)
+            res = postprocess_reasoning_advantages_outputs(advantages, returns)
     return res
 
 

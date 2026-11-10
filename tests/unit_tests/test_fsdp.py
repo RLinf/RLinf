@@ -1223,3 +1223,415 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert output.dtype == torch.bfloat16
     assert after.dtype == torch.float32
     assert (after != before).all()
+
+
+class _CausalLanguageModel(nn.Module):
+    """Small causal model with sequence boundaries supplied by position IDs."""
+
+    def __init__(self):
+        super().__init__()
+        self.embedding = nn.Embedding(32, 8)
+        self.projection = nn.Linear(8, 32)
+
+    def forward(self, input_ids, position_ids, attention_mask=None, **kwargs):
+        from types import SimpleNamespace
+
+        hidden = self.embedding(input_ids)
+        segments = (position_ids == 0).cumsum(dim=-1)
+        allowed = (segments.unsqueeze(2) == segments.unsqueeze(1)) & (
+            position_ids.unsqueeze(2) >= position_ids.unsqueeze(1)
+        )
+        if attention_mask is not None:
+            allowed = allowed & attention_mask.unsqueeze(1)
+        attended = torch.nn.functional.scaled_dot_product_attention(
+            hidden.unsqueeze(1),
+            hidden.unsqueeze(1),
+            hidden.unsqueeze(1),
+            attn_mask=allowed.unsqueeze(1),
+        ).squeeze(1)
+        return SimpleNamespace(logits=self.projection(attended))
+
+
+def _multi_turn_actor(dynamic):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+    actor = object.__new__(MAFSDPActor)
+    actor.torch_platform = torch.cpu
+    actor.enable_dynamic_batch_size = dynamic
+    actor.max_tokens_per_mbs = 20
+    actor.tokenizer = SimpleNamespace(eos_token_id=0)
+    actor.amp_context = nullcontext()
+    actor.entropy_op_type = "torch"
+    actor.cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "sampling_params": {"temperature": 0.8},
+                "logprob_forward_micro_batch_size": 3,
+            },
+            "actor": {"model": {"encoder_seq_length": 32}},
+        }
+    )
+    torch.manual_seed(42)
+    actor.model = _CausalLanguageModel()
+    return actor
+
+
+def _multi_turn_batch():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    lengths = (1, 5, 9, 14)
+    return DynamicRolloutResult(
+        num_sequence=4,
+        group_size=2,
+        idx_to_traj=[0, 0, 1, 1],
+        input_ids=[(torch.arange(n) % 29 + 1).tolist() for n in lengths],
+        prompt_lengths=[1, 3, 4, 5],
+        response_lengths=[0, 2, 5, 9],
+        is_end=[False, False, True, True],
+        rewards=[1.0, 1.0, 0.0, 0.0],
+    ).to_actor_batch()
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_multi_turn_fsdp_forward_matches_individual_sequences_and_gradients(dynamic):
+    import copy
+
+    from rlinf.utils.utils import compute_entropy_from_logits
+
+    actor = _multi_turn_actor(dynamic)
+    batch = _multi_turn_batch()
+    baseline = copy.deepcopy(actor.model)
+    actual_probs, actual_entropy = actor.forward_batch(batch, True)
+    expected_probs, expected_entropy = [], []
+    for row, positions in zip(batch["input_ids"], batch["position_ids"]):
+        logits = baseline(row.unsqueeze(0), positions.unsqueeze(0)).logits / 0.8
+        values = actor.compute_logprobs(logits[:, :-1], row[1:].unsqueeze(0))[0]
+        expected_probs.append(torch.cat((values.new_zeros(1), values)))
+        values = compute_entropy_from_logits(logits[:, :-1])[0]
+        expected_entropy.append(torch.cat((values.new_zeros(1), values)))
+    for actual, expected in zip(
+        actual_probs + actual_entropy, expected_probs + expected_entropy, strict=True
+    ):
+        torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
+    actual_loss = sum(
+        (prob[mask] - 0.03 * entropy[mask]).sum()
+        for prob, entropy, mask in zip(
+            actual_probs, actual_entropy, batch["response_mask"]
+        )
+    )
+    expected_loss = sum(
+        (prob[mask] - 0.03 * entropy[mask]).sum()
+        for prob, entropy, mask in zip(
+            expected_probs, expected_entropy, batch["response_mask"]
+        )
+    )
+    actual_loss.backward()
+    expected_loss.backward()
+    for actual, expected in zip(
+        actor.model.parameters(), baseline.parameters(), strict=True
+    ):
+        torch.testing.assert_close(actual.grad, expected.grad, atol=2e-6, rtol=2e-6)
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize(
+    ("lengths", "micro_batch_size", "expected_batch_sizes"),
+    [((1, 5, 9, 14), 3, [2, 2]), ((7, 3, 9, 5, 11), 2, [2, 2, 1])],
+)
+def test_multi_turn_fsdp_inference_keeps_order_and_tail(
+    tmp_path, dynamic, lengths, micro_batch_size, expected_batch_sizes
+):
+    actor = _multi_turn_actor(dynamic)
+    actor.cfg.algorithm.logprob_forward_micro_batch_size = micro_batch_size
+    batch = {
+        "input_ids": [torch.arange(n) % 29 + 1 for n in lengths],
+        "position_ids": [torch.arange(n) for n in lengths],
+    }
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+    )
+    try:
+        with torch.no_grad():
+            expected = actor.forward_batch(batch)
+            batch_sizes = []
+            hook = actor.model.register_forward_pre_hook(
+                lambda module, args, kwargs: batch_sizes.append(
+                    kwargs["input_ids"].size(0)
+                ),
+                with_kwargs=True,
+            )
+            try:
+                actual, reference = actor.inference_step(batch, False)
+            finally:
+                hook.remove()
+        assert reference is None
+        assert [len(row) for row in actual] == list(lengths)
+        if not dynamic:
+            assert batch_sizes == expected_batch_sizes
+        for row, expected_row in zip(actual, expected, strict=True):
+            assert row.device.type == "cpu" and not row.requires_grad
+            torch.testing.assert_close(row, expected_row)
+    finally:
+        dist.destroy_process_group()
+
+
+def _multi_turn_fsdp_uneven_inference(rank, dynamic, rendezvous):
+    from torch.nn.parallel import DistributedDataParallel
+
+    actor = _multi_turn_actor(dynamic)
+    count = (1, 7)[rank]
+    batch = {
+        "input_ids": [torch.arange(n + 2) % 29 + 1 for n in range(count)],
+        "position_ids": [torch.arange(n + 2) for n in range(count)],
+    }
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        actor.model.register_buffer("inference_calls", torch.zeros(1))
+        actor.model = DistributedDataParallel(actor.model)
+        calls = []
+        actor.model.register_forward_hook(lambda *_: calls.append(1))
+        with torch.no_grad():
+            expected = actor.forward_batch(batch)
+            calls.clear()
+            actual, reference = actor.inference_step(batch, False)
+        assert reference is None
+        assert len(calls) == (2 if dynamic else 3)
+        assert len(batch["input_ids"]) == len(actual) == count
+        for row, expected_row in zip(actual, expected, strict=True):
+            torch.testing.assert_close(row, expected_row)
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_multi_turn_fsdp_inference_aligns_uneven_dp_forwards(tmp_path, dynamic):
+    torch.multiprocessing.spawn(
+        _multi_turn_fsdp_uneven_inference,
+        args=(dynamic, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+@pytest.mark.parametrize("auxiliary_losses", [False, True])
+def test_multi_turn_fsdp_actor_backward_matches_real_rows(
+    dynamic, aggregation, auxiliary_losses
+):
+    import copy
+
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+    from rlinf.algorithms.utils import kl_penalty
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp import FSDPStrategy
+    from rlinf.utils.utils import get_loss_agg_func
+
+    actor = _multi_turn_actor(dynamic)
+    actor.task_type = "reasoning"
+    actor.gradient_accumulation = 1
+    actor.calculate_entropy = actor.calculate_entropy_loss = auxiliary_losses
+    actor.kl_beta = 0.1 if auxiliary_losses else 0.0
+    actor.kl_penalty_type = "low_var_kl"
+    actor.loss_agg_func = get_loss_agg_func(aggregation)
+    actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    actor._strategy = FSDPStrategy(
+        OmegaConf.create({"fsdp_config": {"enable_gradient_accumulation": False}}), 1
+    )
+    actor.cfg.algorithm.ratio_clip_eps = 0.2
+    actor.cfg.algorithm.loss_type = "actor"
+    actor.cfg.algorithm.entropy_bonus = 0.03 if auxiliary_losses else 0.0
+    batch = _multi_turn_batch()
+    with torch.no_grad():
+        old = actor.forward_batch(batch)
+    batch["recomputed_logprobs"] = old
+    batch["ref_logprobs"] = [row - 0.1 for row in old]
+    batch["advantages"] = [mask.float() for mask in batch["response_mask"]]
+    batch["loss_scales"] = [mask.float() * 0.5 for mask in batch["response_mask"]]
+    baseline_model = copy.deepcopy(actor.model)
+    actor.model = baseline_model
+    probabilities, entropy = actor.forward_batch(batch, True)
+    expected = DynamicRolloutResult.materialize_actor_batch(
+        {
+            **batch,
+            "logprobs": probabilities,
+            "entropy": entropy,
+        },
+        32,
+        0,
+    )
+    real_rows = expected["response_mask"].any(dim=-1)
+    expected = {
+        key: expected[key][real_rows]
+        for key in (
+            "logprobs",
+            "recomputed_logprobs",
+            "ref_logprobs",
+            "advantages",
+            "loss_scales",
+            "entropy",
+            "response_mask",
+        )
+    }
+    mask = expected["response_mask"]
+    loss, _ = compute_ppo_actor_loss(
+        logprobs=expected["logprobs"],
+        old_logprobs=expected["recomputed_logprobs"],
+        advantages=expected["advantages"] * expected["loss_scales"],
+        loss_mask=mask,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_agg_func=actor.loss_agg_func,
+        fast_path_zero_loss_mask=False,
+    )
+    if auxiliary_losses:
+        loss = loss - 0.03 * actor.loss_agg_func(expected["entropy"], mask)
+        loss = loss + 0.1 * actor.loss_agg_func(
+            kl_penalty(expected["logprobs"], expected["ref_logprobs"], "low_var_kl")
+            * expected["loss_scales"],
+            mask,
+        )
+    loss.backward()
+    expected_grads = [
+        parameter.grad.clone() for parameter in baseline_model.parameters()
+    ]
+    assert any(gradient.count_nonzero() for gradient in expected_grads)
+    baseline_model.zero_grad()
+    actual_metrics = actor.forward_backward_batch(0, batch, 1)
+    torch.testing.assert_close(actual_metrics["actor/final_loss"], loss.detach())
+    for parameter, gradient in zip(
+        actor.model.parameters(), expected_grads, strict=True
+    ):
+        torch.testing.assert_close(parameter.grad, gradient)
+    assert all(
+        isinstance(row, torch.Tensor) and row.ndim == 1 for row in batch["input_ids"]
+    )
+
+
+def test_multi_turn_fsdp_dense_splitter_keeps_existing_layout(tmp_path):
+    from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
+    from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
+
+    rows = _multi_turn_batch()
+    dense = {
+        key: batch_pad_to_fixed_len(value, 32, 0)
+        if isinstance(value, list) and key != "idx_to_traj"
+        else value
+        for key, value in rows.items()
+    }
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+    )
+    try:
+        row_iter, row_count, row_indices = _multi_turn_actor(
+            True
+        )._split_to_micro_batch(rows, True, max_tokens_per_mbs=20, split_num=2)
+        dense_iter, dense_count, dense_indices = FSDPActor._split_to_micro_batch(
+            dense, True, max_tokens_per_mbs=20, split_num=2
+        )
+        assert row_count == dense_count and row_indices == dense_indices
+        for row_batch, dense_batch in zip(row_iter, dense_iter, strict=True):
+            assert dense_batch["input_ids"].ndim == 2
+            for row, padded in zip(
+                row_batch["input_ids"], dense_batch["input_ids"], strict=True
+            ):
+                torch.testing.assert_close(row, padded[: len(row)])
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    ("local", "load_balance"), [(True, False), (False, False), (False, True)]
+)
+def test_multi_turn_fsdp_receive_and_advantages_use_shared_rows(
+    tmp_path, local, load_balance
+):
+    from queue import Queue
+
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Channel
+    from rlinf.scheduler.channel.channel_worker import LocalChannel
+
+    actor = _multi_turn_actor(False)
+    actor.enable_dp_load_balance = load_balance
+    actor.cfg.data = {"rollout_batch_size": 2}
+    actor.cfg.algorithm.group_size = 2
+    actor.cfg.algorithm.adv_type = "grpo_dynamic"
+    actor.cfg.algorithm.advantage_mode = "trajectory"
+    actor.task_type, actor.reinpp_kl_beta, actor.kl_penalty_type = (
+        "reasoning",
+        0.0,
+        "low_var_kl",
+    )
+    actor._timer_metrics = {}
+    if local:
+        channel = Channel()
+        channel._initialize(
+            "actor-batch", None, None, None, local_channel=LocalChannel()
+        )
+    else:
+        # An in-memory receive endpoint exercises the nonlocal actor boundary.
+        channel = Queue()
+        channel.is_local = False
+    results = []
+    for offset in (0, 3):
+        result = DynamicRolloutResult(
+            num_sequence=2,
+            group_size=2,
+            idx_to_traj=[0, 1],
+            input_ids=[list(range(3 + offset)), list(range(5 + offset))],
+            prompt_lengths=[1, 1],
+            response_lengths=[2 + offset, 4 + offset],
+            rewards=[1.0, 0.0],
+            is_end=[True, True],
+            rollout_logprobs=[[-0.5] * (2 + offset), [-0.25] * (4 + offset)],
+        )
+        results.append(result)
+        channel.put(result)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
+    )
+    try:
+        batch, received = actor.get_batch(channel)
+        assert received == results and channel.empty()
+        if not local:
+            assert batch["extra:source_dp"].tolist() == [0, 0, 0, 0]
+        assert batch["idx_to_traj"] == [0, 1, 2, 3]
+        assert [len(row) for row in batch["input_ids"]] == [3, 5, 6, 8]
+        batch = actor.compute_advantages_and_returns(batch)
+        for row, mask, sign in zip(
+            batch["advantages"], batch["response_mask"], (1, -1, 1, -1), strict=True
+        ):
+            assert row.device.type == "cpu" and row.shape == mask.shape
+            torch.testing.assert_close(row, mask.float() * sign / (2**0.5))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("dense", [False, True])
+def test_multi_turn_fsdp_logprob_gap_uses_only_response_tokens(dense):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.workers.actor.fsdp_actor_worker import compute_rollout_train_kl
+
+    batch = _multi_turn_batch()
+    batch["rollout_logprobs"] = [
+        torch.full_like(row, -1, dtype=torch.float32) for row in batch["input_ids"]
+    ]
+    batch["recomputed_logprobs"] = [
+        row + 0.1 * (i + 1) for i, row in enumerate(batch["rollout_logprobs"])
+    ]
+    if dense:
+        batch = DynamicRolloutResult.materialize_actor_batch(batch, 32, 0)
+    gap = compute_rollout_train_kl(batch, batch["response_mask"])
+    torch.testing.assert_close(gap, torch.tensor((2 * 0.2 + 5 * 0.3 + 9 * 0.4) / 16))

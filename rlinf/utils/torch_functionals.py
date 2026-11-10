@@ -39,32 +39,9 @@ def batch_pad_to_fixed_len(
     pad_token: int,
     left_pad: bool = False,
 ) -> torch.Tensor:
-    if left_pad:
-        batch_pad = torch.stack(
-            [
-                torch.cat(
-                    [
-                        torch.full(
-                            (max_batch_len - len(seq),), pad_token, dtype=seq.dtype
-                        ),
-                        seq,
-                    ]
-                )
-                for seq in batch
-            ]
-        )
-    else:
-        batch_pad = torch.stack(
-            [
-                torch.cat(
-                    [
-                        seq,
-                        torch.full(
-                            (max_batch_len - len(seq),), pad_token, dtype=seq.dtype
-                        ),
-                    ]
-                )
-                for seq in batch
-            ]
-        )
-    return batch_pad
+    """Pad 1-D rows to a fixed width, preserving their device, dtype, and gradients."""
+    padded = []
+    for seq in batch:
+        padding = seq.new_full((max_batch_len - len(seq),), pad_token)
+        padded.append(torch.cat((padding, seq) if left_pad else (seq, padding)))
+    return torch.stack(padded)

@@ -28,9 +28,10 @@ if TYPE_CHECKING:
 
 
 def get_batch_size(
-    batch: dict[str, torch.Tensor], batch_tensor_key: str = "input_ids"
+    batch: dict[str, torch.Tensor | list], batch_tensor_key: str = "input_ids"
 ) -> int:
-    return batch[batch_tensor_key].size(0)
+    """Return the row count of a dense or real-length batch field."""
+    return len(batch[batch_tensor_key])
 
 
 def get_seq_length(

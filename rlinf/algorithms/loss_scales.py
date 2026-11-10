@@ -12,14 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import torch
 
 from rlinf.algorithms.registry import register_loss_scale
 
+if TYPE_CHECKING:
+    from rlinf.data.schema.actor_batch import DynamicActorBatch
+
 
 @register_loss_scale("group_level")
-def group_scale(context, batch):
+def group_scale(context: dict, batch: DynamicActorBatch) -> DynamicActorBatch:
     """Apply the outer group-level normalization factor to advantages.
 
     This function handles the top-level `1 / G` normalization in GRPO.
@@ -47,15 +53,15 @@ def group_scale(context, batch):
     # Convert the local dynamic-turn count back to the effective global batch
     # normalization used by the actor update.
     group_scale = num_sequence * dp_world_size / context["actor_global_batch_size"]
-    batch["advantages"] *= group_scale
+    batch["advantages"] = [row * group_scale for row in batch["advantages"]]
     return batch
 
 
 @register_loss_scale("agent_level")
 def agent_scale(
     context: dict,
-    batch: dict[str, torch.Tensor],
-) -> dict:
+    batch: DynamicActorBatch,
+) -> DynamicActorBatch:
     """Apply per-agent and uniform per-turn scaling inside each trajectory.
 
     This stage contributes:
@@ -70,7 +76,7 @@ def agent_scale(
 
     Args:
         context (dict): Shared scaling context built in `run_training`.
-        batch (dict[str, torch.Tensor]): Dynamic rollout batch containing
+        batch: Dynamic rollout batch containing
             `idx_to_traj`, `extra:idx_to_sub_traj`, and `loss_scales`.
 
     Returns:
@@ -112,8 +118,8 @@ def agent_scale(
 @register_loss_scale("turn_level")
 def turn_scale(
     context: dict,
-    batch: dict[str, torch.Tensor],
-) -> dict:
+    batch: DynamicActorBatch,
+) -> DynamicActorBatch:
     """Refine uniform per-turn weights into token-proportional turn weights.
 
     This function must run after `agent_scale`. At that point,
@@ -130,7 +136,7 @@ def turn_scale(
 
     Args:
         context (dict): Shared scaling context built in `run_training`.
-        batch (dict[str, torch.Tensor]): Dynamic rollout batch containing
+        batch: Dynamic rollout batch containing
             `idx_to_traj`, `extra:idx_to_sub_traj`, `response_mask`, and
             `loss_scales`.
 
@@ -180,3 +186,23 @@ def turn_scale(
                     1 * len(sub_traj_idxes) * masked_counts[i] / masked_count_all
                 )
     return batch
+
+
+def restore_source_dp_normalization(
+    batch: DynamicActorBatch,
+    context: dict,
+    dp_group: torch.distributed.ProcessGroup,
+    device: torch.device | str,
+) -> None:
+    """Retain source-DP loss weights after group redistribution and folding."""
+    if "group_level" not in context["folding_scale"]:
+        return
+    sources = batch["extra:source_dp"].long()
+    counts = torch.bincount(
+        sources, minlength=torch.distributed.get_world_size(dp_group)
+    ).to(device)
+    torch.distributed.all_reduce(counts, group=dp_group)
+    ratios = counts.cpu()[sources].float() / len(sources)
+    batch["advantages"] = [
+        row * ratio for row, ratio in zip(batch["advantages"], ratios)
+    ]

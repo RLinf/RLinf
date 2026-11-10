@@ -18,6 +18,7 @@ import torch
 from omegaconf import DictConfig
 
 import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.loss_scales import restore_source_dp_normalization
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
     get_loss_scales,
@@ -25,6 +26,11 @@ from rlinf.algorithms.registry import (
 )
 from rlinf.algorithms.utils import (
     kl_penalty,
+)
+from rlinf.data.schema.actor_batch import (
+    DynamicActorBatch,
+    TokenRows,
+    pad_actor_batch_rows,
 )
 from rlinf.data.schema.reasoning_results import (
     DynamicRolloutResult,
@@ -34,19 +40,20 @@ from rlinf.hybrid_engines.fsdp.utils import (
     unpack_fsdp_logprobs,
     unpack_sequences,
 )
-from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_reverse_idx,
-    get_seqlen_balanced_partitions,
+    split_dynamic_batch_size,
 )
 from rlinf.utils.distributed import (
-    RolloutDataBalance,
+    balance_rollout_groups,
     compute_rollout_metrics_dynamic,
 )
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
 )
+from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
     cpu_dict,
@@ -75,9 +82,6 @@ class MAFSDPActor(FSDPActor):
         assert self.is_dynamic_rollout_batch, (
             "MAFSDPActor requires agentloop.is_dynamic_rollout_batch=True"
         )
-        assert self.enable_dp_load_balance, (
-            "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
-        )
         self.placement = placement
         assert self.placement.is_collocated, (
             "Only collocated placement is supported for multi-agent actor"
@@ -91,73 +95,93 @@ class MAFSDPActor(FSDPActor):
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
     def _get_num_rollout_results_per_dp(self) -> int:
-        """Return the number of DynamicRolloutResult objects each DP rank should receive.
-
-        For multi-agent dynamic rollout, each channel item corresponds to one trajectory
-        group, while `num_sequence` inside that item can vary across turns. Therefore the
-        receive loop should be counted in rollout-result units, not sequence units.
-        """
+        """Count question groups; each group can contain a different turn count."""
         return self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
 
-    def get_rollout_metrics_group(self, batch: dict[str, torch.Tensor]):
+    def get_rollout_metrics_group(
+        self, batch: DynamicActorBatch
+    ) -> torch.distributed.ProcessGroup:
         """Return the process group used to aggregate rollout metrics."""
         return torch.distributed.group.WORLD
 
     def get_batch(
         self, channel: Channel
-    ) -> tuple[dict[str, torch.Tensor], DynamicRolloutResult]:
-        result: DynamicRolloutResult = channel.get()
-
-        batch = result.to_actor_batch(
-            self.cfg.actor.model.encoder_seq_length,
-            self.tokenizer.eos_token_id,
+    ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
+        """Receive complete groups, balance once, and retain real-length rows."""
+        results = [channel.get() for _ in range(self._get_num_rollout_results_per_dp())]
+        if not channel.is_local:
+            for result in results:
+                result.extra_fields_train["source_dp"] = [
+                    torch.distributed.get_rank()
+                ] * result.num_sequence
+            if self.enable_dp_load_balance:
+                with self.worker_timer("group_dp_balance"):
+                    results = balance_rollout_groups(
+                        results, torch.distributed.group.WORLD
+                    )
+        batch = DynamicRolloutResult.merge_batches(
+            [result.to_actor_batch() for result in results],
+            self.cfg.algorithm.group_size,
         )
-        return batch, result
+        return batch, results
+
+    @staticmethod
+    def _split_to_micro_batch(
+        batch: DynamicActorBatch,
+        enable_dynamic_batch_size: bool,
+        *,
+        max_tokens_per_mbs: Optional[int] = None,
+        split_num: int,
+    ):
+        if enable_dynamic_batch_size:
+            iterator, _, count, indices = split_dynamic_batch_size(
+                batch,
+                cp_world_size=1,
+                vpp_world_size=1,
+                max_tokens_per_mbs=max_tokens_per_mbs,
+                microbatch_group_size_per_vp_stage=1,
+                seq_len_effective=torch.tensor(list(map(len, batch["input_ids"]))),
+            )
+            return iterator, count, indices
+        return (
+            get_iterator_k_split(batch, split_num, enforce_divisible_batch=False),
+            split_num,
+            None,
+        )
 
     def forward_batch(
         self,
-        m_batch: dict[str, torch.Tensor],
+        m_batch: DynamicActorBatch,
         calculate_entropy: bool = False,
-    ) -> torch.Tensor:
-        input_ids = m_batch["input_ids"]
-        attention_mask = m_batch["attention_mask"]
-        position_ids = m_batch["position_ids"]
-
-        seq_length = input_ids.shape[1]
-
+    ) -> TokenRows | tuple[TokenRows, TokenRows]:
+        """Return probabilities and optional entropy aligned with each token row."""
+        device = self.torch_platform.current_device()
+        rows = [row.to(device) for row in m_batch["input_ids"]]
+        positions = [row.to(device) for row in m_batch["position_ids"]]
+        lengths = list(map(len, rows))
+        idx_starts, idx_ends = [0] * len(rows), lengths
         multi_modal_inputs = {}
         if "multi_modal_inputs" in m_batch:
-            for key in m_batch["multi_modal_inputs"][0].keys():
+            for key in m_batch["multi_modal_inputs"][0]:
                 multi_modal_inputs[key] = torch.cat(
-                    [inputs[key] for inputs in m_batch["multi_modal_inputs"]],
-                    dim=0,
-                ).to(Worker.torch_device_type)
-
+                    [inputs[key] for inputs in m_batch["multi_modal_inputs"]], dim=0
+                ).to(device)
         if self.enable_dynamic_batch_size:
-            max_seq_len_pack = self.max_tokens_per_mbs
-            max_seq_len_unpack = seq_length
-
-            if "prompt_lengths" in m_batch and "response_lengths" in m_batch:
-                seq_lens = m_batch["prompt_lengths"].to(input_ids.device) + m_batch[
-                    "response_lengths"
-                ].to(input_ids.device)
-            else:
-                # Fallback: DynamicRolloutResult attention_mask is True for
-                # all valid prompt+response tokens.
-                seq_lens = attention_mask.to(torch.long).sum(dim=1)
-
-            idx_starts = torch.zeros_like(seq_lens, dtype=torch.long)
-            idx_ends = seq_lens.to(torch.long)
-
             input_ids, position_ids, attention_mask = pack_fsdp_input(
-                input_ids,
-                position_ids,
+                rows,
+                positions,
                 idx_starts=idx_starts,
                 idx_ends=idx_ends,
-                max_seq_len_pack=max_seq_len_pack,
+                max_seq_len_pack=self.max_tokens_per_mbs,
                 eos_token_id=self.tokenizer.eos_token_id,
             )
-
+        else:
+            width = max(lengths)
+            input_ids = batch_pad_to_fixed_len(rows, width, self.tokenizer.eos_token_id)
+            position_ids = batch_pad_to_fixed_len(positions, width, 0)
+            attention_mask = batch_pad_to_fixed_len(
+                [torch.ones_like(row, dtype=torch.bool) for row in rows], width, 0
+            )
         with self.amp_context:
             outputs = self.model(
                 input_ids=input_ids,
@@ -166,135 +190,79 @@ class MAFSDPActor(FSDPActor):
                 use_cache=False,
                 **multi_modal_inputs,
             )
-
-        logits: torch.Tensor = outputs.logits
-        logits.div_(self.cfg.algorithm.sampling_params.temperature)
-
+        logits = outputs.logits
+        logits = logits / self.cfg.algorithm.sampling_params.temperature
         if self.enable_dynamic_batch_size:
-            # unpack_fsdp_logprobs is expected to return logprobs unpacked to
-            # [B, max_seq_len_unpack], aligned with token positions.
-            logprobs = unpack_fsdp_logprobs(
+            probabilities = unpack_fsdp_logprobs(
                 logits,
                 input_ids,
                 idx_starts=idx_starts,
                 idx_ends=idx_ends,
-                max_seq_len_unpack=max_seq_len_unpack,
+                max_seq_len_unpack=None,
                 eos_token_id=self.tokenizer.eos_token_id,
                 compute_logprobs_fn=self.compute_logprobs,
             )
-        else:
-            if input_ids.shape[1] <= 1:
-                logprobs = torch.zeros(
-                    input_ids.shape,
-                    dtype=logits.dtype,
-                    device=logits.device,
-                )
-            else:
-                # token_logprobs[:, t] corresponds to input_ids[:, t + 1]
-                token_logprobs = self.compute_logprobs(
-                    logits[:, :-1, :],
-                    input_ids[:, 1:],
-                )
-
-                logprobs = torch.zeros(
-                    input_ids.shape,
-                    dtype=token_logprobs.dtype,
-                    device=token_logprobs.device,
-                )
-                logprobs[:, 1:] = token_logprobs
-
-        if calculate_entropy:
-            if self.enable_dynamic_batch_size:
-                pos_entropy = compute_entropy_from_logits(logits)
-
-                pos_entropy = unpack_sequences(
-                    pos_entropy,
+            logprobs = [torch.cat((row.new_zeros(1), row[1:])) for row in probabilities]
+            if calculate_entropy:
+                values = unpack_sequences(
+                    compute_entropy_from_logits(logits),
                     idx_starts,
                     idx_ends,
-                    max_seq_len_unpack,
+                    None,
                     pad_val=0,
                 )
-
-                entropy = torch.zeros(
-                    pos_entropy.shape,
-                    dtype=pos_entropy.dtype,
-                    device=pos_entropy.device,
-                )
-                if pos_entropy.shape[1] > 1:
-                    entropy[:, 1:] = pos_entropy[:, :-1]
-            else:
-                if input_ids.shape[1] <= 1:
-                    entropy = torch.zeros(
-                        input_ids.shape,
-                        dtype=logits.dtype,
-                        device=logits.device,
-                    )
-                else:
-                    token_entropy = compute_entropy_from_logits(logits[:, :-1, :])
-
-                    entropy = torch.zeros(
-                        input_ids.shape,
-                        dtype=token_entropy.dtype,
-                        device=token_entropy.device,
-                    )
-                    entropy[:, 1:] = token_entropy
-
-            return logprobs, entropy
-
-        return logprobs
+                entropy = [torch.cat((row.new_zeros(1), row[:-1])) for row in values]
+        else:
+            values = self.compute_logprobs(logits[:, :-1, :], input_ids[:, 1:])
+            logprobs = [
+                torch.cat((row.new_zeros(1), row[: n - 1]))
+                for row, n in zip(values, lengths)
+            ]
+            if calculate_entropy:
+                values = compute_entropy_from_logits(logits[:, :-1, :])
+                entropy = [
+                    torch.cat((row.new_zeros(1), row[: n - 1]))
+                    for row, n in zip(values, lengths)
+                ]
+        return (logprobs, entropy) if calculate_entropy else logprobs
 
     def inference_step(
         self,
-        batch: dict[str, torch.Tensor],
-        rollout_result: DynamicRolloutResult,
+        batch: DynamicActorBatch,
         compute_ref_logprobs: bool,
-    ):
+    ) -> tuple[TokenRows, Optional[TokenRows]]:
+        """Return detached CPU probability rows in the input sequence order."""
+        count = len(batch["input_ids"])
+        # A DP peer can need more forward calls than this rank has real rows.
+        batch = pad_actor_batch_rows(
+            batch,
+            1,
+            torch.distributed.group.WORLD,
+            self.torch_platform.current_device(),
+        )
+        size = self.cfg.algorithm.logprob_forward_micro_batch_size
+        split_num = max(1, (len(batch["input_ids"]) + size - 1) // size)
         micro_batches_iter, _, dbs_indices = self._split_to_micro_batch(
             batch,
             self.enable_dynamic_batch_size,
             max_tokens_per_mbs=self.max_tokens_per_mbs,
-            split_num=rollout_result.num_sequence
-            // self.cfg.algorithm.logprob_forward_micro_batch_size,
+            split_num=split_num,
         )
-        if self.enable_dynamic_batch_size:
-            indices = sum(dbs_indices, [])
-            revert_indices = torch.tensor(
-                get_reverse_idx(indices),
-                dtype=torch.long,
-            )
         micro_batches = list(micro_batches_iter)
 
-        recomputed_logprobs, ref_logprobs = None, None
+        def forward_rows() -> TokenRows:
+            rows = []
+            for micro in micro_batches:
+                rows.extend(row.detach().cpu() for row in self.forward_batch(micro))
+            if dbs_indices is not None:
+                rows = [rows[i] for i in get_reverse_idx(sum(dbs_indices, []))]
+            return rows[:count]
 
-        # Recompute logprobs with the actor model.
-        recomputed_logprobs = torch.cat(
-            [self.forward_batch(batch) for batch in micro_batches]
-        ).cpu()
-
-        if self.enable_dynamic_batch_size:
-            assert len(indices) == recomputed_logprobs.size(0), (
-                f"Dynamic batch size indices length {len(indices)} does not equal "
-                f"output length {recomputed_logprobs.size(0)}"
-            )
-            recomputed_logprobs = recomputed_logprobs[revert_indices]
-
-        # Ref logprobs
+        recomputed_logprobs = forward_rows()
+        ref_logprobs = None
         if compute_ref_logprobs:
-            assert self.ref_policy_state_dict is not None, (
-                "Reference policy state dict is None but compute_ref_logprobs is True"
-            )
             with cpu_weight_swap(self, self.ref_policy_state_dict, is_fsdp=True):
-                ref_logprobs = torch.cat(
-                    [self.forward_batch(batch) for batch in micro_batches]
-                ).cpu()
-
-                if self.enable_dynamic_batch_size:
-                    assert len(indices) == ref_logprobs.size(0), (
-                        f"Dynamic batch size indices length {len(indices)} does not equal "
-                        f"output length {ref_logprobs.size(0)}"
-                    )
-                    ref_logprobs = ref_logprobs[revert_indices]
-
+                ref_logprobs = forward_rows()
         return recomputed_logprobs, ref_logprobs
 
     def run_inference(
@@ -303,61 +271,32 @@ class MAFSDPActor(FSDPActor):
         output_channel: Channel,
         compute_ref_logprobs: bool,
     ):
-        """
-        Compute prev/ref logprobs using the actor Model's forward.
-        Override to handle DynamicRolloutResult which has different structure.
-        Args:
-            input_channel: The input channel to read from.
-            output_channel: The output channel to send results to.
-            compute_ref_logprobs: Whether to compute reference logprobs.
-        """
-        assert not self.is_pipeline, (
-            "MAFSDPActor currently only supports collocated inference"
-        )
-
-        batches = []
-        rollout_results = []
-        total_result_size_per_dp = self._get_num_rollout_results_per_dp()
-
-        for _ in range(total_result_size_per_dp):
-            batch, rollout_result = self.get_batch(input_channel)
-            batches.append(batch)
-            rollout_results.append(rollout_result)
-
-        merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
-            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
-        )
-        rollout_result = DynamicRolloutResult.merge_result_list(rollout_results)
-
+        """Compute real-length probabilities and retain the balanced group order."""
+        assert not self.is_pipeline, "MAFSDPActor supports collocated inference."
+        batch, results = self.get_batch(input_channel)
         self._load_weight_and_optimizer()
         self.model.eval()
-        with self.worker_timer():
-            with torch.no_grad():
-                recomputed_logprobs, ref_logprobs = self.inference_step(
-                    merged_batch,
-                    rollout_result,
-                    compute_ref_logprobs,
-                )
+        with self.worker_timer(), torch.no_grad():
+            probabilities, reference = self.inference_step(batch, compute_ref_logprobs)
+        offset = 0
+        for result in results:
+            end = offset + result.num_sequence
+            result.recomputed_logprobs = probabilities[offset:end]
+            if reference is not None:
+                result.ref_logprobs = reference[offset:end]
+            output_channel.put(result)
+            offset = end
 
-            rollout_result.recomputed_logprobs = recomputed_logprobs
-
-            if compute_ref_logprobs:
-                rollout_result.ref_logprobs = ref_logprobs
-
-        rollout_result_per_group = DynamicRolloutResult.split_results(
-            rollout_result, num_sequence_per_group
-        )
-        for rollout_result in rollout_result_per_group:
-            output_channel.put(rollout_result)
-
-    def get_response_loss_mask(self, m_batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    def get_response_loss_mask(
+        self, m_batch: DynamicActorBatch | dict[str, torch.Tensor]
+    ) -> torch.Tensor | TokenRows:
         """Return the full response mask used by dynamic multi-agent rollouts."""
         return m_batch["response_mask"]
 
     def forward_backward_batch(
         self,
         idx: int,
-        m_batch: dict[str, torch.Tensor],
+        m_batch: DynamicActorBatch,
         micro_batch_cnt: int,
     ) -> dict[str, torch.Tensor]:
         """Run one dynamic-rollout micro-batch with trajectory loss scaling."""
@@ -365,14 +304,35 @@ class MAFSDPActor(FSDPActor):
             self.model,
             is_last_micro_batch=(idx + 1) == micro_batch_cnt,
         )
-        for k, v in m_batch.items():
-            m_batch[k] = (
-                v.to(Worker.torch_device_type) if isinstance(v, torch.Tensor) else v
-            )
-
         # batch for forward
         logprobs, entropy = self.forward_batch(m_batch, True)
 
+        width = self.cfg.actor.model.encoder_seq_length
+        outputs = DynamicRolloutResult.materialize_actor_batch(
+            {"logprobs": logprobs, "entropy": entropy},
+            width,
+            0,
+            self.torch_platform.current_device(),
+        )
+        logprobs, entropy = outputs["logprobs"], outputs["entropy"]
+        m_batch = DynamicRolloutResult.materialize_actor_batch(
+            {
+                key: value
+                for key, value in m_batch.items()
+                if key
+                in (
+                    "recomputed_logprobs",
+                    "rollout_logprobs",
+                    "ref_logprobs",
+                    "advantages",
+                    "loss_scales",
+                    "response_mask",
+                )
+            },
+            width,
+            0,
+            self.torch_platform.current_device(),
+        )
         # batch for backward
         old_logprobs = m_batch.get("recomputed_logprobs")
         if old_logprobs is None:
@@ -407,13 +367,13 @@ class MAFSDPActor(FSDPActor):
             fast_path_zero_loss_mask=True,
         )
 
-        entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        entropy_loss = torch.tensor(0.0, device=self.torch_platform.current_device())
         if self.calculate_entropy:
             entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
             if self.calculate_entropy_loss:
                 loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
-        kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        kl_loss = torch.tensor(0.0, device=self.torch_platform.current_device())
         if self.kl_beta > 0 and ref_logprobs is not None:
             kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
             kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
@@ -437,23 +397,7 @@ class MAFSDPActor(FSDPActor):
 
         return mbs_metrics_data
 
-    def _dp_load_balance_dynamic(
-        self,
-        batch: dict[str, torch.Tensor],
-        batch_pad: dict[str, torch.Tensor],
-        split_fix_chunk: int,
-    ):
-        return RolloutDataBalance.from_rollout_batches_dynamic(
-            rollout_batches=batch,
-            dp_world_size=torch.distributed.get_world_size(),
-            dp_rank=torch.distributed.get_rank(),
-            dp_group=torch.distributed.group.WORLD,
-            rollout_batch_pad=batch_pad,
-            split_fix_chunk=split_fix_chunk,
-            partitioning_tool=get_seqlen_balanced_partitions,
-        )
-
-    def _compute_rollout_metrics(self, batch: dict[str, torch.Tensor]):
+    def _compute_rollout_metrics(self, batch: DynamicActorBatch):
         rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
         if rollout_metrics_compute_data_group is None:
             return None
@@ -496,24 +440,15 @@ class MAFSDPActor(FSDPActor):
             "MAFSDPActor currently only supports collocated training"
         )
 
-        batches = []
-        total_result_size_per_dp = self._get_num_rollout_results_per_dp()
-        for _ in range(total_result_size_per_dp):
-            batch, _ = self.get_batch(input_channel)
-            batches.append(batch)
-
-        global_batch = DynamicRolloutResult.merge_batches(
-            batches,
-            self.cfg.algorithm.group_size,
-        )
+        global_batch, _ = self.get_batch(input_channel)
         assert (
             "recomputed_logprobs" in global_batch or "rollout_logprobs" in global_batch
         )
 
         global_batch = self.compute_advantages_and_returns(global_batch)
-        global_batch["loss_scales"] = torch.ones_like(
-            global_batch["advantages"]
-        ).masked_fill(~global_batch["response_mask"], 0)
+        global_batch["loss_scales"] = [
+            mask.float() for mask in global_batch["response_mask"]
+        ]
 
         if self.cfg.algorithm.normalize_advantages:
             raise AssertionError(
@@ -538,22 +473,24 @@ class MAFSDPActor(FSDPActor):
             global_batch = DynamicRolloutResult.pack_traj_batch(
                 scale_context, global_batch
             )
+        restore_source_dp_normalization(
+            global_batch,
+            scale_context,
+            torch.distributed.group.WORLD,
+            self.torch_platform.current_device(),
+        )
         for key in list(global_batch.keys()):
             if key == "idx_to_traj" or key.startswith("extra:"):
                 global_batch.pop(key, None)
 
         self._load_weight_and_optimizer()
 
-        if self.enable_dp_load_balance:
-            batch_pad = DynamicRolloutResult.get_batch_pad(
-                self.cfg.actor.model.encoder_seq_length,
-                list(global_batch.keys()),
-            )
-            global_batch = self._dp_load_balance_dynamic(
-                global_batch,
-                batch_pad,
-                self.cfg.actor.micro_batch_size,
-            )
+        global_batch = pad_actor_batch_rows(
+            global_batch,
+            self.cfg.algorithm.n_minibatches * self.cfg.actor.micro_batch_size,
+            torch.distributed.group.WORLD,
+            self.torch_platform.current_device(),
+        )
 
         mini_batches = get_iterator_k_split(
             global_batch,
@@ -566,7 +503,7 @@ class MAFSDPActor(FSDPActor):
         training_metrics_list = []
         with self.worker_timer():
             for mini_batch in mini_batches:
-                if mini_batch["input_ids"].shape == torch.Size([0]):
+                if not mini_batch["input_ids"]:
                     continue
                 mean_metric_dict = self.training_step(batch=mini_batch)
                 training_metrics_list.append(mean_metric_dict)
@@ -577,11 +514,13 @@ class MAFSDPActor(FSDPActor):
         return rollout_metrics, training_metrics_list
 
     # Advantages and returns
-    def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
+    def compute_advantages_and_returns(
+        self, batch: DynamicActorBatch
+    ) -> DynamicActorBatch:
         """Compute the advantages and returns.
 
         Args:
-            batch (Dict[str, torch.Tensor]): The rollout batch.
+            batch: Real-length token rows and per-sequence metadata.
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
@@ -594,21 +533,28 @@ class MAFSDPActor(FSDPActor):
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
                     advantage_mode=self.cfg.algorithm.advantage_mode,
-                    rewards=batch["rewards"].to(Worker.torch_device_type),
-                    loss_mask=mask.to(Worker.torch_device_type),
+                    rewards=batch["rewards"].to(self.torch_platform.current_device()),
+                    loss_mask=[
+                        row.to(self.torch_platform.current_device()) for row in mask
+                    ],
                     num_sequence=len(batch["input_ids"]),
                     group_size=self.cfg.algorithm.group_size,
                     idx_to_traj=batch["idx_to_traj"],
                     kl_beta=self.reinpp_kl_beta,
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=logprob.to(Worker.torch_device_type),
-                    ref_logprob=batch["ref_logprobs"].to(Worker.torch_device_type)
+                    logprob=[
+                        row.to(self.torch_platform.current_device()) for row in logprob
+                    ],
+                    ref_logprob=[
+                        row.to(self.torch_platform.current_device())
+                        for row in batch["ref_logprobs"]
+                    ]
                     if "ref_logprobs" in batch
                     else None,
                     use_reinpp_baseline=self.cfg.algorithm.get(
                         "use_reinpp_baseline", False
                     ),
                 )
-                batch["advantages"] = advantages
+                batch["advantages"] = [row.cpu() for row in advantages]
 
         return batch
