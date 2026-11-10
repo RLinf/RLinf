@@ -14,10 +14,10 @@ imitate demonstrations first, then continue with RL from a stronger prior.
 
 For visual-history conditioning on LIBERO-Mem, follow
 :doc:`OpenPI Short Memory Evaluation and Training </rst_source/guides/data-checkpoints/openpi_short_memory>`.
-That guide covers history sampling and the FSDP1 SFT recipe.
+That guide covers history sampling and the FSDP1 SFT configuration.
 
-Recipes
--------
+Configurations
+--------------
 
 Each experiment YAML imports a path-free model template through Hydra
 ``defaults``, then overrides paths and task fields. Replace ``/path/to/...``
@@ -103,7 +103,7 @@ Typical official horizons: BEHAVIOR ``pi05_behavior`` **32**, RoboTwin
 checkpoint horizon differs from that ``TrainConfig``.
 
 The BEHAVIOR / dual-Franka streaming SFT loaders currently still use
-``num_action_chunks`` as the data window, so those recipes keep it equal to
+``num_action_chunks`` as the data window, so those configurations keep it equal to
 the official horizon.
 
 Keep original parameters and optimizer updates in FP32 with
@@ -114,12 +114,12 @@ activations. Configure FSDP separately: BF16 parameters
 for forward/backward computation, FP32 gradient reduction, and FP32 buffers.
 The shared model templates use ``precision: null`` for OpenPI's selective
 BF16/FP32 parameter dtypes. BEHAVIOR, RoboTwin, dual-Franka, and RLT Stage 1
-SFT recipes set ``precision: fp32``.
+SFT configurations set ``precision: fp32``.
 
 Select ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm weights,
 and vision embeddings in FP32. The profile preserves FP32 action/time inputs
 and adaptive-norm conditioning while the backbone computes in BF16.
-RLT Stage 1 recipes also keep ``rlt_module`` in FP32.
+RLT Stage 1 configurations also keep ``rlt_module`` in FP32.
 
 OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
 ``use_orig_params: true``. ``no_shard`` replicates all training state;
@@ -127,7 +127,7 @@ OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
 shards parameters between module executions. Select either sharded mode to
 reduce per-rank memory. Enable ``gradient_checkpointing: true`` with
 ``gradient_checkpointing_use_reentrant: false`` to reduce activation memory.
-BEHAVIOR / RoboTwin recipes use the ``openpi_cosine`` learning rate schedule.
+BEHAVIOR / RoboTwin configurations use the ``openpi_cosine`` learning rate schedule.
 
 .. code:: yaml
 
@@ -247,7 +247,7 @@ and ``actions`` before SFT (especially important for real-robot data):
   ``openpi_data.norm_stats_path`` to that ``norm_stats.json``. If the key is
   omitted, OpenPI loads ``{assets_dir}/{asset_id}/norm_stats.json`` from the
   TrainConfig (after ``model_path`` is applied) and logs a warning. The
-  RoboTwin recipe pins stats beside the base weights at
+  RoboTwin configuration pins stats beside the base weights at
   ``physical-intelligence/robotwin/<task>/norm_stats.json``.
 
 If standard deviations are tiny or the q99–q01 range is very narrow, widening
@@ -357,7 +357,7 @@ point to the directory containing ``params/``:
      --max-token-len 200
 
 The converter defaults to π₀.₅; do not add ``--no-pi05``. Other π₀.₅ SFT
-recipes use the same workflow with ``--action-horizon`` matching their existing
+configurations use the same workflow with ``--action-horizon`` matching their existing
 configs: 10 for ManiSkill RLT, and 20 for Franka RLT and dual-Franka. Conversion
 does not require changing action dimensions, image counts, or training settings
 in the YAML.

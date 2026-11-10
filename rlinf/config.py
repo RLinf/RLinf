@@ -1802,10 +1802,7 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
         model_type = cfg.actor.model.get("model_type", None)
-        if (
-            model_type is not None
-            and SupportedModel(model_type) == SupportedModel.OPENPI
-        ):
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
             openpi_cfg = cfg.actor.model.openpi
             history_cfg = cfg.data.get("short_memory")
             if openpi_cfg.get("short_memory", False):
@@ -1818,10 +1815,7 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
                     "OpenPI use_rlt=True requires the RLT loader; "
                     "got short_memory enabled in the model or data configuration."
                 )
-        elif (
-            model_type is not None
-            and SupportedModel(model_type) == SupportedModel.DREAMZERO
-        ):
+        elif SupportedModel(model_type) == SupportedModel.DREAMZERO:
             from rlinf.models.embodiment.dreamzero.dreamzero_config import (
                 validate_dreamzero_sft_model_cfg,
             )
