@@ -329,6 +329,11 @@ class Channel:
         """Check if the channel is a local channel."""
         return self._local_channel is not None
 
+    @property
+    def name(self) -> str:
+        """Return the channel's registered name."""
+        return self._channel_name
+
     def _get_src_node_rank(self) -> int:
         """Return the caller's cluster node rank if available."""
         if self._current_worker is not None:

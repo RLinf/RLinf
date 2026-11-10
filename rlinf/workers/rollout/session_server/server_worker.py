@@ -40,13 +40,18 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from omegaconf import DictConfig
 
-from rlinf.data.schema.reasoning_results import DiscardedGroup, GroupMetadata
+from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
+    GroupMetadata,
+    PayloadRef,
+)
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.http_client import InferenceHTTPClient
 from rlinf.workers.rollout.session_server.payload import (
     PayloadDiscard,
     PayloadPart,
     payload_key_for,
+    payload_locator_for,
     payload_shard_for,
     routing_key_for,
 )
@@ -73,7 +78,8 @@ class _TurnRecord:
     previous turn's input+output, None on the first turn. ``kept_len`` and
     ``continues_prev`` are filled when the agent declares them (close, or the
     per-turn ``prev_kept_len`` declaration); until then the kept length is the
-    full output and the classification is pending.
+    full output and the classification is pending. In verify mode
+    ``merged_sampling_params`` holds the params this call was forwarded with.
     """
 
     input_len: int
@@ -82,6 +88,7 @@ class _TurnRecord:
     declared_prev_kept_len: Optional[int] = None
     kept_len: Optional[int] = None
     continues_prev: Optional[bool] = None
+    merged_sampling_params: Optional[dict] = None
 
 
 @dataclass
@@ -89,7 +96,9 @@ class _SessionState:
     """Per-trajectory state: the turn records and the last engine I/O.
 
     The last input and output token ids are kept only for the next turn's
-    prefix check; logprobs never live here.
+    prefix check; logprobs never live here. ``extra_fields_train`` is the
+    trajectory's slice of the training extra fields, declared at close and
+    moved into the finalize part's verdicts.
     """
 
     session_id: Optional[str]
@@ -98,6 +107,7 @@ class _SessionState:
     turns: list[_TurnRecord] = field(default_factory=list)
     last_input: Optional[list[int]] = None
     last_output: Optional[list[int]] = None
+    extra_fields_train: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -134,6 +144,8 @@ class _GroupState:
     completion_version: Optional[int] = None
     num_gen_tokens: int = 0
     num_generate_calls: int = 0
+    payload_bytes: int = 0
+    verify_result: Optional[dict] = None
     finalized: bool = False
     reported: bool = False
     write_failed: bool = False
@@ -174,16 +186,18 @@ class SessionServerWorker(Worker):
         }
 
         self._expected_group_size = int(cfg.algorithm.group_size)
-        # Defaults come from algorithm.sampling_params; a task passing
-        # config_rollout would override them there (SGLangWorker prefers
-        # config_rollout.sampling_params), which no phase-one task does.
-        self._sampling_params = SGLangWorker.get_sampling_param_from_config(
-            cfg.algorithm.sampling_params
-        )
+        # The session server serves only the training policy model, whose
+        # rollout worker is built without config_rollout; if that ever
+        # changes, the runner must hand this server the same block.
+        self._sampling_params = SGLangWorker.get_default_sampling_params(cfg)
         self._return_logprob = bool(cfg.rollout.return_logprobs)
         rollout_cfg = cfg.get("rollout", {}) or {}
         router_cfg = rollout_cfg.get("router", {}) or {}
         self._discard_record_ttl_s = float(router_cfg.get("max_idle_secs", 600))
+        # Assembly verification: the agent's close carries a reference
+        # result, the generate responses carry logprobs, and the finalize
+        # part carries both sides' sampling params.
+        self._verify_assembly = bool(session_server_cfg.get("verify_assembly", False))
 
         self._groups: dict[int, _GroupState] = {}
         self._sessions: dict[str, _SessionState] = {}
@@ -592,19 +606,24 @@ class SessionServerWorker(Worker):
         session.turns.append(turn)
         session.last_input = list(input_ids)
         session.last_output = list(output_ids)
+        if self._verify_assembly:
+            turn.merged_sampling_params = forwarded["sampling_params"]
         group.num_gen_tokens += len(output_ids)
         group.num_generate_calls += 1
         self._apply_version(group, version_start)
         self._apply_version(group, weight_version)
 
-        return JSONResponse(
-            content={
-                "output_ids": list(output_ids),
-                "finish_reason": dict(finish_reason),
-                "weight_version": weight_version,
-                "cached_tokens": meta_info.get("cached_tokens", 0),
-            }
-        )
+        content = {
+            "output_ids": list(output_ids),
+            "finish_reason": dict(finish_reason),
+            "weight_version": weight_version,
+            "cached_tokens": meta_info.get("cached_tokens", 0),
+        }
+        if self._verify_assembly:
+            # Only the verification needs the agent-side logprobs; normal
+            # responses keep them out of the data plane.
+            content["logprobs"] = logprobs
+        return JSONResponse(content=content)
 
     def _new_turn_record(
         self, session: _SessionState, input_ids: list[int], prev_kept_len: Optional[int]
@@ -846,18 +865,53 @@ class SessionServerWorker(Worker):
             status = error.status_code
             return error if status >= 400 else JSONResponse(content={})
 
-        verdict = body.get("verdict")
-        if verdict:
+        turns = session.turns
+        verdict = body.get("verdict") or {}
+        if not isinstance(verdict, dict):
+            return self._error(400, f"verdict must be an object, got {verdict!r}")
+        unsupported = sorted(set(verdict) - {"extra_fields_train"})
+        if unsupported:
             return self._error(
                 400,
-                f"unsupported verdict {verdict!r}: phase one only declares "
-                f"kept lengths, via kept_lens",
+                f"unsupported verdict fields {unsupported!r}: only "
+                f"extra_fields_train is supported; kept lengths are declared "
+                f"via kept_lens",
             )
+        extra_fields_train = verdict.get("extra_fields_train") or {}
+        if not isinstance(extra_fields_train, dict):
+            return self._error(
+                400,
+                f"verdict extra_fields_train must map a field name to a list, "
+                f"got {extra_fields_train!r}",
+            )
+        for name, values in extra_fields_train.items():
+            if (
+                not isinstance(values, list)
+                or len(values) != len(turns)
+                or any(not isinstance(value, (bool, int, float)) for value in values)
+            ):
+                return self._error(
+                    400,
+                    f"unsupported verdict extra_fields_train {name!r}: each field "
+                    f"must be a list of int / float / bool, one value per turn "
+                    f"of this trajectory, got {values!r}",
+                )
         kept_lens = body.get("kept_lens") or {}
         if not isinstance(kept_lens, dict):
             return self._error(400, "kept_lens must map turn_index to a kept length")
+        verify_result = body.get("verify_result")
+        if verify_result is not None:
+            if not isinstance(verify_result, dict) or not isinstance(
+                verify_result.get("result"), dict
+            ):
+                return self._error(
+                    400,
+                    "verify_result must be an object with a 'result' object; "
+                    f"got {verify_result!r}",
+                )
+            # Expected with the last close of the group; kept until finalize.
+            group.verify_result = verify_result
 
-        turns = session.turns
         try:
             kept = [self._kept_len(i, turns, kept_lens) for i in range(len(turns))]
             continues = self._classify_turns(session, kept)
@@ -868,6 +922,7 @@ class SessionServerWorker(Worker):
         for turn_index, turn in enumerate(turns):
             turn.kept_len = kept[turn_index]
             turn.continues_prev = continues[turn_index]
+        session.extra_fields_train = extra_fields_train
 
         group.closed.add(session.traj_index)
         await self._maybe_finalize(group)
@@ -1046,6 +1101,18 @@ class SessionServerWorker(Worker):
         if group.write_failed:
             await self._void_group(group_id, _WRITE_FAILED)
             return False
+        verify = None
+        if self._verify_assembly:
+            if group.verify_result is None:
+                raise RuntimeError(
+                    f"verify_assembly is enabled but no close carried a "
+                    f"verify_result for group {group_id}"
+                )
+            verify = dict(group.verify_result)
+            verify["merged_sampling_params"] = {
+                traj_index: [turn.merged_sampling_params for turn in session.turns]
+                for traj_index, session in group.sessions.items()
+            }
         verdicts = {
             traj_index: {
                 "kept_lens": {
@@ -1055,6 +1122,7 @@ class SessionServerWorker(Worker):
                 "continues_prev": [
                     turn.continues_prev is True for turn in session.turns
                 ],
+                "extra_fields_train": dict(session.extra_fields_train),
             }
             for traj_index, session in group.sessions.items()
         }
@@ -1071,6 +1139,7 @@ class SessionServerWorker(Worker):
             last=True,
             rewards=list(group.rewards),
             verdicts=verdicts,
+            verify=verify,
         )
         if not await self._put_payload(
             group_id, finalize_part, await_completion=True, weight=group.payload_bytes
@@ -1078,6 +1147,9 @@ class SessionServerWorker(Worker):
             # _settle_put already recorded the failure, voided the group,
             # and removed any container the part produced.
             return False
+        payload_channel = self._payload_channels[
+            payload_shard_for(group_id, len(self._payload_channels))
+        ]
         metadata = GroupMetadata(
             group_id=group_id,
             task_name=group.task_name,
@@ -1086,6 +1158,12 @@ class SessionServerWorker(Worker):
             completion_version=group.completion_version,
             num_gen_tokens=group.num_gen_tokens,
             num_generate_calls=group.num_generate_calls,
+            payload_ref=PayloadRef(
+                locator=payload_locator_for(payload_channel),
+                key=payload_key_for(group_id),
+                parts={"tokens": group.payload_bytes},
+            ),
+            payload_bytes=group.payload_bytes,
         )
         try:
             work = self._agent_output_channel.put(metadata, async_op=True)

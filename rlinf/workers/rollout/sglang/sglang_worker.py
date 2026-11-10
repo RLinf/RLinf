@@ -94,13 +94,8 @@ class SGLangWorker(Worker):
             trust_remote_code=self._cfg_rollout.model.trust_remote_code,
         )
         self._return_logprobs = self._cfg_rollout.return_logprobs
-        sampling_params = None
-        if config_rollout is not None:
-            sampling_params = config_rollout.get("sampling_params", None)
-        if sampling_params is None:
-            sampling_params = self._cfg.algorithm.sampling_params
-        self._sampling_params = SGLangWorker.get_sampling_param_from_config(
-            sampling_params
+        self._sampling_params = SGLangWorker.get_default_sampling_params(
+            self._cfg, config_rollout
         )
 
         self._validate_sampling_params = {"temperature": 0, "max_new_tokens": 32}
@@ -147,6 +142,18 @@ class SGLangWorker(Worker):
             engine_results, self.async_batch_counter
         )
         self.async_batch_counter += 1
+
+    @staticmethod
+    def get_default_sampling_params(
+        cfg: DictConfig, config_rollout: Optional[DictConfig] = None
+    ) -> dict:
+        """Default sampling params of a rollout worker built from cfg and config_rollout."""
+        if config_rollout is None:
+            config_rollout = cfg.rollout
+        sampling_params = config_rollout.get("sampling_params", None)
+        if sampling_params is None:
+            sampling_params = cfg.algorithm.sampling_params
+        return SGLangWorker.get_sampling_param_from_config(sampling_params)
 
     @staticmethod
     def get_sampling_param_from_config(cfg_sampling_params: DictConfig) -> dict:

@@ -36,6 +36,8 @@ __all__ = [
     "payload_key_for",
     "payload_shard_for",
     "create_payload_channels",
+    "payload_locator_for",
+    "payload_channel_for",
 ]
 
 
@@ -69,7 +71,12 @@ class PayloadPart:
             when it declares per turn, else None.
         last: True only on the finalize part.
         rewards: Group rewards, on the finalize part only.
-        verdicts: Verdicts indexed by traj_index, on the finalize part only.
+        verdicts: Verdicts indexed by traj_index, on the finalize part only:
+            kept lengths, continuity flags, and each trajectory's slice of
+            the training extra fields.
+        verify: Assembly-verification record, on the finalize part only and
+            only in verify mode: the reference result fields the agent
+            reported at close, both sides' per-turn sampling params.
     """
 
     group_id: int
@@ -85,6 +92,7 @@ class PayloadPart:
     last: bool = False
     rewards: Optional[list] = None
     verdicts: Optional[dict] = None
+    verify: Optional[dict] = None
 
 
 @dataclass
@@ -237,3 +245,37 @@ def create_payload_channels(
             )
         )
     return channels
+
+
+def payload_locator_for(channel: Channel) -> str:
+    """Return the locator string naming ``channel`` for a PayloadRef.
+
+    The format is ``channel://<name>``; resolving it back is
+    :func:`payload_channel_for`.
+    """
+    return f"channel://{channel.name}"
+
+
+def payload_channel_for(locator: str, channels: Any) -> Channel:
+    """Return the channel of ``channels`` that a payload locator names.
+
+    Args:
+        locator: A ``channel://<name>`` string from a PayloadRef.
+        channels: Payload channels to search, in any iterable order.
+
+    Returns:
+        The channel whose name matches the locator.
+
+    Raises:
+        ValueError: If the locator is malformed or no channel matches it.
+    """
+    prefix = "channel://"
+    if not isinstance(locator, str) or not locator.startswith(prefix):
+        raise ValueError(
+            f"payload locator must be a '{prefix}<name>' string, got {locator!r}."
+        )
+    name = locator[len(prefix) :]
+    for channel in channels:
+        if channel.name == name:
+            return channel
+    raise ValueError(f"no payload channel named {name!r} for locator {locator!r}.")

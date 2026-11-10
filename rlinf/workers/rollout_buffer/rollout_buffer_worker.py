@@ -24,10 +24,15 @@ from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
-from rlinf.data.schema.reasoning_results import DiscardedGroup, GroupMetadata
+from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
+    GroupDelivery,
+    GroupMetadata,
+)
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.down_sampling import rewards_all_equal
 from rlinf.utils.runner_utils import local_mkdir_safe
+from rlinf.workers.rollout.session_server.payload import payload_channel_for
 
 
 class RolloutBuffer:
@@ -117,7 +122,9 @@ class RolloutBuffer:
                 "num_finished_groups": 0,
                 # Finished groups awaiting a release, keyed by group id
                 # and held as (metadata, result): decisions read the
-                # metadata, the release forwards the result untouched.
+                # metadata, the release forwards the result untouched —
+                # None on the session server path, where the payload sits
+                # in its channel behind the metadata's payload ref.
                 "buffer": {},
                 # Loaded version at issue time of every not-yet-released
                 # group.
@@ -260,17 +267,12 @@ class RolloutBuffer:
     def record_result(self, result: Any, metadata: GroupMetadata) -> int:
         """Buffer one finished group and return its group id.
 
-        `metadata` is the decision view of `result`, computed once by the
-        caller at receive time; buffer decisions never touch the result
-        body again. The owning task is the one the group was issued
-        under, recorded in `group_tasks`; a task name the producer
-        carries that differs from it is ignored. A result whose group id
-        is unknown (or None, as merged and split results carry) cannot
-        return capacity to its task: the caller must treat that as a
-        producer bug, so the buffer raises instead of returning a
-        sentinel.
+        `metadata` is the decision view of `result`, computed by the
+        caller at receive time; on the session server path only the
+        metadata travels here and `result` is None. A group id that is
+        unknown or None is a producer bug and raises.
         """
-        group_id = result.group_id
+        group_id = metadata.group_id
         if group_id is None:
             raise ValueError(
                 "RolloutBuffer got a result without a group id. Merged or "
@@ -373,7 +375,7 @@ class RolloutBuffer:
                 stale.append(group_id)
         return stale
 
-    def release_groups(self) -> list[Any]:
+    def release_groups(self) -> list[tuple[GroupMetadata, Any]]:
         """Take the oldest `rollout_batch_size` groups out of the buffer.
 
         Also clears the drops-since-release window of every task: the
@@ -384,11 +386,11 @@ class RolloutBuffer:
             for task_name, task in self.tasks.items()
             for group_id in task["buffer"]
         )[: self.rollout_batch_size]
-        results = []
+        entries = []
         issue_versions = []
         for group_id, task_name in buffered:
             task = self.tasks[task_name]
-            results.append(task["buffer"].pop(group_id)[1])
+            entries.append(task["buffer"].pop(group_id))
             task["group_sample_indices"].pop(group_id, None)
             issue_versions.append(task["issue_versions"].pop(group_id, None))
         known = [version for version in issue_versions if version is not None]
@@ -402,7 +404,7 @@ class RolloutBuffer:
         # Handing groups to the actor freed buffer capacity; admission
         # may issue replacements while the actor trains.
         self._admission_event.set()
-        return results
+        return entries
 
     def get_step_metrics(self) -> dict:
         """Drain the per-step counters and read the gauges.
@@ -457,9 +459,12 @@ class RolloutBuffer:
 
 class RolloutBufferWorker(Worker):
     """Runs on the driver's node.
-    Finished groups currently pass through this worker on their way to the
-    actor; keeping the tensors on the rollout side and holding only their
-    metadata here is not implemented. The dataloader, the admission
+
+    Two payload layouts reach this worker. On the channel path the
+    finished `DynamicRolloutResult` passes through here on its way to the
+    actor; on the session server path only the group metadata travels
+    here, the payload waits in its channel, and the release hands the
+    actor a `GroupDelivery` pointing at it. The dataloader, the admission
     capacity and the buffer state live in this worker, so a checkpoint
     counts as complete only after its `data/data.pt` (written last)
     exists.
@@ -487,6 +492,9 @@ class RolloutBufferWorker(Worker):
         self._resident_task: Optional[asyncio.Task] = None
         self._data_iter = None
         self._rollout_channel: Optional[Channel] = None
+        # Payload channels behind the metadata this worker buffers, set by
+        # run_continuously; payloads are released through these.
+        self._payload_channels: list[Channel] = []
         self._pending_fetch: Optional[asyncio.Future] = None
 
     async def run_continuously(
@@ -494,18 +502,23 @@ class RolloutBufferWorker(Worker):
         agent_output_channel: Channel,
         dataloader_channel: Channel,
         rollout_channel: Channel,
+        payload_channels: Optional[list[Channel]] = None,
     ):
         """Admit prompts and buffer finished groups until `stop()`.
 
         Two coroutines: admission issues prompts from the dataloader onto
         `dataloader_channel` as the capacity allows; receive buffers
         results from `agent_output_channel` and dispatches a pending
-        release onto `rollout_channel`. A failure of either ends this
-        method; a stop cancels both and returns normally.
+        release onto `rollout_channel`. `payload_channels` back the
+        metadata-only (session server) results; without them a payload
+        ref cannot be resolved and a drop cannot release its payload. A
+        failure of either ends this method; a stop cancels both and
+        returns normally.
         """
         assert self._resident_task is None, "the resident method is already running."
         self._resident_task = asyncio.current_task()
         self._rollout_channel = rollout_channel
+        self._payload_channels = list(payload_channels or [])
         admission = asyncio.create_task(self._run_admission(dataloader_channel))
         receive = asyncio.create_task(
             self._run_receive(agent_output_channel, rollout_channel)
@@ -588,6 +601,8 @@ class RolloutBufferWorker(Worker):
         while True:
             result = await agent_output_channel.get(async_op=True).async_wait()
             if isinstance(result, DiscardedGroup):
+                # The session server already released (or never wrote) the
+                # payload of a group it discarded, so this path must not.
                 self.buffer.drop_group(
                     result.group_id,
                     result.reason,
@@ -595,8 +610,15 @@ class RolloutBufferWorker(Worker):
                     already_buffered=False,
                 )
                 continue
-            metadata = result.group_metadata()
+            if isinstance(result, GroupMetadata):
+                # Session server path: the payload waits in its channel
+                # behind the metadata's ref; nothing of it passes through.
+                metadata = result
+                result = None
+            else:
+                metadata = result.group_metadata()
             if self.reject_equal_reward and rewards_all_equal(metadata.rewards):
+                await self._release_payload(metadata)
                 self.buffer.drop_group(
                     metadata.group_id,
                     "equal_reward",
@@ -615,6 +637,7 @@ class RolloutBufferWorker(Worker):
                 # version; release_batch re-checks against the version the
                 # training batch actually runs under, which is the
                 # authoritative one.
+                await self._release_payload(metadata)
                 self.buffer.drop_group(
                     metadata.group_id,
                     "stale",
@@ -642,6 +665,10 @@ class RolloutBufferWorker(Worker):
                 for group_id in self.buffer.stale_group_ids(
                     task, version, self.max_actor_accept_staleness
                 ):
+                    # Read the entry before drop_group pops it: the
+                    # payload ref is what tells where to release.
+                    metadata = task["buffer"][group_id][0]
+                    await self._release_payload(metadata)
                     self.buffer.drop_group(
                         group_id,
                         "stale",
@@ -654,8 +681,31 @@ class RolloutBufferWorker(Worker):
             # let the receive coroutine dispatch once replacements arrive.
             self.buffer.pending_release_version = version
             return
-        for result in self.buffer.release_groups():
-            await rollout_channel.put(result, async_op=True).async_wait()
+        for metadata, result in self.buffer.release_groups():
+            if result is None:
+                delivery = GroupDelivery(
+                    group_id=metadata.group_id,
+                    task_name=metadata.task_name,
+                    payload_ref=metadata.payload_ref,
+                )
+                await rollout_channel.put(delivery, async_op=True).async_wait()
+            else:
+                await rollout_channel.put(result, async_op=True).async_wait()
+
+    async def _release_payload(self, metadata: GroupMetadata) -> None:
+        """Drop a discarded group's payload from its channel.
+
+        The actor fetches payloads by key, so a group dropped here would
+        never be fetched and its queue would hold the container forever.
+        Metadata without a payload ref (the channel path) owns nothing to
+        release. A failed remove_key propagates: nothing else would ever
+        detect the leak.
+        """
+        ref = metadata.payload_ref
+        if ref is None:
+            return
+        channel = payload_channel_for(ref.locator, self._payload_channels)
+        await channel.remove_key(key=ref.key, async_op=True).async_wait()
 
     async def release_batch(self, version: int):
         """Request a training batch of the oldest buffered groups.

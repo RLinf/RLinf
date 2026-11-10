@@ -412,7 +412,7 @@ class TestPerTaskState:
                 ).group_metadata(),
             )
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == [
+        assert [result.group_id for _, result in released] == [
             group_ids[0],
             group_ids[1],
         ]
@@ -467,7 +467,7 @@ class TestRelease:
         for group_id in group_ids:
             buffer.record_result(_result(group_id), _result(group_id).group_metadata())
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == sorted(group_ids)
+        assert [result.group_id for _, result in released] == sorted(group_ids)
 
     def test_release_removes_the_groups_from_the_buffer(self):
         """Released groups leave the buffer and the issue-version dict."""
@@ -1066,7 +1066,7 @@ class TestDiscard:
         assert first not in _task_state(buffer, None)["buffer"]
         buffer.record_result(_result(second), _result(second).group_metadata())
         released = buffer.release_groups()
-        assert [result.group_id for result in released] == [second]
+        assert [result.group_id for _, result in released] == [second]
 
     def test_discarded_group_record_takes_the_receive_path(self):
         """A DiscardedGroup from the agent loop wakes admission."""
