@@ -78,6 +78,7 @@ jobs:
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'
               - 'toolkits/auto_placement/**'
+              - 'toolkits/auto_mps_tuning/**'
             embodied_filter: &embodied
               - *shared
               - 'rlinf/robotics/**'

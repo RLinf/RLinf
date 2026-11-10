@@ -1,0 +1,8 @@
+warmup_windows: 1
+measure_windows: 2
+window_chunks: 4
+validation_warmup_windows: 1
+validation_windows: 1
+min_percentage: 10
+max_trials: 24
+trial_timeout_s: 3600

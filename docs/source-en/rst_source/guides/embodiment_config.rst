@@ -539,3 +539,84 @@ using LIBERO-10 as an example.
      - Camera image height in pixels.
    * - ``init_params.camera_widths``
      - Camera image width in pixels.
+
+Tune GPU Sharing Before Training
+----------------------------------------
+
+Use NVIDIA MPS to tune GPU sharing between environment simulation and policy
+inference before training. Automatic tuning compares short trials and validates
+quotas with full rollout epochs. If MPS at 100/100 is slower than the initial
+no-MPS trial, training proceeds without MPS.
+
+Enable automatic tuning in your training configuration:
+
+.. code-block:: yaml
+
+   mps:
+     enabled: true
+
+Run ``bash examples/embodiment/run_embodiment.sh <config-name>`` to calibrate and
+then train. Setting ``mps.enabled`` to false, or omitting it, uses normal training.
+To reuse quotas on the same hardware and workload, specify them under ``mps``:
+
+.. code-block:: yaml
+
+   mps:
+     enabled: true
+     env_percentage: 100
+     rollout_percentage: 89
+
+Supplying either percentage selects fixed mode and skips calibration; the omitted
+side defaults to 100. Omitting both percentages, or setting both to ``null``,
+selects automatic tuning.
+
+Override individual fields under ``mps.auto_tuning`` to change the measurement
+budget. Omitted fields use ``toolkits/auto_mps_tuning/defaults.yaml``:
+
+.. list-table:: Automatic Tuning Parameters
+   :header-rows: 1
+   :widths: 28 12 60
+
+   * - Parameter
+     - Default
+     - Meaning
+   * - ``warmup_windows``
+     - 1
+     - Warmup windows before each short trial; excluded from reported times.
+   * - ``measure_windows``
+     - 2
+     - Measured windows per short trial; compare their median duration.
+   * - ``window_chunks``
+     - 4
+     - Action chunks per short epoch, capped at the original epoch length; ``null`` uses full epochs.
+   * - ``validation_warmup_windows``
+     - 1
+     - Full-epoch warmup windows before validation.
+   * - ``validation_windows``
+     - 1
+     - Measured full epochs per validation trial; use their median duration.
+   * - ``min_percentage``
+     - 10
+     - Lower bound of the quota search, in percent.
+   * - ``max_trials``
+     - 24
+     - Maximum MPS short trials, including 100/100; the no-MPS baseline and full-window validation are additional.
+   * - ``trial_timeout_s``
+     - 3600
+     - Timeout per trial in seconds, including initialization and measurement; cleanup has a separate timeout.
+
+MPS management requires a single node, Volta-or-newer NVIDIA GPUs, and
+``nvidia-cuda-mps-control`` on ``PATH``; MIG devices are unsupported. Automatic
+tuning additionally requires homogeneous visible GPUs, matching env/rollout
+placement, and at least two rollout pipeline stages. It measures synchronous
+training rollouts; use fixed quotas for training pipelines, evaluation-only runs,
+or runs with a reward model. Calibration uses frozen weights; assess overall
+training performance with end-to-end timings.
+
+Output paths are relative to ``runner.logger.log_path``. The main
+``run_embodiment.log`` records trial results, fallback decisions, and final quotas
+with their timing and gain. Each calibration trial stores worker output in
+``mps_tuning/<trial>/run.log``, timings in ``measurement.json``, and its configuration
+in ``input.yaml`` in the same directory. The measured hardware mapping is saved to
+``mps_tuning/resource_probe/resources.json``; ``training.yaml`` stores the final
+training configuration.
