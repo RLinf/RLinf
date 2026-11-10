@@ -22,6 +22,9 @@ import json
 import pickle
 import random
 import shutil
+import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -3806,11 +3809,14 @@ def test_ragged_loss_materialization_does_not_truncate_outputs(key):
 
 
 @pytest.mark.parametrize("has_response", [False, True])
-@pytest.mark.parametrize("aggregation", ["token_mean", "sequence_mean"])
-def test_ragged_loss_with_empty_first_row(has_response, aggregation):
+@pytest.mark.parametrize("fast_path", [False, True])
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+def test_ragged_loss_with_empty_first_row(has_response, aggregation, fast_path):
     from rlinf.algorithms.losses import compute_ppo_actor_loss
     from rlinf.data.schema.reasoning_results import DynamicRolloutResult
-    from rlinf.utils.utils import masked_mean, seq_mean_token_mean
+    from rlinf.utils.utils import get_loss_agg_func
 
     leaves = [torch.zeros(n, requires_grad=True) for n in (1, 5)]
     mask = [torch.zeros(1, dtype=torch.bool), torch.full((5,), has_response)]
@@ -3824,14 +3830,13 @@ def test_ragged_loss_with_empty_first_row(has_response, aggregation):
         clip_ratio_low=0.2,
         clip_ratio_high=0.2,
         loss_mask=batch["response_mask"],
-        loss_agg_func=(
-            masked_mean if aggregation == "token_mean" else seq_mean_token_mean
-        ),
-        fast_path_zero_loss_mask=False,
+        loss_agg_func=get_loss_agg_func(aggregation),
+        fast_path_zero_loss_mask=fast_path,
     )
+    gradient = -1.0 if aggregation == "seq-mean-token-sum" else -0.2
+    assert loss.item() == pytest.approx(5 * gradient if has_response else 0.0)
     loss.backward()
     torch.testing.assert_close(leaves[0].grad, torch.zeros_like(leaves[0]))
-    gradient = -0.2 if aggregation == "token_mean" else -0.1
     expected = torch.full((5,), gradient) if has_response else torch.zeros(5)
     torch.testing.assert_close(leaves[1].grad, expected)
 
@@ -3950,8 +3955,59 @@ def test_multi_turn_batch_rejects_dense_only_advantages(adv_type):
             "algorithm": {"adv_type": adv_type},
         }
     )
-    with pytest.raises(AssertionError, match="grpo_dynamic"):
+    with pytest.raises(ValueError, match=f"grpo_dynamic.*got {adv_type!r}"):
         validate_searchr1_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("dynamic", "adv_type"),
+    [(True, "grpo_dynamic"), (False, "grpo"), (False, "reinpp"), (False, "raw")],
+)
+def test_batch_validation_preserves_supported_advantages(dynamic, adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": dynamic},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    before = OmegaConf.to_container(cfg)
+    assert validate_searchr1_cfg(cfg) is cfg
+    assert OmegaConf.to_container(cfg) == before
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_multi_turn_batch_validation_survives_python_optimization(optimized):
+    script = textwrap.dedent(
+        """
+        from omegaconf import OmegaConf
+        from rlinf.config import validate_searchr1_cfg
+
+        for adv_type in ("grpo", "reinpp", "raw"):
+            cfg = OmegaConf.create({
+                "agentloop": {"is_dynamic_rollout_batch": True},
+                "algorithm": {"adv_type": adv_type},
+            })
+            try:
+                validate_searchr1_cfg(cfg)
+            except ValueError as error:
+                if "grpo_dynamic" not in str(error) or repr(adv_type) not in str(error):
+                    raise
+            else:
+                raise RuntimeError(f"Expected ValueError for {adv_type!r}.")
+
+        cfg.algorithm.adv_type = "grpo_dynamic"
+        validate_searchr1_cfg(cfg)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, *(["-O"] if optimized else []), "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])

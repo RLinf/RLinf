@@ -1337,18 +1337,40 @@ def test_multi_turn_fsdp_forward_matches_individual_sequences_and_gradients(dyna
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
-def test_multi_turn_fsdp_inference_keeps_order_and_tail(tmp_path, dynamic):
+@pytest.mark.parametrize(
+    ("lengths", "micro_batch_size", "expected_batch_sizes"),
+    [((1, 5, 9, 14), 3, [2, 2]), ((7, 3, 9, 5, 11), 2, [2, 2, 1])],
+)
+def test_multi_turn_fsdp_inference_keeps_order_and_tail(
+    tmp_path, dynamic, lengths, micro_batch_size, expected_batch_sizes
+):
     actor = _multi_turn_actor(dynamic)
-    batch = _multi_turn_batch()
+    actor.cfg.algorithm.logprob_forward_micro_batch_size = micro_batch_size
+    batch = {
+        "input_ids": [torch.arange(n) % 29 + 1 for n in lengths],
+        "position_ids": [torch.arange(n) for n in lengths],
+    }
     dist.init_process_group(
         "gloo", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1
     )
     try:
         with torch.no_grad():
             expected = actor.forward_batch(batch)
-            actual, reference = actor.inference_step(batch, False)
+            batch_sizes = []
+            hook = actor.model.register_forward_pre_hook(
+                lambda module, args, kwargs: batch_sizes.append(
+                    kwargs["input_ids"].size(0)
+                ),
+                with_kwargs=True,
+            )
+            try:
+                actual, reference = actor.inference_step(batch, False)
+            finally:
+                hook.remove()
         assert reference is None
-        assert [len(row) for row in actual] == [1, 5, 9, 14]
+        assert [len(row) for row in actual] == list(lengths)
+        if not dynamic:
+            assert batch_sizes == expected_batch_sizes
         for row, expected_row in zip(actual, expected, strict=True):
             assert row.device.type == "cpu" and not row.requires_grad
             torch.testing.assert_close(row, expected_row)
@@ -1401,8 +1423,13 @@ def test_multi_turn_fsdp_inference_aligns_uneven_dp_forwards(tmp_path, dynamic):
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
-@pytest.mark.parametrize("aggregation", ["token-mean", "seq-mean-token-mean"])
-def test_multi_turn_fsdp_actor_backward_matches_dense_loss(dynamic, aggregation):
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+@pytest.mark.parametrize("auxiliary_losses", [False, True])
+def test_multi_turn_fsdp_actor_backward_matches_real_rows(
+    dynamic, aggregation, auxiliary_losses
+):
     import copy
 
     from rlinf.algorithms.losses import compute_ppo_actor_loss
@@ -1414,8 +1441,9 @@ def test_multi_turn_fsdp_actor_backward_matches_dense_loss(dynamic, aggregation)
     actor = _multi_turn_actor(dynamic)
     actor.task_type = "reasoning"
     actor.gradient_accumulation = 1
-    actor.calculate_entropy = actor.calculate_entropy_loss = True
-    actor.kl_beta, actor.kl_penalty_type = 0.1, "low_var_kl"
+    actor.calculate_entropy = actor.calculate_entropy_loss = auxiliary_losses
+    actor.kl_beta = 0.1 if auxiliary_losses else 0.0
+    actor.kl_penalty_type = "low_var_kl"
     actor.loss_agg_func = get_loss_agg_func(aggregation)
     actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
     actor._strategy = FSDPStrategy(
@@ -1423,7 +1451,7 @@ def test_multi_turn_fsdp_actor_backward_matches_dense_loss(dynamic, aggregation)
     )
     actor.cfg.algorithm.ratio_clip_eps = 0.2
     actor.cfg.algorithm.loss_type = "actor"
-    actor.cfg.algorithm.entropy_bonus = 0.03
+    actor.cfg.algorithm.entropy_bonus = 0.03 if auxiliary_losses else 0.0
     batch = _multi_turn_batch()
     with torch.no_grad():
         old = actor.forward_batch(batch)
@@ -1443,6 +1471,19 @@ def test_multi_turn_fsdp_actor_backward_matches_dense_loss(dynamic, aggregation)
         32,
         0,
     )
+    real_rows = expected["response_mask"].any(dim=-1)
+    expected = {
+        key: expected[key][real_rows]
+        for key in (
+            "logprobs",
+            "recomputed_logprobs",
+            "ref_logprobs",
+            "advantages",
+            "loss_scales",
+            "entropy",
+            "response_mask",
+        )
+    }
     mask = expected["response_mask"]
     loss, _ = compute_ppo_actor_loss(
         logprobs=expected["logprobs"],
@@ -1452,18 +1493,20 @@ def test_multi_turn_fsdp_actor_backward_matches_dense_loss(dynamic, aggregation)
         clip_ratio_low=0.2,
         clip_ratio_high=0.2,
         loss_agg_func=actor.loss_agg_func,
-        fast_path_zero_loss_mask=True,
+        fast_path_zero_loss_mask=False,
     )
-    loss = loss - 0.03 * actor.loss_agg_func(expected["entropy"], mask)
-    loss = loss + 0.1 * actor.loss_agg_func(
-        kl_penalty(expected["logprobs"], expected["ref_logprobs"], "low_var_kl")
-        * expected["loss_scales"],
-        mask,
-    )
+    if auxiliary_losses:
+        loss = loss - 0.03 * actor.loss_agg_func(expected["entropy"], mask)
+        loss = loss + 0.1 * actor.loss_agg_func(
+            kl_penalty(expected["logprobs"], expected["ref_logprobs"], "low_var_kl")
+            * expected["loss_scales"],
+            mask,
+        )
     loss.backward()
     expected_grads = [
         parameter.grad.clone() for parameter in baseline_model.parameters()
     ]
+    assert any(gradient.count_nonzero() for gradient in expected_grads)
     baseline_model.zero_grad()
     actual_metrics = actor.forward_backward_batch(0, batch, 1)
     torch.testing.assert_close(actual_metrics["actor/final_loss"], loss.detach())

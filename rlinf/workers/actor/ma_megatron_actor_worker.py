@@ -296,8 +296,7 @@ class MAMegatronActor(MegatronActor):
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
                     ),
-                    # Ragged microbatches can start with a masked placeholder row.
-                    fast_path_zero_loss_mask=False,
+                    fast_path_zero_loss_mask=True,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)

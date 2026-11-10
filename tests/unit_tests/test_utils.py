@@ -90,19 +90,189 @@ def test_batch_padding_does_not_truncate_overlength_rows(left_pad):
 
 
 @pytest.mark.parametrize("valid_tokens", [0, 5])
-def test_seq_mean_token_mean_handles_empty_rows(valid_tokens):
-    from rlinf.utils.utils import seq_mean_token_mean
+@pytest.mark.parametrize("aggregation", ["seq-mean-token-mean", "seq-mean-token-sum"])
+def test_sequence_loss_aggregation_handles_empty_rows(valid_tokens, aggregation):
+    from rlinf.utils.utils import get_loss_agg_func
 
     values = torch.ones(2, 8, requires_grad=True)
     mask = torch.zeros(2, 8, dtype=torch.bool)
     mask[1, :valid_tokens] = True
-    loss = seq_mean_token_mean(values, mask)
-    assert loss.item() == (0.5 if valid_tokens else 0.0)
+    loss = get_loss_agg_func(aggregation)(values, mask)
+    expected_loss = 1.0 if aggregation == "seq-mean-token-mean" else valid_tokens
+    assert loss.item() == (expected_loss if valid_tokens else 0.0)
     loss.backward()
     expected = torch.zeros_like(values)
     if valid_tokens:
-        expected[1, :valid_tokens] = 1 / (2 * valid_tokens)
+        expected[1, :valid_tokens] = expected_loss / valid_tokens
     torch.testing.assert_close(values.grad, expected)
+
+
+@pytest.mark.parametrize("aggregation", ["seq-mean-token-mean", "seq-mean-token-sum"])
+@pytest.mark.parametrize(
+    "row_order",
+    [
+        pytest.param((0, 1, 2), id="no-padding"),
+        pytest.param((None, 0, 1, 2), id="leading-padding"),
+        pytest.param((0, 1, 2, None), id="trailing-padding"),
+        pytest.param((None, None, 0, 1, 2), id="two-leading-padding-rows"),
+        pytest.param((0, None, 1, None, 2), id="interleaved-padding"),
+    ],
+)
+def test_sequence_loss_and_gradients_ignore_padding_rows(aggregation, row_order):
+    from rlinf.utils.utils import get_loss_agg_func
+
+    real_values = torch.arange(1, 13, dtype=torch.float32).reshape(3, 4)
+    real_values.requires_grad_()
+    real_mask = torch.arange(4).unsqueeze(0) < torch.tensor([1, 2, 3]).unsqueeze(1)
+    values = torch.full((len(row_order), 4), 99.0)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    for index, source in enumerate(row_order):
+        if source is not None:
+            values[index] = real_values[source].detach()
+            mask[index] = real_mask[source]
+    values.requires_grad_()
+
+    expected_rows = []
+    for row, row_mask in zip(real_values, real_mask, strict=True):
+        tokens = row[row_mask]
+        expected_rows.append(
+            tokens.mean() if aggregation == "seq-mean-token-mean" else tokens.sum()
+        )
+    expected = torch.stack(expected_rows).mean()
+    actual = get_loss_agg_func(aggregation)(values, mask)
+    torch.testing.assert_close(actual, expected)
+    actual.backward()
+    expected.backward()
+    for index, source in enumerate(row_order):
+        expected_grad = torch.zeros(4) if source is None else real_values.grad[source]
+        torch.testing.assert_close(values.grad[index], expected_grad)
+
+
+@pytest.mark.parametrize("diagnostics", [False, True])
+@pytest.mark.parametrize("importance_sampling", [False, True])
+@pytest.mark.parametrize("broadcast_mask", [False, True])
+def test_ppo_empty_batch_preserves_metric_contract(
+    diagnostics, importance_sampling, broadcast_mask
+):
+    logprobs = -torch.ones(2, 4)
+    common = {
+        "task_type": "reasoning",
+        "loss_type": "actor",
+        "logprobs": logprobs,
+        "old_logprobs": logprobs - 0.1,
+        "advantages": torch.ones_like(logprobs),
+        "clip_ratio_low": 0.2,
+        "clip_ratio_high": 0.2,
+        "log_logprob_diagnostics": diagnostics,
+        "rollout_logprobs": logprobs - 0.2 if importance_sampling else None,
+        "importance_sampling_clip": 2.0 if importance_sampling else None,
+    }
+    mask = torch.zeros(2, 1 if broadcast_mask else 4, dtype=torch.bool)
+    empty_loss, empty_metrics = policy_loss(
+        **common, loss_mask=mask, fast_path_zero_loss_mask=True
+    )
+    expected_loss, expected_metrics = policy_loss(
+        **common, loss_mask=mask, fast_path_zero_loss_mask=False
+    )
+    _, nonempty_metrics = policy_loss(
+        **common, loss_mask=torch.ones_like(mask), fast_path_zero_loss_mask=True
+    )
+    torch.testing.assert_close(empty_loss, expected_loss)
+    assert list(empty_metrics) == list(expected_metrics) == list(nonempty_metrics)
+    for key, value in empty_metrics.items():
+        torch.testing.assert_close(value, expected_metrics[key])
+
+
+def _ppo_empty_rank_process(rank, counts, aggregation, init_file):
+    from torch.nn.parallel import DistributedDataParallel
+
+    from rlinf.utils.utils import get_loss_agg_func
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        torch.manual_seed(42)
+        model = DistributedDataParallel(torch.nn.Linear(2, 1, bias=False))
+        reference = copy.deepcopy(model.module)
+        inputs = [torch.arange(24).reshape(3, 4, 2).float() / 24 + i for i in range(2)]
+        masks = [torch.zeros(3, 4, dtype=torch.bool) for _ in counts]
+        for mask, count in zip(masks, counts, strict=True):
+            if count:
+                mask[-count:, 1:] = True
+                mask[-1, -1] = False
+
+        logprobs = model(inputs[rank]).squeeze(-1)
+        loss, metrics = policy_loss(
+            task_type="reasoning",
+            loss_type="actor",
+            logprobs=logprobs,
+            old_logprobs=logprobs.detach(),
+            advantages=torch.ones_like(logprobs),
+            loss_mask=masks[rank],
+            loss_agg_func=get_loss_agg_func(aggregation),
+            clip_ratio_low=0.2,
+            clip_ratio_high=0.2,
+            fast_path_zero_loss_mask=True,
+        )
+        keys = [None, None]
+        dist.all_gather_object(keys, list(metrics))
+        assert keys[0] == keys[1]
+        for key, value in metrics.items():
+            value = value.detach().clone()
+            dist.all_reduce(value)
+            metrics[key] = value / 2
+            assert torch.isfinite(value)
+        loss.backward()
+
+        expected = reference.weight.sum() * 0.0
+        for values, mask in zip(inputs, masks, strict=True):
+            if not mask.any():
+                continue
+            probabilities = reference(values).squeeze(-1)
+            token_losses = -(probabilities - probabilities.detach()).exp()
+            if aggregation == "token-mean":
+                source_loss = token_losses[mask].mean()
+            else:
+                rows = [
+                    row[row_mask]
+                    for row, row_mask in zip(token_losses, mask, strict=True)
+                    if row_mask.any()
+                ]
+                source_loss = torch.stack(
+                    [
+                        row.mean()
+                        if aggregation == "seq-mean-token-mean"
+                        else row.sum()
+                        for row in rows
+                    ]
+                ).mean()
+            expected = expected + source_loss / 2
+        expected.backward()
+        torch.testing.assert_close(model.module.weight.grad, reference.weight.grad)
+        torch.testing.assert_close(metrics["actor/policy_loss"], expected.detach())
+        assert bool(model.module.weight.grad.any()) == bool(sum(counts))
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+@pytest.mark.parametrize("counts", [(0, 2), (1, 2), (0, 0)])
+def test_ppo_empty_rank_preserves_distributed_gradients_and_metrics(
+    tmp_path, counts, aggregation
+):
+    mp.spawn(
+        _ppo_empty_rank_process,
+        args=(counts, aggregation, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
