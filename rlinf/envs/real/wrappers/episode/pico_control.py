@@ -52,7 +52,9 @@ class PicoEpisodeControlWrapper(gym.Wrapper):
         self.failure_button = str(failure_button)
         buttons = (self.start_button, self.success_button, self.failure_button)
         if any(not button for button in buttons) or len(set(buttons)) != len(buttons):
-            raise ValueError("Pico episode-control buttons must be distinct and nonempty.")
+            raise ValueError(
+                "Pico episode-control buttons must be distinct and nonempty."
+            )
         self._recording = False
         self._running = False
         self._last_obs: Any = None
@@ -165,13 +167,19 @@ class PicoEpisodeControlWrapper(gym.Wrapper):
         self, event: str | None
     ) -> tuple[Any, float, bool, bool, dict[str, Any]]:
         """Avoid sending an action while the wrapper waits for a start event."""
-        return self._last_obs, 0.0, False, False, {
-            "pre_record": True,
-            "record_reset": False,
-            "keyboard_phase": "pre",
-            "keyboard_event": event,
-            "pico_episode_event": event,
-        }
+        return (
+            self._last_obs,
+            0.0,
+            False,
+            False,
+            {
+                "pre_record": True,
+                "record_reset": False,
+                "keyboard_phase": "pre",
+                "keyboard_event": event,
+                "pico_episode_event": event,
+            },
+        )
 
     def _drain_presses(self) -> list[str]:
         """Read rising-edge events from one Pico ZMQ reader, if available."""

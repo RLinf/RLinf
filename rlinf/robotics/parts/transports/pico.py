@@ -101,10 +101,11 @@ class PicoExpert:
         hand: str = "right",
         control_trigger: str = "grip",
         control_threshold: float = 0.9,
-        gripper_trigger: str = "trigger",
+        gripper_trigger: Optional[str] = None,
         gripper_close_threshold: float = 0.5,
         gripper_close_button: str = "A",
         gripper_open_button: str = "B",
+        gripper_invert: bool = False,
         position_scale: float = 1.0,
         rotation_scale: float = 1.0,
         rotation_delta_frame: str = "controller_local",
@@ -134,6 +135,7 @@ class PicoExpert:
         self.gripper_close_threshold = float(gripper_close_threshold)
         self.gripper_close_button = gripper_close_button
         self.gripper_open_button = gripper_open_button
+        self.gripper_invert = bool(gripper_invert)
         self.position_scale = float(position_scale)
         self.rotation_scale = float(rotation_scale)
         if rotation_delta_frame not in ("controller_local", "operator"):
@@ -515,18 +517,22 @@ class PicoExpert:
         return self._control_value(data, side, str(name)) >= float(threshold)
 
     def _gripper_state(self, data: Mapping[str, Any]) -> tuple[bool, bool]:
-        """Return the B/A/X profile command."""
-        if not self.gripper_trigger:
-            return False, False
-        close_pressed = self._control_pressed(
-            data,
-            self.hand,
-            self.gripper_trigger,
-            self.gripper_close_threshold,
-        )
-        # Franky's Robotiq integration is binary. In this explicit mode,
-        # releasing the front trigger therefore commands the open state.
-        open_pressed = not close_pressed
+        """Read independent buttons unless trigger control is explicitly selected."""
+        if self.gripper_trigger:
+            close_pressed = self._control_pressed(
+                data, self.hand, self.gripper_trigger, self.gripper_close_threshold
+            )
+            # Trigger mode reserves the face buttons for episode control.
+            open_pressed = not close_pressed
+        else:
+            close_pressed = self._control_pressed(
+                data, self.hand, self.gripper_close_button, self.gripper_close_threshold
+            )
+            open_pressed = self._control_pressed(
+                data, self.hand, self.gripper_open_button, self.gripper_close_threshold
+            )
+        if self.gripper_invert:
+            close_pressed, open_pressed = open_pressed, close_pressed
         return close_pressed, open_pressed
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup

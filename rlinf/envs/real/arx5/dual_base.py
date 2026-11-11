@@ -22,7 +22,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import cv2
 import gymnasium as gym
@@ -204,7 +204,9 @@ class DualARX5Env(gym.Env):
         camera_specs = self._camera_infos()
         if not camera_specs and self.config.require_camera and not self.config.is_dummy:
             raise ValueError(
-                "At least one camera is required for ARX5 data collection."
+                "At least one camera is required for ARX5 data collection. "
+                "Run 'ls -l /dev/v4l/by-path/' and set base_camera_serials, "
+                "left_camera_serials, or right_camera_serials in the hardware config."
             )
 
         xyz_low = (
@@ -688,6 +690,19 @@ class DualARX5Env(gym.Env):
         observation = self._observe()
         return observation, reset_info
 
+    def episode_wrappers(self, cfg: Mapping[str, Any]) -> tuple[type, ...]:
+        """Attach Pico episode controls only when teleoperation is enabled."""
+        if self.config.is_dummy:
+            return ()
+        from rlinf.envs.real.wrappers.episode import PicoEpisodeControlWrapper
+        from rlinf.envs.real.wrappers.teleop.config import resolve_teleop_devices
+
+        if resolve_teleop_devices(
+            cfg, supported=self.TELEOP, default=self.TELEOP_DEFAULT
+        ):
+            return (PicoEpisodeControlWrapper,)
+        return ()
+
     def step(
         self, action: np.ndarray
     ) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
@@ -711,14 +726,6 @@ class DualARX5Env(gym.Env):
                 # An all-zero absolute pose is the collector's idle action.
                 # Never turn it into a motion toward the robot origin.
                 if np.linalg.norm(values[index, 3:9]) > 1e-8:
-                    if self.config.enforce_workspace_bounds and (
-                        np.any(current[:3] < self.config.ee_pose_limit_min[index])
-                        or np.any(current[:3] > self.config.ee_pose_limit_max[index])
-                    ):
-                        raise ValueError(
-                            f"ARX5 arm {index} is outside the configured workspace; "
-                            "correct the bounds or reposition it before control."
-                        )
                     delta = values[index, :3] - current[:3]
                     distance = np.linalg.norm(delta)
                     if self.config.max_step > 0 and distance > self.config.max_step:

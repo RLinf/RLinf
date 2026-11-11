@@ -31,20 +31,12 @@ cluster:
             arm_type: 0  # X5-2023; use 2 only for X5-2025 hardware.
             camera_type: v4l2
             camera_fps: 30
-            # These three USB cameras share one reported serial. by-path links
-            # distinguish their physical ports; update them if cabling changes.
-            # video8 is overhead, video0 is left wrist, video4 is right wrist.
-            base_camera_serials:
-              - /dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.4:1.0-video-index0
-            left_camera_serials:
-              - /dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0
-            right_camera_serials:
-              - /dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.3:1.0-video-index0
-            # Clockwise rotation per RLinf frame name; use 0/90/180/270.
-            camera_rotations:
-              base_0_rgb: 180
-              left_wrist_0_rgb: 180
-              right_wrist_0_rgb: 180
+            # Fill these from `ls -l /dev/v4l/by-path/` on the collection host.
+            base_camera_serials: []
+            left_camera_serials: []
+            right_camera_serials: []
+            # Set rotations for configured frame names, e.g. {base_0_rgb: 180}.
+            camera_rotations: {}
 
 runner:
   task_type: embodied
@@ -65,8 +57,8 @@ env:
       - {pico: {drives: left}}
       - {pico: {drives: right}}
     # B starts an episode; X saves success; A discards failure. No pedal needed.
-    pico_reward_wrapper: default
     pico:
+      gripper_trigger: trigger
       zmq_addr: "tcp://127.0.0.1:5555"  # Local pico-services.service publishes on port 5555.
       hold_current_when_inactive: True
       control_threshold: 0.85

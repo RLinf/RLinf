@@ -3296,6 +3296,26 @@ def _pico_reader(**overrides):
     return PicoExpert(**config)
 
 
+@pytest.mark.parametrize("invert", [False, True])
+@pytest.mark.parametrize(
+    "close,open_", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_pico_default_gripper_buttons_remain_independent(
+    monkeypatch, invert, close, open_
+):
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    reader = PicoExpert(gripper_invert=invert, calibration={"enabled": False})
+    packet = _pico_packet(0, 0, 0, 0, grip=1.0, close=close, open_=open_)
+    with reader._lock:
+        reader._latest_data = packet
+        reader._last_update_time = time.time()
+    reading = reader.get_reading()
+    expected = (open_, close) if invert else (close, open_)
+    assert (reading["grip_close"], reading["grip_open"]) == expected
+
+
 def test_pico_bax_reward_profile_uses_the_front_trigger_for_gripper(monkeypatch):
     from rlinf.robotics.actions import ActionKind
     from rlinf.robotics.parts.teleop import Pico
@@ -3305,8 +3325,8 @@ def test_pico_bax_reward_profile_uses_the_front_trigger_for_gripper(monkeypatch)
     entry = Pico.from_config(
         {
             "no_gripper": False,
-            "pico_reward_wrapper": "default",
             "pico": {
+                "gripper_trigger": "trigger",
                 "hand": "right",
                 "control_trigger": "grip",
                 "control_threshold": 0.85,

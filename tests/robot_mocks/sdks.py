@@ -349,7 +349,21 @@ def arx5() -> dict[str, types.ModuleType]:
             self.close_error = False
             self.cartesian_result = True
             self.cartesian_error = False
+            self.pose = np.zeros(6)
+            self.cartesian_targets = []
             self.instances.append(self)
+
+        def get_ee_pose_xyzrpy(self):
+            return self.pose.copy()
+
+        def get_joint_velocities(self):
+            return np.zeros(6)
+
+        def get_joint_currents(self):
+            return np.zeros(6)
+
+        def get_gripper_pos(self):
+            return 0.0
 
         def get_joint_positions(self):
             return self.joints.copy()
@@ -364,6 +378,9 @@ def arx5() -> dict[str, types.ModuleType]:
             print("SDK diagnostic")
             if self.cartesian_error:
                 raise RuntimeError("Cartesian command failed")
+            if self.cartesian_result:
+                self.pose = np.asarray(pose).copy()
+                self.cartesian_targets.append(self.pose.copy())
             return self.cartesian_result
 
         def close(self):

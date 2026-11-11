@@ -5572,6 +5572,75 @@ def test_arx5_failed_startup_rolls_back_open_sessions(monkeypatch, failed_compon
     assert {s: signal.getsignal(s) for s in signals} == signals
 
 
+def test_arx5_empty_camera_config_explains_how_to_find_devices():
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    with pytest.raises(ValueError, match="ls -l /dev/v4l/by-path/"):
+        DualARX5Env({}, robot_info=_robot_info(DualARX5Config(node_rank=0)))
+
+
+@pytest.mark.parametrize(
+    "teleop",
+    ["none", "pico", [{"pico": {"drives": "left"}}, {"pico": {"drives": "right"}}]],
+)
+def test_arx5_episode_controls_follow_teleop_selection(monkeypatch, teleop):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.envs.real.wrappers.episode import PicoEpisodeControlWrapper
+    from rlinf.robotics import DualARX5Config
+
+    monkeypatch.setitem(sys.modules, "bimanual", arx5()["bimanual"])
+    env = DualARX5Env(
+        {"require_camera": False}, robot_info=_robot_info(DualARX5Config(node_rank=0))
+    )
+    try:
+        expected = () if teleop == "none" else (PicoEpisodeControlWrapper,)
+        assert env.episode_wrappers({"teleop": teleop}) == expected
+    finally:
+        env.close()
+    dummy = DualARX5Env({"is_dummy": True})
+    try:
+        assert dummy.episode_wrappers({"teleop": teleop}) == ()
+    finally:
+        dummy.close()
+
+
+@pytest.mark.parametrize("max_step", [0, 0.02])
+def test_arx5_can_move_back_from_outside_workspace(monkeypatch, max_step):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    env = DualARX5Env(
+        {"require_camera": False, "max_step": max_step, "reset_joint_timeout_s": 0.01},
+        robot_info=_robot_info(DualARX5Config(node_rank=0)),
+    )
+    try:
+        for device in sdk.SingleArm.instances:
+            device.pose[0] = 1.01
+        action = np.tile([0.9, 0, 0, 1, 0, 0, 0, 1, 0, 0], 2)
+        env.step(action)
+        expected_x = 0.9 if max_step == 0 else 0.99
+        for device in sdk.SingleArm.instances:
+            assert device.cartesian_targets[-1][0] == pytest.approx(expected_x)
+        # An out-of-range request is still clipped to the workspace boundary.
+        action[0] = action[10] = 2.0
+        env.step(action)
+        for device in sdk.SingleArm.instances:
+            assert device.cartesian_targets[-1][0] <= 1.0
+            device.pose[0] = 1.01
+            device.stalled = True
+        with pytest.raises(ValueError, match="reset pose is outside the workspace"):
+            env.reset()
+    finally:
+        env.close()
+
+
 def test_arx5_joint_reset_qpos_uses_radians():
     from rlinf.envs.real.arx5 import DualARX5Env, DualARX5EnvConfig
 
@@ -5647,6 +5716,11 @@ def test_arx5_collection_composes_shared_names_and_preserves_run_settings(monkey
     assert cfg.close_park_max_deg == 0.5
     hardware = arx.cluster.node_groups[0].hardware.configs[0]
     hardware_cfg = DualARX5Config(**OmegaConf.to_container(hardware))
+    assert hardware_cfg.base_camera_serials == []
+    assert hardware_cfg.left_camera_serials == []
+    assert hardware_cfg.right_camera_serials == []
+    assert hardware_cfg.camera_rotations == {}
+    assert "pico_reward_wrapper" not in arx.env.eval
     assert hardware_cfg.left_urdf_path is None
     assert hardware_cfg.right_urdf_path is None
     assert arx.env.eval.data_collection.get("resume", False) is False
@@ -5677,6 +5751,7 @@ def test_arx5_collection_preserves_pico_control_and_calibration_defaults(monkeyp
         assert reader.control_trigger == "grip"
         assert reader.control_threshold == 0.85
         assert reader.gripper_close_threshold == 0.5
+        assert reader.gripper_trigger == "trigger"
         assert reader.position_scale == reader.rotation_scale == 1.0
         assert reader.max_stale_s == 0.2
         assert reader.calibration_enabled is True
