@@ -235,6 +235,15 @@ class SGLangServerBackend(RolloutBackend):
                 self._rlinf_ctx.cfg, "session_server.enable", default=False
             )
         )
+        server_args_kwargs = dict(self._server_args)
+        # The server's /server_info serializes ServerArgs to JSON and the
+        # router's registration reads it; torch.dtype objects fail that
+        # encoding. Hand the subprocess sglang's string dtype name (same
+        # choices as ServerArgs --dtype); None stays None.
+        if server_args_kwargs.get("dtype") is not None:
+            server_args_kwargs["dtype"] = str(server_args_kwargs["dtype"]).removeprefix(
+                "torch."
+            )
         # On the session server path the router's forwarding client holds
         # idle connections to the engines for 50 s (sgl-model-gateway
         # app_context.rs, hardcoded `.pool_idle_timeout(50s)` in
@@ -252,7 +261,7 @@ class SGLangServerBackend(RolloutBackend):
                 )
             }
         self._process = SGLangServerProcess(
-            server_args_kwargs=dict(self._server_args),
+            server_args_kwargs=server_args_kwargs,
             acquire_free_port=self._acquire_free_port,
             server_type="srt",
             nnodes=self._nnodes,
