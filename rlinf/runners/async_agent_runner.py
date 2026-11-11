@@ -345,15 +345,6 @@ class AsyncAgentRunner(AgentRunner):
                     if save_model:
                         self._save_checkpoint()
 
-                    if is_train_end or run_time_exceeded:
-                        reason = (
-                            f"Step limit given by max_steps={self.max_steps}"
-                            if is_train_end
-                            else f"Time limit given by run_timer={self.run_timer}"
-                        )
-                        logging.info(f"{reason} reached. Stopping run")
-                        break
-
                 time_metrics = self.timer.consume_durations()
                 time_metrics["training"] = actor_handle.consume_duration()
                 # Wall-clock wait minus the actor's training time: how long
@@ -433,6 +424,16 @@ class AsyncAgentRunner(AgentRunner):
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
 
+                if is_train_end or run_time_exceeded:
+                    # Exit only after this step's metrics are logged.
+                    reason = (
+                        f"Step limit given by max_steps={self.max_steps}"
+                        if is_train_end
+                        else f"Time limit given by run_timer={self.run_timer}"
+                    )
+                    logging.info(f"{reason} reached. Stopping run")
+                    break
+
             # Normal exit: stop the buffer worker and the agent loop,
             # confirm both have exited, then stop the rollout engines.
             self._stop_resident_workers(agent_handle, buffer_handle)
@@ -451,6 +452,10 @@ class AsyncAgentRunner(AgentRunner):
                     tool_worker.stop_server()
                 except Exception as e:
                     logging.error(f"Stopping a tool server failed: {e}")
+            try:
+                global_pbar.close()
+            except Exception as e:
+                logging.error(f"Closing the progress bar failed: {e}")
             self.metric_logger.finish()
 
     def _stop_resident_workers(
