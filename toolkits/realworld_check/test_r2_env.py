@@ -467,6 +467,7 @@ def _run_pico_teleop(
         "control_trigger": "grip",
         "control_threshold": 0.85,
         "gripper_trigger": "trigger",
+        "gripper_while_idle": True,
         "gripper_close_threshold": 0.5,
         "position_scale": float(os.environ.get("R2_PICO_SCALE", "1.0")),
         "rotation_scale": float(os.environ.get("R2_PICO_ROT_SCALE", "0.85")),

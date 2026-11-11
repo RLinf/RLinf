@@ -483,7 +483,7 @@ class PicoJoint(Pico):
     by the operator's whole motion since then. IK turns it into joints, and one
     tick moves every joint along the straight line toward them, at most
     ``joint_step_limits`` each. The gripper is an opening, ``0`` shut to ``1``
-    open, latched by the close and open buttons.
+    open, latched by the close and open buttons while the grip is held.
 
     Released, the arm holds the joints it was let go at rather than the
     measured ones, which sag under gravity and would walk the target.
@@ -513,6 +513,9 @@ class PicoJoint(Pico):
             and the command stays within this many radians of them. Unset,
             each tick steps from the measured joints, which caps the speed at
             the step limit over the servo's lag.
+        gripper_while_idle: Let the close and open buttons also drive the
+            gripper while the arm is idle, released or held after a fault.
+            Unset, an idle gripper follows its measured opening.
         gripper: Whether this arm's action carries a gripper channel.
         side: Which arm this controller drives.
         hold_current_when_inactive: Command the held pose while the grip is
@@ -540,6 +543,7 @@ class PicoJoint(Pico):
         side: int = 0,
         hold_current_when_inactive: bool = True,
         max_joint_lead: Optional[float] = None,
+        gripper_while_idle: bool = False,
         **pico_config: Any,
     ) -> None:
         super().__init__(gripper=gripper, side=side, **pico_config)
@@ -569,6 +573,7 @@ class PicoJoint(Pico):
                 f"pico.max_joint_lead must be positive, but got {max_joint_lead}."
             )
         self.max_joint_lead = None if max_joint_lead is None else float(max_joint_lead)
+        self.gripper_while_idle = bool(gripper_while_idle)
         #: An idle arm keeps its held pose only when it holds one.
         self.APPLIES_WHILE_IDLE = self.hold_current_when_inactive
         self._hand = str(pico_config.get("hand", "right"))
@@ -667,16 +672,24 @@ class PicoJoint(Pico):
             self._grip = grip
         info = {**self._reported(reading), **_IK_REPORT}
 
+        buttons_act = self.gripper_while_idle or (
+            reading.get("held", False) and self._fault is None
+        )
         grip_changed = False
-        if reading.get("grip_close", False):
+        if not buttons_act:
+            self._grip = grip
+        elif reading.get("grip_close", False):
             self._grip = 0.0
             grip_changed = True
         elif reading.get("grip_open", False):
             self._grip = 1.0
             grip_changed = True
 
+        # A stale link reports the idle defaults, which say nothing about the
+        # grip, so only a live reading counts as a release.
         grip_released_now = (
-            not reading.get("held", False)
+            reading.get("ready", False)
+            and not reading.get("held", False)
             and float(reading.get("control_value", 0.0)) < 0.5
         )
         if (

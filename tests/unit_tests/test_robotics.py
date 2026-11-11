@@ -2941,8 +2941,47 @@ def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
             assert pico.fault is None
             reading = _settle(zmq, pico, held, lambda r: r["held"])
             assert pico.action(reading, context).driving
+
+            # A stale link says nothing about the grip, so it is not a release.
+            zmq.frame = None
+            time.sleep(pico._device.max_stale_s + 0.05)
+            reading = pico.get_observation()
+            assert reading["stale"] is True
+            assert not pico.action(reading, context).driving
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert not pico.action(reading, context).driving
+            assert pico.fault == "right:unavailable"
         finally:
             pico.disconnect()
+
+
+def test_pico_gripper_buttons_drive_an_idle_arm_only_when_enabled():
+    """Released, the gripper follows its measured opening unless told otherwise."""
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 0.6])}
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        for while_idle, expected in ((False, 0.6), (True, 0.0)):
+            pico = _pico_joint(FreeToolKinematics(), gripper_while_idle=while_idle)
+            pico.connect()
+            try:
+                pressed = _settle(
+                    zmq,
+                    pico,
+                    pico_packet({"A": True}),
+                    lambda r: r["calibrated"] and r["grip_close"] and not r["held"],
+                )
+                idle = pico.action(pressed, context)
+                assert idle.parts["end_effector"][0] == pytest.approx(expected)
+                assert idle.driving == while_idle
+            finally:
+                pico.disconnect()
 
 
 def test_pico_builds_the_variant_the_arm_can_accept():
@@ -8224,6 +8263,7 @@ def test_r2_kinematics_adapter_and_pico_joint():
             hand="right",
             zmq_addr="tcp://x:1",
             gripper_trigger="trigger",
+            gripper_while_idle=True,
             calibration={
                 "enabled": True,
                 "auto_calibrate_on_start": True,
