@@ -299,11 +299,8 @@ class AgentRunner(ReasoningRunner):
                             f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
                         }
                         self.metric_logger.log(rollout_metrics, logging_steps)
-                    for i in range(self.cfg.algorithm.n_minibatches):
-                        training_metrics = {
-                            f"train/{k}": v
-                            for k, v in actor_training_metrics[i].items()
-                        }
+                    for i, metrics in enumerate(actor_training_metrics):
+                        training_metrics = {f"train/{k}": v for k, v in metrics.items()}
                         self.metric_logger.log(training_metrics, logging_steps + i)
 
                     logging_metrics = {f"{k}_time": v for k, v in time_metrics.items()}
@@ -311,7 +308,8 @@ class AgentRunner(ReasoningRunner):
                     logging_metrics.update(agent_metrics)
                     if actor_rollout_metrics is not None:
                         logging_metrics.update(actor_rollout_metrics)
-                    logging_metrics.update(actor_training_metrics[-1])
+                    if actor_training_metrics:
+                        logging_metrics.update(actor_training_metrics[-1])
 
                     global_pbar.set_postfix(logging_metrics, refresh=False)
                     global_pbar.update(1)

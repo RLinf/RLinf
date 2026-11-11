@@ -173,7 +173,7 @@ def turn_scale(
             masked_counts = [
                 batch["response_mask"][idx].sum().item() for idx in sub_traj_idxes
             ]
-            masked_count_all = sum(masked_counts)
+            masked_count_all = max(sum(masked_counts), 1)
             for i, idx in enumerate(sub_traj_idxes):
                 # `agent_scale` already applied 1 / T_{i,a}. Multiply by
                 # T_{i,a} * |o_t| / sum_t |o_t| so the combined factor becomes

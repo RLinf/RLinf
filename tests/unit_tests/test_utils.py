@@ -46,7 +46,7 @@ from rlinf.utils.metric_utils import (
     compute_rollout_metrics,
     compute_staleness_metrics,
 )
-from rlinf.utils.utils import masked_mean
+from rlinf.utils.utils import masked_mean, seq_mean_token_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -78,6 +78,18 @@ def test_group_scale_normalizes_mean_or_summed_contributions(scale_loss):
     torch.testing.assert_close(
         batch["loss_scales"], torch.full((3, 1), 0.5 if scale_loss else 1.0)
     )
+
+
+@pytest.mark.parametrize("valid_rows", [0, 1, 2])
+def test_sequence_mean_padding_has_zero_finite_gradients(valid_rows):
+    values = torch.arange(1.0, 7.0).reshape(2, 3).requires_grad_()
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    mask[:valid_rows] = True
+    loss = seq_mean_token_mean(values, mask)
+    expected = values[:valid_rows].mean(dim=-1).sum() / 2
+    torch.testing.assert_close(loss, expected)
+    loss.backward()
+    torch.testing.assert_close(values.grad, mask.float() / 6)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
