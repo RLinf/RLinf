@@ -42,7 +42,7 @@ runner:
     log_path: /workspace/results/realworld_dual_yam_collect_data_mock
     project_name: rlinf
     experiment_name: ci-test
-    logger_backends: [tensorboard]
+    logger_backends: null
   num_data_episodes: 1
   record_task_description: true
 

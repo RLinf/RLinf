@@ -155,6 +155,10 @@ class AgentLoopWorker(Worker):
         result = await self.generate_output_channel.get(
             channel_key, async_op=True
         ).async_wait()
+        if isinstance(result, dict) and "error" in result:
+            # The rollout side failed to generate and reported back via the
+            # channel; fail loudly instead of continuing.
+            raise RuntimeError(f"Rollout generate request failed: {result['error']}")
         return result
 
     async def state_less_tool_call_with_channel(
@@ -459,7 +463,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             input_dict: Input dictionary containing 'input_ids' and 'answer'
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
-            output_channel: Channel to output results
+            output_channel: Channel receiving each result
         """
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
@@ -489,7 +493,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
         Args:
             input_channel: Channel to receive rollout requests
-            output_channel: Channel to output results
+            output_channel: Channel receiving each result
         """
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()
