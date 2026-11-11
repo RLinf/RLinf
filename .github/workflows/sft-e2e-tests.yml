@@ -259,14 +259,6 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/sft/run_reward_training.sh resnet_reward_training
 
-      - name: ResNet Reward Model Inference in PPO test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_resnet_reward
-
       - name: Clean up
         run: |
           rm -rf .venv

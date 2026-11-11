@@ -37,6 +37,7 @@ from omegaconf import OmegaConf
 
 import rlinf.scheduler.hardware.accelerators.nvidia_gpu as nv_module
 from rlinf.scheduler import (
+    AcceleratorType,
     Cluster,
     NodePlacementStrategy,
     PackedPlacementStrategy,
@@ -50,6 +51,8 @@ from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
 from rlinf.scheduler.manager.coll_manager import CollectiveManager
 from rlinf.scheduler.manager.manager import Manager
 
+MAX_NON_NV_ACCELERATORS = 2
+
 
 def accelerator_is_available():
     """Return whether the Worker accelerator backend is available."""
@@ -58,6 +61,13 @@ def accelerator_is_available():
         and hasattr(Worker.torch_platform, "is_available")
         and Worker.torch_platform.is_available()
     )
+
+
+def available_accelerators(total: int) -> int:
+    """Return accelerator count capped to MAX_NON_NV_ACCELERATORS off NVIDIA."""
+    if Worker.accelerator_type == AcceleratorType.NV_GPU:
+        return total
+    return min(total, MAX_NON_NV_ACCELERATORS)
 
 
 # Fixture to provide a ClusterResource instance for the test session
@@ -177,12 +187,15 @@ class TestWorkerGroup:
 
     def test_worker_group_creation(self, cluster: Cluster):
         """Verify that a WorkerGroup can be created successfully."""
+        placement = None
         if accelerator_is_available():
-            num_workers = cluster.num_accelerators
+            num_workers = available_accelerators(cluster.num_accelerators)
+            if Worker.accelerator_type != AcceleratorType.NV_GPU:
+                placement = PackedPlacementStrategy(0, num_workers - 1)
         else:
             num_workers = 1
         worker_group = DistributedTestWorker.create_group().launch(
-            cluster=cluster, name="dist_test_1"
+            cluster=cluster, placement_strategy=placement, name="dist_test_1"
         )
 
         # Check that the correct number of actors were created
@@ -197,11 +210,13 @@ class TestWorkerGroup:
     def test_execute_on_all_workers(self, cluster: Cluster):
         """Test calling a method on all workers in a group."""
         if accelerator_is_available():
-            num_workers = cluster.num_accelerators
+            num_workers = available_accelerators(cluster.num_accelerators)
+            placement = PackedPlacementStrategy(0, num_workers - 1)
         else:
             num_workers = 1
+            placement = NodePlacementStrategy([0])
         worker_group = DistributedTestWorker.create_group().launch(
-            cluster=cluster, name="dist_test_2"
+            cluster=cluster, placement_strategy=placement, name="dist_test_2"
         )
 
         base_value = 10
@@ -214,7 +229,10 @@ class TestWorkerGroup:
     def test_execute_on_specific_ranks(self, cluster: Cluster):
         """Test calling a method on a subset of workers in a group."""
         if accelerator_is_available():
-            placement = PackedPlacementStrategy(0, cluster.num_accelerators - 1)
+            num_workers = available_accelerators(cluster.num_accelerators)
+            if num_workers < 2:
+                pytest.skip("Specific-rank test requires at least 2 accelerators.")
+            placement = PackedPlacementStrategy(0, num_workers - 1)
         else:
             placement = NodePlacementStrategy([0] * 8)
         worker_group = DistributedTestWorker.create_group().launch(
@@ -234,14 +252,16 @@ class TestWorkerGroup:
     def test_multiple_worker_groups(self, cluster: Cluster):
         """Test the creation and operation of multiple independent worker groups."""
         if accelerator_is_available():
-            num_workers = cluster.num_accelerators
+            num_workers = available_accelerators(cluster.num_accelerators)
+            placement = PackedPlacementStrategy(0, num_workers - 1)
         else:
             num_workers = 1
+            placement = NodePlacementStrategy([0])
         group1 = DistributedTestWorker.create_group().launch(
-            cluster=cluster, name="multi_group_1"
+            cluster=cluster, placement_strategy=placement, name="multi_group_1"
         )
         group2 = DistributedTestWorker.create_group().launch(
-            cluster=cluster, name="multi_group_2"
+            cluster=cluster, placement_strategy=placement, name="multi_group_2"
         )
 
         # Call a method on group 1

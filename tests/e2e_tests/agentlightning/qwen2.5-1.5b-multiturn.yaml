@@ -20,7 +20,7 @@ runner:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf-calc-x-e2e-multiturn
     experiment_name: ${runner.experiment_name}
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   # E2E: short run
   max_epochs: 1

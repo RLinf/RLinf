@@ -22,7 +22,7 @@ runner:
     log_path: "../results/robodojo_put_bottles_into_dustbin_pi05_eval"
     project_name: rlinf
     experiment_name: "test_robodojo_put_bottles_into_dustbin_pi05_eval"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1

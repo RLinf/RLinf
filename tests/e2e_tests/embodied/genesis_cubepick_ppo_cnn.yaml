@@ -24,7 +24,7 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "genesis_cubepick_ppo_cnn"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 400
   max_steps: -1

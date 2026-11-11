@@ -26,7 +26,7 @@ runner:
     log_path: /workspace/results/behavior_ppo_openvlaoft
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 1
   max_steps: -1

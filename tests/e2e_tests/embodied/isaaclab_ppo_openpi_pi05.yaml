@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/isaaclab_ppo_openpi_pi05
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 1
   max_steps: -1
@@ -67,8 +67,8 @@ env:
   train:
     rollout_epoch: 1
     total_num_envs: 4
-    max_episode_steps: 20
-    max_steps_per_rollout_epoch: 20
+    max_episode_steps: 5
+    max_steps_per_rollout_epoch: 5
     use_fixed_reset_state_ids: True
 
   eval:

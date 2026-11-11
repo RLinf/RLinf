@@ -21,7 +21,7 @@ runner:
     log_path: "../results/behavior_openpi_eval"
     project_name: rlinf
     experiment_name: "test_openpi_eval"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   only_eval: True
 
@@ -40,8 +40,9 @@ env:
   eval:
     rollout_epoch: 1
     total_num_envs: 2
-    max_episode_steps: 512
-    max_steps_per_rollout_epoch: 512
+    # BEHAVIOR subtracts one, so 33 env steps fit one 32-step action chunk.
+    max_episode_steps: 33
+    max_steps_per_rollout_epoch: 32
     video_cfg:
       save_video: False
 

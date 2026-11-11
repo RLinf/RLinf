@@ -917,3 +917,22 @@ def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatc
     assert f"source_device={source.device}" in str(info.value)
     assert "requested_bytes=8" in str(info.value)
     assert torch.Tensor.to is original_to
+
+
+def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    class _MusaDeviceTensor(torch.Tensor):
+        @property
+        def device(self):
+            return SimpleNamespace(type="musa")
+
+    def forbid_pinned_alloc(*args, **kwargs):
+        raise AssertionError("MUSA offload must not allocate pinned host memory")
+
+    monkeypatch.setattr(torch, "empty_like", forbid_pinned_alloc)
+    source = torch.ones(2, dtype=torch.float32).as_subclass(_MusaDeviceTensor)
+    with pinned_offload_context():
+        result = source.to("cpu")
+    assert not result.is_pinned()
+    torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
