@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -24,6 +26,7 @@ from rlinf.algorithms.utils import compute_entropy_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
+from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
@@ -145,8 +148,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model = super().model_provider_func()
 
         if self.cfg.runner.get("ckpt_path", None):
-            model_dict = torch.load(self.cfg.runner.ckpt_path)
-            model.load_state_dict(model_dict)
+            if (
+                SupportedModel(self.cfg.actor.model.model_type)
+                == SupportedModel.COSMOS3
+                and self.cfg.actor.model.get("cosmos3", {}).get("task") == "rl"
+            ):
+                from rlinf.models.embodiment.cosmos3.tasks.rl import load_ppo_checkpoint
+
+                load_ppo_checkpoint(model, self.cfg.runner.ckpt_path)
+            else:
+                model_dict = torch.load(self.cfg.runner.ckpt_path)
+                model.load_state_dict(model_dict)
 
         return model
 
@@ -620,14 +632,93 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         return loss
 
+    @torch.no_grad()
+    def _log_wam_optimizer_step(
+        self,
+        probe_batch: dict,
+        reference_means: list[torch.Tensor],
+        step: int,
+        total_steps: int,
+        status: str,
+    ) -> None:
+        """Measure actor update drift and check the original rollout scores."""
+        chunk_log_ratios = []
+        chunk_kls = []
+        try:
+            micro_batches = split_dict_to_chunk(probe_batch, self.gradient_accumulation)
+            for index, batch in enumerate(micro_batches):
+                batch = put_tensor_device(batch, self.device)
+                with self.amp_context:
+                    output = self.model(
+                        forward_inputs=batch["forward_inputs"],
+                        compute_logprobs=True,
+                        compute_entropy=False,
+                        compute_values=False,
+                        use_cache=False,
+                        return_sde_params=True,
+                    )
+                new = output["logprobs"].float().sum(dim=(-2, -1))
+                old = batch["prev_logprobs"].float().sum(dim=(-2, -1))
+                delta = new - old
+                mean = output["sde_mean"].float()
+                std = output["sde_std"].float()
+                active = output["sde_mask"].bool() & (std > 0)
+                if step == 0:
+                    reference_means.append(mean.clone())
+                # The SDE noise scale depends on the cached index, so it is fixed.
+                mean_delta = (mean - reference_means[index]).masked_fill(~active, 0)
+                normalized_delta = mean_delta / std.masked_fill(~active, 1)
+                kl = 0.5 * normalized_delta.square().sum(dim=(-2, -1))
+                if batch["loss_mask"] is not None:
+                    mask = batch["loss_mask"].flatten().bool()
+                    delta = delta.masked_select(mask)
+                    kl = kl.masked_select(mask)
+                chunk_log_ratios.append(delta)
+                chunk_kls.append(kl)
+                micro_batches[index] = None
+                del output, batch
+        finally:
+            # The no-grad forward does not run the backward reshard hooks.
+            for module in reversed(list(self.model.modules())):
+                if isinstance(module, FSDPModule):
+                    module.reshard()
+
+        delta = torch.cat(chunk_log_ratios)
+        ratio = delta.exp()
+        ratio_error = (ratio - 1).abs()
+        totals = torch.stack(
+            (
+                torch.cat(chunk_kls).sum(),
+                -delta.sum(),
+                ratio.sum(),
+                ratio_error.sum(),
+                delta.new_tensor(delta.numel()),
+            )
+        )
+        max_error = torch.cat((ratio_error, ratio_error.new_zeros(1))).max()
+        torch.distributed.all_reduce(totals, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(max_error, op=torch.distributed.ReduceOp.MAX)
+        if self._rank == 0:
+            analytic_kl, approx_kl, mean_ratio, ratio_abs = (
+                totals[:-1] / totals[-1]
+            ).tolist()
+            self.log_info(
+                f"[WAM PPO] rollout={self.version} optimizer_step={step}/{total_steps} "
+                f"status={status} chunks={int(totals[-1].item())} "
+                f"analytic_kl={analytic_kl:.8g} "
+                f"approx_kl={approx_kl:.8g} ratio={mean_ratio:.8g} "
+                f"ratio_abs={ratio_abs:.8g} ratio_abs_max={max_error.item():.8g}"
+            )
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
         Run the training process using the received rollout batch.
         """
+        freeze_actor_updates = self.cfg.algorithm.get("freeze_actor_updates", False)
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
-        if self.is_optimizer_offloaded:
+        if self.is_optimizer_offloaded and not freeze_actor_updates:
             self.load_optimizer(self.device)
 
         if self.cfg.algorithm.loss_type == "opd":
@@ -664,14 +755,47 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         assert rollout_size % batch_size_per_rank == 0, (
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
+        probe_batch = None
+        batches_per_epoch = rollout_size // batch_size_per_rank
+        if self.cfg.algorithm.get("wam_optimizer_step_diagnostics", False):
+            if (
+                self.cfg.actor.model.model_type != SupportedModel.COSMOS3.value
+                or self.cfg.actor.model.cosmos3.task != "rl"
+                or self.cfg.algorithm.logprob_type != "chunk_level"
+                or not isinstance(self.model, FSDPModule)
+            ):
+                raise ValueError(
+                    "WAM optimizer step diagnostics require Cosmos3 PPO with "
+                    "chunk-level logprobs and FSDP2."
+                )
+            # Capture raw rollout logprobs before optional actor recomputation.
+            probe_batch = split_dict_to_chunk(
+                {
+                    "forward_inputs": self.rollout_batch["forward_inputs"],
+                    "prev_logprobs": self.rollout_batch["prev_logprobs"],
+                    "loss_mask": self.rollout_batch.get("loss_mask"),
+                },
+                batches_per_epoch,
+            )[0]
         metrics = {}
-        if self.cfg.algorithm.get("recompute_logprobs", False):
+        if not freeze_actor_updates and self.cfg.algorithm.get(
+            "recompute_logprobs", False
+        ):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
-        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        update_epoch = (
+            1 if freeze_actor_updates else self.cfg.algorithm.get("update_epoch", 1)
+        )
+        step = 0
+        total_steps = 0 if freeze_actor_updates else update_epoch * batches_per_epoch
+        reference_means = []
+        if probe_batch is not None:
+            self._log_wam_optimizer_step(
+                probe_batch, reference_means, 0, total_steps, "before_update"
+            )
         for _ in range(update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
-                rollout_size // batch_size_per_rank,
+                batches_per_epoch,
             )
             for train_global_batch in rollout_dataloader_iter:
                 # split batch into micro_batches
@@ -703,7 +827,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.torch_platform.empty_cache()
 
+                if freeze_actor_updates:
+                    continue
                 grad_norm, lr_list = self.optimizer_step()
+                if probe_batch is not None:
+                    step += 1
+                    self.optimizer.zero_grad()
+                    status = (
+                        "updated" if math.isfinite(grad_norm) else "skipped_nonfinite"
+                    )
+                    self._log_wam_optimizer_step(
+                        probe_batch, reference_means, step, total_steps, status
+                    )
                 data = {
                     "actor/grad_norm": grad_norm,
                     "actor/lr": lr_list[0],
@@ -712,7 +847,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     data["critic/lr"] = lr_list[1]
                 append_to_dict(metrics, data)
         # put LR scheduler step here
-        self.lr_scheduler.step()
+        if not freeze_actor_updates:
+            self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()
         explained_variance_stats = pop_critic_explained_variance_stats(metrics)
@@ -797,7 +933,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_type": self.cfg.algorithm.loss_type,
             "logprob_type": self.cfg.algorithm.logprob_type,
             "reward_type": self.cfg.algorithm.reward_type,
-            "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
+            "single_action_dim": self.cfg.actor.model.get(
+                "logprob_action_dim", self.cfg.actor.model.get("action_dim", 7)
+            ),
             "logprobs": output_dict["logprobs"],
             "values": output_dict.get("values", None),
             "old_logprobs": prev_logprobs,
@@ -817,7 +955,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "loss_agg_func": self.loss_agg_func,
             "log_logprob_diagnostics": self.cfg.algorithm.get(
                 "log_logprob_diagnostics", False
-            ),
+            )
+            or self.cfg.algorithm.get("freeze_actor_updates", False),
         }
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
@@ -865,7 +1004,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     entropy,
                     entropy_type=self.cfg.algorithm.entropy_type,
                     loss_mask=entropy_mask,
-                    action_dim=self.cfg.actor.model.get("action_dim", 7),
+                    action_dim=self.cfg.actor.model.get(
+                        "logprob_action_dim", self.cfg.actor.model.get("action_dim", 7)
+                    ),
                     batch_size=output_dict["logprobs"].shape[0],
                 )
                 if self.cfg.algorithm.entropy_bonus > 0:

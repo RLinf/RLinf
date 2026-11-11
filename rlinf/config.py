@@ -1093,6 +1093,101 @@ def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
     )
 
 
+def _validate_cosmos3_ppo_cfg(cfg, model_cfg) -> None:
+    """Validate the model-local Cosmos3 hybrid Flow-SDE PPO contract."""
+    cosmos_cfg = model_cfg.get("cosmos3", {})
+    assert cosmos_cfg.get("task") == "rl", (
+        "Cosmos3 PPO requires actor.model.cosmos3.task='rl'."
+    )
+    assert cosmos_cfg.get("noise_method", "flow_sde") == "flow_sde", (
+        "Cosmos3 PPO requires actor.model.cosmos3.noise_method='flow_sde'."
+    )
+    assert not cosmos_cfg.get("joint_logprob", False), (
+        "Cosmos3 PPO supports hybrid sampling with cosmos3.joint_logprob=false."
+    )
+    noise_level = float(cosmos_cfg.get("noise_level", 0.5))
+    assert math.isfinite(noise_level) and noise_level > 0, (
+        "Cosmos3 PPO requires a finite, positive cosmos3.noise_level, "
+        f"got {noise_level}."
+    )
+    assert model_cfg.get("action_model_mode", "wam") == "wam", (
+        "Cosmos3 PPO requires action_model_mode='wam' for joint video/action sampling."
+    )
+    assert float(model_cfg.get("guidance", 1.0)) == 1.0, (
+        "Cosmos3 PPO requires actor.model.guidance=1.0 for conditional sampling."
+    )
+    assert model_cfg.get("action_normalization", "quantile_rot") == "quantile_rot", (
+        "Cosmos3 PPO requires actor.model.action_normalization='quantile_rot'."
+    )
+    train_env = cfg.get("env", {}).get("train", {})
+    assert train_env.get("env_type", "libero") == "libero", (
+        "Cosmos3 PPO currently requires env.train.env_type='libero'."
+    )
+    assert int(model_cfg.get("action_dim", 7)) == 7, (
+        "Cosmos3 LIBERO PPO requires actor.model.action_dim=7."
+    )
+    horizon = int(model_cfg.get("num_frames", 17)) - 1
+    chunk = int(model_cfg.get("num_action_chunks", 10))
+    assert horizon > 0 and horizon % 4 == 0, (
+        "Cosmos3 PPO requires num_frames - 1 to be a positive multiple of four, "
+        f"got num_frames={horizon + 1}."
+    )
+    assert 0 < chunk <= horizon, (
+        "Cosmos3 PPO requires 0 < num_action_chunks <= num_frames - 1, "
+        f"got num_action_chunks={chunk}, num_frames={horizon + 1}."
+    )
+    assert model_cfg.get("add_value_head", False), (
+        "Cosmos3 PPO requires actor.model.add_value_head=true."
+    )
+    assert cfg.algorithm.adv_type == "gae", (
+        "Cosmos3 PPO requires algorithm.adv_type='gae'."
+    )
+    assert cfg.algorithm.loss_type == "actor_critic", (
+        "Cosmos3 PPO requires algorithm.loss_type='actor_critic'."
+    )
+    assert cfg.algorithm.reward_type == "chunk_level", (
+        "Cosmos3 PPO requires algorithm.reward_type='chunk_level'."
+    )
+    assert cfg.algorithm.logprob_type == "chunk_level", (
+        "Cosmos3 PPO requires algorithm.logprob_type='chunk_level'."
+    )
+    assert not cfg.critic.get("use_critic_model", False), (
+        "Cosmos3 PPO uses its model-local value head, not a separate critic model."
+    )
+    assert cfg.rollout.get("rollout_backend", "huggingface") == "huggingface", (
+        "Cosmos3 PPO requires rollout.rollout_backend='huggingface'."
+    )
+    assert cfg.rollout.get("collect_prev_infos", True), (
+        "Cosmos3 PPO requires rollout.collect_prev_infos=true."
+    )
+    assert not cfg.rollout.get("recompute_logprobs", False), (
+        "Cosmos3 PPO recomputes logprobs in the actor; "
+        "rollout.recompute_logprobs must be false."
+    )
+    assert not cfg.rollout.get("enable_torch_compile", False), (
+        "Cosmos3 PPO does not implement rollout.enable_torch_compile."
+    )
+    assert not cfg.rollout.get("enable_cuda_graph", False), (
+        "Cosmos3 PPO does not implement rollout.enable_cuda_graph."
+    )
+    assert not model_cfg.get("ema_enabled", False), (
+        "Cosmos3 PPO requires actor.model.ema_enabled=false."
+    )
+    assert int(model_cfg.get("num_inference_steps", 0)) >= 2, (
+        "Cosmos3 PPO requires actor.model.num_inference_steps >= 2."
+    )
+    valid_action_dim = int(cosmos_cfg.get("valid_action_dim", 10))
+    assert valid_action_dim == 10, (
+        "Cosmos3 LIBERO PPO requires cosmos3.valid_action_dim=10 for rot6d actions."
+    )
+    assert int(model_cfg.get("logprob_action_dim", valid_action_dim)) == (
+        valid_action_dim
+    ), (
+        "Cosmos3 PPO requires actor.model.logprob_action_dim to match "
+        "cosmos3.valid_action_dim."
+    )
+
+
 def validate_only_eval_rollout_model(model_cfg) -> None:
     """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
 
@@ -1207,6 +1302,10 @@ def validate_embodied_cfg(cfg):
         else:
             _validate_psi0_train_cfg(cfg, model_cfg, only_eval)
 
+    if model_type == SupportedModel.COSMOS3 and not only_eval:
+        if algorithm_cfg.get("loss_type") in {"actor_critic", "decoupled_actor_critic"}:
+            _validate_cosmos3_ppo_cfg(cfg, model_cfg)
+
     if model_type == SupportedModel.LINGBOTVLAV2:
         # V2 always computes in bf16; only the FSDP actor stores fp32 weights,
         # because the rollout has no FSDP cast to bring them back to bf16.
@@ -1255,9 +1354,10 @@ def validate_embodied_cfg(cfg):
             SupportedModel.OPENVLA_OFT,
             SupportedModel.OPENPI,
             SupportedModel.LINGBOTVLAV2,
+            SupportedModel.COSMOS3,
         ], (
             f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value, SupportedModel.LINGBOTVLAV2.value]}, "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value, SupportedModel.LINGBOTVLAV2.value, SupportedModel.COSMOS3.value]}, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (
