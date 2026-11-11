@@ -988,6 +988,14 @@ class LiberoEnv(gym.Env):
             self.current_raw_obs[idx] = raw_obs[i]
 
         self._reset_metrics(env_idx)
+        if self.is_libero_mem:
+            self.env.reset_memory_progress(id=env_idx)
+        obs = self._wrap_obs(self.current_raw_obs)
+        if self.short_memory is not None:
+            for index in env_idx:
+                self._observation_history[index].clear()
+            self._append_history(obs, env_idx)
+            obs["history"] = self._get_history_obs()
         if self.art_branch_chunk_index is not None:
             self._add_art_sim_state_error(obs)
         infos = {}

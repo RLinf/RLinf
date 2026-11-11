@@ -1,11 +1,17 @@
 Diffusion Model Fine-Tuning with ART
 ====================================
 
-This page describes DiffusionART fine-tuning for SD3.5 Medium image text
-rendering and Wan2.2 TI2V 5B video text rendering. It covers the algorithm
-and its equations, OCR data, training configuration, recorded ART/NFT
-reward and runtime results, and training metrics. The final LIBERO section
-extends ART to Pi0 action chunks with fixed-prefix and snapshot-state sampling.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
+   :align: center
+   :width: 45%
+
+   SD3 and Wan2.2 generation models trained with DiffusionART.
+
+Fine-tune SD3 or Wan2.2 with DiffusionART to improve text rendering using OCR
+rewards. ART combines rewards and clean latent endpoints within each prompt
+group into a shared direction, then trains against frozen velocity targets at
+states visited during generation. Complete the :doc:`shared setup <video_models>`,
+choose an image or video recipe, and inspect the training results below.
 
 Overview
 --------
@@ -25,24 +31,30 @@ reference implementation, see the
    .. grid-item-card:: Models
       :text-align: center
 
-      SD3.5 Medium / Wan2.2 TI2V 5B / Pi0
+      SD3 / Wan2.2
 
    .. grid-item-card:: Algorithm
       :text-align: center
 
-      Image OCR / video OCR / LIBERO
+      DiffusionART
 
    .. grid-item-card:: Output
       :text-align: center
 
-      Image/video: LoRA + FSDP2; Pi0: action expert + FSDP1
+      Image / Video
+
+   .. grid-item-card:: Reward
+      :text-align: center
+
+      OCR / Video OCR
+
+| **You'll do:** select a recipe → launch training → inspect OCR reward and generated samples.
+| **Prerequisites:** :doc:`Shared installation, model, and dataset setup <video_models>`. The recorded Wan experiment used four NVIDIA A800 GPUs.
 
 Tasks
 ~~~~~
 
-The image and video configs in ``examples/diffusion/config/`` use Diffusers
-checkpoints and OCR rewards. The LIBERO configs in ``examples/embodiment/config/``
-use Pi0 and environment returns.
+Choose the config for the output you want to generate.
 
 .. list-table::
    :header-rows: 1
@@ -56,18 +68,13 @@ use Pi0 and environment returns.
      - Image OCR
    * - Wan2.2 TI2V 5B
      - ``wan22_ti2v_5b_art_video_ocr``
-     - OCR prompts; ``visual.video_ocr`` with a video-level mean score.
-   * - Robot manipulation
-     - ``libero_object_0_art_openpi`` (``examples/embodiment/config/``)
-     - LIBERO Object task 0; environment episode returns.
+     - Text-to-video OCR
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Each image/video episode generates one image or video. ART uses one scalar reward for each
-candidate, then compares candidates generated from the same prompt.
-The :ref:`LIBERO action recipes <diffusion-art-libero>` instead compare action
-chunks sampled from a common robot state, using continuation returns as rewards.
+The environment scores each completed candidate; video rewards are averaged
+before ART builds guidance for the prompt group.
 
 .. list-table::
    :header-rows: 1
@@ -257,268 +264,9 @@ overrides above, including ``video_level`` rewards, but set
 stopped after round 29. Both NFT configurations retain
 ``algorithm.nft_tau=[1.0,0.01,0,70]``.
 
-In these records, ART reaches 0.8 with 30.6% less elapsed time and 33.3% fewer
-trajectories than NFT-576. The two NFT runs change learning rate and sampling
-amount together, so this comparison cannot isolate either factor. Different
-record lengths also prevent comparing their final observed rewards as equal
-budget endpoints. These are training rewards from single runs, not held-out
-success rates or a reproduction of the paper's video benchmarks.
-
-Runtime and Diagnostics
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Execution costs cover the common interval
-``5760 < cumulative trajectories <= 40320``. Each run contributes 34560
-trajectories: ART and NFT-1152 rounds 6--35, and NFT-576 rounds 11--70.
-
-.. list-table:: Mean Runtime in the Common Interval
-   :header-rows: 1
-   :widths: 34 22 22 22
-
-   * - Metric
-     - ART
-     - NFT, 1152, 1e-4
-     - NFT, 576, 4e-4
-   * - Round time (s)
-     - 1026.24
-     - 971.35
-     - 495.00
-   * - Actor training per round (s)
-     - 105.23
-     - 61.56
-     - 63.37
-   * - Seconds per 1000 trajectories
-     - 890.83
-     - 843.18
-     - 859.37
-   * - Trajectories per minute
-     - 67.35
-     - 71.16
-     - 69.82
-
-At 1152 trajectories per round, ART spends about 44 s more in actor training
-and 55 s more per round in this interval. The Wan ART recipe selects two
-denoising states per trajectory, precomputes their old velocities, and
-backpropagates through both; the NFT recipe samples one training state per
-trajectory. These additional forwards and backwards are a likely contributor
-to the actor-time difference; the existing timers do not isolate their cost.
-Generation remains the largest phase in all three records.
-
-``algorithm.art_timestep_fraction=0.1`` defines a timestep-cost ablation. With
-the configured ten rollout steps, it selects one training state instead of two.
-A comparison with unchanged remaining settings and initialization excluded from
-timing measures the effect of this reduction. Reward versus elapsed time and
-throughput capture different effects because fewer states also change the
-learning budget.
-
-The metric definitions below relate update diagnostics to reward and runtime.
-ART and NFT losses have different definitions, and logged gradient scales alone
-do not establish which algorithm is more stable. The :ref:`ART Objective and Implementation <diffusion-art-algorithm>` distinguishes the implementation from the paper's
-image, video, and pairwise experiments.
-
-.. _diffusion-training-metrics:
-
-Diffusion Training Metrics
---------------------------
-
-These metrics describe image and video generator training with ART or NFT.
-Task rewards measure text rendering, update diagnostics describe model changes,
-and timers record execution cost. The terminal table shortens namespaces:
-``actor/art_loss`` in Training/Actor is logged as ``train/actor/art_loss``;
-``video_ocr`` in Environment is ``env/video_ocr``.
-
-Task Reward and Rollout Signals
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For a prompt requesting the text "OPEN", OCR reads the generated letters and
-compares them with that target. The scorer removes spaces and ignores case,
-then applies a normalized edit-distance score:
-
-.. math::
-
-   R_{\mathrm{OCR}}=1-\frac{\min(d(\hat y,y),|y|)}{|y|}.
-
-Here :math:`y` is the target text, :math:`\hat y` is the recognized text, and
-:math:`d` counts insertions, deletions, and substitutions. A substring match also
-receives one. Video OCR scores every frame; ``reward_type=video_level`` uses the
-mean frame score, while ``frame_level`` preserves frame scores for downstream
-grouping. A reward of 0.8 expresses text similarity, not an 80% rate of completely
-correct videos.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
-
-   * - Metric in the Terminal Table
-     - Meaning
-   * - ``avg`` / ``video_ocr`` / ``ocr``
-     - Reward-backend scores. ``reward.key`` selects the training reward. Consistent backend fields support comparison across runs; logged aggregates can differ with frame and chunk reductions.
-   * - ``return``
-     - Episode reward sum. In the one-step, scalar-reward ART recipe it coincides with the episode score.
-   * - ``episode_len``
-     - Environment steps per episode. One generated video can be one episode with several internal denoising steps.
-   * - ``num_trajectories``
-     - Completed candidates in the current collection round, rather than a cumulative counter.
-   * - ``rewards``
-     - Rollout-side aggregate of the reward tensor used for training.
-   * - ``advantages_mean`` / ``advantages_min`` / ``advantages_max``
-     - Relative advantage statistics for NFT's grouped comparison. A centered mean is expected after normalization. ART computes guidance directly from rewards.
-   * - ``loss_mask_fraction``
-     - Fraction of rollout entries marked valid for training. This is distinct from ART's corrective mask and NFT's clipping decisions.
-
-ART Guidance and Update Diagnostics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-ART estimates a direction from a complete prompt group, then fits a frozen
-velocity target at selected denoising states. The
-:ref:`ART Objective and Implementation <diffusion-art-algorithm>` defines the equations and velocity convention.
-Its loss is :math:`\mathcal L=w\operatorname{MSE}(v_\theta,v_{\mathrm{old}}-H_c)`.
-
-.. list-table:: Terminal Keys Under Training/Actor
-   :header-rows: 1
-   :widths: 36 64
-
-   * - Metric
-     - Meaning
-   * - ``actor/art_reward_mean``
-     - Mean scalar candidate reward after ``art_reward_reduction``.
-   * - ``actor/art_reward_std``
-     - Population standard deviation of those rewards on each actor shard, averaged across shards. It is not the within-prompt reward spread.
-   * - ``actor/active_group_frac``
-     - Fraction of prompt groups with nonzero guidance. Constant rewards or a zero aggregate direction make a group inactive.
-   * - ``actor/covariance_rms``
-     - Mean RMS of the raw reward--endpoint covariance over active groups. Its scale depends on rewards and latent coordinates.
-   * - ``actor/guidance_rms``
-     - Mean per-candidate RMS of direction times magnitude, including inactive candidates. Under unit normalization it often tracks the active-group fraction.
-   * - ``actor/skipped_zero_guidance``
-     - One when every actor shard has zero guidance and optimization is skipped; zero when at least one shard has a signal.
-   * - ``actor/art_loss``
-     - Weighted, corrective-masked loss averaged over training items, including zero-loss entries.
-   * - ``actor/unmasked_loss``
-     - Weighted loss before corrective masking, averaged over active items. Its denominator differs from ``actor/art_loss``.
-   * - ``actor/old_deviate``
-     - Mean velocity MSE :math:`D^{-1}\|v_\theta-v_{\mathrm{old}}\|_2^2` over training items.
-   * - ``actor/movement_score``
-     - Mean movement proxy. ``sde_kl`` uses reference SDE noise and step size; ``fixed_mse`` uses velocity MSE.
-   * - ``actor/outward_frac``
-     - Fraction of active items whose descent direction has positive inner product with displacement from the old velocity.
-   * - ``actor/mask_frac``
-     - Fraction of active items blocked by both excessive movement and the outward-direction condition.
-   * - ``actor/total_loss``
-     - Equals ``actor/art_loss`` in the ART worker.
-
-Ratios and losses aggregate micro-batch/timestep statistics and are then averaged
-across workers. ``outward_frac`` counts outward directions at any movement size;
-``mask_frac`` also requires crossing the threshold. A smaller masked loss can
-result from blocking more items. Reward and active/masked fractions provide
-the context for interpreting it.
-
-NFT Energies and Clipping
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-NFT compares two velocity branches built from the current change
-:math:`\Delta v=v_\theta-v_{\mathrm{old}}`:
-
-.. math::
-
-   v_\pm=v_{\mathrm{old}}\pm\beta\Delta v,\qquad
-   E_\pm=\operatorname{reduce}\left[
-      w_\pm\bigl(T(v_\pm)-x_{\mathrm{target}}\bigr)^2\right].
-
-The configured transform :math:`T` converts velocity to the prediction space,
-such as ``nft_target_space=x0``. The energy measures prediction error, with
-``nft_weight_mode`` and ``nft_energy_reduction`` controlling its scale. Positive
-and negative identify branches; the energy means normally include all candidates.
-For ``nft_loss_form=mse``, the transformed advantage is a weight
-:math:`r\in[0,1]`, and the unclipped per-item loss is
-
-.. math::
-
-   \ell_{\mathrm{NFT}}=\frac{A_{\max}}{\beta}
-   \left[rE_+ +(1-r)E_-\right],
-   \qquad A_{\max}=\text{advantage clipping bound}.
-
-The bound is ``adv_clip_max``. The clipped implementation selects the maximum
-of the clipped and unclipped per-item losses. Its objective and scale differ
-from ART's target MSE.
-
-.. list-table:: Terminal Keys Under Training/Actor
-   :header-rows: 1
-   :widths: 36 64
-
-   * - Metric
-     - Meaning
-   * - ``actor/E_pos_mean`` / ``actor/E_neg_mean``
-     - Mean positive/negative branch energies over all candidates.
-   * - ``actor/E_pos_mean_pos_only``
-     - Positive-branch energy for valid items with transformed advantage :math:`r>0.5`.
-   * - ``actor/E_neg_mean_neg_only``
-     - Negative-branch energy for valid items with :math:`r<0.5`.
-   * - ``actor/delta_E_mean``
-     - Mean :math:`E_+-E_-`. Opposing contributions can cancel in this aggregate.
-   * - ``actor/delta_v_norm``
-     - Norm of the velocity change over the configured gather/reduction axes. It is not ART's mean squared deviation.
-   * - ``actor/clip_frac``
-     - Fraction of reduced velocity entries with a clipping coefficient below one. The counting unit depends on ``nft_gather_type``.
-   * - ``actor/clip_loss_frac``
-     - Fraction of valid loss entries where the clipped loss exceeds the unclipped loss and is selected.
-   * - ``actor/nft_tau``
-     - Current actor mixing coefficient in the rollout/reference EMA after schedule interpolation. A smaller value retains more historical parameters.
-   * - ``actor/nft_loss``
-     - NFT objective before gradient-accumulation scaling, including configured clipping.
-   * - ``actor/total_loss``
-     - Loss divided by the gradient-accumulation factor in the NFT worker. With SFT co-training, it also includes the SFT contribution.
-   * - ``actor/grad_norm`` / ``actor/lr``
-     - Optimizer-reported gradient norm and current learning rate; also emitted by ART.
-
-Energy means, losses, and gradients help diagnose a run, but their scales depend
-on weighting, target space, and gradient accumulation. Task rewards under
-matched time or sample budgets provide a basis for comparing algorithm performance.
-
-Runtime and Progress
-~~~~~~~~~~~~~~~~~~~~
-
-The runner's round timer and disjoint phase timers describe end-to-end
-performance. Nested timers expose costs within each phase; adding overlapping
-spans would count some execution time more than once.
-
-.. list-table:: Terminal Keys Under Time
-   :header-rows: 1
-   :widths: 43 57
-
-   * - Metric
-     - Meaning
-   * - ``step``
-     - Runner time for the current round.
-   * - ``generate_rollouts``
-     - Collection phase, including generation, reward feedback, and trajectory delivery.
-   * - ``actor_training`` / ``actor/run_training``
-     - Runner and worker views of actor training, including ART/NFT input preparation.
-   * - ``sync_weights``
-     - Runner weight synchronization phase.
-   * - ``actor/actor/recv_traj``
-     - Actor wait/receive span for trajectories, overlapping rollout collection.
-   * - ``actor/actor/compute_adv`` / ``cal_adv_and_returns``
-     - Worker and runner spans for advantage/return processing. ART uses this stage to report rollout statistics.
-   * - ``rollout/predict``
-     - Model generation calls, including generation and decoding in the wrapper.
-   * - ``env/env_interact_step`` / ``env/env/bootstrap_step``
-     - Environment interaction, including reward scoring, and bootstrap work.
-   * - ``env/interact`` / ``env/run_interact_once``
-     - Environment interaction spans, including communication and waits for outputs.
-   * - ``rollout/generate_one_epoch`` / ``rollout/rollout/generate``
-     - Nested rollout-loop spans within ``generate_rollouts``.
-   * - ``actor/actor/sync_model_to_rollout`` / ``rollout/sync_model_from_actor``
-     - Actor-side and rollout-side views of weight transfer; these can overlap.
-
-Global Step in the header counts collection/training rounds; one ART round can
-contain two optimizer updates. Elapsed is cumulative wall time, ETA is an
-estimate, and header Step Time is elapsed time divided by completed rounds.
-Time ``step`` records
-individual round costs. Seconds per 1000 trajectories and trajectories per
-minute account for differences in sampling amounts. The
-:ref:`Training Results <diffusion-art-results>` reports a comparison over the same
-cumulative sampling interval.
+All runs used ``actor.seed=42`` and environment seeds of ``42``. These settings
+do not fix every global RNG used for LoRA initialization and sampling; repeat
+runs and record the revision, dependencies, and RNG seeds when comparing results.
 
 .. _diffusion-art-libero:
 
@@ -533,8 +281,7 @@ trajectories. Neither recipe groups later, independently reached states merely
 because they have the same decision index.
 
 Both load ``RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``. Rollout uses
-``MultiStepRolloutWorker`` with the Hugging Face backend; training uses
-``EmbodiedARTFSDPPolicy`` with FSDP1 NO_SHARD. The vision-language backbone stays
+the Hugging Face backend; training uses FSDP1 NO_SHARD. The vision-language backbone stays
 frozen, while the action expert and its associated trainable layers are updated
 without LoRA. Each observation supplies two camera images, robot state, and the
 task instruction. Pi0 generates a full action tensor; the environment executes
@@ -701,6 +448,8 @@ Monitor ``actor/active_group_frac``, ``actor/branch_valid_group_frac``,
 signal availability and same-state grouping. ``actor/mask_frac_global`` and
 ``actor/outward_frac_global`` pool active-item counts before forming ratios;
 the ``actor/u1/`` and ``actor/u2/`` versions separate the two updates.
+``actor/mask_frac`` and ``actor/outward_frac`` also weight micro-batches and
+actor ranks by active-item count, rather than averaging local ratios.
 
 The optional ``algorithm.art_replay_diagnostics=true`` adds replay forwards.
 ``actor/replay_mse`` compares the pre-update actor with rollout velocities;

@@ -1226,14 +1226,173 @@ def test_env_output_composes_one_transition_object():
     }
 
 
+def test_env_output_preserves_nested_observations():
+    def observation(value):
+        return {
+            "states": torch.full((2, 3), value),
+            "depth_images": torch.full((2, 2, 2), value),
+            "reset_mask": torch.tensor([False, True]),
+            "history": {
+                "main_images": torch.full((2, 3, 2, 2, 3), value),
+                "wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
+                "frame_mask": torch.tensor([[False, True, True]] * 2),
+                "time_offsets": torch.tensor([[0.0, -3.5, 0.0]] * 2),
+            },
+        }
+
+    output = EnvOutput(obs=observation(1), final_obs=observation(7))
+    payload = output.to_dict()
+
+    for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
+        assert "depth_images" not in payload[name]
+        for key in ("states", "reset_mask", "history"):
+            torch.testing.assert_close(payload[name][key], original[key])
+    assert (
+        "history" not in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
+    )
+    shards = PolicyInput(obs=payload["obs"]).split([1, 1])
+    for index, shard in enumerate(shards):
+        torch.testing.assert_close(
+            shard.obs["history"]["main_images"],
+            output.obs["history"]["main_images"][index : index + 1],
+        )
+
+
+@pytest.mark.parametrize("array_type", [torch.tensor, np.array])
+@pytest.mark.parametrize("later_reset", [False, True])
+def test_env_worker_restores_terminal_observations(array_type, later_reset):
+    def observation(value):
+        return {
+            "states": array_type([[value], [value + 1]]),
+            "task_descriptions": [f"task {value}", f"task {value + 1}"],
+            "history": {
+                "main_images": array_type([[[value]], [[value + 1]]]),
+                "frame_mask": array_type([[False, True], [True, True]]),
+                "time_offsets": array_type([[0.0, -value / 10], [-value / 10, 0.0]]),
+            },
+        }
+
+    current, terminal = observation(1), observation(7)
+    original = copy.deepcopy(current)
+    infos = [
+        {
+            "final_observation": terminal,
+            "_final_observation": array_type([[True], [False]]),
+        }
+    ]
+    if later_reset:
+        infos.append(
+            {
+                "final_observation": observation(11),
+                "_final_observation": array_type([[False], [True]]),
+            }
+        )
+    worker = object.__new__(EnvWorker)
+    merged = worker._build_chunk_final_obs([current], infos)
+
+    expected = observation(7)
+    second = observation(11 if later_reset else 1)
+    expected["states"][1] = second["states"][1]
+    expected["task_descriptions"][1] = second["task_descriptions"][1]
+    for key in expected["history"]:
+        expected["history"][key][1] = second["history"][key][1]
+    for key in ("states", "history"):
+        torch.testing.assert_close(merged[key], expected[key])
+        torch.testing.assert_close(current[key], original[key])
+    assert merged["task_descriptions"] == expected["task_descriptions"]
+    assert current["task_descriptions"] == original["task_descriptions"]
+    merged["history"]["main_images"][0] = 100
+    merged["task_descriptions"][0] = "changed"
+    np.testing.assert_array_equal(terminal["history"]["main_images"], [[[7]], [[8]]])
+    assert terminal["task_descriptions"] == ["task 7", "task 8"]
+
+
+def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
+    from torch.utils.data.distributed import DistributedSampler
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.datasets.common.epoch import forward_set_epoch
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    def gather_object(gathered, state):
+        gathered[0] = state
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_object)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    def make_worker():
+        dataset = torch.arange(40)
+        sampler = DistributedSampler(
+            dataset, num_replicas=1, rank=0, shuffle=True, seed=19
+        )
+        worker = object.__new__(FSDPVlaSftWorker)
+        worker._rank = 0
+        worker._world_size = 1
+        worker._data_epoch = 0
+        worker.data_loader = StatefulDataLoader(
+            dataset,
+            batch_size=4,
+            sampler=sampler,
+        )
+        worker.data_iter = iter(worker.data_loader)
+        return worker
+
+    original_rng = get_rng_state()
+    try:
+        uninterrupted = make_worker()
+        uninterrupted._data_epoch = 2
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        uninterrupted.data_iter = iter(uninterrupted.data_loader)
+        for _ in range(3):
+            next(uninterrupted.data_iter)
+        uninterrupted._save_data_checkpoint(str(tmp_path))
+
+        expected_torch = torch.rand(3)
+        expected_numpy = np.random.random(3)
+        expected_python = random.random()
+        expected_remaining = torch.cat(list(uninterrupted.data_iter))
+        uninterrupted._data_epoch += 1
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        expected_next_epoch = torch.cat(list(uninterrupted.data_loader))
+
+        resumed = make_worker()
+        torch.manual_seed(101)
+        np.random.seed(101)
+        random.seed(101)
+        resumed._load_data_checkpoint(str(tmp_path))
+
+        assert resumed._data_epoch == 2
+        torch.testing.assert_close(torch.rand(3), expected_torch, rtol=0, atol=0)
+        np.testing.assert_array_equal(np.random.random(3), expected_numpy)
+        assert random.random() == expected_python
+        first_batch = next(resumed.data_iter)
+        torch.testing.assert_close(first_batch, expected_remaining[:4], rtol=0, atol=0)
+        actual_remaining = torch.cat([first_batch, *list(resumed.data_iter)])
+        torch.testing.assert_close(actual_remaining, expected_remaining, rtol=0, atol=0)
+
+        resumed._data_epoch += 1
+        forward_set_epoch(resumed.data_loader, resumed._data_epoch)
+        actual_next_epoch = torch.cat(list(resumed.data_loader))
+        torch.testing.assert_close(
+            actual_next_epoch, expected_next_epoch, rtol=0, atol=0
+        )
+    finally:
+        set_rng_state(original_rng)
+
+
 @pytest.mark.parametrize("with_diagnostics", [False, True])
-def test_env_output_preserves_optional_art_diagnostics_through_policy_transport(
+@pytest.mark.parametrize("with_reset_mask", [False, True])
+def test_env_output_preserves_optional_fields_through_policy_transport(
     with_diagnostics,
+    with_reset_mask,
 ):
     obs = {"states": torch.zeros(4, 3)}
     if with_diagnostics:
         obs["art_sim_state_error"] = torch.tensor([0.0, 0.0, 0.01, 0.01])
         obs["art_state_id"] = torch.tensor([13, 13, 21, 21])
+    if with_reset_mask:
+        obs["reset_mask"] = torch.tensor([True, False, False, True])
     output = EnvOutput(obs=obs, final_obs=obs)
     env_worker = object.__new__(EnvWorker)
     policy_input = env_worker._build_policy_input(output)
@@ -1248,9 +1407,9 @@ def test_env_output_preserves_optional_art_diagnostics_through_policy_transport(
         output.to_dict()["final_obs"],
         merged.obs,
     ):
-        assert ("art_sim_state_error" in prepared) == with_diagnostics
-        if with_diagnostics:
-            for key in ("art_sim_state_error", "art_state_id"):
+        for key in ("art_sim_state_error", "art_state_id", "reset_mask"):
+            assert (key in prepared) == (key in obs)
+            if key in obs:
                 torch.testing.assert_close(prepared[key], obs[key])
 
 

@@ -1,7 +1,13 @@
 ART 扩散模型微调
 ================
 
-本页介绍 DiffusionART 在 SD3.5 Medium 图像文字生成和 Wan2.2 TI2V 5B 视频文字生成中的微调，内容涵盖算法与公式、OCR 数据、训练配置、ART/NFT 奖励与耗时实测结果，以及训练指标定义，最后的 LIBERO 一节介绍 Pi0 动作块的固定前缀和 snapshot 状态采样配方。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png
+   :align: center
+   :width: 45%
+
+   使用 DiffusionART 训练的 SD3 与 Wan2.2 生成模型。
+
+使用 DiffusionART 微调 SD3 或 Wan2.2，通过 OCR 奖励改善文字渲染。ART 将同一 prompt 下各候选的奖励与干净 latent 终点聚合为共享方向，再向生成过程中所经状态上的冻结速度目标训练。完成 :doc:`共用准备步骤 <video_models>` 后，选择图像或视频配置，并按下文启动训练、检查结果。
 
 概览
 ----
@@ -14,22 +20,30 @@ ART 扩散模型微调
    .. grid-item-card:: 模型
       :text-align: center
 
-      SD3.5 Medium / Wan2.2 TI2V 5B / Pi0
+      SD3 / Wan2.2
 
    .. grid-item-card:: 算法
       :text-align: center
 
-      图像 OCR / 视频 OCR / LIBERO
+      DiffusionART
 
    .. grid-item-card:: 输出
       :text-align: center
 
-      图像、视频：LoRA + FSDP2；Pi0：action expert + FSDP1
+      图像 / 视频
+
+   .. grid-item-card:: 奖励
+      :text-align: center
+
+      OCR / 视频 OCR
+
+| **操作流程：** 选择配置 → 启动训练 → 检查 OCR reward 和生成样本。
+| **前置条件：** :doc:`共用安装、模型与数据集准备 <video_models>`。记录中的 Wan 实验使用四张 NVIDIA A800 GPU。
 
 任务
 ~~~~
 
-图像、视频配置位于 ``examples/diffusion/config/``，使用 Diffusers checkpoint 和 OCR 奖励；LIBERO 配置位于 ``examples/embodiment/config/``，使用 Pi0 和环境回报。
+按需要生成的内容选择配置。
 
 .. list-table::
    :header-rows: 1
@@ -43,15 +57,12 @@ ART 扩散模型微调
      - 图像 OCR
    * - Wan2.2 TI2V 5B
      - ``wan22_ti2v_5b_art_video_ocr``
-     - OCR prompt；``visual.video_ocr`` 计算视频级平均分。
-   * - 机器人操作
-     - ``libero_object_0_art_openpi`` （``examples/embodiment/config/``）
-     - LIBERO Object task 0；环境 episode 回报。
+     - 文生视频 OCR
 
 观测与动作
 ~~~~~~~~~~
 
-图像、视频任务的每个 episode 生成一张图像或一段视频。ART 为每个候选保留一个标量奖励，再比较同一 prompt 下的候选。:ref:`LIBERO 动作配方 <diffusion-art-libero>` 则比较从同一机器人状态采样的动作块，用续跑回报评价候选。
+环境对每个完整候选打分；视频奖励先取帧均值，再用于构造 prompt 组的 ART 引导。
 
 .. list-table::
    :header-rows: 1
@@ -176,210 +187,7 @@ ART 使用 ``env.train.rollout_epoch=12``、``actor.global_batch_size=576``、``
 
 每轮 1152 条轨迹的 NFT 选择 NFT 配置，并采用上面 ART 的覆盖参数，包括 ``video_level`` 奖励，但将 ``runner.max_epochs=200`` 和 ``runner.max_steps=200``；该运行在第 29 轮后停止。两组 NFT 均保留 ``algorithm.nft_tau=[1.0,0.01,0,70]``。
 
-在这些记录中，ART 达到 0.8 的累计时间比 NFT-576 少 30.6%，轨迹数少 33.3%。两组 NFT 同时改变学习率和采样量，本次对比无法拆分各自的贡献。记录长度也不同，不能把最后一个奖励值当作相同预算下的终点比较。这些结果来自单次运行的训练奖励，不能解释成独立测试集成功率，也不代表复现了论文的视频 benchmark。
-
-耗时与诊断
-~~~~~~~~~~
-
-执行成本统一统计累计轨迹区间 ``5760 < cumulative trajectories <= 40320``，每组覆盖 34560 条轨迹。对应 ART、NFT-1152 的第 6 至 35 轮，以及 NFT-576 的第 11 至 70 轮。
-
-.. list-table:: 共同区间内的平均耗时
-   :header-rows: 1
-   :widths: 34 22 22 22
-
-   * - 指标
-     - ART
-     - NFT，1152，1e-4
-     - NFT，576，4e-4
-   * - 每轮耗时（s）
-     - 1026.24
-     - 971.35
-     - 495.00
-   * - 每轮 actor 训练（s）
-     - 105.23
-     - 61.56
-     - 63.37
-   * - 每千条轨迹耗时（s）
-     - 890.83
-     - 843.18
-     - 859.37
-   * - 每分钟轨迹数
-     - 67.35
-     - 71.16
-     - 69.82
-
-在每轮 1152 条轨迹的两组中，ART 在该区间内每轮 actor 训练多用约 44 s，整轮多用约 55 s。Wan ART 配方为每条轨迹选择两个去噪状态，预计算对应旧速度，并在两个状态上反向传播；NFT 配方每条轨迹随机选择一个训练状态。额外的 forward 与 backward 是 actor 耗时差异的可能来源，现有 timer 尚未单独量出这部分成本。三组记录中，生成仍占最大的阶段耗时。
-
-``algorithm.art_timestep_fraction=0.1`` 对应训练时刻成本的消融配置。当前生成步数为 10，该值会把每条轨迹的训练状态从两个减为一个。其余设置一致、计时排除初始化的对照可反映这一调整的影响。奖励随累计时间的变化与吞吐量反映不同侧面，因为减少训练状态也会改变学习预算。
-
-本页的指标定义说明更新诊断与奖励、耗时的关系。ART 与 NFT 的 loss 定义不同，仅凭日志中的梯度大小不能判断哪种算法更稳定。论文的图像、视频与 pairwise 实验，以及当前实现的边界见 :ref:`ART 算法目标与实现 <diffusion-art-algorithm>`。
-
-.. _diffusion-training-metrics:
-
-扩散模型训练指标
-----------------
-
-这些指标描述 ART 和 NFT 的图像、视频生成训练。任务奖励反映文字生成效果，更新诊断记录模型变化，计时记录执行成本。终端表格会缩短 namespace：Training/Actor 下的 ``actor/art_loss`` 对应日志中的 ``train/actor/art_loss``，Environment 下的 ``video_ocr`` 对应 ``env/video_ocr``。
-
-任务奖励与 rollout 信号
-~~~~~~~~~~~~~~~~~~~~~~~
-
-例如 prompt 要求生成 "OPEN"，OCR 会读取生成文字，再与目标比较。评分器去除空格、忽略大小写，按归一化编辑距离评分：
-
-.. math::
-
-   R_{\mathrm{OCR}}=1-\frac{\min(d(\hat y,y),|y|)}{|y|}.
-
-其中 :math:`y` 是目标文字，:math:`\hat y` 是识别文字，:math:`d` 统计插入、删除和替换次数。子串匹配也会得到满分。视频 OCR 对每帧评分，``reward_type=video_level`` 使用所有帧的平均分，``frame_level`` 保留逐帧分数供后续分组。奖励 0.8 表示文字相似度，不代表 80% 的视频文字完全正确。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 36 64
-
-   * - 终端指标
-     - 含义
-   * - ``avg`` / ``video_ocr`` / ``ocr``
-     - 奖励 backend 的评分，``reward.key`` 选择训练奖励。统一的 backend 字段支持跨运行对比；帧和 chunk 归约不同，日志聚合结果也可能不同。
-   * - ``return``
-     - episode 奖励之和。在单步、标量奖励的 ART 配方中，它等于该 episode 的评分。
-   * - ``episode_len``
-     - 每个 episode 的环境步数。一段视频可以只对应一个 episode，内部仍包含多个去噪步骤。
-   * - ``num_trajectories``
-     - 当前采集轮次完成的候选数，不是累计计数器。
-   * - ``rewards``
-     - rollout 侧对训练奖励 tensor 的聚合。
-   * - ``advantages_mean`` / ``advantages_min`` / ``advantages_max``
-     - NFT 分组比较的相对 advantage 统计。归一化后均值接近零是预期行为。ART 直接从奖励计算引导。
-   * - ``loss_mask_fraction``
-     - rollout 中标记为可参与训练的项所占比例，与 ART 修正 mask、NFT 裁剪判断含义不同。
-
-ART 引导与更新诊断
-~~~~~~~~~~~~~~~~~~
-
-ART 先从完整 prompt 组估计方向，再在选中的去噪状态上拟合冻结速度目标。公式与速度符号约定见 :ref:`ART 算法目标与实现 <diffusion-art-algorithm>`。其 loss 为 :math:`\mathcal L=w\operatorname{MSE}(v_\theta,v_{\mathrm{old}}-H_c)`。
-
-.. list-table:: Training/Actor 下的终端字段
-   :header-rows: 1
-   :widths: 36 64
-
-   * - 指标
-     - 含义
-   * - ``actor/art_reward_mean``
-     - 经过 ``art_reward_reduction`` 后，各候选标量奖励的平均值。
-   * - ``actor/art_reward_std``
-     - 每个 actor shard 内候选奖励的总体标准差，再跨 shard 平均。它不等于同一 prompt 内的奖励差异。
-   * - ``actor/active_group_frac``
-     - 引导非零的 prompt 组占比。组内奖励相同或汇总方向为零时，该组无有效引导。
-   * - ``actor/covariance_rms``
-     - 有效组的原始奖励与终点协方差 RMS 的平均值，尺度受奖励与 latent 坐标影响。
-   * - ``actor/guidance_rms``
-     - 每个候选的方向乘幅度后计算 RMS，再对候选平均，包含无效候选。单位归一化时通常接近有效组比例。
-   * - ``actor/skipped_zero_guidance``
-     - 所有 actor shard 均无引导、跳过优化时为一；至少一个 shard 有信号时为零。
-   * - ``actor/art_loss``
-     - 加权并经过修正 mask 后的训练 loss，平均时包含 loss 为零的项。
-   * - ``actor/unmasked_loss``
-     - 修正 mask 生效前的加权 loss，仅对有效项平均，分母与 ``actor/art_loss`` 不同。
-   * - ``actor/old_deviate``
-     - 训练项上速度 MSE 的平均值，即 :math:`D^{-1}\|v_\theta-v_{\mathrm{old}}\|_2^2`。
-   * - ``actor/movement_score``
-     - 偏移代理量的均值。``sde_kl`` 使用参考 SDE 噪声与步长；``fixed_mse`` 使用速度 MSE。
-   * - ``actor/outward_frac``
-     - 有效项中，下降方向与相对于旧速度的偏移内积为正的比例。
-   * - ``actor/mask_frac``
-     - 有效项中，同时因偏移过大和向外移动条件而被屏蔽的比例。
-   * - ``actor/total_loss``
-     - ART worker 中等于 ``actor/art_loss``。
-
-这些比例与 loss 汇总各 micro-batch、各训练时刻的统计，再跨 worker 平均。``outward_frac`` 包含任意偏移大小的向外方向，``mask_frac`` 还要求越过阈值。屏蔽更多训练项也会让 masked loss 变小，奖励、有效组比例和屏蔽比例共同构成解释该值的依据。
-
-NFT 能量与裁剪
-~~~~~~~~~~~~~~
-
-NFT 根据当前速度变化 :math:`\Delta v=v_\theta-v_{\mathrm{old}}` 构造两个分支：
-
-.. math::
-
-   v_\pm=v_{\mathrm{old}}\pm\beta\Delta v,\qquad
-   E_\pm=\operatorname{reduce}\left[
-      w_\pm\bigl(T(v_\pm)-x_{\mathrm{target}}\bigr)^2\right].
-
-变换 :math:`T` 将速度转换到配置指定的预测空间，例如 ``nft_target_space=x0``。能量衡量预测误差，``nft_weight_mode`` 和 ``nft_energy_reduction`` 决定它的尺度。正负指两个分支，能量均值通常包含所有候选。采用 ``nft_loss_form=mse`` 时，转换后的 advantage 是 :math:`r\in[0,1]` 的权重，裁剪前的逐项 loss 为：
-
-.. math::
-
-   \ell_{\mathrm{NFT}}=\frac{A_{\max}}{\beta}
-   \left[rE_+ +(1-r)E_-\right],
-   \qquad A_{\max}=\text{advantage clipping bound}.
-
-这里的裁剪上限为 ``adv_clip_max``。启用裁剪后，实现取裁剪前后逐项 loss 的较大值。它与 ART 目标 MSE 的定义和尺度不同。
-
-.. list-table:: Training/Actor 下的终端字段
-   :header-rows: 1
-   :widths: 36 64
-
-   * - 指标
-     - 含义
-   * - ``actor/E_pos_mean`` / ``actor/E_neg_mean``
-     - 所有候选的正分支与负分支平均能量。
-   * - ``actor/E_pos_mean_pos_only``
-     - 转换后 advantage 满足 :math:`r>0.5` 的有效项上的正分支能量。
-   * - ``actor/E_neg_mean_neg_only``
-     - 满足 :math:`r<0.5` 的有效项上的负分支能量。
-   * - ``actor/delta_E_mean``
-     - :math:`E_+-E_-` 的均值，相反方向的贡献可能在聚合时相互抵消。
-   * - ``actor/delta_v_norm``
-     - 按配置的 gather、reduction 轴计算速度变化范数，与 ART 的平均平方偏移不同。
-   * - ``actor/clip_frac``
-     - 归约后的速度项中，裁剪系数小于一的比例。计数单位由 ``nft_gather_type`` 决定。
-   * - ``actor/clip_loss_frac``
-     - 有效 loss 项中，裁剪后的 loss 大于原 loss、最终被选中的比例。
-   * - ``actor/nft_tau``
-     - schedule 插值后的 rollout/reference EMA 当前 actor 混合系数，越小越保留历史参数。
-   * - ``actor/nft_loss``
-     - 梯度累积缩放前的 NFT 目标值，包含所配置的裁剪行为。
-   * - ``actor/total_loss``
-     - NFT worker 中除以梯度累积因子后的 loss。使用 SFT co-training 时，还包含 SFT 项。
-   * - ``actor/grad_norm`` / ``actor/lr``
-     - optimizer 报告的梯度范数与当前学习率，ART 也记录这两个指标。
-
-能量均值、loss 和梯度可用于诊断单次训练，但它们的尺度受权重、目标空间与梯度累积影响。相同时间或采样预算下的任务奖励构成算法表现对比的依据。
-
-耗时与进度
-~~~~~~~~~~
-
-runner 的整轮计时与互不重叠的阶段计时反映端到端性能，内部 timer 反映各阶段内的成本。重叠计时相加会重复统计部分执行时间。
-
-.. list-table:: Time 下的终端字段
-   :header-rows: 1
-   :widths: 43 57
-
-   * - 指标
-     - 含义
-   * - ``step``
-     - runner 当前轮次的耗时。
-   * - ``generate_rollouts``
-     - 采集阶段，包含生成、奖励反馈和轨迹交付。
-   * - ``actor_training`` / ``actor/run_training``
-     - runner 和 worker 视角的 actor 训练计时，包含 ART/NFT 输入准备。
-   * - ``sync_weights``
-     - runner 权重同步阶段。
-   * - ``actor/actor/recv_traj``
-     - actor 等待、接收轨迹的时间，与 rollout 采集重叠。
-   * - ``actor/actor/compute_adv`` / ``cal_adv_and_returns``
-     - worker 和 runner 视角的 advantage、return 处理时间；ART 在这个阶段报告 rollout 统计。
-   * - ``rollout/predict``
-     - 模型生成调用，包含 wrapper 内的生成与解码。
-   * - ``env/env_interact_step`` / ``env/env/bootstrap_step``
-     - 包含奖励评分的环境交互，以及 bootstrap 工作。
-   * - ``env/interact`` / ``env/run_interact_once``
-     - 环境侧交互区间，包含通信和等待生成结果。
-   * - ``rollout/generate_one_epoch`` / ``rollout/rollout/generate``
-     - ``generate_rollouts`` 内部的嵌套 rollout 循环计时。
-   * - ``actor/actor/sync_model_to_rollout`` / ``rollout/sync_model_from_actor``
-     - actor 与 rollout 两侧的权重传输计时，可能重叠。
-
-表头 Global Step 统计采集与训练轮次，一轮 ART 可以包含两次 optimizer update。Elapsed 是累计墙钟时间，ETA 是预估剩余时间，表头 Step Time 是累计墙钟时间除以已完成轮数得到的平均每轮耗时。Time 区的 ``step`` 记录单轮成本，每千条轨迹耗时与每分钟轨迹数反映不同采样量下的执行成本。相同累计采样区间的对比见 :ref:`训练结果 <diffusion-art-results>`。
+这批实验均使用 ``actor.seed=42`` 和环境 seed ``42``，但这些设置没有固定 LoRA 初始化和采样涉及的全部全局随机数状态。比较结果时应重复运行，并记录代码版本、依赖和随机种子。
 
 .. _diffusion-art-libero:
 
@@ -388,7 +196,7 @@ LIBERO Object Task 0
 
 本节介绍 Pi0 在 LIBERO Object task 0 上如何从同一机器人状态比较候选动作块。两个配方只在状态选取方式上不同：``libero_object_0_art_openpi`` 共享固定前缀，在决策索引 8（从 0 计数，即第 9 次决策）分叉；``libero_object_0_art_states_openpi`` 则恢复从采集轨迹中抽取的 snapshot。两者都不会因为后续决策序号相同，就把独立到达的不同状态放进同一比较组。
 
-两个配方都加载 ``RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``。Rollout 由 Hugging Face backend 的 ``MultiStepRolloutWorker`` 执行，训练由 FSDP1 NO_SHARD 的 ``EmbodiedARTFSDPPolicy`` 执行。视觉语言骨干保持冻结，更新 action expert 及相关可训练层，不使用 LoRA。输入包含双相机图像、机器人状态和任务指令；Pi0 生成完整动作 tensor，每次决策向环境执行 5 个 7 维动作。
+两个配方都加载 ``RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT``。Rollout 使用 Hugging Face backend，训练使用 FSDP1 NO_SHARD。视觉语言骨干保持冻结，更新 action expert 及相关可训练层，不使用 LoRA。输入包含双相机图像、机器人状态和任务指令；Pi0 生成完整动作 tensor，每次决策向环境执行 5 个 7 维动作。
 
 固定前缀与 Snapshot 采样
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -494,7 +302,7 @@ Snapshot 采样使用 states 配方，从相同 SFT checkpoint 单独启动。�
 结果与验证
 ~~~~~~~~~~
 
-比较两种模式时，以完整任务的评估成功率为准。训练中的续跑成功率以采样状态为条件，不能直接视为完整任务成功率。通过 ``actor/active_group_frac``、``actor/branch_valid_group_frac``、``actor/branch_state_error_max`` 和 ``actor/branch_image_error_max`` 检查有效信号与同状态分组。``actor/mask_frac_global`` 和 ``actor/outward_frac_global`` 先汇总有效样本计数再计算比例；``actor/u1/``、``actor/u2/`` 分别记录两次更新。
+比较两种模式时，以完整任务的评估成功率为准。训练中的续跑成功率以采样状态为条件，不能直接视为完整任务成功率。通过 ``actor/active_group_frac``、``actor/branch_valid_group_frac``、``actor/branch_state_error_max`` 和 ``actor/branch_image_error_max`` 检查有效信号与同状态分组。``actor/mask_frac_global`` 和 ``actor/outward_frac_global`` 先汇总有效样本计数再计算比例；``actor/u1/``、``actor/u2/`` 分别记录两次更新。``actor/mask_frac`` 和 ``actor/outward_frac`` 也按有效样本数聚合 micro-batch 和 actor rank，不再直接平均各局部比例。
 
 可选的 ``algorithm.art_replay_diagnostics=true`` 会增加回放前向。``actor/replay_mse`` 比较更新前 actor 与 rollout 速度；``actor/update_u1_exec_rms``、``actor/update_u2_exec_rms`` 则相对于冻结的 actor 参考计算位移。它们不是成功率指标，默认配方关闭这类诊断。
 

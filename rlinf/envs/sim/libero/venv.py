@@ -21,7 +21,7 @@ import gym
 import numpy as np
 
 from rlinf.envs.sim.libero.snapshot import capture_snapshot, restore_snapshot
-from rlinf.envs.sim.libero.utils import get_libero_type
+from rlinf.envs.sim.libero.utils import import_libero_module
 from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,

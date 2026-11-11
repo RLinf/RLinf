@@ -26,6 +26,15 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.diffusion.art import (
+    art_loss,
+    art_scalar_covariance,
+    art_trajectory_guidance,
+    compute_art_loss,
+    prepare_art_training_inputs,
+    prompt_disjoint_windows,
+    validate_art_rollout,
+)
 from rlinf.config import validate_cfg, validate_openpi_art_cfg
 from rlinf.data.schema.embodied_types import EnvOutput
 from rlinf.envs.utils import grouped_state_max_error
@@ -35,13 +44,8 @@ from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 from rlinf.workers.actor.fsdp_art_policy_worker import (
     EmbodiedARTFSDPPolicy,
-    _art_loss,
     _art_mask_count_metrics,
-    _art_scalar_covariance,
-    _art_trajectory_guidance,
     _art_velocity_drift_stats,
-    _prompt_disjoint_windows,
-    _validate_art_rollout,
 )
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import (
@@ -156,7 +160,7 @@ def test_art_covariance_uses_only_executed_coordinates():
         [[[0.0], [100.0]], [[2.0], [4.0]], [[999.0], [8.0]], [[123.0], [888.0]]]
     )
     mask = torch.tensor([[True, False], [True, True], [False, True], [False, False]])
-    stats = _art_scalar_covariance(
+    stats = art_scalar_covariance(
         endpoints,
         torch.tensor([0.0, 1.0, 2.0, 999.0]),
         torch.zeros(4, dtype=torch.long),
@@ -180,7 +184,7 @@ def test_art_covariance_uses_only_executed_coordinates():
 @pytest.mark.parametrize("valid_count", [0, 1, 4])
 def test_art_constant_and_singleton_action_groups_have_zero_guidance(valid_count):
     mask = torch.arange(4) < valid_count
-    stats = _art_scalar_covariance(
+    stats = art_scalar_covariance(
         torch.arange(8.0).reshape(4, 2),
         torch.full((4,), 0.1),
         torch.zeros(4, dtype=torch.long),
@@ -198,7 +202,7 @@ def test_art_trajectory_groups_keep_decisions_and_reset_groups_separate():
     endpoints = torch.tensor([0.0, 2.0, 100.0, 104.0, 2.0, 0.0, 104.0, 100.0]).reshape(
         2, 4, 1, 1
     )
-    guidance = _art_trajectory_guidance(
+    guidance = art_trajectory_guidance(
         endpoints,
         torch.tensor([0.0, 1.0, 1.0, 1.0]),
         torch.ones(2, 4, 1, dtype=torch.bool),
@@ -221,7 +225,7 @@ def test_art_loss_masks_padding_and_keeps_inward_restoration():
         requires_grad=True,
     )
     mask = torch.tensor([[[True, True, False], [False, False, False]]]).expand_as(old)
-    terms = _art_loss(
+    terms = art_loss(
         current,
         old,
         torch.ones(2),
@@ -254,7 +258,7 @@ def test_art_output_gradient_statistics_match_autograd(loss_space):
     sigma = torch.tensor([1.0, 0.5, 0.25, 0.0, 0.75])
     magnitude = torch.tensor([1.0, 1.0, 0.0, 1.0, 1.0])
     direction = torch.ones_like(old)
-    terms = _art_loss(
+    terms = art_loss(
         current,
         old,
         sigma,
@@ -287,7 +291,7 @@ def test_art_output_gradient_statistics_match_autograd(loss_space):
         torch.testing.assert_close(terms[key], value)
         assert not terms[key].requires_grad
 
-    on_policy = _art_loss(
+    on_policy = art_loss(
         old,
         old,
         sigma,
@@ -299,7 +303,7 @@ def test_art_output_gradient_statistics_match_autograd(loss_space):
     )
     assert on_policy["output_restoration_grad_sq"] == 0
     assert on_policy["output_grad_inner"] == 0
-    default = _art_loss(
+    default = art_loss(
         old, old, sigma, sigma / 2, direction, magnitude, coordinate_mask=mask
     )
     assert not set(expected).intersection(default)
@@ -622,7 +626,7 @@ def test_art_state_sampling_preserves_conditions_and_candidate_cache():
 
 def test_art_covariance_groups_by_snapshot_identity():
     endpoints = torch.tensor([[[[0.0]], [[100.0]], [[2.0]], [[96.0]]]])
-    guidance = _art_trajectory_guidance(
+    guidance = art_trajectory_guidance(
         endpoints,
         torch.tensor([0.0, 0.0, 1.0, 1.0]),
         torch.ones(1, 4, 1, dtype=torch.bool),
@@ -911,7 +915,7 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
         assert replay_metrics["actor/replay_padding_rms"] == pytest.approx(1.0)
         assert replay_metrics["actor/replay_unexec_rms"] == pytest.approx(0.75**0.5)
         inputs["art_old_velocity"].copy_(cached_old)
-        guidance = _art_trajectory_guidance(
+        guidance = art_trajectory_guidance(
             inputs["art_endpoint"][None],
             torch.tensor([0.0, 1.0]),
             torch.ones(1, 2, 2, dtype=torch.bool),
@@ -931,7 +935,7 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
                     "timesteps": inputs["art_sigmas"][:, 1],
                 },
             )["v_theta"]
-        expected_loss = _art_loss(
+        expected_loss = art_loss(
             reference[:, :2, :2],
             old[:, 1, :2, :2],
             inputs["art_sigmas"][:, 1],
@@ -966,7 +970,7 @@ def test_openpi_art_rollout_replay_and_two_frozen_target_updates():
                     "timesteps": inputs["art_sigmas"][row : row + 1, 1],
                 },
             )
-            terms = _art_loss(
+            terms = art_loss(
                 output["v_theta"][:, :2, :2],
                 old[row : row + 1, 1, :2, :2],
                 inputs["art_sigmas"][row : row + 1, 1],
@@ -1020,6 +1024,7 @@ def cpu_art_backend(monkeypatch):
     monkeypatch.setattr(Worker, "torch_platform", platform)
     monkeypatch.setattr(torch.distributed, "all_reduce", lambda *args, **kwargs: None)
     monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
     return platform
 
 
@@ -1121,3 +1126,203 @@ def test_art_mask_ratios_pool_only_active_items():
     assert result["actor/mask_frac_global"] == 0.5
     assert result["actor/movement_score_active"] == pytest.approx(0.02)
     assert _art_mask_count_metrics(empty, "actor")["actor/mask_frac_global"] == 0
+
+
+@pytest.mark.parametrize("exclude_final", [False, True])
+@pytest.mark.parametrize("reward_reduction", ["mean", "sum"])
+def test_art_preparation_builds_guidance_and_preserves_timestep_rng_order(
+    exclude_final, reward_reduction
+):
+    states = torch.arange(8 * 4 * 2).reshape(8, 4, 2).float()
+    sigmas = torch.tensor([[1.0, 0.75, 0.5, 0.25]]).expand(8, -1)
+    sigmas_next = torch.tensor([[0.75, 0.5, 0.25, 0.0]]).expand(8, -1)
+    endpoints = torch.tensor([[0.0, 0.0], [1.0, 2.0], [2.0, 4.0], [3.0, 6.0]] * 2)
+    rewards = torch.tensor([[0.0], [1.0], [2.0], [3.0], [0.1], [0.1], [0.1], [0.1]])
+    rewards = torch.cat((rewards, rewards * 2), dim=1)
+    prompts = torch.ones(8, 2, 3)
+    inputs = {
+        "art_endpoint": endpoints,
+        "art_states": states,
+        "art_sigmas": sigmas,
+        "art_sigmas_next": sigmas_next,
+        "prompt_embeds": prompts,
+    }
+    config = OmegaConf.create(
+        {
+            "group_size": 4,
+            "art_timestep_fraction": 0.5,
+            "art_exclude_final_step": exclude_final,
+            "art_reward_reduction": reward_reduction,
+        }
+    )
+    pool = 3 if exclude_final else 4
+    count = max(1, int(pool * 0.5))
+    expected_generator = torch.Generator().manual_seed(37)
+    expected_steps = torch.stack(
+        [torch.randperm(pool, generator=expected_generator)[:count] for _ in range(8)]
+    )
+    generator = torch.Generator().manual_seed(37)
+    metrics, has_guidance = prepare_art_training_inputs(
+        inputs, rewards, config=config, generator=generator
+    )
+    assert has_guidance
+    assert "art_endpoint" not in inputs
+    assert inputs["prompt_embeds"] is prompts
+    rows = torch.arange(8)[:, None]
+    torch.testing.assert_close(inputs["art_states"], states[rows, expected_steps])
+    torch.testing.assert_close(inputs["art_sigmas"], sigmas[rows, expected_steps])
+    torch.testing.assert_close(
+        inputs["art_sigmas_next"], sigmas_next[rows, expected_steps]
+    )
+    torch.testing.assert_close(generator.get_state(), expected_generator.get_state())
+    direction = torch.tensor([1.0, 2.0]) / torch.tensor(2.5).sqrt()
+    torch.testing.assert_close(
+        inputs["art_guidance_direction"][:4], direction.expand(4, -1)
+    )
+    torch.testing.assert_close(inputs["art_guidance_direction"][4:], torch.zeros(4, 2))
+    torch.testing.assert_close(
+        inputs["art_guidance_magnitude"], torch.tensor([1.0] * 4 + [0.0] * 4)
+    )
+    assert metrics["actor/active_group_frac"] == 0.5
+    reduced_rewards = rewards.sum(1) if reward_reduction == "sum" else rewards.mean(1)
+    assert metrics["actor/art_reward_mean"] == pytest.approx(
+        reduced_rewards.mean().item()
+    )
+    assert metrics["actor/art_reward_std"] == pytest.approx(
+        reduced_rewards.std(correction=0).item()
+    )
+
+
+def test_art_preparation_reports_zero_guidance_for_constant_rewards():
+    inputs = {
+        "art_endpoint": torch.arange(8).reshape(4, 2).float(),
+        "art_states": torch.ones(4, 1, 2),
+        "art_sigmas": torch.ones(4, 1),
+        "art_sigmas_next": torch.zeros(4, 1),
+    }
+    metrics, active = prepare_art_training_inputs(
+        inputs,
+        torch.full((4, 1), 0.1),
+        config=OmegaConf.create({"group_size": 4, "art_exclude_final_step": True}),
+        generator=torch.Generator().manual_seed(0),
+    )
+    assert not active
+    assert metrics["actor/active_group_frac"] == 0
+    assert metrics["actor/covariance_rms"] == 0
+    assert metrics["actor/guidance_rms"] == 0
+    assert inputs["art_states"].shape == (4, 1, 2)
+
+
+@pytest.mark.parametrize("mask_metric", ["sde_kl", "fixed_mse"])
+@pytest.mark.parametrize("loss_space", ["velocity_linear_sigma", "velocity_uniform"])
+@pytest.mark.parametrize("mask_enabled", [False, True])
+def test_art_objective_freezes_targets_and_masks_only_active_outward_movement(
+    mask_metric, loss_space, mask_enabled
+):
+    current = torch.tensor([[-0.2, -0.2], [0.2, 0.2], [-0.2, -0.2]], requires_grad=True)
+    old = torch.zeros_like(current, requires_grad=True)
+    direction = torch.ones_like(current, requires_grad=True)
+    magnitude = torch.tensor([1.0, 1.0, 0.0], requires_grad=True)
+    sigma = torch.full((3,), 0.5)
+    config = OmegaConf.create(
+        {
+            "art_mask_metric": mask_metric,
+            "art_loss_space": loss_space,
+            "art_corrective_mask_enabled": mask_enabled,
+        }
+    )
+    loss, metrics = compute_art_loss(
+        current,
+        old,
+        sigma,
+        torch.zeros_like(sigma),
+        direction,
+        magnitude,
+        config=config,
+    )
+    weight = 0.5 if loss_space == "velocity_linear_sigma" else 1.0
+    unmasked = (current + magnitude.detach()[:, None]).square().mean(1) * weight
+    expected = (unmasked[1] if mask_enabled else unmasked[:2].sum()) / 3
+    torch.testing.assert_close(loss, expected)
+    loss.backward()
+    assert metrics["actor/art_loss"] == pytest.approx(expected.item())
+    assert metrics["actor/active_count"] == 2
+    assert metrics["actor/unmasked_loss"] == pytest.approx(unmasked[:2].mean().item())
+    assert metrics["actor/mask_frac"] == (0.5 if mask_enabled else 0)
+    assert torch.count_nonzero(current.grad[2]) == 0
+    assert (torch.count_nonzero(current.grad[0]) == 0) == mask_enabled
+    assert torch.count_nonzero(current.grad[1]) == 2
+    assert old.grad is None
+    assert direction.grad is None
+    assert magnitude.grad is None
+
+
+@pytest.mark.parametrize("updates", [1, 2, 4])
+def test_art_prompt_windows_cover_each_row_once_and_balance_each_group(updates):
+    groups = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+    order = [3, 4, 0, 7, 2, 5, 1, 6]
+    windows = prompt_disjoint_windows(groups, updates=updates, order=order)
+    assert sorted(row for window in windows for row in window) == list(range(8))
+    for window in windows:
+        torch.testing.assert_close(
+            torch.bincount(groups[list(window)]), torch.full((2,), 4 // updates)
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_type", "latent_shape"), [("sd3", (4, 3)), ("wan22_ti2v_5b", (2, 4, 3))]
+)
+def test_image_video_art_keep_full_latents_and_recompute_the_reference(
+    cpu_art_backend, model_type, latent_shape
+):
+    class LatentVelocityPolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.offset = torch.nn.Parameter(torch.zeros(4, *latent_shape))
+
+        def forward(self, forward_type, forward_inputs, nft_inputs, compute_values):
+            ids = forward_inputs["observation/state"][:, 0].long()
+            return {"v_theta": nft_inputs["x_t"] + self.offset[ids]}
+
+    actor = _cpu_art_actor(cpu_art_backend, "rollout", False)
+    actor.cfg.actor.model.model_type = model_type
+    actor.cfg.algorithm.art_replay_diagnostics = False
+    actor.cfg.algorithm.art_timestep_fraction = 0.5
+    inputs = actor.rollout_batch["forward_inputs"]
+    states = torch.arange(4.0).reshape(1, 4, 1, *([1] * len(latent_shape)))
+    inputs["art_states"] = states.expand(1, 4, 4, *latent_shape).clone()
+    inputs["art_old_velocity"] = inputs["art_states"] + 10
+    inputs["art_endpoint"] = inputs["art_states"][:, :, 0].clone()
+    actor.model = LatentVelocityPolicy()
+    actor.optimizer = torch.optim.AdamW(actor.model.parameters(), lr=0.01)
+    actor.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(actor.optimizer, lambda _: 1)
+    before = actor.model.offset.detach().clone()
+    metrics = inspect.unwrap(EmbodiedARTFSDPPolicy.run_training)(actor)
+    selected = actor.rollout_batch["forward_inputs"]
+    assert selected["art_states"].shape == (4, 2, *latent_shape)
+    torch.testing.assert_close(selected["art_old_velocity"], selected["art_states"])
+    assert "art_coordinate_mask" not in selected and "art_endpoint" not in selected
+    assert metrics["actor/active_group_frac"] == 1
+    assert actor.lr_scheduler.last_epoch == 1
+    assert not torch.equal(actor.model.offset, before)
+    assert actor.optimizer.state[actor.model.offset]["step"].item() == 2
+
+
+@pytest.mark.parametrize("config_name", ["sd3_art_ocr", "wan22_ti2v_5b_art_video_ocr"])
+def test_image_video_art_configs_validate_after_libero_integration(
+    monkeypatch, art_config_cluster, config_name
+):
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("DIFFUSION_PATH", str(root / "examples/diffusion"))
+    monkeypatch.setenv("REPO_PATH", str(root))
+    with initialize_config_dir(
+        version_base="1.1", config_dir=str(root / "examples/diffusion/config")
+    ):
+        cfg = compose(config_name=config_name)
+    cfg = validate_cfg(cfg)
+    assert cfg.algorithm.loss_type == "embodied_art"
+    assert not cfg.algorithm.filter_rewards
+    cfg.algorithm.filter_rewards = True
+    with pytest.raises(AssertionError, match="filter_rewards=False"):
+        validate_cfg(cfg)
