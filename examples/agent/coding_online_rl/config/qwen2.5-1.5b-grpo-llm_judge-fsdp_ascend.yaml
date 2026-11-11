@@ -171,6 +171,7 @@ actor:
     model_type: ${rollout.model.model_type}
     model_path: ${rollout.model.model_path}
     attn_implementation: ascend_fusion
+    variable_seq_lengths: True
     is_lora: False
 
   optim:
