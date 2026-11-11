@@ -173,7 +173,7 @@ Robbyant R2 配置与控制
 
 .. warning::
 
-   传入 ``--reset``\ （或在 ``R2ReachEnv-v1`` 中保持 ``reset_on_init: true``）时，环境会按最高 ``--reset-speed``\ （默认 30 deg/s）的升余弦轨迹将激活机械臂移向 ``reset_joint_qpos``。启用启动复位前，请确认回到初始姿态的路径上无遮挡。
+   传入 ``--reset`` 时，脚本会按最高 ``--reset-speed``\ （默认 30 deg/s）的升余弦轨迹将激活机械臂移向 ``reset_joint_qpos``。``R2ReachEnv-v1`` 的 ``reset_on_init`` 默认为 ``true``，创建环境时也会执行同样的复位；如需从当前实测姿态开始，请设为 ``false``。运行前请确认回到初始姿态的路径上无遮挡。
 
 在 ``r2>`` 提示符下逐条输入以下指令，每次等待机器人平稳停下后再执行下一条：
 

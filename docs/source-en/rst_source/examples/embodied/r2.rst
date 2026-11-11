@@ -174,7 +174,7 @@ Once feedback and camera shapes look right, start the interactive console. By de
 
 .. warning::
 
-   Passing ``--reset`` (or setting ``reset_on_init: true`` in ``R2ReachEnv-v1``) moves the active arms to ``reset_joint_qpos`` along a raised-cosine trajectory capped at ``--reset-speed`` (default 30 deg/s). Confirm that the path to the home posture is clear before enabling startup reset.
+   Passing ``--reset`` moves the active arms to ``reset_joint_qpos`` along a raised-cosine trajectory capped at ``--reset-speed`` (default 30 deg/s). ``R2ReachEnv-v1`` makes the same move when it is created, because ``reset_on_init`` defaults to ``true``; set it to ``false`` to start from the measured pose. Confirm that the path to the home posture is clear before either one runs.
 
 Enter commands one at a time at the ``r2>`` prompt and wait for each motion to settle:
 

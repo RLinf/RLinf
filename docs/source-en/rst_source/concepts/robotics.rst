@@ -227,10 +227,11 @@ with more inertia. The R2 connection streams at 100 Hz, allows the arms
 
    hardware:
      type: R2
-     config:
-       motion_profile:
-         max_joint_velocity: 1.5
-         max_joint_acceleration: 15.0
+     configs:
+       - node_rank: 1
+         motion_profile:
+           max_joint_velocity: 1.5
+           max_joint_acceleration: 15.0
 
 A driver for another robot gets the same behavior by owning a ``JointStream``
 from ``rlinf.robotics.parts.motion`` rather than writing its own loop. It hands
@@ -337,10 +338,11 @@ configured in the hardware YAML or at runtime via
 
    hardware:
      type: R2
-     config:
-       enable_fault_recovery: true
-       max_recovery_attempts: 3
-       recovery_cooldown_window: 10.0
+     configs:
+       - node_rank: 1
+         enable_fault_recovery: true
+         max_recovery_attempts: 3
+         recovery_cooldown_window: 10.0
 
 Recover by Severity Without Position Jumps
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

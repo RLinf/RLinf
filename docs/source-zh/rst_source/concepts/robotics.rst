@@ -144,10 +144,11 @@ SO-101 的五个机械臂关节和夹爪则串在同一条舵机总线上。由�
 
    hardware:
      type: R2
-     config:
-       motion_profile:
-         max_joint_velocity: 1.5
-         max_joint_acceleration: 15.0
+     configs:
+       - node_rank: 1
+         motion_profile:
+           max_joint_velocity: 1.5
+           max_joint_acceleration: 15.0
 
 其他机器人的驱动不需要自己再写一套下发循环，只要持有一个 ``rlinf.robotics.parts.motion`` 中的 ``JointStream``，就能获得同样的行为。驱动需要交给它五个可调用对象：下发一帧目标值、读取实测关节角、从内存中报告已锁存的故障、返回各关节的速度与加速度上限，以及返回连接的 ``MotionProfile``。此后，驱动的控制指令只需调用 ``track()`` 更新目标，或调用 ``move()`` 执行一段定时运动；故障恢复后调用 ``hold()``，下一条指令就会从实测关节角重新开始，而不会跳回过时的目标。如果需要提前停止运动（例如操作员或规划器取消了当前动作），可以调用 ``brake()``：它结束正在执行的运动，但会继续下发目标值，让关节在加速度上限内减速停下，而不是停在最后发出的那一帧上突然刹住。``R2Connection.hold()`` 就基于它实现，可以在运动执行期间从其他线程调用，同时也会结束正在进行的底盘脉冲。
 
@@ -204,10 +205,11 @@ SO-101 的五个机械臂关节和夹爪则串在同一条舵机总线上。由�
 
    hardware:
      type: R2
-     config:
-       enable_fault_recovery: true
-       max_recovery_attempts: 3
-       recovery_cooldown_window: 10.0
+     configs:
+       - node_rank: 1
+         enable_fault_recovery: true
+         max_recovery_attempts: 3
+         recovery_cooldown_window: 10.0
 
 按故障等级恢复并防止位置跳变
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
