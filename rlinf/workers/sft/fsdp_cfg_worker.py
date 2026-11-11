@@ -29,6 +29,7 @@ import torch
 from omegaconf import DictConfig
 from torch.utils._pytree import tree_map
 
+from rlinf.data.datasets.common.stateful import TrainingDataLoader
 from rlinf.data.datasets.recap.cfg_model import (
     AdvantagePreservingDataset,
     CFGDataLoaderImpl,
@@ -44,6 +45,7 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.pytree import register_pytree_dataclasses
+from rlinf.workers.sft.data_checkpoint import SFTDataCheckpointMixin
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 # Suppress libdav1d/ffmpeg verbose logging
@@ -55,7 +57,7 @@ except ImportError:
     pass
 
 
-class FSDPCfgWorker(FSDPSftWorker):
+class FSDPCfgWorker(SFTDataCheckpointMixin, FSDPSftWorker):
     """FSDP worker for CFG (Classifier-Free Guidance) training.
 
     Extends FSDPSftWorker to load datasets with pre-computed advantages,
@@ -333,9 +335,10 @@ class FSDPCfgWorker(FSDPSftWorker):
         # Use data config overrides if available, otherwise fall back to OpenPI defaults.
         data_cfg = self.cfg.get("data", {})
         num_workers = int(data_cfg.get("num_workers", config.num_workers))
-        return torch.utils.data.DataLoader(
+        return TrainingDataLoader(
             dataset,
             batch_size=local_batch_size,
+            seed=int(self.cfg.actor.get("seed", 42)) + self._rank,
             shuffle=(sampler is None and shuffle),
             sampler=sampler,
             drop_last=True,

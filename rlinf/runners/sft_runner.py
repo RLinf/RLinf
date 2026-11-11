@@ -103,9 +103,6 @@ class SFTRunner:
                     run_time_exceeded=False,
                 )
 
-                if save_model:
-                    self._save_checkpoint()
-
                 should_stop = False
                 if eval_model:
                     eval_handle: Handle = self.actor.run_eval()
@@ -117,6 +114,9 @@ class SFTRunner:
                         )
                         if best_val_acc_improved:
                             self._save_checkpoint(is_best=True)
+
+                if save_model:
+                    self._save_checkpoint()
 
             time_metrics = self.timer.consume_durations()
             time_metrics["training"] = actor_handle.consume_duration()
