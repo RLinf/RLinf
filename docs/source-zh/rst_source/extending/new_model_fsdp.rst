@@ -169,6 +169,44 @@ RL 逻辑保持在模型内部。
 重建训练所需的全部信息；二是 ``default_forward`` 输出至少覆盖训练算法实际依赖的
 ``logprobs``、``values``、``entropy`` 等字段。
 
+.. _refl-model-interface:
+
+通过可微奖励训练
+^^^^^^^^^^^^^^^^
+
+要直接通过可微奖励训练，模型生成的样本需要保留从分数到可训练参数的梯度。实现 ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)``，返回包含 ``samples`` 的 dict；该 tensor 的首维为 batch。状态选择、时间单位、加噪和解码由模型处理，样本布局由模型与 scorer 约定。rollout 将两者需要的输入保存在 ``forward_inputs`` 中。
+
+``BasePolicy.forward`` 会将 ``ForwardType.REFL`` 分发到这个方法。模型若覆盖了 ``forward``，也应保留这条分发。actor 通过 ``algorithm.refl_xt_source`` 传入 ``xt_source``，再把返回的样本交给 ``scorer(samples, forward_inputs)``。
+
+scorer 为每个样本返回一个奖励，shape 为 ``[B]``，数值越大越好。冻结 scorer 的模型参数，同时保留经过输入的梯度。actor 会在计算 loss 前检查奖励的 shape。
+
+通过接受 ``(cfg, device)`` 的 builder 注册 scorer，即可在配置中选择它。下方扩展模块为现有 ImageReward scorer 注册一个新名字，可以配合 :doc:`SD3 示例 </rst_source/examples/embodied/refl>` 验证注册流程：
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+确保 Python 能导入 ``my_refl_ext.py``，并在启动前设置 ``RLINF_EXT_MODULE=my_refl_ext``。与上方模型注册的流程相同，每个 worker 会在自己的进程中调用 ``register()``。保留 SD3 示例的模型和数据路径，只修改 scorer 类型：
+
+.. code-block:: yaml
+
+   actor:
+     refl_reward_model:
+       type: custom_image_reward
+
+builder 接收完整的 ``actor.refl_reward_model`` 配置和 actor device，使用示例中的 ImageReward checkpoint 字段加载权重。接入自己的 scorer 时，注册一个 builder，返回满足上述输入和返回值要求的 scorer。省略 ``type`` 时，工厂默认选择 ``image_reward``。
+
 3. 配置文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
