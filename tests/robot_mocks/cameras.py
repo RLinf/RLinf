@@ -475,12 +475,11 @@ def zed(width: int = 64, height: int = 48) -> dict[str, types.ModuleType]:
 #: Native dimensions and format required by the LUMOS driver.
 _LUMOS_W = _LUMOS_H = 1280
 _YU12 = 0x32315559
-#: OpenCV backend id the LUMOS driver passes; a generic webcam uses the default.
-_CAP_V4L2 = 200
 
 
 def opencv() -> types.ModuleType:
-    """Return a ``cv2`` module with a synthetic XVisio V4L2 capture."""
+    """Return synthetic BGR captures with optional I420 devices."""
+    device_formats: dict[Any, str] = {}
     opens: list[Any] = []
     # Captured before the fake is installed, so delegation reaches the real
     # module rather than importing this one back and recursing.
@@ -506,10 +505,7 @@ def opencv() -> types.ModuleType:
             return True
 
         def get(self, prop):
-            # The LUMOS driver opens with CAP_V4L2 and checks the native YU12
-            # format, so report that fixed stream. A generic webcam reports
-            # back whatever was asked for.
-            if self.api == _CAP_V4L2:
+            if device_formats.get(self.path) == "I420":
                 fixed = {
                     _Props.FOURCC: float(_YU12),
                     _Props.FRAME_WIDTH: float(_LUMOS_W),
@@ -521,7 +517,7 @@ def opencv() -> types.ModuleType:
         def read(self):
             if self.released:
                 return False, None
-            if self.api == _CAP_V4L2:
+            if device_formats.get(self.path) == "I420":
                 # One I420 plane set, flat, exactly as V4L2 delivers it.
                 return True, np.zeros(_LUMOS_W * _LUMOS_H * 3 // 2, dtype=np.uint8)
             # A generic webcam returns BGR at the requested size; the first
@@ -586,6 +582,7 @@ def opencv() -> types.ModuleType:
         "COLOR_YUV2BGR_I420": 101,
         "INTER_AREA": 3,
         "VideoCapture": VideoCapture,
+        "device_formats": device_formats,
         "VideoWriter_fourcc": lambda *_chars: _YU12,
         "cvtColor": cvtColor,
         "resize": resize,

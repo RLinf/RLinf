@@ -158,16 +158,16 @@ class LeKiwiEnv(gym.Env):
 
     def _setup_hardware(self) -> None:
         """Compose and connect the configured hardware."""
-        if self.hardware.port is None:
+        if self.hardware.serial_port is None:
             raise ValueError(
-                "Real hardware needs a serial port: set 'port' on the LeKiwi "
+                "Real hardware needs a serial port: set 'serial_port' on the LeKiwi "
                 "hardware config."
             )
         node_rank = self.hardware.node_rank
         if node_rank is None:
             node_rank = self.node_rank
         self.robot = LeKiwiRobot.build(
-            port=self.hardware.port,
+            port=self.hardware.serial_port,
             wheel_radius=self.hardware.wheel_radius,
             base_radius=self.hardware.base_radius,
             max_raw=self.hardware.max_raw,
@@ -308,7 +308,7 @@ class LeKiwiEnv(gym.Env):
 
     def _camera_infos(self) -> list[CameraInfo]:
         """Return declarations for the configured cameras."""
-        camera_type = self.hardware.camera_type or "webcam"
+        camera_type = self.hardware.camera_type or "uvc"
         return [
             CameraInfo(
                 name=name,

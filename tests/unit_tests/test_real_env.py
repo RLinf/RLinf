@@ -194,9 +194,9 @@ def test_lekiwi_step_drives_for_one_period_then_stops():
             robot_info=_robot_info(
                 LeKiwiConfig(
                     node_rank=None,
-                    port="/dev/ttyACM0",
+                    serial_port="/dev/ttyACM0",
                     camera_serials=["0"],
-                    camera_type="webcam",
+                    camera_type="uvc",
                 )
             ),
         )
@@ -263,9 +263,9 @@ def test_lekiwi_camera_keeps_object_proportions(monkeypatch, frame_size):
             robot_info=_robot_info(
                 LeKiwiConfig(
                     node_rank=None,
-                    port="/dev/ttyACM0",
+                    serial_port="/dev/ttyACM0",
                     camera_serials=["0"],
-                    camera_type="webcam",
+                    camera_type="uvc",
                 )
             ),
         )
@@ -299,9 +299,9 @@ def test_lekiwi_accepts_a_zero_camera_max_age():
     robot_info = _robot_info(
         LeKiwiConfig(
             node_rank=None,
-            port="/dev/ttyACM0",
+            serial_port="/dev/ttyACM0",
             camera_serials=["0"],
-            camera_type="webcam",
+            camera_type="uvc",
         )
     )
     cfg = {
@@ -354,9 +354,9 @@ def test_lekiwi_rejects_duplicate_frame_names():
                 robot_info=_robot_info(
                     LeKiwiConfig(
                         node_rank=None,
-                        port="/dev/ttyACM0",
+                        serial_port="/dev/ttyACM0",
                         camera_serials=["0", "1"],
-                        camera_type="webcam",
+                        camera_type="uvc",
                     )
                 ),
             )
@@ -5545,7 +5545,7 @@ def test_lekiwi_stops_when_wheel_observation_fails():
     with mocked_sdks() as made:
         env = LeKiwiDriveEnv(
             {"enable_camera_player": False, "step_frequency": 1000.0},
-            robot_info=_robot_info(LeKiwiConfig(node_rank=None, port="fake")),
+            robot_info=_robot_info(LeKiwiConfig(node_rank=None, serial_port="fake")),
         )
         bus_cls = made["lerobot.motors.feetech"].FeetechMotorsBus
         bus = bus_cls.instances[-1]
@@ -5580,9 +5580,9 @@ def test_lekiwi_stops_before_camera_retries_and_error(monkeypatch):
             robot_info=_robot_info(
                 LeKiwiConfig(
                     node_rank=None,
-                    port="fake",
+                    serial_port="fake",
                     camera_serials=["0"],
-                    camera_type="webcam",
+                    camera_type="uvc",
                 )
             ),
         )

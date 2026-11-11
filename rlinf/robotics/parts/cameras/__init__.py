@@ -25,7 +25,6 @@ from .lumos import LumosCamera
 from .orbbec import OrbbecCamera
 from .realsense import RealSenseCamera
 from .uvc import UVCCamera
-from .webcam import WebcamCamera
 from .zed import ZEDCamera
 
 __all__ = [
@@ -36,6 +35,5 @@ __all__ = [
     "OrbbecCamera",
     "RealSenseCamera",
     "UVCCamera",
-    "WebcamCamera",
     "ZEDCamera",
 ]

@@ -20,7 +20,6 @@ import ast
 import contextlib
 import ctypes
 import io
-import logging
 import os
 import pickle
 import re
@@ -75,9 +74,13 @@ from rlinf.robotics.parts.arms import (
     Turtle2Connection,
 )
 from rlinf.robotics.parts.arms.franka import FrankaRobotState
-from rlinf.robotics.parts.cameras.webcam import WebcamCamera
+from rlinf.robotics.parts.cameras.uvc import UVCCamera
 from rlinf.robotics.parts.end_effectors import BaseHand
-from rlinf.robotics.parts.mobility.lekiwi import body_to_wheel_raw, limit_wheel_raw
+from rlinf.robotics.parts.mobility.lekiwi import (
+    body_to_wheel_raw,
+    limit_wheel_raw,
+    start_velocity_mode,
+)
 from rlinf.scheduler import Worker
 from rlinf.scheduler.hardware import (
     Hardware,
@@ -105,7 +108,6 @@ from toolkits.realworld_check.test_lekiwi_env import (
     run_receiver,
     run_teleoperation,
     spin_each_wheel,
-    start_velocity_mode,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -4310,18 +4312,18 @@ def test_orbbec_camera_has_local_remote_observation_parity(node_rank):
         assert not camera.is_connected
 
 
-def test_a_webcam_runs_against_a_faked_sdk():
+def test_a_uvc_runs_against_a_faked_sdk():
     from robot_mocks import mocked_sdks
 
     with mocked_sdks():
         from rlinf.robotics.parts.cameras.base import CameraInfo
-        from rlinf.robotics.parts.cameras.webcam import WebcamCamera
+        from rlinf.robotics.parts.cameras.uvc import UVCCamera
 
-        camera = WebcamCamera(
+        camera = UVCCamera(
             CameraInfo(
                 name="webcam",
                 serial_number="0",
-                camera_type="webcam",
+                camera_type="uvc",
                 fps=10,
                 resolution=(64, 48),
             )
@@ -4338,22 +4340,22 @@ def test_a_webcam_runs_against_a_faked_sdk():
         assert not camera.is_connected
 
 
-def test_a_webcam_preserves_the_delivered_frame(monkeypatch):
+def test_a_uvc_preserves_the_delivered_frame(monkeypatch):
     from robot_mocks import mocked_sdks
 
     from rlinf.robotics.parts.cameras.base import CameraInfo
-    from rlinf.robotics.parts.cameras.webcam import WebcamCamera
+    from rlinf.robotics.parts.cameras.uvc import UVCCamera
 
     delivered = np.arange(48 * 64 * 3, dtype=np.uint8).reshape(48, 64, 3)
     with mocked_sdks() as made:
         monkeypatch.setattr(
             made["cv2"].VideoCapture, "read", lambda self: (True, delivered.copy())
         )
-        camera = WebcamCamera(
+        camera = UVCCamera(
             CameraInfo(
                 name="webcam",
                 serial_number="0",
-                camera_type="webcam",
+                camera_type="uvc",
                 resolution=(32, 32),
             )
         )
@@ -4364,15 +4366,14 @@ def test_a_webcam_preserves_the_delivered_frame(monkeypatch):
             camera.disconnect()
 
 
-def test_a_webcam_opens_a_by_id_serial_from_discover(monkeypatch):
+def test_a_uvc_opens_a_by_id_serial_from_discover(monkeypatch):
     from robot_mocks import mocked_sdks
 
     with mocked_sdks() as made:
         from rlinf.robotics.parts.cameras.base import CameraInfo
-        from rlinf.robotics.parts.cameras.webcam import WebcamCamera
+        from rlinf.robotics.parts.cameras.uvc import UVCCamera
 
-        # A basename from WebcamCamera.discover() on Linux, where /dev/v4l
-        # nodes are not stable and detection reports by-id names.
+        # UVC discovery returns the full stable device path.
         basename = "usb-USB_Camera_USB_Camera_2505280051-video-index0"
         by_id = f"/dev/v4l/by-id/{basename}"
 
@@ -4381,11 +4382,11 @@ def test_a_webcam_opens_a_by_id_serial_from_discover(monkeypatch):
 
         monkeypatch.setattr(os.path, "exists", exists)
 
-        camera = WebcamCamera(
+        camera = UVCCamera(
             CameraInfo(
                 name="webcam",
-                serial_number=basename,
-                camera_type="webcam",
+                serial_number=by_id,
+                camera_type="uvc",
                 fps=10,
                 resolution=(64, 48),
             )
@@ -4396,32 +4397,37 @@ def test_a_webcam_opens_a_by_id_serial_from_discover(monkeypatch):
             assert frame.shape == (48, 64, 3)
         finally:
             camera.disconnect()
-        # The by-id basename must reach cv2 as a full device path, not the
-        # bare name, which would fail to open on the robot.
+        # Preserve the discovered device path through capture startup.
         assert made["cv2"].opens == [by_id]
 
 
-def test_a_webcam_discovery_lists_one_node_per_camera(monkeypatch):
-    from rlinf.robotics.parts.cameras import webcam
+def test_lumos_and_uvc_use_distinct_mock_formats():
+    from robot_mocks import mocked_sdks
 
-    # Each camera exports its frames on index 0 and a metadata node beside it.
-    nodes = [
-        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0",
-        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index1",
-        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index0",
-        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index1",
-    ]
-    monkeypatch.setattr(webcam.glob, "glob", lambda _pattern: nodes)
+    from rlinf.robotics.parts.cameras.base import CameraInfo
+    from rlinf.robotics.parts.cameras.lumos import LumosCamera
 
-    assert webcam.WebcamCamera._linux_devices() == [
-        "/dev/v4l/by-id/usb-Technologies__Inc._ZED_2i_OV0001-video-index0",
-        "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0",
-    ]
-
-    # A camera that exposes only a higher index is still listed.
-    only_higher = ["/dev/v4l/by-id/usb-Odd_Cam_1-video-index1"]
-    monkeypatch.setattr(webcam.glob, "glob", lambda _pattern: only_higher)
-    assert webcam.WebcamCamera._linux_devices() == only_higher
+    with mocked_sdks() as made:
+        made["cv2"].device_formats[1] = "I420"
+        for camera_cls, kind, serial in (
+            (LumosCamera, "lumos", "1"),
+            (UVCCamera, "uvc", "0"),
+        ):
+            camera = camera_cls(
+                CameraInfo(
+                    name=kind,
+                    serial_number=serial,
+                    camera_type=kind,
+                    resolution=(64, 48),
+                )
+            )
+            camera.connect()
+            try:
+                frame = camera.get_observation()["frame"]
+                assert frame.shape == (48, 64, 3)
+                assert frame.dtype == np.uint8
+            finally:
+                camera.disconnect()
 
 
 def test_a_real_arm_runs_against_a_faked_sdk():
@@ -4840,7 +4846,7 @@ def test_every_shipped_robot_runs_on_faked_sdks():
                 "front": CameraInfo(
                     name="front",
                     serial_number="0",
-                    camera_type="webcam",
+                    camera_type="uvc",
                     resolution=(64, 48),
                     fps=5,
                 )
@@ -7575,15 +7581,11 @@ def wheel_command(
 class TestLeKiwi(unittest.TestCase):
     def setUp(self) -> None:
         self.args = parse_args(["teleop", "--port", "fake", "--fps", "1000"])
-        self.logger = logging.getLogger("test_lekiwi")
-        self.logger.addHandler(logging.NullHandler())
-        self.logger.propagate = False
         self.params = {
             "wheel_radius": self.args.wheel_radius,
             "base_radius": self.args.base_radius,
             "max_raw": self.args.max_raw,
             "fps": self.args.fps,
-            "logger": self.logger,
         }
 
     def test_keys_and_opposing_directions(self) -> None:
@@ -7712,7 +7714,7 @@ class TestLeKiwi(unittest.TestCase):
             ["teleop", "--dry-run", "--max-raw", "32768"],
             ["teleop", "--dry-run", "--max-raw", "0"],
             ["teleop", "--listen"],
-            ["teleop", "--listen", "--port", "fake", "--heartbeat-timeout", "0"],
+            ["teleop", "--listen", "--port", "fake", "--input-timeout", "0"],
             ["teleop", "--listen", "--port", "fake", "--remote-port", "0"],
             ["teleop", "--listen", "--remote", "robot"],
             ["teleop", "--remote", "robot", "--port", "fake"],
@@ -7733,23 +7735,21 @@ class TestLeKiwi(unittest.TestCase):
 
     def test_wheel_check_reads_each_wheel_back(self) -> None:
         bus = FakeWheelBus()
-        measured = spin_each_wheel(bus, raw=100, seconds=0.02, logger=self.logger)
+        measured = spin_each_wheel(bus, raw=100, seconds=0.02)
         self.assertEqual(measured, dict.fromkeys(("left", "back", "right"), 100))
-        self.assertTrue(report(100, measured, self.logger))
+        self.assertTrue(report(100, measured))
         self.assertFalse(any(bus.velocity.values()))
         self.assertFalse(any(bus.torque.values()))
         self.assertFalse(bus.is_connected)
 
     def test_wheel_check_flags_a_wheel_that_did_not_turn(self) -> None:
-        self.assertFalse(
-            report(100, {"left": 100, "back": 0, "right": 100}, self.logger)
-        )
+        self.assertFalse(report(100, {"left": 100, "back": 0, "right": 100}))
 
     def test_camera_check_requires_a_choice_when_several_cameras_exist(self) -> None:
-        with mock.patch.object(WebcamCamera, "discover", return_value={"2", "0"}):
+        with mock.patch.object(UVCCamera, "discover", return_value={"2", "0"}):
             with self.assertRaisesRegex(RuntimeError, "Several webcams"):
-                pick_device(None, self.logger)
-            self.assertEqual(pick_device("2", self.logger), "2")
+                pick_device(None)
+            self.assertEqual(pick_device("2"), "2")
 
     def assert_stopped(self, bus: FakeWheelBus, keyboard: FakeKeyboard) -> None:
         self.assertFalse(any(bus.velocity.values()))
@@ -7780,46 +7780,170 @@ def test_lekiwi_initialization_failure_releases_wheels(
         if entrypoint == "start":
             start_velocity_mode(bus)
         else:
-            spin_each_wheel(
-                bus, raw=100, seconds=0.01, logger=logging.getLogger(__name__)
-            )
+            spin_each_wheel(bus, raw=100, seconds=0.01)
     assert not bus.is_connected
     assert not any(bus.velocity.values())
     assert not any(bus.torque.values())
 
 
-def test_lekiwi_remote_accepts_sender_after_silent_timeout():
+def test_lekiwi_remote_timeout_stops_and_closes_motors():
     import socket
 
-    with socket.socket() as reservation:
-        reservation.bind(("127.0.0.1", 0))
-        port = reservation.getsockname()[1]
-    source = SocketKeySource("127.0.0.1", port, heartbeat_timeout=0.2)
+    source = SocketKeySource("127.0.0.1", 0, input_timeout=0.05)
+    bus = FakeWheelBus()
     source.start()
     try:
-        deadline = time.monotonic() + 3
-        while True:
-            try:
-                first = socket.create_connection(("127.0.0.1", port), timeout=1)
-                break
-            except ConnectionRefusedError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.01)
-        with first:
-            first.sendall(b"down w\n")
-            deadline = time.monotonic() + 1
-            while source.snapshot() != (True, {"w"}):
-                assert time.monotonic() < deadline, "First sender was not accepted"
-                time.sleep(0.01)
-            # Keep the socket open but send no heartbeats, as on a silent drop.
-            first.settimeout(3)
-            assert first.recv(1) == b"", "Expired sender must be disconnected"
-            with socket.create_connection(("127.0.0.1", port), timeout=1) as second:
-                second.sendall(b"down a\n")
-                deadline = time.monotonic() + 1
-                while source.snapshot() != (True, {"a"}):
-                    assert time.monotonic() < deadline, "New sender was not accepted"
-                    time.sleep(0.01)
+        with socket.create_connection((source.host, source.port), timeout=1) as sender:
+            source.accept()
+            sender.sendall(b'[["w"], 0]\n')
+            with pytest.raises(TimeoutError):
+                run_receiver(
+                    source,
+                    bus,
+                    wheel_radius=0.05,
+                    base_radius=0.125,
+                    max_raw=3000,
+                    fps=1000,
+                )
+            assert any(bus.commands[0].values())
+            assert not any(bus.velocity.values())
+            assert not bus.is_connected
     finally:
         source.stop()
+
+
+def test_lekiwi_receiver_port_collision_fails_at_start():
+    import socket
+
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        source = SocketKeySource("127.0.0.1", occupied.getsockname()[1])
+        with pytest.raises(OSError):
+            source.start()
+        source.stop()
+
+
+def test_lekiwi_snapshot_replaces_keys_and_keeps_speed():
+    import socket
+
+    source = SocketKeySource("127.0.0.1", 0)
+    source.start()
+    try:
+        with socket.create_connection((source.host, source.port), timeout=1) as sender:
+            source.accept()
+            sender.sendall(b'[["w"], 1]\n')
+            assert source.read_keys() == ({"w"}, 1)
+            sender.sendall(b"[[], 2]\n")
+            assert source.read_keys() == (set(), 2)
+        assert source.read_keys() is None
+    finally:
+        source.stop()
+
+
+def test_lekiwi_serial_port_ignores_service_port(monkeypatch):
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("SERIAL_PORT", "/dev/ttyACM0,/dev/ttyACM1")
+    monkeypatch.setenv("DISABLE_VALIDATE", "true,true")
+    configs = RobotAutoConfig.resolve([], config_cls=LeKiwiConfig, node_rank=0)
+    assert [config.serial_port for config in configs] == [
+        "/dev/ttyACM0",
+        "/dev/ttyACM1",
+    ]
+
+
+def test_lekiwi_disconnect_attempts_cleanup_after_stop_write_failure(monkeypatch):
+    bus = FakeWheelBus()
+    write = bus.sync_write
+    failed = False
+
+    def fail_first_stop(register, values, **kwargs):
+        nonlocal failed
+        if any(bus.velocity.values()) and not any(values.values()) and not failed:
+            failed = True
+            raise OSError("transient stop write failure")
+        return write(register, values, **kwargs)
+
+    monkeypatch.setattr(bus, "sync_write", fail_first_stop)
+    source = FakeKeySource([(True, {"w"}), (False, set())])
+    run_receiver(
+        source,
+        bus,
+        wheel_radius=0.05,
+        base_radius=0.125,
+        max_raw=3000,
+        fps=1000,
+    )
+    assert failed
+    assert not any(bus.velocity.values())
+    assert not any(bus.torque.values())
+    assert not bus.is_connected
+
+
+def test_lekiwi_sender_without_rlinf_dependencies_stops_on_listener_loss():
+    import json
+    import socket
+
+    root = Path(__file__).resolve().parents[2]
+    code = """
+import sys
+from types import SimpleNamespace
+from runpy import run_path
+FakeListener = run_path("tests/robot_mocks/lekiwi.py")["FakeListener"]
+from toolkits.realworld_check import test_lekiwi_env as cli
+sys.modules["pynput"] = SimpleNamespace(keyboard=SimpleNamespace(
+    Listener=FakeListener, Key=SimpleNamespace(esc="escape")))
+result = cli.main(["teleop", "--remote", "127.0.0.1", "--remote-port", sys.argv[1],
+                   "--fps", "100"])
+assert not any(name.split(".")[0] in {"rlinf", "ray", "torch", "numpy", "lerobot"} for name in sys.modules)
+sys.exit(result)
+"""
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        server.settimeout(5)
+        with subprocess.Popen(
+            [sys.executable, "-S", "-c", code, str(server.getsockname()[1])],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as sender:
+            try:
+                with server.accept()[0] as conn:
+                    conn.settimeout(5)
+                    payload = b""
+                    while chunk := conn.recv(1024):
+                        payload += chunk
+                _, stderr = sender.communicate(timeout=5)
+            finally:
+                if sender.poll() is None:
+                    sender.kill()
+                    sender.communicate()
+            assert sender.returncode == 1, stderr
+            assert "Keyboard capture stopped" in stderr
+    # A short R tap must reach the receiver even though R is already released.
+    assert json.loads(payload.splitlines()[0]) == [["w"], 1]
+
+
+def test_lekiwi_camera_explicit_device_does_not_require_discovery(monkeypatch):
+    monkeypatch.setattr(UVCCamera, "discover", lambda: set())
+    assert pick_device("0") == "0"
+    with pytest.raises(RuntimeError, match="No UVC camera found"):
+        pick_device(None)
+
+
+def test_lekiwi_camera_save_failure_returns_error(monkeypatch, tmp_path, capsys):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_lekiwi_env import main
+
+    monkeypatch.setattr(UVCCamera, "discover", lambda: {"0"})
+    with mocked_sdks() as made:
+        monkeypatch.setattr(made["cv2"], "imwrite", lambda *args: False, raising=False)
+        result = main(
+            ["camera", "--device", "0", "--save", str(tmp_path / "frame.png")]
+        )
+    output = capsys.readouterr()
+    assert result == 1
+    assert "Could not save camera frame" in output.err
+    assert "Saved the last frame" not in output.out

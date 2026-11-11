@@ -72,8 +72,8 @@ class LeKiwiRobot(Robot):
 class LeKiwiConfig(RobotConfig):
     """Hardware and placement configuration for a LeKiwi base."""
 
-    port: str | None = None
-    """Serial device the three-wheel servo bus is on, such as ``/dev/ttyACM0``."""
+    serial_port: str | None = None
+    """Servo bus device, such as ``/dev/ttyACM0``; resolved from ``SERIAL_PORT``."""
 
     wheel_radius: float = 0.05
     """Wheel radius in metres."""
@@ -88,7 +88,7 @@ class LeKiwiConfig(RobotConfig):
     """Camera identifiers. ``None`` discovers cameras during enumeration;
     ``[]`` explicitly selects no cameras."""
 
-    camera_type: str = "webcam"
+    camera_type: str = "uvc"
     """Camera backend; the base carries a plain UVC webcam by default."""
 
     def __post_init__(self) -> None:

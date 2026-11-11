@@ -52,8 +52,9 @@ class FakeKeySource:
     def __init__(self, snapshots: list[tuple[bool, set[str]]]) -> None:
         self._snapshots = iter(snapshots)
 
-    def snapshot(self) -> tuple[bool, set[str]]:
-        return next(self._snapshots)
+    def read_keys(self) -> tuple[set[str], int] | None:
+        connected, keys = next(self._snapshots)
+        return (keys, 0) if connected else None
 
 
 class FakeWheelBus:
@@ -136,3 +137,29 @@ class FakeWheelBus:
 
     def disconnect(self, disable_torque: bool = True) -> None:
         self.is_connected = False
+
+
+class FakeListener:
+    """Emit movement and a speed tap, then lose keyboard capture."""
+
+    def __init__(self, on_press, on_release):
+        self.on_press = on_press
+        self.on_release = on_release
+        self.polls = 0
+
+    def start(self):
+        from types import SimpleNamespace
+
+        self.on_press(SimpleNamespace(char="w"))
+        self.on_press(SimpleNamespace(char="r"))
+        self.on_release(SimpleNamespace(char="r"))
+
+    def is_alive(self):
+        self.polls += 1
+        return self.polls == 1
+
+    def join(self):
+        pass
+
+    def stop(self):
+        pass

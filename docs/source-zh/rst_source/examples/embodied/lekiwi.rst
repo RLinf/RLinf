@@ -30,7 +30,7 @@ LeKiwi 移动底盘配置与控制
 
 LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动全向轮。policy 输出平面运动指令 ``[x, y, theta]``\ （前进速度 ``m/s``、横移速度 ``m/s``、偏航角速度 ``deg/s``），而舵机控制器接收的是每个车轮的原始速度指令。
 
-``LeKiwiBase`` 零部件负责衔接这两层：通过平面运动学将 ``[x, y, theta]`` 映射为三个车轮的速度；如果任一车轮的计算速度超出 ``max_raw``，它会按相同比例缩放三个车轮的速度，使底盘整体降速但保持原有的移动与转向比例不变。``LeKiwiRobot`` 将该底盘与 ``WebcamCamera`` 摄像头零部件组合为整机，``LeKiwiDriveEnv-v1`` 再将其封装为 Gymnasium 环境，使 policy 能以 ``step_frequency`` 的频率接收图像与底盘速度观测并下发 ``[x, y, theta]`` 动作。各零部件的观测与动作契约见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
+``LeKiwiBase`` 零部件负责衔接这两层：通过平面运动学将 ``[x, y, theta]`` 映射为三个车轮的速度；如果任一车轮的计算速度超出 ``max_raw``，它会按相同比例缩放三个车轮的速度，使底盘整体降速但保持原有的移动与转向比例不变。``LeKiwiRobot`` 将该底盘与 ``UVCCamera`` 摄像头零部件组合为整机，``LeKiwiDriveEnv-v1`` 再将其封装为 Gymnasium 环境，使 policy 能以 ``step_frequency`` 的频率接收图像与底盘速度观测并下发 ``[x, y, theta]`` 动作。各零部件的观测与动作契约见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
 安装环境
 --------
@@ -85,10 +85,10 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
 
 .. code-block:: text
 
-   INFO: Spinning the left wheel at raw 100
-   INFO: left  commanded    100  measured     98  ok
-   INFO: back  commanded    100  measured     97  ok
-   INFO: right commanded    100  measured     99  ok
+   Spinning the left wheel at raw 100
+   left  commanded    100  measured     98  ok
+   back  commanded    100  measured     97  ok
+   right commanded    100  measured     99  ok
 
 ``--raw`` 让转动更快，``--seconds`` 让转动更久。
 
@@ -103,10 +103,10 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
 
 .. code-block:: text
 
-   INFO: Webcams found: usb-USB_Camera_USB_Camera_2505280051-video-index0
-   INFO: Using usb-USB_Camera_USB_Camera_2505280051-video-index0 at 640x480
-   INFO: Captured 10 frames in 0.34 s (29.4 fps)
-   INFO: Frame shape (480, 640, 3), dtype uint8, mean brightness 96.2
+   Webcams found: /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0
+   Using /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0 at 640x480
+   Captured 10 frames in 0.34 s (29.4 fps)
+   Frame shape (480, 640, 3), dtype uint8, mean brightness 96.2
 
 把打印出的标识符填入下文的 ``camera_names``。打开 ``check.png`` 查看机器人看到的画面，并在采集数据前调整安装角度。接有多个摄像头时，用 ``--device`` 指定。
 
@@ -177,24 +177,26 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
    # 在接键盘的机器上：
    python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <机器人 IP>
 
-按键与速度档位完全相同。两端默认使用 TCP 端口 5555，可用 ``--remote-port`` 修改。``--listen`` 还接受 ``--fps``、``--wheel-radius``、``--base-radius``、``--max-raw`` 和 ``--dry-run``，``--connect-timeout`` 决定 ``--remote`` 持续重试多久。接收端监视发送端的心跳：发送端被杀、网络断开或笔记本休眠时，它会把车轮归零并等待新的发送端。用 Ctrl+C 停止发送端；接收端关闭时它也会退出。
+按键与速度档位完全相同。两端默认使用 TCP 端口 5555，可用 ``--remote-port`` 修改。发送端按 ``--fps`` 周期发送当前运动按键和速度档位，默认为 30 Hz。接收端的 ``--fps`` 设置电机控制循环的频率。``--listen`` 还接受 ``--wheel-radius``、``--base-radius``、``--max-raw`` 和 ``--dry-run``。``--connect-timeout`` 限制连接和发送操作的等待时间，连接失败直接退出；请先启动接收端。
 
-按上文安装好的机器已经带有 ``pynput``，该包会随 LeRobot 一起安装。在单独的笔记本或 macOS（``install.sh`` 不支持 macOS）上，只需准备一个 Python 3.11+ 虚拟环境，安装运行时依赖与 ``pynput`` 后直接在仓库里运行发送端即可，无需运行安装脚本或安装 RLinf：
+接收端在断线或超过 ``--input-timeout`` 秒没有收到输入时停车并退出，默认超时为 2 秒。开始新会话时重新运行两端命令。Q、Esc 或 Ctrl+C 可停止发送端，键盘监听器退出也会结束会话。
+
+按上文安装好的机器已经带有 ``pynput``，该包会随 LeRobot 一起安装。在单独的笔记本或 macOS（``install.sh`` 不支持 macOS）上，创建 Python 3.11+ 虚拟环境并安装 ``pynput``，然后在仓库里运行发送端：
 
 .. code-block:: bash
 
    cd /path/to/RLinf
-   pip install torch omegaconf numpy pynput
+   pip install pynput
    PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <机器人 IP>
 
-macOS 还需在「系统设置 > 隐私与安全性」中为终端打开「辅助功能」和「输入监控」，然后重启终端；否则发送端能连上并持续发送心跳，但按键不会到达机器人。
+macOS 还需在「系统设置 > 隐私与安全性」中为终端打开「辅助功能」和「输入监控」，然后重启终端。启用电机前，先用接收端的 ``--dry-run`` 确认按键有效。
 
 驱动环境
 --------
 
 ``LeKiwiDriveEnv-v1`` 是已注册的 Gymnasium 任务：按硬件配置组装整机，上报实测的机体速度与摄像头画面，并下发有界的速度指令。一个 step 保持该速度一个控制周期，随后停止车轮，因此只有调用方持续 step 时底盘才会移动。
 
-``examples/embodiment`` 下没有 LeKiwi 的配置文件：这个环境由 RPent 承载，而不是由一次训练运行承载。由自己承载该任务的配置与其他真机任务一样，用 ``init_params.id`` 选择它；``examples/embodiment/config/env/so101_reach.yaml`` 是同样写法的机械臂示例：
+RPent 直接运行该环境，不经过训练脚本，因此 ``examples/embodiment`` 下没有提供 LeKiwi 配置文件。在自己的运行配置中，与其他真机任务一样，用 ``init_params.id`` 选择它；``examples/embodiment/config/env/so101_reach.yaml`` 是同样写法的机械臂示例：
 
 .. code-block:: yaml
 
@@ -217,8 +219,8 @@ macOS 还需在「系统设置 > 隐私与安全性」中为终端打开「辅�
          hardware:
            type: LeKiwi
            configs:
-             - port: /dev/ttyACM0
-               camera_serials: ["<摄像头序列号>"]
+             - serial_port: /dev/ttyACM0
+               camera_serials: ["/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0"]
                node_rank: 1
 
 单次运行的参数写在训练配置的 ``override_cfg`` 下：
@@ -229,7 +231,7 @@ macOS 还需在「系统设置 > 隐私与安全性」中为终端打开「辅�
      eval:
        override_cfg:
          camera_names:
-           "<摄像头序列号>": front
+           "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0": front
          frame_size: [128, 128]
          max_linear_velocity: 0.5
          max_angular_velocity: 90.0

@@ -50,7 +50,7 @@ the servo controller expects per-wheel raw speed commands.
 three wheel speeds, and if any wheel would exceed ``max_raw`` it scales all
 three wheel speeds down by the same factor so the base slows down without
 changing its trajectory or turn rate. ``LeKiwiRobot`` pairs that base with
-``WebcamCamera`` cameras, and ``LeKiwiDriveEnv-v1`` wraps the robot as a
+``UVCCamera`` cameras, and ``LeKiwiDriveEnv-v1`` wraps the robot as a
 Gymnasium environment so a policy receives image observations and base
 velocities and sends ``[x, y, theta]`` actions at ``step_frequency``. Each
 part's observation and action contracts are in :doc:`Robotics Interface
@@ -130,10 +130,10 @@ reports the velocity its encoder sent back:
 
 .. code-block:: text
 
-   INFO: Spinning the left wheel at raw 100
-   INFO: left  commanded    100  measured     98  ok
-   INFO: back  commanded    100  measured     97  ok
-   INFO: right commanded    100  measured     99  ok
+   Spinning the left wheel at raw 100
+   left  commanded    100  measured     98  ok
+   back  commanded    100  measured     97  ok
+   right commanded    100  measured     99  ok
 
 ``--raw`` makes the spin faster and ``--seconds`` makes it longer.
 
@@ -149,10 +149,10 @@ actually delivers, because a camera can open and still send nothing:
 
 .. code-block:: text
 
-   INFO: Webcams found: usb-USB_Camera_USB_Camera_2505280051-video-index0
-   INFO: Using usb-USB_Camera_USB_Camera_2505280051-video-index0 at 640x480
-   INFO: Captured 10 frames in 0.34 s (29.4 fps)
-   INFO: Frame shape (480, 640, 3), dtype uint8, mean brightness 96.2
+   Webcams found: /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0
+   Using /dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0 at 640x480
+   Captured 10 frames in 0.34 s (29.4 fps)
+   Frame shape (480, 640, 3), dtype uint8, mean brightness 96.2
 
 Write the printed identifier into ``camera_names`` later in this page. Open
 ``check.png`` to see what the robot sees, and adjust the mount before
@@ -237,27 +237,32 @@ them.
    python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
 
 The keys and speed levels are the same. Both sides use TCP port 5555 unless you
-change it with ``--remote-port``. ``--listen`` also takes ``--fps``,
-``--wheel-radius``, ``--base-radius``, ``--max-raw``, and ``--dry-run``, and
-``--connect-timeout`` sets how long ``--remote`` keeps retrying. The listener
-watches the sender's heartbeat: if the sender is killed, the network drops, or
-the laptop sleeps, it zeroes the wheels and waits for a new sender. Stop the
-sender with Ctrl+C; it also exits when the listener closes.
+change it with ``--remote-port``. The sender transmits the current movement keys
+and speed level at ``--fps`` (30 Hz by default). On the receiver, ``--fps``
+sets the motor-control rate. ``--listen`` also takes
+``--wheel-radius``, ``--base-radius``, ``--max-raw``, and ``--dry-run``.
+``--connect-timeout`` bounds connection and send operations; a failed connection
+exits immediately. Start the receiver first.
+
+The receiver stops and exits on disconnect or when input stops arriving for
+``--input-timeout`` seconds (default: 2). Restart both commands to begin another
+session. Q, Esc, or Ctrl+C stops the sender; loss of keyboard capture also ends
+the session.
 
 A machine installed as above already has ``pynput``, which is installed with
 LeRobot. On a separate laptop or on macOS (which ``install.sh`` does not
-support), create a Python 3.11+ virtual environment, install the runtime
-dependencies and ``pynput``, and run the sender from a checkout:
+support), create a Python 3.11+ virtual environment, install ``pynput``, and run
+the sender from a checkout:
 
 .. code-block:: bash
 
    cd /path/to/RLinf
-   pip install torch omegaconf numpy pynput
+   pip install pynput
    PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
 
 On macOS, also allow the terminal in System Settings under Privacy & Security
-in Accessibility and Input Monitoring, then restart it; without that the
-sender connects and sends heartbeats, but no key reaches the robot.
+in Accessibility and Input Monitoring, then restart it. Check that key presses
+reach the receiver in ``--dry-run`` before enabling the motors.
 
 The Drive Environment
 ---------------------
@@ -296,8 +301,8 @@ the node group that runs the environment:
          hardware:
            type: LeKiwi
            configs:
-             - port: /dev/ttyACM0
-               camera_serials: ["<camera-serial>"]
+             - serial_port: /dev/ttyACM0
+               camera_serials: ["/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0"]
                node_rank: 1
 
 Per-run settings are listed under ``override_cfg`` in the training config:
@@ -308,7 +313,7 @@ Per-run settings are listed under ``override_cfg`` in the training config:
      eval:
        override_cfg:
          camera_names:
-           "<camera-serial>": front
+           "/dev/v4l/by-id/usb-USB_Camera_USB_Camera_2505280051-video-index0": front
          frame_size: [128, 128]
          max_linear_velocity: 0.5
          max_angular_velocity: 90.0
