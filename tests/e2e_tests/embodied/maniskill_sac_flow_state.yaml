@@ -24,9 +24,9 @@ runner:
     log_path: /workspace/results/maniskill_sac_flow_state
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
-  max_epochs: 10
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -34,7 +34,7 @@ runner:
   save_interval: -1
 
 algorithm:
-  update_epoch: 32
+  update_epoch: 1
   normalize_advantages: False  # SAC doesn't use advantages
   kl_penalty: kl
   group_size: 1
@@ -117,8 +117,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 512  # Smaller batch size for SAC. 1024 can also be considered
-  global_batch_size: 512   # Smaller global batch size
+  micro_batch_size: 8
+  global_batch_size: 8
   seed: 1234
   enable_offload: False
 
