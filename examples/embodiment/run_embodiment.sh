@@ -48,17 +48,31 @@ fi
 echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 
 echo "Using Python at $(which python)"
-LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"
+LOG_DIR="${RLINF_LOG_DIR:-${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}}"
 MEGA_LOG_FILE="${LOG_DIR}/run_embodiment.log"
-mkdir -p "${LOG_DIR}"
+if ! mkdir -p -- "${LOG_DIR}"; then
+    printf 'Set RLINF_LOG_DIR to a writable run directory.\n' >&2
+    exit 1
+fi
 # Forward optional overrides exported by callers (e.g. tests/parity_tests/run_all.sh).
 # Sentinel: "-2" means "do not override, use YAML default". -1 is a legitimate value
 # (e.g. runner.max_steps=-1 means unlimited) and is forwarded as-is.
-EXTRA_OVERRIDES=""
-[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=" runner.max_steps=${STEPS}"
-[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=" runner.save_interval=${SAVE_INTER}"
-[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=" cluster.num_nodes=${NODES}"
+EXTRA_OVERRIDES=()
+[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=("runner.max_steps=${STEPS}")
+[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=("runner.save_interval=${SAVE_INTER}")
+[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=("cluster.num_nodes=${NODES}")
+[ "${PPO_STEP_DIAGNOSTICS:-}" = "1" ] && EXTRA_OVERRIDES+=("++algorithm.wam_optimizer_step_diagnostics=true")
+[ -n "${ACTOR_MICRO_BATCH_SIZE:-}" ] && EXTRA_OVERRIDES+=("actor.micro_batch_size=${ACTOR_MICRO_BATCH_SIZE}")
 
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}${EXTRA_OVERRIDES}"
-echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+CMD=(python "${SRC_FILE}" --config-path "${EMBODIED_PATH}/config/"
+     --config-name "${CONFIG_NAME}" "runner.logger.log_path=${LOG_DIR}"
+     "${EXTRA_OVERRIDES[@]}")
+{ printf '%q ' "${CMD[@]}" && printf '\n'; } > "${MEGA_LOG_FILE}" || exit 1
+set -o pipefail
+"${CMD[@]}" 2>&1 | tee -a -- "${MEGA_LOG_FILE}"
+train_status=$?
+if [ "${PPO_STEP_DIAGNOSTICS:-}" = "1" ] && grep -qF 'analytic_kl=' "$MEGA_LOG_FILE"; then
+    python "$EMBODIED_PATH/plot_wam_optimizer_kl.py" "$MEGA_LOG_FILE" ||
+        printf 'Could not plot optimizer KL. The values are in %s\n' "$MEGA_LOG_FILE" >&2
+fi
+exit "$train_status"

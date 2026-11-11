@@ -162,8 +162,17 @@ class MultiStepRolloutWorker(Worker):
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
         if self.cfg.runner.get("ckpt_path", None):
-            model_dict = torch.load(self.cfg.runner.ckpt_path)
-            self.hf_model.load_state_dict(model_dict)
+            if (
+                SupportedModel(rollout_model_config.model_type)
+                == SupportedModel.COSMOS3
+                and rollout_model_config.get("cosmos3", {}).get("task") == "rl"
+            ):
+                from rlinf.models.embodiment.cosmos3.tasks.rl import load_ppo_checkpoint
+
+                load_ppo_checkpoint(self.hf_model, self.cfg.runner.ckpt_path)
+            else:
+                model_dict = torch.load(self.cfg.runner.ckpt_path)
+                self.hf_model.load_state_dict(model_dict)
 
         rlt_feature_model_config = OmegaConf.select(
             self.cfg, "rollout.rlt_feature_model", default=None
@@ -514,6 +523,7 @@ class MultiStepRolloutWorker(Worker):
         model_type = SupportedModel(self.model_cfg.model_type)
         if model_type in [
             SupportedModel.OPENPI,
+            SupportedModel.COSMOS3,
             SupportedModel.PI0_FAST,
             SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
@@ -535,6 +545,13 @@ class MultiStepRolloutWorker(Worker):
                 kwargs["mode"] = mode
             else:
                 kwargs = {"mode": mode}
+
+        if (
+            model_type == SupportedModel.COSMOS3
+            and kwargs.get("mode") == "train"
+            and self.model_cfg.get("cosmos3", {}).get("task") == "rl"
+        ):
+            kwargs["logprob_micro_batch_size"] = self.cfg.actor.micro_batch_size
 
         if model_type in [
             SupportedModel.CNN_POLICY,

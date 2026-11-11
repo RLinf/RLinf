@@ -237,6 +237,46 @@ The script runs all four steps in order (``--use-ema-weights`` keeps the EMA wei
 
 The resulting ``model_diffusers`` is the ``rollout.model.model_path`` for :doc:`Cosmos3 SGLang Evaluation <../../evaluations/guides/cosmos3_sglang>`.
 
+Continue With PPO
+----------------------------------------
+
+Use the LIBERO SFT policy as the starting point for online PPO with ``examples/embodiment/config/libero_10_ppo_cosmos3.yaml``. The recipe loads the base model from ``actor.model.model_path`` and the trained LIBERO weights from ``runner.ckpt_path``. Keep the tokenizer, Wan VAE, and action normalization statistics consistent with the SFT deployment. The included paths target the existing assets under ``/mnt/public/rhy``; set these fields to your local assets on another host.
+
+Activate the prepared Cosmos environment and launch the standard embodied runner:
+
+.. code-block:: bash
+
+   cd /mnt/public/rhy/ppo_WAM/RLinf
+   source examples/embodiment/cosmos3_ppo_env.sh
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_cosmos3
+
+The source script activates the existing environment and configures local assets and offline caches. The launch command reads the PPO recipe, gathers LIBERO interactions, and alternates rollout with actor and value-head updates. Set the environment and asset paths in the source script and recipe before launching on a different deployment.
+
+The policy generates future video and actions jointly. Future video follows deterministic ODE updates; one randomly chosen action update uses Flow-SDE. PPO stores the selected full WAM state and its sampled next action tensor, then re-evaluates that same transition during training. It retains one selected state instead of every video state in the denoising chain. The PPO ratio scores this internal action transition conditioned on the cached joint WAM state. The existing runner computes GAE from environment action-chunk rewards and applies the standard PPO actor loss and value-clipped Huber critic loss.
+
+Keep the execution and density dimensions distinct: ``actor.model.action_dim=7`` describes LIBERO's axis-angle actions, while ``actor.model.logprob_action_dim=10`` and ``actor.model.cosmos3.valid_action_dim=10`` score normalized rot6d action coordinates. Padding coordinates and the unexecuted action suffix are excluded from the PPO score. The initial implementation uses conditional sampling with ``guidance=1.0``, ``noise_method=flow_sde``, and ``joint_logprob=false``.
+
+Read the model-specific workflow in the grouped Cosmos3 modules:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 57 43
+
+   * - Source
+     - Responsibility
+   * - ``rlinf/models/embodiment/cosmos3/env_io.py``
+     - Replay observations, WAM prompts, and LIBERO action decoding.
+   * - ``rlinf/models/embodiment/cosmos3/tasks/rl.py``
+     - Hybrid rollout, selected-transition replay, and the value head.
+   * - ``rlinf/models/embodiment/cosmos3/sampling/bridge.py``
+     - Joint video/action velocity and action hidden states from Cosmos.
+   * - ``rlinf/models/embodiment/cosmos3/sampling/rl_sampler.py``
+     - SDE means, standard deviations, and masked Gaussian scores.
+
+.. note::
+
+   The recipe synchronizes actor weights before each rollout and enables key validation. Set ``PPO_STEP_DIAGNOSTICS=1`` when launching to record actor-versus-rollout sampled KL before training and after each optimizer update.
+
 Visualization and Results
 ----------------------------------------
 
