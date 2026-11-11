@@ -820,3 +820,119 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+def test_pinned_offload_context_restores_after_overlapping_exits():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    original_to = torch.Tensor.to
+    first = pinned_offload_context()
+    second = pinned_offload_context()
+    first_active = True
+    first.__enter__()
+    second.__enter__()
+    try:
+        patched_to = torch.Tensor.to
+        assert patched_to is not original_to
+
+        tensor = torch.ones(2)
+        assert tensor.to(torch.float64).dtype == torch.float64
+        torch.testing.assert_close(tensor.to(torch.zeros(2)), tensor)
+
+        first.__exit__(None, None, None)
+        first_active = False
+        assert torch.Tensor.to is patched_to
+    finally:
+        if first_active:
+            first.__exit__(None, None, None)
+        second.__exit__(None, None, None)
+
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize(
+    "source_format", [torch.contiguous_format, torch.channels_last]
+)
+@pytest.mark.parametrize(
+    "memory_format",
+    [torch.preserve_format, torch.contiguous_format, torch.channels_last],
+)
+def test_pinned_offload_preserves_cuda_tensor_values_and_layout(
+    dtype, source_format, memory_format
+):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.randn(2, 3, 8, 8, device="cuda", dtype=dtype).contiguous(
+        memory_format=source_format
+    )
+    expected = source.to("cpu", memory_format=memory_format)
+    original_to = torch.Tensor.to
+    with pinned_offload_context():
+        result = source.to("cpu", None, False, memory_format=memory_format)
+        assert result.is_pinned()
+        assert result.device.type == "cpu"
+        assert result.dtype == source.dtype
+        assert result.stride() == expected.stride()
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result.to(source.device), source)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_restores_after_cuda_copy_and_exception():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda")
+    original_to = torch.Tensor.to
+    with pytest.raises(RuntimeError, match="abort offload"):
+        with pinned_offload_context():
+            assert source.to(device=torch.device("cpu")).is_pinned()
+            raise RuntimeError("abort offload")
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda", dtype=torch.float32)
+    original_to = torch.Tensor.to
+    allocator_error = RuntimeError("pinned allocator exhausted")
+
+    def fail_allocation(*args, **kwargs):
+        assert kwargs["pin_memory"] is True
+        raise allocator_error
+
+    monkeypatch.setattr(torch, "empty_like", fail_allocation)
+    with pytest.raises(
+        RuntimeError, match="Failed to allocate pinned CPU memory"
+    ) as info:
+        with pinned_offload_context():
+            source.to("cpu")
+    assert info.value.__cause__ is allocator_error
+    assert "shape=(2,)" in str(info.value)
+    assert "dtype=torch.float32" in str(info.value)
+    assert f"source_device={source.device}" in str(info.value)
+    assert "requested_bytes=8" in str(info.value)
+    assert torch.Tensor.to is original_to
+
+
+def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    class _MusaDeviceTensor(torch.Tensor):
+        @property
+        def device(self):
+            return SimpleNamespace(type="musa")
+
+    def forbid_pinned_alloc(*args, **kwargs):
+        raise AssertionError("MUSA offload must not allocate pinned host memory")
+
+    monkeypatch.setattr(torch, "empty_like", forbid_pinned_alloc)
+    source = torch.ones(2, dtype=torch.float32).as_subclass(_MusaDeviceTensor)
+    with pinned_offload_context():
+        result = source.to("cpu")
+    assert not result.is_pinned()
+    torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
