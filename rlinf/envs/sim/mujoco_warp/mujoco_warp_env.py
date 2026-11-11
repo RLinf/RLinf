@@ -206,7 +206,8 @@ class MujocoWarpEnv(gym.Env):
         return reset_state_ids
 
     def _init_reset_state_ids(self) -> None:
-        self.update_reset_state_ids()
+        if self.use_fixed_reset_state_ids:
+            self.update_reset_state_ids()
 
     def update_reset_state_ids(self) -> None:
         """Sample new deterministic reset IDs for all environment groups."""
@@ -485,30 +486,64 @@ class MujocoWarpEnv(gym.Env):
         chunk_rewards: list[torch.Tensor] = []
         raw_chunk_terminations: list[torch.Tensor] = []
         raw_chunk_truncations: list[torch.Tensor] = []
-        aggregated_final_info = None
-        aggregated_final_obs = None
+        finished = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        final_obs = None
+        final_info = None
+        final_qpos = self.world.qpos.clone()
+        final_qvel = self.world.qvel.clone()
+        final_ctrl = self.world.ctrl.clone()
+        final_terminations = torch.zeros_like(finished)
+        final_truncations = torch.zeros_like(finished)
+
         for i in range(acts.shape[1]):
+            previously_finished = finished
             (
                 extracted_obs,
                 step_reward,
                 terminations,
                 truncations,
                 infos,
-            ) = self.step(acts[:, i])
+            ) = self.step(acts[:, i], auto_reset=False)
+
+            if previously_finished.any():
+                # MjWarp steps the whole batch, so restore finished worlds to
+                # their first terminal state before caching this substep.
+                finished_ids = previously_finished.nonzero(as_tuple=True)[0]
+                self.world.reset_worlds(finished_ids)
+                self.world.qpos[finished_ids] = final_qpos[finished_ids]
+                self.world.qvel[finished_ids] = final_qvel[finished_ids]
+                self.world.ctrl[finished_ids] = final_ctrl[finished_ids]
+                self.world.forward()
+                self._elapsed_steps[previously_finished] = 0
+                self.prev_step_reward[previously_finished] = 0.0
+                self._reward_sum[previously_finished] = 0.0
+                self._episode_length[previously_finished] = 0.0
+                step_reward = step_reward.masked_fill(previously_finished, 0.0)
+
+            step_dones = torch.logical_or(terminations, truncations)
+            new_dones = torch.logical_and(step_dones, ~previously_finished)
+            if new_dones.any():
+                final_obs = self._masked_update(final_obs, extracted_obs, new_dones)
+                final_info = self._masked_update(final_info, infos, new_dones)
+                final_qpos[new_dones] = self.world.qpos[new_dones]
+                final_qvel[new_dones] = self.world.qvel[new_dones]
+                final_ctrl[new_dones] = self.world.ctrl[new_dones]
+                final_terminations[new_dones] = terminations[new_dones]
+                final_truncations[new_dones] = truncations[new_dones]
+                finished = torch.logical_or(finished, new_dones)
+
+            if finished.any():
+                extracted_obs = self._masked_update(extracted_obs, final_obs, finished)
+                infos = self._masked_update(infos, final_info, finished)
+                terminations = torch.where(finished, final_terminations, terminations)
+                truncations = torch.where(finished, final_truncations, truncations)
+                self._last_obs[finished] = final_obs["states"][finished]
+
             obs_list.append(extracted_obs)
             infos_list.append(infos)
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
-
-            step_dones = torch.logical_or(terminations, truncations)
-            if step_dones.any() and self.auto_reset:
-                aggregated_final_info = self._masked_update(
-                    aggregated_final_info, infos["final_info"], step_dones
-                )
-                aggregated_final_obs = self._masked_update(
-                    aggregated_final_obs, infos["final_observation"], step_dones
-                )
 
         chunk_rewards_tensor = torch.stack(chunk_rewards, dim=1)
         raw_chunk_terminations_tensor = torch.stack(raw_chunk_terminations, dim=1)
@@ -519,12 +554,11 @@ class MujocoWarpEnv(gym.Env):
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
-            infos_list[-1] = dict(infos_list[-1])
-            infos_list[-1]["final_info"] = aggregated_final_info
-            infos_list[-1]["final_observation"] = aggregated_final_obs
-            infos_list[-1]["_final_info"] = past_dones
-            infos_list[-1]["_final_observation"] = past_dones
-            infos_list[-1]["_elapsed_steps"] = past_dones
+            final_obs = self._masked_update(obs_list[-1], final_obs, past_dones)
+            final_info = self._masked_update(infos_list[-1], final_info, past_dones)
+            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+                past_dones, final_obs, final_info
+            )
 
         if self.auto_reset or self.ignore_terminations:
             chunk_terminations = torch.zeros_like(raw_chunk_terminations_tensor)
@@ -552,8 +586,6 @@ class MujocoWarpEnv(gym.Env):
         final_obs = copy.deepcopy(_final_obs)
         final_info = copy.deepcopy(infos)
         env_idx = torch.arange(self.num_envs, device=self.device)[dones].cpu().numpy()
-        if self.is_eval and self.use_fixed_reset_state_ids:
-            self.update_reset_state_ids()
         reset_state_ids = self._sample_reset_state_ids(env_idx)
         obs, infos = self.reset(env_idx=env_idx, reset_state_ids=reset_state_ids)
         infos["final_observation"] = final_obs

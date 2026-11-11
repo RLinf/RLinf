@@ -435,6 +435,7 @@ jobs:
           bash tests/e2e_tests/embodied/run.sh mujoco_warp_ppo_mlp
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
           uv cache prune

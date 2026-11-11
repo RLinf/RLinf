@@ -170,7 +170,7 @@ Launch TensorBoard from the repository root:
 
    tensorboard --logdir ../results --port 6006
 
-Watch ``eval/env/return`` for the mean evaluation episode return and ``env/return`` for training episode returns. See :doc:`Training metrics <../../reference/metrics>` for the shared metric definitions and the Evaluation section for standalone evaluation workflows.
+Watch ``eval/env/return`` for the mean evaluation episode return and ``env/return`` for training episode returns. See :doc:`Training metrics <../../reference/metrics>` for the shared metric definitions. For standalone checkpoint evaluation, run ``run_embodiment.sh`` with ``runner.only_eval=true`` and ``runner.ckpt_path=<path>``.
 
 .. list-table::
    :header-rows: 1

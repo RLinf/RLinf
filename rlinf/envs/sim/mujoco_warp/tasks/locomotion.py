@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Gymnasium MuJoCo v4 locomotion tasks on a MuJoCo Warp world."""
+"""Torque-controlled locomotion tasks on a MuJoCo Warp world."""
 
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ __all__ = ["TASK_SPECS", "LocomotionTask", "TaskSpec"]
 class TaskSpec:
     """Static description of one locomotion task.
 
-    Reward and termination follow the Gymnasium MuJoCo v4 task semantics:
-    ``reward = healthy_reward + forward_velocity - ctrl_cost_weight * ||ctrl||^2``,
-    and (for terminating tasks) an episode ends when the body leaves the
-    healthy height/angle ranges or the observation becomes non-finite.
+    Reward and termination follow the shared locomotion task formula:
+    ``reward = healthy_reward + root_x_velocity - ctrl_cost_weight * ||ctrl||^2``,
+    and (for tasks with ``healthy_z_range``) an episode ends when the body leaves
+    the configured height/angle ranges or the observation becomes non-finite.
     """
 
     def __init__(

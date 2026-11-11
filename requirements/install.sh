@@ -3497,6 +3497,7 @@ install_env_only() {
             install_d4rl_env
             ;;
         mujoco_warp)
+            install_common_embodied_deps
             install_mujoco_warp_env
             ;;
         dummy)
@@ -3708,7 +3709,6 @@ install_maniskill_libero_env() {
 }
 
 install_mujoco_warp_env() {
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     # Pin the verified CUDA 12-compatible stack so driverless Docker builds do
     # not resolve warp-lang>=1.17, whose wheels require a CUDA 13 driver.
     uv pip install "mujoco-warp==3.17.0" "warp-lang==1.16.0"

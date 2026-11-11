@@ -170,7 +170,7 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
    tensorboard --logdir ../results --port 6006
 
-``eval/env/return`` 是平均评估回合回报，``env/return`` 是训练回合回报。共享指标定义见 :doc:`训练指标 <../../reference/metrics>`；独立评估流程见 Evaluation 章节。
+``eval/env/return`` 是平均评估回合回报，``env/return`` 是训练回合回报。共享指标定义见 :doc:`训练指标 <../../reference/metrics>`；独立评估可通过在 ``run_embodiment.sh`` 中设置 ``runner.only_eval=true`` 和 ``runner.ckpt_path=<path>`` 运行。
 
 .. list-table::
    :header-rows: 1

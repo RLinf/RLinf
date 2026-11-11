@@ -5,6 +5,7 @@ defaults:
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:
@@ -29,7 +30,7 @@ runner:
   max_epochs: 1
   max_steps: -1
   only_eval: false
-  val_check_interval: -1
+  val_check_interval: 1
   save_interval: -1
   seq_length: 1
   max_prompt_length: 1
@@ -65,7 +66,7 @@ env:
     total_num_envs: 2
     group_size: ${algorithm.group_size}
     max_episode_steps: 1
-    max_steps_per_rollout_epoch: 1
+    max_steps_per_rollout_epoch: 2
     is_eval: false
     video_cfg:
       save_video: false
@@ -75,7 +76,7 @@ env:
     total_num_envs: 2
     group_size: ${algorithm.group_size}
     max_episode_steps: 1
-    max_steps_per_rollout_epoch: 1
+    max_steps_per_rollout_epoch: 2
     is_eval: true
     video_cfg:
       save_video: false
@@ -83,7 +84,7 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  backend: huggingface
+  rollout_backend: huggingface
   enable_offload: false
   pipeline_stage_num: 1
   model:
@@ -101,17 +102,10 @@ actor:
   enable_offload: false
 
   model:
-    model_type: mlp_policy
-    model_path: ""
     policy_setup: locomotion
     obs_dim: 17
     action_dim: 6
-    num_action_chunks: 1
-    hidden_dim: 256
-    precision: "32"
-    add_value_head: true
-    is_lora: false
-    lora_rank: 32
+    num_action_chunks: 2
 
   optim:
     lr: 3.0e-4
@@ -123,30 +117,11 @@ actor:
     clip_grad: 0.5
 
   fsdp_config:
-    strategy: fsdp
     sharding_strategy: no_shard
-    gradient_checkpointing: false
-    cpu_offload: false
-    offload_pin_memory: false
-    reshard_after_forward: true
-    enable_gradient_accumulation: true
-    forward_prefetch: false
-    limit_all_gathers: false
-    backward_prefetch: null
-    use_orig_params: false
-    use_liger_kernel: false
-
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-    amp_autocast:
-      enabled: false
-      precision: "bf16"
-
-    grad_scaler:
-      enabled: false
 
 reward:
   use_reward_model: false
