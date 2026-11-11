@@ -1172,7 +1172,8 @@ def test_cluster_env_configs_path_override_mode_in_worker_launch(monkeypatch):
 
 
 def test_cluster_env_configs_multi_node_group_and_hetero_placement():
-    # Skip if num of accelerators is not 4
+    if Worker.accelerator_type != AcceleratorType.NV_GPU:
+        pytest.skip("4-accelerator test only runs on NVIDIA hardware.")
     if accelerator_device_count() != 4:
         pytest.skip("Skipping test because num of accelerators is not 4")
     _reset_cluster_singleton()
