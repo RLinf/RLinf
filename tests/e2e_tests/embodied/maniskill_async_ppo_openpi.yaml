@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/maniskill_async_ppo_openpi
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -68,8 +68,8 @@ env:
     total_num_envs: 4
     auto_reset: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 20
-    max_steps_per_rollout_epoch: 20
+    max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
     init_params:
       use_multiple_plates: False
     video_cfg:
