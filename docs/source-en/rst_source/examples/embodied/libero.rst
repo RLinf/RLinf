@@ -460,19 +460,25 @@ processes resolve the same package and configuration. The last command initializ
 the fork's configuration before launching workers; answer ``N`` to use its
 default dataset path when prompted.
 
-Provide the initial-state files used by your evaluation protocol. The pinned
-fork includes four examples in ``scripts/__init_data/``; evaluating all 10 tasks
-requires a complete set of ``.pruned_init`` files. Each filename must match its
-task's BDDL stem. Copy your set into the installed fork:
+Download the complete initial-state set: 10 tasks with 20 states per task.
+These states come from demonstrations 101–120, in order, in the public
+`LIBERO-Mem-Raw dataset <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__.
+Install the files into the fork and verify their checksums:
 
 .. code-block:: bash
 
-   mkdir -p ../LIBERO-Mem/libero/libero/init_files/libero_mem
-   cp /path/to/libero-mem-init-states/*.pruned_init \
-      ../LIBERO-Mem/libero/libero/init_files/libero_mem/
+   INIT_URL=https://raw.githubusercontent.com/anHappyDog/RLinf/8d0f7cffcd5d315182faa104adb31b9ca52de9e4/evaluations/libero/init_states/libero_mem
+   INIT_DIR=../LIBERO-Mem/libero/libero/init_files/libero_mem
+   mkdir -p "$INIT_DIR"
+   curl -fL "$INIT_URL/SHA256SUMS" -o "$INIT_DIR/SHA256SUMS"
+   while read -r checksum filename; do
+     curl -fL "$INIT_URL/$filename" -o "$INIT_DIR/$filename"
+   done < "$INIT_DIR/SHA256SUMS"
+   (cd "$INIT_DIR" && sha256sum -c SHA256SUMS)
 
-Retain the source of these files and the task/trial selection when comparing
-checkpoints. Generating a new set changes the evaluation protocol.
+This downloads a fixed version of the 200 initial states. Keep these files and
+the task/trial selection unchanged when comparing checkpoints. Source details
+and the license are in ``evaluations/libero/init_states/libero_mem/``.
 
 On PyTorch 2.6 and later, enable loading the NumPy objects in trusted benchmark
 initial-state files in this evaluation shell:

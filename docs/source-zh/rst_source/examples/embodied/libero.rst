@@ -438,15 +438,20 @@ LIBERO-Mem 用于评测需要记住先前交互、按顺序完成子目标的操
 
 上述命令在新虚拟环境中安装指定版本的 fork。启动任务时保留 ``LIBERO_CONFIG_PATH`` 和 ``LIBERO_TYPE``，使 worker 进程使用相同的包与配置。最后一条命令在启动 worker 前初始化 fork 的配置；提示数据集路径时，回答 ``N`` 可使用默认值。
 
-准备评测协议指定的初始状态文件。该版本的 fork 仅在 ``scripts/__init_data/`` 中提供 4 个示例，评测全部 10 个任务需要完整的 ``.pruned_init`` 文件集，每个文件名必须与对应任务的 BDDL 文件名一致。将已有文件复制到安装的 fork 中：
+下载完整初始状态集：10 个任务，每个任务 20 个状态。它们依次来自公开 `LIBERO-Mem-Raw 数据集 <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__ 中的第 101–120 号 demonstration。将文件放入 fork 并校验：
 
 .. code-block:: bash
 
-   mkdir -p ../LIBERO-Mem/libero/libero/init_files/libero_mem
-   cp /path/to/libero-mem-init-states/*.pruned_init \
-      ../LIBERO-Mem/libero/libero/init_files/libero_mem/
+   INIT_URL=https://raw.githubusercontent.com/anHappyDog/RLinf/8d0f7cffcd5d315182faa104adb31b9ca52de9e4/evaluations/libero/init_states/libero_mem
+   INIT_DIR=../LIBERO-Mem/libero/libero/init_files/libero_mem
+   mkdir -p "$INIT_DIR"
+   curl -fL "$INIT_URL/SHA256SUMS" -o "$INIT_DIR/SHA256SUMS"
+   while read -r checksum filename; do
+     curl -fL "$INIT_URL/$filename" -o "$INIT_DIR/$filename"
+   done < "$INIT_DIR/SHA256SUMS"
+   (cd "$INIT_DIR" && sha256sum -c SHA256SUMS)
 
-比较 checkpoint 时，保留这些文件的来源和 task/trial 选择。重新生成初始状态会改变评测协议。
+上述命令下载固定版本的 200 个初始状态。比较 checkpoint 时，保持这些文件及 task/trial 选择不变。来源说明和许可证位于 ``evaluations/libero/init_states/libero_mem/``。
 
 使用 PyTorch 2.6 及以上版本时，在当前评测 shell 中允许加载可信基准初始状态文件中的 NumPy 对象：
 
