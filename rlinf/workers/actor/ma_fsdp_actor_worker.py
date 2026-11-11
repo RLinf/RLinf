@@ -437,12 +437,20 @@ class MAFSDPActor(FSDPActor):
         old_logprobs = m_batch.get("recomputed_logprobs")
         if old_logprobs is None:
             old_logprobs = m_batch["rollout_logprobs"]
-        advantages = m_batch["advantages"] * m_batch["loss_scales"]
+        loss_mask = self.get_response_loss_mask(m_batch)
+        # Cancel microbatch means; loss weights already contain global normalization.
+        if self.cfg.algorithm.loss_agg_func == "token-mean":
+            token_counts = loss_mask.sum(dim=-1, keepdim=True)
+            reduction_scale = token_counts.sum() / token_counts.clamp_min(1)
+        else:
+            reduction_scale = loss_mask.shape[0]
+        loss_scales = (
+            m_batch["loss_scales"] * reduction_scale * self.gradient_accumulation
+        )
+        advantages = m_batch["advantages"] * loss_scales
         ref_logprobs = None
         if "ref_logprobs" in m_batch:
             ref_logprobs = m_batch["ref_logprobs"]
-
-        loss_mask = self.get_response_loss_mask(m_batch)
 
         clip_ratio = self.cfg.algorithm.ratio_clip_eps
         clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
@@ -477,7 +485,7 @@ class MAFSDPActor(FSDPActor):
         kl_loss = torch.tensor(0.0, device=logprobs.device)
         if self.kl_beta > 0 and ref_logprobs is not None:
             kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
-            kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
+            kl_loss = self.loss_agg_func(kld * loss_scales, loss_mask)
             loss = loss + kl_loss * self.kl_beta
 
         # add to log
@@ -585,6 +593,7 @@ class MAFSDPActor(FSDPActor):
 
         scale_context = {
             "folding_scale": [],
+            "group_scale_in_loss": True,
             "enable_scale_of_group": False,
             "actor_global_batch_size": (
                 self.cfg.data.rollout_batch_size
@@ -627,12 +636,16 @@ class MAFSDPActor(FSDPActor):
         training_metrics_list = []
         with self.worker_timer():
             for mini_batch in mini_batches:
-                if mini_batch["input_ids"].shape == torch.Size([0]):
+                valid_tokens = (
+                    mini_batch["response_mask"].sum().to(Worker.torch_device_type)
+                )
+                torch.distributed.all_reduce(valid_tokens)
+                if valid_tokens.item() == 0:
                     continue
                 mean_metric_dict = self.training_step(batch=mini_batch)
                 training_metrics_list.append(mean_metric_dict)
 
-            if not self.lr_sched_sync_with_optim:
+            if training_metrics_list and not self.lr_sched_sync_with_optim:
                 self.lr_scheduler.step()
 
         return rollout_metrics, training_metrics_list

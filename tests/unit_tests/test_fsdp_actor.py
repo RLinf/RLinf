@@ -71,6 +71,9 @@ class _TokenModel(torch.nn.Module):
 def actor_group(tmp_path, monkeypatch, request):
     device = getattr(request, "param", "cpu")
     monkeypatch.setattr(Worker, "torch_device_type", device)
+    monkeypatch.setattr(
+        Worker, "torch_platform", torch.cuda if device == "cuda" else _CPUPlatform
+    )
     dist.init_process_group(
         "nccl" if device == "cuda" else "gloo",
         init_method=f"file://{tmp_path / 'group'}",
@@ -127,6 +130,7 @@ def _actor(dynamic=False, model_type="token"):
                 "advantage_mode": "trajectory",
                 "group_size": 2,
                 "loss_type": "actor",
+                "loss_agg_func": "token-mean",
                 "ratio_clip_eps": 0.2,
             },
         }
@@ -244,6 +248,7 @@ def test_group_packing_preserves_mask_loss_gradient_and_update(actor_group):
     batch["loss_scales"] = batch["response_mask"].float()
     context = {
         "folding_scale": [],
+        "group_scale_in_loss": True,
         "actor_global_batch_size": 4,
         "data_parallel_world_size": 1,
     }
@@ -530,8 +535,53 @@ def _sharded_actor(dynamic, model_type="token", world_size=2):
     return actor
 
 
-def _unsharded_update(temperature=1.0, model_type="token"):
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_generated_padding_keeps_backward_graph(actor_group, dynamic):
+    actor = _actor(dynamic)
+    batch = DynamicRolloutResult.get_batch_pad(
+        10,
+        [
+            "input_ids",
+            "attention_mask",
+            "position_ids",
+            "prompt_lengths",
+            "response_lengths",
+            "response_mask",
+            "recomputed_logprobs",
+            "advantages",
+            "loss_scales",
+        ],
+    )
+    metrics = actor.forward_backward_batch(0, batch, 1)
+    assert metrics["actor/final_loss"] == 0
+    for parameter in actor.model.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()
+        assert torch.count_nonzero(parameter.grad) == 0
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_sharded_training_with_generated_padding(actor_group, dynamic):
+    from packaging.version import Version
+
+    if Version(torch.__version__) < Version("2.12"):
+        pytest.skip("CPU FSDP2 coverage currently targets PyTorch >= 2.12")
+    actor = _sharded_actor(dynamic, world_size=1)
+    actor.pack_traj = False
+    actor.cfg.algorithm.n_minibatches = 4
+    actor.n_mini_batches = 4
+    rollout_metrics, metrics = _run_sharded_step(actor, 0)
+    assert rollout_metrics["valid_response_tokens"] == 10
+    assert len(metrics) == actor.optimizer_steps == 3
+    assert actor.optimizer.param_groups[0]["lr"] == pytest.approx(0.01 * 0.9**3)
+    for parameter in actor.model.parameters():
+        assert torch.isfinite(parameter.full_tensor()).all()
+        assert torch.isfinite(parameter.grad.full_tensor()).all()
+
+
+def _unsharded_update(temperature=1.0, model_type="token", kl_beta=0.0):
     actor = _actor(model_type=model_type)
+    actor.kl_beta = kl_beta
     actor.cfg.algorithm.sampling_params.temperature = temperature
     batch = DynamicRolloutResult.merge_batches(
         [_rollout().to_actor_batch(10, 0), _rollout(True).to_actor_batch(10, 0)],
@@ -539,25 +589,28 @@ def _unsharded_update(temperature=1.0, model_type="token"):
     )
     with torch.no_grad():
         batch["recomputed_logprobs"] = actor.forward_batch(batch)
+    if kl_beta > 0:
+        batch["ref_logprobs"] = batch["recomputed_logprobs"] + 0.15
     batch = actor.compute_advantages_and_returns(batch)
-    batch["loss_scales"] = batch["response_mask"].float()
-    context = {
-        "folding_scale": [],
-        "actor_global_batch_size": 4,
-        "data_parallel_world_size": 1,
-    }
-    for scale in get_loss_scales(["group_level", "agent_level", "turn_level"]):
-        batch = scale(context, batch)
-    batch = DynamicRolloutResult.pack_traj_batch(context, batch)
-    actor.gradient_accumulation = 4
+    mask = batch["response_mask"]
+    trajectories = set(batch["idx_to_traj"])
+    weights = torch.zeros_like(batch["advantages"])
+    for traj in trajectories:
+        rows = [i for i, t in enumerate(batch["idx_to_traj"]) if t == traj]
+        weights[rows] = 1 / (len(trajectories) * mask[rows].sum())
     optimizer = torch.optim.SGD(actor.model.parameters(), lr=0.01, momentum=0.9)
-    losses = []
-    for idx, micro in enumerate(get_iterator_k_split(batch, 4)):
-        losses.append(actor.forward_backward_batch(idx, micro, 4)["actor/final_loss"])
+    logprobs = actor.forward_batch(batch)
+    ratio = torch.exp(logprobs - batch["recomputed_logprobs"])
+    loss = -(ratio * batch["advantages"] * weights * mask).sum()
+    if kl_beta > 0:
+        log_ratio = batch["ref_logprobs"] - logprobs
+        kld = log_ratio.exp() - log_ratio - 1
+        loss = loss + kl_beta * (kld * weights * mask).sum()
+    loss.backward()
     norm = torch.nn.utils.clip_grad_norm_(actor.model.parameters(), 1.0)
     grads = {name: p.grad.clone() for name, p in actor.model.named_parameters()}
     optimizer.step()
-    return actor.model.state_dict(), grads, norm, torch.stack(losses).mean()
+    return actor.model.state_dict(), grads, norm, loss.detach()
 
 
 def _run_sharded_step(actor, rank):
@@ -565,6 +618,13 @@ def _run_sharded_step(actor, rank):
     for group_index in range(rank, 2, dist.get_world_size()):
         inputs.put(_rollout(bool(group_index)))
     actor.run_inference(inputs, inference, compute_ref_logprobs=False)
+    if actor.kl_beta > 0:
+        groups = [
+            inference.get() for _ in range(actor._get_num_rollout_results_per_dp())
+        ]
+        for rollout in groups:
+            rollout.ref_logprobs = rollout.recomputed_logprobs + 0.15
+            inference.put(rollout)
     metrics = actor.run_training(inference)
     assert inputs.empty() and inference.empty()
     return metrics
@@ -579,6 +639,9 @@ def _check_sharded_training(
     device="cpu",
     model_type="token",
     world_size=2,
+    kl_beta=0.0,
+    pack_traj=True,
+    micro_batch_size=1,
 ):
     Worker.torch_device_type = device
     Worker.torch_platform = torch.cuda if device == "cuda" else _CPUPlatform
@@ -593,8 +656,14 @@ def _check_sharded_training(
         timeout=timedelta(seconds=90),
     )
     try:
-        expected, grads, norm, loss = _unsharded_update(temperature, model_type)
+        expected, grads, norm, loss = _unsharded_update(
+            temperature, model_type, kl_beta
+        )
         actor = _sharded_actor(dynamic, model_type, world_size)
+        actor.kl_beta = kl_beta
+        actor.pack_traj = pack_traj
+        actor.micro_batch_size = micro_batch_size
+        actor.cfg.actor.micro_batch_size = micro_batch_size
         actor.cfg.algorithm.sampling_params.temperature = temperature
         assert all(
             isinstance(p, torch.distributed.tensor.DTensor)
@@ -653,6 +722,9 @@ def _check_sharded_training(
                         "world_size": world_size,
                         "dynamic_batch": dynamic,
                         "temperature": temperature,
+                        "kl_beta": kl_beta,
+                        "pack_traj": pack_traj,
+                        "micro_batch_size": micro_batch_size,
                         "loss": float(loss.detach()),
                         "grad_norm": float(norm),
                         "weight_max_abs_error": weight_error,
@@ -764,9 +836,56 @@ def test_tiny_qwen_sharded_update_and_checkpoint_resume(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "world_size,dynamic", [(1, False), (1, True), (2, False), (2, True)]
+)
+def test_nonzero_kl_sharded_update_and_checkpoint_resume(tmp_path, world_size, dynamic):
+    from packaging.version import Version
+
+    if Version(torch.__version__) < Version("2.12"):
+        pytest.skip("CPU FSDP2 coverage currently targets PyTorch >= 2.12")
+    args = (
+        str(tmp_path / "group"),
+        str(tmp_path / "checkpoint"),
+        dynamic,
+        0.7,
+        "cpu",
+        "token",
+        world_size,
+        0.1,
+    )
+    if world_size == 1:
+        _check_sharded_training(0, *args)
+    else:
+        torch.multiprocessing.spawn(
+            _check_sharded_training, args=args, nprocs=world_size, join=True
+        )
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize("pack_traj", [False, True])
+def test_padded_microbatches_match_trajectory_objective(tmp_path, dynamic, pack_traj):
+    from packaging.version import Version
+
+    if Version(torch.__version__) < Version("2.12"):
+        pytest.skip("CPU FSDP2 coverage currently targets PyTorch >= 2.12")
+    _check_sharded_training(
+        0,
+        str(tmp_path / "group"),
+        str(tmp_path / "checkpoint"),
+        dynamic,
+        0.7,
+        world_size=1,
+        kl_beta=0.1,
+        pack_traj=pack_traj,
+        micro_batch_size=2,
+    )
+
+
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires two CUDA GPUs")
 @pytest.mark.parametrize("dynamic", [False, True])
-def test_cuda_sharded_actor_update_and_checkpoint_resume(tmp_path, dynamic):
+@pytest.mark.parametrize("kl_beta", [0.0, 0.1])
+def test_cuda_sharded_actor_update_and_checkpoint_resume(tmp_path, dynamic, kl_beta):
     torch.multiprocessing.spawn(
         _check_sharded_training,
         args=(
@@ -776,6 +895,8 @@ def test_cuda_sharded_actor_update_and_checkpoint_resume(tmp_path, dynamic):
             0.7,
             "cuda",
             "token" if dynamic else "qwen",
+            2,
+            kl_beta,
         ),
         nprocs=2,
         join=True,
