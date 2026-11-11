@@ -117,20 +117,8 @@ class MAFSDPActor(FSDPActor):
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
     def _get_num_rollout_results_per_dp(self) -> int:
-        """Return the number of DynamicRolloutResult objects each DP rank should receive.
-
-        For multi-agent dynamic rollout, each channel item corresponds to one trajectory
-        group, while `num_sequence` inside that item can vary across turns. Therefore the
-        receive loop should be counted in rollout-result units, not sequence units.
-        """
-        world_size = torch.distributed.get_world_size()
-        batch_size = self.cfg.data.rollout_batch_size
-        if batch_size < world_size or batch_size % world_size:
-            raise ValueError(
-                f"rollout_batch_size ({batch_size}) must be a positive multiple "
-                f"of actor DP world size ({world_size})"
-            )
-        return batch_size // world_size
+        """Return the number of question groups consumed by each actor DP rank."""
+        return self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
 
     def get_rollout_metrics_group(self, batch: dict[str, torch.Tensor]):
         """Return the process group used to aggregate rollout metrics."""
