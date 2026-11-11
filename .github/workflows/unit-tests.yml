@@ -49,7 +49,7 @@ jobs:
       - name: Create environment and install dependencies
         run: |
           pip install uv
-          uv venv
+          uv venv --python 3.11.14
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
           UV_TORCH_BACKEND=cpu uv pip install gymnasium imageio opencv-python "torchvision==0.26.0"
