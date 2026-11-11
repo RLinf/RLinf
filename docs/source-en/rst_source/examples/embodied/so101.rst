@@ -1,8 +1,7 @@
 SO101 Setup and Control
 =======================
 
-This doc walks you through setting up an SO101 arm and running the RLinf
-hardware test script to read feedback and check joint and gripper movement.
+This doc covers SO101 hardware setup, data collection, SFT, policy evaluation, and online HG-DAgger with leader takeover.
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center
@@ -318,12 +317,30 @@ success, or ``b`` to end it as failure. The checkpoint must contain weights
 compatible with ``pi05_so101_joint`` and normalization statistics for the
 configured asset ID.
 
+Train with Online HG-DAgger
+---------------------------
+
+Use online HG-DAgger when the policy needs new SO-101 demonstrations collected during deployment. The template places the training actor on node rank 0 and the policy rollout and SO-101 environment on node rank 1; it enables action-expert-only training and saves successful episodes as an online LeRobot dataset.
+
+Start from ``examples/embodiment/config/realworld_so101_hg_dagger_openpi.yaml`` and make a private site config. Set checkpoint and normalization-statistics paths that are readable on each node, then replace the follower and leader serial ports, calibration IDs, camera device, keyboard device, and both nodes' network-interface placeholders. Review the reset pose for the connected arm before enabling hardware. The template leaves the SO-101 environment's default joint reset pose and gripper position in effect; set a tested pose when that default is unsuitable.
+
+The config assigns the actor to ``train`` on rank 0 and assigns ``rollout`` and ``so101`` to rank 1. Before starting Ray, export each node's ``RLINF_NODE_RANK`` and ``RLINF_COMM_NET_DEVICES``; set ``GLOO_SOCKET_IFNAME`` and ``NCCL_SOCKET_IFNAME`` when your cluster needs explicit interface selection. The ``env_configs`` entries configure RLinf worker environments, while the Ray processes must inherit the node-specific values for default communication workers. Follow :doc:`Multi-Node Setup </rst_source/guides/multi_node>` for Ray startup.
+
+With the two-node Ray cluster running, activate the embodied environment on the rank-0 head and launch the training entrypoint from the repository root:
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+     --config-name realworld_so101_hg_dagger_openpi
+
+After each robot reset, wait for the HG-DAgger ready message. Press ``a`` to start policy control, ``Space`` to take over with the leader, ``Space`` again to return control to the policy, ``c`` to save a successful episode, or ``a`` to abort the active episode. Successful episodes are written below ``runner.logger.log_path/online_lerobot``; ``actor.model.openpi.train_expert_only`` controls action-expert-only training.
+
 New Real-World Tasks
 --------------------
 
 To build a different RLinf environment around the arm, follow
 :doc:`New Real-World Tasks </rst_source/extending/new_task>` to define its
 reset procedure, observations, actions, reward, and success condition. The
-collection, SFT, and fixed-checkpoint evaluation workflow above already uses
-the provided ``SO101ReachEnv-v1`` task; use this extension guide when you add a
-different task or environment.
+collection, SFT, fixed-checkpoint evaluation, and online HG-DAgger workflows
+above reuse the provided ``SO101ReachEnv-v1`` task; use this extension guide
+when you add a different task or environment.

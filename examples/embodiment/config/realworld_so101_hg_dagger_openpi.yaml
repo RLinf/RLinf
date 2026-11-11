@@ -1,0 +1,196 @@
+# Online human-guided DAgger for SO-101 with Pi0.5.
+defaults:
+  - env/so101_reach@env.train
+  - env/so101_reach@env.eval
+  - model/so101_pi05@actor.model
+  - model/so101_pi05@rollout.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: train
+      placement: 0
+    env:
+      node_group: so101
+      placement: 0
+    rollout:
+      node_group: inference
+      placement: 0
+  node_groups:
+    - label: train
+      node_ranks: 0
+      env_configs:
+        - node_ranks: 0
+          env_vars:
+            - RLINF_COMM_NET_DEVICES: "<training_node_interface>"
+    - label: inference
+      node_ranks: 1
+      env_configs:
+        - node_ranks: 1
+          env_vars:
+            - RLINF_COMM_NET_DEVICES: "<robot_node_interface>"
+    - label: so101
+      node_ranks: 1
+      env_configs:
+        - node_ranks: 1
+          env_vars:
+            - RLINF_COMM_NET_DEVICES: "<robot_node_interface>"
+            - RLINF_KEYBOARD_DEVICE: "/dev/input/by-id/<keyboard_event_device>"
+      hardware:
+        type: SO101
+        configs:
+          - node_rank: 1
+            serial_port: "/path/to/follower_serial_port"
+            calibration_id: "<follower_calibration_id>"
+            camera_type: uvc
+            camera_serials: ["/dev/v4l/by-id/<camera_id>"]
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: so101-dagger
+    experiment_name: "realworld_so101_hg_dagger_openpi"
+    logger_backends: ["tensorboard"]
+  max_epochs: 8000
+  max_steps: -1
+  only_eval: false
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: "/path/to/checkpoint"
+
+algorithm:
+  dagger:
+    # Retain every frame from successful episodes, including policy actions.
+    only_save_expert: true
+    online_lerobot:
+      enabled: true
+      only_success: true
+      robot_type: so101
+      fps: 15
+      finalize_interval: 1
+      data_path: ${runner.logger.log_path}/online_lerobot
+      rolling_lerobot_window_size: 50000
+      min_frames: 1
+      lerobot_num_workers: 0
+  gamma: 0.99
+  update_epoch: 1
+  adv_type: gae
+  loss_type: embodied_dagger
+
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    auto_reset: true
+    ignore_terminations: false
+    total_num_envs: 1
+    no_gripper: false
+    teleop:
+      - so101_leader:
+          port: /path/to/leader_serial_port
+          calibration_id: "<leader_calibration_id>"
+          align_fps: 30.0
+          manual_start_hold_seconds: 3.0
+    keyboard_reward_wrapper: null
+    so101_episode_wrapper: hg_dagger
+    max_steps_per_rollout_epoch: 1000
+    max_episode_steps: 1000
+    override_cfg:
+      max_num_steps: 1000
+      task_description: "Pick something and place it into the box."
+      step_frequency: 15.0
+      reset_on_init: false
+      reset_duration: 3.0
+      reset_joint_speed: 1.3089969390
+      success_hold_steps: 1
+      use_dense_reward: false
+      enable_camera_player: false
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    no_gripper: false
+    teleop: none
+    max_steps_per_rollout_epoch: 1000
+    max_episode_steps: 1000
+    override_cfg:
+      max_num_steps: 1000
+      task_description: ${env.train.override_cfg.task_description}
+      step_frequency: 15.0
+      reset_on_init: false
+      reset_duration: 3.0
+      reset_joint_speed: 1.3089969390
+      success_hold_steps: 1
+      use_dense_reward: false
+      enable_camera_player: false
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_prev_infos: false
+  model:
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+    openpi_data:
+      norm_stats_path: ${actor.model.openpi_data.norm_stats_path}
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 32
+  global_batch_size: 32
+  seed: 0
+  enable_offload: false
+  model:
+    model_path: /path/to/checkpoint
+    num_action_chunks: 20
+    action_dim: 6
+    openpi:
+      task: dagger
+      config_name: pi05_so101_joint
+      discrete_state_input: true
+      train_expert_only: true
+      action_chunk: ${actor.model.num_action_chunks}
+    openpi_data:
+      norm_stats_path: /path/to/norm_stats.json
+  optim:
+    lr: 1.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
+    clip_grad: 4.0
+    warmup_style: cosine
+    lr_warmup_steps: 20
+    total_training_steps: 1000
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
+
+# Both nodes load the same initial checkpoint; later updates sync expert patches.
+weight_syncer:
+  patch:
+    init_sync:
+      enabled: false

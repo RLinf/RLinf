@@ -20,9 +20,10 @@ import math
 import threading
 import time
 from contextlib import nullcontext
-from typing import Any, SupportsFloat
+from typing import Any, Iterator, SupportsFloat
 
 import numpy as np
+from gymnasium import Env
 from gymnasium.core import ActType, ObsType
 
 from rlinf.envs.real.wrappers.episode.start_end import KeyboardStartEndWrapper
@@ -80,7 +81,7 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
             self.log("%s: %d", message, math.ceil(remaining))
             time.sleep(min(1.0, remaining))
 
-    def _hold_before_reset(self) -> None:
+    def _hold_before_reset(self, *, wait_for_operator: bool = True) -> None:
         """Reapply leader torque and wait before reset or park."""
         hold = self._teleop_attr("hold_for_reset")
         if hold is not None:
@@ -91,19 +92,22 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         seconds = float(seconds)
         if seconds < 0 or not math.isfinite(seconds):
             raise ValueError("manual_start_hold_seconds must be finite and nonnegative")
-        if seconds:
+        if seconds and wait_for_operator:
             self._countdown("Keep hands clear; reset starts in", seconds)
 
-    def before_recording_start(self) -> None:
-        """Release the leader after the handover countdown."""
+    def _countdown_before_manual(self) -> None:
         seconds = self._teleop_attr("manual_start_hold_seconds")
         if seconds is None:
-            seconds = 0.0
+            return
         seconds = float(seconds)
         if seconds < 0 or not math.isfinite(seconds):
             raise ValueError("manual_start_hold_seconds must be finite and nonnegative")
         if seconds:
             self._countdown("Manual control starts in", seconds)
+
+    def before_recording_start(self) -> None:
+        """Release the leader after the handover countdown."""
+        self._countdown_before_manual()
         release = self._teleop_attr("release_for_manual")
         if release is not None:
             release(self._teleop_context())
@@ -277,4 +281,116 @@ class SO101StartEndWrapper(KeyboardStartEndWrapper):
         )
         info["keyboard_event"] = event
         info["segment_advance"] = segment_advance
+        return obs, reward, terminated, truncated, info
+
+
+class SO101HGDAggerWrapper(SO101StartEndWrapper):
+    """Switch SO-101 control between policy and leader at chunk boundaries."""
+
+    def __init__(self, env: Env) -> None:
+        """Initialize policy-owned control and clear pending handovers."""
+        super().__init__(env)
+        self._control_mode = "policy"
+        self._pending_space = False
+        self._hold_action_chunk = False
+
+    def _set_control_mode(self, mode: str) -> None:
+        """Assign control ownership to the policy or the SO-101 leader."""
+        set_mode = self._teleop_attr("set_dagger_control_mode")
+        if set_mode is None:
+            raise RuntimeError("SO-101 HG-DAgger requires an SO-101 leader")
+        set_mode(mode)
+        self._control_mode = mode
+
+    def begin_episode(self) -> None:
+        """Start an episode with policy control and no queued handover."""
+        super().begin_episode()
+        self._pending_space = False
+        self._hold_action_chunk = False
+        self._set_control_mode("policy")
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[Any, dict[str, Any]]:
+        """Show the operator controls after the robot reset is complete."""
+        result = super().reset(seed=seed, options=options)
+        self.log(
+            "HG-DAgger ready: reset is complete. Press 'a' to start the policy "
+            "rollout; press Space to take over; press 'c' to save or 'a' to abort."
+        )
+        return result
+
+    def before_recording_start(self) -> None:
+        """Start policy control without handing ownership to the leader."""
+
+    def before_recording_abort(self) -> None:
+        """Hold the leader before reset; wait only if it owns control."""
+        was_manual = self._control_mode == "manual"
+        self._hold_before_reset(wait_for_operator=was_manual)
+        self._set_control_mode("policy")
+
+    def before_recording_success(self) -> None:
+        """Hold the leader before reset; wait only if it owns control."""
+        was_manual = self._control_mode == "manual"
+        self._hold_before_reset(wait_for_operator=was_manual)
+        self._set_control_mode("policy")
+
+    def presses(self) -> Iterator[str]:
+        """Queue Space for the next action chunk and pass episode keys through."""
+        for key in super().presses():
+            if key == "Key.space":
+                if self._recording:
+                    self._pending_space = True
+                continue
+            yield key
+
+    def on_action_chunk_begin(self) -> None:
+        """Apply a pending handover after the previous action chunk completes."""
+        try:
+            on_begin = self.env.get_wrapper_attr("on_action_chunk_begin")
+        except AttributeError:
+            on_begin = None
+        if callable(on_begin):
+            on_begin()
+
+        self._hold_action_chunk = False
+        if not self._pending_space or not self._recording:
+            return
+        self._pending_space = False
+        context = self._teleop_context()
+        if self._control_mode == "policy":
+            align = self._teleop_attr("align_to_follower")
+            release = self._teleop_attr("release_for_manual")
+            if align is None or release is None:
+                raise RuntimeError("SO-101 leader cannot perform manual handover")
+            align(context)
+            self._countdown_before_manual()
+            release(context)
+            self._set_control_mode("manual")
+        else:
+            hold = self._teleop_attr("hold_for_reset")
+            if hold is None:
+                raise RuntimeError("SO-101 leader cannot hold during policy handover")
+            hold(context)
+            self._set_control_mode("policy")
+            self._hold_action_chunk = True
+
+    def step(
+        self, action: ActType
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        """Apply explicit control ownership and report executed expert actions."""
+        stale_policy_chunk = self._hold_action_chunk
+        if stale_policy_chunk:
+            action = self._hold_action(action)
+        obs, reward, terminated, truncated, info = super().step(action)
+
+        if stale_policy_chunk:
+            info["intervene_action"] = action
+            info["intervene_flag"] = np.ones(1, dtype=bool)
+        elif self._control_mode == "manual" and "intervene_action" in info:
+            info["intervene_flag"] = np.ones(1, dtype=bool)
+
+        if info["keyboard_event"] in {"abort", "end_success"}:
+            self._pending_space = False
+            self._hold_action_chunk = False
         return obs, reward, terminated, truncated, info

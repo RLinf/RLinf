@@ -1,7 +1,7 @@
 SO101 配置与控制
 ================
 
-本文介绍如何配置 SO101 机械臂，并运行 RLinf 硬件测试脚本，读取反馈、检查关节运动与夹爪开合。
+本页介绍 SO101 硬件配置、数据采集、SFT、policy 评测，以及使用主臂接管的在线 HG-DAgger 流程。
 
 .. figure:: https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp
    :align: center
@@ -210,7 +210,25 @@ RLinf 提供 SO-101 关节空间 SFT 配置和本地 fixed-checkpoint 推理配�
 
 评测配置使用 standard action-chunk 评测路径。按选定键盘上的 ``a`` 启动 episode，按 ``c`` 以成功结束，按 ``b`` 以失败结束。checkpoint 必须包含与 ``pi05_so101_joint`` 兼容的权重，以及配置的 asset ID 对应的 norm stats。
 
+使用在线 HG-DAgger 训练
+------------------------------
+
+当 policy 需要在部署过程中继续收集 SO-101 示范时，使用在线 HG-DAgger 流程。模板将训练 actor 放在 rank 0，并把 policy rollout 和 SO-101 环境放在 rank 1；它启用仅训练 action expert，并将成功 episode 保存为在线 LeRobot dataset。
+
+从 ``examples/embodiment/config/realworld_so101_hg_dagger_openpi.yaml`` 开始，复制出本机专用配置。填写两台节点都能读取的 checkpoint 和 norm stats 路径，再替换 follower 与 leader 串口、calibration ID、相机设备、键盘设备以及两台主机的网卡占位值。连接硬件前先检查 reset 姿态。模板默认使用 SO-101 环境的关节 reset 姿态和夹爪位置；若该默认姿态不适合当前本体，请换成已验证的姿态。
+
+配置将 actor 放在 rank 0 的 ``train`` 组，并将 ``rollout`` 与 ``so101`` 放在 rank 1。启动 Ray 前，在每台节点分别导出 ``RLINF_NODE_RANK`` 和 ``RLINF_COMM_NET_DEVICES``；集群需要显式指定接口时，再设置 ``GLOO_SOCKET_IFNAME`` 与 ``NCCL_SOCKET_IFNAME``。配置中的 ``env_configs`` 用于设置 RLinf worker 环境；Ray 进程也必须在启动时继承对应节点的网卡值，默认通信 worker 才能选择正确接口。Ray 启动方法参考 :doc:`多机配置 </rst_source/guides/multi_node>`。
+
+两节点 Ray 集群启动后，在 rank 0 的 head 节点激活 embodied 环境，并从仓库根目录运行训练入口：
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent.py \
+     --config-name realworld_so101_hg_dagger_openpi
+
+每次机械臂复位完成后，等待 HG-DAgger 就绪提示。按 ``a`` 开始 policy 控制，按 ``Space`` 由主臂接管，再按一次 ``Space`` 将控制权交回 policy；按 ``c`` 保存成功 episode，按 ``a`` 放弃当前 episode。成功 episode 会写入 ``runner.logger.log_path/online_lerobot``；``actor.model.openpi.train_expert_only`` 控制是否仅训练 action expert。
+
 新增真机任务
 ------------
 
-如果要围绕这台机械臂构建其他 RLinf environment，请参考 :doc:`新增真机任务 </rst_source/extending/new_task>`，定义对应的 reset 流程、观测、动作、奖励和成功条件。上面的采集、SFT 与 fixed-checkpoint 评测流程已经使用 RLinf 提供的 ``SO101ReachEnv-v1`` task；只有新增其他 task 或 environment 时才需要参考这份扩展指南。
+如果要围绕这台机械臂构建其他 RLinf environment，请参考 :doc:`新增真机任务 </rst_source/extending/new_task>`，定义对应的 reset 流程、观测、动作、奖励和成功条件。上面的采集、SFT、fixed-checkpoint 评测与在线 HG-DAgger 流程都复用 RLinf 提供的 ``SO101ReachEnv-v1`` task；只有新增其他 task 或 environment 时才需要参考这份扩展指南。
