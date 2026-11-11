@@ -2693,6 +2693,8 @@ def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
     with pytest.raises(ValueError, match="active right arm"):
         client.predict_action_batch({"history": [sample]}, mode="eval")
     client.close()
+
+
 def _accelerator_device() -> torch.device:
     """Device the OpenVLA checkpoint smoke test should run on."""
     npu = getattr(torch, "npu", None)
