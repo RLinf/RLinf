@@ -1025,7 +1025,7 @@ class DynamicRolloutResult:
                 *pad_seq_shape, dtype=torch.long, device=Worker.torch_device_type
             ),
             "is_end": torch.zeros(1, dtype=torch.bool, device=Worker.torch_device_type),
-            "prompt_lengths": torch.zeros(
+            "prompt_lengths": torch.ones(
                 1, dtype=torch.int32, device=Worker.torch_device_type
             ),
             "response_lengths": torch.zeros(
@@ -1283,7 +1283,9 @@ class DynamicRolloutResult:
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context.get("folding_scale", [])
-        if "group_level" in folding_scale:
+        if "group_level" in folding_scale and not context.get(
+            "group_scale_in_loss", False
+        ):
             packed_batch["loss_scales"] *= num_sequence_after / num_sequence
 
         return packed_batch

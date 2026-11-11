@@ -20,20 +20,21 @@ from rlinf.algorithms.registry import register_loss_scale
 
 @register_loss_scale("group_level")
 def group_scale(context, batch):
-    """Apply the outer group-level normalization factor to advantages.
+    """Apply the outer group-level normalization to advantages or loss weights.
 
     This function handles the top-level `1 / G` normalization in GRPO.
 
     Concretely, it rescales the current advantages so that the effective batch
     contribution matches the configured actor global batch size after dynamic
-    batches are merged across data-parallel workers.
+    batches are merged across data-parallel workers. With `group_scale_in_loss`,
+    normalize summed row contributions for both policy and KL terms.
 
     Args:
         context (dict): Shared scaling context built in `run_training`.
         batch (dict): Dynamic rollout batch containing `idx_to_traj` and `advantages`.
 
     Returns:
-        dict: The input batch with group-normalized advantages.
+        dict: The input batch with group-normalized advantages or loss weights.
     """
     folding_scale = context["folding_scale"]
     assert "group_level" not in folding_scale, (
@@ -44,10 +45,11 @@ def group_scale(context, batch):
 
     num_sequence = len(batch["idx_to_traj"])
     dp_world_size = context.get("data_parallel_world_size", 1)
-    # Convert the local dynamic-turn count back to the effective global batch
-    # normalization used by the actor update.
-    group_scale = num_sequence * dp_world_size / context["actor_global_batch_size"]
-    batch["advantages"] *= group_scale
+    group_scale = dp_world_size / context["actor_global_batch_size"]
+    if context.get("group_scale_in_loss", False):
+        batch["loss_scales"] *= group_scale
+    else:
+        batch["advantages"] *= num_sequence * group_scale
     return batch
 
 
