@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import inspect
 import math
@@ -36,8 +37,10 @@ from rlinf.algorithms.utils import (
     apply_importance_sampling_correction,
     compute_entropy_loss,
 )
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+from rlinf.utils.utils import masked_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -1026,3 +1029,353 @@ def test_npu_sdpa_mask_cast_preserves_updates_and_biases(monkeypatch, capturing)
         rtol=0,
         atol=0,
     )
+
+
+def test_pinned_offload_context_restores_after_overlapping_exits():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    original_to = torch.Tensor.to
+    first = pinned_offload_context()
+    second = pinned_offload_context()
+    first_active = True
+    first.__enter__()
+    second.__enter__()
+    try:
+        patched_to = torch.Tensor.to
+        assert patched_to is not original_to
+
+        tensor = torch.ones(2)
+        assert tensor.to(torch.float64).dtype == torch.float64
+        torch.testing.assert_close(tensor.to(torch.zeros(2)), tensor)
+
+        first.__exit__(None, None, None)
+        first_active = False
+        assert torch.Tensor.to is patched_to
+    finally:
+        if first_active:
+            first.__exit__(None, None, None)
+        second.__exit__(None, None, None)
+
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize(
+    "source_format", [torch.contiguous_format, torch.channels_last]
+)
+@pytest.mark.parametrize(
+    "memory_format",
+    [torch.preserve_format, torch.contiguous_format, torch.channels_last],
+)
+def test_pinned_offload_preserves_cuda_tensor_values_and_layout(
+    dtype, source_format, memory_format
+):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.randn(2, 3, 8, 8, device="cuda", dtype=dtype).contiguous(
+        memory_format=source_format
+    )
+    expected = source.to("cpu", memory_format=memory_format)
+    original_to = torch.Tensor.to
+    with pinned_offload_context():
+        result = source.to("cpu", None, False, memory_format=memory_format)
+        assert result.is_pinned()
+        assert result.device.type == "cpu"
+        assert result.dtype == source.dtype
+        assert result.stride() == expected.stride()
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(result.to(source.device), source)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_restores_after_cuda_copy_and_exception():
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda")
+    original_to = torch.Tensor.to
+    with pytest.raises(RuntimeError, match="abort offload"):
+        with pinned_offload_context():
+            assert source.to(device=torch.device("cpu")).is_pinned()
+            raise RuntimeError("abort offload")
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a CUDA device")
+def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    source = torch.ones(2, device="cuda", dtype=torch.float32)
+    original_to = torch.Tensor.to
+    allocator_error = RuntimeError("pinned allocator exhausted")
+
+    def fail_allocation(*args, **kwargs):
+        assert kwargs["pin_memory"] is True
+        raise allocator_error
+
+    monkeypatch.setattr(torch, "empty_like", fail_allocation)
+    with pytest.raises(
+        RuntimeError, match="Failed to allocate pinned CPU memory"
+    ) as info:
+        with pinned_offload_context():
+            source.to("cpu")
+    assert info.value.__cause__ is allocator_error
+    assert "shape=(2,)" in str(info.value)
+    assert "dtype=torch.float32" in str(info.value)
+    assert f"source_device={source.device}" in str(info.value)
+    assert "requested_bytes=8" in str(info.value)
+    assert torch.Tensor.to is original_to
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normalize):
+    values = torch.full((4, 6), 99.0)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    mask[0, 4] = mask[3, 1] = True
+    mask[1, 3:5] = mask[2, 1:3] = True
+    values[mask] = torch.tensor([0.4, 0.5, 0.6, 0.2, 0.3, 0.1])
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="gae_dynamic",
+        rewards=torch.tensor([1.0, -0.5, 1.0, -0.5]),
+        values=values,
+        loss_mask=mask,
+        idx_to_traj=[0, 1, 0, 1],
+        prompt_lengths=torch.tensor([4, 3, 1, 1]),
+        gamma=0.9,
+        gae_lambda=0.95,
+        normalize_advantages=normalize,
+    )
+    expected_advantages = torch.zeros_like(values)
+    expected_returns = torch.zeros_like(values)
+    episodes = [([(2, 1), (2, 2), (0, 4)], 1.0), ([(3, 1), (1, 3), (1, 4)], -0.5)]
+    for actions, reward in episodes:
+        gae, next_value = 0.0, 0.0
+        for step in reversed(range(len(actions))):
+            row, token = actions[step]
+            value = values[row, token]
+            terminal_reward = reward if step == len(actions) - 1 else 0.0
+            delta = terminal_reward + 0.9 * next_value - value
+            gae = delta + 0.9 * 0.95 * gae
+            expected_advantages[row, token] = gae
+            expected_returns[row, token] = gae + value
+            next_value = value
+    if normalize:
+        valid = expected_advantages[mask]
+        expected_advantages[mask] = (valid - valid.mean()) / valid.std(unbiased=False)
+        torch.testing.assert_close(
+            advantages[mask].mean(), torch.tensor(0.0), atol=1e-6, rtol=0
+        )
+        torch.testing.assert_close(
+            advantages[mask].var(unbiased=False), torch.tensor(1.0)
+        )
+    torch.testing.assert_close(advantages, expected_advantages)
+    torch.testing.assert_close(returns, expected_returns)
+
+
+def test_multiturn_gae_rejects_duplicate_prompt_lengths_in_one_episode():
+    with pytest.raises(ValueError, match="distinct prompt lengths"):
+        calculate_adv_and_returns(
+            task_type="reasoning",
+            adv_type="gae_dynamic",
+            rewards=torch.ones(2),
+            values=torch.zeros(2, 3),
+            loss_mask=torch.tensor([[False, True, False], [False, True, False]]),
+            idx_to_traj=[0, 0],
+            prompt_lengths=torch.tensor([1, 1]),
+            gamma=0.9,
+            gae_lambda=0.95,
+        )
+
+
+# Multi-agent Megatron actor and critic losses on a single CPU rank.
+
+
+class _TokenModel(torch.nn.Module):
+    pre_process = True
+    post_process = True
+
+    def __init__(self, role="critic"):
+        super().__init__()
+        self.role = role
+        self.weight = torch.nn.Parameter(torch.tensor(0.01))
+
+    def forward(self, input_ids, attention_mask, position_ids, packed_seq_params):
+        output = (input_ids.float() * self.weight).unsqueeze(-1)
+        if self.role == "actor":
+            output = output * torch.arange(8, dtype=torch.float32)
+        return output
+
+
+@pytest.fixture
+def megatron_cpu(monkeypatch, tmp_path):
+    pytest.importorskip("megatron.training")
+    from megatron.core import parallel_state
+
+    from rlinf.scheduler import Worker
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+    from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, *args, **kwargs: self)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+    torch.distributed.init_process_group(
+        "gloo", init_method=(tmp_path / "megatron-group").as_uri(), rank=0, world_size=1
+    )
+    for name in (
+        "_TENSOR_MODEL_PARALLEL_GROUP",
+        "_CONTEXT_PARALLEL_GROUP",
+        "_DATA_PARALLEL_GROUP",
+    ):
+        monkeypatch.setattr(parallel_state, name, torch.distributed.group.WORLD)
+    monkeypatch.setattr(parallel_state, "get_context_parallel_rank", lambda: 0)
+
+    def make_worker(role, valid_token_scale=False):
+        worker = object.__new__(
+            MAMegatronActor if role == "actor" else MAMegatronCritic
+        )
+        worker.cfg = OmegaConf.create(
+            {
+                "runner": {"task_type": "reasoning"},
+                "algorithm": {
+                    "loss_type": "actor",
+                    "use_valid_token_scale": valid_token_scale,
+                    "sampling_params": {"temperature": 1.0},
+                    "early_stop_imp_ratio": None,
+                },
+            }
+        )
+        worker.transformer_config = SimpleNamespace(sequence_parallel=False)
+        worker.return_loss = True
+        worker.loss_agg_func = masked_mean
+        worker.calculate_entropy = False
+        worker.kl_beta = 0
+        worker.clip_ratio_c = None
+        worker.clip_ratio_low = worker.clip_ratio_high = 0.2
+        worker.value_clip = 0.5
+        worker.num_microbatches = 1
+        return worker
+
+    try:
+        yield make_worker, parallel_state
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.parametrize("role", ["actor", "critic"])
+def test_valid_token_scaling_preserves_unsplit_gradient(
+    megatron_cpu, monkeypatch, role
+):
+    make_worker, parallel_state = megatron_cpu
+    worker = make_worker(role)
+    input_ids = torch.arange(64).reshape(16, 4) % 7 + 1
+    positions = torch.arange(4).expand_as(input_ids).clone()
+    mask = (positions > 0) & (positions <= (torch.arange(16) % 3 + 1)[:, None])
+    mask[[0, 2, 3, 15]] = False
+    batch = {
+        "input_ids": input_ids,
+        "attention_mask": torch.ones_like(mask),
+        "position_ids": positions,
+        "response_mask": mask,
+        "loss_scales": mask.float(),
+        "advantages": input_ids.float() / 7 - 0.5,
+        "recomputed_logprobs": torch.zeros_like(mask, dtype=torch.float32),
+        "values": torch.zeros_like(mask, dtype=torch.float32),
+        "returns": torch.full_like(mask, 0.7, dtype=torch.float32),
+    }
+    forward = worker.get_forward_step_func()
+    expected_model = _TokenModel(role)
+    output, loss_func = forward(iter([copy.deepcopy(batch)]), expected_model)
+    expected_loss, _ = loss_func(output)
+    expected_loss.backward()
+    assert expected_model.weight.grad.abs() > 0
+
+    worker.cfg.algorithm.use_valid_token_scale = True
+    worker._setup_valid_token_scale(batch)
+    dp_size, micro_batch_size = 4, 2
+    worker.num_microbatches = len(input_ids) // dp_size // micro_batch_size
+    monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: dp_size)
+    model = _TokenModel(role)
+    for rank_rows in torch.chunk(torch.arange(len(input_ids)), dp_size):
+        for rows in rank_rows.split(micro_batch_size):
+            microbatch = {key: value[rows] for key, value in batch.items()}
+            output, loss_func = forward(iter([microbatch]), model)
+            loss, _ = loss_func(output)
+            assert loss.requires_grad and torch.isfinite(loss)
+            # Megatron averages microbatch losses and then DP gradients.
+            (loss / worker.num_microbatches / dp_size).backward()
+    torch.testing.assert_close(
+        model.weight.grad, expected_model.weight.grad, rtol=1e-5, atol=1e-7
+    )
+
+
+def test_critic_packing_preserves_values_loss_and_optimizer_update(megatron_cpu):
+    make_worker, _ = megatron_cpu
+    worker = make_worker("critic", valid_token_scale=True)
+    result = DynamicRolloutResult(
+        num_sequence=3,
+        group_size=2,
+        idx_to_traj=[0, 0, 1],
+        input_ids=[[10, 11, 12], [10, 11, 12, 50, 51, 13], [20, 21, 22]],
+        prompt_lengths=[1, 5, 1],
+        response_lengths=[2, 1, 2],
+        is_end=[False, True, True],
+        rewards=[1.0, 1.0, 0.0],
+        values=torch.tensor(
+            [[0, 0.2, 0.3, 0, 0, 0], [0, 0, 0, 0, 0, 0.4], [0, 0.1, 0.2, 0, 0, 0]]
+        ),
+        returns=torch.tensor(
+            [[0, 1, 1, 0, 0, 0], [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 0]],
+            dtype=torch.float32,
+        ),
+    )
+    batch = result.to_actor_batch(6, 0)
+    frozen = copy.deepcopy(batch)
+    outcomes = []
+    for pack in (False, True):
+        minibatch = copy.deepcopy(batch)
+        if pack:
+            minibatch = DynamicRolloutResult.pack_traj_batch({}, minibatch)
+        assert minibatch["input_ids"].shape[0] == (2 if pack else 3)
+        mask = minibatch["response_mask"]
+        model = _TokenModel()
+        worker._setup_valid_token_scale(minibatch)
+        forward = worker.get_forward_step_func()
+        worker.return_loss = False
+        values, _ = forward(iter([minibatch]), model)
+        expected_values = torch.nn.functional.pad(
+            minibatch["input_ids"].float()[:, :-1] * model.weight, (1, 0)
+        )
+        torch.testing.assert_close(values, expected_values * mask)
+
+        worker.return_loss = True
+        output, loss_func = forward(iter([minibatch]), model)
+        loss, _ = loss_func(output)
+        loss.backward()
+        assert torch.isfinite(model.weight.grad) and model.weight.grad.abs() > 0
+        torch.optim.SGD(model.parameters(), lr=0.01).step()
+        outcomes.append((values[mask].detach(), loss.detach(), model.weight.detach()))
+    for unpacked, packed in zip(*outcomes, strict=True):
+        torch.testing.assert_close(unpacked, packed)
+    for key in ("values", "returns"):
+        torch.testing.assert_close(batch[key], frozen[key])
+
+
+def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
+    from rlinf.utils.pinned_offload import pinned_offload_context
+
+    class _MusaDeviceTensor(torch.Tensor):
+        @property
+        def device(self):
+            return SimpleNamespace(type="musa")
+
+    def forbid_pinned_alloc(*args, **kwargs):
+        raise AssertionError("MUSA offload must not allocate pinned host memory")
+
+    monkeypatch.setattr(torch, "empty_like", forbid_pinned_alloc)
+    source = torch.ones(2, dtype=torch.float32).as_subclass(_MusaDeviceTensor)
+    with pinned_offload_context():
+        result = source.to("cpu")
+    assert not result.is_pinned()
+    torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))

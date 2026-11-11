@@ -3764,3 +3764,39 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3], [1, 2, 3, 4]],
+        prompt_lengths=[1, 2],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        rollout_logprobs=[[-0.1, -0.2], [-0.3, -0.4]],
+        values=torch.arange(8, dtype=torch.float32).reshape(2, 4),
+        advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
+        returns=torch.ones(2, 4),
+    )
+    batch = result.to_actor_batch(4, 0)
+    batch["loss_scales"] = batch["response_mask"].float()
+    assert (batch["response_mask"][0] & batch["response_mask"][1]).sum() == 1
+    packed = DynamicRolloutResult.pack_traj_batch({}, batch)
+    assert packed["idx_to_traj"] == [0, 0]
+    for key in (
+        "input_ids",
+        "response_mask",
+        "values",
+        "advantages",
+        "returns",
+        "rollout_logprobs",
+        "loss_scales",
+    ):
+        torch.testing.assert_close(packed[key], batch[key])
