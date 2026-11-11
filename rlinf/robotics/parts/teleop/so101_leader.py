@@ -115,6 +115,7 @@ class SO101Leader(TeleopDevice):
         self._manual_release_reference: np.ndarray | None = None
         self._last_valid_observation: Observation | None = None
         self._last_action_grip: float | None = None
+        self._dagger_control_mode: str | None = None
 
     @classmethod
     def from_config(
@@ -325,6 +326,28 @@ class SO101Leader(TeleopDevice):
             self._manual_release_reference = None
             self._last_action_grip = None
 
+    def align_to_follower(self, context: Mapping[str, Any]) -> None:
+        """Align the leader to the follower before manual DAgger control."""
+        self._manual_release_pending = False
+        self._manual_release_reference = None
+        self._last_action_grip = None
+        self._move_to(
+            np.asarray(context["joint_positions"], dtype=float).reshape(-1),
+            np.asarray(context["gripper_open"], dtype=float).reshape(-1),
+            float(context["reset_duration"]),
+            max_joint_speed=float(context["reset_joint_speed"]),
+        )
+        self._reset_prepared = True
+
+    def set_dagger_control_mode(self, mode: str) -> None:
+        """Set explicit policy or manual ownership for HG-DAgger."""
+        if mode not in {"policy", "manual"}:
+            raise ValueError(f"Unsupported SO-101 DAgger control mode {mode!r}")
+        self._dagger_control_mode = mode
+        self._manual_release_pending = False
+        self._manual_release_reference = None
+        self._last_action_grip = None
+
     def hold_for_reset(self, context: Mapping[str, Any]) -> None:
         """Hold the current leader pose before the robot is reset or parked."""
         del context
@@ -453,6 +476,12 @@ class SO101Leader(TeleopDevice):
         target = np.asarray(reading["joint_position"], dtype=float)
         current = np.asarray(context["joint_positions"])[0]
         grip = np.asarray(reading["grip"], dtype=float).reshape(1)
+        if self._dagger_control_mode == "policy":
+            return TeleopAction(parts={}, driving=False)
+        if self._dagger_control_mode == "manual":
+            return TeleopAction(
+                parts={"arm": target, "end_effector": grip}, driving=True
+            )
         if self._manual_release_pending:
             self._manual_release_pending = False
             self._manual_release_reference = np.concatenate((target, grip))
