@@ -42,9 +42,9 @@ runner:
     log_path: "/workspace/results/maniskill_ppo_mlp_vlm_trend_reward_sglang"
     project_name: rlinf
     experiment_name: "ci-test-sglang"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
-  max_epochs: 2
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -59,7 +59,7 @@ runner:
   weight_sync_interval: 1
 
 algorithm:
-  update_epoch: 4
+  update_epoch: 1
   normalize_advantages: True
   kl_penalty: kl
   group_size: 1
@@ -113,8 +113,8 @@ env:
     seed: 0
     group_size: 1
     use_fixed_reset_state_ids: False
-    max_steps_per_rollout_epoch: 50
-    max_episode_steps: 50
+    max_steps_per_rollout_epoch: 5
+    max_episode_steps: 5
     video_cfg:
       save_video: False
       info_on_video: True

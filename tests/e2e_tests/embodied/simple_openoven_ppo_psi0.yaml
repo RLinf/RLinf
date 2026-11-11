@@ -20,8 +20,8 @@ cluster:
 runner:
   task_type: embodied
   only_eval: false
-  max_epochs: 2
-  max_steps: 2
+  max_epochs: 1
+  max_steps: 1
   val_check_interval: -1
   save_interval: -1
   resume_dir: null

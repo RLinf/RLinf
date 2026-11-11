@@ -1382,6 +1382,54 @@ def test_apxinf_close_delegates_to_model():
     assert model.closed
 
 
+def test_so101_openpi_transforms_pad_six_joint_contract():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.so101_policy import SO101Inputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = SO101Inputs(action_dim=32, model_type=openpi_model.ModelType.PI05)(
+        {
+            "observation/image": image,
+            "observation/state": np.zeros(6, dtype=np.float32),
+            "actions": np.zeros((20, 6), dtype=np.float32),
+            "prompt": "reach a joint configuration",
+        }
+    )
+    assert result["state"].shape == (32,)
+    assert result["actions"].shape == (20, 32)
+    assert result["image"]["base_0_rgb"].shape == image.shape
+    assert not result["image_mask"]["left_wrist_0_rgb"]
+
+
+def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from openpi.models.pi0_config import Pi0Config
+
+    from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+        SO101JointDataConfig,
+    )
+
+    data_config = SO101JointDataConfig(repo_id="so101_joint").create(
+        assets_dirs=Path("/tmp/nonexistent-openpi-assets"),
+        model_config=Pi0Config(pi05=True),
+    )
+    raw_sample = {
+        "image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "state": np.zeros(6, dtype=np.float32),
+        "actions": np.zeros((2, 6), dtype=np.float32),
+        "task": "reach a joint configuration",
+    }
+
+    repacked = data_config.repack_transforms.inputs[0](raw_sample)
+
+    assert repacked["prompt"] == raw_sample["task"]
+    assert "task" not in repacked
+
+
 def _stub_apxinf_robo(monkeypatch, resolved_tactics=None):
     """Install a fake ``apxinf_robo`` and record what ``_load_model`` asks it for."""
     seen = {}
@@ -2484,4 +2532,120 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
         "/explicit/lingbot-vla-v2/"
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
-    assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+    assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
+
+
+def _accelerator_device() -> torch.device:
+    """Device the OpenVLA checkpoint smoke test should run on."""
+    npu = getattr(torch, "npu", None)
+    if npu is not None and npu.is_available():
+        return torch.device("npu")
+    musa = getattr(torch, "musa", None)
+    if musa is not None and musa.is_available():
+        return torch.device("musa")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    pytest.fail("OpenVLA accelerator test found no NPU, MUSA, or CUDA device")
+
+
+def _openvla_checkpoint(env_var: str, default: str) -> str:
+    path = os.environ.get(env_var, default)
+    if not os.path.isdir(path):
+        pytest.fail(f"OpenVLA checkpoint directory does not exist: {path}")
+    return path
+
+
+def _skip_unless_openvla_accelerator_test(package: str) -> None:
+    """Load a real checkpoint only when the platform unit-test job asks for it."""
+    if os.environ.get("RLINF_RUN_OPENVLA_ACCELERATOR_TEST") != "1":
+        pytest.skip("set RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1 to load this checkpoint")
+    pytest.importorskip(package)
+
+
+def _rgb_observation(task: str) -> dict:
+    return {
+        "task_descriptions": [task],
+        "main_images": torch.randint(0, 255, (1, 224, 224, 3), dtype=torch.uint8),
+        "states": torch.zeros(1, 8),
+    }
+
+
+def test_openvla_predicts_a_finite_action_on_the_accelerator():
+    _skip_unless_openvla_accelerator_test("prismatic")
+    from rlinf.models.embodiment.openvla import get_model
+
+    model_path = _openvla_checkpoint(
+        "RLINF_OPENVLA_MODEL_PATH", "/workspace/dataset/openvla-7b"
+    )
+    cfg = OmegaConf.create(
+        {
+            "model_path": model_path,
+            "precision": "bf16",
+            "action_dim": 7,
+            "num_action_chunks": 1,
+            "use_proprio": False,
+            "unnorm_key": "bridge_orig",
+            "center_crop": True,
+            "hidden_size": 4096,
+            "add_value_head": False,
+            "max_prompt_length": 30,
+            "is_lora": False,
+            "attn_implementation": "flash_attention_2",
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True,
+        }
+    )
+    device = _accelerator_device()
+    model = get_model(cfg, torch_dtype=torch.bfloat16).to(device).eval()
+
+    actions, result = model.predict_action_batch(
+        env_obs=_rgb_observation("pick up the carrot"),
+        do_sample=False,
+        max_new_tokens=7,
+    )
+
+    assert tuple(actions.shape) == (1, 1, 7)
+    assert torch.isfinite(actions).all()
+    assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
+    _skip_unless_openvla_accelerator_test("prismatic")
+    from rlinf.models.embodiment.openvla_oft import get_model
+
+    model_path = _openvla_checkpoint(
+        "RLINF_OPENVLA_OFT_MODEL_PATH",
+        "/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1",
+    )
+    cfg = OmegaConf.create(
+        {
+            "model_type": "openvla_oft",
+            "implement_version": "rlinf",
+            "model_path": model_path,
+            "precision": "bf16",
+            "action_dim": 7,
+            "num_action_chunks": 8,
+            "use_proprio": False,
+            "use_film": False,
+            "unnorm_key": "libero_goal_no_noops",
+            "center_crop": True,
+            "max_prompt_length": 128,
+            "hidden_size": 4096,
+            "add_value_head": False,
+            "num_images_in_input": 1,
+            "is_lora": False,
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True,
+        }
+    )
+    device = _accelerator_device()
+    model = get_model(cfg, torch_dtype=torch.bfloat16).to(device).eval()
+
+    actions, result = model.predict_action_batch(
+        env_obs=_rgb_observation("open the drawer"),
+        do_sample=False,
+    )
+
+    assert tuple(actions.shape) == (1, 8, 7)
+    assert torch.isfinite(actions).all()
+    assert torch.isfinite(result["prev_logprobs"]).all()
