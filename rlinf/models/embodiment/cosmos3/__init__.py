@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build a Cosmos3 action-policy for RLinf SFT.
+"""Build Cosmos3 policies for RLinf SFT and embodied PPO.
 
 Builds cosmos's *training* config directly, then disables only its internal
 FSDP/CP/CFGP (via ``enable_inference_mode`` so AC + EMA stay on) -- RLinf's
@@ -25,6 +25,8 @@ sharded to GPU later by FSDP2. Model defaults live in the Hydra config group
 from __future__ import annotations
 
 import contextlib
+import copy
+import json
 import os
 import re
 from pathlib import Path
@@ -44,6 +46,46 @@ def _cosmos_framework_root() -> Path:
     import cosmos_framework
 
     return Path(cosmos_framework.__file__).resolve().parent.parent
+
+
+def _apply_ppo_checkpoint_config(cosmos_cfg, model_cfg: DictConfig) -> None:
+    """Use checkpoint architecture while retaining the RLinf recipe's runtime settings."""
+    from cosmos_framework.inference.common.config import structure_config
+    from cosmos_framework.inference.common.public_model_config import (
+        load_model_config_from_hf_config,
+    )
+
+    root = Path(str(model_cfg.model_path)).expanduser()
+    candidates = (root / "model" / "config.json", root / "config.json")
+    for path in candidates:
+        if not path.is_file():
+            continue
+        raw = json.loads(path.read_text())
+        if "model" not in raw:
+            continue
+        checkpoint_model = structure_config(
+            load_model_config_from_hf_config(raw), DictConfig
+        )
+        recipe = cosmos_cfg.model.config
+        for key in (
+            "action_gen",
+            "activation_checkpointing",
+            "compile",
+            "ema",
+            "max_num_tokens_after_packing",
+            "parallelism",
+            "rectified_flow_training_config",
+        ):
+            checkpoint_model.config[key] = copy.deepcopy(getattr(recipe, key))
+        checkpoint_model.config.diffusion_expert_config.load_weights_from_pretrained = (
+            recipe.diffusion_expert_config.load_weights_from_pretrained
+        )
+        cosmos_cfg.model = checkpoint_model
+        logger.info("Cosmos3 PPO: loaded model architecture from %s", path)
+        return
+    raise FileNotFoundError(
+        f"WAM PPO requires checkpoint model metadata in one of {candidates}."
+    )
 
 
 def _promote_scalar_params_to_1d(model: nn.Module) -> None:
@@ -146,13 +188,13 @@ def _load_base_weights(
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
-    """Build and warm-start a ``Cosmos3Policy`` for RLinf SFT.
+    """Build and warm-start a Cosmos3 SFT or PPO policy.
 
-    ``torch_dtype`` is accepted only for model-builder registry signature parity;
-    cosmos sets precision from its own config, so it is unused here.
+    SFT retains native Cosmos precision. PPO uses ``torch_dtype`` for trainable
+    master parameters, with compute precision managed by RLinf FSDP.
 
-    Returns a ``Cosmos3Policy`` wrapping a cosmos-FSDP-disabled ``OmniMoTModel``
-    with AC + EMA on, ready for RLinf ``FSDPModelManager`` to ``fully_shard``.
+    Returns a policy wrapping a cosmos-FSDP-disabled ``OmniMoTModel``, ready
+    for RLinf ``FSDPModelManager`` to ``fully_shard``.
     """
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
     from cosmos_framework.configs.base.config import make_config
@@ -162,6 +204,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     from cosmos_framework.utils.lazy_config import instantiate
 
     model_path = cfg.get("model_path")
+    is_rl = cfg.get("cosmos3", {}).get("task") == "rl"
 
     # Build + instantiate under cosmos-framework root (its configs use paths
     # relative to that root).
@@ -169,6 +212,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_cfg = make_config()
         experiment_name = "action_policy_libero_nano"
         cosmos3_cfg = override(cosmos3_cfg, ["--", f"experiment={experiment_name}"])
+        if is_rl:
+            _apply_ppo_checkpoint_config(cosmos3_cfg, cfg)
 
         # Disable cosmos internal FSDP/CP/CFGP at any world size; RLinf FSDP owns
         # fully_shard. enable_inference_mode avoids degrees=1 re-enabling cosmos
@@ -184,6 +229,13 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_cfg.model.config.compile.enabled = bool(
             cfg.get("compile_enabled", False)
         )
+        if is_rl and cfg.get("tokenizer_path"):
+            from cosmos_framework.data.generator.processors import build_processor_lazy
+            from cosmos_framework.utils.lazy_config import LazyCall
+
+            cosmos3_cfg.model.config.vlm_config.tokenizer = LazyCall(
+                build_processor_lazy
+            )(tokenizer_type=str(cfg.tokenizer_path), config_variant="hf")
 
         # Wan2.2 VAE: the cookbook injects via ${oc.env:WAN_VAE_PATH}; we build the
         # config directly, so set the local file path here instead.
@@ -191,6 +243,9 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         if wan_vae_path:
             try:
                 cosmos3_cfg.model.config.tokenizer.vae_path = str(wan_vae_path)
+                if is_rl:
+                    cosmos3_cfg.model.config.tokenizer.bucket_name = ""
+                    cosmos3_cfg.model.config.tokenizer.object_store_credential_path_pretrained = ""
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
@@ -240,6 +295,19 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     # FSDP2 cannot shard 0-d params.
     _promote_scalar_params_to_1d(cosmos3_model)
 
+    if is_rl:
+        from rlinf.config import torch_dtype_from_precision
+        from rlinf.models.embodiment.cosmos3.tasks.rl import Cosmos3RL
+
+        policy = Cosmos3RL(cosmos3_model, cfg)
+        # FSDP retains FP32 trainable master weights and gathers BF16 for compute.
+        dtype = torch_dtype or torch_dtype_from_precision(cfg.get("precision", "fp32"))
+        for param in policy.parameters():
+            if param.requires_grad:
+                param.data = param.data.to(dtype=dtype)
+        if cfg.get("load_to_device", False):
+            policy.to(device="cuda")
+        return policy
     return Cosmos3Policy(
         cosmos3_model,
         lr_multipliers=dict(cfg.get("lr_multipliers", {})),

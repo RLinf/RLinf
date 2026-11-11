@@ -1,0 +1,149 @@
+defaults:
+  - env/libero_10@env.train
+  - env/libero_10@env.eval
+  - model/cosmos3_ppo@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/bucket_syncer@weight_syncer
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: libero_10_ppo_cosmos3
+    logger_backends: [tensorboard]
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: false
+  val_check_interval: -1
+  save_interval: 100
+  resume_dir: null
+  ckpt_path: /mnt/public/rhy/SFT_RLinf/RLinf/logs/20261029-07:40:09-libero_sft_cosmos3_edge/libero_sft_cosmos3_edge/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt
+  weight_sync_interval: 1
+
+algorithm:
+  freeze_actor_updates: false
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 1
+  reward_coef: 1.0
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+  update_epoch: 1
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0.0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  filter_rewards: false
+
+env:
+  group_name: EnvGroup
+  train:
+    init_params:
+      ignore_done: true
+    rollout_epoch: 2
+    total_num_envs: 64
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 480
+    reward_coef: 1.0
+    auto_reset: true
+    ignore_terminations: false
+    skip_intermediate_renders: false
+    seed: 42
+    video_cfg:
+      save_video: false
+  eval:
+    rollout_epoch: 2
+    total_num_envs: 64
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 480
+    auto_reset: true
+    ignore_terminations: true
+    group_size: 1
+    is_eval: true
+    video_cfg:
+      save_video: false
+
+rollout:
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  recompute_logprobs: false
+  collect_prev_infos: true
+  collect_final_values: true
+  enable_offload: false
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  pipeline_stage_num: 1
+  model:
+    model_path: /mnt/public/rhy/dataset/Cosmos3-Edge-DCP
+    precision: bf16
+    load_to_device: true
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 2048
+  seed: 42
+  enable_offload: true
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    clip_grad: 2.0
+    weight_decay: 0.01
+    critic_warmup_steps: 0
+  fsdp_config:
+    strategy: fsdp2
+    sharding_strategy: full_shard
+    use_orig_params: true
+    gradient_checkpointing: false
+    enable_gradient_accumulation: true
+    forward_prefetch: false
+    reshard_after_forward: true
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: null
+      cast_forward_inputs: false
+      cast_root_forward_inputs: false
+    amp_autocast:
+      enabled: false
+      precision: bf16
+    grad_scaler:
+      enabled: false
+
+weight_syncer:
+  bucket:
+    bucket_dtype: bf16
+    validate_keys: true
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

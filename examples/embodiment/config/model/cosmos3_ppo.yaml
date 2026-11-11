@@ -1,0 +1,51 @@
+model_type: cosmos3
+precision: fp32
+is_lora: false
+add_value_head: true
+load_to_device: false
+disable_cosmos_parallelism: true
+compile_enabled: false
+ema_enabled: false
+
+model_path: /mnt/public/rhy/dataset/Cosmos3-Edge-DCP
+wan_vae_path: /mnt/public/rhy/dataset/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+tokenizer_path: /mnt/public/rhy/dataset/Cosmos3-Edge
+
+action_model_mode: wam
+action_dim: 7
+logprob_action_dim: 10
+num_action_chunks: 10
+num_frames: 17
+image_size: 256
+fps: 20
+num_inference_steps: 4
+guidance: 1.0
+max_prompt_length: 1024
+action_normalization: quantile_rot
+action_stats_path: /mnt/public/rhy/cosmos_dagger/RLinf/.venv/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+
+# The base checkpoint is followed by the LIBERO SFT checkpoint in runner.ckpt_path.
+keys_to_skip_loading:
+  - net_ema.
+  - action2llm
+  - llm2action
+  - action_modality_embed
+  - action_pos_embed
+keys_to_select:
+  - moe_gen
+  - time_embedder
+  - vae2llm
+  - llm2vae
+  - action2llm
+  - llm2action
+  - action_modality_embed
+lr_multipliers: {}
+
+cosmos3:
+  task: rl
+  noise_method: flow_sde
+  joint_logprob: false
+  noise_level: 0.5
+  valid_action_dim: 10
+  detach_critic_input: true
+  value_hidden_dims: [512, 256, 128]

@@ -237,6 +237,46 @@ SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weig
 
 转换得到的 ``model_diffusers`` 即 :doc:`Cosmos3 SGLang 评测 <../../evaluations/guides/cosmos3_sglang>` 的 ``rollout.model.model_path``。
 
+继续使用 PPO 训练
+----------------------------------------
+
+使用 ``examples/embodiment/config/libero_10_ppo_cosmos3.yaml``，从 LIBERO SFT policy 开始在线 PPO 训练。配置通过 ``actor.model.model_path`` 加载基座，通过 ``runner.ckpt_path`` 加载已训练的 LIBERO 权重。Tokenizer、Wan VAE 和动作归一化统计应与 SFT 部署保持一致。示例路径指向 ``/mnt/public/rhy`` 下已有的资产；换到其他主机时，将这些字段改为当地的资产路径。
+
+先激活准备好的 Cosmos 环境，再通过标准 embodied runner 启动训练：
+
+.. code-block:: bash
+
+   cd /mnt/public/rhy/ppo_WAM/RLinf
+   source examples/embodiment/cosmos3_ppo_env.sh
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_cosmos3
+
+Source 脚本激活已有环境，设置本地资产和离线缓存。启动命令读取 PPO 配置，采集 LIBERO 交互数据，再交替执行 rollout、actor 更新和 value head 更新。在其他部署上启动前，先核对 source 脚本与 YAML 中的环境、资产路径。
+
+Policy 联合生成未来视频和动作。未来视频沿确定性的 ODE 更新，动作在随机选中的一个去噪位置使用 Flow-SDE。PPO 保存该位置的完整 WAM 状态和采样得到的下一步动作张量，更新时重新评价同一个转移。缓存保留选中的一个状态，而非整条去噪链的所有视频状态。PPO 概率比对这个内部动作转移评分，其条件包含缓存的联合 WAM 状态。现有 runner 根据环境动作块的奖励计算 GAE，继续使用标准 PPO actor loss 和带 value clipping 的 Huber critic loss。
+
+执行维度与概率评分维度分别设置：``actor.model.action_dim=7`` 对应 LIBERO 的 axis-angle 动作；``actor.model.logprob_action_dim=10`` 和 ``actor.model.cosmos3.valid_action_dim=10`` 对归一化 rot6d 动作坐标评分。PPO 评分排除 padding 坐标和未执行的动作后缀。当前实现使用条件采样，要求 ``guidance=1.0``、``noise_method=flow_sde`` 和 ``joint_logprob=false``。
+
+模型相关流程集中在 Cosmos3 模块下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 57 43
+
+   * - 源码
+     - 职责
+   * - ``rlinf/models/embodiment/cosmos3/env_io.py``
+     - 保存重放观测、构建 WAM prompt、解码 LIBERO 动作。
+   * - ``rlinf/models/embodiment/cosmos3/tasks/rl.py``
+     - 混合采样、选中转移的重算和 value head。
+   * - ``rlinf/models/embodiment/cosmos3/sampling/bridge.py``
+     - 调用 Cosmos，得到联合视频／动作速度及动作隐状态。
+   * - ``rlinf/models/embodiment/cosmos3/sampling/rl_sampler.py``
+     - 计算 SDE 均值、标准差和带 mask 的高斯评分。
+
+.. note::
+
+   配置在每轮 rollout 前同步 actor 权重，并开启键名校验。启动时设置 ``PPO_STEP_DIAGNOSTICS=1``，可记录训练开始前以及每次 optimizer 更新后的 actor 与 rollout 采样 KL。
+
 可视化与结果
 ----------------------------------------
 

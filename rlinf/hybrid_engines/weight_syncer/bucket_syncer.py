@@ -77,7 +77,7 @@ def iter_named_tensor_buckets(
             prepared_items = []
             currently_hold = 0
 
-    if currently_hold > 0:
+    if prepared_items:
         bucket_plan.append(prepared_items)
         prepared_items = []
         currently_hold = 0
@@ -134,6 +134,7 @@ class BucketWeightSyncer(WeightSyncer):
         is_agent: Whether to apply agent-specific language-model key rewriting.
         load_instant: Whether the receiver loads each bucket immediately instead
             of staging all buckets on CPU before one final model load.
+        validate_keys: Whether to reject missing selected keys and invalid payload keys.
     """
 
     _TOTAL_BUCKETS_KEY = "total_buckets"
@@ -146,6 +147,7 @@ class BucketWeightSyncer(WeightSyncer):
         bucket_device: str | torch.device,
         is_agent: bool = False,
         load_instant: bool = True,
+        validate_keys: bool = False,
     ):
         super().__init__()
         self.bucket_size = bucket_size
@@ -153,6 +155,7 @@ class BucketWeightSyncer(WeightSyncer):
         self.bucket_device = normalize_device(bucket_device)
         self.is_agent = is_agent
         self.load_instant = load_instant
+        self.validate_keys = validate_keys
 
     def _bucket_key(self, key: str, has_visual: bool) -> str | None:
         """
@@ -208,20 +211,43 @@ class BucketWeightSyncer(WeightSyncer):
             dict[str, torch.Tensor]: A dictionary representing a bucket of parameters to be synchronized.
         """
 
-        has_visual = any(
-            "visual." in key
-            for key in self.param_names_need_sync_set
-            if key in state_dict
-        )
+        selected_keys: list[str] = []
+        missing_keys: list[str] = []
+        for name in self.param_names_need_sync:
+            if "_extra_state" in name:
+                continue
+            key = name
+            if key not in state_dict:
+                # Activation checkpoint wrappers strip their module prefix on export.
+                key = ".".join(
+                    part
+                    for part in name.split(".")
+                    if part != "_checkpoint_wrapped_module"
+                )
+            if key in state_dict:
+                selected_keys.append(key)
+            elif self.validate_keys:
+                missing_keys.append(name)
+
+        if missing_keys:
+            raise ValueError(
+                f"Cannot sync {len(missing_keys)} selected weights absent from "
+                f"the actor state dict. First missing keys: {missing_keys[:5]}"
+            )
+        has_visual = any("visual." in key for key in selected_keys)
 
         def iter_named_items() -> Iterator[tuple[str, torch.Tensor | DTensor]]:
-            for key in self.param_names_need_sync:
-                value = state_dict.get(key)
-                if value is None:
-                    continue
+            payload_keys: set[str] = set()
+            for key in selected_keys:
                 bucket_key = self._bucket_key(key, has_visual)
                 if bucket_key is not None:
-                    yield bucket_key, value
+                    if self.validate_keys:
+                        if bucket_key in payload_keys:
+                            raise ValueError(
+                                f"Multiple selected weights map to payload key {bucket_key!r}"
+                            )
+                        payload_keys.add(bucket_key)
+                    yield bucket_key, state_dict[key]
 
         yield from iter_named_tensor_buckets(
             iter_named_items(),
@@ -253,9 +279,8 @@ class BucketWeightSyncer(WeightSyncer):
         """
 
         del state_dict, send, recv, is_sender
-        self.param_names_need_sync = param_names_need_sync
-        self.param_names_need_sync_set = set(param_names_need_sync)
-        if not self.param_names_need_sync_set:
+        self.param_names_need_sync = list(dict.fromkeys(param_names_need_sync))
+        if not self.param_names_need_sync:
             raise ValueError("param_names_need_sync must not be empty")
         self._sender_initialized = True
 
@@ -295,6 +320,22 @@ class BucketWeightSyncer(WeightSyncer):
         total_buckets = int(bucket.pop(self._TOTAL_BUCKETS_KEY).item())
         applied_version = int(bucket.pop(self._SYNCER_VERSION_KEY).item())
 
+        load_errors: list[str] = []
+
+        def load_bucket(weights: dict[str, torch.Tensor]) -> None:
+            try:
+                result = model.load_state_dict(weights, strict=False)
+            except RuntimeError as error:
+                if not self.validate_keys:
+                    raise
+                # Drain the remaining buckets so the sender can finish its broadcasts.
+                load_errors.append(str(error))
+            else:
+                if self.validate_keys:
+                    unexpected = getattr(result, "unexpected_keys", ())
+                    if unexpected:
+                        load_errors.append(f"unexpected keys {unexpected[:5]}")
+
         fallback_keepalive: list[torch.Tensor] = []
         current_stream: torch.Stream | None = None
         # NOTE:
@@ -306,7 +347,7 @@ class BucketWeightSyncer(WeightSyncer):
         )
 
         if self.load_instant:
-            model.load_state_dict(bucket, strict=False)
+            load_bucket(bucket)
         else:
             cpu_buffer: dict[str, torch.Tensor] = {}
             for key, value in bucket.items():
@@ -319,7 +360,7 @@ class BucketWeightSyncer(WeightSyncer):
         for _ in range(total_buckets - 1):
             bucket = await recv()
             if self.load_instant:
-                model.load_state_dict(bucket, strict=False)
+                load_bucket(bucket)
             else:
                 for key, value in bucket.items():
                     cpu_buffer[key] = value.to("cpu")
@@ -329,11 +370,16 @@ class BucketWeightSyncer(WeightSyncer):
             del bucket
 
         if not self.load_instant:
-            model.load_state_dict(cpu_buffer, strict=False)
+            load_bucket(cpu_buffer)
             del cpu_buffer
 
         if fallback_keepalive:
             current_stream.synchronize()
             del fallback_keepalive
 
+        if load_errors:
+            raise RuntimeError(
+                f"Rollout could not apply weight sync version {applied_version}: "
+                f"{load_errors[0]}"
+            )
         return applied_version
