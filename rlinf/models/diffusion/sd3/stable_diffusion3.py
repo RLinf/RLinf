@@ -242,7 +242,8 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
         model_dtype = next(self.transformer.parameters()).dtype
         return self.transformer(
             hidden_states=x_t.to(dtype=model_dtype),
-            timestep=t.to(dtype=torch.float32) * 1000.0,
+            timestep=t.to(dtype=torch.float32)
+            * self.pipeline.scheduler.config.num_train_timesteps,
             encoder_hidden_states=prompt_embeds,
             pooled_projections=pooled_prompt_embeds,
             return_dict=False,
@@ -251,13 +252,17 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
     def refl_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
-        refl_inputs: dict[str, torch.Tensor],
+        refl_inputs: dict[str, torch.Tensor] | None = None,
+        xt_source: str = "rollout",
         **kwargs,
     ) -> dict[str, torch.Tensor]:
-        """Decode the one-step x0 prediction, keeping gradients to the velocity.
+        """Return differentiable image ``samples`` in [0, 1], shape [B, 3, H, W].
 
-        Returns images in [0, 1] with shape [B, 3, H, W].
+        ``refl_inputs`` can supply an explicit state and normalized timestep;
+        otherwise sample a late state using ``xt_source``.
         """
+        if refl_inputs is None:
+            refl_inputs = self._sample_refl_state(forward_inputs, xt_source)
         x_t = refl_inputs["x_t"]
         t = refl_inputs["timesteps"]
         velocity = self._conditional_velocity(
@@ -272,7 +277,27 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
         vae.to(device=x0.device)
         latents = x0 / vae.config.scaling_factor + vae.config.shift_factor
         images = vae.decode(latents.to(dtype=vae.dtype), return_dict=False)[0]
-        return {"images": (images / 2 + 0.5).clamp(0, 1)}
+        return {"samples": (images / 2 + 0.5).clamp(0, 1)}
+
+    def _sample_refl_state(
+        self, forward_inputs: dict[str, torch.Tensor], xt_source: str
+    ) -> dict[str, torch.Tensor]:
+        """Select a late state with flow time 1 at noise and 0 at data."""
+        if xt_source not in {"rollout", "resample"}:
+            raise ValueError(
+                f"SD3 ReFL xt_source must be 'rollout' or 'resample', got {xt_source!r}."
+            )
+        latents = forward_inputs["latents"]
+        rows = torch.arange(latents.shape[0], device=latents.device)
+        steps = torch.randint(0, latents.shape[1], rows.shape, device=latents.device)
+        t = forward_inputs["timesteps"][rows, steps]
+        if xt_source == "rollout":
+            x_t = latents[rows, steps]
+        else:
+            x0 = forward_inputs["x0"]
+            t_bc = t.view(-1, *([1] * (x0.ndim - 1)))
+            x_t = (1 - t_bc) * x0 + t_bc * torch.randn_like(x0)
+        return {"x_t": x_t, "timesteps": t}
 
     def sft_forward(self, data: dict[str, Any], **kwargs) -> torch.Tensor:
         """Return the flow-matching pre-training loss on text-image pairs.
@@ -328,7 +353,8 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
         ).to(full_latents.device)
         return {
             "latents": full_latents[:, start:num_steps].detach(),
-            "timesteps": timesteps[:, start:].detach(),
+            "timesteps": timesteps[:, start:].detach()
+            / self.pipeline.scheduler.config.num_train_timesteps,
             "x0": full_latents[:, -1].detach(),
             "prompt_embeds": prompt_embeds.detach(),
             "pooled_prompt_embeds": pooled_prompt_embeds.detach(),

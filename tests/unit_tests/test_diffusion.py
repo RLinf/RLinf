@@ -25,8 +25,9 @@ import torch
 from omegaconf import OmegaConf
 from PIL import Image
 
+from rlinf.algorithms.refl_scorers import build_refl_scorer, register_refl_scorer
 from rlinf.envs.sim.diffusion import build_reward_dataset
-from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 
 def test_prompt_dataset_excludes_eval_and_preserves_unique_order(tmp_path):
@@ -122,11 +123,70 @@ def test_refl_config_composes(monkeypatch, pre_weight):
         OmegaConf.resolve(cfg)
     assert cfg.algorithm.loss_type == "embodied_refl"
     assert cfg.actor.model.sd3.rl_mode == "refl"
+    assert cfg.actor.refl_reward_model.type == "image_reward"
     assert cfg.actor.refl_pre_data.num_workers == 0
     assert cfg.algorithm.refl_pre_loss_weight == pre_weight
     assert cfg.env.train.reward.model_path == cfg.actor.refl_reward_model.model_path
     assert cfg.env.eval.sequential_eval
     assert cfg.runner.max_steps == 200
+
+
+class _VectorPolicy(torch.nn.Module, BasePolicy):
+    forward = BasePolicy.forward
+
+    def __init__(self):
+        super().__init__()
+        self.projection = torch.nn.Linear(3, 4)
+
+    def default_forward(self, features):
+        return self.projection(features)
+
+    def predict_action_batch(self, env_obs, **kwargs):
+        return self.default_forward(env_obs["features"]), {}
+
+    def refl_forward(self, forward_inputs, xt_source="rollout", **kwargs):
+        return {"samples": self.default_forward(forward_inputs["features"])}
+
+
+class _VectorScorer(torch.nn.Module):
+    def __init__(self, target, device):
+        super().__init__()
+        self.target = torch.nn.Parameter(
+            torch.full((4,), target, device=device), requires_grad=False
+        )
+
+    def forward(self, samples, forward_inputs):
+        error = samples - self.target - forward_inputs["offset"]
+        return -error.square().flatten(1).mean(1)
+
+
+def test_refl_scorer_supports_non_image_samples_and_policy_gradients():
+    register_refl_scorer(
+        "test_vector_reward", lambda cfg, device: _VectorScorer(cfg["target"], device)
+    )
+    scorer = build_refl_scorer({"type": "test_vector_reward", "target": 0.5}, "cpu")
+    policy = _VectorPolicy()
+    samples = policy(
+        forward_type=ForwardType.REFL,
+        forward_inputs={"features": torch.ones(2, 5, 3)},
+    )["samples"]
+    rewards = scorer(samples, {"offset": torch.zeros(2, 5, 4)})
+    assert rewards.shape == (2,) and torch.isfinite(rewards).all()
+    torch.nn.functional.relu(2 - rewards).mean().backward()
+    assert policy.projection.weight.grad is not None
+    assert policy.projection.weight.grad.abs().sum() > 0
+    assert all(not p.requires_grad and p.grad is None for p in scorer.parameters())
+    with pytest.raises(ValueError, match="already registered"):
+        register_refl_scorer("test_vector_reward", lambda cfg, device: scorer)
+
+
+def test_refl_scorer_rejects_invalid_registration_and_unknown_types():
+    with pytest.raises(ValueError, match="non-empty"):
+        register_refl_scorer("", lambda cfg, device: None)
+    with pytest.raises(TypeError, match="callable"):
+        register_refl_scorer("invalid_builder", None)
+    with pytest.raises(ValueError, match="Unknown ReFL scorer 'unknown'"):
+        build_refl_scorer({"type": "unknown"}, "cpu")
 
 
 class _ExternalImageReward(torch.nn.Module):
@@ -141,15 +201,15 @@ class _ExternalImageReward(torch.nn.Module):
         return self.projection(pixels.mean(dim=(-2, -1)))
 
 
+@pytest.mark.parametrize("scorer_type", [None, "image_reward"])
 def test_image_reward_freezes_weights_but_preserves_image_gradients(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, scorer_type
 ):
     pytest.importorskip("torchvision")
     from transformers import BertTokenizer
 
     from rlinf.envs.sim.diffusion.rewards.visual.image_reward import (
         ImageRewardBackend,
-        ImageRewardScorer,
     )
 
     vocab = tmp_path / "vocab.txt"
@@ -158,17 +218,21 @@ def test_image_reward_freezes_weights_but_preserves_image_gradients(
     reward_package = ModuleType("ImageReward")
     reward_package.load = lambda *args, **kwargs: external_model
     monkeypatch.setitem(sys.modules, "ImageReward", reward_package)
-    scorer = ImageRewardScorer.from_config(
-        {
-            "model_path": "local-checkpoint",
-            "med_config": "local-config",
-            "precision": "fp32",
-        },
-        device="cpu",
-    )
+    reward_cfg = {
+        "model_path": "local-checkpoint",
+        "med_config": "local-config",
+        "precision": "fp32",
+    }
+    if scorer_type is not None:
+        reward_cfg["type"] = scorer_type
+    scorer = build_refl_scorer(reward_cfg, device="cpu")
     images = torch.full((2, 3, 16, 16), 0.5, requires_grad=True)
     tokens = scorer.tokenize(["a fox", "a cat"])
-    rewards = scorer.score(images, *tokens)
+    rewards = scorer(
+        images,
+        {"reward_input_ids": tokens[0], "reward_attention_mask": tokens[1]},
+    )
+    torch.testing.assert_close(rewards, scorer.score(images, *tokens))
     assert rewards.shape == (2,)
     assert tokens[0].shape == (2, 35)
     rewards.sum().backward()
@@ -310,8 +374,16 @@ def tiny_sd3(tmp_path):
 
 @pytest.mark.parametrize("cfg", [False, True])
 @pytest.mark.parametrize("use_lora", [False, True])
-def test_refl_rollout_and_differentiable_forward(tiny_sd3, cfg, use_lora):
+@pytest.mark.parametrize("native_time_scale", [1000, 2000])
+def test_refl_rollout_and_differentiable_forward(
+    tiny_sd3, cfg, use_lora, native_time_scale
+):
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
     model = tiny_sd3
+    model.pipeline.scheduler = FlowMatchEulerDiscreteScheduler(
+        num_train_timesteps=native_time_scale
+    )
     if use_lora:
         from peft import LoraConfig, get_peft_model
 
@@ -326,6 +398,12 @@ def test_refl_rollout_and_differentiable_forward(tiny_sd3, cfg, use_lora):
     forward_inputs = output["forward_inputs"]
     assert forward_inputs["latents"].shape == (1, 2, 16, 8, 8)
     assert forward_inputs["reward_input_ids"].shape == (1, 35)
+    assert (forward_inputs["timesteps"] > 0).all()
+    assert (forward_inputs["timesteps"] <= 1).all()
+    torch.testing.assert_close(
+        forward_inputs["timesteps"],
+        model.pipeline.scheduler.timesteps[None, -2:] / native_time_scale,
+    )
     assert all(not tensor.requires_grad for tensor in forward_inputs.values())
     assert "next_latents" not in forward_inputs
 
@@ -334,9 +412,9 @@ def test_refl_rollout_and_differentiable_forward(tiny_sd3, cfg, use_lora):
         forward_inputs=forward_inputs,
         refl_inputs={
             "x_t": forward_inputs["latents"][:, -1],
-            "timesteps": forward_inputs["timesteps"][:, -1] / 1000,
+            "timesteps": forward_inputs["timesteps"][:, -1],
         },
-    )["images"]
+    )["samples"]
     torch.testing.assert_close(predicted, images, atol=1e-5, rtol=1e-5)
     predicted.square().mean().backward()
     grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
@@ -354,6 +432,49 @@ def test_refl_rollout_and_differentiable_forward(tiny_sd3, cfg, use_lora):
             for name, p in model.transformer.named_parameters()
             if "lora_" in name
         )
+
+
+@pytest.mark.parametrize("xt_source", ["rollout", "resample"])
+def test_refl_model_state_selection_matches_the_original_sd3_path(tiny_sd3, xt_source):
+    model = tiny_sd3
+    _, output = model.predict_action_batch({"task_descriptions": ["a fox", "a cat"]})
+    inputs = output["forward_inputs"]
+    latents = inputs["latents"]
+    # Reproduce the original worker's random late-state selection.
+    torch.manual_seed(123)
+    rows = torch.arange(latents.shape[0])
+    steps = torch.randint(0, latents.shape[1], rows.shape)
+    t = inputs["timesteps"][rows, steps]
+    if xt_source == "rollout":
+        x_t = latents[rows, steps]
+    else:
+        x0 = inputs["x0"]
+        t_bc = t.view(-1, 1, 1, 1)
+        x_t = (1 - t_bc) * x0 + t_bc * torch.randn_like(x0)
+    expected = model(
+        forward_type=ForwardType.REFL,
+        forward_inputs=inputs,
+        refl_inputs={"x_t": x_t, "timesteps": t},
+    )["samples"]
+    torch.manual_seed(123)
+    actual = model(
+        forward_type=ForwardType.REFL,
+        forward_inputs=inputs,
+        xt_source=xt_source,
+    )["samples"]
+    torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
+    parameters = [p for p in model.transformer.parameters() if p.requires_grad]
+    expected_grads = torch.autograd.grad(expected.square().mean(), parameters)
+    actual.square().mean().backward()
+    for parameter, expected_grad in zip(parameters, expected_grads):
+        torch.testing.assert_close(parameter.grad, expected_grad, atol=1e-6, rtol=1e-6)
+    assert all(torch.isfinite(p.grad).all() for p in parameters)
+    assert sum(p.grad.abs().sum() for p in parameters) > 0
+
+
+def test_refl_model_rejects_unknown_state_sources(tiny_sd3):
+    with pytest.raises(ValueError, match="xt_source must be 'rollout' or 'resample'"):
+        tiny_sd3(forward_type=ForwardType.REFL, forward_inputs={}, xt_source="unknown")
 
 
 def test_sd3_pretraining_forward_backpropagates_only_to_transformer(tiny_sd3):

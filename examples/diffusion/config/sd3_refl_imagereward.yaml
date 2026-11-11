@@ -138,6 +138,7 @@ actor:
   enable_offload: False
 
   refl_reward_model:
+    type: image_reward
     # ImageReward.pt and med_config.json from https://huggingface.co/THUDM/ImageReward.
     model_path: /path/to/ImageReward/ImageReward.pt
     med_config: /path/to/ImageReward/med_config.json

@@ -21,9 +21,8 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, DistributedSampler
 
+from rlinf.algorithms.refl_scorers import build_refl_scorer
 from rlinf.data.datasets.common.epoch import forward_set_epoch
-from rlinf.envs.sim.diffusion import build_reward_dataset
-from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -55,13 +54,15 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
 
     def init_worker(self) -> None:
         super().init_worker()
-        self.reward_scorer = ImageRewardScorer.from_config(
+        self.reward_scorer = build_refl_scorer(
             self.cfg.actor.refl_reward_model, self.device
         )
         if self.refl_pre_loss_weight > 0:
             self._build_pre_data_loader()
 
     def _build_pre_data_loader(self) -> None:
+        from rlinf.envs.sim.diffusion import build_reward_dataset
+
         pre_data_cfg = self.cfg.actor.refl_pre_data
         dataset = build_reward_dataset(pre_data_cfg)
         self.pre_data_loader = DataLoader(
@@ -92,36 +93,21 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
                 micro_batches.append(next(self.pre_data_iter))
         return micro_batches
 
-    def _sample_late_state(
-        self, forward_inputs: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Pick a random late denoising state and its ``t`` in [0, 1]."""
-        latents = forward_inputs["latents"]
-        rows = torch.arange(latents.shape[0], device=latents.device)
-        steps = torch.randint(0, latents.shape[1], rows.shape, device=latents.device)
-        t = forward_inputs["timesteps"][rows, steps] / 1000.0
-        if self.refl_xt_source == "rollout":
-            return latents[rows, steps], t
-
-        x0 = forward_inputs["x0"]
-        t_bc = t.view(-1, *([1] * (x0.ndim - 1)))
-        return (1 - t_bc) * x0 + t_bc * torch.randn_like(x0), t
-
     def _reward_loss(
         self, batch: dict[str, Any]
     ) -> tuple[torch.Tensor, dict[str, float]]:
         forward_inputs = batch["forward_inputs"]
-        x_t, t = self._sample_late_state(forward_inputs)
         with self.amp_context:
-            images = self.model(
+            samples = self.model(
                 forward_type=ForwardType.REFL,
                 forward_inputs=forward_inputs,
-                refl_inputs={"x_t": x_t, "timesteps": t},
-            )["images"]
-            rewards = self.reward_scorer.score(
-                images,
-                forward_inputs["reward_input_ids"],
-                forward_inputs["reward_attention_mask"],
+                xt_source=self.refl_xt_source,
+            )["samples"]
+            rewards = self.reward_scorer(samples, forward_inputs)
+        if rewards.shape != samples.shape[:1]:
+            raise ValueError(
+                f"ReFL scorer must return rewards of shape {samples.shape[:1]}, "
+                f"got {rewards.shape}."
             )
         loss = F.relu(self.refl_margin - rewards).mean() * self.refl_grad_scale
         return loss, {

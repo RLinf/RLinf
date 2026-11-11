@@ -101,6 +101,16 @@ class ImageRewardScorer:
         rewards = self.model.score_gard(input_ids, attention_mask, pixels)
         return rewards.squeeze(-1)
 
+    def __call__(
+        self, samples: torch.Tensor, forward_inputs: dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Score ReFL images using the stored prompt tokens."""
+        return self.score(
+            samples,
+            forward_inputs["reward_input_ids"],
+            forward_inputs["reward_attention_mask"],
+        )
+
 
 class ImageRewardBackend(ImageRewardBackendBase):
     """Image reward from the ImageReward human-preference model."""
