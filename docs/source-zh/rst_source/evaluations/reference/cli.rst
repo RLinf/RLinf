@@ -50,6 +50,20 @@ CLI 参考
 - ``realworld_*`` → realworld
 - ``maniskill_*`` → maniskill
 - ``polaris_*`` → polaris
+- ``supermimic_*`` → supermimic，见下面的 `SuperMimic 评测`_。
+
+SuperMimic 评测
+---------------
+
+SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运行。用 ``runner.ckpt_path`` 指定检查点中的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果表格的目录。评测主训练配置时运行：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_lafan1_goal730_eval \
+       runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=/data/runs/lafan1/eval
+
+权重旁边的 ``supermimic_interface.json`` 必须与配置一致。其他变体的覆盖项和协议定义见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节。
 
 配置回退
 --------
@@ -64,6 +78,7 @@ CLI 参考
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/realworld`
 - :doc:`../guides/polaris`
+- :doc:`SuperMimic <../../examples/embodied/supermimic>`\ （“评测”一节）
 
 直接调用 Python
 ---------------

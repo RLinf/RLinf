@@ -89,6 +89,16 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
 
         actor_worker_cls = EmbodiedNFTFSDPPolicy
+    elif cfg.algorithm.loss_type == "supermimic":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for supermimic."
+            )
+        from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
+            EmbodiedSuperMimicFSDPPolicy,
+        )
+
+        actor_worker_cls = EmbodiedSuperMimicFSDPPolicy
     else:
         if use_training_pipeline:
             from rlinf.workers.actor.fsdp_actor_worker_pipeline import (
@@ -112,6 +122,12 @@ def main(cfg) -> None:
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
         rollout_worker_cls = PhyAIRolloutWorker
+    elif rollout_backend == "huggingface" and cfg.algorithm.loss_type == "supermimic":
+        from rlinf.workers.rollout.hf.supermimic_rollout_worker import (
+            SuperMimicRolloutWorker,
+        )
+
+        rollout_worker_cls = SuperMimicRolloutWorker
     elif rollout_backend == "huggingface":
         from rlinf.workers.rollout.hf.huggingface_worker import (
             MultiStepRolloutWorker,
@@ -131,7 +147,15 @@ def main(cfg) -> None:
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
+    env_worker_cls = EnvWorker
+    runner_cls = EmbodiedRunner
+    if cfg.algorithm.loss_type == "supermimic":
+        from rlinf.runners.supermimic_runner import SuperMimicRunner
+        from rlinf.workers.env.supermimic_env_worker import SuperMimicEnvWorker
+
+        env_worker_cls = SuperMimicEnvWorker
+        runner_cls = SuperMimicRunner
+    env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
@@ -177,7 +201,7 @@ def main(cfg) -> None:
             placement_strategy=reward_placement,
         )
 
-    runner = EmbodiedRunner(
+    runner = runner_cls(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,

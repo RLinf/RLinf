@@ -19,12 +19,12 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
+from rlinf.runners import get_embodied_eval_runner
 from rlinf.scheduler import Cluster
 from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.env.env_worker import EnvWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+from rlinf.workers.env import get_env_worker
+from rlinf.workers.rollout.hf import get_hf_rollout_worker
 
 mp.set_start_method("spawn", force=True)
 
@@ -47,8 +47,6 @@ def main(cfg) -> None:
     # wired into embodied evaluation.
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
-    # Default env worker; RTC on the huggingface path overrides it below.
-    env_worker_cls = EnvWorker
     if rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
@@ -70,21 +68,14 @@ def main(cfg) -> None:
             )
         )
     elif rollout_backend == "huggingface":
-        if cfg.runner.get("rtc", {}).get("enabled", False):
-            from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
-            from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
-                RTCMultiStepRolloutWorker,
+        rollout_group = (
+            get_hf_rollout_worker(cfg)
+            .create_group(cfg)
+            .launch(
+                cluster,
+                name=cfg.rollout.group_name,
+                placement_strategy=rollout_placement,
             )
-
-            env_worker_cls = RTCEnvWorker
-            rollout_worker_cls = RTCMultiStepRolloutWorker
-        else:
-            rollout_worker_cls = MultiStepRolloutWorker
-
-        # Create rollout worker group
-        rollout_placement = component_placement.get_strategy("rollout")
-        rollout_group = rollout_worker_cls.create_group(cfg).launch(
-            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
         )
     elif rollout_backend == "phyai":
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
@@ -98,8 +89,10 @@ def main(cfg) -> None:
         raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = env_worker_cls.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
+    env_group = (
+        get_env_worker(cfg)
+        .create_group(cfg)
+        .launch(cluster, name=cfg.env.group_name, placement_strategy=env_placement)
     )
 
     # launch the sglang server
@@ -120,7 +113,7 @@ def main(cfg) -> None:
         )
         rollout_group.set_sglang_server_urls(_server_urls).wait()
 
-    runner = EmbodiedEvalRunner(
+    runner = get_embodied_eval_runner(cfg)(
         cfg=cfg,
         rollout=rollout_group,
         env=env_group,

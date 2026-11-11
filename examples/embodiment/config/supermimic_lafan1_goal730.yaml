@@ -1,0 +1,166 @@
+# SuperMimic on LAFAN1 with the 730-d goal and the 99-d observation.
+# Batch sizes and env counts are global; every rank gets an equal share.
+defaults:
+  - env/g1_mimic@env.train
+  - env/g1_mimic@env.eval
+  - model/supermimic@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/bucket_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: supermimic_lafan1_goal730
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 16000          # global updates
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 2000
+  log_interval: 100          # logger backends and metrics table
+  resume_dir: null           # a global_step_<N> directory, or auto for the latest
+  ckpt_path: null
+  eval_export:
+    enabled: False
+    output_dir: null
+
+algorithm:
+  adv_type: null             # lambda-returns are computed in the critic phases
+  loss_type: supermimic
+
+  k: 8                       # world-model training window
+  H: 32                      # imagination horizon
+  gamma: 0.99
+  lam: 0.95
+  updates_per_env_step: 0.4
+  warmup_sim_steps: 64
+  wm_only_updates: 500
+
+  wm_batches: 10
+  wm_window_batch: 2048
+  imagine_batch: 4096
+  critic_epochs: 5
+  critic_minibatches: 4
+  replay_length: 1000
+
+  reward_anchor: pelvis      # pelvis or torso
+  residual_frame: body       # body or heading
+  termination_head: analytic # learned or analytic
+  termination_body: pelvis   # pelvis or torso
+  bce_weight: 1.0
+  max_nonfinite_skips: 20
+
+env:
+  group_name: EnvGroup
+  train:
+    total_num_envs: 4096
+    num_clips: 40
+    com_sampling: per_env
+  eval:
+    total_num_envs: 40
+    num_clips: 40
+    is_eval: True
+    eval_tasks: [tracking]
+    # The longest LAFAN1 clip has 8194 frames at 30 fps, 13656 control steps.
+    max_steps_per_rollout_epoch: 13656
+    video_cfg:
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: False
+  pipeline_stage_num: 1
+  amp_autocast: ${actor.fsdp_config.amp_autocast}
+  gc_after_weight_sync: False  # weights sync after every update
+  model:
+    model_path: ""
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: ${algorithm.wm_window_batch}
+  seed: 0
+  enable_offload: False
+  use_profiler: False # trace the first global updates of a launch with torch.profiler
+  profiler:
+    output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/profiler
+    activities: ["cpu", "cuda"]
+    record_shapes: False
+    profile_memory: False
+    with_stack: False
+    with_flops: False
+    with_modules: False
+    export_tensorboard: True
+    export_chrome_trace: False
+    chrome_filename_prefix: "chrome_trace"
+    schedule_warmup: 3
+    schedule_active: 1
+    schedule_repeat: 1
+
+  model:
+    goal_encoding: goal730
+    obs_dim: 99
+    critic_features: body_error
+    input_norm: running
+    wm_state_loss: running
+
+  # Motion actor (goal encoder and action decoder).
+  optim:
+    lr: 2.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    clip_grad: 1.0
+    clip_grad_value: 0.1
+    fused: True                # fused Adam on CUDA; skips non-finite steps on the device
+    lr_scheduler: ref_warmup_cosine
+    lr_warmup_steps: 0
+    total_training_steps: 250000
+    min_lr_rate: 0.03
+  world_model_optim:
+    lr: ${actor.optim.lr}
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    clip_grad: 1.0
+    fused: ${actor.optim.fused}
+    lr_scheduler: ${actor.optim.lr_scheduler}
+    lr_warmup_steps: 0
+    total_training_steps: ${actor.optim.total_training_steps}
+    min_lr_rate: ${actor.optim.min_lr_rate}
+  critic_optim: ${actor.world_model_optim}
+  velocity_actor_optim: ${actor.optim}
+  velocity_critic_optim: ${actor.world_model_optim}
+
+  fsdp_config:
+    strategy: fsdp2
+    wrap_policy:
+      module_classes_to_wrap: []
+    amp_autocast:
+      enabled: True
+      precision: bf16
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

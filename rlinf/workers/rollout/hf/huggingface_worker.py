@@ -124,6 +124,7 @@ class MultiStepRolloutWorker(Worker):
             )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
+        self.gc_after_weight_sync = self.cfg.rollout.get("gc_after_weight_sync", True)
         self.version = 0
         self.global_step = 0
         self.finished_episodes = None
@@ -689,8 +690,9 @@ class MultiStepRolloutWorker(Worker):
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(applied_version)
 
-        gc.collect()
-        self.torch_platform.empty_cache()
+        if self.gc_after_weight_sync:
+            gc.collect()
+            self.torch_platform.empty_cache()
 
     @classmethod
     def _infer_policy_input_batch_size(cls, policy_input: PolicyInput) -> int:

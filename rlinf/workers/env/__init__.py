@@ -11,3 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from omegaconf import DictConfig
+
+from rlinf.scheduler.worker.worker import Worker
+
+
+def get_env_worker(cfg: DictConfig) -> type[Worker]:
+    """Env worker of an embodied evaluation config.
+
+    SuperMimic and RTC bring their own env workers on the huggingface rollout
+    backend; every other config uses :class:`EnvWorker`.
+    """
+    if cfg.rollout.get("rollout_backend", "huggingface") == "huggingface":
+        if cfg.algorithm.get("loss_type", None) == "supermimic":
+            from .supermimic_env_worker import SuperMimicEnvWorker
+
+            return SuperMimicEnvWorker
+        if cfg.runner.get("rtc", {}).get("enabled", False):
+            from .rtc_env_worker import RTCEnvWorker
+
+            return RTCEnvWorker
+    from .env_worker import EnvWorker
+
+    return EnvWorker

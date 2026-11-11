@@ -646,6 +646,12 @@ class FSDPModelManager:
         param_filters: dict[str, list[str]],
         filtered_optim_config: dict[str, DictConfig],
     ):
+        """Build the main Adam and one Adam per entry of ``param_filters``.
+
+        An optimizer config may set ``fused: True`` to use PyTorch's fused Adam
+        kernel; it applies on CUDA when no parameter is a scalar. Otherwise a
+        warning is logged and PyTorch picks the implementation as before.
+        """
         validate_adam_mixed_precision(model, optimizer_name="Adam")
         main_betas = (
             main_optim_config.get("adam_beta1", 0.9),
@@ -700,7 +706,8 @@ class FSDPModelManager:
                     "betas": main_betas,
                     "eps": main_adam_eps,
                 },
-            ]
+            ],
+            fused=self._fused_adam("main", main_optim_config, main_optim_params),
         )
         optimizers = [main_optimizer]
 
@@ -718,10 +725,38 @@ class FSDPModelManager:
                             "betas": filtered_optim_batas_map[key],
                             "eps": filtered_optim_adam_eps_map[key],
                         },
-                    ]
+                    ],
+                    fused=self._fused_adam(key, filtered_optim_config[key], params),
                 )
             )
         return optimizers
+
+    def _fused_adam(
+        self, name: str, optim_config: DictConfig, params: list[torch.Tensor]
+    ) -> Union[bool, None]:
+        """``True`` when the config asks for fused Adam and it applies, else ``None``.
+
+        A request that cannot apply logs a warning, since that optimizer then
+        runs PyTorch's default Adam.
+        """
+        if not optim_config.get("fused", False):
+            return None
+        if (
+            Worker.torch_device_type != "cuda"
+            or not Worker.torch_platform.is_available()
+        ):
+            reason = (
+                f"device type {Worker.torch_device_type!r} has no available CUDA device"
+            )
+        elif any(p.dim() == 0 for p in params):
+            reason = "it has a scalar parameter"
+        else:
+            return True
+        self._logger.warning(
+            f"[FSDP] Optimizer {name!r} asks for fused Adam, but {reason}; "
+            "using PyTorch's default Adam."
+        )
+        return None
 
     def build_grad_scaler(self, enabled: bool, **kwargs) -> ShardedGradScaler:
         """

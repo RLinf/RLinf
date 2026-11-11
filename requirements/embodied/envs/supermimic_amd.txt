@@ -1,0 +1,6 @@
+# Experimental MI300X recipe; install.sh builds the pinned ROCm/warp first.
+# Keep the ROCm local version: a PyPI CUDA Warp wheel must not replace it.
+mjlab==1.2.0
+mujoco==3.8.1
+mujoco-warp==3.8.1
+warp-lang==1.13.0+rocm.0

@@ -50,6 +50,25 @@ Supported Benchmark Prefixes
 - ``realworld_*`` → realworld
 - ``maniskill_*`` → maniskill
 - ``polaris_*`` → polaris
+- ``supermimic_*`` → supermimic; see `SuperMimic Evaluation`_ below.
+
+SuperMimic Evaluation
+---------------------
+
+SuperMimic configs run through ``eval_embodied_agent.py`` like the other
+benchmarks. Pass the checkpoint's ``full_weights.pt`` as ``runner.ckpt_path``;
+``runner.eval_export.output_dir`` chooses where the result tables go. For the
+main training recipe, run:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh supermimic_lafan1_goal730_eval \
+       runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=/data/runs/lafan1/eval
+
+The ``supermimic_interface.json`` beside the weights must match the config.
+For the overrides of other variants and the protocol definitions, see the
+Evaluate section of :doc:`SuperMimic <../../examples/embodied/supermimic>`.
 
 Config Fallback
 ---------------
@@ -64,6 +83,7 @@ Full launch examples per benchmark:
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/realworld`
 - :doc:`../guides/polaris`
+- :doc:`SuperMimic <../../examples/embodied/supermimic>` (the Evaluate section)
 
 Direct Python Invocation
 ------------------------

@@ -51,6 +51,7 @@ infer_benchmark() {
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
         geniesim_*|geniesim-* ) echo "geniesim" ;;
+        supermimic_*|supermimic-* ) echo "supermimic" ;;
         simple_*|simple-* ) echo "simple" ;;
         * )
             echo "unknown"

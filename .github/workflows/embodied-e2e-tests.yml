@@ -411,6 +411,94 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-supermimic-g1-mimic-test:
+    runs-on: embodied
+    env:
+      SUPERMIMIC_MOTION_PATH: /workspace/results/g1_mimic_supermimic_clips
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment (supermimic)
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env supermimic
+
+      - name: SuperMimic unit tests with mjlab
+        timeout-minutes: 10
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export MUJOCO_GL=egl
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_supermimic.py
+
+      - name: Write a standing G1 clip
+        run: |
+          export PYTHONPATH=$(pwd)
+          export MUJOCO_GL=egl
+          source .venv/bin/activate
+          python - <<'EOF'
+          import os
+
+          import torch
+
+          from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES, JOINT_POS
+          from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+
+          pose = asset_default_state()
+          os.makedirs(os.environ["SUPERMIMIC_MOTION_PATH"], exist_ok=True)
+          clip = {
+              "fps": 50.0,
+              "joint_names": list(G1_JOINT_NAMES),
+              "q0": pose[JOINT_POS],
+              "state": pose.repeat(64, 1),
+          }
+          torch.save(clip, os.path.join(os.environ["SUPERMIMIC_MOTION_PATH"], "clip_000.pt"))
+          EOF
+
+      - name: SuperMimic training test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic
+
+      - name: SuperMimic resume test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic \
+            runner.max_epochs=5 \
+            runner.resume_dir=/workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_3
+
+      - name: SuperMimic velocity tracking test on two GPUs
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic_velocity
+
+      - name: SuperMimic evaluation test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh g1_mimic_supermimic_eval
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvla-maniskill-libero-test:
     runs-on: embodied
     steps:

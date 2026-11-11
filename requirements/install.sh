@@ -35,6 +35,9 @@ PLATFORM_TORCH_STR=""
 # into pyproject.toml so `uv sync` resolves torch/torchvision/torchaudio from
 # this index (UV_TORCH_BACKEND alone only affects `uv pip install` /  `uv add`).
 PLATFORM_TORCH_INDEX=""
+# "simple" for a PEP 503 index, "flat" for a plain wheel listing. Set to flat
+# by apply_env_torch_source.
+PLATFORM_TORCH_INDEX_FORMAT="simple"
 # Package names routed through PLATFORM_TORCH_INDEX. Must include any transitive
 # deps that only live on the platform-specific index (e.g. pytorch-triton-rocm
 # for ROCm). Set per-platform by configure_<platform>.
@@ -76,6 +79,12 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Override entries an environment needs in place of the project-wide pin for
+# the same package (that pin is removed first). Set by apply_env_default_torch.
+ENV_OVERRIDE_REPLACEMENTS=()
+# torchvision version an environment pairs with its torch when that index does
+# not follow torchvision's usual numbering. Set by apply_env_torch_source.
+ENV_TORCHVISION_VERSION=""
 # Package names inserted into the pyproject.toml `exclude-dependencies` array
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
@@ -125,7 +134,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "supermimic" "simple")
 
 #=======================Utility Functions=======================
 
@@ -151,7 +160,8 @@ Common options:
                            torchcodec is left untouched. Patches pyproject.toml in place for the
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
-                           +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
+                           +rocm<version> wheel on https://download.pytorch.org/whl/torch/,
+                           unless the model or environment selects its own recipe.
     --engine <name>        Rollout engine: sglang or vllm for target=agentic (default: sglang),
                            or phyai for target=embodied (requires --model openpi --env libero).
                            One venv holds one engine -- they pin the
@@ -1137,10 +1147,23 @@ configure_metax() {
 # UV_TORCH_BACKEND together instead of a mid-install `uv pip install torch==...`
 # that leaves a mixed torch tree. An explicit --torch always wins.
 apply_env_default_torch() {
+    case "$ENV_NAME:$PLATFORM" in
+        # torch 2.14 requires setuptools>=77.0.3, above the project-wide
+        # setuptools<75.9 override; setuptools 82 removes pkg_resources.
+        supermimic:nvidia) ENV_OVERRIDE_REPLACEMENTS=("setuptools>=77.0.3,<82") ;;
+    esac
     [ -n "$TORCH_VERSION" ] && return 0
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        supermimic)
+            case "$PLATFORM" in
+                # mjlab 8bb2bc9 requires torch>=2.14.0.
+                nvidia) env_torch="2.14.0" ;;
+                # Community MI300X recipe with mjlab 1.2.0 / mujoco-warp 3.8.1.
+                amd) env_torch="2.9.1" ;;
+            esac
+            ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
     esac
@@ -1148,6 +1171,28 @@ apply_env_default_torch() {
         TORCH_VERSION="$env_torch"
         echo "[install.sh] Environment '${ENV_NAME}' pins torch ${TORCH_VERSION}; overriding the project default."
     fi
+}
+
+# Envs whose torch wheels come from another index than the platform's replace
+# the PLATFORM_TORCH_* settings here. It runs after configure_platform, which
+# resolves the ROCm version these indexes are named after.
+apply_env_torch_source() {
+    case "$ENV_NAME:$PLATFORM" in
+        supermimic:amd)
+            # Radeon wheels carry build-specific local versions, unlike PyTorch's
+            # +rocmX.Y tags. Public version pins accept those local suffixes.
+            local rocm_release
+            rocm_release=$(printf '%s' "$ROCM_VERSION" | cut -d. -f1,2)
+            PLATFORM_TORCH_STR=""
+            PLATFORM_TORCH_INDEX="https://repo.radeon.com/rocm/manylinux/rocm-rel-${rocm_release}/"
+            PLATFORM_TORCH_INDEX_FORMAT="flat"
+            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "triton")
+            # ROCm 7.2's Radeon release pairs torch 2.9.1 with torchvision 0.24.0.
+            if [ "$TORCH_VERSION" = "2.9.1" ]; then
+                ENV_TORCHVISION_VERSION="0.24.0"
+            fi
+            ;;
+    esac
 }
 
 configure_platform() {
@@ -1713,6 +1758,7 @@ apply_torch_override() {
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
         && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#ENV_OVERRIDE_REPLACEMENTS[@]} -eq 0 ] \
         && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
@@ -1734,7 +1780,11 @@ apply_torch_override() {
     # Replace the default protobuf override rather than adding a conflicting
     # second pin. The same policy is enforced after all model/env installs.
     sed -i -E '/^override-dependencies = \[/,/^\]/ { /"protobuf[<>=!]/d; }' "$PYPROJECT_FILE"
-    local extra_overrides=("${RAY_COMPAT_DEPS[@]}" "${PLATFORM_EXTRA_OVERRIDES[@]}")
+    local replacement
+    for replacement in "${ENV_OVERRIDE_REPLACEMENTS[@]}"; do
+        sed -i -E "/^override-dependencies = \\[/,/^\\]/ { /\"${replacement%%[<>=!~;]*}[<>=!~]/d; }" "$PYPROJECT_FILE"
+    done
+    local extra_overrides=("${RAY_COMPAT_DEPS[@]}" "${PLATFORM_EXTRA_OVERRIDES[@]}" "${ENV_OVERRIDE_REPLACEMENTS[@]}")
     if [ ${#extra_overrides[@]} -gt 0 ]; then
         # Insert each extra override right after the opening bracket of the
         # override-dependencies array. Done in reverse so the final order
@@ -1810,6 +1860,10 @@ apply_torch_override() {
         fi
     fi
 
+    if [ -n "$ENV_TORCHVISION_VERSION" ]; then
+        torchvision_version="$ENV_TORCHVISION_VERSION"
+    fi
+
     local torch_pin="${torch_version}${PLATFORM_TORCH_STR}"
     local torchvision_pin="${torchvision_version}${PLATFORM_TORCH_STR}"
     local torchaudio_pin="${torchaudio_version}${PLATFORM_TORCH_STR}"
@@ -1832,7 +1886,8 @@ apply_torch_override() {
         # any already declared there). Appended to the file so the existing
         # trap restores the original on exit.
         for pkg in "${PLATFORM_TORCH_PACKAGES[@]}"; do
-            if grep -qE "^[[:space:]]*\"${pkg}\\b" "$PYPROJECT_FILE"; then
+            if sed -n '/^dependencies = \[/,/^\]/p' "$PYPROJECT_FILE" \
+                | grep -qE "^[[:space:]]*\"${pkg}\\b"; then
                 continue
             fi
             sed -i "/^dependencies = \\[\$/a\\    \"${pkg}\"," "$PYPROJECT_FILE"
@@ -1843,6 +1898,9 @@ apply_torch_override() {
             echo "[[tool.uv.index]]"
             echo "name = \"pytorch-platform\""
             echo "url = \"${PLATFORM_TORCH_INDEX}\""
+            if [ "$PLATFORM_TORCH_INDEX_FORMAT" = "flat" ]; then
+                echo 'format = "flat"'
+            fi
             echo "explicit = true"
             echo ""
             echo "[tool.uv.sources]"
@@ -3538,6 +3596,9 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        supermimic)
+            install_supermimic_env
+            ;;
         simple)
             install_common_embodied_deps
             install_simple_env
@@ -4066,6 +4127,64 @@ install_piper_env() {
     mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "pyAgxArm @ git+${GITHUB_PREFIX}https://github.com/agilexrobotics/pyAgxArm.git@4b0f06585db3324222616999afeda9037df2e8bd"
+}
+
+install_supermimic_amd_env() {
+    local rocm_path="${ROCM_PATH:-/opt/rocm}"
+    if [ ! -x "$rocm_path/bin/hipcc" ]; then
+        echo "[install.sh] SuperMimic AMD needs a ROCm SDK with hipcc; set ROCM_PATH (found ${rocm_path})." >&2
+        exit 1
+    fi
+    install_common_embodied_deps
+    local warp_path
+    warp_path=$(clone_or_reuse_repo SUPERMIMIC_WARP_PATH ../warp-rocm \
+        "${GITHUB_PREFIX}https://github.com/ROCm/warp.git")
+    git -C "$warp_path" checkout 36ed75aa65f837a78b20d1a3a1ac08cfe1fc7b71
+    pushd "$warp_path"
+    # Follow ROCm/warp's gfx942 Docker recipe, including its HIP compiler flags.
+    python build_lib.py --rocm-path "$rocm_path" \
+        --hip-arch "${SUPERMIMIC_HIP_ARCH:-gfx942}" \
+        --hipcc-options="-Xarch_device -fno-inline"
+    uv pip install --reinstall-package warp-lang .
+    popd
+    uv pip install "amdsmi<=${ROCM_VERSION}" -r "$SCRIPT_DIR/embodied/envs/supermimic_amd.txt"
+}
+
+# PyPI's warp-lang 1.18.0 is a CUDA 13 build and is invisible to an older
+# driver; warp's GitHub release also ships the +cu12 build of that version.
+install_supermimic_env() {
+    case "$PLATFORM" in
+        amd)
+            install_supermimic_amd_env
+            return
+            ;;
+        nvidia) ;;
+        *)
+            echo "[install.sh] supermimic supports nvidia or experimental amd; got platform=${PLATFORM}." >&2
+            exit 1
+            ;;
+    esac
+    install_common_embodied_deps
+    local cuda_mm cuda_major
+    cuda_mm=$(detect_cuda_major_minor) || {
+        echo "Could not detect the CUDA version of the installed torch." >&2
+        exit 1
+    }
+    cuda_major="${cuda_mm%% *}"
+    if [ "$cuda_major" -lt 13 ]; then
+        local arch wheel_tag
+        arch=$(uname -m)
+        case "$arch" in
+            x86_64) wheel_tag="manylinux_2_28_x86_64" ;;
+            aarch64|arm64) wheel_tag="manylinux_2_34_aarch64" ;;
+            *)
+                echo "[install.sh] no CUDA 12 Warp wheel for architecture ${arch}." >&2
+                exit 1
+                ;;
+        esac
+        uv pip install "warp-lang @ ${GITHUB_PREFIX}https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-${wheel_tag}.whl"
+    fi
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/supermimic.txt"
 }
 
 install_so101_env() {
@@ -4667,6 +4786,7 @@ main() {
     apply_env_default_torch
     apply_agentic_torch_default
     configure_platform
+    apply_env_torch_source
     setup_mirror
     apply_torch_override
 

@@ -27,6 +27,11 @@ class ForwardType(Enum):
     IQL_CRITIC = "iql_critic"
     IQL_VALUE = "iql_value"
     NFT = "nft"
+    SUPERMIMIC_WORLD_MODEL = "supermimic_world_model"
+    SUPERMIMIC_ACTOR = "supermimic_actor"
+    SUPERMIMIC_CRITIC = "supermimic_critic"
+    SUPERMIMIC_VELOCITY_ACTOR = "supermimic_velocity_actor"
+    SUPERMIMIC_VELOCITY_CRITIC = "supermimic_velocity_critic"
 
 
 class BasePolicy(ABC):

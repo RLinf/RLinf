@@ -1,0 +1,56 @@
+# Tracking and velocity evaluation of the checkpoint that
+# g1_mimic_supermimic_velocity saves, on the clip in SUPERMIMIC_MOTION_PATH.
+# Mirrors evaluations/supermimic/supermimic_lafan1_goal730_eval.yaml.
+defaults:
+  - supermimic_lafan1_goal730
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  component_placement:
+    actor,env,rollout: 0-1
+
+runner:
+  task_type: embodied_eval
+  only_eval: True
+  ckpt_path: /workspace/results/g1_mimic_supermimic_velocity/ci-test/checkpoints/global_step_3/actor/model_state_dict/full_weights.pt
+  logger:
+    log_path: /workspace/results/g1_mimic_supermimic_eval
+    experiment_name: ci-test
+  eval_export:
+    enabled: True
+
+rollout:
+  model: ${actor.model}
+
+algorithm:
+  termination_head: learned
+
+actor:
+  model:
+    torch_compile: False
+    goal_encoding: paper
+    obs_dim: 93
+    critic_features: root4
+    input_norm: none
+    wm_state_loss: paper
+    velocity_tracking: True
+
+env:
+  train:
+    num_clips: 1
+    motion_on_cpu: True
+  eval:
+    total_num_envs: 8
+    num_clips: 1
+    motion_on_cpu: True
+    max_steps_per_rollout_epoch: 64  # frames in the standing clip
+    eval_tasks: [tracking, velocity_smoke]
+    velocity_smoke:
+      seconds: 0.08
