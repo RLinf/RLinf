@@ -1,0 +1,120 @@
+defaults:
+  - qwen2.5-1.5b-megatron
+  - _self_
+
+cluster:
+  component_placement:
+    critic: all
+
+runner:
+  synchronous: true
+  experiment_name: searchr1-qwen2.5-1.5b-ppo-megatron
+
+algorithm:
+  group_size: 1
+  adv_type: gae_dynamic
+  gamma: 1.0
+  gae_lambda: 1.0
+  value_cliprange: 0.5
+  kl_beta: 0.0
+  loss_scales: []
+  normalize_advantages: true
+  use_valid_token_scale: true
+  recompute_logprobs: false
+
+agentloop:
+  truncate_response: false
+
+rollout:
+  return_logprobs: true
+  sglang:
+    backend_type: server
+
+critic:
+  use_critic_model: true
+  value_head_init: normal # normal or zero
+  group_name: "CriticGroup"
+  training_backend: megatron
+  enable_dp_load_balance: true
+  seed: 1234
+  spec_name: decoder_gpt
+
+  offload_optimizer: true
+  offload_weight: true
+  offload_grad: true
+
+  model:
+    precision: fp16
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    megatron_checkpoint: null
+    activation: swiglu
+    normalization: rmsnorm
+    add_bias_linear: false
+    position_embedding_type: rope
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    recompute_method: block
+    recompute_granularity: full
+    recompute_num_layers: 36
+    apply_rope_fusion: true
+    bias_dropout_fusion: false
+    persist_layer_norm: false
+    bias_activation_fusion: false
+    attention_softmax_in_fp32: true
+    batch_p2p_comm: false
+    variable_seq_lengths: true
+    gradient_accumulation_fusion: false
+    moe_token_dispatcher_type: alltoall
+    use_cpu_initialization: false
+
+  optim:
+    optimizer: adam
+    lr: 5.0e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-05
+    min_lr: 0.0
+    weight_decay: 0.01
+    clip_grad: 0.8
+    use_distributed_optimizer: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: false
+    bf16: false
+    fp16: true
+    # Start the fp16 value head conservatively; dynamic scaling adapts during training.
+    initial_loss_scale: 32
+    loss_scale_window: 1000
+
+  lr_sched:
+    lr_warmup_fraction: null
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 10
+    max_lr: 5.0e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 662
+
+  tokenizer:
+    tokenizer_model: ${rollout.model.model_path}
+    use_fast: false
+    trust_remote_code: true
+    padding_side: 'right'
+
+  megatron:
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    ckpt_format: torch
+    use_hf_ckpt: true
+    ckpt_convertor:
+      model: Qwen2.5-1.5B
+      hf_model_path: ${rollout.model.model_path}
+      save_path: ${runner.output_dir}/${runner.experiment_name}/converted_ckpts/critic
+      use_gpu_num: 0
+      use_gpu_index: null
+      process_num: 16
+      tensor_model_parallel_size: ${critic.model.tensor_model_parallel_size}
+      pipeline_model_parallel_size: ${critic.model.pipeline_model_parallel_size}
