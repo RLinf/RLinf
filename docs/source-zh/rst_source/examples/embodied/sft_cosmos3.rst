@@ -275,7 +275,7 @@ Policy 联合生成未来视频和动作。未来视频沿确定性的 ODE 更�
 
 .. note::
 
-   ``tests/unit_tests/test_cosmos3_ppo.py`` 中的 25 项 CPU 契约测试已通过。使用本地 Edge 与 SFT 权重的单卡检查也已通过：rollout 与 replay 的 logprob 一致，FSDP2 完成 PPO loss、反向传播及一步优化器更新。尚未验证多卡环境训练与 PPO 收敛；需在目标 GPU 上核对 ``env/success_once`` 和保存的训练指标。
+   配置在每轮 rollout 前同步 actor 权重，并开启键名校验。启动时设置 ``PPO_STEP_DIAGNOSTICS=1``，可记录训练开始前以及每次 optimizer 更新后的 actor 与 rollout 采样 KL。
 
 可视化与结果
 ----------------------------------------

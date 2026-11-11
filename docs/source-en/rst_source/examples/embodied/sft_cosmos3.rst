@@ -275,7 +275,7 @@ Read the model-specific workflow in the grouped Cosmos3 modules:
 
 .. note::
 
-   The 25 CPU contract tests in ``tests/unit_tests/test_cosmos3_ppo.py`` pass. A single-GPU check with the local Edge and SFT checkpoints also passes rollout/replay logprob equality and an FSDP2 PPO loss, backward, and optimizer step. Multi-GPU environment training and PPO convergence have not been validated; verify ``env/success_once`` and the saved training metrics on the target GPUs.
+   The recipe synchronizes actor weights before each rollout and enables key validation. Set ``PPO_STEP_DIAGNOSTICS=1`` when launching to record actor-versus-rollout sampled KL before training and after each optimizer update.
 
 Visualization and Results
 ----------------------------------------
