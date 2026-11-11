@@ -466,7 +466,7 @@ class MAFSDPActor(FSDPActor):
 
         entropy_loss = torch.tensor(0.0, device=logprobs.device)
         if self.calculate_entropy:
-            entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+            entropy_loss = self.loss_agg_func(entropy * loss_scales, mask=loss_mask)
             if self.calculate_entropy_loss:
                 loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 

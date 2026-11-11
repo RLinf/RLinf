@@ -229,8 +229,13 @@ def test_dynamic_logprob_inference_restores_rows_and_weights(
         assert 4 in actor.model.forward_batch_sizes
 
 
-def test_group_packing_preserves_mask_loss_gradient_and_update(actor_group):
+@pytest.mark.parametrize("entropy_bonus", [0.0, 0.01])
+def test_group_packing_preserves_mask_loss_gradient_and_update(
+    actor_group, entropy_bonus
+):
     actor = _actor()
+    actor.cfg.algorithm.entropy_bonus = entropy_bonus
+    actor.calculate_entropy = actor.calculate_entropy_loss = entropy_bonus > 0
     groups = [_rollout(), _rollout(True)]
     batch = DynamicRolloutResult.merge_batches(
         [group.to_actor_batch(10, 0) for group in groups], group_size=2
@@ -578,7 +583,9 @@ def test_sharded_training_with_generated_padding(actor_group, dynamic):
         assert torch.isfinite(parameter.grad.full_tensor()).all()
 
 
-def _unsharded_update(temperature=1.0, model_type="token", kl_beta=0.0):
+def _unsharded_update(
+    temperature=1.0, model_type="token", kl_beta=0.0, entropy_bonus=0.0
+):
     actor = _actor(model_type=model_type)
     actor.kl_beta = kl_beta
     actor.cfg.algorithm.sampling_params.temperature = temperature
@@ -598,9 +605,10 @@ def _unsharded_update(temperature=1.0, model_type="token", kl_beta=0.0):
         rows = [i for i, t in enumerate(batch["idx_to_traj"]) if t == traj]
         weights[rows] = 1 / (len(trajectories) * mask[rows].sum())
     optimizer = torch.optim.SGD(actor.model.parameters(), lr=0.01, momentum=0.9)
-    logprobs = actor.forward_batch(batch)
+    logprobs, entropy = actor.forward_batch(batch, calculate_entropy=True)
     ratio = torch.exp(logprobs - batch["recomputed_logprobs"])
     loss = -(ratio * batch["advantages"] * weights * mask).sum()
+    loss = loss - entropy_bonus * (entropy * weights * mask).sum()
     if kl_beta > 0:
         log_ratio = batch["ref_logprobs"] - logprobs
         kld = log_ratio.exp() - log_ratio - 1
@@ -641,6 +649,7 @@ def _check_sharded_training(
     kl_beta=0.0,
     pack_traj=True,
     micro_batch_size=1,
+    entropy_bonus=0.0,
 ):
     Worker.torch_device_type = device
     Worker.torch_platform = torch.cuda if device == "cuda" else _CPUPlatform
@@ -656,10 +665,12 @@ def _check_sharded_training(
     )
     try:
         expected, grads, norm, loss = _unsharded_update(
-            temperature, model_type, kl_beta
+            temperature, model_type, kl_beta, entropy_bonus
         )
         actor = _sharded_actor(dynamic, model_type, world_size)
         actor.kl_beta = kl_beta
+        actor.cfg.algorithm.entropy_bonus = entropy_bonus
+        actor.calculate_entropy = actor.calculate_entropy_loss = entropy_bonus > 0
         actor.pack_traj = pack_traj
         actor.micro_batch_size = micro_batch_size
         actor.cfg.actor.micro_batch_size = micro_batch_size
@@ -722,6 +733,7 @@ def _check_sharded_training(
                         "dynamic_batch": dynamic,
                         "temperature": temperature,
                         "kl_beta": kl_beta,
+                        "entropy_bonus": entropy_bonus,
                         "pack_traj": pack_traj,
                         "micro_batch_size": micro_batch_size,
                         "loss": float(loss.detach()),
@@ -863,7 +875,10 @@ def test_nonzero_kl_sharded_update_and_checkpoint_resume(tmp_path, world_size, d
 
 @pytest.mark.parametrize("dynamic", [False, True])
 @pytest.mark.parametrize("pack_traj", [False, True])
-def test_padded_microbatches_match_trajectory_objective(tmp_path, dynamic, pack_traj):
+@pytest.mark.parametrize("entropy_bonus", [0.0, 0.01])
+def test_padded_microbatches_match_trajectory_objective(
+    tmp_path, dynamic, pack_traj, entropy_bonus
+):
     from packaging.version import Version
 
     if Version(torch.__version__) < Version("2.12"):
@@ -878,6 +893,7 @@ def test_padded_microbatches_match_trajectory_objective(tmp_path, dynamic, pack_
         kl_beta=0.1,
         pack_traj=pack_traj,
         micro_batch_size=2,
+        entropy_bonus=entropy_bonus,
     )
 
 
