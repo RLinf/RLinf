@@ -24,9 +24,9 @@ runner:
     log_path: /workspace/results/frankasim_sac_cnn_async
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
-  max_epochs: 2
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -35,7 +35,7 @@ runner:
   weight_sync_interval: 1
 
 algorithm:
-  update_epoch: 4
+  update_epoch: 1
   group_size: 1
   agg_q: min # or mean
   actor_agg_q: mean

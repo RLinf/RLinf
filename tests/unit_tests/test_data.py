@@ -608,6 +608,45 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _StreamingScalarFeatureDataset(_LegacyDataset):
+    """Mimic a streaming LeRobot dataset with scalar HF features."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "is_success": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {
+            "done": [],
+            "is_success": [],
+            "segment_id": [],
+            "size": 0,
+        }
+        self.image_writer = None
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["is_success"].append(frame["is_success"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+        self.episode_buffer["size"] += 1
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, bool) for value in self.episode_buffer["is_success"]
+        )
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -635,6 +674,28 @@ def test_current_dataset_gets_task_as_argument():
     assert dataset.tasks == ["pick up the cube"] * 2
     assert all("task" not in f for f in dataset.frames)
     assert dataset.frames[0]["state"] == 0
+    assert dataset.saved_episodes == 1
+
+
+def test_streaming_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _StreamingScalarFeatureDataset()
+    writer = _make_writer(dataset)
+    writer.add_frame(
+        {
+            "done": np.array([False], dtype=bool),
+            "is_success": np.array([False], dtype=bool),
+            "segment_id": np.array([3], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+    )
+
+    assert writer.save_episode(is_success=True) == 1
+    assert dataset.episode_buffer == {
+        "done": [True],
+        "is_success": [True],
+        "segment_id": [3],
+        "size": 1,
+    }
     assert dataset.saved_episodes == 1
 
 
@@ -3613,3 +3674,39 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3], [1, 2, 3, 4]],
+        prompt_lengths=[1, 2],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        rollout_logprobs=[[-0.1, -0.2], [-0.3, -0.4]],
+        values=torch.arange(8, dtype=torch.float32).reshape(2, 4),
+        advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
+        returns=torch.ones(2, 4),
+    )
+    batch = result.to_actor_batch(4, 0)
+    batch["loss_scales"] = batch["response_mask"].float()
+    assert (batch["response_mask"][0] & batch["response_mask"][1]).sum() == 1
+    packed = DynamicRolloutResult.pack_traj_batch({}, batch)
+    assert packed["idx_to_traj"] == [0, 0]
+    for key in (
+        "input_ids",
+        "response_mask",
+        "values",
+        "advantages",
+        "returns",
+        "rollout_logprobs",
+        "loss_scales",
+    ):
+        torch.testing.assert_close(packed[key], batch[key])

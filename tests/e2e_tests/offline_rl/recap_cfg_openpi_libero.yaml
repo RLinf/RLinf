@@ -23,7 +23,7 @@ runner:
     log_path: "/workspace/results/recap_cfg_openpi_libero"
     project_name: rlinf
     experiment_name: "recap_cfg_openpi_libero"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: -1
   max_steps: 1
