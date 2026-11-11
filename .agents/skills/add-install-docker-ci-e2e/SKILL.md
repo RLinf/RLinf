@@ -67,7 +67,7 @@ Copy an existing `build-embodied-*` job and replace the target name. See [refere
   - Checkout.
   - Create embodied environment: set `UV_*`, any required path env vars (e.g. `GR00T_PATH`, `BEHAVIOR_PATH`), then `bash requirements/install.sh embodied --model <model> --env <env>`.
   - Run test: `source .venv/bin/activate`, set `REPO_PATH`, then `bash tests/e2e_tests/embodied/run.sh <config_name>` (or `run_async.sh` if the test is async). Use a reasonable `timeout-minutes`.
-  - Clean up: `rm -rf .venv`, `uv cache prune`, and any test-specific cleanup.
+  - Clean up: `rm -rf .venv` and any test-specific cleanup (never run `uv cache prune` against the shared CI cache).
 
 Use `runs-on: embodied` so the job runs on a runner with GPU/datasets. See existing jobs in the file for env vars and step order.
 
