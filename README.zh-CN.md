@@ -34,7 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 ## 最新动态
 
 - [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
-- [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
+- [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，率先在 Robbyant R2 上支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
 - [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](docs/source-zh/rst_source/examples/embodied/so101.rst)。
 - [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。

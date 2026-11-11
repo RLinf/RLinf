@@ -179,8 +179,9 @@ jerks, stutter, or a controller that drops out of streaming mode:
    and right-arm methods one after another runs two separate trajectories back
    to back.
 
-The connection layer handles all three, so task code does not need its own
-interpolation loop.
+A connection that streams joint setpoints handles all three, so task code does
+not need its own interpolation loop. The R2 connection is the one that does so
+today; on other robots, each command still goes straight to the driver.
 
 Stream Setpoints from a Fixed-Rate Loop
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -272,18 +273,20 @@ Because the calls inside the block return before anything moves, read
    if not batch.ok:
        raise RuntimeError(f"Reset did not finish: {robot.diagnose().error_message}")
 
-During the normal ``step`` loop, ``robot.send_action({...})`` automatically
-batches commands across every connection involved, so multi-part ``policy``
-actions are always combined. You only need ``with robot.batch_commands():`` when
-calling methods such as ``reset_joint()`` across multiple parts during setup or
-reset.
+During the normal ``step`` loop, ``robot.send_action({...})`` opens a batch on
+every connection involved, so on a connection that merges commands (R2 today),
+multi-part ``policy`` actions are always combined. You only need
+``with robot.batch_commands():`` when calling methods such as ``reset_joint()``
+across multiple parts during setup or reset.
 
 Diagnose and Recover from Hardware Faults
 -----------------------------------------
 
 Motion smoothing prevents software-induced jumps, but physical collisions or
 joint limits can still trigger hardware protection during a run, disabling motor
-drives or dropping the controller out of streaming mode. You can call
+drives or dropping the controller out of streaming mode. The R2 driver detects
+and recovers from these faults today; other robots report a healthy connection
+and ignore the fault-recovery settings. You can call
 ``diagnose()`` to inspect health and ``recover()`` to clear faults on the
 ``Robot`` (or any part), or keep automatic recovery enabled so the connection
 checks and recovers before sending each command:
@@ -455,9 +458,9 @@ Robot parts read sensors and drive actuators, while the task environment
 - **Truncating fault-interrupted episodes**: in teleoperation or standalone
   evaluation, control can continue right after a 50–300 ms automatic recovery.
   In RL data collection, however, that pause breaks the transition continuity of
-  the current ``step``. At the end of each ``step``, the ``env`` calls
+  the current ``step``. At the end of each ``step``, the R2 ``env`` calls
   ``robot.consume_recovery_event()``, records any fault details in
-  ``info["robot_fault"]``, and when ``truncate_on_fault_recovery`` is enabled,
+  ``info["robot_fault"]``, and when its ``truncate_on_fault_recovery`` is enabled,
   marks the ``step`` with ``truncated=True`` so the rollout runner ends the
   interrupted ``episode`` and resets the robot.
 

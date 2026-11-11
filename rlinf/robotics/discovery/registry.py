@@ -50,6 +50,10 @@ class RobotConfig(HardwareConfig):
     that dials it.
     """
 
+    # Only drivers that report hardware health or stream joint setpoints read
+    # the fault-recovery and motion settings below (R2 today); every other
+    # robot accepts them and ignores them.
+
     enable_fault_recovery: bool = True
     """Whether to automatically diagnose and recover from recoverable hardware faults."""
 
