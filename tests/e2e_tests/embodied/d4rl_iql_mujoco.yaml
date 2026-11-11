@@ -26,12 +26,12 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "d4rl_iql_mujoco"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
-  max_epochs: 5000
-  max_steps: 5000
+  max_epochs: 1
+  max_steps: 1
 
-  local_update_steps: 500
+  local_update_steps: 1
 
   val_check_interval: 5000
   save_interval: -1
