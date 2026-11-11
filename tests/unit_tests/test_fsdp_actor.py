@@ -47,7 +47,11 @@ from rlinf.utils.distributed import RolloutDataBalance, ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.timers import Timer
-from rlinf.utils.utils import get_loss_agg_func, retrieve_model_state_dict_in_cpu
+from rlinf.utils.utils import (
+    cpu_weight_swap,
+    get_loss_agg_func,
+    retrieve_model_state_dict_in_cpu,
+)
 from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 
 
@@ -1083,13 +1087,29 @@ def test_single_cuda_fsdp_actor_update_and_checkpoint_resume(tmp_path):
     )
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires one CUDA GPU")
-@pytest.mark.parametrize("actor_group", ["cuda"], indirect=True)
-def test_single_cuda_fsdp_reference_swap_preserves_policy(actor_group):
-    _check_fsdp_reference_swap()
+@pytest.mark.parametrize(
+    "actor_group",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="Requires one CUDA GPU"
+            ),
+        ),
+    ],
+    indirect=True,
+)
+@pytest.mark.parametrize("raise_during_swap", [False, True])
+def test_fsdp_reference_swap_preserves_policy(actor_group, raise_during_swap):
+    from packaging.version import Version
+
+    if actor_group == "cpu" and Version(torch.__version__) < Version("2.12"):
+        pytest.skip("CPU FSDP2 coverage currently targets PyTorch >= 2.12")
+    _check_fsdp_reference_swap(raise_during_swap)
 
 
-def _check_fsdp_reference_swap():
+def _check_fsdp_reference_swap(raise_during_swap=False):
     actor = _sharded_actor(False, "qwen", world_size=dist.get_world_size())
     reference = _actor(model_type="qwen")
     reference_initial = {
@@ -1117,6 +1137,14 @@ def _check_fsdp_reference_swap():
     torch.testing.assert_close(actual[mask], expected[mask])
     torch.testing.assert_close(ref[mask], expected_ref[mask])
     assert (actual[mask] - ref[mask]).abs().max() > 1e-5
+    if raise_during_swap:
+        with pytest.raises(RuntimeError, match="reference forward failed"):
+            with cpu_weight_swap(actor, actor.ref_policy_state_dict, is_fsdp=True):
+                with torch.no_grad():
+                    torch.testing.assert_close(
+                        actor.forward_batch(batch).cpu()[mask], expected_ref[mask]
+                    )
+                raise RuntimeError("reference forward failed")
     for name in initial:
         torch.testing.assert_close(after[name], initial[name], atol=0, rtol=0)
     with torch.no_grad():
