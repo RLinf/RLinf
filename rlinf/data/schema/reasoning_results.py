@@ -1050,10 +1050,10 @@ class DynamicRolloutResult:
                 *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "values": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "returns": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
         }
         batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}
