@@ -85,7 +85,7 @@ ARX X5 数采配置在一台 Ubuntu 24.04 主机上运行双臂控制、三路�
 
    ls -l /dev/v4l/by-path/
 
-打开 ``examples/embodiment/config/collect_data_dual_arx5.yaml``，按实际接线填写左右臂的 CAN 接口和每路视角相机的 V4L2 路径。
+打开 ``examples/embodiment/config/collect_data_dual_arx5.yaml``，按实际接线填写左右臂的 CAN 接口和每路视角相机的 V4L2 路径。如果相机侧装或倒装，为对应视角设置 ``camera_rotations``，使录制的图像保持正向。
 
 .. code-block:: yaml
 
@@ -96,6 +96,7 @@ ARX X5 数采配置在一台 Ubuntu 24.04 主机上运行双臂控制、三路�
    base_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.4:1.0-video-index0']  # 主视角
    left_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0']  # 左腕
    right_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.3:1.0-video-index0']  # 右腕
+   camera_rotations: {base_0_rgb: 180}  # 按视角顺时针旋转：0/90/180/270
 
 如果 OpenCV 报错 ``Could not open V4L2 camera``，检查设备属主和当前用户的附加组：
 

@@ -85,7 +85,7 @@ Find stable V4L2 paths for the three cameras:
 
    ls -l /dev/v4l/by-path/
 
-In ``examples/embodiment/config/collect_data_dual_arx5.yaml``, set the CAN interface for each arm and the V4L2 path for each camera view to match your wiring.
+In ``examples/embodiment/config/collect_data_dual_arx5.yaml``, set the CAN interface for each arm and the V4L2 path for each camera view to match your wiring. If a camera is mounted rotated or upside down, set ``camera_rotations`` for its view so the recorded images are upright.
 
 .. code-block:: yaml
 
@@ -96,6 +96,7 @@ In ``examples/embodiment/config/collect_data_dual_arx5.yaml``, set the CAN inter
    base_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.4:1.0-video-index0']  # Overhead view
    left_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0']  # Left wrist
    right_camera_serials: ['/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2.3:1.0-video-index0']  # Right wrist
+   camera_rotations: {base_0_rgb: 180}  # Clockwise rotation per view: 0/90/180/270
 
 If OpenCV reports ``Could not open V4L2 camera``, check the device owner and your supplementary groups:
 
