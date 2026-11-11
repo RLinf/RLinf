@@ -84,6 +84,88 @@ PHASE_MODULES = {
     ForwardType.SUPERMIMIC_VELOCITY_CRITIC: ("velocity_critic",),
 }
 
+# Observation norm lived on the decoder. The interface record does not name
+# that path, so loading renames the three buffers itself.
+_LEGACY_OBS_NORM = "decoder.obs_norm."
+_OBS_NORM_BUFFERS = frozenset(("mean", "var", "count"))
+
+
+def _renamed_obs_norm_key(key: str) -> str | None:
+    """Current name of one legacy observation-norm buffer key."""
+    start = 0
+    while True:
+        index = key.find(_LEGACY_OBS_NORM, start)
+        if index < 0:
+            return None
+        if index == 0 or key[index - 1] == ".":
+            break
+        start = index + 1
+    suffix = key[index + len(_LEGACY_OBS_NORM) :]
+    if suffix not in _OBS_NORM_BUFFERS:
+        return None
+    return f"{key[:index]}obs_norm.{suffix}"
+
+
+def _with_renamed_obs_norm_keys(mapping):
+    """Copy ``mapping`` with legacy observation-norm names replaced.
+
+    A current key already in ``mapping`` wins. The input is returned
+    unchanged when nothing has to move.
+    """
+    moves = []
+    for key in mapping:
+        if not isinstance(key, str):
+            continue
+        renamed = _renamed_obs_norm_key(key)
+        if renamed is not None:
+            moves.append((key, renamed))
+    if not moves:
+        return mapping
+    renamed_map = dict(mapping)
+    for old, new in moves:
+        if new not in mapping:
+            renamed_map[new] = renamed_map[old]
+        del renamed_map[old]
+    return renamed_map
+
+
+def migrate_legacy_obs_norm_state_dict(state_dict):
+    """Rename ``decoder.obs_norm.{mean,var,count}`` to ``obs_norm.*``."""
+    return _with_renamed_obs_norm_keys(state_dict)
+
+
+def migrate_legacy_obs_norm_metadata(metadata):
+    """Rename those buffers in DCP metadata before the load is planned.
+
+    The planner asks for the live names, so the saved names have to change
+    first. File offsets stay with the storage records.
+    """
+    state = _with_renamed_obs_norm_keys(metadata.state_dict_metadata)
+    if state is metadata.state_dict_metadata:
+        return metadata
+    from torch.distributed.checkpoint.metadata import MetadataIndex
+
+    metadata.state_dict_metadata = state
+    storage = metadata.storage_data
+    if isinstance(storage, dict):
+        moved = {}
+        changed = False
+        for index, value in storage.items():
+            fqn = getattr(index, "fqn", None)
+            renamed = _renamed_obs_norm_key(fqn) if isinstance(fqn, str) else None
+            if renamed is None:
+                moved[index] = value
+                continue
+            changed = True
+            new_index = MetadataIndex(renamed, index.offset, index.index)
+            if new_index not in storage:
+                moved[new_index] = value
+        metadata.storage_data = moved if changed else storage
+    planner = metadata.planner_data
+    if isinstance(planner, dict):
+        metadata.planner_data = _with_renamed_obs_norm_keys(planner)
+    return metadata
+
 
 def goal_width(goal_encoding: str, goal_anchor: bool) -> int:
     """Width of the policy goal for one encoding."""
@@ -155,6 +237,12 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         set_kinematics_compile(torch_compile)
         self._wm_window = None
         self._imagination = None
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """Load weights, moving observation-norm buffers off the decoder."""
+        if self.obs_norm is not None:
+            state_dict = migrate_legacy_obs_norm_state_dict(state_dict)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
 
     def set_autocast(self, dtype: torch.dtype | None) -> None:
         """Autocast every linear stack to ``dtype``; ``None`` keeps float32.

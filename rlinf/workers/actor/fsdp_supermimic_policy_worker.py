@@ -51,7 +51,10 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.interface import PolicyInterface
-from rlinf.models.embodiment.supermimic.supermimic_policy import goal_width
+from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    goal_width,
+    migrate_legacy_obs_norm_metadata,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.precision import torch_dtype_from_precision
@@ -935,6 +938,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             optimizers=list(self.phase_optimizers.values()),
             lr_schedulers=list(self.phase_schedulers.values()),
             load_path=load_base_path,
+            prepare_metadata=migrate_legacy_obs_norm_metadata,
         )
         with open(os.path.join(load_base_path, _COUNTERS_FILE)) as file:
             counters = json.load(file)

@@ -421,7 +421,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
      - ``../results``
      - 检查点和日志的根目录，相对启动目录。正式训练请显式设置。
 
-**更新次数与仿真步数。** 每个控制步（所有环境各走一步）累计 ``updates_per_env_step`` 次欠下的更新。runner 一直采集到有更新到期，执行所有整数次的欠账更新，同步新权重后继续采集。所以 ``runner.max_epochs=16000`` 对应 16000 / 0.4 = 40,000 个控制步（另加预热）。全局步是更新次数，``env/env_steps`` 是控制步数。
+**更新次数与仿真步数。** 每个控制步（所有环境各走一步）累计 ``updates_per_env_step`` 次欠下的更新。runner 一直采集到有更新到期，再执行这次采集欠下的全部整数次更新。这些更新若会跨过保存或评测步，就先停在那一步，同步权重并保存或评测，然后执行剩余的更新。同步新权重后继续采集。所以 ``runner.max_epochs=16000`` 对应 16000 / 0.4 = 40,000 个控制步（另加预热）。全局步是更新次数，``env/env_steps`` 是控制步数。
 
 **全局量。** ``env.train.total_num_envs``、``algorithm.wm_window_batch`` 和 ``algorithm.imagine_batch`` 是所有 GPU 的总和，必须能被 GPU 数整除；``updates_per_env_step`` 和 ``runner.max_epochs`` 数的也是全局更新。所以加 GPU 而不改这些值，训练的数学含义不变，见 `多卡训练`_。
 

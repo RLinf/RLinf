@@ -17,8 +17,9 @@
 The env, rollout and actor workers of one rank exchange every control step
 point to point (see :class:`SuperMimicEnvWorker`). This runner decides how
 many steps to collect before the next update, launches the three workers
-for those steps, runs the owed updates on the actor, syncs the policy to
-the rollout workers, and handles logging, evaluation and checkpoints.
+for those steps, runs the owed updates on the actor, stopping on the next
+save or evaluation step, syncs the policy to the rollout workers, and
+handles logging, evaluation and checkpoints.
 """
 
 from __future__ import annotations
@@ -38,8 +39,10 @@ from rlinf.runners.supermimic_eval_runner import (
     export_eval_results,
     merge_rank_rows,
 )
+from rlinf.scheduler import Tracer
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
+from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
@@ -53,12 +56,57 @@ if TYPE_CHECKING:
 _RUNNER_STATE = "runner_state.json"
 
 
+def _boundary_distance(step: int, interval: int) -> int | None:
+    """Updates from ``step`` until the next positive multiple of ``interval``.
+
+    A finished count of 0 is not a boundary, so the distance from 0 is the
+    interval itself. An interval of 0 or less is disabled.
+    """
+    if interval <= 0:
+        return None
+    remainder = step % interval
+    if remainder == 0:
+        return interval
+    return interval - remainder
+
+
+def boundary_update_spans(
+    step: int,
+    count: int,
+    max_steps: int,
+    save_interval: int,
+    val_check_interval: int,
+) -> list[int]:
+    """Split ``count`` updates at save and evaluation steps.
+
+    ``check_progress`` acts only when the finished count is an exact multiple
+    of the interval, so a piece that would pass the next multiple stops on
+    it. The multiple itself is included. The pieces also stop at
+    ``max_steps``.
+    """
+    spans: list[int] = []
+    left = min(max(count, 0), max(max_steps - step, 0))
+    while left > 0:
+        distance = left
+        for interval in (save_interval, val_check_interval):
+            gap = _boundary_distance(step, interval)
+            if gap is not None:
+                distance = min(distance, gap)
+        distance = min(distance, max_steps - step)
+        spans.append(distance)
+        step += distance
+        left -= distance
+    return spans
+
+
 class SuperMimicRunner(EmbodiedRunner):
     """Collect, update and sync at ``algorithm.updates_per_env_step``.
 
     Every control step adds ``updates_per_env_step`` owed updates. Collection
-    stops at the first step that makes an update due, the due updates run,
-    and the new policy goes to the rollout workers before collection resumes.
+    stops at the first step that makes an update due. The owed updates then
+    run, but a batch stops on the next save or evaluation step so that step
+    is checkpointed before the remaining updates. The new policy goes to the
+    rollout workers before collection resumes.
     """
 
     def __init__(
@@ -227,16 +275,21 @@ class SuperMimicRunner(EmbodiedRunner):
                         windows, env_handle, rollout_handle, _ = self._collect(steps)
                         if windows > 0:
                             ready = min(int(self.owed_updates), self.max_steps - step)
-                with self.timer("actor_training"):
-                    actor_handle = self.actor.run_updates(ready, step)
-                    training_metrics = actor_handle.wait()
-                self.owed_updates -= ready
-                self.global_step += ready
-                with self.timer("sync_weights"):
-                    self._set_global_step()
-                    self.update_rollout_weights()
-                last_step = self.global_step - 1
-                eval_metrics = self._maybe_eval_and_checkpoint(last_step)
+                # check_progress matches exact multiples, so a batch that would
+                # pass a save or evaluation step stops on that step first.
+                spans = boundary_update_spans(
+                    step,
+                    ready,
+                    self.max_steps,
+                    int(self.cfg.runner.save_interval),
+                    int(self.cfg.runner.val_check_interval),
+                )
+                (
+                    actor_handle,
+                    training_metrics,
+                    eval_metrics,
+                    last_step,
+                ) = self._execute_update_spans(spans)
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
             self._log_iteration(
@@ -248,6 +301,97 @@ class SuperMimicRunner(EmbodiedRunner):
                 eval_metrics,
             )
         self._finish_run()
+
+    def _execute_update_spans(
+        self, spans: list[int]
+    ) -> tuple[Handle, list[dict], dict[str, float], int]:
+        """Run each span, then sync and checkpoint before the next one.
+
+        One collection still pays for every span. The runner timer keeps a
+        single measurement per name, so a batch that crosses more than one
+        boundary records the summed training and sync time after the loop.
+        """
+        single = len(spans) == 1
+        actor_handle: Handle | None = None
+        training_metrics: list[dict] = []
+        eval_metrics: dict[str, float] = {}
+        measured = {"actor_training": 0.0, "sync_weights": 0.0}
+        last_step = self.global_step
+        for count in spans:
+            actor_handle, training_metrics = self._run_update_count(
+                count, single, measured
+            )
+            self.owed_updates -= count
+            self.global_step += count
+            self._sync_updated_weights(single, measured)
+            last_step = self.global_step - 1
+            segment_eval = self._maybe_eval_and_checkpoint(last_step)
+            if segment_eval:
+                eval_metrics = segment_eval
+        if not single:
+            for name, duration in measured.items():
+                logged = self.timer._duration_log.get(name, 0.0)
+                self.timer._duration_log[name] = logged + duration
+        if actor_handle is None:
+            raise RuntimeError("An update batch produced no actor call.")
+        return actor_handle, training_metrics, eval_metrics, last_step
+
+    def _run_update_count(
+        self, count: int, single: bool, measured: dict[str, float]
+    ) -> tuple[Handle, list[dict]]:
+        def run() -> tuple[Handle, list[dict]]:
+            handle = self.actor.run_updates(count, self.global_step)
+            return handle, handle.wait()
+
+        if single:
+            with self.timer("actor_training"):
+                return run()
+        return self._measure("actor_training", measured, run)
+
+    def _sync_updated_weights(self, single: bool, measured: dict[str, float]) -> None:
+        def sync() -> None:
+            self._set_global_step()
+            self.update_rollout_weights()
+
+        if single:
+            with self.timer("sync_weights"):
+                sync()
+            return
+        self._measure("sync_weights", measured, sync)
+
+    def _measure(self, name: str, measured: dict[str, float], fn):
+        Tracer.trace_begin(name, cat="runner")
+        started = time.perf_counter()
+        try:
+            return fn()
+        finally:
+            measured[name] += time.perf_counter() - started
+            Tracer.trace_end(name, cat="runner")
+
+    def _maybe_eval_and_checkpoint(self, step: int) -> dict:
+        # One iteration can evaluate at more than one boundary. The runner
+        # timer accepts the eval name once, so later evals add to that time.
+        if "eval" not in self.timer._duration_log:
+            return super()._maybe_eval_and_checkpoint(step)
+        run_val, save_model, _ = check_progress(
+            self.global_step,
+            self.max_steps,
+            self.cfg.runner.val_check_interval,
+            self.cfg.runner.save_interval,
+            1.0,
+            run_time_exceeded=False,
+        )
+        eval_metrics: dict[str, float] = {}
+        if run_val:
+            started = time.perf_counter()
+            self.update_rollout_weights()
+            evaluated = self.evaluate()
+            eval_metrics = {f"eval/{key}": value for key, value in evaluated.items()}
+            self.metric_logger.log(data=eval_metrics, step=step)
+            self.timer._duration_log["eval"] += time.perf_counter() - started
+        if save_model:
+            self._save_checkpoint()
+        return eval_metrics
 
     def _log_iteration(
         self,

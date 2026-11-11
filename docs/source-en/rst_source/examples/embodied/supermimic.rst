@@ -613,10 +613,13 @@ above change some of them. Each can be passed as a Hydra override.
 
 **Updates versus simulator steps.** Every control step (every environment
 steps once) adds ``updates_per_env_step`` to the updates owed. The runner
-collects until an update is due, runs every whole update owed, syncs the new
-weights and resumes collection. So ``runner.max_epochs=16000`` is
-16000 / 0.4 = 40,000 control steps plus the warmup. The global step counts
-updates and ``env/env_steps`` counts control steps.
+collects until an update is due, then runs every whole update that
+collection owes. One collection still covers those updates, but a run stops
+on the next save or evaluation step, syncs the weights, saves or evaluates,
+and then runs what remains. The new weights are synced again before
+collection resumes. So ``runner.max_epochs=16000`` is 16000 / 0.4 = 40,000
+control steps plus the warmup. The global step counts updates and
+``env/env_steps`` counts control steps.
 
 **Global sizes.** ``env.train.total_num_envs``, ``algorithm.wm_window_batch``
 and ``algorithm.imagine_batch`` are totals over all GPUs and must divide

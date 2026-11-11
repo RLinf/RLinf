@@ -14,13 +14,14 @@
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from logging import Logger
 from typing import TYPE_CHECKING, ContextManager, Optional, Union
 
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
+from torch.distributed.checkpoint.filesystem import FileSystemReader
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -41,6 +42,17 @@ from rlinf.utils.utils import clear_memory
 if TYPE_CHECKING:
     from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
     from rlinf.workers.inference.fsdp_inference_worker import FSDPInference
+
+
+class _MetadataRewritingReader(FileSystemReader):
+    """DCP reader that rewrites metadata before the load is planned."""
+
+    def __init__(self, path: str, rewrite: Callable) -> None:
+        super().__init__(path)
+        self._rewrite = rewrite
+
+    def read_metadata(self, *args, **kwargs):
+        return self._rewrite(super().read_metadata(*args, **kwargs))
 
 
 class FSDPStrategyBase(ABC):
@@ -273,6 +285,7 @@ class FSDPStrategyBase(ABC):
         lr_schedulers: Union[LRScheduler, Iterable[LRScheduler]],
         load_path: str,
         checkpoint_format: str = "dcp",
+        prepare_metadata: Optional[Callable] = None,
     ) -> None:
         """
         Load the training state checkpoint.
@@ -289,6 +302,10 @@ class FSDPStrategyBase(ABC):
             lr_schedulers (Union[LRScheduler, Iterable[LRScheduler]]): The learning rate scheduler to load the checkpoint into.
             load_path (str): The path to load the checkpoint from.
             checkpoint_format (str): "dcp" or "local_shard".
+            prepare_metadata: Rewrites DCP metadata after it is read and
+                before the load is planned. ``None`` keeps the saved names.
+                ``local_shard`` loads through ``load_state_dict`` and ignores
+                this argument.
         """
         opts = StateDictOptions(full_state_dict=False, cpu_offload=True)
         training_state = Checkpoint(
@@ -344,7 +361,12 @@ class FSDPStrategyBase(ABC):
                         f"[Checkpoint] loading DCP checkpoint from {dcp_load_path}"
                     )
 
-                storage_reader = dcp.FileSystemReader(dcp_load_path)
+                if prepare_metadata is None:
+                    storage_reader = dcp.FileSystemReader(dcp_load_path)
+                else:
+                    storage_reader = _MetadataRewritingReader(
+                        dcp_load_path, prepare_metadata
+                    )
                 metadata = storage_reader.read_metadata()
                 # DCP loads into the state_dict's structure. Old checkpoints
                 # flattened one RNG dictionary instead of saving all ranks.

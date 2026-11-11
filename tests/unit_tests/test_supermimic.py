@@ -62,6 +62,10 @@ from rlinf.models.embodiment.supermimic.normalization import (
     RunningMeanStd,
     merged_batch_stats,
 )
+from rlinf.models.embodiment.supermimic.supermimic_policy import (
+    SuperMimicPolicy,
+    migrate_legacy_obs_norm_state_dict,
+)
 
 CPU = torch.device("cpu")
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
@@ -289,6 +293,163 @@ def test_policy_input_stats_merge_over_ranks_like_one_batch(tmp_path):
         buffers = torch.load(tmp_path / f"rank{rank}.pt")
         for name, buffer in one_batch.named_buffers():
             torch.testing.assert_close(buffers[name], buffer)
+
+
+def _legacy_obs_norm_state(policy):
+    legacy = {}
+    for key, value in policy.state_dict().items():
+        cloned = value.detach().clone()
+        if key.startswith("obs_norm."):
+            legacy["decoder." + key] = cloned
+        else:
+            legacy[key] = cloned
+    return legacy
+
+
+def test_legacy_obs_norm_buffers_load_and_current_keys_win():
+    untouched = {"obs_norm.mean": torch.zeros(1)}
+    assert migrate_legacy_obs_norm_state_dict(untouched) is untouched
+    prefixed = migrate_legacy_obs_norm_state_dict(
+        {
+            "module.decoder.obs_norm.mean": torch.tensor([1.0]),
+            "module.decoder.obs_norm.var": torch.tensor([2.0]),
+            "module.decoder.obs_norm.count": torch.tensor(3.0),
+            "not_decoder.obs_norm.mean": torch.tensor([4.0]),
+        }
+    )
+    assert torch.equal(prefixed["module.obs_norm.mean"], torch.tensor([1.0]))
+    assert "module.decoder.obs_norm.mean" not in prefixed
+    assert torch.equal(prefixed["not_decoder.obs_norm.mean"], torch.tensor([4.0]))
+
+    policy = SuperMimicPolicy(input_norm=True, torch_compile=True)
+    norm = policy.obs_norm
+    with torch.no_grad():
+        norm.mean.copy_(torch.linspace(-1, 1, norm.mean.numel()))
+        norm.var.copy_(torch.linspace(0.5, 1.5, norm.var.numel()))
+        norm.count.fill_(11)
+    norm.refresh_host_count()
+    legacy = _legacy_obs_norm_state(policy)
+    assert not any(key.startswith("obs_norm.") for key in legacy)
+
+    fresh = SuperMimicPolicy(input_norm=True, torch_compile=True)
+    fresh.load_state_dict(legacy)
+    assert "decoder.obs_norm.mean" in legacy
+    for key, value in policy.state_dict().items():
+        assert torch.equal(fresh.state_dict()[key], value)
+    assert fresh.obs_norm._count_cpu == 11.0
+
+    fresh.load_state_dict(policy.state_dict())
+    for key, value in policy.state_dict().items():
+        assert torch.equal(fresh.state_dict()[key], value)
+
+    mixed = {key: value.detach().clone() for key, value in policy.state_dict().items()}
+    for suffix in ("mean", "var", "count"):
+        mixed[f"decoder.obs_norm.{suffix}"] = torch.full_like(
+            mixed[f"obs_norm.{suffix}"], -4
+        )
+    fresh.load_state_dict(mixed)
+    assert "decoder.obs_norm.mean" in mixed
+    for key, value in policy.state_dict().items():
+        assert torch.equal(fresh.state_dict()[key], value)
+
+    plain = SuperMimicPolicy(input_norm=False, torch_compile=True)
+    rejected = plain.state_dict()
+    rejected["decoder.obs_norm.mean"] = torch.zeros(plain.obs_dim)
+    rejected["decoder.obs_norm.var"] = torch.ones(plain.obs_dim)
+    rejected["decoder.obs_norm.count"] = torch.zeros(())
+    with pytest.raises(RuntimeError, match="decoder.obs_norm"):
+        plain.load_state_dict(rejected)
+
+
+def test_legacy_obs_norm_dcp_metadata_loads_into_current_names(tmp_path):
+    import torch.distributed.checkpoint as dcp
+
+    from rlinf.hybrid_engines.fsdp.strategy.base import _MetadataRewritingReader
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        migrate_legacy_obs_norm_metadata,
+    )
+
+    def save_and_load(saved, dest, path):
+        dcp.save(saved, checkpoint_id=path, no_dist=True)
+        reader = _MetadataRewritingReader(path, migrate_legacy_obs_norm_metadata)
+        dcp.load(dest, storage_reader=reader, no_dist=True)
+
+    legacy_path = tmp_path / "legacy"
+    legacy_dest = {
+        "model": {
+            "obs_norm.mean": torch.zeros(4),
+            "obs_norm.var": torch.ones(4),
+            "obs_norm.count": torch.zeros(()),
+            "decoder.weight": torch.zeros(2),
+        }
+    }
+    save_and_load(
+        {
+            "model": {
+                "decoder.obs_norm.mean": torch.arange(4, dtype=torch.float32),
+                "decoder.obs_norm.var": torch.arange(4, dtype=torch.float32) + 2,
+                "decoder.obs_norm.count": torch.tensor(9.0),
+                "decoder.weight": torch.tensor([5.0, 6.0]),
+            }
+        },
+        legacy_dest,
+        legacy_path,
+    )
+    model = legacy_dest["model"]
+    assert torch.equal(model["obs_norm.mean"], torch.arange(4, dtype=torch.float32))
+    assert torch.equal(model["obs_norm.var"], torch.arange(4, dtype=torch.float32) + 2)
+    assert torch.equal(model["obs_norm.count"], torch.tensor(9.0))
+    assert torch.equal(model["decoder.weight"], torch.tensor([5.0, 6.0]))
+
+    current_dest = {
+        "model": {
+            "obs_norm.mean": torch.zeros(4),
+            "obs_norm.var": torch.ones(4),
+            "obs_norm.count": torch.zeros(()),
+        }
+    }
+    save_and_load(
+        {
+            "model": {
+                "obs_norm.mean": torch.arange(4, dtype=torch.float32) + 1,
+                "obs_norm.var": torch.arange(4, dtype=torch.float32) + 3,
+                "obs_norm.count": torch.tensor(8.0),
+            }
+        },
+        current_dest,
+        tmp_path / "current",
+    )
+    assert torch.equal(
+        current_dest["model"]["obs_norm.mean"], torch.arange(4, dtype=torch.float32) + 1
+    )
+    assert torch.equal(current_dest["model"]["obs_norm.count"], torch.tensor(8.0))
+
+
+def test_batched_updates_stop_on_save_and_eval_boundaries():
+    from rlinf.runners.supermimic_runner import boundary_update_spans
+
+    # global_step 1998, three owed updates, save every 2000: two, then one.
+    assert boundary_update_spans(1998, 3, 16000, 2000, -1) == [2, 1]
+    assert boundary_update_spans(1998, 1, 16000, 2000, -1) == [1]
+    assert boundary_update_spans(0, 3, 16000, 2000, -1) == [3]
+    assert boundary_update_spans(2000, 3, 16000, 2000, -1) == [3]
+    assert boundary_update_spans(1998, 5, 2001, 2000, -1) == [2, 1]
+    assert boundary_update_spans(15999, 3, 16000, 2000, -1) == [1]
+    assert boundary_update_spans(1998, 3, 16000, -1, -1) == [3]
+    assert boundary_update_spans(1998, 3, 16000, 0, 0) == [3]
+    assert boundary_update_spans(1990, 30, 16000, 2000, 1000) == [10, 20]
+    assert boundary_update_spans(1990, 1020, 16000, 2000, 1000) == [10, 1000, 10]
+
+    step = 0
+    saved = []
+    while step < 4000:
+        ready = min(3, 16000 - step)
+        for span in boundary_update_spans(step, ready, 16000, 2000, -1):
+            step += span
+            if step % 2000 == 0:
+                saved.append(step)
+    assert saved == [2000, 4000]
+    assert step == 4002
 
 
 @needs_cuda
