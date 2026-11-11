@@ -426,15 +426,14 @@ class MAFSDPActor(FSDPActor):
         if old_logprobs is None:
             old_logprobs = m_batch["rollout_logprobs"]
         loss_mask = self.get_response_loss_mask(m_batch)
-        # Cancel microbatch means; loss weights already contain global normalization.
-        if self.cfg.algorithm.loss_agg_func == "token-mean":
-            token_counts = loss_mask.sum(dim=-1, keepdim=True)
-            reduction_scale = token_counts.sum() / token_counts.clamp_min(1)
-        else:
-            reduction_scale = loss_mask.shape[0]
-        loss_scales = (
-            m_batch["loss_scales"] * reduction_scale * self.gradient_accumulation
-        )
+        loss_scales = m_batch["loss_scales"]
+        if "group_level" in self.cfg.algorithm.get("loss_scales", []):
+            if self.cfg.algorithm.loss_agg_func == "token-mean":
+                token_counts = loss_mask.sum(dim=-1, keepdim=True)
+                reduction_scale = token_counts.sum() / token_counts.clamp_min(1)
+            else:
+                reduction_scale = loss_mask.shape[0]
+            loss_scales = loss_scales * reduction_scale * self.gradient_accumulation
         advantages = m_batch["advantages"] * loss_scales
         ref_logprobs = None
         if "ref_logprobs" in m_batch:

@@ -139,6 +139,7 @@ def _actor(dynamic=False, model_type="token", loss_agg_func="token-mean"):
                 "group_size": 2,
                 "loss_type": "actor",
                 "loss_agg_func": loss_agg_func,
+                "loss_scales": ["group_level", "agent_level", "turn_level"],
                 "ratio_clip_eps": 0.2,
             },
         }
@@ -235,6 +236,43 @@ def test_dynamic_logprob_inference_restores_rows_and_weights(
             torch.testing.assert_close(value, original[key])
     if not dynamic:
         assert 4 in actor.model.forward_batch_sizes
+
+
+@pytest.mark.parametrize("entropy_bonus", [0.0, 0.01])
+@pytest.mark.parametrize(
+    "loss_agg_func", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+@pytest.mark.parametrize("gradient_accumulation", [1, 3])
+def test_unscaled_actor_preserves_loss_reduction(
+    actor_group, entropy_bonus, loss_agg_func, gradient_accumulation
+):
+    actor = _actor(loss_agg_func=loss_agg_func)
+    actor.cfg.algorithm.loss_scales = []
+    actor.cfg.algorithm.entropy_bonus = entropy_bonus
+    actor.calculate_entropy = actor.calculate_entropy_loss = entropy_bonus > 0
+    actor.kl_beta = 0.1
+    actor.gradient_accumulation = gradient_accumulation
+    batch = _rollout().to_actor_batch(10, 0)
+    batch["advantages"] = batch["response_mask"].float()
+    batch["loss_scales"] = batch["response_mask"].float()
+    with torch.no_grad():
+        batch["recomputed_logprobs"] = actor.forward_batch(batch)
+        batch["ref_logprobs"] = batch["recomputed_logprobs"] + 0.15
+    logprobs, entropy = actor.forward_batch(batch, True)
+    mask = batch["response_mask"]
+    expected = -actor.loss_agg_func(
+        (logprobs - batch["recomputed_logprobs"]).exp(), mask
+    )
+    delta = batch["ref_logprobs"] - logprobs
+    expected = expected + 0.1 * actor.loss_agg_func(delta.exp() - delta - 1, mask)
+    expected = expected - entropy_bonus * actor.loss_agg_func(entropy, mask)
+    (expected / gradient_accumulation).backward()
+    gradients = [p.grad.clone() for p in actor.model.parameters()]
+    actor.model.zero_grad()
+    metrics = actor.forward_backward_batch(0, batch, 1)
+    torch.testing.assert_close(metrics["actor/final_loss"], expected.detach())
+    for parameter, gradient in zip(actor.model.parameters(), gradients):
+        torch.testing.assert_close(parameter.grad, gradient)
 
 
 @pytest.mark.parametrize("entropy_bonus", [0.0, 0.01])
