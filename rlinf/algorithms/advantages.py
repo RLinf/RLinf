@@ -86,6 +86,126 @@ def compute_gae_advantages_and_returns(
     return advantages, returns
 
 
+def _episode_action_indices(
+    loss_mask: torch.Tensor, idx_to_traj: list[int], prompt_lengths: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Map each generated token to its time and trajectory in a complete batch."""
+    if len(idx_to_traj) != loss_mask.shape[1] or not idx_to_traj:
+        raise ValueError("Agent GAE requires one trajectory index per generated turn.")
+    if min(idx_to_traj) < 0:
+        raise ValueError("Agent GAE requires nonnegative trajectory indices.")
+    if prompt_lengths.shape != (len(idx_to_traj),):
+        raise ValueError("Agent GAE requires one prompt length per generated turn.")
+    prompts = prompt_lengths.tolist()
+    num_trajectories = max(idx_to_traj) + 1
+    lengths = [0] * num_trajectories
+    last_turns = [-1] * num_trajectories
+    offsets = [0] * len(idx_to_traj)
+    for turn in sorted(range(len(idx_to_traj)), key=lambda i: prompts[i]):
+        trajectory = idx_to_traj[turn]
+        length = int(loss_mask[:, turn].sum())
+        if length == 0:
+            raise ValueError("Agent GAE requires nonempty generated turns.")
+        previous = last_turns[trajectory]
+        if previous >= 0 and prompts[previous] == prompts[turn]:
+            raise ValueError(
+                "Agent GAE requires distinct prompt lengths within an episode."
+            )
+        offsets[turn] = lengths[trajectory]
+        lengths[trajectory] += length
+        last_turns[trajectory] = turn
+    if any(length == 0 for length in lengths):
+        raise ValueError(
+            "Agent GAE requires contiguous trajectory indices starting at zero."
+        )
+
+    device = loss_mask.device
+    times = loss_mask.long().cumsum(dim=0) - 1 + torch.tensor(offsets, device=device)
+    trajectories = torch.tensor(idx_to_traj, device=device).expand_as(loss_mask)
+    return (
+        times[loss_mask],
+        trajectories[loss_mask],
+        torch.tensor(lengths, device=device),
+        torch.tensor(last_turns, device=device),
+    )
+
+
+@register_advantage("gae_dynamic")
+def compute_gae_dynamic_advantages_and_returns(
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    loss_mask: torch.Tensor,
+    idx_to_traj: list[int],
+    prompt_lengths: torch.Tensor,
+    group_size: int = 1,
+    gamma: float = 1.0,
+    gae_lambda: float = 1.0,
+    normalize_advantages: bool = True,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute GAE across complete multi-turn episodes.
+
+    Args:
+        rewards: Episode rewards repeated on each turn, shaped [num_turns].
+        values: Fixed old action values, shaped [seq_len, num_turns].
+        loss_mask: Generated action positions, with the same shape as values.
+        idx_to_traj: Trajectory owning each turn; rows may arrive out of order.
+        prompt_lengths: Growing conversation lengths used to order each episode.
+        group_size: Number of complete trajectories per prompt.
+        gamma: Discount per generated action.
+        gae_lambda: GAE decay per generated action.
+        normalize_advantages: Normalize over all actions in the rollout batch.
+
+    Returns:
+        Advantages and returns in the original turn layout, zero outside actions.
+        The final turn's reward is applied once; completed episodes bootstrap zero.
+    """
+    if values.shape != loss_mask.shape:
+        raise ValueError("Agent GAE requires matching values and action masks.")
+    times, trajectories, lengths, last_turns = _episode_action_indices(
+        loss_mask, idx_to_traj, prompt_lengths
+    )
+    if group_size <= 0 or len(lengths) % group_size != 0:
+        raise ValueError(
+            f"Agent GAE requires the trajectory count ({len(lengths)}) to be "
+            f"divisible by a positive group_size ({group_size})."
+        )
+    episode_values = values.new_zeros(
+        (int(lengths.max()), len(lengths)), dtype=torch.float32
+    )
+    episode_values[times, trajectories] = values[loss_mask].float()
+    episode_mask = (
+        torch.arange(len(episode_values), device=values.device)[:, None] < lengths
+    )
+    episode_rewards = torch.zeros_like(episode_values)
+    episode_rewards[lengths - 1, torch.arange(len(lengths), device=values.device)] = (
+        rewards[last_turns]
+    )
+    values_with_bootstrap = torch.nn.functional.pad(episode_values, (0, 0, 0, 1))
+    dones = torch.zeros_like(values_with_bootstrap, dtype=torch.bool)
+    dones[lengths, torch.arange(len(lengths), device=values.device)] = True
+    advantages, returns = compute_gae_advantages_and_returns(
+        rewards=episode_rewards,
+        values=values_with_bootstrap,
+        dones=dones,
+        gamma=gamma,
+        gae_lambda=gae_lambda,
+        normalize_advantages=False,
+    )
+    if normalize_advantages:
+        valid = advantages[episode_mask].double()
+        mean, variance = valid.mean(), valid.var(unbiased=False)
+        advantages = (advantages - mean.float()) / variance.sqrt().clamp_min(
+            1e-8
+        ).float()
+
+    turn_advantages = torch.zeros_like(values, dtype=torch.float32)
+    turn_returns = torch.zeros_like(turn_advantages)
+    turn_advantages[loss_mask] = advantages[times, trajectories]
+    turn_returns[loss_mask] = returns[times, trajectories]
+    return turn_advantages, turn_returns
+
+
 @register_advantage("grpo")
 def compute_grpo_advantages(
     rewards: torch.Tensor,
