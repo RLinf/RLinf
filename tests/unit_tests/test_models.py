@@ -2532,7 +2532,7 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
         "/explicit/lingbot-vla-v2/"
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
-    assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+    assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
 @pytest.mark.parametrize(
@@ -2634,7 +2634,6 @@ def test_gr00t_n1d7_value_gradient_routing(
             assert torch.count_nonzero(features.grad).item() > 0
         else:
             assert features.grad is None
-    assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
 def _accelerator_device() -> torch.device:
