@@ -614,12 +614,13 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
         ]
         device = next(self.parameters()).device
         # Frames cross as uint8; resize and normalize on the model's device.
-        image_tensor = (
-            env_obs["main_images"].to(device, non_blocking=True).permute(0, 3, 1, 2)
-        )  # [B, H, W, C] -> [B, C, H, W]
+        image_tensor = env_obs["main_images"].to(device, non_blocking=True)
         if image_tensor.ndim == 4:
             image_tensor = image_tensor.unsqueeze(1)
-        assert image_tensor.ndim == 5
+        assert image_tensor.ndim == 5, (
+            f"Expected 4D or 5D main_images, got shape {tuple(image_tensor.shape)}."
+        )
+        image_tensor = image_tensor.permute(0, 1, 4, 2, 3)
 
         precision = next(self.parameters()).dtype
         processed_obs = self.input_processor(
@@ -645,6 +646,10 @@ class OpenVLAForRLActionPrediction(OpenVLAForBatchActionPrediction, BasePolicy):
             "attention_mask": attention_mask,
             "pixel_values": pixel_values,
         }
+
+    def supports_value_only_bootstrap(self) -> bool:
+        """Return whether this OpenVLA instance has a critic head for bootstrap."""
+        return hasattr(self, "value_head")
 
     @torch.no_grad()
     def predict_value_batch(self, env_obs: dict[str, Any]) -> torch.Tensor:

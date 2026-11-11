@@ -63,13 +63,27 @@ class _TensorMetadataCache:
         if entry is not None and entry[0]() is tensor and entry[1] == tensor._version:
             return entry[2]
         platform = Worker.torch_platform or getattr(torch, tensor.device.type, None)
+        is_available = getattr(platform, "is_available", None)
         capturing = getattr(platform, "is_current_stream_capturing", None)
-        if capturing is not None and capturing():
+        if (
+            capturing is not None
+            and (is_available is None or is_available())
+            and capturing()
+        ):
             return self.compute(tensor)
         value = self.compute(tensor)
         if len(self.entries) >= 8:
             self.entries.clear()
-        self.entries[id(tensor)] = (weakref.ref(tensor), tensor._version, value)
+        key = id(tensor)
+        ref = weakref.ref(
+            tensor,
+            lambda dead_ref, k=key: (
+                self.entries.pop(k, None)
+                if self.entries.get(k, (None,))[0] is dead_ref
+                else None
+            ),
+        )
+        self.entries[key] = (ref, tensor._version, value)
         return value
 
 
@@ -133,7 +147,7 @@ def install_npu_flash_attention_cache() -> bool:
             q.shape[2],
             "BSND",
             keep_prob=1.0 - dropout_p,
-            scale=softmax_scale,
+            scale=q.shape[-1] ** -0.5 if softmax_scale is None else softmax_scale,
             atten_mask=causal_mask(q.device) if causal else None,
             sparse_mode=native_flash.SPARSE_MODE if causal else 0,
         )[0]
@@ -168,7 +182,7 @@ def install_npu_flash_attention_cache() -> bool:
             q.shape[1],
             input_layout="TND",
             keep_prob=1.0 - dropout_p,
-            scale=softmax_scale,
+            scale=q.shape[-1] ** -0.5 if softmax_scale is None else softmax_scale,
             atten_mask=causal_mask(q.device) if causal else None,
             sparse_mode=native_flash.SPARSE_MODE if causal else 0,
             actual_seq_qlen=offsets.get(cu_seqlens_q),

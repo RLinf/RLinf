@@ -54,9 +54,9 @@ The tensor cache checks object identity and version. Ordinary PyTorch tensors up
 
 Inference tensors do not offer the same version-tracking conditions. Graph capture also requires computations to follow the current dynamic contents written into captured inputs. These paths recompute metadata. Reuse is conditional on proving that it remains valid; callers should not inherit an undocumented obligation to keep a cache correct.
 
-Vision grids follow a related but shorter scope. ``grid_thw`` describes patch counts along time, height, and width; ``[1, 3, 2]`` describes one frame with a 3 × 2 patch grid. Position encoding and window indexing both consume those integers. Preparing one CPU description inside a visual forward, sharing it between consumers, and clearing the scope when the call exits avoids duplicate device-to-host reads. A later image with the same grid still requires fresh feature extraction. Sharing grid descriptions must not turn into sharing image results.
+Vision grids follow a related but shorter scope. ``grid_thw`` describes patch counts along time, height, and width; ``[1, 3, 2]`` describes one frame with a 3 × 2 patch grid. Position encoding and window indexing both consume those integers. A measured benchmark prototype prepares one CPU description inside a visual forward, shares it between consumers, and clears the scope when the call exits to avoid duplicate device-to-host reads. A later image with the same grid still requires fresh feature extraction. Sharing grid descriptions must not turn into sharing image results.
 
-The call scope gives cleanup an explicit boundary. Entry stores the device grid and its CPU copy; position-processing methods confirm that they received the current grid before using the copy. A ``finally`` block restores the previous scope on exit. Single-frame images use the fast path, while other temporal layouts retain their original position-encoding rules.
+In that prototype, the call scope gives cleanup an explicit boundary: entry stores the device grid and its CPU copy, position-processing methods confirm that they received the current grid before using the copy, and a ``finally`` block restores the previous scope on exit. Single-frame images use the fast path, while other temporal layouts retain their original position-encoding rules. That call-scope prototype is separate from the repository's staged ``<= 8D`` patch-packing path.
 
 At B32, StarVLA complete-action latency falls from 0.764 s to 0.654 s, improving throughput by 16.96%; the same-batch GR00T N1.7 comparison yields 10.83%. Adding position and grid processing to the StarVLA M16 baseline with FSDP prefetch improves per-rank training-call throughput by 8.28%–29.52%. The first two comparisons isolate grid processing. The training result combines position and grid changes and cannot be attributed entirely to one CPU copy.
 
@@ -67,7 +67,7 @@ OpenVLA also calls attention through PyTorch SDPA. A floating mask is added to a
 
 This conversion is not a truthiness test. Allowed entries must be exactly zero, and blocked entries must meet the checked large-negative condition. A value of ``+0.2`` changes an attention score, as does ``-0.2``; neither represents a binary choice. Differentiable masks also retain the floating path because conversion would change their gradient behavior.
 
-Fully blocked rows need a separate check. Adding the same finite negative value to all entries can still leave a nonzero softmax distribution, whereas an all-false boolean row has different output semantics. The implementation checks these rows before choosing a boolean representation. It caches the verdict by tensor version across layers and recomputes it after mutation.
+Fully blocked rows need a separate check. Adding the same finite negative value to all entries can still leave a nonzero softmax distribution, whereas an all-false boolean row has different output semantics. The implementation checks these rows before choosing a boolean representation. It caches the verdict by tensor version across layers, recomputes it after mutation, and leaves floating masks unchanged during stream capture.
 
 Scope and Measured Contribution
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -127,19 +127,20 @@ Communication overlap addresses dependencies between devices. Action generation 
 Read Predetermined Control Values Once
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-When a denoising loop already knows its schedule or stochastic step index on the host, reading control scalars back from a device tensor with ``.item()`` inside the loop adds avoidable synchronization. Evo-1's rollout sampler instead draws the sampled step index once on the host, records it on the device for logprob replay, and branches directly on the host integer at each denoising step:
+When a denoising loop already knows its schedule or stochastic step index on the host, reading control scalars back from a device tensor with ``.item()`` inside the loop adds avoidable synchronization. Evo-1's rollout sampler instead builds the step schedule once on the host, copies the indices to the device for logprob replay, and branches directly on the host list at each denoising step:
 
 .. code-block:: python
 
-   selected_step: int | None = None
-   if mode == "train" and not joint_logprob:
-       selected_step = random.randint(0, last_step)
-   for idx in range(N):
-       step_mode = (
-           "train"
-           if mode == "train" and (joint_logprob or idx == selected_step)
-           else "eval"
-       )
+   if mode == "train":
+       if joint:
+           step_indices = list(range(num))
+       else:
+           hi = max(num - 2 if ignore_last else num - 1, 0)
+           step_indices = [random.randint(0, hi)] * num
+   else:
+       step_indices = [-1] * num
+   for idx in range(num):
+       step_mode = "train" if idx == step_indices[idx] else "eval"
 
 The sampled step and RNG call order stay unchanged; only the device-to-host round trip inside the loop is removed. Independently reconstructing control values with different dtype or operation ordering can alter results, and a value that depends on later network outputs cannot be moved out of the loop this way.
 
@@ -207,7 +208,7 @@ Two independent HuggingFace rollout-worker options control request organization 
 
 The first batches the currently received terminal-value requests and splits results back by original request sizes. A terminal observation belongs to the previous episode; a reset observation starts the next one. Their values cannot be interchanged, and each result must retain its trajectory ownership.
 
-The second requires ``model_type: openvla`` and directly requests values when a value head and the algorithm path permit it. RLT, DAgger, and models without a value head retain the original path. Both options default to false and can be verified separately.
+The second requires a policy implementing ``predict_value_batch`` (such as OpenVLA or Psi0) and directly requests values when a value head and the algorithm path permit it. RLT, DAgger, and policies without a value head retain the original path. Both options default to false and can be verified separately.
 
 Skipping unused action generation also consumes fewer random numbers, potentially changing later actions under the same seed. That is distinct from whether the current value is numerically consistent. Value comparisons check the interface result; learning validation checks the resulting training process. No independently unmeasured percentage gain is assigned to these switches here.
 
@@ -216,9 +217,9 @@ Reuse Stable Context Projections within One Sampling Call
 
 During Evo-1 denoising, action queries change while the same call's image/text context stays fixed. In a cross-attention block, ``K = X_context W_K`` and ``V = X_context W_V`` remain unchanged while both context and weights are unchanged. They can be projected on first use and reused in later steps. Current Q projections and attention still run at each step.
 
-The measured native-operator design limits this reuse to a single sampling call in eval mode with gradients disabled. A new observation starts fresh projections; gradient-bearing training retains its graph construction. Those boundaries prevent stale cross-observation features and detached inference results from entering training.
+An external benchmark prototype limits this reuse to a single sampling call in eval mode with gradients disabled (this K/V projection cache is not merged into the repository, where Evo-1 keeps per-step projections and optional action-head graph capture). A new observation starts fresh projections; gradient-bearing training retains its graph construction. Those boundaries prevent stale cross-observation features and detached inference results from entering training.
 
-This differs from caching attention lengths or masks. Those caches reuse sequence organization; K/V reuse retains actual intermediate features under an invariance condition. Both need explicit lifetimes, but neither can use shape alone as proof of validity. The final Evo-1 combination contains this reuse without an isolated toggle comparison, so only its overall performance is reported.
+This differs from caching attention lengths or masks. Those caches reuse sequence organization; K/V reuse retains actual intermediate features under an invariance condition. Both need explicit lifetimes, but neither can use shape alone as proof of validity. The measured Evo-1 benchmark combination includes this prototype without an isolated toggle comparison, so only its overall performance is reported.
 
 Batch Inputs without Changing Preprocessing Semantics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

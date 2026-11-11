@@ -440,7 +440,8 @@ class CUDAGraphManager:
                 del self.graphs[name]
         else:
             self.graphs.clear()
-        self.graph_pool = None
+        if not self.graphs:
+            self.graph_pool = None
 
         gc.collect()
         self.backend.empty_cache()

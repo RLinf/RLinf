@@ -87,17 +87,12 @@ class MultiStepRolloutWorker(Worker):
         self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
         self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
-        self.batch_bootstrap_inference = self.cfg.rollout.get(
-            "batch_bootstrap_inference", False
+        self.batch_bootstrap_inference = bool(
+            self.cfg.rollout.get("batch_bootstrap_inference", False)
         )
-        self.value_only_bootstrap = self.cfg.rollout.get("value_only_bootstrap", False)
-        if (
-            self.value_only_bootstrap
-            and SupportedModel(self.model_cfg.model_type) != SupportedModel.OPENVLA
-        ):
-            raise ValueError(
-                "rollout.value_only_bootstrap requires model_type=openvla."
-            )
+        self.value_only_bootstrap = bool(
+            self.cfg.rollout.get("value_only_bootstrap", False)
+        )
         self.expert_model = None
         self.rlt_feature_model = None
         self.rlt_route = None
@@ -172,6 +167,13 @@ class MultiStepRolloutWorker(Worker):
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
+        if self.value_only_bootstrap and getattr(
+            type(self.hf_model), "predict_value_batch", None
+        ) in (None, BasePolicy.predict_value_batch):
+            raise ValueError(
+                "rollout.value_only_bootstrap=True requires a policy implementing "
+                f"predict_value_batch, got {type(self.hf_model).__name__}."
+            )
 
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
@@ -758,13 +760,18 @@ class MultiStepRolloutWorker(Worker):
         ).async_wait()
         return policy_input, None
 
+    def _can_predict_value_only(self) -> bool:
+        if isinstance(self.hf_model, BasePolicy):
+            return self.hf_model.supports_value_only_bootstrap()
+        return callable(getattr(self.hf_model, "predict_value_batch", None))
+
     def _predict_bootstrap(self, env_obs: dict[str, Any]) -> dict[str, Any]:
         if self.model_cfg.model_type == SupportedModel.PSI0.value or (
             self.value_only_bootstrap
             and not self.enable_rlt
             and not self.enable_dagger
             and self.rlt_feature_model is None
-            and hasattr(self.hf_model, "value_head")
+            and self._can_predict_value_only()
         ):
             return {"prev_values": self.hf_model.predict_value_batch(env_obs)}
         _, result = self._predict_rollout_actions(env_obs)

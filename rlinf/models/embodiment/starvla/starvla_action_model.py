@@ -253,12 +253,15 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         del return_obs
 
         # Build examples based on env_obs and state adapter.
-        # Device-tensor views feed the batched processor path; families whose
-        # builder needs PIL keep the host conversion.
+        # Device-tensor views feed the Qwen batched processor path; PIL-based
+        # backbones (Florence, Cosmos) and Dual DINO heads keep host PIL views.
         iface = vlm_input_utils.resolve_vlm_interface(self.starvla_model)
-        image_device = (
-            next(self.parameters()).device if hasattr(iface, "processor") else None
+        use_device_images = (
+            self.vlm_type == "qwen"
+            and self.action_head_type != "dual"
+            and hasattr(iface, "processor")
         )
+        image_device = next(self.parameters()).device if use_device_images else None
         examples = data_pipeline_utils.build_examples_from_env_obs(
             env_obs=env_obs,
             image_device=image_device,

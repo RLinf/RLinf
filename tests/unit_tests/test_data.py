@@ -3800,3 +3800,87 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
+
+
+def test_rollout_value_only_bootstrap_checks_policy_capability_and_config(monkeypatch):
+    from rlinf.config import validate_embodied_cfg
+    from rlinf.models.embodiment.base_policy import BasePolicy
+    from rlinf.workers.rollout.hf import huggingface_worker as hf_mod
+
+    class _NoValuePolicy(torch.nn.Module, BasePolicy):
+        def default_forward(self, **kwargs):
+            return {}
+
+        def predict_action_batch(self, **kwargs):
+            return np.zeros((1, 1, 1)), {}
+
+    class _CustomValuePolicy(_NoValuePolicy):
+        def predict_value_batch(self, env_obs):
+            return torch.ones(1, 1)
+
+    assert not _NoValuePolicy().supports_value_only_bootstrap()
+    assert _CustomValuePolicy().supports_value_only_bootstrap()
+
+    def _make_worker(policy_cls):
+        worker = object.__new__(MultiStepRolloutWorker)
+        worker.model_cfg = OmegaConf.create({"model_type": "openvla"})
+        worker.cfg = OmegaConf.create(
+            {
+                "rollout": {
+                    "model": {"model_type": "openvla"},
+                    "enable_torch_compile": False,
+                },
+                "runner": {},
+            }
+        )
+        worker.value_only_bootstrap = True
+        worker.enable_opd = False
+        worker.enable_cuda_graph = False
+        worker.enable_offload = False
+        worker.rlt_feature_model = None
+        worker.expert_model = None
+        worker.setup_sample_params = lambda: None
+        monkeypatch.setattr(hf_mod, "get_model", lambda cfg: policy_cls())
+        return worker
+
+    with pytest.raises(ValueError, match="predict_value_batch"):
+        _make_worker(_NoValuePolicy).init_worker()
+
+    ok_worker = _make_worker(_CustomValuePolicy)
+    ok_worker.init_worker()
+    ok_worker.enable_rlt = False
+    ok_worker.enable_dagger = False
+    assert torch.equal(
+        ok_worker._predict_bootstrap({"states": torch.zeros(1, 2)})["prev_values"],
+        torch.ones(1, 1),
+    )
+
+    bad_type_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "huggingface",
+                "value_only_bootstrap": "yes",
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(
+        ValueError, match="Expected bool for rollout.value_only_bootstrap"
+    ):
+        validate_embodied_cfg(bad_type_cfg)
+
+    bad_backend_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "vllm",
+                "batch_bootstrap_inference": True,
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(ValueError, match="rollout_backend='huggingface'"):
+        validate_embodied_cfg(bad_backend_cfg)

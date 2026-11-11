@@ -69,7 +69,14 @@ def boolean_attention_mask(attn_mask, _cache={}, *, use_cache: bool = True):
     if use_cache:
         if len(_cache) >= 8:
             _cache.clear()
-        _cache[id(attn_mask)] = (weakref.ref(attn_mask), version, result)
+        key = id(attn_mask)
+        ref = weakref.ref(
+            attn_mask,
+            lambda dead_ref, k=key: (
+                _cache.pop(k, None) if _cache.get(k, (None,))[0] is dead_ref else None
+            ),
+        )
+        _cache[key] = (ref, version, result)
     return result
 
 
@@ -96,13 +103,13 @@ def install_npu_sdpa_mask_cast() -> bool:
     ):
         if attn_mask is not None and attn_mask.dtype.is_floating_point:
             capturing = getattr(torch.npu, "is_current_stream_capturing", None)
-            # A captured graph must recompute the conversion after its input
-            # mask is copied in. Reusing an eager cached tensor would freeze it.
-            keep = boolean_attention_mask(
-                attn_mask, use_cache=capturing is not None and not capturing()
-            )
-            if keep is not None:
-                attn_mask = keep
+            # Evaluating boolean_attention_mask reads a device scalar on the
+            # host, which is illegal during stream capture and cannot re-check
+            # mask values copied into static buffers on replay.
+            if capturing is None or not capturing():
+                keep = boolean_attention_mask(attn_mask, use_cache=True)
+                if keep is not None:
+                    attn_mask = keep
         return original(query, key, value, attn_mask, *args, **kwargs)
 
     scaled_dot_product_attention._rlinf_npu_mask_cast = True

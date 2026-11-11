@@ -84,6 +84,28 @@ def test_graph_manager_rejects_unsupported_devices_before_initialization():
         CUDAGraphManager(device=torch.device("cpu"))
 
 
+def test_graph_manager_destroy_named_graph_keeps_shared_pool_until_empty():
+    from rlinf.utils.cuda_graph import CUDAGraphManager
+
+    pool = object()
+    manager = object.__new__(CUDAGraphManager)
+    manager.backend = SimpleNamespace(
+        synchronize=lambda: None,
+        empty_cache=lambda: None,
+    )
+    manager.graphs = {"g1": object(), "g2": object()}
+    manager.graph_pool = pool
+
+    manager.destroy("g1")
+    assert "g1" not in manager.graphs
+    assert "g2" in manager.graphs
+    assert manager.graph_pool is pool
+
+    manager.destroy("g2")
+    assert not manager.graphs
+    assert manager.graph_pool is None
+
+
 def test_graph_manager_restores_generators_after_failed_capture():
     from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
 
@@ -931,6 +953,9 @@ def test_boolean_attention_mask_caches_per_live_tensor():
     # One mask tensor flows through every layer of a forward; the verdict is
     # cached so only the first layer pays the device sync, and an in-place
     # edit or a new tensor gets a fresh verdict.
+    import gc
+    import weakref
+
     import torch
 
     from rlinf.scheduler.hardware.accelerators.ascend_npu import (
@@ -943,6 +968,13 @@ def test_boolean_attention_mask_caches_per_live_tensor():
 
     mask[0, 0, 0, 0] = -2.0  # bias now; version bump must invalidate
     assert boolean_attention_mask(mask) is None
+
+    ephemeral = torch.zeros(1, 1, 2, 2, dtype=torch.float32)
+    cached_ref = weakref.ref(boolean_attention_mask(ephemeral))
+    assert cached_ref() is not None
+    del ephemeral
+    gc.collect()
+    assert cached_ref() is None
 
 
 @pytest.mark.parametrize("capturing", [False, True])
@@ -982,7 +1014,7 @@ def test_npu_sdpa_mask_cast_preserves_updates_and_biases(monkeypatch, capturing)
             actual = torch.nn.functional.scaled_dot_product_attention(
                 query, key, value, mask
             )
-    assert len(scalar_reads) == (6 if capturing else 1)
+    assert len(scalar_reads) == (0 if capturing else 1)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
     # Reusing the same mask object must not retain an old conversion.

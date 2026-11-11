@@ -4117,3 +4117,169 @@ def test_abot_m0_override_vggt_model_path_redirects_and_restores(monkeypatch):
         "other/model",
         "facebook/VGGT-1B",
     ]
+
+
+def test_openvla_prepare_observation_accepts_5d_multi_image_tensors():
+    model = _small_openvla()
+    seen_shapes: list[tuple[int, ...]] = []
+    orig_processor = model.input_processor
+
+    def recording_processor(*, text, images, padding, max_length):
+        seen_shapes.append(tuple(images.shape))
+        return orig_processor(
+            text=text, images=images, padding=padding, max_length=max_length
+        )
+
+    model.input_processor = recording_processor
+    obs_4d = {
+        "main_images": torch.randint(0, 256, (2, 4, 5, 3), dtype=torch.uint8),
+        "task_descriptions": ["pick", "place"],
+    }
+    obs_5d = {
+        "main_images": torch.randint(0, 256, (2, 3, 4, 5, 3), dtype=torch.uint8),
+        "task_descriptions": ["pick", "place"],
+    }
+    model._prepare_observation(obs_4d)
+    model._prepare_observation(obs_5d)
+    assert seen_shapes == [(2, 1, 3, 4, 5), (2, 3, 3, 4, 5)]
+
+
+def test_npu_flash_attention_cache_defaults_softmax_scale_and_evicts_dead_keys(
+    monkeypatch,
+):
+    import gc
+    import math
+    import weakref
+
+    from transformers import modeling_flash_attention_utils as flash_utils
+    from transformers.integrations import npu_flash_attention as native_flash
+
+    from rlinf.models.embodiment.gr00t import npu_common
+    from rlinf.scheduler import AcceleratorType
+
+    cache = npu_common._TensorMetadataCache(lambda t: t.clone())
+    ephemeral = torch.ones(3)
+    cached_ref = weakref.ref(cache.get(ephemeral))
+    assert cached_ref() is not None
+    assert len(cache.entries) == 1
+    del ephemeral
+    gc.collect()
+    assert cached_ref() is None
+    assert not cache.entries
+
+    scales: list[float] = []
+
+    def fake_fusion_attention(q, k, v, num_heads, *args, **kwargs):
+        scale = kwargs.get("scale")
+        assert isinstance(scale, float), f"Expected float scale, got {scale!r}"
+        scales.append(scale)
+        return (q,)
+
+    monkeypatch.setattr(Worker, "accelerator_type", AcceleratorType.NPU)
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    monkeypatch.setattr(
+        npu_common,
+        "torch_npu",
+        SimpleNamespace(npu_fusion_attention=fake_fusion_attention),
+        raising=False,
+    )
+    monkeypatch.delattr(native_flash, "get_attn_mask_npu", raising=False)
+    monkeypatch.setattr(native_flash, "SPARSE_MODE", 2, raising=False)
+    monkeypatch.setattr(
+        flash_utils,
+        "flash_attn_func",
+        native_flash.npu_flash_attn_func,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        flash_utils,
+        "flash_attn_varlen_func",
+        native_flash.npu_flash_attn_varlen_func,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        flash_utils,
+        "_get_unpad_data",
+        flash_utils._get_unpad_data,
+        raising=False,
+    )
+
+    assert npu_common.install_npu_flash_attention_cache()
+    q_bsnd = torch.randn(2, 5, 4, 16)
+    flash_utils.flash_attn_func(q_bsnd, q_bsnd, q_bsnd)
+    flash_utils.flash_attn_func(q_bsnd, q_bsnd, q_bsnd, softmax_scale=0.125)
+    q_tnd = torch.randn(7, 4, 16)
+    cu = torch.tensor([0, 3, 7], dtype=torch.int32)
+    flash_utils.flash_attn_varlen_func(q_tnd, q_tnd, q_tnd, cu, cu)
+    assert len(scales) == 3
+    assert math.isclose(scales[0], 16**-0.5)
+    assert math.isclose(scales[1], 0.125)
+    assert math.isclose(scales[2], 16**-0.5)
+
+
+def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
+    starvla_preprocessing, monkeypatch
+):
+    starvla_mod = importlib.import_module(
+        "starvla_preprocessing_under_test.starvla_action_model"
+    )
+    StarVLAForRLActionPrediction = starvla_mod.StarVLAForRLActionPrediction
+
+    seen_devices: list = []
+    orig_build = starvla_mod.data_pipeline_utils.build_examples_from_env_obs
+
+    def record_build(*, env_obs, image_device=None, **kwargs):
+        seen_devices.append(image_device)
+        return orig_build(env_obs=env_obs, image_device=image_device, **kwargs)
+
+    monkeypatch.setattr(
+        starvla_mod.data_pipeline_utils,
+        "build_examples_from_env_obs",
+        record_build,
+    )
+    monkeypatch.setattr(
+        starvla_mod.vlm_input_utils,
+        "resolve_vlm_interface",
+        lambda _: SimpleNamespace(processor=object()),
+    )
+    monkeypatch.setattr(
+        starvla_mod,
+        "get_rollout_handler",
+        lambda _: lambda model, **kw: {
+            "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
+            "model_inputs": {},
+            "forward_inputs": {},
+        },
+    )
+    monkeypatch.setattr(
+        starvla_mod.action_space_utils,
+        "unnormalize_actions_for_env",
+        lambda normalized_actions, **kw: normalized_actions,
+    )
+
+    obs = {
+        "main_images": torch.zeros((1, 4, 4, 3), dtype=torch.uint8),
+        "task_descriptions": ["pick"],
+    }
+    for vlm_type, head_type in (
+        ("qwen", "oft"),
+        ("florence", "oft"),
+        ("qwen", "dual"),
+    ):
+        wrapper = torch.nn.Module()
+        wrapper.__class__ = StarVLAForRLActionPrediction
+        wrapper.p = torch.nn.Parameter(torch.zeros(1))
+        wrapper.starvla_model = torch.nn.Module()
+        wrapper.vlm_type = vlm_type
+        wrapper.action_head_type = head_type
+        wrapper.state_adapter_type = "none"
+        wrapper.enable_state_input = False
+        wrapper.action_dim = 7
+        wrapper.num_action_chunks = 2
+        wrapper._action_norm_stats = _FRANKA_ACTION_STATS
+        wrapper.policy_setup = "franka"
+        wrapper.predict_action_batch(
+            obs, calculate_logprobs=False, calculate_values=False, mode="eval"
+        )
+
+    assert seen_devices == [torch.device("cpu"), None, None]
