@@ -902,6 +902,7 @@ class TestSearchr1DisaggregatedValidation:
                     "sglang": {"tool_call_parser": None},
                 },
                 "reward": {"reward_type": "searchr1"},
+                "critic": {"use_critic_model": False},
                 "data": {},
             }
         )
@@ -964,6 +965,7 @@ class TestSearchr1AsyncPauseModeDefaults:
                     "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
+                "critic": {"use_critic_model": False},
                 "data": {},
             }
         )
@@ -1040,6 +1042,7 @@ class TestSearchr1AsyncBatchDivisibility:
                     "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
+                "critic": {"use_critic_model": False},
                 "data": {"rollout_batch_size": rollout_batch_size},
             }
         )
@@ -1106,6 +1109,7 @@ class TestSearchr1AsyncDiscardConfig:
                     "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
+                "critic": {"use_critic_model": False},
                 "data": {"rollout_batch_size": rollout_batch_size},
             }
         )
@@ -2217,6 +2221,7 @@ class TestSearchr1AsyncAdmissionCfg:
                     "pause_mode": "retract",
                 },
                 "reward": {"reward_type": "searchr1"},
+                "critic": {"use_critic_model": False},
                 "data": {"rollout_batch_size": 64},
             }
         )
