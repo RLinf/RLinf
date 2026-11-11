@@ -17,6 +17,7 @@
 import copy
 import json
 import os
+import queue
 import subprocess
 import sys
 from contextlib import nullcontext
@@ -34,6 +35,7 @@ from omegaconf import OmegaConf, open_dict
 from rlinf.algorithms.registry import get_loss_scales
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.channel.channel_worker import LocalChannel
 from rlinf.scheduler.hardware import AcceleratorType
@@ -41,8 +43,10 @@ from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_seqlen_balanced_partitions,
 )
-from rlinf.utils.distributed import RolloutDataBalance
+from rlinf.utils.distributed import RolloutDataBalance, ScopedTimer
+from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.placement import ModelParallelComponentPlacement
+from rlinf.utils.timers import Timer
 from rlinf.utils.utils import get_loss_agg_func, retrieve_model_state_dict_in_cpu
 from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 
@@ -112,7 +116,7 @@ def _rollout(second_group=False):
     )
 
 
-def _actor(dynamic=False, model_type="token"):
+def _actor(dynamic=False, model_type="token", loss_agg_func="token-mean"):
     actor = object.__new__(MAFSDPActor)
     actor.cfg = OmegaConf.create(
         {
@@ -130,7 +134,7 @@ def _actor(dynamic=False, model_type="token"):
                 "advantage_mode": "trajectory",
                 "group_size": 2,
                 "loss_type": "actor",
-                "loss_agg_func": "token-mean",
+                "loss_agg_func": loss_agg_func,
                 "ratio_clip_eps": 0.2,
             },
         }
@@ -167,7 +171,7 @@ def _actor(dynamic=False, model_type="token"):
     actor.kl_penalty_type = "low_var_kl"
     actor.calculate_entropy = False
     actor.calculate_entropy_loss = False
-    actor.loss_agg_func = get_loss_agg_func("token-mean")
+    actor.loss_agg_func = get_loss_agg_func(loss_agg_func)
     actor.gradient_accumulation = 1
     actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
     return actor
@@ -230,10 +234,13 @@ def test_dynamic_logprob_inference_restores_rows_and_weights(
 
 
 @pytest.mark.parametrize("entropy_bonus", [0.0, 0.01])
+@pytest.mark.parametrize(
+    "loss_agg_func", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
 def test_group_packing_preserves_mask_loss_gradient_and_update(
-    actor_group, entropy_bonus
+    actor_group, entropy_bonus, loss_agg_func
 ):
-    actor = _actor()
+    actor = _actor(loss_agg_func=loss_agg_func)
     actor.cfg.algorithm.entropy_bonus = entropy_bonus
     actor.calculate_entropy = actor.calculate_entropy_loss = entropy_bonus > 0
     groups = [_rollout(), _rollout(True)]
@@ -256,6 +263,7 @@ def test_group_packing_preserves_mask_loss_gradient_and_update(
         "group_scale_in_loss": True,
         "actor_global_batch_size": 4,
         "data_parallel_world_size": 1,
+        "loss_agg_func": loss_agg_func,
     }
     for scale in get_loss_scales(["group_level", "agent_level", "turn_level"]):
         batch = scale(context, batch)
@@ -434,10 +442,13 @@ def test_disaggregated_actor_rejects_unsupported_modes_before_worker_init(invali
 
 
 @pytest.mark.parametrize("all_padding", [False, True])
+@pytest.mark.parametrize(
+    "loss_agg_func", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
 def test_padding_microbatch_keeps_valid_rows_and_backward_graph(
-    actor_group, all_padding
+    actor_group, all_padding, loss_agg_func
 ):
-    actor = _actor()
+    actor = _actor(loss_agg_func=loss_agg_func)
     batch = _rollout(True).to_actor_batch(10, 0)
     with torch.no_grad():
         batch["recomputed_logprobs"] = actor.forward_batch(batch)
@@ -482,10 +493,78 @@ def _local_channel(name):
     return channel
 
 
-def _sharded_actor(dynamic, model_type="token", world_size=2):
+def _run_agent_runner_with_metrics(cfg, result):
+    """Run the driver with real Actor results and in-process RPC facades."""
+
+    def handle(value=None):
+        return SimpleNamespace(wait=lambda: value, consume_duration=lambda **_: 0.0)
+
+    runner = object.__new__(AgentRunner)
+    runner.cfg = OmegaConf.merge(
+        cfg,
+        {
+            "runner": {
+                "max_epochs": 1,
+                "val_check_interval": -1,
+                "save_interval": -1,
+                "logger": {"logger_backends": []},
+            }
+        },
+    )
+    runner.global_steps, runner.num_steps_per_epoch, runner.max_steps = 0, 1, 1
+    runner.run_timer, runner.timer = Timer(None), ScopedTimer(trace=False)
+    runner.train_dataloader = [
+        {
+            "prompt": torch.tensor([[1, 2], [12, 13]]),
+            "length": torch.tensor([2, 2]),
+            "answer": [["a"], ["b"]],
+            "image_data": [None, None],
+            "multi_modal_inputs": [None, None],
+        }
+    ]
+    runner.batch_split_num = 1
+    runner.tool_workers, runner.solid_rollouts = {}, {}
+    requests = queue.Queue()
+    runner.dataloader_channel = SimpleNamespace(
+        put=lambda request, async_op=False: requests.put(request), get=requests.get
+    )
+    runner.rollout_channel = _local_channel("rollout")
+    runner.generate_input_channel = _local_channel("generate_input")
+    runner.generate_output_channel = _local_channel("generate_output")
+    runner.component_placement = SimpleNamespace(is_collocated=False, is_auto=False)
+    runner.has_dedicated_actor_inference = runner.is_pipeline = False
+    runner.has_dedicated_critic_inference = False
+    runner.recompute_logprobs = False
+    runner.reward = runner.critic = None
+    runner.rollout = SimpleNamespace(
+        rollout_serverless=lambda *args: None,
+        offload_engine=handle,
+        sync_model_from_actor=handle,
+        stop=handle,
+    )
+    runner.actor = SimpleNamespace(
+        run_training=lambda **kwargs: handle([result]),
+        sync_model_to_rollout=handle,
+        del_reshard_state_dict=handle,
+    )
+
+    def generate(input_channel, output_channel):
+        input_channel.get()
+        return handle([{}])
+
+    runner.agent_loop = SimpleNamespace(run_agentloop_rollout=generate)
+    runner.metric_logger = MetricLogger(runner.cfg)
+    runner.run()
+    assert runner.global_steps == 1
+    assert requests.empty()
+
+
+def _sharded_actor(
+    dynamic, model_type="token", world_size=2, loss_agg_func="token-mean"
+):
     from torch.distributed.device_mesh import init_device_mesh
 
-    actor = _actor(dynamic, model_type)
+    actor = _actor(dynamic, model_type, loss_agg_func)
     actor.cfg = OmegaConf.merge(
         actor.cfg,
         {
@@ -578,19 +657,79 @@ def test_sharded_training_with_generated_padding(actor_group, dynamic):
     assert rollout_metrics["valid_response_tokens"] == 10
     assert len(metrics) == actor.optimizer_steps == 3
     assert actor.optimizer.param_groups[0]["lr"] == pytest.approx(0.01 * 0.9**3)
+    _run_agent_runner_with_metrics(actor.cfg, (rollout_metrics, metrics))
     for parameter in actor.model.parameters():
         assert torch.isfinite(parameter.full_tensor()).all()
         assert torch.isfinite(parameter.grad.full_tensor()).all()
 
 
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize("empty", ["last_turn", "trajectory", "all"])
+def test_empty_responses_preserve_finite_training(actor_group, dynamic, empty):
+    from packaging.version import Version
+
+    if Version(torch.__version__) < Version("2.12"):
+        pytest.skip("CPU FSDP2 coverage currently targets PyTorch >= 2.12")
+    actor = _sharded_actor(dynamic, world_size=1)
+    groups = [_rollout(), _rollout(True)]
+    for group in groups:
+        for i, trajectory in enumerate(group.idx_to_traj):
+            if (
+                empty == "all"
+                or (group is groups[0] and empty == "trajectory" and trajectory == 0)
+                or (group is groups[0] and empty == "last_turn" and i == 1)
+            ):
+                group.input_ids[i] = group.input_ids[i][: group.prompt_lengths[i]]
+                group.response_lengths[i] = 0
+    expected, gradients, _, _ = _unsharded_update(rollouts=groups)
+    inputs, inference = _local_channel("input"), _local_channel("inference")
+    for group in groups:
+        inputs.put(group)
+    actor.run_inference(inputs, inference, compute_ref_logprobs=False)
+    rollout_metrics, metrics = actor.run_training(inference)
+    assert (
+        rollout_metrics["valid_response_tokens"]
+        == {
+            "all": 0,
+            "trajectory": 6,
+            "last_turn": 8,
+        }[empty]
+    )
+    assert len(metrics) == actor.optimizer_steps == (0 if empty == "all" else 1)
+    assert all(torch.isfinite(torch.tensor(v)) for v in rollout_metrics.values())
+    assert actor.optimizer.param_groups[0]["lr"] == pytest.approx(
+        0.01 if empty == "all" else 0.009
+    )
+    for name, parameter in actor.model.named_parameters():
+        torch.testing.assert_close(
+            parameter.full_tensor(), expected[name], atol=1e-6, rtol=1e-5
+        )
+        if empty != "all":
+            torch.testing.assert_close(
+                parameter.grad.full_tensor(), gradients[name], atol=1e-6, rtol=1e-5
+            )
+    assert inputs.empty() and inference.empty()
+    _run_agent_runner_with_metrics(actor.cfg, (rollout_metrics, metrics))
+
+
 def _unsharded_update(
-    temperature=1.0, model_type="token", kl_beta=0.0, entropy_bonus=0.0
+    temperature=1.0,
+    model_type="token",
+    kl_beta=0.0,
+    entropy_bonus=0.0,
+    loss_agg_func="token-mean",
+    rollouts=None,
 ):
     actor = _actor(model_type=model_type)
     actor.kl_beta = kl_beta
     actor.cfg.algorithm.sampling_params.temperature = temperature
     batch = DynamicRolloutResult.merge_batches(
-        [_rollout().to_actor_batch(10, 0), _rollout(True).to_actor_batch(10, 0)],
+        [
+            rollout.to_actor_batch(10, 0)
+            for rollout in (
+                rollouts if rollouts is not None else [_rollout(), _rollout(True)]
+            )
+        ],
         group_size=2,
     )
     with torch.no_grad():
@@ -603,7 +742,9 @@ def _unsharded_update(
     weights = torch.zeros_like(batch["advantages"])
     for traj in trajectories:
         rows = [i for i, t in enumerate(batch["idx_to_traj"]) if t == traj]
-        weights[rows] = 1 / (len(trajectories) * mask[rows].sum())
+        weights[rows] = 1 / (len(trajectories) * mask[rows].sum().clamp_min(1))
+        if loss_agg_func == "seq-mean-token-sum":
+            weights[rows] *= mask[rows].sum(dim=-1, keepdim=True)
     optimizer = torch.optim.SGD(actor.model.parameters(), lr=0.01, momentum=0.9)
     logprobs, entropy = actor.forward_batch(batch, calculate_entropy=True)
     ratio = torch.exp(logprobs - batch["recomputed_logprobs"])
@@ -650,6 +791,7 @@ def _check_sharded_training(
     pack_traj=True,
     micro_batch_size=1,
     entropy_bonus=0.0,
+    loss_agg_func="token-mean",
 ):
     Worker.torch_device_type = device
     Worker.torch_platform = torch.cuda if device == "cuda" else _CPUPlatform
@@ -665,9 +807,9 @@ def _check_sharded_training(
     )
     try:
         expected, grads, norm, loss = _unsharded_update(
-            temperature, model_type, kl_beta, entropy_bonus
+            temperature, model_type, kl_beta, entropy_bonus, loss_agg_func
         )
-        actor = _sharded_actor(dynamic, model_type, world_size)
+        actor = _sharded_actor(dynamic, model_type, world_size, loss_agg_func)
         actor.kl_beta = kl_beta
         actor.cfg.algorithm.entropy_bonus = entropy_bonus
         actor.calculate_entropy = actor.calculate_entropy_loss = entropy_bonus > 0
@@ -734,6 +876,7 @@ def _check_sharded_training(
                         "temperature": temperature,
                         "kl_beta": kl_beta,
                         "entropy_bonus": entropy_bonus,
+                        "loss_agg_func": loss_agg_func,
                         "pack_traj": pack_traj,
                         "micro_batch_size": micro_batch_size,
                         "loss": float(loss.detach()),
@@ -876,8 +1019,11 @@ def test_nonzero_kl_sharded_update_and_checkpoint_resume(tmp_path, world_size, d
 @pytest.mark.parametrize("dynamic", [False, True])
 @pytest.mark.parametrize("pack_traj", [False, True])
 @pytest.mark.parametrize("entropy_bonus", [0.0, 0.01])
+@pytest.mark.parametrize(
+    "loss_agg_func", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
 def test_padded_microbatches_match_trajectory_objective(
-    tmp_path, dynamic, pack_traj, entropy_bonus
+    tmp_path, dynamic, pack_traj, entropy_bonus, loss_agg_func
 ):
     from packaging.version import Version
 
@@ -894,6 +1040,7 @@ def test_padded_microbatches_match_trajectory_objective(
         pack_traj=pack_traj,
         micro_batch_size=2,
         entropy_bonus=entropy_bonus,
+        loss_agg_func=loss_agg_func,
     )
 
 

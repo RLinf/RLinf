@@ -208,9 +208,9 @@ def compute_rollout_metrics_dynamic(
         "reward_scores_turn": sum_turn_rewards / num_seq,
         "avg_turns_per_traj": num_seq / num_trajectories,
         "fraction_of_samples_properly_ended": sum_end / num_seq,
-        "advantages_mean": sum_adv / n_valid_token,
-        "advantages_max": adv_max,
-        "advantages_min": adv_min,
+        "advantages_mean": sum_adv / max(n_valid_token, 1),
+        "advantages_max": adv_max if n_valid_token else 0.0,
+        "advantages_min": adv_min if n_valid_token else 0.0,
     }
     return rollout_metrics, total_prompt_lengths, total_decode_lengths
 

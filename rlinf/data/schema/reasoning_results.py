@@ -1246,7 +1246,12 @@ class DynamicRolloutResult:
                     split_params["loss_scales"][idx].masked_fill(
                         ~split_params["response_mask"][idx], 0
                     )
-                    * (masked_count_all / masked_counts[i])
+                    * (
+                        masked_count_all / max(masked_counts[i], 1)
+                        if context.get("loss_agg_func", "token-mean")
+                        != "seq-mean-token-sum"
+                        else 1
+                    )
                     for i, idx in enumerate(idxes)
                 ]
                 split_params["loss_scales"][suffix] = torch.stack(value).sum(dim=0)
