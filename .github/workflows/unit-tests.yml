@@ -191,6 +191,182 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  unit-tests-openvla-rocm:
+    runs-on: rocm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create ROCm OpenVLA environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform amd embodied --model openvla --env maniskill_libero
+
+      - name: OpenVLA accelerator unit test
+        timeout-minutes: 40
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
+          export RLINF_OPENVLA_MODEL_PATH=/workspace/dataset/openvla-7b
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py::test_openvla_predicts_a_finite_action_on_the_accelerator
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  unit-tests-openvlaoft-rocm:
+    runs-on: rocm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create ROCm OpenVLA-OFT environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform amd embodied --model openvla-oft --env libero
+
+      - name: OpenVLA-OFT accelerator unit test
+        timeout-minutes: 40
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
+          export RLINF_OPENVLA_OFT_MODEL_PATH=/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py::test_openvla_oft_predicts_a_finite_action_on_the_accelerator
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  unit-tests-openvla-musa:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA OpenVLA environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --model openvla --env maniskill_libero
+
+      - name: OpenVLA accelerator unit test
+        timeout-minutes: 60
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
+          export RLINF_OPENVLA_MODEL_PATH=/workspace/dataset/openvla-7b
+          export OPENBLAS_NUM_THREADS=1
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py::test_openvla_predicts_a_finite_action_on_the_accelerator
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  unit-tests-openvlaoft-musa:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA OpenVLA-OFT environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --model openvla-oft --env libero
+
+      - name: OpenVLA-OFT accelerator unit test
+        timeout-minutes: 60
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
+          export RLINF_OPENVLA_OFT_MODEL_PATH=/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1
+          export OPENBLAS_NUM_THREADS=1
+          export OMP_NUM_THREADS=1
+          export MKL_NUM_THREADS=1
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py::test_openvla_oft_predicts_a_finite_action_on_the_accelerator
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  unit-tests-openvla-ascend:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend OpenVLA environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform ascend embodied --model openvla --env maniskill_libero
+
+      - name: OpenVLA accelerator unit test
+        timeout-minutes: 60
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
+          export RLINF_OPENVLA_MODEL_PATH=/workspace/dataset/openvla-7b
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py::test_openvla_predicts_a_finite_action_on_the_accelerator
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  unit-tests-openvlaoft-ascend:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend OpenVLA-OFT environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
+
+      - name: OpenVLA-OFT accelerator unit test
+        timeout-minutes: 60
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
+          export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
+          export RLINF_OPENVLA_OFT_MODEL_PATH=/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1
+          source .venv/bin/activate
+          pytest tests/unit_tests/test_models.py::test_openvla_oft_predicts_a_finite_action_on_the_accelerator
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   package-build-test:
     runs-on: embodied
     steps:

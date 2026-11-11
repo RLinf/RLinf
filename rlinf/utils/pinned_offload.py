@@ -47,11 +47,13 @@ def _pinned_tensor_to(self: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Te
     if dtype is None:
         dtype = kwargs.get("dtype")
 
+    # Pinning an entire model on MUSA conflicts with cross-process MUSA IPC
+    # during collocated actor-to-rollout weight sync.
     if (
         device is not None
         and dtype is None
         and torch.device(device).type == "cpu"
-        and self.device.type != "cpu"
+        and self.device.type not in ("cpu", "musa")
     ):
         try:
             buffer = torch.empty_like(

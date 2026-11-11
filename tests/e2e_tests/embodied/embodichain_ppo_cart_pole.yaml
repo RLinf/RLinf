@@ -25,7 +25,7 @@ runner:
     log_path: /workspace/results/embodichain_ppo_cart_pole
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -38,7 +38,7 @@ runner:
   ckpt_path: null
 
 algorithm:
-  update_epoch: 2
+  update_epoch: 1
   normalize_advantages: true
   kl_penalty: kl
   group_size: 1
