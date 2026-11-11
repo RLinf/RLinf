@@ -37,7 +37,6 @@ class RobotAutoConfig:
     SKIP_FIELDS: frozenset[str] = frozenset(
         {
             "node_rank",
-            "disable_validate",
             "enable_fault_recovery",
             "max_recovery_attempts",
             "recovery_cooldown_window",

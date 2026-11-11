@@ -414,6 +414,18 @@ def test_robot_auto_config_supports_pep604_optional(monkeypatch):
     assert RobotAutoConfig.resolve([config])[0].port == 5000
 
 
+def test_robot_auto_config_reads_disable_validate_for_created_robots(monkeypatch):
+    from rlinf.robotics import FrankaConfig
+
+    monkeypatch.setenv("ROBOT_IP", "10.0.0.2,10.0.0.3")
+    monkeypatch.setenv("DISABLE_VALIDATE", "true,true")
+
+    configs = RobotAutoConfig.resolve([], config_cls=FrankaConfig, node_rank=0)
+
+    assert [c.robot_ip for c in configs] == ["10.0.0.2", "10.0.0.3"]
+    assert [c.disable_validate for c in configs] == [True, True]
+
+
 def test_namespaces_follow_the_composition():
     robot = Robot(arm=PartGroup(arm=FakeControllablePart("arm", [])))
     robot.connect()
