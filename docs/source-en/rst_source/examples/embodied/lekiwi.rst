@@ -10,7 +10,7 @@ Work through the three checks in order. Each one covers a single part, so when
 a later step fails you already know the wheels, the camera, and the keyboard
 work.
 
-What you need
+What You Need
 -------------
 
 .. list-table::
@@ -30,28 +30,33 @@ What you need
        on the robot is the usual choice; it needs no GPU.
    * - Keyboard computer
      - Optional. Any computer on the same network, macOS included, with a
-       Python environment that has RLinf's runtime dependencies and pynput.
-       It does not need an RLinf install.
+       Python 3.11+ environment that has ``torch``, ``omegaconf``, ``numpy``,
+       and ``pynput`` installed. It does not need an RLinf install.
 
 Assembly is not covered here: follow the `LeKiwi assembly guide
 <https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_, and
 LeRobot's `LeKiwi guide <https://huggingface.co/docs/lerobot/en/lekiwi>`_ for
 the same robot in its own stack.
 
-How the pieces fit
+How the Pieces Fit
 ------------------
 
-The base is three wheel servos at 120 degree spacing on one serial bus, so
-only per-wheel velocities reach the hardware. RLinf converts a body velocity
-``[x, y, theta]``, in m/s, m/s, and deg/s, into wheel speeds, and scales every
-wheel by the same factor when one would exceed its limit, so a direction the
-base cannot reach at full speed runs slower but still in a straight line. The
-robotics layer composes ``LeKiwiRobot`` from the base and the cameras; the env
-layer wraps that robot as ``LeKiwiDriveEnv-v1``. Each part's observation and
-action contracts are in :doc:`Robotics Interface
+The LeKiwi base uses three omniwheels driven by Feetech STS3215 servos in
+velocity mode. A policy outputs planar base commands ``[x, y, theta]``—forward
+velocity in ``m/s``, lateral velocity in ``m/s``, and yaw rate in ``deg/s``—while
+the servo controller expects per-wheel raw speed commands.
+
+``LeKiwiBase`` bridges the two: its planar kinematics map ``[x, y, theta]`` to
+three wheel speeds, and if any wheel would exceed ``max_raw`` it scales all
+three wheel speeds down by the same factor so the base slows down without
+changing its trajectory or turn rate. ``LeKiwiRobot`` pairs that base with
+``WebcamCamera`` cameras, and ``LeKiwiDriveEnv-v1`` wraps the robot as a
+Gymnasium environment so a policy receives image observations and base
+velocities and sends ``[x, y, theta]`` actions at ``step_frequency``. Each
+part's observation and action contracts are in :doc:`Robotics Interface
 </rst_source/concepts/robotics>`.
 
-Install the environment
+Install the Environment
 -----------------------
 
 Run these steps on the computer (for example, a Raspberry Pi 5) wired to the
@@ -70,15 +75,16 @@ Install the robot dependencies from the repository root:
 
 The installer includes LeRobot with Feetech support and OpenCV's headless
 build, which captures frames without the system GL libraries a camera window
-needs. ``--install-rlinf`` installs RLinf itself. Run the checks below from
-the repository root using the modules in ``toolkits/realworld_check/lekiwi``.
-``--no-root`` skips the system libraries the installer would
-otherwise add with sudo: the checks below use only the serial port and that
-headless build, so a base computer needs none of them. Drop the flag if you also
-train or run simulators on this computer. Platform prerequisites are in
-:doc:`Installation </rst_source/start/installation>`.
+needs. ``--no-root`` skips the system libraries the installer would otherwise
+add with sudo: the checks below use only the serial port and that headless
+build, so a base computer needs none of them. Drop the flag if you also train
+or run simulators on this computer. ``--install-rlinf`` installs RLinf itself.
+Platform prerequisites are in :doc:`Installation
+</rst_source/start/installation>`. Run every command below from the repository
+root with this virtual environment active, using
+``toolkits/realworld_check/test_lekiwi_env.py``.
 
-Find the servo port
+Find the Servo Port
 -------------------
 
 Every command takes the serial port of the servo controller. With the
@@ -95,7 +101,7 @@ the path looks like ``/dev/tty.usbmodem...``. A name under
 it when the base stays in one place. The port stays the same for all the checks
 below.
 
-Assign the wheel motor IDs
+Assign the Wheel Motor IDs
 --------------------------
 
 A factory-fresh STS3215 answers on the same default ID, so the wheels are
@@ -109,7 +115,7 @@ only the wheel it names:
 It writes left wheel 7, back wheel 8, and right wheel 9, the IDs this driver
 expects. Skip this step on a base whose wheels are already numbered.
 
-Check the wheels
+Check the Wheels
 ----------------
 
 Put the base on blocks so the wheels spin free, connect all three motors, and
@@ -117,10 +123,10 @@ run:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.lekiwi.wheels --port /dev/ttyACM0
+   python -m toolkits.realworld_check.test_lekiwi_env wheels --port /dev/ttyACM0
 
-Each wheel turns for half a second and the command reports the velocity its
-encoder sent back:
+Each wheel turns for 0.6 seconds at raw command 100 and stops, and the command
+reports the velocity its encoder sent back:
 
 .. code-block:: text
 
@@ -131,12 +137,12 @@ encoder sent back:
 
 ``--raw`` makes the spin faster and ``--seconds`` makes it longer.
 
-Check the camera
+Check the Camera
 ----------------
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.lekiwi.camera --save check.png
+   python -m toolkits.realworld_check.test_lekiwi_env camera --save check.png
 
 The command lists the webcams it finds, opens one, and reports the frames it
 actually delivers, because a camera can open and still send nothing:
@@ -153,7 +159,7 @@ Write the printed identifier into ``camera_names`` later in this page. Open
 collecting data. With several cameras attached, choose one with
 ``--device``.
 
-Drive the base with the keyboard
+Drive the Base with the Keyboard
 --------------------------------
 
 Keep the wheels off the ground for the first run and keep servo power within
@@ -161,13 +167,13 @@ reach. Check the key handling without touching the motors first:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.lekiwi.teleop --dry-run
+   python -m toolkits.realworld_check.test_lekiwi_env teleop --dry-run
 
 Then drive:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.lekiwi.teleop --port /dev/ttyACM0
+   python -m toolkits.realworld_check.test_lekiwi_env teleop --port /dev/ttyACM0
 
 .. list-table::
    :header-rows: 1
@@ -225,10 +231,10 @@ them.
 .. code-block:: bash
 
    # On the robot, wired to the motors:
-   python -m toolkits.realworld_check.lekiwi.teleop --listen --port /dev/ttyACM0
+   python -m toolkits.realworld_check.test_lekiwi_env teleop --listen --port /dev/ttyACM0
 
    # On the machine with the keyboard:
-   python -m toolkits.realworld_check.lekiwi.teleop --remote <robot-ip>
+   python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
 
 The keys and speed levels are the same. Both sides use TCP port 5555 unless you
 change it with ``--remote-port``. ``--listen`` also takes ``--fps``,
@@ -238,24 +244,22 @@ watches the sender's heartbeat: if the sender is killed, the network drops, or
 the laptop sleeps, it zeroes the wheels and waits for a new sender. Stop the
 sender with Ctrl+C; it also exits when the listener closes.
 
-A machine installed as above already has pynput, which LeRobot brings in. A
-machine that has only a Python environment with RLinf's runtime dependencies,
-``torch`` and ``omegaconf`` — an existing RLinf virtual environment, for
-example — adds pynput and runs the sender from a checkout: no installer and no
-RLinf install. That is the route on macOS, which ``install.sh`` does not
-support.
+A machine installed as above already has ``pynput``, which is installed with
+LeRobot. On a separate laptop or on macOS (which ``install.sh`` does not
+support), create a Python 3.11+ virtual environment, install the runtime
+dependencies and ``pynput``, and run the sender from a checkout:
 
 .. code-block:: bash
 
    cd /path/to/RLinf
-   pip install pynput
-   PYTHONPATH=$PWD python -m toolkits.realworld_check.lekiwi.teleop --remote <robot-ip>
+   pip install torch omegaconf numpy pynput
+   PYTHONPATH=$PWD python -m toolkits.realworld_check.test_lekiwi_env teleop --remote <robot-ip>
 
 On macOS, also allow the terminal in System Settings under Privacy & Security
 in Accessibility and Input Monitoring, then restart it; without that the
 sender connects and sends heartbeats, but no key reaches the robot.
 
-The drive environment
+The Drive Environment
 ---------------------
 
 ``LeKiwiDriveEnv-v1`` is the registered Gymnasium task: it composes the robot from
@@ -264,9 +268,9 @@ commands bounded velocities. A step holds the commanded velocity for one
 control period and then stops the wheels, so the base moves only while the
 caller keeps stepping.
 
-LeKiwi ships no config under ``examples/embodiment``: RPent hosts this
-environment rather than a training run. A config that hosts the task selects
-it with ``init_params.id``, as every real-world task does, and
+LeKiwi ships no config under ``examples/embodiment`` because RPent runs this
+environment directly rather than through a training script. Any config that uses
+the task selects it with ``init_params.id``, as every real-world task does, and
 ``examples/embodiment/config/env/so101_reach.yaml`` is a shipped example of the
 same shape:
 
@@ -311,16 +315,17 @@ Per-run settings are listed under ``override_cfg`` in the training config:
          step_frequency: 10.0
 
 The keys of ``camera_names`` are the identifiers printed by
-``python -m toolkits.realworld_check.lekiwi.camera``. Name the camera ``front``
+``python -m toolkits.realworld_check.test_lekiwi_env camera``. Name the camera ``front``
 so its frames appear
 under the key ``main_image_key`` points at; a camera left unnamed reports under
 ``camera_1`` and so on.
 
 ``frame_size`` sets the width and height of every frame in the observation, 128
 by 128 pixels by default. A policy usually wants a small frame; a live viewer
-wants a larger one. The driver requests a capture resolution and returns the
-frame at the size delivered by the device. The environment crops the center
-to the target aspect ratio before resizing, preserving object proportions.
+wants a larger one. The driver requests a ``640x480`` capture resolution by
+default and returns the frame at the size delivered by the device. The
+environment crops the center to the target aspect ratio before resizing,
+preserving object proportions.
 
 The reward is always zero and the episode never terminates early: a task
 decides success itself, as

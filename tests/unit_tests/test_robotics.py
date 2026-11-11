@@ -96,14 +96,17 @@ from rlinf.utils.rot6d import (
     se3_body_compose,
     se3_body_delta,
 )
-from toolkits.realworld_check.lekiwi.camera import pick_device
-from toolkits.realworld_check.lekiwi.remote import run_receiver
-from toolkits.realworld_check.lekiwi.teleop import (
+from toolkits.realworld_check.test_lekiwi_env import (
     KeyboardControl,
+    SocketKeySource,
     parse_args,
+    pick_device,
+    report,
+    run_receiver,
     run_teleoperation,
+    spin_each_wheel,
+    start_velocity_mode,
 )
-from toolkits.realworld_check.lekiwi.wheels import report, spin_each_wheel
 
 pytestmark = pytest.mark.skipif(
     Worker.accelerator_type == AcceleratorType.MUSA_GPU,
@@ -7571,7 +7574,7 @@ def wheel_command(
 
 class TestLeKiwi(unittest.TestCase):
     def setUp(self) -> None:
-        self.args = parse_args(["--port", "fake", "--fps", "1000"])
+        self.args = parse_args(["teleop", "--port", "fake", "--fps", "1000"])
         self.logger = logging.getLogger("test_lekiwi")
         self.logger.addHandler(logging.NullHandler())
         self.logger.propagate = False
@@ -7696,19 +7699,25 @@ class TestLeKiwi(unittest.TestCase):
     def test_invalid_options_are_rejected(self) -> None:
         for flags in (
             [],
-            ["--dry-run", "--fps", "0"],
-            ["--dry-run", "--fps", "nan"],
-            ["--dry-run", "--wheel-radius", "-1"],
-            ["--dry-run", "--base-radius", "inf"],
-            ["--dry-run", "--max-raw", "32768"],
-            ["--dry-run", "--max-raw", "0"],
-            ["--listen"],
-            ["--listen", "--port", "fake", "--heartbeat-timeout", "0"],
-            ["--listen", "--port", "fake", "--remote-port", "0"],
-            ["--listen", "--remote", "robot"],
-            ["--remote", "robot", "--port", "fake"],
-            ["--remote", "robot", "--dry-run"],
-            ["--remote", "robot", "--connect-timeout", "nan"],
+            ["wheels"],
+            ["wheels", "--port", "fake", "--raw", "0"],
+            ["wheels", "--port", "fake", "--seconds", "0"],
+            ["camera", "--width", "0"],
+            ["camera", "--fps", "0"],
+            ["teleop"],
+            ["teleop", "--dry-run", "--fps", "0"],
+            ["teleop", "--dry-run", "--fps", "nan"],
+            ["teleop", "--dry-run", "--wheel-radius", "-1"],
+            ["teleop", "--dry-run", "--base-radius", "inf"],
+            ["teleop", "--dry-run", "--max-raw", "32768"],
+            ["teleop", "--dry-run", "--max-raw", "0"],
+            ["teleop", "--listen"],
+            ["teleop", "--listen", "--port", "fake", "--heartbeat-timeout", "0"],
+            ["teleop", "--listen", "--port", "fake", "--remote-port", "0"],
+            ["teleop", "--listen", "--remote", "robot"],
+            ["teleop", "--remote", "robot", "--port", "fake"],
+            ["teleop", "--remote", "robot", "--dry-run"],
+            ["teleop", "--remote", "robot", "--connect-timeout", "nan"],
         ):
             with (
                 self.subTest(flags=flags),
@@ -7716,9 +7725,11 @@ class TestLeKiwi(unittest.TestCase):
                 self.assertRaises(SystemExit),
             ):
                 parse_args(flags)
-        self.assertTrue(parse_args(["--dry-run"]).dry_run)
-        self.assertTrue(parse_args(["--listen", "--port", "fake"]).listen)
-        self.assertEqual(parse_args(["--remote", "robot"]).remote, "robot")
+        self.assertEqual(parse_args(["wheels", "--port", "fake"]).command, "wheels")
+        self.assertEqual(parse_args(["camera"]).command, "camera")
+        self.assertTrue(parse_args(["teleop", "--dry-run"]).dry_run)
+        self.assertTrue(parse_args(["teleop", "--listen", "--port", "fake"]).listen)
+        self.assertEqual(parse_args(["teleop", "--remote", "robot"]).remote, "robot")
 
     def test_wheel_check_reads_each_wheel_back(self) -> None:
         bus = FakeWheelBus()
@@ -7752,8 +7763,6 @@ class TestLeKiwi(unittest.TestCase):
 def test_lekiwi_initialization_failure_releases_wheels(
     monkeypatch, entrypoint, failure
 ):
-    from toolkits.realworld_check.lekiwi._support import start_velocity_mode
-
     bus = FakeWheelBus()
     original = getattr(bus, failure)
     failed = False
@@ -7781,8 +7790,6 @@ def test_lekiwi_initialization_failure_releases_wheels(
 
 def test_lekiwi_remote_accepts_sender_after_silent_timeout():
     import socket
-
-    from toolkits.realworld_check.lekiwi.remote import SocketKeySource
 
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
