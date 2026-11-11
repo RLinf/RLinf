@@ -434,6 +434,20 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-megatron
 
+      - name: Check multi-agent Megatron numerical equivalence
+        timeout-minutes: 5
+        run: |
+          export PYTHONPATH=$(pwd):$PYTHONPATH
+          source .venv/bin/activate
+          python -m pytest -q tests/unit_tests/test_utils.py -k "valid_token_scaling or critic_packing"
+
+      - name: Train PPO with SGLang Megatron Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-megatron
+
       - name: Train with SGLang MA-FSDP Collocated mode
         timeout-minutes: 20
         run: |

@@ -652,7 +652,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             input_dict: Input dictionary containing 'input_ids' and 'answer'
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
-            output_channel: Channel to output results
+            output_channel: Channel receiving each result
             group_id: Id of the query group, carried on the result so the
                 receiver can route it; None in synchronous training.
             task_name: Agent task name of the group, carried on the result
@@ -705,7 +705,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
         Args:
             input_channel: Channel to receive rollout requests
-            output_channel: Channel to output results
+            output_channel: Channel receiving each result
         """
         with self.worker_timer():
             rollout_request: RolloutRequest = input_channel.get()

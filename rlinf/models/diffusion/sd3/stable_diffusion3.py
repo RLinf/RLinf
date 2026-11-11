@@ -100,9 +100,15 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
     def to(self, device):
         module = super().to(device)
         device = torch.device(device)
-        if device.type == "cpu":
+        if device.type == "cpu" and not getattr(self, "_nft_reference_only", False):
             move_auxiliary_modules(self.pipeline, device=device)
         return module
+
+    def prepare_nft_reference_model(self) -> None:
+        """Release pipeline modules that NFT reference forward does not use."""
+        self._nft_reference_only = True
+        for name in ("vae", "text_encoder", "text_encoder_2", "text_encoder_3"):
+            setattr(self.pipeline, name, None)
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:

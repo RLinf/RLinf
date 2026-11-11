@@ -26,10 +26,10 @@ runner:
     log_path: ../results/libero_10_grpo_pi0_fast
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   # The first run saves global_step_1. Resume validation overrides max_steps=2.
-  max_epochs: 2
+  max_epochs: 1
   max_steps: 1
   only_eval: False
   val_check_interval: -1

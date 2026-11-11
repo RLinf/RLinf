@@ -93,37 +93,6 @@ class MAMegatronActor(MegatronActor):
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
 
-    def get_batch(
-        self, channel: Channel
-    ) -> tuple[dict[str, torch.Tensor], DynamicRolloutResult]:
-        if channel.is_local:
-            # Local channel, every process will put its own data locally
-            # No need to broadcast
-            result: DynamicRolloutResult = channel.get()
-        else:
-            if self.is_data_io_rank:
-                result: DynamicRolloutResult = channel.get()
-            else:
-                result = None
-            result = self.broadcast(
-                result,
-                groups=[
-                    (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
-                ],
-            )
-            result = self.broadcast(
-                result,
-                groups=[
-                    (self._group_name, parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS)
-                ],
-            )
-        batch = result.to_actor_batch(
-            self.cfg.actor.model.encoder_seq_length,
-            self.tokenizer.eos_token_id,
-        )
-
-        return batch, result
-
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 
@@ -243,7 +212,6 @@ class MAMegatronActor(MegatronActor):
                     clip_log_ratio_max=self.cfg.algorithm.get(
                         "clip_log_ratio_max", None
                     ),
-                    fast_path_zero_loss_mask=True,
                 )
 
                 entropy_loss = torch.zeros(1, device=loss.device)
@@ -277,6 +245,15 @@ class MAMegatronActor(MegatronActor):
                         f"than early stop threshold {self.cfg.algorithm.early_stop_imp_ratio}. Abandon this microbatch."
                     )
                     loss = loss * 0.0
+
+                if self.cfg.algorithm.use_valid_token_scale:
+                    loss_scale = (
+                        mask.sum()
+                        / self.global_valid_token
+                        * parallel_state.get_data_parallel_world_size()
+                        * self.num_microbatches
+                    )
+                    loss *= loss_scale.item()
 
                 # add to log
                 metrics_data.update(
@@ -420,14 +397,14 @@ class MAMegatronActor(MegatronActor):
         batch = DynamicRolloutResult.merge_batches(
             batches, self.cfg.algorithm.group_size
         )
+        fixed_ppo_targets = self.cfg.critic.get("use_critic_model", False)
         assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
-        # Compute advantages and returns
         batch = self.compute_advantages_and_returns(batch)
         batch["loss_scales"] = torch.ones_like(batch["advantages"]).masked_fill(
             ~batch["response_mask"], 0
         )
         # Advantage normalization
-        if self.cfg.algorithm.normalize_advantages:
+        if self.cfg.algorithm.normalize_advantages and not fixed_ppo_targets:
             assert False, "not implemented in multi-agent"
             mask = batch["response_mask"][:, -self.response_len :]
             batch["advantages"] = masked_normalization(
@@ -462,6 +439,9 @@ class MAMegatronActor(MegatronActor):
             batch = loss_scale_fn(scale_context, batch)
         if self.pack_traj:
             batch = DynamicRolloutResult.pack_traj_batch(scale_context, batch)
+            if fixed_ppo_targets:
+                # PPO weights action tokens equally across folded turns.
+                batch["loss_scales"] = batch["response_mask"].float()
         for key in list(batch.keys()):
             if key == "idx_to_traj" or key.startswith("extra:"):
                 batch.pop(key, None)
@@ -476,9 +456,8 @@ class MAMegatronActor(MegatronActor):
             batch_pad = DynamicRolloutResult.get_batch_pad(
                 self.cfg.actor.model.encoder_seq_length, batch.keys()
             )
-            batch = self._dp_load_balance_dynamic(
-                batch, batch_pad, self.cfg.actor.micro_batch_size
-            )
+            split_fix_chunk = self.num_train_steps * self.cfg.actor.micro_batch_size
+            batch = self._dp_load_balance_dynamic(batch, batch_pad, split_fix_chunk)
 
         global_batches = get_iterator_k_split(
             batch,
@@ -494,8 +473,11 @@ class MAMegatronActor(MegatronActor):
         with self.worker_timer("run_training"):
             training_metrics_list = []
             for idx, global_batch in enumerate(global_batches):
-                if global_batch["input_ids"].shape == torch.Size([0]):
-                    continue
+                if self.cfg.algorithm.use_valid_token_scale:
+                    self._setup_valid_token_scale(global_batch)
+                assert global_batch["input_ids"].shape[0] > 0, (
+                    "Dynamic DP load balancing must produce nonempty actor minibatches."
+                )
                 global_batch_size_per_dp = global_batch["input_ids"].shape[0]
                 dp_size = parallel_state.get_data_parallel_world_size()
                 configure_batch_sizes(
@@ -505,12 +487,18 @@ class MAMegatronActor(MegatronActor):
                     dp=dp_size,
                 )
                 num_microbatches = get_num_microbatches()
-                assert num_microbatches == global_batch_size_per_dp
+                assert (
+                    num_microbatches * self.cfg.actor.micro_batch_size
+                    == global_batch_size_per_dp
+                )
                 training_metrics = self.training_step(global_batch)
                 training_metrics_list.append(training_metrics)
 
         # Gather weights if overlap_param_gather before the next weight sync
         self._gather_weights_among_dp()
+
+        if fixed_ppo_targets:
+            clear_memory()
 
         return rollout_metrics, training_metrics_list
 
@@ -722,6 +710,11 @@ class MAMegatronActor(MegatronActor):
         Args:
             batch (Dict[str, torch.Tensor]): The rollout batch.
         """
+        if self.cfg.critic.get("use_critic_model", False):
+            assert batch.get("advantages") is not None, (
+                "Critic-owned PPO advantages are missing from the actor batch."
+            )
+            return batch
         with self.worker_timer():
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"]  # [num_sequence, seq_len]

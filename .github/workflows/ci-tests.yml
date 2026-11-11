@@ -137,6 +137,7 @@ jobs:
               - 'rlinf/workers/rollout/vllm/**'
               - 'rlinf/workers/rollout_buffer/**'
               - 'rlinf/runners/agent_runner.py'
+              - 'rlinf/runners/agent_ppo_runner.py'
               - 'rlinf/runners/async_agent_runner.py'
               - 'rlinf/runners/agentlightning_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
@@ -198,6 +199,10 @@ jobs:
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
+              # ROCm, MUSA, and Ascend unit jobs load these checkpoints.
+              - 'rlinf/models/embodiment/openvla/**'
+              - 'rlinf/models/embodiment/openvla_oft/**'
+              - 'rlinf/models/embodiment/prismatic/**'
             scheduler_test_filter: &scheduler
               - *shared
               - *embodied
