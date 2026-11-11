@@ -63,7 +63,10 @@ def factorized_space_time_attention(
     causal_mask = torch.ones(
         num_frames, num_frames, dtype=torch.bool, device=tokens.device
     ).tril()
-    temporal_mask = causal_mask[None] & frame_mask[:, None, :]
+    # Padded queries attend to themselves to avoid empty rows in cuDNN attention.
+    temporal_mask = (causal_mask[None] & frame_mask[:, None, :]) | torch.eye(
+        num_frames, dtype=torch.bool, device=tokens.device
+    )
     temporal_mask = (
         temporal_mask[:, None, None]
         .expand(-1, num_patches, 1, -1, -1)

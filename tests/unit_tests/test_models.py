@@ -305,24 +305,25 @@ def _reference_space_time_attention(attention, tokens, frame_mask):
     for batch in range(batch_size):
         for frame_index in range(num_frames):
             valid_times = [
-                past for past in range(frame_index + 1) if frame_mask[batch, past]
+                past
+                for past in range(frame_index + 1)
+                if frame_mask[batch, past] or past == frame_index
             ]
             for patch in range(num_patches):
                 for head in range(num_heads):
                     channels = slice(head * head_dim, (head + 1) * head_dim)
                     query = queries[batch, frame_index, patch, channels]
-                    if valid_times:
-                        scores = torch.stack(
-                            [
-                                query @ keys[batch, past, patch, channels]
-                                for past in valid_times
-                            ]
-                        ) / math.sqrt(head_dim)
-                        weights = scores.softmax(dim=0)
-                        temporal_values[batch, frame_index, patch, channels] = sum(
-                            weight * values[batch, past, patch, channels]
-                            for weight, past in zip(weights, valid_times)
-                        )
+                    scores = torch.stack(
+                        [
+                            query @ keys[batch, past, patch, channels]
+                            for past in valid_times
+                        ]
+                    ) / math.sqrt(head_dim)
+                    weights = scores.softmax(dim=0)
+                    temporal_values[batch, frame_index, patch, channels] = sum(
+                        weight * values[batch, past, patch, channels]
+                        for weight, past in zip(weights, valid_times)
+                    )
         for frame_index in range(num_frames):
             for patch in range(num_patches):
                 for head in range(num_heads):

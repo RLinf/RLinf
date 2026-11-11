@@ -1708,10 +1708,14 @@ class EnvOutput:
         return self.transition.rlt_switch_flags
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        """Preserve observation fields and normalize standard policy inputs."""
-        prepared = dict(obs)
-        for key in ("main_images", "wrist_images", "extra_view_images", "states"):
-            prepared.setdefault(key, None)
+        """Select policy inputs and normalize task descriptions."""
+        prepared = {
+            key: obs.get(key)
+            for key in ("main_images", "wrist_images", "extra_view_images", "states")
+        }
+        for key in ("reset_mask", "history"):
+            if key in obs:
+                prepared[key] = obs[key]
         task_descriptions = obs.get("task_descriptions")
         prepared["task_descriptions"] = (
             list(task_descriptions) if task_descriptions is not None else None

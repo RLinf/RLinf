@@ -1243,8 +1243,9 @@ def test_env_output_preserves_nested_observations():
     payload = output.to_dict()
 
     for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
-        for key, value in original.items():
-            torch.testing.assert_close(payload[name][key], value)
+        assert "depth_images" not in payload[name]
+        for key in ("states", "reset_mask", "history"):
+            torch.testing.assert_close(payload[name][key], original[key])
     assert (
         "history" not in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
     )
