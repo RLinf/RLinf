@@ -13,14 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Stages an Ascend CI job's working tree, virtualenv, Python runtime, and
-# editable dependency checkouts on the local root disk (/var/tmp) while keeping
-# large wheel caches and model assets on /workspace/dataset (NFS).
+# Stages an Ascend CI job's working tree, virtualenv, local uv wheel cache,
+# Python runtime, and editable dependency checkouts on the local root disk
+# (/var/tmp) while keeping large model assets on /workspace/dataset (NFS).
 #
-# Root disk is bounded (~100 GB), so directory names are keyed by RUNNER_NAME
-# (at most one active directory per runner), stale state from prior cancelled
-# runs is wiped before staging, and staging falls back to GITHUB_WORKSPACE if
-# /var/tmp has less than 15 GiB free.
+# Keeping UV_CACHE_DIR (/var/tmp/uv_cache) and .venv on the same /var/tmp
+# filesystem lets uv use instant hardlinks (zero extra data blocks per .venv
+# and 100% local-disk Python imports). Root disk is ~100 GB, so:
+#   - Runner scratch paths are keyed by RUNNER_NAME (at most one per runner)
+#     and wiped both before setup and in `if: always()` cleanup.
+#   - If free space on /var/tmp drops below 18 GiB, `uv cache prune --ci`
+#     reclaims unzipped archive trees first; if still below 10 GiB, the job
+#     falls back to /workspace/dataset/.uv_cache with UV_LINK_MODE=symlink.
 
 ascend_stage_dep_repo() {
     local var_name="$1"
@@ -51,13 +55,20 @@ case "${1:-}" in
 
         unset UV_DEFAULT_INDEX
         export UV_PATH=/workspace/dataset/.uv
-        export UV_CACHE_DIR=/workspace/dataset/.uv_cache
 
-        # Require >= 15 GiB free on /var/tmp before staging onto root disk.
         avail_kb=$(df -Pk /var/tmp | awk 'NR==2 {print $4}')
-        if [ "${avail_kb:-0}" -ge 15728640 ]; then
+        if [ "${avail_kb:-0}" -lt 18874368 ] && [ -d /var/tmp/uv_cache ]; then
+            echo "[ascend-ci] /var/tmp below 18 GiB free; pruning unzipped entries in /var/tmp/uv_cache"
+            uv cache prune --ci --cache-dir /var/tmp/uv_cache >/dev/null 2>&1 || true
+            avail_kb=$(df -Pk /var/tmp | awk 'NR==2 {print $4}')
+        fi
+
+        if [ "${avail_kb:-0}" -ge 10485760 ]; then
             ASCEND_LOCAL_STAGE=1
-            mkdir -p /var/tmp/uv_python "$ASCEND_LOCAL_ROOT"
+            mkdir -p /var/tmp/uv_cache /var/tmp/uv_python "$ASCEND_LOCAL_ROOT"
+            export UV_CACHE_DIR=/var/tmp/uv_cache
+            export UV_LINK_MODE=hardlink
+
             py_arch="cpython-3.11.14-linux-aarch64-gnu"
             if [ -d "/workspace/dataset/.uv_python/${py_arch}" ] && [ ! -d "/var/tmp/uv_python/${py_arch}" ]; then
                 tmp_py="/var/tmp/uv_python/.tmp.${py_arch}.$$"
@@ -79,13 +90,14 @@ case "${1:-}" in
                 mkdir -p "$ASCEND_WORK_DIR"
                 git -C "$GITHUB_WORKSPACE" archive HEAD | tar -C "$ASCEND_WORK_DIR" -xf -
             fi
-            echo "[ascend-ci] Staged workspace on local disk: ${ASCEND_WORK_DIR} (free=$((avail_kb / 1048576)) GiB)"
+            echo "[ascend-ci] Using local /var/tmp workspace + hardlinked uv_cache: ${ASCEND_WORK_DIR} (free=$((avail_kb / 1048576)) GiB)"
         else
             ASCEND_LOCAL_STAGE=0
             ASCEND_WORK_DIR="$GITHUB_WORKSPACE"
+            export UV_CACHE_DIR=/workspace/dataset/.uv_cache
             export UV_LINK_MODE=symlink
             export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-            echo "[ascend-ci] Low disk on /var/tmp ($((avail_kb / 1048576)) GiB free); using symlinked venv at ${ASCEND_WORK_DIR}"
+            echo "[ascend-ci] Low disk on /var/tmp ($((avail_kb / 1048576)) GiB free); falling back to NFS uv_cache with symlinked venv"
         fi
 
         export ASCEND_LOCAL_STAGE ASCEND_LOCAL_ROOT ASCEND_WORK_DIR RAY_TMPDIR
@@ -98,6 +110,8 @@ case "${1:-}" in
                 echo "ASCEND_WORK_DIR=${ASCEND_WORK_DIR}"
                 echo "ASCEND_LOCAL_ROOT=${ASCEND_LOCAL_ROOT}"
                 echo "RAY_TMPDIR=${RAY_TMPDIR}"
+                echo "UV_CACHE_DIR=${UV_CACHE_DIR}"
+                echo "UV_LINK_MODE=${UV_LINK_MODE}"
                 echo "UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR}"
             } >> "$GITHUB_ENV"
         fi
