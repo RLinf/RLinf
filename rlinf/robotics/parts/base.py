@@ -30,6 +30,7 @@ from enum import Enum
 from functools import partial
 from importlib import import_module
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     ClassVar,
@@ -41,6 +42,9 @@ from typing import (
 from rlinf.utils.logging import get_logger
 
 from .motion import MotionProfile
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..discovery.registry import RobotConfig
 
 _KeyType = TypeVar("_KeyType")
 _ValueType = TypeVar("_ValueType")
@@ -391,9 +395,7 @@ class Connection(ABC, metaclass=ConnectionMeta):
     def diagnose(self) -> HealthStatus:
         """Return a structured health and fault diagnosis for this connection."""
         if self._owner is not None:
-            fn = getattr(self._owner, "diagnose", None)
-            if callable(fn):
-                return fn()
+            return self._owner.diagnose()
         if not self.is_connected:
             return HealthStatus(
                 healthy=False,
@@ -407,29 +409,32 @@ class Connection(ABC, metaclass=ConnectionMeta):
     def clear_errors(self) -> Any:
         """Clear a latched fault so this connection accepts commands again."""
         if self._owner is not None:
-            fn = getattr(self._owner, "clear_errors", None)
-            if callable(fn):
-                return fn()
+            return self._owner.clear_errors()
         return True
 
     def _recover_mode(self) -> Any:
         """Restore streaming control after a :attr:`FaultLevel.MODE_DROP`."""
         if self._owner is not None:
-            fn = getattr(self._owner, "_recover_mode", None)
-            if callable(fn):
-                return fn()
+            return self._owner._recover_mode()
         self.clear_errors()
         return "clear_errors"
 
     def configure_fault_recovery(
         self,
-        config: Optional[Any] = None,
+        config: "Optional[RobotConfig]" = None,
         *,
         enable_fault_recovery: Optional[bool] = None,
         max_recovery_attempts: Optional[int] = None,
         recovery_cooldown_window: Optional[float] = None,
     ) -> None:
-        """Configure automatic fault-recovery switches and circuit-breaker limits."""
+        """Configure automatic fault-recovery switches and circuit-breaker limits.
+
+        Args:
+            config: A robot config whose fault-recovery fields apply first.
+            enable_fault_recovery: Overrides ``config`` when set.
+            max_recovery_attempts: Overrides ``config`` when set.
+            recovery_cooldown_window: Overrides ``config`` when set.
+        """
         if self._owner is not None:
             self._owner.configure_fault_recovery(
                 config,
@@ -439,24 +444,7 @@ class Connection(ABC, metaclass=ConnectionMeta):
             )
             return
 
-        if config is not None:
-            settings = (
-                config.fault_recovery_settings()
-                if hasattr(config, "fault_recovery_settings")
-                else dict(config)
-                if isinstance(config, Mapping)
-                else {
-                    k: getattr(config, k)
-                    for k in (
-                        "enable_fault_recovery",
-                        "max_recovery_attempts",
-                        "recovery_cooldown_window",
-                    )
-                    if hasattr(config, k)
-                }
-            )
-        else:
-            settings = {}
+        settings = {} if config is None else config.fault_recovery_settings()
 
         overrides = {
             "enable_fault_recovery": enable_fault_recovery,
@@ -487,9 +475,7 @@ class Connection(ABC, metaclass=ConnectionMeta):
     def recover(self, trigger: str = "manual") -> HealthStatus:
         """Diagnose and execute tiered recovery, enforcing the cooldown circuit breaker."""
         if self._owner is not None:
-            fn = getattr(self._owner, "recover", None)
-            if callable(fn):
-                return fn(trigger=trigger)
+            return self._owner.recover(trigger=trigger)
         status = self.diagnose()
         if status.healthy:
             return status
@@ -548,9 +534,7 @@ class Connection(ABC, metaclass=ConnectionMeta):
     def consume_recovery_event(self) -> Optional[dict[str, Any]]:
         """Return and clear the most recent fault-recovery event, if any."""
         if self._owner is not None:
-            fn = getattr(self._owner, "consume_recovery_event", None)
-            if callable(fn):
-                return fn()
+            return self._owner.consume_recovery_event()
         event = self._last_recovery_event
         self._last_recovery_event = None
         return event
@@ -1313,7 +1297,7 @@ class PartGroup(ControllablePart):
 
     def configure_fault_recovery(
         self,
-        config: Optional[Any] = None,
+        config: "Optional[RobotConfig]" = None,
         *,
         enable_fault_recovery: Optional[bool] = None,
         max_recovery_attempts: Optional[int] = None,
