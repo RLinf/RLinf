@@ -27,7 +27,7 @@ runner:
     log_path: "/workspace/results/maniskill_ppo_mlp_vlm_trend_reward"
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 2
   max_steps: -1

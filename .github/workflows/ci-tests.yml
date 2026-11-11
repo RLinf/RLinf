@@ -188,6 +188,10 @@ jobs:
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
+              # ROCm, MUSA, and Ascend unit jobs load these checkpoints.
+              - 'rlinf/models/embodiment/openvla/**'
+              - 'rlinf/models/embodiment/openvla_oft/**'
+              - 'rlinf/models/embodiment/prismatic/**'
             scheduler_test_filter: &scheduler
               - *shared
               - *embodied

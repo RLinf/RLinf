@@ -226,7 +226,15 @@ To use a custom virtual environment directory, pass ``--venv <dir>``:
 
 This command creates a Python 3.10 environment and installs the SD3, Wan2.2,
 and OCR reward dependencies, including Diffusers, PEFT, Transformers,
-PaddleOCR, and PaddlePaddle.
+PaddleOCR, and CPU PaddlePaddle for OCR rewards with ``use_gpu: False``,
+as in ``sd3_nft_ocr.yaml``.
+
+The Wan2.2 OCR configs use ``use_gpu: True``. Install GPU PaddlePaddle with
+``--paddle-gpu`` (CUDA 11.x or 12.x):
+
+.. code:: bash
+
+   bash requirements/install.sh embodied --model diffusion --paddle-gpu
 
 .. warning::
 
@@ -308,6 +316,11 @@ model and dataset paths.
       env.eval.dataset.path=/path/to/dataset/ocr
 
 Configure further in ``examples/diffusion/config/*.yaml``.
+
+Set ``runner.resume_dir`` to a ``checkpoints/global_step_N`` directory to
+resume NFT training, including off-policy EMA rollout weights. If an older
+checkpoint lacks EMA weights, the actor logs a warning and initializes EMA from
+the restored actor weights; this fallback is not an exact resume.
 
 Expected Results
 ----------------

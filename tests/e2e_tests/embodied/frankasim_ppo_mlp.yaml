@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/frankasim_ppo_mlp
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 1
   max_steps: -1
@@ -40,7 +40,7 @@ runner:
   ckpt_path: null
 
 algorithm:
-  update_epoch: 8
+  update_epoch: 1
   normalize_advantages: true
   kl_penalty: kl
   group_size: 1
