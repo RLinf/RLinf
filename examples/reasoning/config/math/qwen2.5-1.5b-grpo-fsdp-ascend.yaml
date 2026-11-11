@@ -198,7 +198,6 @@ actor:
   fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
 
     strategy: "fsdp2"            # FSDP strategy: ["fsdp", "fsdp2"]
-    init_model_with_meta_device: True
 
     # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
     # "shard_grad_op" (shard gradients and optimizer states only),
