@@ -83,6 +83,7 @@ def test_openpi_fused_attention_preserves_fully_masked_query_rows(monkeypatch):
     import rlinf.models.embodiment.openpi.modules.utils as openpi_utils
     from rlinf.models.embodiment.openpi.modules.gemma import Attention
 
+    monkeypatch.setattr(openpi_utils, "_torch_compile_enabled", False)
     monkeypatch.setattr(
         openpi_utils,
         "_sdpa_attention_enabled",
@@ -688,7 +689,7 @@ def test_qwen_npu_attention_preserves_masks_cache_gradients_and_weight_updates(
         Qwen2_5_VLTextConfig,
     )
 
-    from rlinf.models.embodiment.qwen_vl_npu_attention import (
+    from rlinf.models.embodiment.qwen_vl.npu_attention import (
         enable_qwen_vl_npu_attention,
     )
     from rlinf.scheduler import AcceleratorType
@@ -816,10 +817,10 @@ def test_qwen_npu_attention_preserves_vision_windows_and_weight_updates(monkeypa
         pytest.skip("Transformers Qwen2.5-VL attention interface required")
     from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLConfig
 
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         patch_vision_patch_embed,
     )
-    from rlinf.models.embodiment.qwen_vl_npu_attention import (
+    from rlinf.models.embodiment.qwen_vl.npu_attention import (
         enable_qwen_vl_npu_attention,
     )
     from rlinf.scheduler import AcceleratorType
@@ -1453,7 +1454,7 @@ class _QwenVisionPatchEmbed(torch.nn.Module):
 
 
 def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         _linear_patch_embed_forward,
     )
 
@@ -1471,7 +1472,7 @@ def test_qwen_vl_linear_patch_embed_matches_conv3d_and_backprops():
 
 
 def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         _linear_patch_embed_forward,
         patch_vision_patch_embed,
     )
@@ -1487,7 +1488,7 @@ def test_qwen_vl_linear_patch_embed_is_rebound_on_npu(monkeypatch):
 
 
 def test_qwen_vl_linear_patch_embed_is_left_alone_on_nvidia(monkeypatch):
-    from rlinf.models.embodiment.qwen_vl_linear_patch_embed import (
+    from rlinf.models.embodiment.qwen_vl.linear_patch_embed import (
         patch_vision_patch_embed,
     )
     from rlinf.scheduler import AcceleratorType
@@ -3585,7 +3586,7 @@ def test_qwen_patchify_matches_upstream_10d_layout(
     batch, frames, channel, grid_h, grid_w, patch, merge, t_p
 ):
     """The staged <=8-dim packing reproduces the upstream 10-dim chain."""
-    from rlinf.models.embodiment.qwen_vl_npu_patchify import _patchify_qwen_vl
+    from rlinf.models.embodiment.qwen_vl.npu_patchify import _patchify_qwen_vl
 
     torch.manual_seed(0)
     height, width = grid_h * patch, grid_w * patch
@@ -3991,3 +3992,128 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessing):
+    from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
+
+    StarVLAForRLActionPrediction = importlib.import_module(
+        "starvla_preprocessing_under_test.starvla_action_model"
+    ).StarVLAForRLActionPrediction
+
+    class _FakeVisionBlock(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+
+    class _FakeDecoderLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+
+    class _FakeVLM(torch.nn.Module):
+        _no_split_modules = ["_FakeDecoderLayer", "_FakeVisionBlock"]
+
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(hidden_size=8)
+            self.embed = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+            self.vision = _FakeVisionBlock()
+            self.layer = _FakeDecoderLayer()
+
+    class _FakeActionHead(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(8, 7, dtype=torch.float32)
+
+    class _FakeStarVLA(torch.nn.Module):
+        framework_name = "QwenOFT"
+
+        def __init__(self):
+            super().__init__()
+            self.qwen_vl_interface = torch.nn.Module()
+            self.qwen_vl_interface.model = _FakeVLM()
+            self.action_model = _FakeActionHead()
+            self.norm_stats = {
+                "franka": {"action": {"min": [-1.0] * 7, "max": [1.0] * 7}}
+            }
+
+    wrapper = StarVLAForRLActionPrediction(
+        starvla_model=_FakeStarVLA(),
+        action_dim=7,
+        num_action_chunks=2,
+        add_value_head=False,
+        unnorm_key="franka",
+    )
+    assert wrapper._no_split_modules == [
+        "_FakeDecoderLayer",
+        "_FakeVisionBlock",
+        "_FakeActionHead",
+    ]
+    wrap_policy = get_fsdp_wrap_policy(
+        wrapper,
+        OmegaConf.create({"wrap_policy": {}, "use_orig_params": False}),
+        is_lora=False,
+        model_type="starvla",
+    )
+    wrapped = {
+        name
+        for name, sub in wrapper.named_modules()
+        if sub is not wrapper
+        and wrap_policy(
+            module=sub,
+            recurse=False,
+            nonwrapped_numel=sum(p.numel() for p in sub.parameters()),
+        )
+    }
+    assert wrapped == {
+        "starvla_model.qwen_vl_interface.model.vision",
+        "starvla_model.qwen_vl_interface.model.layer",
+        "starvla_model.action_model",
+    }
+
+
+def test_abot_m0_override_vggt_model_path_redirects_and_restores(monkeypatch):
+    import sys
+    import types
+
+    from rlinf.models.embodiment.abot_m0.abot_m0_action_model import (
+        _override_vggt_model_path,
+    )
+
+    calls: list[str] = []
+
+    class _BaseMixin:
+        @classmethod
+        def from_pretrained(cls, model_id, *args, **kwargs):
+            calls.append(model_id)
+            return SimpleNamespace(cls=cls, model_id=model_id)
+
+    class _FakeVGGT(_BaseMixin):
+        pass
+
+    vggt_pkg = types.ModuleType("vggt")
+    vggt_models = types.ModuleType("vggt.models")
+    vggt_mod = types.ModuleType("vggt.models.vggt")
+    vggt_mod.VGGT = _FakeVGGT
+    monkeypatch.setitem(sys.modules, "vggt", vggt_pkg)
+    monkeypatch.setitem(sys.modules, "vggt.models", vggt_models)
+    monkeypatch.setitem(sys.modules, "vggt.models.vggt", vggt_mod)
+
+    monkeypatch.delenv("VGGT_MODEL_PATH", raising=False)
+    with _override_vggt_model_path():
+        _FakeVGGT.from_pretrained("facebook/VGGT-1B")
+    assert calls == ["facebook/VGGT-1B"]
+
+    monkeypatch.setenv("VGGT_MODEL_PATH", "/local/VGGT-1B")
+    with _override_vggt_model_path():
+        _FakeVGGT.from_pretrained("facebook/VGGT-1B")
+        _FakeVGGT.from_pretrained("other/model")
+    assert "from_pretrained" not in _FakeVGGT.__dict__
+    _FakeVGGT.from_pretrained("facebook/VGGT-1B")
+    assert calls == [
+        "facebook/VGGT-1B",
+        "/local/VGGT-1B",
+        "other/model",
+        "facebook/VGGT-1B",
+    ]

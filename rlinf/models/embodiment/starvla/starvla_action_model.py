@@ -115,6 +115,36 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         self._rollout_prompt_seq_len: Optional[int] = None
 
     @property
+    def _no_split_modules(self) -> list[str]:
+        """Return FSDP wrap target class names for the VLM and action submodules."""
+        names: list[str] = []
+        iface = getattr(self.starvla_model, "qwen_vl_interface", None)
+        vlm = getattr(iface, "model", None)
+        for name in getattr(vlm, "_no_split_modules", None) or ():
+            if name not in names:
+                names.append(name)
+        for attr in ("action_model", "dino_encoder"):
+            submodule = getattr(self.starvla_model, attr, None)
+            if not isinstance(submodule, nn.Module):
+                continue
+            sub_names = getattr(submodule, "_no_split_modules", None)
+            if sub_names:
+                for name in sub_names:
+                    if name not in names:
+                        names.append(name)
+                continue
+            params = list(submodule.parameters())
+            if (
+                params
+                and len({p.dtype for p in params}) == 1
+                and len({p.requires_grad for p in params}) == 1
+            ):
+                cls_name = type(submodule).__name__
+                if cls_name not in names:
+                    names.append(cls_name)
+        return names
+
+    @property
     def uses_state_input(self) -> bool:
         """Return whether the active policy path should consume proprio/state."""
         return self.enable_state_input and self.action_head_type != "oft"

@@ -26,7 +26,7 @@ import numpy as np
 import torch
 from gr00t.model.gr00t_n1d7.processing_gr00t_n1d7 import Gr00tN1d7Processor
 
-from rlinf.models.embodiment.qwen_vl_npu_patchify import (
+from rlinf.models.embodiment.qwen_vl.npu_patchify import (
     qwen_vl_supports_device_images,
 )
 

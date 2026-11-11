@@ -247,7 +247,7 @@ PPO 训练可使用 10k-step ABot-M0 LIBERO checkpoint 作为 RL baseline。该�
    qwenvl:
      base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-安装脚本使 ABot 的 VGGT loader 支持 ``VGGT_MODEL_PATH``。离线运行时，在启动评测或训练之前，将该变量设置为上面下载的权重目录：
+RLinf 的 ABot-M0 加载路径支持 ``VGGT_MODEL_PATH``。离线运行时，在启动评测或训练之前，将该变量设置为上面下载的权重目录：
 
 .. code-block:: bash
 

@@ -43,7 +43,7 @@ Sequence Boundaries Can Introduce Host Synchronization
 
 Consider two sequences with valid lengths 5 and 3. After removing padding, their tokens can be packed contiguously with cumulative boundaries ``[0, 5, 8]``. The checked legacy Transformers NPU FlashAttention path expects the sequence endpoints as a CPU tuple, ``(5, 8)``. Converting device boundaries into that tuple requires a host transfer. Repeating it in each layer makes unchanged control information a recurring synchronization point between device work and host submission.
 
-``install_npu_flash_attention_cache`` in ``rlinf/models/embodiment/gr00t/npu_common.py`` reuses three kinds of objects on the recognized legacy interface: unpadding indices and lengths, CPU endpoints derived from cumulative lengths, and a causal mask on each device. The first use computes these objects through the original path. Later layers reuse them while the input remains valid. Their Q/K/V tensors, attention outputs, and gradients are still computed afresh.
+On the recognized legacy interface, the runtime reuses three kinds of control metadata across layers: unpadding indices and lengths, CPU sequence endpoints derived from cumulative lengths, and a per-device causal mask. The first layer computes these objects through the original path, and later layers reuse them while the input remains unchanged. Each layer still computes its Q/K/V tensors, attention outputs, and gradients afresh.
 
 Those objects have different lifetimes. Padding and sequence boundaries belong to the current input and must be invalidated when it changes. A fixed-size causal mask describes positional ordering and can be reused per device. A single cache indexed only by shape would conceal that distinction: two padding masks with identical shapes can mark different valid tokens.
 
@@ -63,7 +63,7 @@ At B32, StarVLA complete-action latency falls from 0.764 s to 0.654 s, improving
 Mask Conversion Must Preserve Numerical Meaning
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-OpenVLA also uses attention through PyTorch SDPA. A floating mask is added to attention logits; a boolean mask selects participating positions. On the measured torch-npu version, an eligible boolean representation permits a fused kernel, whereas a floating representation may use a decomposed path. ``rlinf/scheduler/hardware/accelerators/ascend_npu.py`` installs a conversion wrapper during NPU worker initialization.
+OpenVLA also calls attention through PyTorch SDPA. A floating mask is added to attention logits, whereas a boolean mask selects participating positions. On the measured torch-npu version, an eligible boolean mask dispatches to a fused kernel, while a floating mask can fall back to a decomposed path. Each NPU worker therefore converts eligible additive masks before calling SDPA.
 
 This conversion is not a truthiness test. Allowed entries must be exactly zero, and blocked entries must meet the checked large-negative condition. A value of ``+0.2`` changes an attention score, as does ``-0.2``; neither represents a binary choice. Differentiable masks also retain the floating path because conversion would change their gradient behavior.
 
@@ -127,7 +127,7 @@ Communication overlap addresses dependencies between devices. Action generation 
 Read Predetermined Control Values Once
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-When a denoising loop already knows its schedule or stochastic step index on the host, reading control scalars back from a device tensor with ``.item()`` inside the loop adds avoidable synchronization. In ``rlinf/models/embodiment/evo1/evo1_rl_head.py``, ``rl_denoise_sample`` draws ``selected_step`` once on the host, records ``denoise_inds`` on the device for replay, and branches directly on the host integer at each denoising step:
+When a denoising loop already knows its schedule or stochastic step index on the host, reading control scalars back from a device tensor with ``.item()`` inside the loop adds avoidable synchronization. Evo-1's rollout sampler instead draws the sampled step index once on the host, records it on the device for logprob replay, and branches directly on the host integer at each denoising step:
 
 .. code-block:: python
 
@@ -160,9 +160,9 @@ Moving control reads out of the loop can still leave gaps between short kernel l
 
    Replay reuses the execution plan and reads current inputs. Static inputs keep stable addresses; cloned outputs belong to callers. The caller releases old graphs before parameter storage moves.
 
-``CUDAGraphManager`` in ``rlinf/utils/cuda_graph.py`` handles capture, input updates, replay, and release for CUDA and NPU. ``graph_signature`` distinguishes shape, dtype, specific device, container structure, and scalar types. The signature describes execution conditions rather than image or hidden-state contents, which are copied into static buffers before each replay.
+The graph runtime manages capture, input updates, replay, and release across CUDA and NPU. Each captured graph is keyed by a structural signature covering tensor shapes, dtypes, target device, container layout, and scalar types. That signature describes execution conditions rather than image or hidden-state values, which are copied into static input buffers before each replay.
 
-The captured ``GraphSpec`` holds the graph and its static inputs and outputs. The next replay overwrites those output buffers. An asynchronous channel may still be sending the previous result, or a caller may need it in later work. The model wrapper therefore clones outputs before returning them, separating the graph's storage from caller-owned results:
+Each captured entry holds the device graph alongside its static input and output buffers. Because the next replay overwrites those output buffers while an asynchronous channel or caller may still read the previous result, replay clones outputs into fresh storage before returning them:
 
 .. code-block:: python
 
@@ -195,7 +195,7 @@ At M128/G512, this improves per-rank training-call throughput by 9.34%–9.50%. 
 Request the Value Needed for Bootstrap
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-OpenVLA bootstrap can also follow its consumer's requirements. A value head reads the prompt's final-position hidden state, available before the first action token is generated. ``predict_value_batch(env_obs)`` shares image and prompt preprocessing with action inference and returns a ``[B, 1]`` value tensor after one feature extraction.
+OpenVLA bootstrap can also follow its consumer's requirements. A value head reads the prompt's final-position hidden state, available before the first action token is generated. The value-only path shares image and prompt preprocessing with action inference and returns a ``[B, 1]`` value tensor after one feature extraction.
 
 Two independent HuggingFace rollout-worker options control request organization and compute scope:
 

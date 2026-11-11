@@ -24,7 +24,7 @@ from starVLA.training.trainer_utils.trainer_tools import (
     resize_images as resize_images,
 )
 
-from rlinf.models.embodiment.qwen_vl_npu_patchify import (
+from rlinf.models.embodiment.qwen_vl.npu_patchify import (
     qwen_vl_supports_device_images,
 )
 

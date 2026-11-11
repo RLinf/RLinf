@@ -20,6 +20,7 @@ from typing import Any
 import torch
 
 from rlinf.scheduler import Worker
+from rlinf.utils.logging import get_logger
 
 
 class _GraphBackend:
@@ -330,8 +331,10 @@ class CUDAGraphManager:
                     dummy.zero_()
             for gen, state in snapshots:
                 gen.set_state(state)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as error:  # noqa: BLE001
+            get_logger().warning(
+                f"Could not restore RNG state after failed graph capture: {error}"
+            )
 
     def capture(
         self,

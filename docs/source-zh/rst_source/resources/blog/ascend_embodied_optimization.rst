@@ -43,7 +43,7 @@ attention 用 query（Q）与 key（K）计算位置之间的匹配分数，再�
 
 假设两个样本的有效长度分别为 5 和 3。去掉 padding 后，两条序列可以连续存放，累积边界为 ``[0, 5, 8]``。当前已检查的旧版 Transformers NPU FlashAttention 路径需要以 CPU tuple ``(5, 8)`` 表示序列终点。设备上保存的边界必须先传回主机，才能构造这个 tuple。若每层都重新转换，同一份控制信息就会反复成为设备计算与主机下发之间的同步点。
 
-``rlinf/models/embodiment/gr00t/npu_common.py`` 中的 ``install_npu_flash_attention_cache`` 在已经识别的旧版 NPU 接口上复用三类对象：去 padding 的索引与长度、累积长度对应的 CPU 终点，以及同一设备上的 causal mask。第一层按原路径生成这些对象，后续层在输入仍有效时复用。每一层的 Q/K/V、attention 输出和梯度仍由当前层重新计算。
+在已识别的旧版 NPU 接口上，运行时跨层复用三类控制信息：去 padding 的索引与长度、累积长度对应的 CPU 序列终点，以及按设备保存的 causal mask。第一层按原路径生成这些对象，后续层在输入未变时直接复用；各层的 Q/K/V、attention 输出和梯度仍按当前特征重新计算。
 
 这里需要区分两类有效期。padding 和序列边界属于当前输入，其缓存必须随输入变化而失效；固定大小的 causal mask 只描述位置之间的先后关系，可以按设备复用。把两者都做成一个“按 shape 缓存”的字典会掩盖这个区别：相同 shape 的两个 padding mask 完全可能描述不同的有效位置。
 
@@ -63,7 +63,7 @@ StarVLA 在 B32 下的完整动作调用由 0.764 s 降至 0.654 s，吞吐提�
 mask 转换需要保留数值含义
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-OpenVLA 的另一条路径通过 PyTorch SDPA 调用 attention。浮点 mask 会加到 attention logits 上，布尔 mask 则表示哪些位置参与 attention。在已测 torch-npu 版本中，符合条件的布尔 mask 可以走融合 kernel；浮点表示可能使执行落入分解路径。因此，``rlinf/scheduler/hardware/accelerators/ascend_npu.py`` 在 NPU worker 初始化时安装转换 wrapper。
+OpenVLA 的另一条路径通过 PyTorch SDPA 调用 attention。浮点 mask 会加到 attention logits 上，布尔 mask 则指定参与计算的位置。在已测 torch-npu 版本中，符合条件的布尔 mask 可以进入融合 kernel，而浮点表示可能落入分解路径。因此，NPU worker 会在调用 SDPA 前将符合条件的加性 mask 转为布尔表示。
 
 转换并不等于对浮点 mask 求真假。允许的位置必须恰好为 0，屏蔽位置必须符合已检查的极小负数条件。一个 ``+0.2`` 的值是在改变某个位置的 attention 分数，一个 ``-0.2`` 的值也在改变相对权重，它们都不能变成简单的允许或屏蔽。如果 mask 需要梯度，转换还会改变其可微性，所以继续保留浮点路径。
 
@@ -127,7 +127,7 @@ GR00T N1.6/N1.7 的最终训练组合也启用了预取，现有实验没有单�
 预先确定的控制量只读取一次
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当去噪循环已经在主机侧确定调度表或随机步骤索引时，在循环内通过 ``.item()`` 从设备 tensor 逐步读回控制标量会引入不必要的同步。``rlinf/models/embodiment/evo1/evo1_rl_head.py`` 中的 ``rl_denoise_sample`` 先在主机上抽取一次 ``selected_step``，同时把训练回放所需的 ``denoise_inds`` 写入设备，而循环内的分支直接读取主机整数：
+当去噪循环已经在主机侧确定调度表或随机步骤索引时，在循环内通过 ``.item()`` 从设备 tensor 逐步读回控制标量会引入不必要的同步。Evo-1 的采样循环改为先在主机侧抽取一次随机步骤索引，同时把 logprob 回放所需的步骤索引写入设备，后续每步直接根据主机整数分支：
 
 .. code-block:: python
 
@@ -160,9 +160,9 @@ GR00T N1.6/N1.7 的最终训练组合也启用了预取，现有实验没有单�
 
    replay 复用运算安排，每次仍读取本次输入。输入缓冲区保持地址稳定，输出复制后交给调用方；参数存储迁移需要调用层先释放旧图。
 
-``rlinf/utils/cuda_graph.py`` 的 ``CUDAGraphManager`` 为 CUDA 与 NPU 提供捕获、输入更新、重放和释放接口。``graph_signature`` 区分输入的 shape、dtype、具体 device，以及 list、tuple、mapping 和标量类型。这个签名描述执行条件，不描述图像或 hidden states 的具体内容；内容由每次 replay 前的输入复制更新。
+执行图运行时统一管理 CUDA 与 NPU 上的捕获、输入更新、重放和释放。每张捕获图按结构签名索引，区分输入的 shape、dtype、目标 device、容器结构与标量类型。该签名只描述执行条件，不绑定图像或 hidden states 的具体数值；实际输入内容在每次 replay 前复制到静态输入缓冲区中。
 
-捕获得到的 ``GraphSpec`` 持有图对象、静态输入和静态输出。静态缓冲区也规定了输出的所有权。一次 replay 的输出通常落在图捕获时确定的存储中，下次 replay 会覆盖同一块存储。异步 channel 可能仍在发送上一次结果，调用方也可能在后续步骤继续读取它。因此，模型 wrapper 在返回前复制输出，让图管理器和调用方各自拥有自己的结果：
+每个捕获条目持有图对象及其静态输入、输出缓冲区。下一次 replay 会覆盖同一块输出存储，而异步 channel 可能仍在发送上一次结果，调用方也可能在后续步骤继续读取它。因此，重放路径在返回前复制输出，把图的内部存储与调用方持有的结果分开：
 
 .. code-block:: python
 
@@ -195,7 +195,7 @@ GR00T N1.5 的已测动作训练原型在确认没有语言 labels、且返回�
 bootstrap 直接请求所需的 value
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-OpenVLA 的 bootstrap 也可以根据消费方需求缩减计算。带 value head 的模型使用 prompt 最后一个位置的 hidden state；第一个动作 token 生成前，这个特征已经可用。``predict_value_batch(env_obs)`` 沿用动作调用的图像与 prompt 预处理，完成一次特征提取后返回 shape 为 ``[B, 1]`` 的 value。
+OpenVLA 的 bootstrap 也可以根据消费方需求缩减计算。带 value head 的模型使用 prompt 最后一个位置的 hidden state；第一个动作 token 生成前，这个特征已经可用。value-only 路径沿用动作调用的图像与 prompt 预处理，完成一次特征提取后直接返回 shape 为 ``[B, 1]`` 的 value。
 
 HuggingFace rollout worker 通过两个独立选项控制请求组织与计算范围：
 

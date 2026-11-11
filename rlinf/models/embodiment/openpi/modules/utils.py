@@ -25,14 +25,10 @@ from rlinf.scheduler import AcceleratorType, Worker
 
 @functools.cache
 def inductor_available() -> bool:
-    """Whether Inductor can compile these kernels in this interpreter.
+    """Return whether ``triton`` can be imported for TorchInductor compilation.
 
-    Inductor generates its device code through Triton, which ships only for
-    CUDA and ROCm: Ascend and MUSA venvs have no ``triton``, and Isaac Sim's
-    bundled torch cannot import the one in the venv. Compiling there fails at
-    the first forward pass, so this decides the default for
-    :func:`set_torch_compile`. A configuration that names ``torch_compile``
-    explicitly still wins.
+    Used as the process-wide default for :func:`set_torch_compile`; an explicit
+    ``torch_compile`` setting in model configuration overrides this default.
     """
     return importlib.util.find_spec("triton") is not None
 

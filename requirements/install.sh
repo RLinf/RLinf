@@ -1251,10 +1251,9 @@ EOF
 }
 
 install_ascend_tensorflow_pins() {
-    # Pin installed TensorFlow after dependency resolution to avoid the
-    # incompatible TF 2.21/protobuf 6 combination on Ascend.
+    # TF 2.21 SIGSEGVs against Ray's protobuf 6.x on Ascend. Shared by every
+    # embodied model whose install pulls TensorFlow (GR00T, StarVLA, …).
     [ "$PLATFORM" = "ascend" ] || return 0
-    uv pip show tensorflow >/dev/null 2>&1 || return 0
     echo "[install.sh] Applying Ascend TensorFlow compatibility pins"
     uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/tensorflow.txt"
 }
@@ -2960,6 +2959,7 @@ install_starvla_model() {
     fi
 
     install_flash_attn
+    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -3021,6 +3021,7 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
+    install_ascend_tensorflow_pins
     uv pip uninstall pynvml || true
 }
 
@@ -3160,25 +3161,6 @@ install_abot_m0_model() {
     uv pip install -e "$vggt_path"
 
     uv pip install -e "$abot_path" --no-deps
-
-    # Allow local VGGT weights through VGGT_MODEL_PATH, preserving the Hub default.
-    local abot_framework="$abot_path/ABot/model/framework/ABot_M0.py"
-    if [ -f "$abot_framework" ]; then
-        python - "$abot_framework" <<'EOF'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-source = path.read_text()
-pinned = "VGGT.from_pretrained('facebook/VGGT-1B')"
-configurable = (
-    "VGGT.from_pretrained(os.environ.get('VGGT_MODEL_PATH', 'facebook/VGGT-1B'))"
-)
-if pinned in source:
-    path.write_text(source.replace(pinned, configurable))
-    print("[install.sh] ABot-M0 VGGT weights now honor VGGT_MODEL_PATH")
-EOF
-    fi
 
     maybe_build_decord_from_source
     uv pip install -r $SCRIPT_DIR/embodied/models/abot.txt
@@ -4807,7 +4789,6 @@ main() {
     esac
 
     install_platform_extras
-    install_ascend_tensorflow_pins
     # Env/model installs may have changed the protobuf runtime or gencode.
     echo "[install.sh] Ensuring ${RAY_COMPAT_DEPS[*]} for Ray dashboard/agent"
     uv pip install "${RAY_COMPAT_DEPS[@]}"

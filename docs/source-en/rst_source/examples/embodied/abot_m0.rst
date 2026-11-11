@@ -257,9 +257,8 @@ for further RL training.
    qwenvl:
      base_vlm: /path/to/Qwen3-VL-4B-Instruct-Action
 
-The installer makes ABot's VGGT loader accept ``VGGT_MODEL_PATH``. For offline
-runs, export the directory downloaded above before starting evaluation or
-training:
+RLinf's ABot-M0 loader honors ``VGGT_MODEL_PATH``. For offline runs, export the
+directory downloaded above before starting evaluation or training:
 
 .. code-block:: bash
 

@@ -26,7 +26,7 @@ import os
 import torch
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.qwen_vl_linear_patch_embed import patch_vision_patch_embed
+from rlinf.models.embodiment.qwen_vl.linear_patch_embed import patch_vision_patch_embed
 from rlinf.utils.logging import get_logger
 
 from .starvla_action_model import StarVLAForRLActionPrediction
@@ -93,7 +93,7 @@ def get_model(
     # 'framework_name' is optional but helps infer the expected wiring for some checkpoints.
     starvla_cfg = getattr(cfg, "starvla", None)
     if getattr(starvla_cfg, "enable_npu_attention", False):
-        from rlinf.models.embodiment.qwen_vl_npu_attention import (
+        from rlinf.models.embodiment.qwen_vl.npu_attention import (
             enable_qwen_vl_npu_attention,
         )
 
