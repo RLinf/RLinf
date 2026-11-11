@@ -166,7 +166,9 @@ class SGLangRouterWorker(Worker):
         assert self._proc is None, "router subprocess already started."
 
         router_cfg = OmegaConf.to_container(self._router_cfg, resolve=True)
-        self._port = router_cfg.pop("port", self.acquire_free_port())
+        # `port: null` in the config must also grab a free port, and the
+        # grab must only happen when no usable port was configured.
+        self._port = router_cfg.pop("port", None) or self.acquire_free_port()
         # RLinf-side selector of whether a router runs at all; not a
         # RouterArgs field, so it never reaches the CLI.
         router_cfg.pop("type", None)
