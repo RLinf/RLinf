@@ -60,9 +60,6 @@ def main(cfg) -> None:
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
-    actor_worker_cls = get_ma_actor_worker(cfg)
-    if cfg.actor.training_backend == "fsdp":
-        MAFSDPActor.validate_placement(cfg, component_placement)
 
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
@@ -107,6 +104,7 @@ def main(cfg) -> None:
 
     # Actor and optional critic groups
     actor_placement_strategy = component_placement.get_strategy("actor")
+    actor_worker_cls = get_ma_actor_worker(cfg)
     actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
