@@ -83,66 +83,109 @@ if ! sudo -n true 2>/dev/null; then
     exit 1
 fi
 
+apt_all_installed() {
+    local status_out
+    status_out=$(dpkg-query -W -f='${db:Status-Status}\n' "$@" 2>/dev/null) || return 1
+    [ "$(printf '%s\n' "$status_out" | grep -vc '^installed$')" -eq 0 ]
+}
+
+apt_repair_if_interrupted() {
+    if sudo find /var/lib/dpkg/updates -maxdepth 1 -regextype posix-extended -regex '.*/[0-9]+' -print -quit 2>/dev/null | grep -q .; then
+        echo "Detected interrupted dpkg state; running 'dpkg --configure -a'..."
+        sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+    fi
+}
+
 # Install packages based on package manager
-install_deps_apt() {
-    sudo apt-get update -y
-    sudo apt-get install -y --no-install-recommends libgl1-mesa-glx || sudo apt-get install -y --no-install-recommends libglx-mesa0
-    sudo apt-get install -y --no-install-recommends \
-        linux-libc-dev \
-        build-essential \
-        wget \
-        unzip \
-        curl \
-        cmake \
-        patchelf \
-        git-lfs \
-        lsb-release \
-        libavutil-dev \
-        libavcodec-dev \
-        libavformat-dev \
-        libavfilter-dev \
-        libavdevice-dev \
-        libibverbs-dev \
-        ncurses-term \
-        mesa-utils \
-        libosmesa6 \
-        libosmesa6-dev \
-        freeglut3-dev \
-        libglew-dev \
-        libegl1 \
-        libgles2 \
-        libglvnd-dev \
-        libglfw3-dev \
-        libgl1-mesa-dev \
-        libgl1 \
-        libglib2.0-0 \
-        libgtk2.0-dev \
-        libhidapi-hidraw0 \
-        libusb-1.0-0 \
-        libudev1 \
-        libsm6 \
-        libxext6 \
-        libxrender-dev \
-        libxrandr-dev \
-        libxinerama-dev \
-        libxcursor-dev \
-        libxi-dev \
-        libaio-dev \
-        libgomp1 \
-        libexpat1 \
-        libfontconfig1-dev \
-        liblz4-dev \
-        libpython3-stdlib \
-        imagemagick \
-        libmagickwand-dev \
-        libvulkan1 \
-        vulkan-tools \
-        libnuma1 \
-        libzstd-dev \
-        mesa-vulkan-drivers || {
+install_deps_apt_unlocked() {
+    local apt_opts=(-y -o DPkg::Lock::Timeout=120)
+    local pkgs=(
+        linux-libc-dev
+        build-essential
+        wget
+        unzip
+        curl
+        cmake
+        patchelf
+        git-lfs
+        lsb-release
+        libavutil-dev
+        libavcodec-dev
+        libavformat-dev
+        libavfilter-dev
+        libavdevice-dev
+        libibverbs-dev
+        ncurses-term
+        mesa-utils
+        libosmesa6
+        libosmesa6-dev
+        freeglut3-dev
+        libglew-dev
+        libegl1
+        libgles2
+        libglvnd-dev
+        libglfw3-dev
+        libgl1-mesa-dev
+        libgl1
+        libglib2.0-0
+        libgtk2.0-dev
+        libhidapi-hidraw0
+        libusb-1.0-0
+        libudev1
+        libsm6
+        libxext6
+        libxrender-dev
+        libxrandr-dev
+        libxinerama-dev
+        libxcursor-dev
+        libxi-dev
+        libaio-dev
+        libgomp1
+        libexpat1
+        libfontconfig1-dev
+        liblz4-dev
+        libpython3-stdlib
+        imagemagick
+        libmagickwand-dev
+        libvulkan1
+        vulkan-tools
+        libnuma1
+        libzstd-dev
+        mesa-vulkan-drivers
+    )
+
+    apt_repair_if_interrupted
+
+    if (apt_all_installed libgl1-mesa-glx || apt_all_installed libglx-mesa0) && apt_all_installed "${pkgs[@]}"; then
+        echo "All apt system dependencies are already installed; skipping apt-get."
+        return 0
+    fi
+
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" update || {
+        sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" update
+    }
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" --no-install-recommends install libgl1-mesa-glx || \
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" --no-install-recommends install libglx-mesa0
+    if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" --no-install-recommends install "${pkgs[@]}"; then
+        sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" --no-install-recommends install "${pkgs[@]}" || {
             echo "apt-get install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
         }
+    fi
+}
+
+install_deps_apt() {
+    if command -v flock >/dev/null 2>&1; then
+        (
+            exec 9>/tmp/rlinf-sys-deps.lock
+            flock -w 300 9 || true
+            install_deps_apt_unlocked
+        )
+    else
+        install_deps_apt_unlocked
+    fi
 }
 
 install_deps_dnf() {

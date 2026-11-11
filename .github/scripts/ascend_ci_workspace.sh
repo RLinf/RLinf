@@ -101,6 +101,11 @@ case "${1:-}" in
         fi
 
         export ASCEND_LOCAL_STAGE ASCEND_LOCAL_ROOT ASCEND_WORK_DIR RAY_TMPDIR
+        git_cfg_idx="${GIT_CONFIG_COUNT:-0}"
+        export "GIT_CONFIG_KEY_${git_cfg_idx}=safe.directory"
+        export "GIT_CONFIG_VALUE_${git_cfg_idx}=*"
+        export GIT_CONFIG_COUNT=$((git_cfg_idx + 1))
+
         for dep_var in DECORD_PATH GR00T_PATH STARVLA_PATH DREAMZERO_PATH; do
             ascend_stage_dep_repo "$dep_var"
         done
@@ -113,6 +118,9 @@ case "${1:-}" in
                 echo "UV_CACHE_DIR=${UV_CACHE_DIR}"
                 echo "UV_LINK_MODE=${UV_LINK_MODE}"
                 echo "UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR}"
+                echo "GIT_CONFIG_KEY_${git_cfg_idx}=safe.directory"
+                echo "GIT_CONFIG_VALUE_${git_cfg_idx}=*"
+                echo "GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT}"
             } >> "$GITHUB_ENV"
         fi
         cd "$ASCEND_WORK_DIR"
