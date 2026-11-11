@@ -29,6 +29,7 @@ from torch import nn
 
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
+    running_state_loss,
     state_prediction_loss,
     termination_bce,
 )
@@ -68,7 +69,7 @@ from rlinf.models.embodiment.supermimic.networks import (
     TerminationHead,
     VelocityCritic,
     VelocityEncoder,
-    running_state_loss,
+    normalize_history,
 )
 from rlinf.models.embodiment.supermimic.normalization import RunningMeanStd
 
@@ -136,16 +137,14 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
 
         self.dynamics = DynamicsNet(input_norm, self.wm_state_loss == "running")
         self.encoder = MotionEncoder(self.goal_dim, input_norm)
-        self.decoder = MotionDecoder(self.obs_dim, input_norm)
+        self.decoder = MotionDecoder(self.obs_dim)
+        self.obs_norm = RunningMeanStd(self.obs_dim) if input_norm else None
         self.critic = CriticNet(
             critic_input_dim(self.goal_dim, self.critic_features), input_norm
         )
         self.termination = TerminationHead(termination_bias_init)
-        shared_obs_norm = self.decoder.obs_norm
         self.velocity_encoder = (
-            VelocityEncoder(self.obs_dim, shared_obs_norm)
-            if self.velocity_tracking
-            else None
+            VelocityEncoder(self.obs_dim) if self.velocity_tracking else None
         )
         self.velocity_critic = (
             VelocityCritic(input_norm) if self.velocity_tracking else None
@@ -246,6 +245,7 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         ``task`` is 1 on velocity-tracking rows, which read the normalized
         ``command``; the other rows read ``goal``.
         """
+        history = self._normalized(history)
         if self.velocity_encoder is None or task is None:
             return self.decoder(self.encoder(goal), history)
         velocity_rows = task.bool()
@@ -277,10 +277,14 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         goal_count: float,
     ) -> None:
         """Fold merged statistics of the frame and goal the policy is about to see."""
-        if self.decoder.obs_norm is not None:
-            self.decoder.obs_norm.update_from_packed(obs_stats, obs_count)
+        if self.obs_norm is not None:
+            self.obs_norm.update_from_packed(obs_stats, obs_count)
         if self.encoder.goal_norm is not None and goal_stats is not None:
             self.encoder.goal_norm.update_from_packed(goal_stats, goal_count)
+
+    def _normalized(self, history: torch.Tensor) -> torch.Tensor:
+        """History as the motion and velocity policies read it."""
+        return normalize_history(self.obs_norm, history, self.obs_dim)
 
     def refresh_norm_counts(self) -> None:
         """Re-read the count of every running norm after a weight sync."""
@@ -353,7 +357,9 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
 
     def _state_loss(self, pred, true) -> torch.Tensor:
         if self.wm_state_loss == "running":
-            return running_state_loss(pred, true, self.dynamics, self.residual_frame)
+            return running_state_loss(
+                pred, true, self.dynamics.out_norm.std(), self.residual_frame
+            )
         return state_prediction_loss(pred, true, scaled=self.wm_state_loss == "scaled")
 
     def _world_model_forward(
@@ -455,6 +461,7 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
             _, _, features, rewards, d_hat, objective = self._imagination(
                 self.encoder,
                 self.decoder,
+                self.obs_norm,
                 self.dynamics,
                 self.termination,
                 self.critic,
@@ -515,7 +522,7 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
                     scale_xi=self.scale_xi,
                 )
             )
-            action = self.decoder(self.encoder(goal), history)
+            action = self.decoder(self.encoder(goal), self._normalized(history))
             state = integrate_residual(
                 state, self.dynamics(state, action, xi), self.residual_frame
             )
@@ -605,11 +612,12 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
             command = torch.where(ref_rows, ref_commands[:, t], command)
             states.append(state)
             commands.append(command)
-            latent = self.velocity_encoder(normalize_command(command), history)
+            normed = self._normalized(history)
+            latent = self.velocity_encoder(normalize_command(command), normed)
             if has_reference_rows:
                 motion_latent = self.encoder(ref_goals[:, t]).detach()
                 align_terms.append((latent[from_ref] - motion_latent).pow(2).mean())
-            action = self.decoder(latent, history)
+            action = self.decoder(latent, normed)
             state = integrate_residual(
                 state, self.dynamics(state, action, xi), self.residual_frame
             )

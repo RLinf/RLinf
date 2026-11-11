@@ -28,7 +28,11 @@ from rlinf.envs.sim.g1_mimic.constants import (
     ROOT_POS,
     STATE_LOSS_SCALES,
 )
-from rlinf.envs.sim.g1_mimic.features import so3_relative_rotvec
+from rlinf.envs.sim.g1_mimic.features import (
+    error_floor,
+    frame_local_error,
+    so3_relative_rotvec,
+)
 
 
 def survival_weights(d_hat: torch.Tensor) -> torch.Tensor:
@@ -97,6 +101,20 @@ def state_prediction_loss(
     qd = (pred[..., JOINT_VEL] - target[..., JOINT_VEL]) / scales["joint_vel"]
     stacked = torch.cat((pos, rot, lin, ang, q, qd), dim=-1)
     return (stacked**2).sum(dim=-1).mean()
+
+
+def running_state_loss(
+    pred: torch.Tensor, true: torch.Tensor, residual_std: torch.Tensor, frame: str
+) -> torch.Tensor:
+    """Frame-local state error divided by the running residual std.
+
+    ``residual_std`` is the std of the world model's running residual norm.
+    Each component's scale is at least :func:`error_floor`. The result is the
+    mean over the 70 components and over the batch.
+    """
+    err = frame_local_error(pred, true, frame)
+    scale = torch.maximum(residual_std, error_floor(err))
+    return (err / scale).square().mean()
 
 
 def termination_bce(logit: torch.Tensor, end_kind: torch.Tensor) -> torch.Tensor:

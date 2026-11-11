@@ -368,7 +368,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
      - 梯度范数非有限的优化器步会被跳过；连续超过这个次数就停止训练。
    * - ``actor.optim.fused``
      - ``True``
-     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，读取指标时再计数，优化器步不等待主机。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查。
+     - 各阶段在 CUDA 上使用 fused Adam。梯度范数非有限的步在 kernel 内跳过，读取指标时再计数，优化器步不等待主机。设为 ``False`` 时使用 PyTorch 默认的 Adam，并在主机端逐步检查；没有可用的 CUDA 设备时也是如此，并先记录一条警告。
    * - ``algorithm.wm_batches``
      - 10
      - 每次更新拟合世界模型的小批次数。

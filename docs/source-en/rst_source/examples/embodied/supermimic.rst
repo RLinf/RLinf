@@ -543,7 +543,8 @@ above change some of them. Each can be passed as a Hydra override.
      - Fused Adam on CUDA for every phase. A step with a non-finite gradient
        norm is skipped inside the kernel and counted when the metrics are
        read, so optimizer steps do not wait for the host. ``False`` uses
-       PyTorch's default Adam and checks each step on the host.
+       PyTorch's default Adam and checks each step on the host; so does a
+       run without an available CUDA device, after logging a warning.
    * - ``algorithm.wm_batches``
      - 10
      - World-model minibatches per update.

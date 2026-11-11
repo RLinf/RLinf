@@ -15,7 +15,8 @@
 """Numerical checks of the SuperMimic objectives, reset sampler, evaluation
 guards, training config limits, input norms, forward kinematics and simulator.
 None needs Ray. The two-rank check needs Gloo, the kinematics and world-model
-checks need mjlab, and the MuJoCo Warp checks need mjlab and a CUDA device.
+checks need mjlab, the fused-Adam check needs a CUDA device, and the MuJoCo
+Warp checks need mjlab and a CUDA device.
 """
 
 import importlib.util
@@ -70,6 +71,9 @@ needs_mjlab = pytest.mark.skipif(
 needs_gloo = pytest.mark.skipif(
     not dist.is_available() or not dist.is_gloo_available(),
     reason="torch.distributed with Gloo is not available",
+)
+needs_cuda = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="fused Adam needs a CUDA device"
 )
 needs_warp = pytest.mark.skipif(
     not torch.cuda.is_available() or importlib.util.find_spec("mjlab") is None,
@@ -285,6 +289,64 @@ def test_policy_input_stats_merge_over_ranks_like_one_batch(tmp_path):
         buffers = torch.load(tmp_path / f"rank{rank}.pt")
         for name, buffer in one_batch.named_buffers():
             torch.testing.assert_close(buffers[name], buffer)
+
+
+@needs_cuda
+def test_fused_adam_step_matches_host_step_and_skips_nonfinite():
+    from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
+        clip_step,
+        fused_clip_step,
+    )
+
+    device = torch.device("cuda:0")
+    gen = torch.Generator().manual_seed(5)
+    init = [torch.randn(4, 3, generator=gen), torch.randn(3, generator=gen)]
+    host_params = [torch.nn.Parameter(p.to(device)) for p in init]
+    fused_params = [torch.nn.Parameter(p.to(device)) for p in init]
+    host = torch.optim.Adam(host_params, lr=1e-2)
+    fused = torch.optim.Adam(fused_params, lr=1e-2, fused=True)
+
+    def set_grads(grads):
+        for params in (host_params, fused_params):
+            for param, grad in zip(params, grads, strict=True):
+                param.grad = grad.to(device)
+
+    def fused_step():
+        grads = [param.grad for param in fused_params]
+        norm = torch.nn.utils.get_total_norm(grads)
+        return fused_clip_step(fused, grads, norm, 1.0, 0.1)
+
+    # The first step stays under the norm limit; the others are clipped.
+    for scale in (0.1, 5.0, 30.0):
+        set_grads([scale * torch.randn(p.shape, generator=gen) for p in init])
+        norm = torch.nn.utils.get_total_norm([param.grad for param in host_params])
+        clip_step(host, host_params, float(norm), 1.0, 0.1)
+        assert float(fused_step()) == 0.0
+    for host_param, fused_param in zip(host_params, fused_params, strict=True):
+        torch.testing.assert_close(fused_param, host_param)
+        for key in ("exp_avg", "exp_avg_sq"):
+            torch.testing.assert_close(
+                fused.state[fused_param][key], host.state[host_param][key]
+            )
+        assert float(fused.state[fused_param]["step"]) == 3.0
+
+    before = [
+        (
+            param.clone(),
+            {key: value.clone() for key, value in fused.state[param].items()},
+        )
+        for param in fused_params
+    ]
+    for bad in (float("nan"), float("inf")):
+        grads = [torch.ones(p.shape) for p in init]
+        grads[0][1, 2] = bad
+        set_grads(grads)
+        assert float(fused_step()) == 1.0
+        for param, (value, state) in zip(fused_params, before, strict=True):
+            assert param.grad is None
+            assert torch.equal(param, value)
+            for key, saved in state.items():
+                assert torch.equal(fused.state[param][key], saved), key
 
 
 @needs_mjlab

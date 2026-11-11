@@ -190,9 +190,11 @@ def _register_builtin_models():
         return get_model(cfg, torch_dtype)
 
     def _build_supermimic(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.supermimic import get_model
+        from rlinf.models.embodiment.supermimic.supermimic_policy import (
+            SuperMimicPolicy,
+        )
 
-        return get_model(cfg, torch_dtype)
+        return SuperMimicPolicy.from_config(cfg)
 
     def _build_sd3(cfg: DictConfig, torch_dtype):
         from rlinf.models.diffusion.sd3 import get_model

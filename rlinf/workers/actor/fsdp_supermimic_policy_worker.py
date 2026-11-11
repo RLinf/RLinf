@@ -50,12 +50,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     to_local_if_dtensor,
 )
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.models.embodiment.supermimic.interface import (
-    check_interface,
-    find_interface,
-    interface_record,
-    write_interface,
-)
+from rlinf.models.embodiment.supermimic.interface import PolicyInterface
 from rlinf.models.embodiment.supermimic.supermimic_policy import goal_width
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -85,6 +80,50 @@ _STEP_COUNTERS = {
     "critic": "critic_optimizer_steps",
     "velocity_critic": "critic_optimizer_steps",
 }
+
+
+def clip_step(
+    optimizer: torch.optim.Optimizer,
+    params: list,
+    norm: float,
+    max_norm: float,
+    value_clip: float | None,
+) -> None:
+    """Clip by the finite global gradient ``norm``, clamp each element, step."""
+    clip_grad_by_total_norm_(params, max_norm, norm)
+    if value_clip is not None:
+        for param in params:
+            if param.grad is not None:
+                to_local_if_dtensor(param.grad).clamp_(-value_clip, value_clip)
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+
+
+def fused_clip_step(
+    optimizer: torch.optim.Optimizer,
+    grads: list[torch.Tensor],
+    norm: torch.Tensor,
+    max_norm: float,
+    value_clip: float | None,
+) -> torch.Tensor:
+    """:func:`clip_step` for fused Adam, without reading ``norm`` on the host.
+
+    A non-finite ``norm`` becomes the kernel's ``found_inf``, which leaves the
+    parameters, moments and step count unchanged. Returns ``found_inf``.
+    """
+    scale = (max_norm / (norm + 1.0e-6)).clamp(max=1.0)
+    torch._foreach_mul_(grads, scale)
+    if value_clip is not None:
+        torch._foreach_clamp_min_(grads, -value_clip)
+        torch._foreach_clamp_max_(grads, value_clip)
+    found_inf = (~torch.isfinite(norm)).float()
+    optimizer.found_inf = found_inf
+    try:
+        optimizer.step()
+    finally:
+        optimizer.found_inf = None
+    optimizer.zero_grad(set_to_none=True)
+    return found_inf
 
 
 class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
@@ -414,17 +453,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self._note_nonfinite(phase)
             return False, float("nan")
         self.consecutive_nonfinite = 0
-        optim_cfg = self.phase_optim_cfgs[phase]
-        clip_grad_by_total_norm_(params, float(optim_cfg.clip_grad), norm)
-        value_clip = optim_cfg.get("clip_grad_value", None)
-        if value_clip is not None:
-            for param in params:
-                if param.grad is not None:
-                    to_local_if_dtensor(param.grad).clamp_(
-                        -float(value_clip), float(value_clip)
-                    )
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
+        clip_step(optimizer, params, norm, *self._clip_limits(phase))
         return True, norm
 
     def _fused_step(
@@ -432,28 +461,23 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     ) -> torch.Tensor:
         """Clip and step fused Adam without waiting for the device.
 
-        A non-finite norm becomes the kernel's ``found_inf``, which leaves the
-        parameters, moments and step count unchanged; :meth:`_replay_skips`
-        counts such steps later, in step order. Returns the pre-clip norm.
+        :meth:`_replay_skips` counts the steps the kernel skipped later, in
+        step order. Returns the pre-clip norm.
         """
         grads = self._local_grads(params)
         norm = self._grad_norm(grads)
-        optim_cfg = self.phase_optim_cfgs[phase]
-        scale = (float(optim_cfg.clip_grad) / (norm + 1.0e-6)).clamp(max=1.0)
-        torch._foreach_mul_(grads, scale)
-        value_clip = optim_cfg.get("clip_grad_value", None)
-        if value_clip is not None:
-            torch._foreach_clamp_min_(grads, -float(value_clip))
-            torch._foreach_clamp_max_(grads, float(value_clip))
-        found_inf = (~torch.isfinite(norm)).float()
-        optimizer.found_inf = found_inf
-        try:
-            optimizer.step()
-        finally:
-            optimizer.found_inf = None
-        optimizer.zero_grad(set_to_none=True)
+        found_inf = fused_clip_step(optimizer, grads, norm, *self._clip_limits(phase))
         self._pending_skips.append((phase, found_inf))
         return norm
+
+    def _clip_limits(self, phase: str) -> tuple[float, float | None]:
+        """Global-norm limit and optional per-element limit of ``phase``."""
+        optim_cfg = self.phase_optim_cfgs[phase]
+        value_clip = optim_cfg.get("clip_grad_value", None)
+        return (
+            float(optim_cfg.clip_grad),
+            None if value_clip is None else float(value_clip),
+        )
 
     @staticmethod
     def _local_grads(params) -> list[torch.Tensor]:
@@ -874,8 +898,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.model.reshard()
         return super().get_rollout_state_dict()
 
-    def _interface(self) -> dict:
-        return interface_record(self.cfg.actor.model, self.cfg.algorithm)
+    def _interface(self) -> PolicyInterface:
+        return PolicyInterface.from_config(self.cfg.actor.model, self.cfg.algorithm)
 
     def save_checkpoint(self, save_base_path: str, step: int = 0) -> None:
         """Networks, optimizers, schedulers and RNG of every rank, plus counters.
@@ -891,7 +915,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             save_full_model_weights=True,
         )
         if self._rank == 0:
-            write_interface(save_base_path, self._interface())
+            self._interface().save(save_base_path)
             counters = {
                 "wm_optimizer_steps": self.wm_optimizer_steps,
                 "actor_optimizer_steps": self.actor_optimizer_steps,
@@ -903,8 +927,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         dist.barrier()
 
     def load_checkpoint(self, load_base_path: str) -> None:
-        check_interface(
-            find_interface(load_base_path, levels=0), self._interface(), load_base_path
+        self._interface().validate(
+            PolicyInterface.load(load_base_path, levels=0), load_base_path
         )
         self._strategy.load_checkpoint(
             model=self.model,

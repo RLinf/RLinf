@@ -26,11 +26,6 @@ import torch.distributed as dist
 from torch import nn
 
 
-def _as_count(value: torch.Tensor, host: float | None) -> float:
-    """Python count. ``host`` avoids reading a CUDA scalar back to the CPU."""
-    return float(value) if host is None else host
-
-
 def _chan_merge(
     n_a: torch.Tensor,
     mean_a: torch.Tensor,
@@ -38,20 +33,24 @@ def _chan_merge(
     n_b: torch.Tensor,
     mean_b: torch.Tensor,
     var_b: torch.Tensor,
-    host_a: float | None = None,
-    host_b: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Merge two population-variance batches. A non-positive count is skipped."""
-    n_a = n_a.reshape(())
-    n_b = n_b.reshape(())
-    if _as_count(n_b, host_b) <= 0.0:
-        return n_a, mean_a, var_a
-    if _as_count(n_a, host_a) <= 0.0:
-        return n_b, mean_b, var_b
+    """Merge two population-variance batches. A non-positive count is skipped.
+
+    The skip is selected on the device, so no count is read back to the host.
+    """
+    has_a = n_a.reshape(()) > 0
+    has_b = n_b.reshape(()) > 0
+    n_a = n_a.reshape(()).clamp_min(0)
+    n_b = n_b.reshape(()).clamp_min(0)
     total = n_a + n_b
+    safe_total = torch.where(total > 0, total, torch.ones_like(total))
     delta = mean_b - mean_a
-    mean = mean_a + delta * (n_b / total)
-    var = (var_a * n_a + var_b * n_b + delta.square() * (n_a * n_b / total)) / total
+    mean = mean_a + delta * (n_b / safe_total)
+    var = (
+        var_a * n_a + var_b * n_b + delta.square() * (n_a * n_b / safe_total)
+    ) / safe_total
+    mean = torch.where(has_b, torch.where(has_a, mean, mean_b), mean_a)
+    var = torch.where(has_b, torch.where(has_a, var, var_b), var_a)
     return total, mean, var
 
 
@@ -96,13 +95,10 @@ def batch_stats(
     if flat.shape[0] == 0:
         zeros = flat.new_zeros(width)
         return flat.new_zeros(()), zeros, zeros.clone()
+    var, mean = torch.var_mean(flat, dim=0, correction=0)
     # ``new_full`` fills on the device. ``torch.tensor(..., device=cuda)``
     # copies from the host and waits for every queued kernel.
-    return (
-        flat.new_full((), float(flat.shape[0])),
-        flat.mean(0),
-        flat.var(0, unbiased=False),
-    )
+    return flat.new_full((), float(flat.shape[0])), mean, var
 
 
 def pack_stats(
@@ -237,14 +233,7 @@ class RunningMeanStd(nn.Module):
         mean = mean.detach().to(device=self.mean.device, dtype=self.mean.dtype)
         var = var.detach().to(device=self.var.device, dtype=self.var.dtype)
         total, new_mean, new_var = _chan_merge(
-            self.count,
-            self.mean,
-            self.var,
-            count,
-            mean,
-            var,
-            host_a=self._count_cpu,
-            host_b=host_count,
+            self.count, self.mean, self.var, count, mean, var
         )
         self.mean.copy_(new_mean)
         self.var.copy_(new_var)

@@ -19,11 +19,7 @@ from __future__ import annotations
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.models.embodiment.supermimic.interface import (
-    check_interface,
-    find_interface,
-    interface_record,
-)
+from rlinf.models.embodiment.supermimic.interface import PolicyInterface
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -41,8 +37,8 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
         ckpt_path = self.cfg.runner.get("ckpt_path", None)
         if ckpt_path:
             model_cfg = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
-            expected = interface_record(model_cfg, self.cfg.algorithm)
-            check_interface(find_interface(ckpt_path), expected, ckpt_path)
+            expected = PolicyInterface.from_config(model_cfg, self.cfg.algorithm)
+            expected.validate(PolicyInterface.load(ckpt_path), ckpt_path)
         super().init_worker()
         amp = self.cfg.rollout.get("amp_autocast", None)
         dtype = None

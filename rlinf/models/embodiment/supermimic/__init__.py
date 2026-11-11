@@ -11,14 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import torch
-from omegaconf import DictConfig
-
-
-def get_model(cfg: DictConfig, torch_dtype=torch.float32):
-    from rlinf.models.embodiment.supermimic.supermimic_policy import (
-        SuperMimicPolicy,
-    )
-
-    return SuperMimicPolicy.from_config(cfg)

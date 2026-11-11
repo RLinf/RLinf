@@ -34,6 +34,7 @@ import torch
 
 from rlinf.algorithms.supermimic.objectives import (
     actor_objective,
+    running_state_loss,
     state_prediction_loss,
     termination_bce,
 )
@@ -49,7 +50,7 @@ from rlinf.envs.sim.g1_mimic.reward import (
     rollout_critic_feature,
     termination_head_input,
 )
-from rlinf.models.embodiment.supermimic.networks import running_state_loss
+from rlinf.models.embodiment.supermimic.networks import normalize_history
 
 
 def _caller(compile_name: str | None, cache: CompileCache | None):
@@ -91,7 +92,9 @@ def make_dynamics_window(
 
     def state_loss(pred, target, dynamics):
         if loss_mode == "running":
-            return running_state_loss(pred, target, dynamics, residual_frame)
+            return running_state_loss(
+                pred, target, dynamics.out_norm.std(), residual_frame
+            )
         return state_prediction_loss(pred, target, scaled=loss_mode == "scaled")
 
     def step(dynamics, pred, action, xi):
@@ -165,8 +168,8 @@ def make_imagination(
     """
     call = _caller(compile_name, compile_cache)
 
-    def step(decoder, dynamics, state, latent, history, xi, q0, ref_quat):
-        action = decoder(latent, history)
+    def step(decoder, obs_norm, dynamics, state, latent, history, xi, q0, ref_quat):
+        action = decoder(latent, normalize_history(obs_norm, history, obs_dim))
         state = integrate_residual(state, dynamics(state, action, xi), residual_frame)
         obs_next = add_sensor_noise(
             analytic_obs(state, action, xi, q0, ref_quat=ref_quat), True
@@ -256,6 +259,7 @@ def make_imagination(
     def run(
         encoder,
         decoder,
+        obs_norm,
         dynamics,
         termination,
         critic,
@@ -286,6 +290,7 @@ def make_imagination(
                 "step",
                 step,
                 decoder,
+                obs_norm,
                 dynamics,
                 state,
                 latents[:, t],

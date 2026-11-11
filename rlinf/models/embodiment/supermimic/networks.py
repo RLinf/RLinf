@@ -30,8 +30,6 @@ from rlinf.envs.sim.g1_mimic.constants import (
     XI_DIM,
 )
 from rlinf.envs.sim.g1_mimic.features import (
-    error_floor,
-    frame_local_error,
     heading_invariant_features,
     residual_target,
     scale_context,
@@ -132,18 +130,7 @@ class DynamicsNet(nn.Module):
         _fold(self.out_norm, target, group)
 
 
-def running_state_loss(pred: torch.Tensor, true: torch.Tensor, dynamics, frame: str):
-    """Frame-local state error divided by the running residual std.
-
-    Each component's scale is at least :func:`error_floor`. The result is the
-    mean over the 70 components and over the batch.
-    """
-    err = frame_local_error(pred, true, frame)
-    scale = torch.maximum(dynamics.out_norm.std(), error_floor(err))
-    return (err / scale).square().mean()
-
-
-def _normalize_history(norm: RunningMeanStd | None, history: torch.Tensor, obs_dim):
+def normalize_history(norm: RunningMeanStd | None, history: torch.Tensor, obs_dim):
     """Normalize each observation frame. A missing norm leaves history as stored."""
     if norm is None:
         return history
@@ -167,20 +154,17 @@ class MotionEncoder(nn.Module):
 
 
 class MotionDecoder(nn.Module):
-    """Shared decoder: a goal latent and the observation history to an action."""
+    """Shared decoder: a goal latent and the normalized history to an action."""
 
-    def __init__(self, obs_dim: int = OBS_DIM, input_norm: bool = False):
+    def __init__(self, obs_dim: int = OBS_DIM):
         super().__init__()
-        self.obs_dim = int(obs_dim)
         self.net = _mlp(
             [LATENT_DIM + HISTORY_LEN * obs_dim, 2048, 1024, 512, 256, ACTION_DIM],
             last_gain=0.01,
         )
-        self.obs_norm = RunningMeanStd(obs_dim) if input_norm else None
 
     def forward(self, latent: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
-        """Action ``[B, 29]`` from a latent and a flat 10-frame history."""
-        history = _normalize_history(self.obs_norm, history, self.obs_dim)
+        """Action ``[B, 29]`` from a latent and a flat normalized 10-frame history."""
         return _mlp_forward(self, self.net, torch.cat((latent, history), dim=-1))
 
 
@@ -224,17 +208,12 @@ class TerminationHead(nn.Module):
 class VelocityEncoder(nn.Module):
     """MLP(256, 256) on the normalized command and the 10-frame observation."""
 
-    def __init__(self, obs_dim: int = OBS_DIM, obs_norm: RunningMeanStd | None = None):
+    def __init__(self, obs_dim: int = OBS_DIM):
         super().__init__()
-        self.obs_dim = int(obs_dim)
-        # Shared with the decoder. Registering it here as well would store and
-        # update the same buffers under two names.
-        object.__setattr__(self, "obs_norm", obs_norm)
         self.net = _mlp([3 + HISTORY_LEN * obs_dim, 256, 256, LATENT_DIM])
 
     def forward(self, command: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
-        """Latent ``[B, 32]`` of a normalized command and the history."""
-        history = _normalize_history(self.obs_norm, history, self.obs_dim)
+        """Latent ``[B, 32]`` of a normalized command and normalized history."""
         packed = torch.cat((command, history), dim=-1)
         return torch.tanh(_mlp_forward(self, self.net, packed))
 
