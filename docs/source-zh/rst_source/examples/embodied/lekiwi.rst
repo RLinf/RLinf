@@ -21,7 +21,7 @@ LeKiwi 移动底盘配置与控制
    * - 控制主机
      - 带 USB 接口的 Linux 计算机。常用选择是底盘上的树莓派，不需要 GPU。
    * - 键盘主机
-     - 可选。同一网络内的任意计算机（macOS 也可），只需一个装好 ``torch``、``omegaconf``、``numpy`` 和 ``pynput`` 的 Python 3.11+ 环境，无需安装 RLinf。
+     - 可选。同一网络内的任意计算机（macOS 也可），只需一个装好 ``pynput`` 的 Python 3.11+ 环境，无需安装 RLinf。
 
 本文不介绍组装：步骤见 `LeKiwi 组装指南 <https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_，同一款机器人在其自身框架中的用法见 LeRobot 的 `LeKiwi 指南 <https://huggingface.co/docs/lerobot/en/lekiwi>`_。
 

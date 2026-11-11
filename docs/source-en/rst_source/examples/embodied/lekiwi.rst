@@ -30,8 +30,8 @@ What You Need
        on the robot is the usual choice; it needs no GPU.
    * - Keyboard computer
      - Optional. Any computer on the same network, macOS included, with a
-       Python 3.11+ environment that has ``torch``, ``omegaconf``, ``numpy``,
-       and ``pynput`` installed. It does not need an RLinf install.
+       Python 3.11+ environment with ``pynput`` installed. It does not need an
+       RLinf install.
 
 Assembly is not covered here: follow the `LeKiwi assembly guide
 <https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md>`_, and
