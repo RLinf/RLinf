@@ -1,0 +1,287 @@
+Robbyant R2 配置与控制
+==============================
+
+本文介绍如何通过 RFrame 与 ROS 2 接入 Robbyant R2 轮式双臂人形机器人，使用 RLinf 硬件检查脚本验证状态反馈与全身运动，运行 PICO VR 遥操作，并配置 ``R2ReachEnv-v1`` 用于真机强化学习。
+
+概览
+--------
+
+将 Robbyant R2 接入 RLinf，完成交互式诊断、全身 VR 遥操作与关节空间真机强化学习。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      MLP · CNN · VLA
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      PPO · GRPO · SAC · SFT
+
+   .. grid-item-card:: 任务
+      :text-align: center
+
+      关节到达（``R2ReachEnv-v1``）
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      Robbyant R2 · RFrame / ROS 2 · PICO VR
+
+| **主要步骤：** 安装含 RFrame/ROS 2 的 RLinf 环境 → 运行 mock 与只读硬件检查 → 测试双臂、躯干、夹爪与底盘运动 → 运行 PICO VR 遥操作 → 配置 ``R2ReachEnv-v1``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 已安装 RFrame 与 ROS 2 中间件的 Robbyant R2 · 局域网互通 · 可随时触及的物理急停开关。
+
+任务
+~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 32 46
+
+   * - 任务
+     - 配置 / 入口
+     - 说明
+   * - Mock 冒烟检查
+     - ``test_r2_env --mock``
+     - 无需连接真机，基于模拟 RFrame SDK 验证环境空间、全身运动学与 ``step`` 循环。
+   * - 硬件检查
+     - ``test_r2_env``
+     - 检查关节角、TCP 位姿、相机画面和健康诊断反馈，并逐步测试双臂、夹爪、腰部、头部及全向底盘运动。
+   * - VR 遥操作
+     - ``test_r2_env --pico``
+     - 通过 PICO 手柄与 6-DoF 逆运动学协同控制双 7-DoF 机械臂、夹爪与全向底盘。
+   * - 关节到达任务
+     - ``R2ReachEnv-v1``
+     - 在 ``env_type: real`` 下控制单臂或双臂到达并保持 ``target_joint_qpos``。
+
+观测与动作
+~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - 字段
+     - 说明
+   * - Observation
+     - ``state`` 字典包含 ``arm_joint_position``\ （``7 * N_arms``）、``tcp_pose``\ （``6 * N_arms``，格式为 ``[x, y, z, roll, pitch, yaw]``）、可选的 ``gripper_position``\ （夹爪为 ``1 * N_arms``，灵巧手为 ``6 * N_arms``，取值范围 ``[0, 1]``），以及启用底盘时的 ``base_pose``\ （``[x, y, yaw]``）和 ``base_velocity``\ （``[vx, vy, wz]``）；``frames`` 字典包含各配置相机（默认 ``head``、``wrist_left``、``wrist_right``）的 ``128 x 128 x 3`` RGB ``uint8`` 图像。
+   * - Action
+     - 连续动作向量，按激活机械臂依次排列 7 维绝对关节角目标（rad）与末端目标（``1`` 维夹爪开度，``0=闭合, 1=张开``；或 ``6`` 维灵巧手手指目标，范围 ``[0, 1]``），当 ``enable_base: true`` 时末尾追加 ``[vx, vy, wz]`` 平面底盘速度（双臂 + 夹爪 + 底盘共 19 维，关闭底盘时为 16 维）。
+   * - Reward
+     - 所有激活关节与 ``target_joint_qpos`` 的偏差均小于 ``reward_threshold``\ （默认 ``0.05`` rad）时返回 ``1.0``；开启 ``use_dense_reward: true`` 时返回负欧氏关节距离。
+   * - Prompt
+     - ``reach a joint configuration``
+
+硬件准备
+----------------
+
+在控制主机上安装 RLinf 前，先准备好机器人本体、局域网与操作台。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - 组件
+     - 要求
+   * - 机器人本体
+     - Robbyant R2 轮式双臂人形机器人（20 或 21 自由度躯干：5-DoF 腰部、双 7-DoF 机械臂、1 或 2-DoF 颈部；可选平行夹爪、6-DoF 灵巧手或无末端；全向轮式底盘）。
+   * - 机载 / 控制主机
+     - 接入 R2 FastDDS/ROS 2 网络的 Linux 主机，已安装 Robbyant ``rframe``、``rclpy`` 及 R2 ROS 2 消息包。
+   * - 相机
+     - RFrame 相机话题（``head``、``wrist_left``、``wrist_right``，以及可选的 ``navigation_front``、``navigation_rear``）。
+   * - 训练节点（可选）
+     - 与机器人控制节点处于同一局域网的 Linux GPU 服务器，用于多节点 policy rollout 与训练。
+
+.. warning::
+
+   机器人上电期间，操作员须始终位于物理急停开关旁。R2 在 ``ServoJ`` 模式下以 100 Hz 流式下发关节目标，全向底盘可沿平面任意方向平移与旋转；使能运动前请清空双臂及底盘周围的活动空间。
+
+.. note::
+
+   当控制主机上存在 ``/opt/robbyant/dynamic_participant.xml`` 时，``R2Connection`` 会在初始化 ``rframe.App`` 前自动设置 ``FASTRTPS_DEFAULT_PROFILES_FILE``。
+
+安装
+--------
+
+机器人控制节点除 RLinf 具身 Python 依赖外，还需要厂商提供的 ROS 2 / RFrame 软件包；GPU 训练与 rollout 节点只需安装对应的模型与训练环境。
+
+机器人控制节点
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在接入 R2 中间件的主机上克隆 RLinf：
+
+.. include:: _setup_common.rst
+   :end-before: 然后，使用
+
+由于 ``rclpy`` 和 ``rframe`` 直接加载主机 ROS 2 与 Robbyant 环境编译好的 CPython 扩展，创建 RLinf 虚拟环境时需要指定与系统 ROS 2 一致的 Python ``major.minor`` 版本（例如 Ubuntu 22.04 + ROS 2 Humble 使用 ``3.10``）：
+
+.. code-block:: bash
+
+   # 读取主机 ROS 2 所用的 Python 版本（例如 3.10）
+   ROS_PY=$(/usr/bin/python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+
+   # 中国大陆用户可追加 --use-mirror 提升下载速度
+   bash requirements/install.sh --no-flash-attn embodied --env dummy --python "$ROS_PY"
+
+   # 加载主机 ROS 2 环境并激活 .venv，使 rclpy、rframe 与 R2 消息包位于 PYTHONPATH 中
+   source /opt/ros/humble/setup.bash
+   source .venv/bin/activate
+   export REPO_PATH="$PWD"
+
+   # 可选：若在该节点运行 PICO VR 遥操作，额外安装 ZeroMQ 绑定
+   uv pip install pyzmq
+
+如果 Robbyant RFrame 及 R2 消息包（``r2_motion_msgs``、``rdiagnostic_msgs``、``navigation_msgs``、``state_machine_msgs``）安装在独立的 overlay 工作空间中，请一并 ``source`` 该工作空间的 ``setup.bash``，随后运行 ``python -c "import rclpy, rframe"`` 验证导入正常。通用平台要求见 :doc:`安装 </rst_source/start/installation>`。
+
+训练与 Rollout 节点
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在独立用于 policy rollout 和训练的 GPU 服务器上，按计划训练的模型选择预构建 Docker 镜像或 ``requirements/install.sh`` 安装环境。例如安装 OpenPI 环境：
+
+.. code-block:: bash
+
+   # 中国大陆用户可追加 --use-mirror 提升下载速度
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   source .venv/bin/activate
+
+运行
+--------
+
+验证硬件状态与运动
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+先运行无需连接真机的 mock 冒烟检查，确认当前 RLinf 代码与环境空间工作正常：
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_r2_env --mock --steps 5
+
+确认机器人上电并已 ``source`` ROS 2 / RFrame 环境后，运行只读检查。脚本会连接 R2，从 ``/robotic/joint_states`` 自动探测 ``body_dof``\ （20 或 21）与 ``end_effector_type``\ （``gripper``、``hand`` 或 ``none``），打印一帧观测并退出，不发送任何运动指令：
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_r2_env --no-move
+
+确认状态反馈和相机尺寸正常后，启动交互式终端。``test_r2_env`` 默认保持当前实测姿态启动（``--no-reset``），不在连接瞬间主动复位；如需跳过相机订阅可传 ``--no-cameras``，无需控制轮式底盘可传 ``--no-base``：
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_r2_env --step 2
+
+.. warning::
+
+   传入 ``--reset``\ （或在 ``R2ReachEnv-v1`` 中保持 ``reset_on_init: true``）时，环境会按最高 ``--reset-speed``\ （默认 30 deg/s）的升余弦轨迹将激活机械臂移向 ``reset_joint_qpos``。启用启动复位前，请确认回到初始姿态的路径上无遮挡。
+
+在 ``r2>`` 提示符下逐条输入以下指令，每次等待机器人平稳停下后再执行下一条：
+
+.. code-block:: text
+
+   where
+   diag
+   l up 3
+   r fwd 3
+   open
+   close
+   waist up
+   head left
+   base fwd 0.5
+   home
+   quit
+
+各条测试指令的作用如下：
+
+- ``where`` 打印左右臂实测关节角（deg）、TCP 坐标（m）、末端开合状态、5-DoF 腰部与颈部角度、底盘位姿/速度以及各相机画面摘要。
+- ``diag`` 与 ``recover`` 查看内存中缓存的 ``HealthStatus``，并清除可恢复的控制器报错（先把指令目标同步到当前实测关节角以防跳变，再重新为全身关节上使能并切回 ``ServoJ`` 模式）。物理急停一旦触发会被安全锁存，不会自动清除；须先人工旋开急停并确认周围安全后，再执行 ``recover`` 恢复控制。
+- ``l|r <up|down|fwd|back|left|right> [cm]`` 通过 6-DoF 逆运动学让左臂或右臂末端在基座坐标系下步进；``l|r <raise|lower|out|in|bend|extend>`` 按 ``--step`` 度步进单个关节。
+- ``open`` / ``close``\ （或 ``l open``、``r close``）控制夹爪开合；``waist ...``、``head ...`` 和 ``base ...`` 分别测试腰部、头部与全向底盘；``ready`` 与 ``home`` 平滑切换到预设姿态。
+
+PICO VR 遥操作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+先按 :ref:`PICO 软件配置说明 <pico-software-setup>` 部署 XRoboToolkit 与 ZeroMQ VR 数据发布进程，随后直接以 PICO 遥操作模式启动 ``test_r2_env``\ （也可在交互式提示符下输入 ``pico`` 进入）：
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_r2_env \
+     --pico \
+     --pico-zmq-addr tcp://<publisher-host>:<port>
+
+未指定 ``--pico-zmq-addr`` 时，脚本优先读取环境变量 ``R2_PICO_ZMQ_ADDR``，未设置时默认连接 ``ipc:///tmp/vr_data.ipc``。遥操作映射关系如下：
+
+- **侧握键（Side grip，按住生效）**：分别启用左、右 7-DoF 机械臂的 6-DoF 逆运动学跟随；松开侧握键后对应机械臂保持当前位置。
+- **食指扳机（Trigger）** 或左手 **X/Y**、右手 **A/B** 键：控制两侧夹爪闭合与张开。
+- **左右摇杆（Thumbsticks）**：启用底盘时控制全向底盘前后平移、左右横移与原地转向。
+- **菜单键（Menu）**：重新标定头显水平朝向基准；按 **Ctrl-C** 刹停底盘并安全退出遥操作。
+
+遥操作过程中若触发可恢复的机械臂保护报错，脚本会自动执行恢复并将双臂保持在实测位置，待操作员松开并重新握住侧握键后才继续跟随，避免恢复瞬间姿态突变。在 rollout YAML 中配置 ``teleop: pico`` 的通用方式见 :doc:`遥操作 </rst_source/guides/teleoperation>`。
+
+集群与环境配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在多节点 Ray 集群配置中，在 ``cluster.node_groups`` 下声明 ``hardware.type: R2``，并在 ``env`` 下选择 ``R2ReachEnv-v1``\ （配合 ``env_type: real``）：
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 2
+     component_placement:
+       actor:
+         node_group: gpu
+         placement: 0
+       rollout:
+         node_group: gpu
+         placement: 0
+       env:
+         node_group: r2
+         placement: 0
+     node_groups:
+       - label: gpu
+         node_ranks: 0
+       - label: r2
+         node_ranks: 1
+         hardware:
+           type: R2
+           configs:
+             - node_rank: 1
+               body_dof: null                # null 会从 /robotic/joint_states 自动探测 20 或 21
+               end_effector_type: null       # null 会自动探测 "gripper"、"hand" 或 "none"
+               enable_base: true
+               cameras: ["head", "wrist_left", "wrist_right"]
+               use_compressed_camera: true
+               enable_fault_recovery: true
+               max_recovery_attempts: 3
+               recovery_cooldown_window: 10.0
+               motion_profile:
+                 control_rate_hz: 100.0
+                 max_joint_velocity: 2.0
+                 max_joint_acceleration: 20.0
+
+在 ``env.train`` / ``env.eval`` 下配置 ``R2ReachEnv-v1`` 的任务参数：
+
+.. code-block:: yaml
+
+   env:
+     train:
+       env_type: real
+       total_num_envs: 1
+       init_params:
+         id: "R2ReachEnv-v1"
+       override_cfg:
+         active_arms: ["left", "right"]
+         step_frequency: 20.0
+         reset_duration: 2.0
+         use_dense_reward: true
+         truncate_on_fault_recovery: true
+         # 每条激活机械臂 7 个目标关节角（rad）；双臂激活时共 14 个值
+         target_joint_qpos: [-0.35, 0.20, 1.00, -0.70, 0.0, -0.30, 0.0,
+                             -0.35, -0.20, 1.00, 0.70, 0.0, -0.30, 0.0]
+
+在 R2 控制节点执行 ``ray start`` 前，请先加载 ROS 2 / RFrame 工作空间并激活 RLinf ``.venv``，同时导出 ``PYTHONPATH``、``RLINF_NODE_RANK`` 以及多网卡主机上的 ``RLINF_COMM_NET_DEVICES``，以便 Ray worker 继承中间件环境。强化学习采样期间建议保持 ``truncate_on_fault_recovery: true``，这样一旦某个 ``step`` 触发了硬件自动恢复，环境会将该 ``episode`` 标记为 ``truncated=True`` 并在下一轮采样前平稳复位。如需在自有脚本中直接调用 ``R2Robot``、多部件指令合并 ``batch_commands()``、定频轨迹流或故障恢复接口，请参考 :doc:`机器人接口 </rst_source/concepts/robotics>`。
+
+新增真机任务
+------------------------
+
+完成硬件检查与遥操作验证后，可参考 :doc:`新增真机任务 </rst_source/extending/new_task>` 继承 ``R2Env``，按具体操作任务定义复位流程、观测字段、奖励函数与终止条件。
