@@ -34,6 +34,9 @@ from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.dexjoco_dataconfig import (
+    LeRobotDexJoCoDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
     DualFrankaTcpRot6dDataConfig,
 )
@@ -633,6 +636,21 @@ _CONFIGS = [
             repo_id="yam",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(asset_id="yam"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_dexjoco",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            max_token_len=250,
+            discrete_state_input=True,
+        ),
+        data=LeRobotDexJoCoDataConfig(
+            repo_id="dexjoco",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(asset_id="dexjoco"),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),

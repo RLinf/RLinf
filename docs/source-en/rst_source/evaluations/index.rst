@@ -35,6 +35,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - RoboCasa365
      - ``robocasa365`` pretrain task slices
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - DexJoCo
+     - ``dexjoco_water_plant``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``

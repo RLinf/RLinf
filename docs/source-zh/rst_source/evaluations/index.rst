@@ -35,6 +35,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - RoboCasa365
      - ``robocasa365`` pretrain 任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - DexJoCo
+     - ``dexjoco_water_plant``
+     - ``dexjoco/dexjoco_openpi_pi05_eval.yaml``, ``dexjoco/dexjoco_cnn_eval.yaml``
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``

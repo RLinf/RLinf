@@ -192,6 +192,17 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/dexjoco.html" style="display: block;"><img src="https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/dexjoco.html" style="text-decoration: underline; color: blue;">
+           <b>RL with DexJoCo Benchmark</b>
+         </a><br>
+         CNN / π₀.₅ SFT and PPO on WaterPlant
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/geniesim.html" style="display: block;"><video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: contain; background: #000; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
          <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/geniesim_post_train.mp4" type="video/mp4">
          Your browser does not support the video tag.
@@ -226,5 +237,6 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    PolaRiS <embodied/polaris>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
+   DexJoCo <embodied/dexjoco>
    GenieSim <embodied/geniesim>
    Real-World Simulator <embodied/real_simulator>
