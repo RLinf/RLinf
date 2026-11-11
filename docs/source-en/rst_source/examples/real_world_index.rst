@@ -70,7 +70,7 @@ Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data coll
 Piper and SO101 Setup
 ---------------------
 
-Use these guides to connect an arm and run its hardware test script. Piper and SO101 do not yet have supported real-world tasks or training workflows.
+Use these guides to connect an arm and run its hardware test script. The SO101 guide also covers online HG-DAgger with a leader arm.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -85,7 +85,7 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
       :link: embodied/so101
       :link-type: doc
 
-      Set up motors, calibrate an SO-101, and run the joint and gripper test script.
+      Set up an SO-101, collect and train with leader takeover, and run policy evaluation.
 
 .. toctree::
    :hidden:

@@ -264,7 +264,13 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     elif safetensors_path is not None:
         load_base_safetensors(model, safetensors_path)
 
-    _freeze_after_load(model, task)
+    _freeze_after_load(
+        model,
+        task,
+        train_expert_only=bool(
+            OmegaConf.select(model_cfg, "train_expert_only", default=False)
+        ),
+    )
     _apply_openpi_param_dtypes(model, target_dtype)
 
     n_params = sum(param.numel() for param in model.parameters())
@@ -284,8 +290,16 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     return model
 
 
-def _freeze_after_load(model, task: str) -> None:
+def _freeze_after_load(model, task: str, *, train_expert_only: bool = False) -> None:
     """Freeze after weights load so ``requires_grad`` is the post-load truth."""
+    if task == "dagger" and train_expert_only:
+        frozen = model.freeze_vlm()
+        logger.info(
+            "openpi[dagger]: train_expert_only=True; froze %d parameter "
+            "tensors (SigLIP + gemma expert-0) after weight load",
+            frozen,
+        )
+        return
     if task == "rl" and getattr(model, "rl_cfg", None) is not None:
         if model.rl_cfg.train_expert_only:
             frozen = model.freeze_vlm()

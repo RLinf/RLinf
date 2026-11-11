@@ -1644,6 +1644,193 @@ def test_so101_idle_leader_hold_is_recorded_as_the_executed_action(monkeypatch):
     np.testing.assert_array_equal(frame.action, idle_action.astype(np.float32))
 
 
+def test_so101_hg_dagger_selects_its_episode_wrapper():
+    """Select the HG-DAgger wrapper from the SO-101 environment config."""
+    from rlinf.envs.real.so101.base import SO101Env
+    from rlinf.envs.real.so101.wrappers import SO101HGDAggerWrapper
+
+    env = SimpleNamespace(config=SimpleNamespace(is_dummy=False))
+
+    assert SO101Env.episode_wrappers(env, {"so101_episode_wrapper": "hg_dagger"}) == (
+        SO101HGDAggerWrapper,
+    )
+
+
+def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
+    """Defer leader handovers until chunks finish and mark expert actions."""
+    from rlinf.envs.real.so101.wrappers import SO101HGDAggerWrapper
+    from rlinf.envs.real.wrappers.episode import session as session_module
+
+    class FakeListener:
+        def __init__(self, device=None):
+            self.batches = []
+
+        def pop_pressed_keys(self):
+            return self.batches.pop(0) if self.batches else []
+
+    class Leader:
+        manual_start_hold_seconds = 0.0
+
+        def __init__(self):
+            self.mode = None
+            self.events = []
+
+        def set_dagger_control_mode(self, mode):
+            self.mode = mode
+            self.events.append(("mode", mode))
+
+        def align_to_follower(self, context):
+            self.events.append(("align", context["joint_positions"].copy()))
+
+        def release_for_manual(self, context):
+            del context
+            self.events.append(("release", None))
+
+        def hold_for_reset(self, context):
+            del context
+            self.events.append(("hold", None))
+
+    class Device:
+        timeout = 0.0
+
+        def __init__(self, leader):
+            self.group = SimpleNamespace(devices=(leader,))
+
+        def context_from(self, env):
+            del env
+            return {
+                "joint_positions": np.zeros((1, 5)),
+                "gripper_position": np.zeros(1),
+                "reset_joint_positions": np.zeros(5),
+                "reset_gripper_position": 0.0,
+                "reset_duration": 1.0,
+                "reset_joint_speed": 1.0,
+            }
+
+        def before_reset(self, env, kwargs):
+            del env
+            return kwargs
+
+        def reset(self, env):
+            del env
+
+        def after_reset(self, env):
+            del env
+
+        def read(self, env, policy_action):
+            del env
+            if leader.mode == "manual":
+                return TeleopSample(np.full_like(policy_action, 7.0), active=True)
+            return TeleopSample(None, active=False)
+
+        def before_step(self, env):
+            del env
+
+        def on_action_chunk_begin(self):
+            pass
+
+        def get_hold_action(self, env, fallback_action=None):
+            del env
+            return np.full_like(fallback_action, -1.0)
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.actions = []
+
+        def reset(self, seed=None, options=None):
+            del seed, options
+            return {}, {}
+
+        def step(self, action):
+            self.actions.append(np.asarray(action).copy())
+            return {}, 0.0, False, False, {}
+
+    monkeypatch.setattr(session_module, "KeyboardListener", FakeListener)
+    leader = Leader()
+    device = Device(leader)
+    inner = Env()
+    wrapper = SO101HGDAggerWrapper(TeleopIntervention(inner, device))
+    wrapper.DEBOUNCE_S = 0.0
+    wrapper.reset()
+    assert leader.mode == "policy"
+    wrapper.listener.batches = [["a"], ["Key.space"], [], ["Key.space"], [], []]
+
+    _, _, _, _, started = wrapper.step(np.array([1.0]))
+    assert started["keyboard_event"] == "start"
+    assert leader.mode == "policy"
+
+    _, _, _, _, queued = wrapper.step(np.array([2.0]))
+    assert wrapper._pending_space is True
+    assert leader.mode == "policy"
+
+    wrapper.on_action_chunk_begin()
+    assert leader.mode == "manual"
+    assert [event[0] for event in leader.events[-3:]] == ["align", "release", "mode"]
+
+    _, _, _, _, manual = wrapper.step(np.array([3.0]))
+    assert leader.mode == "manual"
+    assert manual["intervene_flag"].tolist() == [True]
+    np.testing.assert_array_equal(inner.actions[-1], [7.0])
+
+    wrapper.step(np.array([4.0]))
+    wrapper.on_action_chunk_begin()
+    assert leader.mode == "policy"
+    assert leader.events[-2][0] == "hold"
+
+    _, _, _, _, stale = wrapper.step(np.array([5.0]))
+    np.testing.assert_array_equal(inner.actions[-1], [-1.0])
+    np.testing.assert_array_equal(stale["intervene_action"], [-1.0])
+    assert stale["intervene_flag"].tolist() == [True]
+
+    wrapper.on_action_chunk_begin()
+    wrapper.step(np.array([6.0]))
+    np.testing.assert_array_equal(inner.actions[-1], [6.0])
+
+
+def test_so101_hg_dagger_leader_uses_explicit_control_owner():
+    """Route leader actions only while HG-DAgger assigns manual ownership."""
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    leader = SO101Leader(port="/dev/unused")
+    joints = np.array([0.1, -0.2, 0.3, -0.4, 0.5])
+    reading = {"joint_position": joints, "grip": np.array([0.25])}
+    context = {"joint_positions": joints[None, :], "gripper_position": np.array([0.25])}
+
+    leader.set_dagger_control_mode("policy")
+    policy = leader.action(reading, context)
+    assert not policy.driving
+    assert policy.parts == {}
+
+    leader.set_dagger_control_mode("manual")
+    manual = leader.action(reading, context)
+    assert manual.driving
+    np.testing.assert_array_equal(manual.parts["arm"], joints)
+    np.testing.assert_array_equal(manual.parts["end_effector"], [0.25])
+
+
+def test_so101_hg_dagger_leader_aligns_to_follower_before_manual_handover():
+    """Move the leader to the follower pose before manual control starts."""
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    leader = SO101Leader(port="/dev/unused")
+    leader._move_to = Mock()
+    joints = np.array([[0.1, -0.2, 0.3, -0.4, 0.5]])
+    context = {
+        "joint_positions": joints,
+        "gripper_open": np.array([0.25]),
+        "reset_duration": 2.0,
+        "reset_joint_speed": 0.4,
+    }
+
+    leader.align_to_follower(context)
+
+    args, kwargs = leader._move_to.call_args
+    np.testing.assert_array_equal(args[0], joints[0])
+    np.testing.assert_array_equal(args[1], [0.25])
+    assert args[2] == 2.0
+    assert kwargs["max_joint_speed"] == 0.4
+
+
 def _so101_random_reset_stack(monkeypatch):
     from rlinf.envs.real.so101 import SO101ReachEnv
     from rlinf.envs.real.so101.wrappers import SO101StartEndWrapper

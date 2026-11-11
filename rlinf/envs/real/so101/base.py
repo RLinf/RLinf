@@ -298,10 +298,15 @@ class SO101Env(gym.Env):
         """Add the SO-101 collection wrapper without changing shared wrappers."""
         if getattr(self.config, "is_dummy", False):
             return ()
-        if cfg.get("so101_episode_wrapper") == "start_end":
+        wrapper_name = cfg.get("so101_episode_wrapper")
+        if wrapper_name == "start_end":
             from .wrappers import SO101StartEndWrapper
 
             return (SO101StartEndWrapper,)
+        if wrapper_name == "hg_dagger":
+            from .wrappers import SO101HGDAggerWrapper
+
+            return (SO101HGDAggerWrapper,)
         return ()
 
     def action_parts(self) -> tuple[ActionPart, ...]:

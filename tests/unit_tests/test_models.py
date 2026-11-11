@@ -67,6 +67,31 @@ class _DummyModel:
         return self
 
 
+@pytest.mark.parametrize("train_expert_only", [False, True])
+def test_openpi_dagger_expert_only_freezes_vlm(train_expert_only):
+    """Verify expert-only DAgger freezes VLM parameters but trains the expert."""
+    from rlinf.models.embodiment.openpi import _freeze_after_load
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.tasks.dagger import Pi0DAgger
+    from rlinf.utils.utils import collect_param_names_need_sync
+
+    with torch.device("meta"):
+        model = Pi0DAgger(Pi0Config(pi05=True))
+    _freeze_after_load(model, "dagger", train_expert_only=train_expert_only)
+
+    block = model.llm.layers[0]
+    vlm_modules = [model.img, model.llm.embedder, block.mlps[0], block.attn.q_proj[0]]
+    for module in vlm_modules:
+        assert all(
+            p.requires_grad == (not train_expert_only) for p in module.parameters()
+        )
+    for module in [block.mlps[1], block.attn.q_proj[1], model.action_out_proj]:
+        assert all(p.requires_grad for p in module.parameters())
+    sync_names = collect_param_names_need_sync(model)
+    assert "action_out_proj.weight" in sync_names
+    assert any(name.startswith("img.") for name in sync_names) != train_expert_only
+
+
 class _DummyBlock(torch.nn.Module):
     def __init__(self):
         super().__init__()
