@@ -884,6 +884,37 @@ def test_empty_history_input_still_resets_shaping_state_on_done():
     assert model._success_streak.tolist() == [0, 1]
 
 
+def test_robotwin_t5_reward_scores_env_observations():
+    from rlinf.models.embodiment.reward import get_reward_model_class
+
+    model_cls = get_reward_model_class("robotwin_t5")
+    model = model_cls.__new__(model_cls)
+    torch.nn.Module.__init__(model)
+    model.batch_size = 2
+    model.register_buffer("_mean", torch.zeros(1, 3, 1, 1), False)
+    seen = []
+
+    def fake_logits(images, instructions):
+        seen.append((images, instructions))
+        return torch.zeros(images.shape[0])
+
+    model._logits = fake_logits
+    images = torch.tensor([0, 255, 51], dtype=torch.uint8).view(3, 1, 1, 1)
+
+    rewards = model.compute_reward(
+        {
+            "main_images": images.expand(3, 4, 4, 3),
+            "task_descriptions": ["a", "b", "c"],
+        }
+    )
+
+    assert rewards.tolist() == pytest.approx([0.5, 0.5, 0.5])
+    assert [batch.shape for batch, _ in seen] == [(2, 3, 4, 4), (1, 3, 4, 4)]
+    frames = torch.cat([batch for batch, _ in seen])
+    assert frames.amax(dim=(1, 2, 3)).tolist() == pytest.approx([0.0, 1.0, 0.2])
+    assert [texts for _, texts in seen] == [["a", "b"], ["c"]]
+
+
 VALUE_CLIP = 0.2
 HUBER_DELTA = 10.0
 
@@ -1402,6 +1433,26 @@ def test_so101_openpi_transforms_pad_six_joint_contract():
     assert result["actions"].shape == (20, 32)
     assert result["image"]["base_0_rgb"].shape == image.shape
     assert not result["image_mask"]["left_wrist_0_rgb"]
+
+
+def test_aloha_inputs_mask_wrist_views_missing_from_a_head_only_observation():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.aloha_policy import AlohaInputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = AlohaInputs(adapt_to_pi=False)(
+        {
+            "observation/image": image,
+            "observation/wrist_image": None,
+            "observation/state": np.zeros(14, dtype=np.float32),
+            "prompt": "adjust the bottle",
+        }
+    )
+    assert result["image_mask"]["base_0_rgb"]
+    for view in ("left_wrist_0_rgb", "right_wrist_0_rgb"):
+        assert not result["image_mask"][view]
+        assert result["image"][view].shape == image.shape
 
 
 def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
@@ -2145,6 +2196,22 @@ def phyai_example_cfg(monkeypatch):
     monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
     with initialize_config_dir(config_dir=str(config_dir), version_base=None):
         return compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
+
+
+@pytest.mark.parametrize(
+    ("path", "value"), [("env.train.chunk", 25), ("env.train.action_dim", 7)]
+)
+def test_world_model_env_must_match_the_policy_action_shape(monkeypatch, path, value):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="bwm_robotwin_adjust_bottle_ppo_openpi_pi05")
+    OmegaConf.update(cfg, path, value)
+
+    with pytest.raises(ValueError, match=f"Expected {path} to equal"):
+        validate_embodied_cfg(cfg)
 
 
 def test_phyai_example_config_validates_and_shares_the_actor_checkpoint(

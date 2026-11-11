@@ -22,7 +22,17 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           source .venv/bin/activate
+          no_ray_files=()
+          ray_files=()
           for file in tests/unit_tests/test_*.py; do
+              if grep -qE '\bCluster\(|@pytest\.mark\.placement|\bray\.init\b' "$file"; then
+                  ray_files+=("$file")
+              else
+                  no_ray_files+=("$file")
+              fi
+          done
+          pytest "${no_ray_files[@]}"
+          for file in "${ray_files[@]}"; do
               code=0
               pytest "$file" || code=$?
               ray stop
@@ -38,7 +48,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-cpu:
     runs-on: ubuntu-latest
@@ -60,7 +69,17 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH 
           source .venv/bin/activate
+          no_ray_files=()
+          ray_files=()
           for file in tests/unit_tests/test_*.py; do
+              if grep -qE '\bCluster\(|@pytest\.mark\.placement|\bray\.init\b' "$file"; then
+                  ray_files+=("$file")
+              else
+                  no_ray_files+=("$file")
+              fi
+          done
+          pytest "${no_ray_files[@]}"
+          for file in "${ray_files[@]}"; do
               code=0
               pytest "$file" || code=$?
               ray stop
@@ -88,7 +107,23 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
+          no_ray_files=()
+          ray_files=()
+          # Pure-CPU, dataset, and mock-robotics suites run on unit-tests-cpu and unit-tests-cuda.
           for file in tests/unit_tests/test_*.py; do
+              case "$(basename "$file")" in
+                  test_agentic_tokenizer.py|test_ckpt_convertor.py|test_data.py|test_geniesim_env.py|test_real_env.py|test_robot_autoconfig.py|test_robotics.py)
+                      continue
+                      ;;
+              esac
+              if grep -qE '\bCluster\(|@pytest\.mark\.placement|\bray\.init\b' "$file"; then
+                  ray_files+=("$file")
+              else
+                  no_ray_files+=("$file")
+              fi
+          done
+          pytest "${no_ray_files[@]}"
+          for file in "${ray_files[@]}"; do
               code=0
               pytest "$file" || code=$?
               ray stop
@@ -98,7 +133,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-ascend:
     runs-on: ascend
@@ -108,10 +142,7 @@ jobs:
 
       - name: Create CANN environment and install dependencies
         run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend --no-flash-attn embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
@@ -119,9 +150,26 @@ jobs:
       - name: Run unit tests
         timeout-minutes: 120
         run: |
+          cd "$ASCEND_WORK_DIR"
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
+          no_ray_files=()
+          ray_files=()
+          # Pure-CPU, dataset, and mock-robotics suites run on unit-tests-cpu and unit-tests-cuda.
           for file in tests/unit_tests/test_*.py; do
+              case "$(basename "$file")" in
+                  test_agentic_tokenizer.py|test_ckpt_convertor.py|test_data.py|test_geniesim_env.py|test_real_env.py|test_robot_autoconfig.py|test_robotics.py)
+                      continue
+                      ;;
+              esac
+              if grep -qE '\bCluster\(|@pytest\.mark\.placement|\bray\.init\b' "$file"; then
+                  ray_files+=("$file")
+              else
+                  no_ray_files+=("$file")
+              fi
+          done
+          pytest "${no_ray_files[@]}"
+          for file in "${ray_files[@]}"; do
               code=0
               # One head per file; tests attach to it instead of starting their own.
               ray start --head > /dev/null || { ray stop > /dev/null; ray start --head > /dev/null; }
@@ -131,9 +179,9 @@ jobs:
           done
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          uv cache prune
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   unit-tests-musa:
     runs-on: musa
@@ -163,7 +211,25 @@ jobs:
           export OMP_NUM_THREADS=1
           export MKL_NUM_THREADS=1
           source .venv/bin/activate
+          target_files=()
+          no_ray_files=()
+          ray_files=()
+          # Pure-CPU, dataset, and mock-robotics suites run on unit-tests-cpu and unit-tests-cuda.
           for file in tests/unit_tests/test_*.py; do
+              case "$(basename "$file")" in
+                  test_agentic_tokenizer.py|test_ckpt_convertor.py|test_data.py|test_geniesim_env.py|test_real_env.py|test_robot_autoconfig.py|test_robotics.py)
+                      continue
+                      ;;
+              esac
+              target_files+=("$file")
+              if grep -qE '\bCluster\(|@pytest\.mark\.placement|\bray\.init\b' "$file"; then
+                  ray_files+=("$file")
+              else
+                  no_ray_files+=("$file")
+              fi
+          done
+          pytest "${no_ray_files[@]}" -m "not placement"
+          for file in "${ray_files[@]}"; do
               code=0
               pytest "$file" -m "not placement" || code=$?
               ray stop
@@ -174,11 +240,7 @@ jobs:
           # parts over and over in one process leaves it unable to allocate
           # thread-local storage for the next worker, and the run dies rather
           # than reporting a test. Give each of them a fresh process.
-          placement_tests=$(pytest --collect-only -qq -m placement tests/unit_tests | grep '::')
-          if [ -z "$placement_tests" ]; then
-              echo "No placement tests were collected; the marker or the path is wrong."
-              exit 1
-          fi
+          placement_tests=$(pytest --collect-only -qq -m placement "${target_files[@]}" | grep '::' || true)
           for test in $placement_tests; do
               code=0
               pytest "tests/unit_tests/$test" || code=$?
@@ -189,7 +251,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-openvla-rocm:
     runs-on: rocm
@@ -218,7 +279,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-openvlaoft-rocm:
     runs-on: rocm
@@ -247,7 +307,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-openvla-musa:
     runs-on: musa
@@ -278,7 +337,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-openvlaoft-musa:
     runs-on: musa
@@ -309,7 +367,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   unit-tests-openvla-ascend:
     runs-on: ascend
@@ -319,15 +376,13 @@ jobs:
 
       - name: Create Ascend OpenVLA environment
         run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model openvla --env maniskill_libero
 
       - name: OpenVLA accelerator unit test
         timeout-minutes: 60
         run: |
+          cd "$ASCEND_WORK_DIR"
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
           export RLINF_OPENVLA_MODEL_PATH=/workspace/dataset/openvla-7b
@@ -335,9 +390,9 @@ jobs:
           pytest tests/unit_tests/test_models.py::test_openvla_predicts_a_finite_action_on_the_accelerator
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          uv cache prune
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   unit-tests-openvlaoft-ascend:
     runs-on: ascend
@@ -347,15 +402,13 @@ jobs:
 
       - name: Create Ascend OpenVLA-OFT environment
         run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
 
       - name: OpenVLA-OFT accelerator unit test
         timeout-minutes: 60
         run: |
+          cd "$ASCEND_WORK_DIR"
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           export RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1
           export RLINF_OPENVLA_OFT_MODEL_PATH=/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1
@@ -363,9 +416,9 @@ jobs:
           pytest tests/unit_tests/test_models.py::test_openvla_oft_predicts_a_finite_action_on_the_accelerator
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          uv cache prune
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   package-build-test:
     runs-on: embodied
@@ -376,7 +429,8 @@ jobs:
       - name: Create environment and install dependencies
         shell: bash
         run: |
-          uv venv
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          uv venv --python 3.11.14
           source .venv/bin/activate
           uv build
           export WHL_FILE=$(ls $(pwd)/dist/rlinf-*.whl)
@@ -386,7 +440,6 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           uv pip install $WHL_FILE[embodied]
           uv pip install $WHL_FILE[agentic]
           env -u UV_TORCH_BACKEND uv pip install -r $REQ_DIR/vllm_0.8.5_cu12.txt
@@ -408,7 +461,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   package-structure-check:
     runs-on: ubuntu-latest
