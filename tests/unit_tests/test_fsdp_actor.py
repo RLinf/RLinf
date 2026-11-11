@@ -297,14 +297,16 @@ def test_group_packing_preserves_mask_loss_gradient_and_update(actor_group):
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 3])
-def test_group_receive_count_rejects_incomplete_batches(actor_group, batch_size):
-    actor = _actor()
-    actor.cfg.data.rollout_batch_size = batch_size
-    if batch_size:
-        assert actor._get_num_rollout_results_per_dp() == batch_size
-    else:
-        with pytest.raises(ValueError, match="positive multiple"):
-            actor._get_num_rollout_results_per_dp()
+def test_placement_rejects_incomplete_rollout_groups(batch_size):
+    from test_placement import create_fake_cluster
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/agent/searchr1/config"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name="train_qwen2.5_fsdp_disaggregated")
+    cfg.data.rollout_batch_size = batch_size
+    placement = ModelParallelComponentPlacement(cfg, create_fake_cluster(1, 3))
+    with pytest.raises(ValueError, match="positive multiple"):
+        MAFSDPActor.validate_placement(cfg, placement)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="NCCL requires a GPU")
@@ -337,9 +339,6 @@ def _check_two_rank_dynamic_actor(rank, init_file):
     try:
         actor = _actor()
         assert actor._get_num_rollout_results_per_dp() == 1
-        actor.cfg.data.rollout_batch_size = 3
-        with pytest.raises(ValueError, match="positive multiple"):
-            actor._get_num_rollout_results_per_dp()
         rollout = _rollout(second_group=bool(rank))
         batch = rollout.to_actor_batch(10, 0)
         with torch.no_grad():
