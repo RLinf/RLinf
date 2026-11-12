@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Check changed RLinf docs: the build, markup, names, links, and EN/ZH pairing.
+"""Check changed RLinf docs: the build, markup, names, links, pairing, and writing.
 
 Usage::
 
@@ -54,6 +54,7 @@ except ImportError:
 
 import check_doc_symbols  # noqa: E402
 import check_rst_markup  # noqa: E402
+import check_writing  # noqa: E402
 
 LANGS = {"docs/source-en/": "docs/source-zh/", "docs/source-zh/": "docs/source-en/"}
 READMES = {"README.md": "README.zh-CN.md", "README.zh-CN.md": "README.md"}
@@ -289,9 +290,14 @@ def main() -> int:
         | check_doc_symbols.EXTERNAL
         | check_doc_symbols.KNOWN_DRIFT
     )
+    names = check_writing.code_names(route.REPO_ROOT)
+    added = {c.path for c in changes if c.status == "A"}
     findings = check_parity(changes) + check_toctrees(pages)
     for page in pages:
-        findings += selection.relevant(check_page(route.REPO_ROOT / page, page, known))
+        path = route.REPO_ROOT / page
+        page_findings = check_page(path, page, known)
+        page_findings += check_writing.check_page(path, page, names, page in added)
+        findings += selection.relevant(page_findings)
     if args.no_build:
         print("skipped: the Sphinx build (--no-build)")
     elif any(c.path.startswith("docs/") for c in changes):

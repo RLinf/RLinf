@@ -26,7 +26,7 @@ RLinf's design patterns are in [patterns.md](patterns.md), and the rules CI and 
 4. Put new tests in the component's existing file in `tests/unit_tests/`, through the public contract, and mock only what lies outside RLinf (patterns.md § Tests).
 5. Start a new config YAML from the closest current one in `examples/`, keep values static, and override only what differs from the Hydra `defaults` (patterns.md § Configuration).
 6. Add every new `.py`, test, or root YAML file to the path filter in `.github/workflows/ci-tests.yml` whose tests exercise it.
-7. Run the check below, and the unit tests of the component you changed (AGENTS.md § Setup and commands).
+7. Before you finish, go through [mistakes.md](mistakes.md), the mistakes agents most often make in RLinf code, then run the check below and the unit tests of the component you changed (AGENTS.md § Setup and commands).
 
 ## Check
 
@@ -45,7 +45,7 @@ It prints findings in the shared format of [README.md](../README.md#findings):
 | `code/ci-filter` | major | a changed file that CI's `filter-coverage-test` would reject |
 | `code/test-layout` | minor | a new file in `tests/unit_tests/` |
 
-Then go through what a script cannot decide, for every changed function, compared with its version on `main`:
+Then go through what a script cannot decide, for every changed function, compared with its version on `main`. [mistakes.md](mistakes.md) lists the concrete forms these take:
 
 - [ ] The change extends an existing mechanism; shared code gains no branch that names a model, env, or accelerator (patterns.md § Generalize; don't special-case, § Contain component code).
 - [ ] Each resource has one owner, and the fix sits at the layer that owns the invariant (§ Small abstractions with one owner, § Fix at the owning layer).

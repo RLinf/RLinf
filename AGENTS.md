@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file tells coding agents how to build, test, and change RLinf so that the result passes CI and review. `CLAUDE.md` is a symlink to it. It holds only rules that apply across the repository: the contribution process is in [CONTRIBUTING.md](CONTRIBUTING.md), writing and documentation rules are in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md), and step-by-step workflows are skills under `.agents/skills/`. When this file disagrees with the code, the code is right; fix this file in the same change.
+This file tells coding agents how to build, test, and change RLinf so that the result passes CI and review. `CLAUDE.md` is a symlink to it. It holds only rules that apply across the repository: the contribution process is in [CONTRIBUTING.md](CONTRIBUTING.md), writing and documentation rules are in the docs skill's [rules](.agents/skills/docs/rules/base.md), and step-by-step workflows are skills under `.agents/skills/`. When this file disagrees with the code, the code is right; fix this file in the same change.
 
 RLinf is a distributed reinforcement learning framework for embodied and agentic AI. A run starts from one entry script that builds a Ray-backed `Cluster`, places the actor, rollout, env, reward, and agent components on hardware, launches each as a `Worker` group, and hands control to a runner that loops through rollout, reward, advantage, and update. Configuration is Hydra YAML. Training uses FSDP or Megatron; LLM rollout uses SGLang or vLLM. User-facing workflows such as installation, placement, multi-node setup, memory tuning, checkpoint resume, metrics, and evaluation are documented under `docs/source-en/rst_source/` (`start/`, `concepts/`, `guides/`, `extending/`, and `resources/faq.rst`).
 
@@ -114,7 +114,7 @@ Each extension point is a registry or an enum. Register the component, select it
 
 - Commit subjects follow Conventional Commits (`<type>(<scope>): <description>`, imperative, about 72 characters). Every commit carries a `Signed-off-by:` trailer (`git commit -s`), which certifies the [DCO](DCO) for the human author; use that person's Git identity, never an agent's.
 - PR titles are stricter than commit subjects: the description after `: ` is at most 50 characters, starts with a lowercase letter, has no trailing period, and is plain ASCII. The `create-pr` skill fills `.github/PULL_REQUEST_TEMPLATE.md` and checks both title and body with `python3 .agents/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>`. Include the commands you ran and their results; a change that can move training curves needs curves.
-- All project writing, including PR descriptions, review comments, and commit messages, follows the voice rules in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md); its page-structure and RST rules apply to documentation only. Change the English and Chinese docs together.
+- All project writing, including PR descriptions, review comments, and commit messages, follows the language rules in [english.md](.agents/skills/docs/rules/english.md) and [chinese.md](.agents/skills/docs/rules/chinese.md). Explain behavior in words the reader knows, and name a file, class, or function only where the reader acts on it or needs it to find the change. Change the English and Chinese docs together.
 
 ## Skills
 

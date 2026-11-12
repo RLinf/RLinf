@@ -25,7 +25,7 @@ Every area skill has the same shape, so that `route.py`, `create-pr`, and `revie
 
 - **`paths:`** in the frontmatter is a YAML block list of the globs the skill owns, relative to the repository root. `*` matches within one directory and `**` across directories; quote a pattern that starts with `*`. Claude Code and Cursor load the skill when an agent works on a matching file, and `route.py` reads the same list. A file may belong to more than one area. The field is not part of the Agent Skills specification; Codex and Gemini CLI ignore it.
 - **`description`** opens with the files and the action, because clients shorten long descriptions from the end.
-- **Write** says what to read before editing and points to the rules by section. Each rule lives in one place: `docs/STYLE_GUIDE.md` for docs, `AGENTS.md` and `code/patterns.md` for code, and `install/SKILL.md` for install.
+- **Write** says what to read before editing and points to the rules by section. Each rule lives in one place: `docs/rules/` for docs, `AGENTS.md` and `code/patterns.md` for code, and `install/SKILL.md` for install.
 - **Check** is `check.py`, run as `python3 .agents/skills/<area>/check.py [--base REF] [--all-lines] [FILE ...]`. With no files it checks the area's files that differ from the merge base of `--base` (default: `main` of the RLinf remote), including uncommitted and untracked files. Line findings count only on lines the change adds, so a check reports what the change introduces; `--all-lines` reports every line. A list of judgment items follows in `SKILL.md`, for what a script cannot decide.
 - **Verify** (optional) covers runs that need GPUs, datasets, or other assets.
 

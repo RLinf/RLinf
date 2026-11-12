@@ -1,6 +1,6 @@
 # Docs check reference
 
-Background for the rules [check.py](check.py) applies and for the judgment items in [SKILL.md](SKILL.md#check). The writing rules themselves are in [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md).
+Background for the rules [check.py](check.py) applies and for the judgment items in [SKILL.md](SKILL.md#check). The writing rules themselves are in [rules/](rules/).
 
 ## Source of truth for models and envs
 

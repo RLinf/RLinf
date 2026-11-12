@@ -1,6 +1,6 @@
 # RLinf code and design patterns
 
-This page is the standard for code that goes into RLinf: authors follow it while writing a change, and a review measures the PR against it. It summarizes the rules in [AGENTS.md](../../../AGENTS.md) and [CONTRIBUTING.md](../../../CONTRIBUTING.md) as patterns you can spot in a diff. Each pattern says what RLinf expects and what to flag. A finding that cites a pattern names the pattern, the code that breaks it, and the version that follows it. Docs follow [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md) through the [docs](../docs/SKILL.md) skill.
+This page is the standard for code that goes into RLinf: authors follow it while writing a change, and a review measures the PR against it. It summarizes the rules in [AGENTS.md](../../../AGENTS.md) and [CONTRIBUTING.md](../../../CONTRIBUTING.md) as patterns you can spot in a diff. Each pattern says what RLinf expects and what to flag. A finding that cites a pattern names the pattern, the code that breaks it, and the version that follows it. Docs follow the rules of the [docs](../docs/SKILL.md) skill.
 
 ## Design philosophy
 
@@ -102,6 +102,8 @@ Simulators, robot SDKs, and model-specific packages are imported inside the func
 - Comments are sparse. They state contracts, invariants, ownership, and non-obvious reasons. They do not narrate the code, repeat the signature, or tell the history of a fix.
 - Assertion and exception messages say what was expected and what was found.
 - New files carry `# Copyright <current year> The RLinf Authors.`; moved or renamed files keep their year, and vendored files keep their upstream header.
+- Every new function, method, field, and config key has a caller or consumer. No commented-out code, debug output, or copied legacy helpers stay behind.
+- Machine-specific values (paths, GPU indices, hostnames, credentials), sleep-based synchronization, and monkey-patches have no place in the code; take values from config or the environment.
 - Elegant code reads as if it had always been part of the codebase: names match the neighbors, no scaffolding is left behind, and the diff to shared files is as small as the extension point allows.
 
 ## Tests
