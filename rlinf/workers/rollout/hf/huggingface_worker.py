@@ -878,33 +878,43 @@ class MultiStepRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
-                actions, result = self._predict_rollout_actions(
-                    policy_input.obs,
-                    rlt_switch_flags=policy_input.rlt_switch_flags,
-                    intervene_requested=policy_input.intervene_flags,
-                )
-                forward_inputs = result.get("forward_inputs")
-                policy_output = self._build_policy_output(actions, result)
+                if not policy_input.requires_inference:
+                    actions = policy_input.external_actions
+                    forward_inputs = None
+                    policy_output = None
+                else:
+                    actions, result = self._predict_rollout_actions(
+                        policy_input.obs,
+                        rlt_switch_flags=policy_input.rlt_switch_flags,
+                        intervene_requested=policy_input.intervene_flags,
+                    )
+                    forward_inputs = result.get("forward_inputs")
+                    policy_output = self._build_policy_output(actions, result)
                 self._send_actions(
                     output_channel,
                     actions.contiguous(),
                     stage_id,
                     split_sizes,
                 )
-                # A request without sources is recorded by the env itself.
-                if policy_input.sources:
-                    # Omit raw observations when the collector does not consume them.
-                    transition_obs = (
-                        policy_input.obs if self.collect_raw_transition_obs else {}
+                # Omit raw observations when the collector does not consume them.
+                transition_obs = (
+                    policy_input.obs if self.collect_raw_transition_obs else {}
+                )
+                if not policy_input.requires_inference:
+                    trajectory_part = PolicyPart(
+                        sources=policy_input.sources,
+                        obs=transition_obs,
+                        external_actions=actions,
                     )
+                else:
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
                         output=policy_output,
                     )
-                    # Publish model-owned data immediately; its environment half
-                    # arrives later through an EnvPart with the same key.
-                    actor_channel.put(trajectory_part, async_op=True)
+                # Publish model-owned data immediately; its environment half
+                # arrives later through an EnvPart with the same key.
+                actor_channel.put(trajectory_part, async_op=True)
                 # Attached parts close previously executed chunks.
                 self._publish_env_parts(policy_input, forward_inputs, actor_channel)
 

@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Env-worker helpers: history, delay sampling, smooth intervention, episode recording."""
+"""Env-worker helpers: history buffers, delay sampling, and smooth intervention."""
 
 from rlinf.utils.env_helpers.delay_sampler import DelaySampler
-from rlinf.utils.env_helpers.episode_recorder import EnvEpisodeRecorder
 from rlinf.utils.env_helpers.history_manager import HistoryManager
 from rlinf.utils.env_helpers.smooth_intervene import SmoothInterveneController
 
 __all__ = [
     "DelaySampler",
-    "EnvEpisodeRecorder",
     "HistoryManager",
     "SmoothInterveneController",
 ]

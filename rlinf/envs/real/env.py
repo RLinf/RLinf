@@ -90,8 +90,6 @@ class RealWorldEnv(gym.Env):
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self._init_reset_state_ids()
-        self._chunk_timing: Optional[dict[str, Optional[float]]] = None
-        self._last_chunk_exit: Optional[float] = None
 
     def _create_env(self, env_idx: int) -> gym.Env:
         worker_info: WorkerInfo = self.worker_info
@@ -206,11 +204,6 @@ class RealWorldEnv(gym.Env):
     @is_start.setter
     def is_start(self, value: bool) -> None:
         self._is_start = value
-
-    @property
-    def chunk_timing(self) -> Optional[dict[str, Optional[float]]]:
-        """Timing of the last chunk: idle time before it and its slowest step."""
-        return self._chunk_timing
 
     @property
     def elapsed_steps(self) -> np.ndarray:
@@ -401,11 +394,6 @@ class RealWorldEnv(gym.Env):
 
     def chunk_step(self, chunk_actions: np.ndarray) -> ChunkStepResult:
         # Shape: [num_envs, chunk_steps, action_dim].
-        entered = time.monotonic()
-        gap_s = (
-            None if self._last_chunk_exit is None else entered - self._last_chunk_exit
-        )
-        step_ends = []
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
@@ -424,7 +412,6 @@ class RealWorldEnv(gym.Env):
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
-            step_ends.append(time.monotonic())
             obs_list.append(extracted_obs)
             infos_list.append(infos)
             if "intervene_action" in infos:
@@ -476,12 +463,6 @@ class RealWorldEnv(gym.Env):
         else:
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
-
-        self._chunk_timing = {
-            "gap_s": gap_s,
-            "step_period_max_s": float(np.diff(step_ends).max(initial=0.0)),
-        }
-        self._last_chunk_exit = time.monotonic()
         return (
             obs_list,
             chunk_rewards,

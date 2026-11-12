@@ -397,6 +397,10 @@ class AccumulatorOutput(TrajectoryOutput):
 
     def emit(self, chunk: JoinedChunk) -> Iterator[CollectedItem]:
         """Append a policy chunk and flush its scope when complete."""
+        if not chunk.policy.inferred:
+            raise ValueError(
+                "External policy actions are only supported for online LeRobot DAgger."
+            )
         if chunk.key in self._completed_keys:
             raise ValueError(f"Received duplicate trajectory event for {chunk.key}.")
 

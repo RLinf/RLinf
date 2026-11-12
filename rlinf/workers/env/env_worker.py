@@ -33,11 +33,7 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
-from rlinf.utils.env_helpers import (
-    EnvEpisodeRecorder,
-    HistoryManager,
-    SmoothInterveneController,
-)
+from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
     copy_dict_tensor,
@@ -198,15 +194,8 @@ class EnvWorker(Worker):
                 self.train_num_envs_per_stage if self.enable_train else 0
             ),
         )
-        self.episode_recorder = (
-            EnvEpisodeRecorder.from_cfg(
-                self.cfg,
-                stage_num=self.stage_num,
-                num_envs_per_stage=self.train_num_envs_per_stage,
-            )
-            if self.smooth_intervene.enabled
-            else None
-        )
+        if self.smooth_intervene.enabled and self.env_decoupled_mode:
+            raise ValueError("smooth_intervene does not support decoupled env mode")
 
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
@@ -906,23 +895,6 @@ class EnvWorker(Worker):
             decoupled_mode=self.env_decoupled_mode,
         )
 
-    def _request_next_policy_chunk(
-        self,
-        rollout_channel: Channel,
-        env_output: EnvOutput,
-        stage_id: int,
-        is_last: bool,
-    ) -> None:
-        """Ask the rollout for the next chunk unless a smooth intervention serves it."""
-        continue_smooth = self.smooth_intervene.on_chunk_done(
-            stage_id, env_output.intervene_flags, env_output.dones
-        )
-        # After the last chunk, the next bootstrap makes the request.
-        if continue_smooth or is_last:
-            return
-        policy_input = self._build_policy_input(env_output)
-        self._send_policy_input(rollout_channel, policy_input, stage_id, None)
-
     def _publish_step(
         self,
         rollout_channel: Channel,
@@ -941,11 +913,6 @@ class EnvWorker(Worker):
         )
         source = TrajectorySource(key=key, size=self.train_num_envs_per_stage)
         is_last = chunk_id == self.n_train_chunk_steps - 1
-        if self.smooth_intervene.enabled:
-            self._request_next_policy_chunk(
-                rollout_channel, env_output, stage_id, is_last
-            )
-            return None
         has_terminal_state = env_output.dones is not None and bool(
             env_output.dones.any()
         )
@@ -972,7 +939,17 @@ class EnvWorker(Worker):
                 stage_id,
                 chunk_id + 1,
             )
-        policy_input = self._build_policy_input(env_output)
+        continue_smooth = self.smooth_intervene.on_chunk_done(
+            stage_id, env_output.intervene_flags, env_output.dones
+        )
+        if continue_smooth and not is_last:
+            policy_input = self.smooth_intervene.build_external_policy_input(
+                stage_id,
+                env=self.env_list[stage_id],
+                obs=env_output.prepare_observations(env_output.obs),
+            )
+        else:
+            policy_input = self._build_policy_input(env_output)
         # Piggyback the completed transition on the next policy request so
         # Rollout remains the Actor channel's only producer.
         env_part = EnvPart(
@@ -1046,16 +1023,18 @@ class EnvWorker(Worker):
         previous_env_parts: dict[int, EnvPart] | None = None,
     ) -> None:
         for stage_id in range(self.stage_num):
+            # Bootstrap starts chunk zero; no earlier transition exists yet.
+            key = TrajectoryKey(step_id, epoch_id, self._rank, stage_id, 0)
             if self.smooth_intervene.is_active(stage_id):
-                continue
-            # Bootstrap starts chunk zero; no earlier transition exists yet. The
-            # env records its own episodes under smooth_intervene, so no key.
-            key = (
-                None
-                if self.smooth_intervene.enabled
-                else TrajectoryKey(step_id, epoch_id, self._rank, stage_id, 0)
-            )
-            policy_input = self._build_policy_input(env_outputs[stage_id])
+                policy_input = self.smooth_intervene.build_external_policy_input(
+                    stage_id,
+                    env=self.env_list[stage_id],
+                    obs=env_outputs[stage_id].prepare_observations(
+                        env_outputs[stage_id].obs
+                    ),
+                )
+            else:
+                policy_input = self._build_policy_input(env_outputs[stage_id])
             policy_input.env_parts = [
                 previous_env_parts.get(stage_id)
                 if previous_env_parts is not None
@@ -1133,14 +1112,6 @@ class EnvWorker(Worker):
             decoupled_mode=self.env_decoupled_mode,
         )
 
-    def _log_smooth_chunk_timing(self, stage_id: int) -> None:
-        timing = get_env_attr(self.env_list[stage_id], "chunk_timing")
-        if timing is not None and timing["gap_s"] is not None:
-            self.log_info(
-                f"smooth chunk gap_ms={timing['gap_s'] * 1e3:.1f} "
-                f"step_period_ms_max={timing['step_period_max_s'] * 1e3:.1f}"
-            )
-
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
         self,
@@ -1149,12 +1120,9 @@ class EnvWorker(Worker):
         reward_channel: Channel | None,
         *,
         cooperative_yield: bool,
-        actor_channel: Channel | None = None,
     ) -> dict[str, torch.Tensor]:
         env_metrics = defaultdict(list)
         final_env_parts: dict[int, EnvPart] = {}
-        if self.smooth_intervene.enabled:
-            self.episode_recorder.prepare(actor_channel)
 
         for epoch in range(self.rollout_epoch):
             if epoch == 0 and self._prefetched_train_bootstrap is not None:
@@ -1181,22 +1149,13 @@ class EnvWorker(Worker):
                     if cooperative_yield:
                         await asyncio.sleep(0)
 
-                    smooth_chunk = self.smooth_intervene.is_active(stage_id)
-                    actions = (
-                        self.smooth_intervene.hold_chunk(
-                            stage_id, self.env_list[stage_id]
-                        )
-                        if smooth_chunk
-                        else self._recv_actions(input_channel, stage_id)
-                    )
+                    actions = self._recv_actions(input_channel, stage_id)
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
                     env_output, env_info, chunk_step_data = self.env_interact_step(
                         actions,
                         stage_id,
                     )
-                    if smooth_chunk:
-                        self._log_smooth_chunk_timing(stage_id)
 
                     # LeRobot stores the observation from before each action.
                     # The env returns the frame after each action, so prepend the
@@ -1212,8 +1171,6 @@ class EnvWorker(Worker):
                             env_outputs[stage_id].obs,
                             *post_action_obs[:-1],
                         ]
-                    if self.smooth_intervene.enabled:
-                        self.episode_recorder.record(stage_id, chunk_step_data)
 
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)
@@ -1274,10 +1231,6 @@ class EnvWorker(Worker):
                 final_env_parts,
             )
 
-        if self.smooth_intervene.enabled:
-            env_metrics["recorder/dropped_episodes"].append(
-                torch.tensor([float(self.episode_recorder.dropped)])
-            )
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 

@@ -18,9 +18,8 @@ Bypasses policy inference across action-chunk boundaries while human teleop
 continues. Requires ``algorithm.loss_type=embodied_dagger`` with online LeRobot
 collection enabled, a ``realworld`` env, and PICO teleop
 (``env.train.teleop: pico``); SpaceMouse is not supported. The env only
-supplies hold actions; this module owns the per-stage continue/skip state. A
-smooth chunk runs on the env worker without contacting the rollout, so it needs
-``runner.enable_decoupled_mode`` and the env worker records its own episodes.
+supplies hold actions; this module owns external-action request construction and the
+per-stage continue/skip state.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ from __future__ import annotations
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.utils import get_env_attr
 
@@ -120,21 +120,6 @@ class SmoothInterveneController:
                     "smooth_intervene requires every env.train.teleop entry to be "
                     f"pico (PICO-only; got {named!r})"
                 )
-            if not bool(
-                OmegaConf.select(
-                    cfg, "algorithm.dagger.only_save_expert", default=False
-                )
-            ):
-                raise ValueError(
-                    "smooth_intervene requires algorithm.dagger.only_save_expert=True; "
-                    "otherwise the hold frames of a smooth chunk become training targets"
-                )
-            if not bool(
-                OmegaConf.select(cfg, "runner.enable_decoupled_mode", default=False)
-            ):
-                raise ValueError(
-                    "smooth_intervene requires runner.enable_decoupled_mode=True"
-                )
         model_path = "actor.model" if enable_train else "rollout.model"
         return cls(
             stage_num=stage_num,
@@ -176,8 +161,14 @@ class SmoothInterveneController:
             )
         return actions[:, -1, :].float().cpu().numpy()
 
-    def hold_chunk(self, stage_id: int, env) -> torch.Tensor:
-        """Return the chunk a smooth stage runs: the hold action repeated per step."""
+    def build_external_policy_input(
+        self,
+        stage_id: int,
+        *,
+        env,
+        obs: dict,
+    ) -> PolicyInput:
+        """Build a self-contained request for a chunk without model inference."""
         get_hold_actions = get_env_attr(env, "get_hold_actions")
         if not callable(get_hold_actions):
             raise ValueError(
@@ -193,7 +184,7 @@ class SmoothInterveneController:
                 f"expected {expected_shape} for stage {stage_id}"
             )
         actions = hold_actions.unsqueeze(1).expand(-1, self.num_action_chunks, -1)
-        return actions.contiguous()
+        return PolicyInput(obs=obs, external_actions=actions.contiguous())
 
     def on_chunk_done(
         self,

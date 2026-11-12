@@ -100,21 +100,13 @@ class EmbodiedRunner:
         self.rollout_channel = Channel.create("Rollout")
         # Trajectory assembly runs on the channel worker, so neither the env
         # nor the rollout worker has to hold partial trajectory state.
-        # With smooth_intervene the env is the only producer and sends finished
-        # episodes, so the channel sits next to it and has nothing to join.
-        self.smooth_intervene = bool(
-            self.cfg.env.get("train", {}).get("smooth_intervene", False)
-        )
         self.actor_channel = Channel.create(
             "Actor",
-            collector=None
-            if self.smooth_intervene
-            else select_trajectory_collector(self.cfg),
+            collector=select_trajectory_collector(self.cfg),
             dispatcher=select_trajectory_dispatcher(self.cfg),
             cfg=self.cfg,
-            producers=[self.env] if self.smooth_intervene else [self.rollout],
+            producers=[self.rollout],
             consumers=[self.actor],
-            maxsize=1 if self.smooth_intervene else 0,
         )
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
@@ -496,11 +488,6 @@ class EmbodiedRunner:
         self.logger.info(f"Closed profiling window at step {step_idx}")
 
     def run(self):
-        if self.smooth_intervene:
-            raise ValueError(
-                "env.train.smooth_intervene needs the async runner "
-                "(runner.enable_decoupled_mode); the sync EmbodiedRunner rejects it."
-            )
         if self.cfg.runner.get("use_training_pipeline", False):
             return self.run_pipeline()
 

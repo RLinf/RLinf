@@ -427,9 +427,6 @@ PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数�
 
 .. code-block:: yaml
 
-   runner:
-     enable_decoupled_mode: True
-
    algorithm:
      dagger:
        only_save_expert: True
@@ -460,7 +457,7 @@ PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数�
 
 ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
 
-``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿，并要求 ``runner.enable_decoupled_mode: True``。如果一个 chunk 的最后一帧仍由人工接管，env worker 会直接用 hold 动作运行下一个 chunk，不再访问 rollout；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。env worker 自行录制 episode，并在后台把完成的 episode 上传给 actor，采集不会等待上行带宽；上传跟不上时会丢弃最旧的未发送 episode（``online_lerobot.max_unsent_episodes``，默认 4）并输出 error 日志。episode 结束前会一直保存在内存中。该模式只接受 PICO：``env.train.teleop`` 的每一项都必须是 pico。该模式要求 ``only_save_expert: True``，每个 env worker pipeline stage 只运行一个环境，且同步 runner 不支持。
+``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式只接受 PICO：``env.train.teleop`` 的每一项都必须是 pico，且当前要求每个 env worker pipeline stage 只运行一个环境。
 
 ``only_success: True`` 表示失败 rollout 会被丢弃，只保存成功 episode；
 ``only_save_expert: True`` 仍会归档完整的成功 episode，但训练只采样 action chunk

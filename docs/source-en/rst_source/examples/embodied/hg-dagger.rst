@@ -288,7 +288,6 @@ your cluster, cameras, target pose, and checkpoints:
                node_rank: 1
 
    runner:
-     enable_decoupled_mode: True
      ckpt_path: "/path/to/sft_checkpoint/full_weights.pt"
 
    algorithm:
@@ -345,7 +344,7 @@ your cluster, cameras, target pose, and checkpoints:
 
 ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
 
-``smooth_intervene: True`` runs the next action chunk on the env worker from the hold action, without contacting the rollout, when PICO intervention continues through the last frame of a chunk. Normal inference resumes after ``grip`` is released or the episode ends. It requires ``runner.enable_decoupled_mode: True``, and the env worker records episodes itself and uploads finished ones to the actor in the background; if the uplink cannot keep up, the oldest unsent episode is dropped (``online_lerobot.max_unsent_episodes``, default 4). It is PICO-only: ``env.train.teleop`` must be ``pico``. It also requires ``only_save_expert: True`` and one environment per env-worker pipeline stage. ``env.eval.teleop: none`` keeps evaluation policy-only.
+``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.teleop`` must be ``pico``. It also requires one environment per env-worker pipeline stage. ``env.eval.teleop: none`` keeps evaluation policy-only.
 
 ``only_success: True`` discards failed episodes. ``only_save_expert: True`` keeps
 the complete successful episode in the LeRobot archive, but restricts the online

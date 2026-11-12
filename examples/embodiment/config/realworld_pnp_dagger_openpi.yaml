@@ -38,8 +38,6 @@ cluster:
 
 runner:
   task_type: embodied
-  # env.train.smooth_intervene needs the decoupled env/rollout mode.
-  enable_decoupled_mode: True
   logger:
     log_path: "../results"
     project_name: rlinf
@@ -58,8 +56,8 @@ runner:
 
 algorithm:
   dagger:
-    # Train only on action chunks whose frames are all human-driven. Required by
-    # env.train.smooth_intervene, so hold frames never become training targets.
+    # Train on every frame from successful episodes. Human-intervened frames
+    # still carry intervene_flag=True and store the executed expert action.
     only_save_expert: True
     online_lerobot:
       enabled: True

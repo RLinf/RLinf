@@ -139,7 +139,6 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             rollout_channel=self.rollout_channel,
             reward_channel=self.reward_channel,
             metric_channel=self.env_metric_channel,
-            actor_channel=self.actor_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
