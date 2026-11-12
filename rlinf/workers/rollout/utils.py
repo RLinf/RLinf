@@ -20,7 +20,7 @@ import typing
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.data.schema.reasoning_requests import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
@@ -34,7 +34,6 @@ if typing.TYPE_CHECKING:
 
     from rlinf.scheduler import Cluster
     from rlinf.scheduler.worker import WorkerGroup
-    from rlinf.utils.placement import HybridComponentPlacement
 
 
 COLOR_END = "\033[0m"
@@ -191,12 +190,25 @@ class DisaggRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
+        rollout_sp_degree: int = 1,
     ) -> dict[int, list[tuple[int, int]]]:
         """Map actor 1D rank to a list of rollout transmission 2D ranks
-        ``(engine_id, rank_in_engine)``. Each rollout rank is assigned to
-        exactly one actor rank; ``rank_in_engine`` (the rollout tp position)
-        drives the weight sharding coords, independent of actor_tp.
+        ``(engine_id, rank_in_engine)``. Each receiver has exactly one sender.
+        Each instance has ``rollout_tp_size * rollout_sp_degree`` model ranks.
+        SP defaults to 1 for SRT.
         """
+        ranks_per_instance = rollout_tp_size * rollout_sp_degree
+        if (
+            rollout_tp_size < 1
+            or rollout_sp_degree < 1
+            or rollout_world_size % ranks_per_instance
+        ):
+            raise ValueError(
+                f"Expected positive rollout_tp_size={rollout_tp_size} and "
+                f"rollout_sp_degree={rollout_sp_degree}, with "
+                f"rollout_world_size={rollout_world_size} divisible by "
+                f"TP*SP={ranks_per_instance}"
+            )
         rank_map = {}
         for actor_rank in range(actor_world_size):
             targets = []
@@ -216,13 +228,13 @@ class DisaggRankMapper(RankMapper):
                     )
                 for i in range(num_targets):
                     rollout_rank = start + i
-                    engine_id = rollout_rank // rollout_tp_size
-                    rank_in_engine = rollout_rank % rollout_tp_size
+                    engine_id = rollout_rank // ranks_per_instance
+                    rank_in_engine = rollout_rank % ranks_per_instance
                     targets.append((engine_id, rank_in_engine))
             elif actor_rank < rollout_world_size:
                 # Each actor rank sends to one rollout rank.
-                engine_id = actor_rank // rollout_tp_size
-                rank_in_engine = actor_rank % rollout_tp_size
+                engine_id = actor_rank // ranks_per_instance
+                rank_in_engine = actor_rank % ranks_per_instance
                 targets.append((engine_id, rank_in_engine))
             # else: actor has more ranks than rollout, no target.
             rank_map[actor_rank] = targets
@@ -236,6 +248,7 @@ class DisaggRankMapper(RankMapper):
         actor_world_size: int,
         rollout_tp_size: int,
         rollout_world_size: int,
+        rollout_sp_degree: int = 1,
     ) -> dict[tuple[int, int], int]:
         """Inverse of get_actor_rank_to_rollout_rank_map."""
         rank_map = cls.get_actor_rank_to_rollout_rank_map(
@@ -244,6 +257,7 @@ class DisaggRankMapper(RankMapper):
             actor_world_size,
             rollout_tp_size,
             rollout_world_size,
+            rollout_sp_degree=rollout_sp_degree,
         )
         result_map = {}
         for actor_rank, rollout_2d_ranks in rank_map.items():
@@ -397,62 +411,44 @@ def get_embodied_rollout_worker(cfg: DictConfig) -> type[Worker]:
     )
 
 
-def launch_embodied_sglang_server(
+def launch_embodied_sglang_router(
     cfg: DictConfig,
     cluster: "Cluster",
-    component_placement: "HybridComponentPlacement",
     rollout_group: "WorkerGroup",
-) -> tuple["WorkerGroup | None", "WorkerGroup | None"]:
-    """Launch SGLang servers for embodied rollout and distribute their URLs.
+) -> "WorkerGroup | None":
+    """Launch a router for initialized embodied servers and distribute its URL.
 
-    Args:
-        cfg: Embodied config selecting rollout.rollout_backend.
-        cluster: Cluster on which to launch serving workers.
-        component_placement: Placement used by the rollout component.
-        rollout_group: Rollout workers that receive the server URLs.
-
-    Returns:
-        Server and router groups, both None for backends without a server.
-        The caller owns returned groups and must stop them after the run.
-
-    Raises:
-        ValueError: SGLang server launch is disabled.
+    Returns None for other backends or when launch_router is disabled.
+    The caller owns the returned group and must stop it after the run.
     """
-    if cfg.rollout.get("rollout_backend", "huggingface") != "sglang":
-        return None, None
+    if cfg.rollout.get("rollout_backend") != "sglang" or not cfg.rollout.sglang.get(
+        "launch_router", False
+    ):
+        return None
 
     from rlinf.workers.rollout.sglang import launch_sglang_router_and_server
 
-    if not cfg.rollout.sglang.get("launch_server", True):
-        raise ValueError(
-            "SGLang embodied rollout requires rollout.sglang.launch_server=true"
-        )
-    only_eval = cfg.runner.get("only_eval", False) or (
-        cfg.runner.get("task_type") == "embodied_eval"
+    server_urls = rollout_group.get_server_url().wait()
+    router_server_args = OmegaConf.create(
+        OmegaConf.to_container(cfg.rollout.sglang, resolve=True)
     )
-    server_group, router_group = launch_sglang_router_and_server(
+    router_server_args.launch_server = False
+    _, router_group = launch_sglang_router_and_server(
         cfg,
         cluster,
-        rollout_hardware_ranks=component_placement.get_hardware_ranks("rollout")
-        if only_eval
-        else None,
-        router_server_args=cfg.rollout.sglang,
-        placement_strategy=None
-        if only_eval
-        else component_placement.get_strategy("rollout"),
+        rollout_hardware_ranks=None,
+        router_server_args=router_server_args,
     )
     try:
-        rollout_group.set_sglang_server_urls(
-            server_group.get_server_url().wait()
+        for url in server_urls:
+            router_group.register_server(url).wait()
+        rollout_group.set_sglang_router_url(
+            router_group.get_router_url().wait()[0]
         ).wait()
     except BaseException:
-        try:
-            if router_group is not None:
-                router_group.stop().wait()
-        finally:
-            server_group.stop().wait()
+        router_group.stop().wait()
         raise
-    return server_group, router_group
+    return router_group
 
 
 class RunningStatusManager:

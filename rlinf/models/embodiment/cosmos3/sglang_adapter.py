@@ -170,11 +170,15 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 "Install the modified SGLang 0.5.19 source in the serving environment."
             )
         server = cfg.rollout.sglang.server
-        if any(
-            int(server.get(key, 1)) != 1
-            for key in ("num_gpus", "tp_size", "sp_degree", "cfg_parallel_degree")
+        sp_degree = int(server.get("sp_degree", 1))
+        if sp_degree > 1 and (
+            int(server.get("ulysses_degree", 1)) != sp_degree
+            or int(server.get("ring_degree", 1)) != 1
+            or int(server.get("kv_gather_degree", 1) or 1) != 1
         ):
-            raise ValueError("Cosmos3 training requires one GPU per serving engine")
+            raise ValueError(
+                "Cosmos3 action SP requires ulysses_degree=sp_degree and ring_degree=1"
+            )
 
     @staticmethod
     def map_weight_name(name: str) -> str | None:

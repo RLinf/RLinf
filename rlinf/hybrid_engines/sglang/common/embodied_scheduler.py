@@ -72,10 +72,8 @@ class Scheduler(_Scheduler):
             self._loaded_checkpoint = checkpoint
             self._weights_ready = True
             return
-        if self.server_args.num_gpus != 1:
-            raise ValueError(
-                "Embodied weight synchronization requires one GPU per server"
-            )
+        if self.server_args.dp_size != 1:
+            raise ValueError("Use separate embodied server instances for DP replicas")
         from rlinf.models.embodiment.sglang_adapter import get_sglang_adapter_cls
 
         self._weights_ready = False
@@ -95,19 +93,22 @@ class Scheduler(_Scheduler):
             return
         from rlinf.workers.rollout.utils import DisaggRankMapper
 
-        tp_size = self.server_args.tp_size
-        tp_rank = self.worker.tp_group.rank
+        ranks_per_instance = placement.rollout_gpus_per_process
+        if ranks_per_instance != self.server_args.num_gpus:
+            raise ValueError("Server GPU count does not match rollout placement")
+        rank = self.worker.rank
         self._rlinf_worker = Worker(
-            parent_address=parent_address, world_size=tp_size, rank=tp_rank
+            parent_address=parent_address, world_size=ranks_per_instance, rank=rank
         )
         rank_map = DisaggRankMapper.get_rollout_rank_to_actor_rank_map(
             actor_tp_size=1,
             actor_pp_size=1,
             actor_world_size=placement.get_world_size("actor"),
-            rollout_tp_size=tp_size,
-            rollout_world_size=placement.get_world_size("rollout"),
+            rollout_tp_size=placement.rollout_tp_size,
+            rollout_world_size=placement.rollout_world_size,
+            rollout_sp_degree=placement.rollout_sp_degree,
         )
-        self.actor_weight_rank = rank_map[(model_instance_id, tp_rank)]
+        self.actor_weight_rank = rank_map[(model_instance_id, rank)]
         self._actor_group_name = config.actor.group_name
         self._weights_ready = False
 
@@ -132,6 +133,11 @@ class Scheduler(_Scheduler):
                 "Restart the server after a failed weight synchronization"
             )
         self._weights_ready = False
+        import torch.distributed as dist
+        from sglang.multimodal_gen.runtime.distributed import get_replica_group
+
+        version = None
+        error = None
         try:
             self.weight_target.begin_sync(full=True)
             version = receive_hf_weights(
@@ -145,9 +151,21 @@ class Scheduler(_Scheduler):
                 raise ValueError(
                     "Embodied actor weight buckets must include weight_version"
                 )
-        except BaseException:
+        except Exception as exc:
+            error = f"rank {self.worker.rank}: {type(exc).__name__}: {exc}"
+        replica = get_replica_group()
+        results = [None] * replica.world_size
+        try:
+            dist.all_gather_object(results, (version, error), group=replica.cpu_group)
+        except Exception:
             self._sync_failed = True
             raise
+        errors = [message for _, message in results if message is not None]
+        if errors or len({v for v, _ in results}) != 1:
+            self._sync_failed = True
+            raise RuntimeError(
+                f"Embodied replica weight sync failed: {errors or results}; restart server"
+            )
         self._weights_ready = True
         return OutputBatch(output={"version": version})
 

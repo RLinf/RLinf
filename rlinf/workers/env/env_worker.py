@@ -47,7 +47,7 @@ from rlinf.utils.nested_dict_process import (
     update_nested_cfg,
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
-from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.placement import EmbodiedComponentPlacement
 
 
 class EnvWorker(Worker):
@@ -78,7 +78,7 @@ class EnvWorker(Worker):
         self.last_intervened_info_list = []
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
         self._trajectory_step = 0
-        self._component_placement = HybridComponentPlacement(cfg, Cluster())
+        self._component_placement = EmbodiedComponentPlacement(cfg, Cluster())
 
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)

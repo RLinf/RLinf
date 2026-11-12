@@ -60,9 +60,7 @@ from rlinf.utils.nested_dict_process import (
     split_dict_to_chunk,
     trim_nested_tensor_time_dim,
 )
-from rlinf.utils.placement import (
-    HybridComponentPlacement,
-)
+from rlinf.utils.placement import EmbodiedComponentPlacement
 from rlinf.utils.utils import (
     add_loss_weights,
     clear_memory,
@@ -97,7 +95,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.cfg = cfg
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
-        self._component_placement = HybridComponentPlacement(cfg, Cluster())
+        self._component_placement = EmbodiedComponentPlacement(cfg, Cluster())
 
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
@@ -145,13 +143,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.rollout_backend == "sglang":
             from rlinf.workers.rollout.utils import DisaggRankMapper
 
+            placement = self._component_placement
             self._sglang_weight_targets = (
                 DisaggRankMapper.get_actor_rank_to_rollout_rank_map(
                     actor_tp_size=1,
                     actor_pp_size=1,
                     actor_world_size=self._world_size,
-                    rollout_tp_size=1,
-                    rollout_world_size=len(self._rollout_all_ranks),
+                    rollout_tp_size=placement.rollout_tp_size,
+                    rollout_world_size=placement.rollout_world_size,
+                    rollout_sp_degree=placement.rollout_sp_degree,
                 )[self._rank]
             )
 

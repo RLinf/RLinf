@@ -62,6 +62,12 @@ class SGLangEmbodiedAdapter:
         if mode == "train" and not self.supports_training:
             raise ValueError(f"{type(self).__name__} does not support training rollout")
         payload, state = self.build_request(env_obs, mode=mode)
+        return self.send_request(client, payload, state, mode=mode, **http_options)
+
+    def send_request(self, client, payload, state, mode="eval", **http_options):
+        """Send a prepared request and parse its response using the retained state."""
+        if mode == "train" and not self.supports_training:
+            raise ValueError(f"{type(self).__name__} does not support training rollout")
         training = mode == "train"
         response = client.post(
             self.rollout_path if training else self.action_path,

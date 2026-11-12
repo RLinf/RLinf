@@ -21,11 +21,11 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
 from rlinf.scheduler import Cluster
-from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.placement import EmbodiedComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.utils import (
     get_embodied_rollout_worker,
-    launch_embodied_sglang_server,
+    launch_embodied_sglang_router,
 )
 
 mp.set_start_method("spawn", force=True)
@@ -42,7 +42,7 @@ def main(cfg) -> None:
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
-    component_placement = HybridComponentPlacement(cfg, cluster)
+    component_placement = EmbodiedComponentPlacement(cfg, cluster)
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
@@ -69,19 +69,16 @@ def main(cfg) -> None:
         env=env_group,
     )
 
-    server_group = None
     router_group = None
     try:
-        server_group, router_group = launch_embodied_sglang_server(
-            cfg, cluster, component_placement, rollout_group
-        )
         runner.init_workers()
+        router_group = launch_embodied_sglang_router(cfg, cluster, rollout_group)
         runner.run()
     finally:
         if router_group is not None:
             router_group.stop().wait()
-        if server_group is not None:
-            server_group.stop().wait()
+        if cfg.rollout.get("rollout_backend") == "sglang":
+            rollout_group.stop().wait()
 
 
 if __name__ == "__main__":

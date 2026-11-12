@@ -25,6 +25,8 @@ from rlinf.scheduler import (
     FlexiblePlacementStrategy,
     PackedPlacementStrategy,
 )
+from rlinf.scheduler.cluster import NodeGroupInfo
+from rlinf.scheduler.placement.placement import MultiNodeGroupResolver
 
 
 class PlacementMode(Enum):
@@ -254,6 +256,143 @@ class HybridComponentPlacement(ComponentPlacement):
         """
         super().__init__(config, cluster)
         self._placement_mode = PlacementMode.HYBRID
+
+
+class EmbodiedComponentPlacement(HybridComponentPlacement):
+    """Place embodied components according to the rollout backend.
+
+    Hugging Face and other local backends retain hybrid placement. SGLang
+    uses one rollout process per node-local TP/SP server instance.
+    """
+
+    def __init__(self, config: DictConfig, cluster: Cluster):
+        self.rollout_backend = config.rollout.get("rollout_backend")
+        self._rollout_tp_size = 1
+        self._rollout_sp_degree = 1
+        if self.rollout_backend != "sglang":
+            super().__init__(config, cluster)
+            return
+
+        server = config.rollout.sglang.server
+        self._rollout_tp_size = int(server.get("tp_size", 1))
+        self._rollout_sp_degree = int(server.get("sp_degree", 1))
+        if min(self._rollout_tp_size, self._rollout_sp_degree) < 1:
+            raise ValueError("Expected positive SGLang tp_size and sp_degree")
+        if int(server.get("nnodes", 1)) != 1:
+            raise ValueError(
+                "Embodied SGLang model instances must fit on one node; "
+                "use separate server instances for cross-node DP"
+            )
+        if (
+            int(server.get("dp_size", 1)) != 1
+            or int(server.get("cfg_parallel_degree", 1)) != 1
+        ):
+            raise ValueError("Embodied SGLang requires dp_size=cfg_parallel_degree=1")
+        configured_gpus = server.get("num_gpus")
+        width = self.rollout_gpus_per_process
+        if configured_gpus is not None and int(configured_gpus) != width:
+            raise ValueError(
+                f"Expected server.num_gpus=TP*SP={width}, got {configured_gpus}; "
+                "omit num_gpus to derive it from TP/SP"
+            )
+        super().__init__(config, cluster)
+        if not isinstance(self.get_strategy("rollout"), FlexiblePlacementStrategy):
+            raise ValueError("Embodied SGLang rollout requires accelerator placement")
+
+    def _parse_component_placement(
+        self,
+        cluster: Cluster,
+        component_placement: str | DictConfig,
+        component_names: list[str],
+    ) -> None:
+        if (
+            self.rollout_backend == "sglang"
+            and "rollout" in component_names
+            and len(component_names) > 1
+        ):
+            super()._parse_component_placement(
+                cluster,
+                component_placement,
+                [name for name in component_names if name != "rollout"],
+            )
+            component_names = ["rollout"]
+        super()._parse_component_placement(
+            cluster, component_placement, component_names
+        )
+
+    def _gen_resource_placement(
+        self,
+        rank_map: dict[tuple[int, ...], list[int]],
+        node_groups: list[NodeGroupInfo],
+        component_names: list[str],
+    ) -> FlexiblePlacementStrategy:
+        if self.rollout_backend != "sglang" or component_names != ["rollout"]:
+            return super()._gen_resource_placement(rank_map, node_groups, component_names)
+
+        resolver = MultiNodeGroupResolver(node_groups)
+        width = self.rollout_gpus_per_process
+        entry = next(
+            entry
+            for names, entry in self._placement_config.items()
+            if "rollout" in [name.strip() for name in str(names).split(",")]
+        )
+        rank_spec = entry.placement if isinstance(entry, DictConfig) else entry
+        if ":" not in str(rank_spec):
+            gpu_groups: dict[int, list[int]] = {}
+            for ranks in rank_map:
+                for rank in ranks:
+                    node_rank = resolver.get_node_by_hardware_rank(rank).node_rank
+                    gpu_groups.setdefault(node_rank, []).append(rank)
+            if any(len(ranks) % width for ranks in gpu_groups.values()):
+                raise ValueError(
+                    f"Each node's rollout GPUs must be divisible by TP*SP={width}; "
+                    f"got {gpu_groups}. Model instances must fit on one node."
+                )
+            instance_gpus = [
+                tuple(ranks[start : start + width])
+                for ranks in gpu_groups.values()
+                for start in range(0, len(ranks), width)
+            ]
+            # The parent registers both strategy and process count from this map.
+            rank_map.clear()
+            rank_map.update({ranks: [i] for i, ranks in enumerate(instance_gpus)})
+
+        assigned_gpus: set[tuple[int, int]] = set()
+        for ranks in self._rank_map_to_process_resources_map(rank_map).values():
+            if len(ranks) != width:
+                raise ValueError(
+                    f"Explicit rollout placement must assign {width} GPUs per "
+                    f"server worker, got {ranks}"
+                )
+            devices = [
+                (
+                    resolver.get_node_by_hardware_rank(rank).node_rank,
+                    resolver.get_local_hardware_rank(rank),
+                )
+                for rank in ranks
+            ]
+            if len({node for node, _ in devices}) != 1:
+                raise ValueError("Each embodied SGLang server must fit on one node")
+            if len(set(devices)) != width or assigned_gpus.intersection(devices):
+                raise ValueError("SGLang server instances must use disjoint GPUs")
+            assigned_gpus.update(devices)
+        return super()._gen_resource_placement(rank_map, node_groups, component_names)
+
+    @property
+    def rollout_tp_size(self) -> int:
+        return self._rollout_tp_size
+
+    @property
+    def rollout_sp_degree(self) -> int:
+        return self._rollout_sp_degree
+
+    @property
+    def rollout_gpus_per_process(self) -> int:
+        return self.rollout_tp_size * self.rollout_sp_degree
+
+    @property
+    def rollout_world_size(self) -> int:
+        return self.get_world_size("rollout") * self.rollout_gpus_per_process
 
 
 class ModelParallelComponentPlacement(ComponentPlacement):

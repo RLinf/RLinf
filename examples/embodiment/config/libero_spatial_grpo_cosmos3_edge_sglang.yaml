@@ -95,10 +95,15 @@ rollout:
   model: ${actor.model}
   sglang:
     serving_mode: embodied
-    group_name: SGLangServerGroup
-    server_type: embodied
+    backend_type: server
     launch_server: true
     launch_router: false
+    router_group_name: EmbodiedSGLangRouterGroup
+    router_node_group: sglang
+    router:
+      policy: round_robin
+      request_timeout_secs: 600
+      disable_retries: true
     http_timeout_s: 600
     http_max_retries: 0
     seed: ${rollout.model.seed}
@@ -107,7 +112,6 @@ rollout:
       backend: sglang
       pipeline_class_name: Cosmos3OmniDiffusersPipeline
       tp_size: 1
-      num_gpus: 1
       attention_backend: FA
       dit_cpu_offload: false
       cfg_parallel_degree: 1

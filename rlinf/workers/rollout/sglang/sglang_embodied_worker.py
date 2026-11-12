@@ -14,9 +14,10 @@
 
 """Drive embodied training and evaluation through SGLang Diffusion servers.
 
-Training owns a server backend; evaluation can use driver-provided server URLs.
+Training and evaluation own the same server backend and direct control client.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal, Optional
 
 import torch
@@ -30,7 +31,7 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
-from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.placement import EmbodiedComponentPlacement
 
 
 class SGLangEmbodiedWorker(Worker):
@@ -39,7 +40,6 @@ class SGLangEmbodiedWorker(Worker):
     def __init__(
         self,
         config: DictConfig,
-        placement: Optional[HybridComponentPlacement] = None,
         config_rollout: Optional[DictConfig] = None,
     ):
         Worker.__init__(self)
@@ -53,10 +53,10 @@ class SGLangEmbodiedWorker(Worker):
         self.model_cfg = self.cfg_rollout.model
         self.sglang_adapter = None
         self.http_client = None
+        self._router_client = None
         self.sglang_server_url = None
-        self._sglang_server_urls = None
         self._backend = None
-        self._placement = placement
+        self._placement = EmbodiedComponentPlacement(config, Cluster())
         self.only_eval = config.runner.get("only_eval", False)
         self._weights_ready = False
         self.version = 0
@@ -116,36 +116,6 @@ class SGLangEmbodiedWorker(Worker):
         if not self.only_eval:
             self.sglang_adapter.validate_training(self.cfg)
         sglang_cfg = self.cfg_rollout.sglang
-        if self._placement is None:
-            self._placement = HybridComponentPlacement(self.cfg, Cluster())
-        if self._sglang_server_urls is None:
-            from rlinf.workers.rollout.backend import RlinfContext
-            from rlinf.workers.rollout.sglang.backends import SGLangServerBackend
-
-            if not sglang_cfg.get("launch_server", True):
-                raise ValueError("Worker-owned SGLang requires launch_server=true")
-            self._backend = SGLangServerBackend(
-                OmegaConf.to_container(sglang_cfg.server, resolve=True),
-                RlinfContext(
-                    parent_address=self.worker_address,
-                    weight_reload=None if self.only_eval else "sync",
-                    placement=self._placement,
-                    cfg=self.cfg,
-                    model_instance_id=self._rank,
-                ),
-                acquire_free_port=self.acquire_free_port,
-                log_info=self.log_info,
-                log_error=self.log_error,
-                server_type="embodied",
-            )
-            await self._backend.initialize()
-            self.http_client = self._backend.http_client
-            self.sglang_server_url = self._backend.server_url
-        else:
-            from rlinf.utils.http_client import InferenceHTTPClient
-
-            self._init_sglang_server()
-            self.http_client = InferenceHTTPClient(self.sglang_server_url)
         self._http_timeout_s = float(
             sglang_cfg.get("http_timeout_s", sglang_cfg.get("timeout_s", 120.0))
         )
@@ -153,51 +123,70 @@ class SGLangEmbodiedWorker(Worker):
             sglang_cfg.get("http_max_retries", 5 if self.only_eval else 0)
         )
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
-        checkpoint = self.cfg.runner.get("ckpt_path")
-        if self._backend is None and (not self.only_eval or checkpoint):
-            from rlinf.hybrid_engines.sglang.common.io_struct import TaskMethodInput
+        self._max_concurrent_requests = int(
+            sglang_cfg.get("max_concurrent_requests", 1)
+        )
+        if self._max_concurrent_requests < 1:
+            raise ValueError("SGLang max_concurrent_requests must be positive")
+        if not self.only_eval and self._http_max_retries != 0:
+            raise ValueError("SGLang training requires http_max_retries=0")
+        from rlinf.workers.rollout.backend import RlinfContext
+        from rlinf.workers.rollout.sglang.backends import make_backend
 
-            await self.http_client.async_run_task_method(
-                TaskMethodInput(
-                    "init_rlinf_worker",
-                    args=(
-                        self.worker_address,
-                        None if self.only_eval else "sync",
-                        self._placement,
-                        self.cfg,
-                        self._rank,
-                    ),
-                )
+        if not sglang_cfg.get("launch_server", True):
+            raise ValueError("Worker-owned SGLang requires launch_server=true")
+        from rlinf.scheduler.hardware import AcceleratorUtil
+
+        visible_devices = AcceleratorUtil.get_visible_devices(self._accelerator_type)
+        num_gpus = self._placement.rollout_gpus_per_process
+        if len(visible_devices) != num_gpus:
+            raise ValueError(
+                f"SGLang server requires {num_gpus} assigned GPUs, "
+                f"got {visible_devices}; group rollout placement per instance"
             )
+        server_args = OmegaConf.to_container(sglang_cfg.server, resolve=True)
+        server_args["num_gpus"] = num_gpus
+        self._backend = make_backend(
+            sglang_cfg.get("backend_type", "server"),
+            server_args,
+            RlinfContext(
+                parent_address=self.worker_address,
+                weight_reload=None if self.only_eval else "sync",
+                placement=self._placement,
+                cfg=self.cfg,
+                model_instance_id=self._rank,
+            ),
+            acquire_free_port=self.acquire_free_port,
+            log_info=self.log_info,
+            log_error=self.log_error,
+            server_type="embodied",
+            bind_host="0.0.0.0"
+            if sglang_cfg.get("launch_router", False)
+            else "127.0.0.1",
+            advertise_host=None
+            if sglang_cfg.get("launch_router", False)
+            else "127.0.0.1",
+        )
+        await self._backend.initialize()
+        self.http_client = self._backend.http_client
+        self.sglang_server_url = self._backend.server_url
         if not self.only_eval:
             torch.manual_seed(int(self.model_cfg.get("seed", 1140)) + self._rank)
         self._weights_ready = self.only_eval
 
-    def set_sglang_server_urls(self, urls) -> None:
-        """Receive the sglang server URLs the driver launched."""
-        self._sglang_server_urls = list(urls)
+    def get_server_url(self) -> str:
+        """Return this instance's direct URL for router registration."""
+        if self.sglang_server_url is None:
+            raise RuntimeError("Initialize the SGLang server before requesting its URL")
+        return self.sglang_server_url
 
-    def _init_sglang_server(self) -> None:
-        """Pick the pre-launched sglang server URL assigned to this rank."""
-        urls = self._sglang_server_urls
-        if not urls:
-            raise RuntimeError(
-                "sglang server URLs not set; the driver must call "
-                "rollout_group.set_sglang_server_urls(urls) (after "
-                "launch_sglang_router_and_server) before init_workers()."
-            )
-        if not self.only_eval and (
-            len(urls) != self._world_size or len(set(urls)) != len(urls)
-        ):
-            raise ValueError(
-                "SGLang training requires one distinct server per rollout worker, "
-                f"got {len(set(urls))} distinct URLs for {self._world_size} workers"
-            )
-        self.sglang_server_url = urls[int(self._rank) % len(urls)]
-        self.log_info(
-            f"sglang server assigned: rank={self._rank} -> "
-            f"{self.sglang_server_url} ({len(urls)} server(s))"
-        )
+    async def set_sglang_router_url(self, url: str) -> None:
+        """Route generation through the router; retain direct control requests."""
+        from rlinf.utils.http_client import InferenceHTTPClient
+
+        if self._router_client is not None:
+            await self._router_client.aclose()
+        self._router_client = InferenceHTTPClient(url)
 
     @staticmethod
     def _infer_env_batch_size(obs_batch: dict[str, Any]) -> int:
@@ -253,10 +242,36 @@ class SGLangEmbodiedWorker(Worker):
         groups = request_groups(env_obs) if request_groups is not None else None
         if groups is None or len(groups) <= 1:
             return self._request_actions(env_obs, mode)
-        outputs = [
-            self._request_actions(select_env_rows(env_obs, group), mode)
-            for group in groups
-        ]
+        if self._max_concurrent_requests == 1:
+            outputs = [
+                self._request_actions(select_env_rows(env_obs, group), mode)
+                for group in groups
+            ]
+        else:
+            # Prepare in env order so random seeds and replay states are stable.
+            requests = [
+                self.sglang_adapter.build_request(
+                    select_env_rows(env_obs, group), mode=mode
+                )
+                for group in groups
+            ]
+            with ThreadPoolExecutor(
+                max_workers=min(self._max_concurrent_requests, len(groups))
+            ) as executor:
+                futures = [
+                    executor.submit(
+                        self.sglang_adapter.send_request,
+                        self._router_client or self.http_client,
+                        payload,
+                        state,
+                        mode=mode,
+                        timeout_s=self._http_timeout_s,
+                        max_retries=self._http_max_retries,
+                        retry_backoff_s=self._http_retry_backoff_s,
+                    )
+                    for payload, state in requests
+                ]
+                outputs = [future.result() for future in futures]
         order = [index for group in groups for index in group]
         actions = gather_env_rows([actions for actions, _ in outputs], order)
         info = gather_env_rows([info for _, info in outputs], order)
@@ -266,7 +281,7 @@ class SGLangEmbodiedWorker(Worker):
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         return self.sglang_adapter.request_actions(
-            self.http_client,
+            self._router_client or self.http_client,
             env_obs,
             mode=mode,
             timeout_s=self._http_timeout_s,
@@ -326,24 +341,21 @@ class SGLangEmbodiedWorker(Worker):
         if self.only_eval:
             raise RuntimeError("Standalone evaluation has no actor to synchronize")
         self._weights_ready = False
-        from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
-
-        result = (
-            await self._backend.sync_weights()
-            if self._backend is not None
-            else await self.http_client.async_sync_hf_weight(SyncHFWeightInput())
-        )
+        result = await self._backend.sync_weights()
         self.version = int(result["version"])
         self._weights_ready = True
 
     async def stop(self) -> None:
         """Stop the server owned by this worker and release its HTTP client."""
+        self._weights_ready = False
+        self.sglang_server_url = None
         if self._backend is not None:
             self._backend.shutdown()
             self._backend = None
-        elif self.http_client is not None:
-            await self.http_client.aclose()
         self.http_client = None
+        if self._router_client is not None:
+            await self._router_client.aclose()
+            self._router_client = None
 
     def set_global_step(self, global_step: int) -> None:
         """Record the runner step independently of the serving weight version."""

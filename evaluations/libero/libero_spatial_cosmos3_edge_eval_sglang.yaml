@@ -64,6 +64,7 @@ rollout:
 
   sglang:
     serving_mode: "embodied"
+    backend_type: server
     http_timeout_s: 600
     http_max_retries: 5
     http_retry_backoff_s: 1.0
@@ -72,15 +73,16 @@ rollout:
     pipeline_parallel_size: 1
     launch_server: true
     launch_router: false
-    server_type: embodied
-    group_name: SGLangServerGroup
     router_group_name: SGLangRouterGroup
+    router:
+      policy: round_robin
+      request_timeout_secs: 600
+      disable_retries: true
     server:
       model_path: ${rollout.model.model_path}
       backend: sglang
       pipeline_class_name: Cosmos3OmniPipeline
       tp_size: ${..tensor_parallel_size}
-      num_gpus: 1  # launcher/placement key: should be TP size * PP size * CFG degree * SP degree
       attention_backend: FA  # FA or TORCH_SDPA
       dit_cpu_offload: false
       cfg_parallel_degree: 1

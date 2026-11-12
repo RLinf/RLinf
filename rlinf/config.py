@@ -33,6 +33,7 @@ from rlinf.envs.layout import EnvLayout, EnvSpec
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
+    EmbodiedComponentPlacement,
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
     PlacementMode,
@@ -1433,6 +1434,16 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
 def validate_embodied_cfg(cfg):
     with open_dict(cfg.rollout):
         cfg.rollout.rollout_backend = cfg.rollout.get("rollout_backend", None)
+    if cfg.rollout.rollout_backend == "sglang":
+        with open_dict(cfg.rollout.sglang):
+            cfg.rollout.sglang.backend_type = cfg.rollout.sglang.get(
+                "backend_type", "server"
+            )
+        if cfg.rollout.sglang.backend_type != "server":
+            raise ValueError(
+                "Embodied SGLang requires backend_type='server', got "
+                f"{cfg.rollout.sglang.backend_type!r}"
+            )
     only_eval = (
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
@@ -1812,7 +1823,7 @@ def validate_embodied_cfg(cfg):
         )
 
     # process num-envs
-    component_placement = HybridComponentPlacement(cfg, Cluster())
+    component_placement = EmbodiedComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
     if model_type == SupportedModel.PSI0:
