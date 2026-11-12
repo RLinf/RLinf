@@ -347,6 +347,8 @@ RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
 
 - 当前维护中的 RLinf N1.7 RL 示例为 ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``。
 - 当前 RL 设置使用 PPO 且 ``algorithm.loss_type: actor_critic``，因此训练时必须保证 ``actor.model.add_value_head`` 为 ``True``。
+- 设置 ``rl_head_config.detach_critic_input: true`` 时，value head 使用已分离梯度的特征，其 loss 不会更新共享的 policy 特征；设为 ``false`` 则保留联合梯度传播。
+- 对于 BF16 N1.7 模型，加载器会在各 worker 进程中关闭 ``torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction``；此进程级设置持续影响该 worker 内所有 CUDA BF16 GEMM，保留更高精度的 GEMM 中间归约，以处理已观察到的 rollout 与 actor 批量大小不同引起的 backbone 输出漂移。此设置不改变参数和优化器状态的存储类型。
 - 当前仓库中经过验证的 LIBERO 示例使用 ``num_action_chunks: 16`` 和 ``denoising_steps: 4``。
 
 ---------------

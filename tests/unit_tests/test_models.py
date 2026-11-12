@@ -3116,6 +3116,107 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
+@pytest.mark.parametrize(
+    ("detach_critic_input", "use_vlm_value", "expect_vl_grad", "expect_state_grad"),
+    [
+        pytest.param(True, False, False, False, id="detached-vl-and-state"),
+        pytest.param(True, True, False, False, id="detached-vl-only"),
+        pytest.param(False, False, True, True, id="attached-vl-and-state"),
+        pytest.param(False, True, True, False, id="attached-vl-only"),
+        pytest.param(None, False, True, True, id="default-vl-and-state"),
+        pytest.param(None, True, True, False, id="default-vl-only"),
+    ],
+)
+def test_gr00t_n1d7_value_gradient_routing(
+    monkeypatch, detach_critic_input, use_vlm_value, expect_vl_grad, expect_state_grad
+):
+    # Delayed-env tests stub imageio; vendor imports need its real module spec.
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    config_module = pytest.importorskip("gr00t.configs.model.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        FlowMatchingActionHeadForRLActionPrediction,
+    )
+
+    # Construct only the action head; no pretrained backbone or processor loads.
+    config = config_module.Gr00tN1d7Config(
+        backbone_embedding_dim=16,
+        hidden_size=16,
+        input_embedding_dim=16,
+        max_state_dim=8,
+        max_action_dim=7,
+        action_dim=7,
+        action_horizon=2,
+        max_num_embodiments=1,
+        state_history_length=1,
+        add_pos_embed=False,
+        use_alternate_vl_dit=False,
+        vl_self_attention_cfg={"num_layers": 0},
+        num_inference_timesteps=2,
+        num_timestep_buckets=4,
+        diffusion_model_cfg={
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "attention_head_dim": 8,
+            "output_dim": 16,
+            "norm_type": "ada_norm",
+            "dropout": 0.0,
+            "final_dropout": False,
+            "positional_embeddings": None,
+            "interleave_self_attention": False,
+        },
+    )
+    rl_head_config = {
+        "add_value_head": True,
+        "use_vlm_value": use_vlm_value,
+        "value_vlm_mode": "mean_token",
+    }
+    if detach_critic_input is not None:
+        rl_head_config["detach_critic_input"] = detach_critic_input
+    head = FlowMatchingActionHeadForRLActionPrediction(
+        config, rl_head_config, output_action_chunks=2
+    ).float()
+
+    # Positive activations make every value-head layer contribute to backward.
+    with torch.no_grad():
+        for module in head.value_head.modules():
+            if isinstance(module, torch.nn.Linear):
+                module.weight.fill_(0.01)
+                if module.bias is not None:
+                    module.bias.zero_()
+    vl_features = torch.linspace(0.1, 1.0, 96).reshape(2, 3, 16).requires_grad_()
+    state_features = torch.linspace(0.2, 1.1, 32).reshape(2, 1, 16).requires_grad_()
+
+    # Detachment must change gradient ownership, never the predicted values.
+    head.rl_config["detach_critic_input"] = False
+    with torch.no_grad():
+        attached_values = head.get_value(vl_features, state_features)
+    if detach_critic_input is None:
+        head.rl_config.pop("detach_critic_input")
+    else:
+        head.rl_config["detach_critic_input"] = detach_critic_input
+    values = head.get_value(vl_features, state_features)
+    assert values.shape == (2,)
+    torch.testing.assert_close(values, attached_values, rtol=0, atol=0)
+    values.sum().backward()
+
+    for parameter in head.value_head.parameters():
+        assert parameter.grad is not None
+        assert torch.count_nonzero(parameter.grad).item() > 0
+    for features, expect_grad in (
+        (vl_features, expect_vl_grad),
+        (state_features, expect_state_grad),
+    ):
+        if expect_grad:
+            assert features.grad is not None
+            assert torch.count_nonzero(features.grad).item() > 0
+        else:
+            assert features.grad is None
+
+
 def _accelerator_device() -> torch.device:
     """Device the OpenVLA checkpoint smoke test should run on."""
     npu = getattr(torch, "npu", None)
