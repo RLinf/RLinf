@@ -437,15 +437,15 @@ to match its demonstrations. Standard LIBERO keeps its existing camera conventio
 Installation
 ~~~~~~~~~~~~
 
-Create a dedicated OpenPI environment, then replace its standard LIBERO package
+Use the OpenPI environment, then replace its standard LIBERO package
 with the `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__. Both
 packages use the ``libero.libero`` Python namespace. The installer option
 ``--env libero`` supplies the standard dependencies; install the fork separately:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env libero --venv .venv-libero-mem
-   source .venv-libero-mem/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero
+   source .venv/bin/activate
    git clone https://github.com/libero-mem/libero-mem.git ../LIBERO-Mem
    git -C ../LIBERO-Mem checkout 0eee0defa4024e51511b6e15a79f30e9620209de
    uv pip uninstall rlinf-libero
@@ -454,7 +454,7 @@ packages use the ``libero.libero`` Python namespace. The installer option
    export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
    python -c "import libero.libero"
 
-This installs the pinned fork in the new virtual environment. Keep
+This installs the pinned fork into the default ``.venv`` environment. Keep
 ``LIBERO_CONFIG_PATH`` and ``LIBERO_TYPE`` in the launch environment so worker
 processes resolve the same package and configuration. The last command initializes
 the fork's configuration before launching workers; answer ``N`` to use its
@@ -513,7 +513,7 @@ the fork's memory benchmark. For OpenPI evaluation, start from
 ``evaluations/libero/libero_mem_openpi_pi05_eval.yaml``. It uses
 ``ignore_terminations: True`` to continue until the episode limit and report the
 final state. Checkpoint paths and launch commands are covered in
-:doc:`OpenPI Short Memory </rst_source/guides/data-checkpoints/openpi_short_memory>`.
+:doc:`OpenPI Short Memory </rst_source/examples/embodied/pi0/short_memory>`.
 
 Observation History
 ~~~~~~~~~~~~~~~~~~~

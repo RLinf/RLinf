@@ -34,7 +34,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
-- [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/guides/data-checkpoints/openpi_short_memory.html).
+- [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
 - [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
 - [2026/11] 🔥 RLinf supports Psi0 VLA and the SIMPLE humanoid simulator. Docs: [Psi0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/psi0.html), [SIMPLE](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html).

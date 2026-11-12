@@ -16,8 +16,6 @@ resume a stopped run.
      - Convert checkpoints between formats.
    * - :doc:`Resume Training <../resume>`
      - Checkpoint cadence and resuming a run.
-   * - :doc:`OpenPI Short Memory <openpi_short_memory>`
-     - Evaluate and fine-tune OpenPI with a configurable visual history.
 
 .. toctree::
    :hidden:
@@ -25,4 +23,3 @@ resume a stopped run.
    Data Collection <../data_collection>
    Checkpoint Conversion <../convertor>
    Resume Training <../resume>
-   OpenPI Short Memory <openpi_short_memory>

@@ -422,12 +422,12 @@ LIBERO-Mem 用于评测需要记住先前交互、按顺序完成子目标的操
 安装
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-先创建独立的 OpenPI 环境，再将标准 LIBERO 替换为 `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__。两者使用相同的 ``libero.libero`` Python namespace。安装选项 ``--env libero`` 提供标准依赖，fork 需要单独安装：
+使用 OpenPI 环境，将标准 LIBERO 替换为 `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__。两者使用相同的 ``libero.libero`` Python namespace。安装选项 ``--env libero`` 提供标准依赖，fork 需要单独安装：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env libero --venv .venv-libero-mem
-   source .venv-libero-mem/bin/activate
+   bash requirements/install.sh embodied --model openpi --env libero
+   source .venv/bin/activate
    git clone https://github.com/libero-mem/libero-mem.git ../LIBERO-Mem
    git -C ../LIBERO-Mem checkout 0eee0defa4024e51511b6e15a79f30e9620209de
    uv pip uninstall rlinf-libero
@@ -436,7 +436,7 @@ LIBERO-Mem 用于评测需要记住先前交互、按顺序完成子目标的操
    export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
    python -c "import libero.libero"
 
-上述命令在新虚拟环境中安装指定版本的 fork。启动任务时保留 ``LIBERO_CONFIG_PATH`` 和 ``LIBERO_TYPE``，使 worker 进程使用相同的包与配置。最后一条命令在启动 worker 前初始化 fork 的配置；提示数据集路径时，回答 ``N`` 可使用默认值。
+上述命令在默认的 ``.venv`` 环境中安装指定版本的 fork。启动任务时保留 ``LIBERO_CONFIG_PATH`` 和 ``LIBERO_TYPE``，使 worker 进程使用相同的包与配置。最后一条命令在启动 worker 前初始化 fork 的配置；提示数据集路径时，回答 ``N`` 可使用默认值。
 
 下载完整初始状态集：10 个任务，每个任务 20 个状态。它们依次来自公开 `LIBERO-Mem-Raw 数据集 <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__ 中的第 101–120 号 demonstration。将文件放入 fork 并校验：
 
@@ -477,7 +477,7 @@ LIBERO-Mem 用于评测需要记住先前交互、按顺序完成子目标的操
      stride: 70
      fps: 20.0
 
-``env_type`` 选择 RLinf 的 LIBERO adapter，``task_suite_name`` 选择 fork 中的记忆任务。OpenPI 评测可从 ``evaluations/libero/libero_mem_openpi_pi05_eval.yaml`` 开始；该配置设置 ``ignore_terminations: True``，持续运行到回合步数上限并记录最终状态。checkpoint 路径和启动命令见 :doc:`OpenPI Short Memory </rst_source/guides/data-checkpoints/openpi_short_memory>`。
+``env_type`` 选择 RLinf 的 LIBERO adapter，``task_suite_name`` 选择 fork 中的记忆任务。OpenPI 评测可从 ``evaluations/libero/libero_mem_openpi_pi05_eval.yaml`` 开始；该配置设置 ``ignore_terminations: True``，持续运行到回合步数上限并记录最终状态。checkpoint 路径和启动命令见 :doc:`OpenPI Short Memory </rst_source/examples/embodied/pi0/short_memory>`。
 
 观测历史
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
