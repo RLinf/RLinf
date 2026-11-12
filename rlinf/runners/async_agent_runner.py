@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import time
+import typing
 from typing import Optional, Union
 
 from omegaconf.dictconfig import DictConfig
@@ -33,9 +34,11 @@ from rlinf.workers.agent.agent_loop import AgentLoopWorker
 from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
-from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
-from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
+
+if typing.TYPE_CHECKING:
+    from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+    from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
 logging.getLogger().setLevel(logging.INFO)
 
