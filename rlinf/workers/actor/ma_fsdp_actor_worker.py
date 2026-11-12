@@ -50,6 +50,7 @@ from rlinf.utils.placement import (
 from rlinf.utils.utils import (
     compute_entropy_from_logits,
     cpu_dict,
+    cpu_weight_swap,
 )
 from rlinf.workers.actor.fsdp_actor_worker import (
     FSDPActor,
@@ -282,7 +283,7 @@ class MAFSDPActor(FSDPActor):
             assert self.ref_policy_state_dict is not None, (
                 "Reference policy state dict is None but compute_ref_logprobs is True"
             )
-            with self._swap_to_ref_policy():
+            with cpu_weight_swap(self, self.ref_policy_state_dict, is_fsdp=True):
                 ref_logprobs = torch.cat(
                     [self.forward_batch(batch) for batch in micro_batches]
                 ).cpu()

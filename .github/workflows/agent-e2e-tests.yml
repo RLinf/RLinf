@@ -290,7 +290,6 @@ jobs:
         run: |
           ray stop --force 2>/dev/null || true
           rm -rf .venv
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   searchr1-qwen-grpo-test:

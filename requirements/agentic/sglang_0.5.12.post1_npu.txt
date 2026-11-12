@@ -1,0 +1,13 @@
+# Core engine dependencies come from SGLang's versioned pyproject_npu.toml.
+# Runtime components for CANN 8.5 and the official NPU kernel release.
+torch-npu==2.8.0.post2
+triton-ascend==3.2.0
+pybind11
+pyyaml
+decorator
+attrs
+scipy
+psutil
+wheel==0.45.1
+setuptools<80
+transformers==5.6.1
