@@ -130,31 +130,61 @@ ART 要求 ``actor.training_backend=fsdp``、``rollout.pipeline_stage_num=1``、
 
 Wan 关注 ``env/video_ocr``，SD3 关注 ``env/avg``，同时检查生成样本。``actor/active_group_frac`` 表示提供有效引导的 prompt 组比例；``actor/skipped_zero_guidance`` 标记所有 rank 都没有可用引导的轮次。日志与 TensorBoard 设置见 :doc:`训练指标 </rst_source/reference/metrics>`。OCR reward 不衡量视觉质量或时序一致性，ART 与 NFT 的 loss 也不能直接比较。
 
-记录中的 Wan 对比使用四张 NVIDIA A800 GPU、LoRA、FSDP2 和 CPU 视频 OCR。下表取每种配置的一次运行，报告按 5760 条生成轨迹平滑后，训练 reward 首次达到 ``0.8`` 的时间与采样量。表中的采样预算与当前用于启动训练的配置不同。
+2026 年 11 月 11 日启动的这批实验使用四张 NVIDIA A800 80 GB GPU、Wan2.2 TI2V 5B、LoRA（rank 为 ``32``，alpha 为 ``64``）、FSDP2、BF16 和 CPU OCR。第一张表统一比较生成 **40,320 条轨迹** 时的结果，对应 ART 第 35 轮、NFT 第 70 轮。每次运行先取该预算下最后 5760 条轨迹的 ``env/video_ocr`` 均值；NFT 再报告两次运行的均值和样本标准差，ART 只有一次运行。
 
-.. list-table:: Wan 视频 OCR 运行记录
+.. list-table:: 生成 40,320 条轨迹时的 Wan 视频 OCR 结果
    :header-rows: 1
-   :widths: 18 22 18 20 22
+   :widths: 24 8 16 12 20 20
+
+   * - 方法
+     - 运行次数
+     - 每轮轨迹数
+     - 学习率
+     - 训练 Reward
+     - 耗时（h）
+   * - ART
+     - 1
+     - 1152
+     - 1e-4
+     - 0.8584
+     - 10.01
+   * - NFT
+     - 2
+     - 576
+     - 4e-4
+     - 0.7565 ± 0.0544
+     - 11.29 ± 0.52
+
+在相同采样预算下，ART 的 reward 比 NFT 均值高 13.5%（绝对增加 ``0.1019``），训练耗时减少 11.3%。耗时取自训练循环日志，不含模型初始化。按同样的 5760 条轨迹窗口计算，ART 在生成 21,888 条轨迹时首次达到 ``0.8``，耗时 5.48 h；两次 NFT 运行在 40,320 条轨迹内均未达到这一窗口均值阈值。
+
+与 ART 使用相同每轮轨迹数和学习率的 NFT 运行在第 29 轮后停止。因此，下表统一比较生成 **33,408 条轨迹** 时的结果，仍取最后 5760 条轨迹的 reward 均值，两者各运行一次。
+
+.. list-table:: 每轮轨迹数和学习率对齐的结果
+   :header-rows: 1
+   :widths: 18 22 18 22 20
 
    * - 方法
      - 每轮轨迹数
      - 学习率
-     - 记录轮数
-     - 平滑 Reward 首次达到 0.8
+     - 训练 Reward
+     - 耗时（h）
    * - ART
      - 1152
      - 1e-4
-     - 148
-     - 5.43 h / 21888 条轨迹
+     - 0.8446
+     - 8.31
    * - NFT
      - 1152
      - 1e-4
-     - 111
-     - 29.50 h 内未达到
-   * - NFT
-     - 576
-     - 4e-4
-     - 70
-     - 7.83 h / 32832 条轨迹
+     - 0.1076
+     - 8.23
 
-这些是单次运行的训练奖励，不是独立测试集成功率。两个 NFT 运行同时改变了学习率和采样预算，记录长度也不同，不能把最终 reward 当作等预算结果比较。
+每轮轨迹数和学习率对齐后，ART 的 reward 高出 ``0.7370``，相对提高 685.2%，耗时基本相当。这里比较的是前 29 轮的表现，不代表最终收敛结果。这些是训练奖励，不是独立测试集分数；第一张表中的每轮 576 条轨迹 NFT 配置还改变了学习率和奖励归约方式，不能据此单独归因于算法。
+
+复现时，ART 选择 ``wan22_ti2v_5b_art_video_ocr``，NFT 选择 ``wan22_ti2v_5b_nft_video_ocr``，模型和数据路径按上文准备。两者均设置 ``cluster.component_placement={"actor,env,rollout": "0,1,2,3"}``、``env.train.total_num_envs=96``、``algorithm.group_size=8`` 和 ``runner.val_check_interval=-1``。将 ``env.train.reward.use_gpu`` 与 ``env.eval.reward.use_gpu`` 设为 ``False``。在 ``actor.model.wan22_ti2v_5b`` 下设置 ``max_generation_batch_size=2``、``compile_transformer_forward=True`` 和 ``offload_auxiliary_modules=True``；保留配置中的 512 × 512 分辨率、5 帧、10 个去噪步骤和 ``1.0`` 的 guidance scale。
+
+ART 使用 ``env.train.rollout_epoch=12``、``actor.global_batch_size=576``、``actor.micro_batch_size=2``、``actor.optim.lr=1e-4``、``runner.save_interval=10``、``runner.max_epochs=70`` 和 ``runner.max_steps=70``。每轮 576 条轨迹的 NFT 使用 ``env.train.rollout_epoch=6``、``actor.global_batch_size=288``、``actor.micro_batch_size=1``、``actor.optim.lr=4e-4``、``runner.save_interval=-1``、``runner.max_epochs=70`` 和 ``runner.max_steps=70``。两者的 ``env.*.reward.reward_type`` 分别设为 ``video_level`` 和 ``frame_level``。
+
+每轮 1152 条轨迹的 NFT 选择 NFT 配置，并采用上面 ART 的覆盖参数，包括 ``video_level`` 奖励，但将 ``runner.max_epochs=200`` 和 ``runner.max_steps=200``；该运行在第 29 轮后停止。两组 NFT 均保留 ``algorithm.nft_tau=[1.0,0.01,0,70]``。
+
+这批实验均使用 ``actor.seed=42`` 和环境 seed ``42``，但这些设置没有固定 LoRA 初始化和采样涉及的全部全局随机数状态。比较结果时应重复运行，并记录代码版本、依赖和随机种子。

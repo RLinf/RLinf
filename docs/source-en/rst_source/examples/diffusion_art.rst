@@ -169,36 +169,101 @@ Use :doc:`Training Metrics </rst_source/reference/metrics>` for logging and
 TensorBoard setup. OCR reward alone does not measure visual quality or temporal
 consistency, and ART and NFT losses are not directly comparable.
 
-The recorded Wan comparison used four NVIDIA A800 GPUs, LoRA, FSDP2, and CPU
-video OCR. The table reports the first crossing of a training reward of ``0.8``,
-smoothed over 5760 generated trajectories, from one run per configuration.
-The recorded sampling budgets below differ from the checked-in startup recipes.
+The runs started on November 11, 2026 used four NVIDIA A800 80 GB GPUs,
+Wan2.2 TI2V 5B, LoRA (rank ``32``, alpha ``64``), FSDP2, BF16, and CPU OCR.
+The first table compares **40,320 generated trajectories**: round 35 for ART
+and round 70 for NFT. For each run, reward is the mean ``env/video_ocr`` over
+the last 5760 trajectories at that budget. The NFT entry reports the mean and
+sample standard deviation across two runs; the ART entry is one run.
 
-.. list-table:: Recorded Wan Video OCR Runs
+.. list-table:: Wan Video OCR at 40,320 Generated Trajectories
    :header-rows: 1
-   :widths: 18 22 18 20 22
+   :widths: 24 8 16 12 20 20
+
+   * - Method
+     - Runs
+     - Trajectories per Round
+     - Learning Rate
+     - Training Reward
+     - Elapsed Time (h)
+   * - ART
+     - 1
+     - 1152
+     - 1e-4
+     - 0.8584
+     - 10.01
+   * - NFT
+     - 2
+     - 576
+     - 4e-4
+     - 0.7565 ± 0.0544
+     - 11.29 ± 0.52
+
+At this sample budget, ART's reward is **13.5% higher** than the NFT mean
+(an absolute increase of ``0.1019``), with **11.3% less elapsed training time**.
+Elapsed time comes from the training-loop log and excludes model initialization.
+ART first reached a reward of ``0.8`` over the same 5760-trajectory window at
+21,888 trajectories (5.48 h); neither NFT run reached that windowed threshold
+within 40,320 trajectories.
+
+The NFT run with the same trajectories per round and learning rate as ART
+recorded 29 rounds before it was stopped. Compare both at **33,408 generated
+trajectories**, using the same last-5760-trajectory reward window. Each entry
+below is one run.
+
+.. list-table:: Matched Trajectories per Round and Learning Rate
+   :header-rows: 1
+   :widths: 18 22 18 22 20
 
    * - Method
      - Trajectories per Round
      - Learning Rate
-     - Recorded Rounds
-     - First Smoothed Reward of 0.8
+     - Training Reward
+     - Elapsed Time (h)
    * - ART
      - 1152
      - 1e-4
-     - 148
-     - 5.43 h / 21888 trajectories
+     - 0.8446
+     - 8.31
    * - NFT
      - 1152
      - 1e-4
-     - 111
-     - Unreached within 29.50 h
-   * - NFT
-     - 576
-     - 4e-4
-     - 70
-     - 7.83 h / 32832 trajectories
+     - 0.1076
+     - 8.23
 
-These are single-run training rewards, not held-out success rates. The NFT runs
-change learning rate and sampling budget together; their different lengths also
-prevent treating final rewards as equal-budget results.
+With matched trajectories per round and learning rate, ART's reward is
+``0.7370`` higher (**685.2% relative improvement**), with similar elapsed time.
+This comparison covers only the first 29 rounds, not final convergence.
+These are training rewards, not held-out evaluation scores. The 576-trajectory
+NFT configuration in the first table also changes learning rate and reward
+reduction; that comparison does not isolate the algorithm's effect.
+
+To reproduce the configurations, use ``wan22_ti2v_5b_art_video_ocr`` for ART or
+``wan22_ti2v_5b_nft_video_ocr`` for NFT with the model and data paths prepared
+above. Set ``cluster.component_placement`` to ``{"actor,env,rollout": "0,1,2,3"}``,
+``env.train.total_num_envs=96``, ``algorithm.group_size=8``, and
+``runner.val_check_interval=-1``. Set ``env.train.reward.use_gpu`` and
+``env.eval.reward.use_gpu`` to ``False``. Under ``actor.model.wan22_ti2v_5b``,
+use ``max_generation_batch_size=2``, ``compile_transformer_forward=True``, and
+``offload_auxiliary_modules=True``; retain the recipes' 512 × 512 resolution,
+five frames, ten denoising steps, and guidance scale of ``1.0``.
+
+For ART, set ``env.train.rollout_epoch=12``, ``actor.global_batch_size=576``,
+``actor.micro_batch_size=2``, ``actor.optim.lr=1e-4``,
+``runner.save_interval=10``, ``runner.max_epochs=70``, and
+``runner.max_steps=70``. For NFT with 576 trajectories per round, use
+``env.train.rollout_epoch=6``, ``actor.global_batch_size=288``,
+``actor.micro_batch_size=1``, ``actor.optim.lr=4e-4``,
+``runner.save_interval=-1``, ``runner.max_epochs=70``, and
+``runner.max_steps=70``. Set ``env.*.reward.reward_type`` to ``video_level``
+for ART or ``frame_level`` for this NFT configuration.
+
+For NFT with 1152 trajectories per round, use the NFT recipe with the ART
+overrides above, including ``video_level`` rewards, but set
+``runner.max_epochs=200`` and ``runner.max_steps=200``; the recorded run was
+stopped after round 29. Both NFT configurations retain
+``algorithm.nft_tau=[1.0,0.01,0,70]``.
+
+All runs used ``actor.seed=42`` and environment seeds of ``42``. These settings
+do not fix every global RNG used for LoRA initialization and sampling; repeat
+runs and record the revision, dependencies, and RNG seeds when comparing results.
