@@ -922,6 +922,85 @@ def test_pinned_offload_reports_allocation_failure_and_restores_patch(monkeypatc
     assert torch.Tensor.to is original_to
 
 
+@pytest.mark.parametrize("mode", ["frame", "video"])
+@pytest.mark.parametrize("invalid_reward", [100.0, float("nan")])
+def test_video_grpo_excludes_masked_rewards_from_group_statistics(mode, invalid_reward):
+    x = invalid_reward
+    rewards = torch.tensor([[[1.0, 5.0], [3.0, x], [x, 7.0], [2.0, x], [x, x], [x, x]]])
+    loss_mask = torch.tensor(
+        [
+            [
+                [True, True],
+                [True, False],
+                [False, True],
+                [True, False],
+                [False, False],
+                [False, False],
+            ]
+        ]
+    )
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="grpo_video",
+        advantage_mode=mode,
+        reward_type="action_level",
+        group_size=3,
+        rewards=rewards,
+        loss_mask=loss_mask,
+        dones=torch.zeros(2, 6, 2, dtype=torch.bool),
+    )
+
+    expected = torch.zeros_like(rewards)
+    if mode == "frame":
+        expected[0, :3] = torch.tensor([[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]]) / (
+            math.sqrt(2) + 1e-6
+        )
+    else:
+        expected[0, :3] = torch.tensor([[-3.0, 1.0], [-1.0, 0.0], [0.0, 3.0]]) / (
+            math.sqrt(20 / 3) + 1e-6
+        )
+    torch.testing.assert_close(result["advantages"], expected)
+    assert "returns" not in result
+
+
+@pytest.mark.parametrize("mode", ["frame", "video"])
+@pytest.mark.parametrize("use_mask", [True, False])
+def test_video_grpo_preserves_sample_std_when_all_rewards_are_valid(mode, use_mask):
+    rewards = torch.tensor([[[1.0, 3.0], [2.0, 6.0], [3.0, 9.0]]])
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="grpo_video",
+        advantage_mode=mode,
+        reward_type="action_level",
+        group_size=3,
+        rewards=rewards,
+        loss_mask=torch.ones_like(rewards, dtype=torch.bool) if use_mask else None,
+        dones=torch.zeros(2, 3, 2, dtype=torch.bool),
+    )
+
+    dims = (1,) if mode == "frame" else (1, 2)
+    expected = (rewards - rewards.mean(dim=dims, keepdim=True)) / (
+        rewards.std(dim=dims, keepdim=True) + 1e-6
+    )
+    torch.testing.assert_close(result["advantages"], expected)
+
+
+@pytest.mark.parametrize("mode", ["frame", "video"])
+def test_video_grpo_returns_zero_when_every_reward_is_masked(mode):
+    rewards = torch.full((1, 2, 2), float("nan"))
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="grpo_video",
+        advantage_mode=mode,
+        reward_type="action_level",
+        group_size=2,
+        rewards=rewards,
+        loss_mask=torch.zeros_like(rewards, dtype=torch.bool),
+        dones=torch.zeros(2, 2, 2, dtype=torch.bool),
+    )
+    torch.testing.assert_close(result["advantages"], torch.zeros_like(rewards))
+
+
 @pytest.mark.parametrize("normalize", [False, True])
 def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normalize):
     values = torch.full((4, 6), 99.0)
