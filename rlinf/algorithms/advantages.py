@@ -244,7 +244,7 @@ def compute_grpo_advantages(
 @register_advantage("grpo_video")
 def compute_grpo_video_advantages(
     rewards: torch.Tensor,
-    loss_mask: torch.Tensor,
+    loss_mask: Optional[torch.Tensor],
     group_size: int,
     **kwargs,
 ):
@@ -267,21 +267,38 @@ def compute_grpo_video_advantages(
         Normalize all frame/chunk rewards within the same prompt group together
         over dimensions [num_steps, group_size]. This keeps frame-level
         advantages but uses one video-level mean/std per prompt group.
+
+    Only unmasked rewards contribute to the statistics. A None mask treats
+    all rewards as valid.
     """
     num_steps, batch_size = rewards.shape
     grouped_rewards = rewards.reshape(num_steps, -1, group_size)
     advantage_mode = kwargs.get("advantage_mode")
     if advantage_mode == "frame":
-        grouped_reward_mean = grouped_rewards.mean(dim=-1, keepdim=True)
-        grouped_reward_std = grouped_rewards.std(dim=-1, keepdim=True)
+        reduce_dims = (-1,)
     elif advantage_mode == "video":
-        grouped_reward_mean = grouped_rewards.mean(dim=(0, 2), keepdim=True)
-        grouped_reward_std = grouped_rewards.std(dim=(0, 2), keepdim=True)
+        reduce_dims = (0, 2)
     else:
         raise ValueError(f"Unsupported grpo_video advantage_mode: {advantage_mode}")
-    advantages = (grouped_rewards - grouped_reward_mean) / (grouped_reward_std + 1e-6)
-    advantages = advantages.reshape(num_steps, batch_size)
-    return advantages * loss_mask, None
+
+    if loss_mask is None:
+        valid = torch.ones_like(grouped_rewards, dtype=torch.bool)
+    else:
+        valid = loss_mask.expand_as(rewards).reshape_as(grouped_rewards).bool()
+    if grouped_rewards.dtype in (torch.float16, torch.bfloat16):
+        grouped_rewards = grouped_rewards.float()
+
+    invalid = ~valid
+    count = valid.sum(dim=reduce_dims, keepdim=True)
+    masked_rewards = grouped_rewards.masked_fill(invalid, 0)
+    mean = masked_rewards.sum(dim=reduce_dims, keepdim=True) / count.clamp_min(1)
+    centered = (masked_rewards - mean).masked_fill(invalid, 0)
+    # Keep torch.std's sample-variance correction.
+    variance = centered.square().sum(dim=reduce_dims, keepdim=True) / (
+        count - 1
+    ).clamp_min(1)
+    advantages = (centered / (variance.sqrt() + 1e-6)).masked_fill(invalid, 0)
+    return advantages.reshape(num_steps, batch_size).to(rewards.dtype), None
 
 
 @register_advantage("grpo_dynamic")
