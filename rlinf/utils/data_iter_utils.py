@@ -69,12 +69,10 @@ def split_list(
     Split a list into equal sized chunks or fixed size chunks
     Args:
         inputs: Input list to split
-        num_chunks: Number of chunks to split into. Can be a list of chunk sizes or a single integer.
+        num_chunks: Positive number of chunks, or a list of positive chunk sizes.
         enforce_divisible_batch: Whether to enforce the batch size being divisible by num_chunks.
     Returns:
-        List of chunks
-    Raises:
-        AssertionError: If the batch size configuration is invalid.
+        Exactly the requested number of chunks, including empty chunks for empty inputs.
     """
     if isinstance(num_chunks, list):
         assert all((i > 0 for i in num_chunks)) and sum(num_chunks) == len(inputs), (
@@ -87,13 +85,14 @@ def split_list(
             passd_num += length
         return result
     else:
+        assert num_chunks > 0, f"num_chunks must be positive, got {num_chunks}."
         if enforce_divisible_batch:
-            chunk_size = len(inputs) // num_chunks
-            assert len(inputs) % chunk_size == 0, (
-                f"Issue with batch size configuration! inputs len:{len(inputs)} num_chunks:{num_chunks}"
+            assert len(inputs) % num_chunks == 0, (
+                f"The batch size ({len(inputs)}) must be divisible by num_chunks ({num_chunks})."
             )
+            chunk_size = len(inputs) // num_chunks
             return [
-                inputs[i : i + chunk_size] for i in range(0, len(inputs), chunk_size)
+                inputs[i * chunk_size : (i + 1) * chunk_size] for i in range(num_chunks)
             ]
         else:
             k, m = divmod(len(inputs), num_chunks)
