@@ -88,8 +88,9 @@ The imagined return uses a soft survival weight :math:`c_0 = 1`,
 reward, the termination probability, and the bootstrap value. The world
 model and the critic are frozen for this step. Each network is a stack of
 ``Linear -> LayerNorm -> GELU`` blocks and a final linear layer. The policy
-and dynamics hidden widths step down from 2048 to 256, the critic is
-``(256, 128)``, and the latent size is 32.
+encoder and decoder use hidden widths 2048, 1024, 512, 256. The dynamics
+network uses 2048, 2048, 2048. The critic uses 256, 128. The latent size is
+32.
 
 The critic fits GAE returns computed backwards on the same imagined
 rollout, with :math:`\gamma = 0.99` and :math:`\lambda = 0.95`. Targets are
@@ -111,8 +112,9 @@ element to 0.1. The norm stays on the GPU, so this step does not read it on
 the host. A non-finite gradient is not skipped. When a batch of updates
 finishes and the metrics are copied to the host, a non-finite value stops
 training. The official implementation captures the whole update in a CUDA
-graph. FSDP2 collectives cannot be captured that way, so this code does not.
-The update written above is unchanged.
+graph. This FSDP2 training path does not yet support that capture, so it
+keeps the ordinary step. The difference is speed. The update written above
+is unchanged.
 
 Return-Based Reset
 ------------------
@@ -153,7 +155,8 @@ Differences from the Paper and the Official Code
    * - Optimizer
      - The official code uses Muon plus fused Adam, and captures the whole
        update in a CUDA graph
-     - Muon plus fused Adam, with the norm left on the GPU. No CUDA graph
+     - Muon plus fused Adam, with the norm left on the GPU. This FSDP2
+       path does not capture the whole update
    * - Parallelism
      - The official training entry is one process
      - One env, rollout, and FSDP2 actor worker per GPU

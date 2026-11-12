@@ -414,7 +414,7 @@ placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker
        env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
-MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检查点路径。``env.eval.eval_tasks`` 只能是 ``[tracking]`` 或 ``[push_recovery]``。40 条 LAFAN1 片段由 ``env.eval.total_num_envs=40`` 一次放完；``max_steps_per_rollout_epoch=13656`` 覆盖最长片段（30 fps 下 8194 帧，重采样到 50 Hz）。
+MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检查点路径。把上面命令里的 ``global_step_2000`` 和输出目录换成 ``global_step_4000``，就是第 4000 次更新的评测。`已报告的跟踪结果`_ 就是这四次：GenCoord 和 MaxCoord，各评第 2000 次和第 4000 次更新。训练用的是 `单卡训练`_ 里 ``runner.max_epochs=16000`` 的两条命令。``env.eval.eval_tasks`` 只能是 ``[tracking]`` 或 ``[push_recovery]``。40 条 LAFAN1 片段由 ``env.eval.total_num_envs=40`` 一次放完；``max_steps_per_rollout_epoch=13656`` 覆盖最长片段（30 fps 下 8194 帧，重采样到 50 Hz）。
 
 **输出。** ``runner.eval_export.enabled`` 在评测配置里默认打开。结果写到 ``runner.eval_export.output_dir``，不设置时写到 ``<log_path>/<experiment_name>/eval_results/``。目录里有 ``summary.json``、``per_clip.csv`` 和这次评测的 ``config.yaml``。同样的指标以 ``eval/`` 为前缀写进日志。
 

@@ -577,10 +577,15 @@ with ``supermimic_``. ``runner.ckpt_path`` is the checkpoint's
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
 Add ``actor.model.representation=maxcoord`` for a MaxCoord checkpoint and
-point ``runner.ckpt_path`` at that run. ``env.eval.eval_tasks`` is
-``[tracking]`` or ``[push_recovery]``. The 40 LAFAN1 clips fit in
-``env.eval.total_num_envs=40``. ``max_steps_per_rollout_epoch=13656`` covers
-the longest clip (8194 frames at 30 fps, resampled to 50 Hz).
+point ``runner.ckpt_path`` at that run. Replacing ``global_step_2000`` and
+the output directory with ``global_step_4000`` evaluates update 4000.
+`Reported Tracking Results`_ is these four evaluations: GenCoord and
+MaxCoord, each at updates 2000 and 4000. Training uses the two
+``runner.max_epochs=16000`` commands in `Train on One GPU`_.
+``env.eval.eval_tasks`` is ``[tracking]`` or ``[push_recovery]``. The 40
+LAFAN1 clips fit in ``env.eval.total_num_envs=40``.
+``max_steps_per_rollout_epoch=13656`` covers the longest clip (8194 frames
+at 30 fps, resampled to 50 Hz).
 
 **Output.** ``runner.eval_export.enabled`` is on in the evaluation configs.
 Results go to ``runner.eval_export.output_dir``, or to
