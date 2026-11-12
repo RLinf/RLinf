@@ -222,7 +222,7 @@ rollout:
 
   rollout_backend: sglang       # here choose which backend to rollout,support [sglang, vllm]
   sglang:
-    backend_type: server        # this example uses the server backend (the two-node verified configuration)
+    backend_type: server        # async training requires the server backend
     attention_backend: triton   # [flashinfer, triton] for more, see sglang's doc
     decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
     use_torch_compile: False    # enable torch_compile in SGLang for rollout.

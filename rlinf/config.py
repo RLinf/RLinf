@@ -2018,6 +2018,23 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
                 "the current placement mode is "
                 f"{component_placement.placement_mode.name}."
             )
+        # Deliberately no setdefault for backend_type: this runs after
+        # validate_sglang_cfg, and filling a default here would bypass its
+        # mutual-exclusion check between serving_mode and the server backend.
+        rollout_backend = cfg.rollout.get("rollout_backend", None)
+        backend_type = OmegaConf.select(
+            cfg, "rollout.sglang.backend_type", default="engine"
+        )
+        if rollout_backend != "sglang" or backend_type != "server":
+            raise ValueError(
+                "SearchR1 async training requires "
+                "rollout.rollout_backend: sglang with "
+                "rollout.sglang.backend_type: server: the weight sync "
+                "pauses and resumes generation through the SGLang server "
+                f"HTTP interface. Found rollout.rollout_backend="
+                f"{rollout_backend!r} and rollout.sglang.backend_type="
+                f"{backend_type!r}."
+            )
         if cfg.algorithm.get("staleness_threshold", None) is not None:
             raise ValueError(
                 f"algorithm.staleness_threshold is the embodied async "

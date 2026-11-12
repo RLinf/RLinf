@@ -961,7 +961,8 @@ class TestSearchr1AsyncPauseModeDefaults:
                 },
                 "rollout": {
                     "return_logprobs": True,
-                    "sglang": {"tool_call_parser": None},
+                    "rollout_backend": "sglang",
+                    "sglang": {"tool_call_parser": None, "backend_type": "server"},
                     "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
@@ -1038,7 +1039,8 @@ class TestSearchr1AsyncBatchDivisibility:
                 },
                 "rollout": {
                     "return_logprobs": True,
-                    "sglang": {"tool_call_parser": None},
+                    "rollout_backend": "sglang",
+                    "sglang": {"tool_call_parser": None, "backend_type": "server"},
                     "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
@@ -1105,7 +1107,8 @@ class TestSearchr1AsyncDiscardConfig:
                 "algorithm": algorithm,
                 "rollout": {
                     "return_logprobs": True,
-                    "sglang": {"tool_call_parser": None},
+                    "rollout_backend": "sglang",
+                    "sglang": {"tool_call_parser": None, "backend_type": "server"},
                     "max_running_requests": 128,
                 },
                 "reward": {"reward_type": "searchr1"},
@@ -2216,7 +2219,8 @@ class TestSearchr1AsyncAdmissionCfg:
                 },
                 "rollout": {
                     "return_logprobs": True,
-                    "sglang": {"tool_call_parser": None},
+                    "rollout_backend": "sglang",
+                    "sglang": {"tool_call_parser": None, "backend_type": "server"},
                     "max_running_requests": 128,
                     "pause_mode": "retract",
                 },
@@ -2263,6 +2267,19 @@ class TestSearchr1AsyncAdmissionCfg:
         ):
             with pytest.raises(ValueError, match="disaggregated placement.*COLLOCATED"):
                 cfg_mod.validate_searchr1_cfg(self._make_cfg())
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("rollout.sglang.backend_type", "engine"),
+            ("rollout.rollout_backend", "vllm"),
+        ],
+    )
+    def test_non_sglang_server_backends_are_rejected(self, key, value):
+        """Async training pauses generation through the SGLang server HTTP
+        interface, so the engine backend and vLLM are rejected."""
+        with pytest.raises(ValueError, match="requires.{0,20}rollout_backend: sglang"):
+            self._validate(self._make_cfg(**{key: value}))
 
     def test_defaults_are_derived(self):
         """Unset caps derive from engine capacity and batch size."""
