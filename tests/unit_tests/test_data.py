@@ -1528,6 +1528,7 @@ def test_external_policy_input_split_merge_preserves_actions():
 def test_online_lerobot_payload_survives_source_routing():
     episode_data = {
         "chunk_actions": torch.arange(12).reshape(3, 2, 2),
+        "initial_observation": {"images": torch.arange(6).reshape(3, 2)},
         "obs_list": [
             {"images": torch.arange(6).reshape(3, 2)},
             {"images": torch.arange(6, 12).reshape(3, 2)},
@@ -1544,6 +1545,10 @@ def test_online_lerobot_payload_survives_source_routing():
 
     assert merged_data is not None
     assert torch.equal(merged_data["chunk_actions"], episode_data["chunk_actions"])
+    assert torch.equal(
+        merged_data["initial_observation"]["images"],
+        episode_data["initial_observation"]["images"],
+    )
     assert torch.equal(
         merged_data["obs_list"][1]["images"],
         episode_data["obs_list"][1]["images"],
@@ -1618,6 +1623,7 @@ def test_merging_conflicting_scalar_batch_values_is_rejected():
 def test_episode_data_round_trip_keeps_scalar_info_flags_intact():
     episode_data = {
         "chunk_actions": torch.arange(8, dtype=torch.float32).reshape(4, 2),
+        "initial_observation": {"states": torch.arange(4).reshape(4, 1)},
         "obs_list": [{"states": torch.arange(4).reshape(4, 1)}],
         "terminations": torch.zeros(4, 1, dtype=torch.bool),
         "truncations": torch.zeros(4, 1, dtype=torch.bool),
@@ -1851,6 +1857,7 @@ def _env_part(
 def _episode_data():
     return {
         "chunk_actions": torch.zeros(1, 1, 1),
+        "initial_observation": {"states": torch.zeros(1, 1)},
         "obs_list": [{"states": torch.zeros(1, 1)}],
         "terminations": torch.zeros(1, 1, dtype=torch.bool),
         "truncations": torch.zeros(1, 1, dtype=torch.bool),
@@ -2384,6 +2391,10 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0, 2.0]]]),
+        initial_observation={
+            "states": torch.tensor([[-1.0, -1.0]]),
+            "task_descriptions": ["pick"],
+        },
         obs_list=[
             {
                 "states": torch.tensor([[0.0, 0.0]]),
@@ -2404,6 +2415,9 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     assert torch.equal(
         torch.from_numpy(episode[0]["actions"]), torch.tensor([9.0, 8.0])
     )
+    assert torch.equal(
+        torch.from_numpy(episode[0]["state"]), torch.tensor([-1.0, -1.0])
+    )
 
 
 def test_online_lerobot_accumulator_preserves_auto_reset_observation():
@@ -2416,6 +2430,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0]]]),
+        initial_observation={"states": torch.tensor([[5.0]])},
         obs_list=[{"states": torch.tensor([[100.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2429,6 +2444,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[2.0]]]),
+        initial_observation={"states": torch.tensor([[100.0]])},
         obs_list=[{"states": torch.tensor([[20.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2436,7 +2452,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     )
 
     first, second = accumulator.drain_episodes()
-    assert first[0]["state"].item() == 10.0
+    assert first[0]["state"].item() == 5.0
     assert first[0]["is_success"].item()
     assert second[0]["state"].item() == 100.0
 
@@ -2457,6 +2473,7 @@ def test_online_lerobot_accumulator_filters_unsuccessful_episodes():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[1.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
             obs_list=[{"states": torch.tensor([[1.0]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[truncated]]),
@@ -2478,6 +2495,7 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0], [2.0]], [[3.0], [4.0]]]),
+        initial_observation={"states": torch.tensor([[0.0], [20.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0], [30.0]])},
             {"states": torch.tensor([[20.0], [40.0]])},
@@ -2491,6 +2509,8 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     assert len(episodes) == 2
     assert [frame["actions"].item() for frame in episodes[0]] == [1.0, 2.0]
     assert [frame["actions"].item() for frame in episodes[1]] == [3.0, 4.0]
+    assert [frame["state"].item() for frame in episodes[0]] == [0.0, 10.0]
+    assert [frame["state"].item() for frame in episodes[1]] == [20.0, 30.0]
 
 
 def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
@@ -2508,6 +2528,7 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     accumulator.append_chunk_episode_data(
         policy_output=policy_output,
         chunk_actions=chunk_actions,
+        initial_observation={"states": torch.tensor([[0.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0]])},
             {"states": torch.tensor([[20.0]])},
@@ -2520,6 +2541,37 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     [episode] = accumulator.drain_episodes()
     assert [frame["actions"].item() for frame in episode] == [1.0, 8.0]
     assert [frame["intervene_flag"].item() for frame in episode] == [False, True]
+    assert [frame["state"].item() for frame in episode] == [0.0, 10.0]
+
+
+def test_online_lerobot_accumulator_filters_by_intervention_step_count():
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1,
+        intervene_step_filter=2,
+        num_action_chunks=2,
+        action_dim=1,
+    )
+
+    for flags in ([True, False], [True, True]):
+        policy_output = PolicyOutput(
+            forward_inputs={"action": torch.tensor([[[1.0], [2.0]]])},
+            intervene_flags=torch.tensor([flags]),
+        )
+        accumulator.append_chunk_episode_data(
+            policy_output=policy_output,
+            chunk_actions=torch.tensor([[[1.0], [2.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
+            obs_list=[
+                {"states": torch.tensor([[10.0]])},
+                {"states": torch.tensor([[20.0]])},
+            ],
+            terminations=torch.tensor([[False, True]]),
+            truncations=torch.zeros(1, 2, dtype=torch.bool),
+            infos_list=[{}, {}],
+        )
+
+    [episode] = accumulator.drain_episodes()
+    assert [frame["intervene_flag"].item() for frame in episode] == [True, True]
 
 
 def test_online_lerobot_accumulator_applies_recording_controls():
@@ -2537,6 +2589,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[action]]]),
+            initial_observation={"states": torch.tensor([[state - 10.0]])},
             obs_list=[{"states": torch.tensor([[state]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[False]]),
@@ -2545,7 +2598,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
 
     [episode] = accumulator.drain_episodes()
     assert len(episode) == 1
-    assert episode[0]["state"].item() == 10.0
+    assert episode[0]["state"].item() == 20.0
     assert episode[0]["actions"].item() == 3.0
     assert episode[0]["segment_id"].item() == 1
 

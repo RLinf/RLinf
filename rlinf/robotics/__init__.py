@@ -57,6 +57,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .robots import (
         DOSW1Robot,
         DOSW1RobotConfig,
+        DualARX5Config,
+        DualARX5Robot,
         DualFrankaConfig,
         DualFrankaRobot,
         DualYamConfig,
@@ -96,6 +98,8 @@ _MODULE_GROUPS: dict[str, tuple[str, ...]] = {
     ".robots": (
         "DOSW1Robot",
         "DOSW1RobotConfig",
+        "DualARX5Config",
+        "DualARX5Robot",
         "DualFrankaConfig",
         "DualFrankaRobot",
         "DualYamConfig",
@@ -148,6 +152,8 @@ __all__ = [
     "ControllablePart",
     "DOSW1Robot",
     "DOSW1RobotConfig",
+    "DualARX5Config",
+    "DualARX5Robot",
     "DualFrankaConfig",
     "DualFrankaRobot",
     "DualYamConfig",
