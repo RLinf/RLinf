@@ -1199,6 +1199,12 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.OPENPI:
+        if only_eval and model_cfg.openpi.get("short_memory", False):
+            assert cfg.env.eval.get("short_memory") is not None, (
+                "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "
+                "got no environment history configuration."
+            )
     for split in ("train", "eval"):
         env_cfg = cfg.get("env", {}).get(split)
         if env_cfg is None or env_cfg.get("env_type") != "world_model":
@@ -1937,10 +1943,20 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
         model_type = cfg.actor.model.get("model_type", None)
-        if (
-            model_type is not None
-            and SupportedModel(model_type) == SupportedModel.DREAMZERO
-        ):
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
+            openpi_cfg = cfg.actor.model.openpi
+            history_cfg = cfg.data.get("short_memory")
+            if openpi_cfg.get("short_memory", False):
+                assert history_cfg is not None, (
+                    "actor.model.openpi.short_memory=True requires data.short_memory; "
+                    "got no history sampling configuration."
+                )
+            if history_cfg is not None:
+                assert not openpi_cfg.get("use_rlt", False), (
+                    "OpenPI use_rlt=True requires the RLT loader; "
+                    "got short_memory enabled in the model or data configuration."
+                )
+        elif SupportedModel(model_type) == SupportedModel.DREAMZERO:
             from rlinf.models.embodiment.dreamzero.dreamzero_config import (
                 validate_dreamzero_sft_model_cfg,
             )
