@@ -235,6 +235,7 @@ actor:
       precision: fp16
     grad_scaler:
       enabled: True
+      init_scale: 32768
 
 
 inference:

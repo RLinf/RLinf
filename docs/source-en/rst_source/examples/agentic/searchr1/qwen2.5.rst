@@ -225,6 +225,8 @@ Huawei Ascend CANN
 
 .. include:: ../_ascend_agentic.rst
 
+The Ascend recipe uses FP16 with dynamic gradient scaling and an initial scale of ``32768`` to reduce overflow during the first updates. The scaler continues to adapt during training.
+
 Prepare the retriever using the setup above, and set ``tools.search.server_addr`` to its reachable endpoint. The retriever can run on a separate machine. Edit ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` and launch:
 
 .. code-block:: bash
