@@ -6,7 +6,7 @@ Search-R1 异步训练
 概述
 --------------------------------
 
-使用本配方在两台 8 卡机器上异步训练 GLM-4.7-Flash：Megatron actor 占用 node 0，SGLang server rollout 占用 node 1，生成持续进行，训练消费的是更早权重版本上的数据。reward 在 agent loop 内计算，不启动 reward worker。
+使用本配方在两台 8 卡机器上异步训练 GLM-4.7-Flash：Megatron actor 占用 node 0，SGLang server rollout 占用 node 1，生成不间断，训练消费的是更早权重版本上的数据。reward 在 agent loop 内计算，不启动 reward worker。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -135,7 +135,7 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
      - 平均 data staleness
      - reward 范围
      - ``ratio_abs`` 范围
-   * - 同步 ``AgentRunner``
+   * - 同步
      - 278.6 s
      - 1159 tok/s
      - —

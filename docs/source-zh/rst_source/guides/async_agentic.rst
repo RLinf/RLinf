@@ -58,7 +58,7 @@
 异步为什么快
 ------------
 
-要理解这两个上限，先看异步改变了什么。同步的 agent 训练里，训练和生成这两个最耗时的环节只能轮流进行，总有一边空着：actor 训练一批轨迹时，rollout 引擎没有活干；训练结束后引擎重新满载，actor 又得等这一批里最慢的那条轨迹跑完，才能开始下一步。多轮 agentic rollout 会让情况更糟，一条反复调用工具的轨迹就能把整批拖到最后。
+要理解这两个上限，先看异步改变了什么。同步的 agent 训练里，训练和生成这两个最耗时的环节只能交替运行，总有一边空着：actor 训练一批轨迹时，rollout 引擎没有活干；训练结束后引擎重新满载，actor 又得等这一批里最慢的那条轨迹跑完，才能开始下一步。多轮 agentic rollout 会让情况更糟，一条反复调用工具的轨迹就能把整批拖到最后。
 
 异步训练把两边解耦，不再互相等待。prompt 持续送进 rollout 引擎，生成完的轨迹先放进缓冲，actor 每准备好一步，就取走缓冲里最早的 ``rollout_batch_size`` 个组。
 
@@ -71,7 +71,7 @@
 
 - rollout worker：运行 SGLang server 后端，持有生成引擎；
 - agent loop：驱动每条多轮轨迹，依次发出生成请求、解析工具调用、调用工具、把工具返回拼回对话，直到轨迹结束；
-- buffer worker（``RolloutBufferWorker``）：持有 dataloader，决定投放哪些 prompt、把哪些已完成的组交给训练；
+- buffer worker：持有 dataloader，决定投放哪些 prompt、把哪些已完成的组交给训练；
 - actor：完成训练，再把新权重同步回 rollout 引擎。
 
 一个 prompt 的路径很短。buffer worker 从 dataloader 读出 prompt，准入上限允许时，通过 ``dataloader_channel`` 投放给 agent loop；agent loop 用 rollout 引擎跑完这个组的所有轨迹，再通过 ``agent_output_channel`` 把整组交回；buffer worker 把完成的组放进缓冲，每一步把最早的 ``rollout_batch_size`` 个组交给 actor。
@@ -81,14 +81,14 @@
 两个准入上限
 ------------
 
-buffer worker 只在两个上限同时满足时才投放新 prompt。两个上限管的是不同的事：一个决定给引擎多少活，一个决定训练数据最多多旧。每当可能空出额度时，准入都会重新检查：收到一个完成的组、丢弃一个组、向 actor 交付一批。
+buffer worker 只在两个上限同时满足时才投放新 prompt。两个上限管的是不同的事：一个决定给引擎多少活，一个决定训练数据最多多旧。只要可能空出额度，准入就会重新检查：收到一个完成的组、丢弃一个组、向 actor 交付一批。
 
 在途上限：引擎负载
 ~~~~~~~~~~~~~~~~~~
 
 第一个上限要求在途组数（已投放、尚未交回的组）低于 ``rollout_buffer.max_inflight_groups``。默认值把引擎的请求容量换算成组数，即 ``ceil(max_running_requests x instances x 1.2 / group_size)``；多出的 1.2 倍余量，留给那些轨迹正在等工具返回、或在等组内最慢那条轨迹的组。
 
-只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 异步页 </rst_source/examples/agentic/searchr1/async>` 的「两个上限怎么调」一节。
+只有引擎还有空闲时，调高这个上限才有用。引擎一旦忙满，多投放的组只会在引擎里排队，让数据变旧。在 GLM 参考运行上，把 ``max_inflight_groups`` 从 77 提到 160 后，每个 DP rank 的运行请求数从约 75 升到 128（另有 33–78 个在排队），吞吐没有变化，平均 staleness 却从约 1.3 升到约 2.0：GPU 在约 75 个请求时就已经忙满了。对应的实测图见 :doc:`Search-R1 异步页 </rst_source/examples/agentic/searchr1/async>` 的“两个上限怎么调”一节。
 
 缓冲上限：数据新鲜度
 ~~~~~~~~~~~~~~~~~~~~
@@ -111,10 +111,10 @@ Staleness
 
 需要硬性上限时，设置 ``agentloop.max_actor_accept_staleness``。比上限更旧的组会在训练前被丢弃，丢弃会归还准入额度，于是会有别的 prompt 补投进来；被丢弃的 prompt 要到之后的 epoch 才会再次出现。丢弃的代价是这些组已经花掉的生成算力，所以上限要高于缓冲上限本身带来的 staleness（即上面说的 ``max_buffered_groups / rollout_batch_size`` 步）。如果设得更低，每一批里最早的组都会被丢掉，而不只是偶尔出现的过旧的组，配置校验时也会给出警告。
 
-权重同步与 ``pause_mode``
--------------------------
+生成期间的权重同步
+------------------
 
-每个训练步结束后，新权重要在生成仍在进行时同步进 rollout 引擎。``rollout.pause_mode`` 决定同步期间正在生成的请求怎么处理：
+每个训练步结束后，新权重要在生成仍在运行时同步进 rollout 引擎。``rollout.pause_mode`` 决定同步期间正在生成的请求怎么处理：
 
 - ``retract`` 是默认模式：把正在生成的请求退回引擎队列，再同步权重。已经生成的 token 保留；KV cache 随旧权重一起清空，恢复后重新计算，所以每个被退回的请求要多做一次 re-prefill。
 - ``in_place`` 暂停引擎的事件循环：正在运行的请求保留原有 KV cache，同步完成后用新权重继续解码。

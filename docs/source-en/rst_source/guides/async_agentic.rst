@@ -108,8 +108,8 @@ between them:
 - the **agent loop**, which drives each multi-turn trajectory: it sends
   generation requests, parses tool calls, queries the tools, and appends the
   tool responses until the trajectory ends;
-- the **buffer worker** (``RolloutBufferWorker``), which owns the dataloader and
-  decides which prompts to issue and which finished groups to train on;
+- the **buffer worker**, which owns the dataloader and decides which prompts
+  to issue and which finished groups to train on;
 - the **actor**, which trains and then syncs its new weights back to the
   rollout engines.
 
@@ -220,8 +220,8 @@ group, so put the cap above what the buffer limit produces on its own (the
 drops the oldest groups of every batch instead of the rare outliers, and the
 configuration check warns about it.
 
-Weight Sync and ``pause_mode``
-------------------------------
+Weight Sync During Generation
+-----------------------------
 
 After each training step, the new weights go into the rollout engines while
 generation is in full flight. ``rollout.pause_mode`` decides what happens to the
@@ -257,7 +257,7 @@ rollout, giving the rollout more capacity or generating with a smaller model.
 Limitations
 -----------
 
-Asynchronous agentic RL currently runs on the combination it was built for: a
+Asynchronous agentic RL runs only on the combination it was built for: a
 Megatron actor, the multi-turn agent loop, the SGLang server backend, and a
 disaggregated placement of actor and rollout. There is no off-policy
 correction: the rollout logprob is used directly as the PPO old logprob, so

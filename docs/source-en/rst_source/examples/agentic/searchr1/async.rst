@@ -200,7 +200,7 @@ response_length / time/step``.
      - Mean data staleness
      - reward range
      - ``ratio_abs`` range
-   * - Synchronous ``AgentRunner``
+   * - Synchronous
      - 278.6 s
      - 1159 tok/s
      - —
