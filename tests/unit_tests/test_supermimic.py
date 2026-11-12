@@ -63,6 +63,7 @@ from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
 )
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 from rlinf.envs.sim.g1_mimic.reward import failure_signals
+from rlinf.hybrid_engines.fsdp.utils import get_grad_norm
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.normalization import (
     EmpiricalNorm,
@@ -389,6 +390,26 @@ def test_clip_step_clips_the_norm_then_each_element():
     clip_step(optimizers, [first, second], 0.37, max_norm=1.0, value_clip=None)
     torch.testing.assert_close(first.detach(), torch.tensor([-0.7, -0.2]))
     torch.testing.assert_close(second.detach(), torch.tensor([-1.0]))
+
+
+@pytest.mark.parametrize("grads", [([3.0, 0.0], [4.0]), ([0.1, 0.2], [0.3])])
+def test_clip_step_with_a_device_norm_matches_the_host_norm(grads):
+    params = {}
+    for as_tensor in (False, True):
+        first = torch.nn.Parameter(torch.zeros(2))
+        second = torch.nn.Parameter(torch.zeros(1))
+        first.grad, second.grad = (torch.tensor(g) for g in grads)
+        norm = get_grad_norm([first, second], None, as_tensor=as_tensor)
+        assert torch.is_tensor(norm) == as_tensor
+        clip_step(
+            [torch.optim.Adam([first, second], lr=0.1, fused=True)],
+            [first, second],
+            norm,
+            max_norm=1.0,
+            value_clip=0.7,
+        )
+        params[as_tensor] = torch.cat([first.detach(), second.detach()])
+    torch.testing.assert_close(params[True], params[False])
 
 
 def test_pelvis_falls_on_height_or_tilt():

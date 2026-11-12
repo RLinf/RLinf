@@ -765,7 +765,7 @@ def to_local_if_dtensor(tensor: Union[torch.Tensor, DTensor]) -> torch.Tensor:
 def clip_grad_by_total_norm_(
     parameters: Union[list[Union[torch.Tensor, DTensor]], Union[torch.Tensor, DTensor]],
     max_grad_norm: Union[int, float],
-    total_norm: float,
+    total_norm: Union[float, torch.Tensor],
 ):
     """Clips gradient of an iterable of parameters by total norm.
 
@@ -778,7 +778,10 @@ def clip_grad_by_total_norm_(
             An iterable of Tensors or DTensors, or a single Tensor or DTensor
             that will have gradients normalized.
         max_grad_norm (Union[float, int]): Maximum norm of the gradients.
-        total_norm (float): The pre-computed total norm of the gradients to use for scaling.
+        total_norm (Union[float, torch.Tensor]): The pre-computed total norm of
+            the gradients to use for scaling. A tensor norm, as returned by
+            ``get_grad_norm(..., as_tensor=True)``, scales on its device
+            without reading the norm on the host.
     """
     if isinstance(parameters, (torch.Tensor, DTensor)):
         parameters = [parameters]
@@ -791,7 +794,11 @@ def clip_grad_by_total_norm_(
     # Scale.
     clip_coeff = max_grad_norm / (total_norm + 1.0e-6)
 
-    if clip_coeff < 1.0:
+    if isinstance(clip_coeff, torch.Tensor):
+        clip_coeff = clip_coeff.clamp(max=1.0)
+        for g in grads:
+            g.mul_(clip_coeff.to(device=g.device, dtype=g.dtype))
+    elif clip_coeff < 1.0:
         for g in grads:
             g.mul_(clip_coeff)
 
@@ -802,7 +809,8 @@ def get_grad_norm(
     dp_group: torch.distributed.ProcessGroup,
     norm_type: Union[int, float] = 2,
     dtype: torch.dtype = torch.float32,
-) -> float:
+    as_tensor: bool = False,
+) -> Union[float, torch.Tensor]:
     """Calculate the norm of gradients.
 
     Taken and modified from: https://github.com/NVIDIA/Megatron-LM/blob/a695b2bd2a0ca9ca63385a48c41a1c5a033cdd1e/megatron/core/optimizer/clip_grads.py#L51
@@ -814,9 +822,13 @@ def get_grad_norm(
         dp_group (torch.distributed.ProcessGroup): Process group for data parallel communication.
         norm_type (Union[int, float]): Type of the used p-norm. Can be ``'inf'`` for
             infinity norm.
+        as_tensor (bool): Return the norm as a 0-d tensor on the gradients'
+            device. A p-norm then never waits for the host; the infinity norm
+            still reads each gradient's maximum.
 
     Returns:
-        float: Total norm of the gradients (viewed as a single vector)
+        Union[float, torch.Tensor]: Total norm of the gradients (viewed as a
+        single vector), a tensor when ``as_tensor`` is set.
     """
     if isinstance(parameters, (torch.Tensor, DTensor)):
         parameters = [parameters]
@@ -834,7 +846,7 @@ def get_grad_norm(
     # If there are no gradients to norm (e.g., no trainable params or all grads are None),
     # directly return 0.0 to avoid constructing tensors or calling .cuda() on a float.
     if len(grads_for_norm) == 0:
-        return 0.0
+        return torch.tensor(0.0) if as_tensor else 0.0
 
     total_norm = 0.0
     device = grads_for_norm[0].device
@@ -849,6 +861,8 @@ def get_grad_norm(
             torch.distributed.all_reduce(
                 total_norm_cuda, op=torch.distributed.ReduceOp.MAX, group=dp_group
             )
+        if as_tensor:
+            return total_norm_cuda[0]
         total_norm = total_norm_cuda[0].item()
 
     else:
@@ -872,6 +886,8 @@ def get_grad_norm(
             torch.distributed.all_reduce(
                 total_norm, op=torch.distributed.ReduceOp.SUM, group=dp_group
             )
+        if as_tensor:
+            return total_norm ** (1.0 / norm_type)
         total_norm = total_norm.item() ** (1.0 / norm_type)  # type: ignore
 
     return float(total_norm)

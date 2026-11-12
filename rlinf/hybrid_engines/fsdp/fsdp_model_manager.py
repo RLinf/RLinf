@@ -650,7 +650,8 @@ class FSDPModelManager:
 
         A filtered config with ``optimizer: muon`` builds ``torch.optim.Muon``
         for its parameters, which must all be matrices; any other filtered
-        config builds Adam.
+        config builds Adam. An Adam config may set ``fused`` to choose
+        PyTorch's fused Adam kernel; unset, PyTorch picks the implementation.
         """
         validate_adam_mixed_precision(model, optimizer_name="Adam")
         main_betas = (
@@ -706,7 +707,8 @@ class FSDPModelManager:
                     "betas": main_betas,
                     "eps": main_adam_eps,
                 },
-            ]
+            ],
+            fused=main_optim_config.get("fused", None),
         )
         optimizers = [main_optimizer]
 
@@ -737,7 +739,8 @@ class FSDPModelManager:
                             "betas": filtered_optim_batas_map[key],
                             "eps": filtered_optim_adam_eps_map[key],
                         },
-                    ]
+                    ],
+                    fused=config.get("fused", None),
                 )
             )
         return optimizers

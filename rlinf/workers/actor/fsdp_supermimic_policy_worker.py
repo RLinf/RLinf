@@ -81,7 +81,7 @@ _PHASE_TYPES = {"world_model": WORLD_MODEL, "actor": ACTOR, "critic": CRITIC}
 def clip_step(
     optimizers: list[torch.optim.Optimizer],
     params: list,
-    norm: float,
+    norm: float | torch.Tensor,
     max_norm: float,
     value_clip: float | None,
 ) -> None:
@@ -113,12 +113,9 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.imagine_batch = int(alg.imagine_batch) // world
         self.critic_epochs = int(alg.critic_epochs)
         self.critic_minibatches = int(alg.critic_minibatches)
-        self.max_nonfinite_skips = int(alg.max_nonfinite_skips)
         self.num_envs = int(cfg.env.train.total_num_envs) // world
 
         self.optimizer_steps = dict.fromkeys(_PHASES, 0)
-        self.nonfinite_skips = 0
-        self.consecutive_nonfinite = 0
         self.profiler = None
         if cfg.actor.get("use_profiler", False):
             # One profiler step per global update, counted from this launch.
@@ -259,13 +256,22 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             if not torch.is_tensor(value)
         }
         out.update(zip(names, hosted, strict=True))
+        # Non-finite gradients are stepped, not skipped, so the weights
+        # are already poisoned; stop before they are synced or saved.
+        poisoned = sorted(
+            name for name, value in out.items() if not math.isfinite(value)
+        )
+        if poisoned:
+            raise RuntimeError(
+                f"non-finite training metrics {poisoned} after global update "
+                f"{self.optimizer_steps['actor']}; stopping instead of training on NaN"
+            )
         out.update(
             {
                 f"{phase}_optimizer_steps": float(n)
                 for phase, n in self.optimizer_steps.items()
             }
         )
-        out["nonfinite_skips"] = float(self.nonfinite_skips)
         return out
 
     def _run_update(self, metrics: dict) -> None:
@@ -295,27 +301,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.model.zero_grad(set_to_none=True)
         self.model.set_trainable(forward_type)
 
-    def _optimizer_step(self, phase: str) -> float:
+    def _optimizer_step(self, phase: str) -> torch.Tensor:
         """Clip and step one phase's optimizers; returns the pre-clip norm.
 
-        A non-finite gradient norm skips the step on every rank alike.
+        The norm stays on the device, so the step never waits for the host.
         """
         optimizers = self.phase_optimizers[phase]
         params = self.model.phase_parameters(_PHASE_TYPES[phase])
-        norm = get_grad_norm(params, self._dp_group)
-        if not math.isfinite(norm):
-            for optimizer in optimizers:
-                optimizer.zero_grad(set_to_none=True)
-            self.nonfinite_skips += 1
-            self.consecutive_nonfinite += 1
-            if self.consecutive_nonfinite > self.max_nonfinite_skips:
-                raise RuntimeError(
-                    f"non-finite gradients in {self.consecutive_nonfinite} "
-                    f"consecutive optimizer steps (last: {phase}); stopping "
-                    "instead of training on NaN"
-                )
-            return norm
-        self.consecutive_nonfinite = 0
+        norm = get_grad_norm(params, self._dp_group, as_tensor=True)
         optim_cfg = self.phase_optim_cfgs[phase]
         value_clip = optim_cfg.get("clip_grad_value", None)
         clip_step(
@@ -465,10 +458,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             save_full_model_weights=True,
         )
         if self._rank == 0:
-            counters = {
-                "optimizer_steps": self.optimizer_steps,
-                "nonfinite_skips": self.nonfinite_skips,
-            }
+            counters = {"optimizer_steps": self.optimizer_steps}
             with open(os.path.join(save_base_path, _COUNTERS_FILE), "w") as file:
                 json.dump(counters, file, indent=2)
         dist.barrier()
@@ -485,4 +475,3 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.optimizer_steps = {
             phase: int(counters["optimizer_steps"][phase]) for phase in _PHASES
         }
-        self.nonfinite_skips = int(counters["nonfinite_skips"])

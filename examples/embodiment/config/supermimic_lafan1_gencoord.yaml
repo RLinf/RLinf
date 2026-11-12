@@ -58,7 +58,6 @@ algorithm:
   critic_epochs: 5
   critic_minibatches: 4
   replay_length: 1000
-  max_nonfinite_skips: 20
 
 env:
   group_name: EnvGroup
@@ -118,6 +117,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-8
+    fused: True
     clip_grad: 1.0
     clip_grad_value: 0.1
     lr_scheduler: constant
@@ -126,6 +126,7 @@ actor:
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-8
+    fused: True
     clip_grad: 1.0
     lr_scheduler: constant
   critic_optim: ${actor.world_model_optim}

@@ -179,7 +179,6 @@ def _check_training(cfg: DictConfig) -> None:
         "critic_minibatches",
     ):
         _check_number(alg, name, "algorithm", int, low=1)
-    _check_number(alg, "max_nonfinite_skips", "algorithm", int, low=0)
     _check_number(alg, "replay_length", "algorithm", int, low=int(alg.k))
     env = cfg.env.train
     _check_number(env, "action_noise_std", "env.train", low=0.0)
