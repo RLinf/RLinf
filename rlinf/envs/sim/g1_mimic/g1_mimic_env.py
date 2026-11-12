@@ -167,12 +167,25 @@ class G1MimicEnv:
             "goal": merged_moments(obs["goal"], self.group),
         }
 
-    def _score(self, state, pos, quat, lin, ang, frame, action, prev_action):
+    def _score(
+        self,
+        state,
+        pos,
+        quat,
+        lin,
+        ang,
+        ref_pos,
+        ref_rot,
+        ref_lin,
+        ref_ang,
+        action,
+        prev_action,
+    ):
         return tracking_reward(
             state[:, :3],
             quat_to_rotmat(state[:, 3:7]),
             (pos, quat_to_rotmat(quat), lin, ang),
-            self.motion.body_state(frame),
+            (ref_pos, ref_rot, ref_lin, ref_ang),
             state[:, 7:36],
             action,
             prev_action,
@@ -194,12 +207,14 @@ class G1MimicEnv:
         context = sim.sim_context.clone()
         result = sim.step(executed)
         with torch.no_grad():
+            # The library's kinematics are gathered before the call: filling
+            # their cache inside the compiled piece would trace every frame.
             reward = run_compiled(
                 "collect-score",
                 self._score,
                 sim.state,
                 *sim.body_state(),
-                result["frame"],
+                *self.motion.body_state(result["frame"]),
                 executed,
                 prev_action,
                 cache=self._compile_cache,
