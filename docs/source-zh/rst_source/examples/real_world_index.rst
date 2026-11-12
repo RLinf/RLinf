@@ -1,7 +1,7 @@
 真实机器人强化学习
 ========================================
 
-按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper、SO101 和 LeKiwi 请进入对应页面。
+按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、AgileX Piper、SO101、LeKiwi 和 UR5e 请进入对应页面。
 
 根据硬件检查、遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 的需求，选择相应指南。
 
@@ -67,10 +67,10 @@ YAM
 
 进入 :doc:`YAM 页面 <embodied/yam_index>`，查看双臂配置与数据采集指南。
 
-Piper、SO101 与 LeKiwi 配置
---------------------------------
+Piper、SO101、LeKiwi 与 UR5e
+---------------------------------
 
-通过以下指南连接机器人并运行硬件测试脚本。Piper、SO101 和 LeKiwi 目前尚未提供真机训练流程。
+通过以下指南连接机器人、运行硬件检查，并执行各机器人支持的数据采集、训练与评测流程。
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -93,6 +93,12 @@ Piper、SO101 与 LeKiwi 配置
 
       配置轮电机、检查前置摄像头，并驱动移动底盘。
 
+   .. grid-item-card:: UR5e
+      :link: embodied/ur5e
+      :link-type: doc
+
+      检查 UR5e 驱动，使用 Orbbec 相机、Robotiq 夹爪与 SpaceMouse 采集演示，并运行 OpenPI π₀.₅ 监督微调与评测。
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -106,3 +112,4 @@ Piper、SO101 与 LeKiwi 配置
    Piper <embodied/piper>
    SO101 <embodied/so101>
    LeKiwi <embodied/lekiwi>
+   UR5e <embodied/ur5e>

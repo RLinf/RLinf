@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
@@ -168,6 +169,8 @@ class SpaceMouseExpert:
                     [-state.y, state.x, state.z, -state.roll, -state.pitch, -state.yaw]
                 )  # Express SpaceMouse axes in the robot base frame.
                 self.latest_data["buttons"] = state.buttons
+            # HID reads are nonblocking; yield outside the state lock between polls.
+            time.sleep(0.005)
 
     def close(self) -> None:
         """Stop the read loop and release the HID handle.
@@ -190,7 +193,6 @@ class SpaceMouseExpert:
 
 
 if __name__ == "__main__":
-    import time
 
     def test_spacemouse() -> None:
         """Print SpaceMouse readings at 10 Hz until interrupted."""

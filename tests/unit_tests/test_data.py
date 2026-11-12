@@ -2893,6 +2893,178 @@ def test_streaming_keeps_aborted_and_unfinished_takes_but_not_discards(tmp_path)
     assert takes == [(2, False), (2, True), (2, False)]
 
 
+def _ur_collection_data_env(monkeypatch):
+    """Open the public UR collection stack against caller-installed SDK fakes."""
+    from rlinf.envs.real.env import RealWorldEnv
+    from rlinf.envs.real.wrappers.episode import session
+    from rlinf.robotics import RobotInfo, UR5eConfig
+
+    keys = []
+
+    class Keyboard:
+        def __init__(self, device=None):
+            pass
+
+        def pop_pressed_keys(self):
+            pressed = keys.copy()
+            keys.clear()
+            return pressed
+
+    monkeypatch.setattr(session, "KeyboardListener", Keyboard)
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "examples/embodiment/config/env/realworld_ur5e_collect.yaml"
+    )
+    cfg = OmegaConf.load(path)
+    cfg.override_cfg.update(
+        {
+            "ee_pose_limit_min": [-0.5, -0.5, 0.0, -np.pi, -np.pi, -np.pi],
+            "ee_pose_limit_max": [0.5, 0.5, 0.8, np.pi, np.pi, np.pi],
+            "reset_ee_pose": [0.4, 0.05, 0.3, 0, 0, np.pi / 2],
+            "reset_duration": 0.001,
+            "step_frequency": 100.0,
+            "camera_names": {"MOCK0001": "main"},
+            "camera_crop_regions": {"MOCK0001": [0.0, 0.0, 1.0, 1.0]},
+            "image_size": [48, 64],
+            "task_description": "move the UR5e TCP",
+        }
+    )
+    hardware = UR5eConfig(
+        node_rank=0,
+        robot_ip="192.0.2.90",
+        gripper_type="robotiq",
+        gripper_connection="/dev/mock-ur-collection-data",
+        end_effector_config={"max_width": 0.085},
+        camera_serials=["MOCK0001"],
+        camera_type="orbbec",
+        camera_resolution=(64, 48),
+    )
+    worker = SimpleNamespace(
+        rank=0,
+        cluster_node_rank=None,
+        hardware_infos=[RobotInfo(type="UR5e", model="UR5e", config=hardware)],
+    )
+    env = RealWorldEnv(
+        cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=worker
+    )
+    return env, keys
+
+
+def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
+    monkeypatch, tmp_path
+):
+    """The public stack records operator actions and pedal segment boundaries."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.utils.pose import construct_adjoint_matrix
+
+    pytest.importorskip("lerobot")
+    parquet = pytest.importorskip("pyarrow.parquet")
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    except ModuleNotFoundError:
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+    with mocked_sdks() as made:
+        made["pyspacemouse"].twist = (0.25, 0, 0, 0, 0, 0)
+        env, keys = _ur_collection_data_env(monkeypatch)
+        collector = CollectEpisode(
+            env,
+            str(tmp_path),
+            export_format="lerobot_dataset",
+            robot_type="ur5e",
+            fps=10,
+            only_success=True,
+        )
+        expected_actions = []
+        try:
+            collector.reset()
+            collector.step(np.zeros((1, 7), dtype=np.float32))  # Preview.
+            keys.append("a")
+            start, *_ = collector.step(np.zeros((1, 7), dtype=np.float32))
+            for key in (None, "b", "c"):
+                if key is not None:
+                    keys.append(key)
+                *_, info = collector.step(np.zeros((1, 7), dtype=np.float32))
+                expected_actions.append(info["intervene_action"][0].numpy())
+        finally:
+            collector.close()
+
+    [path] = list((tmp_path / "lerobot_dataset").rglob("*.parquet"))
+    table = parquet.read_table(path)
+    rows = table.to_pylist()
+    assert len(rows) == 3, "Preview and the start edge must not become dataset frames."
+    states = np.stack([row["state"] for row in rows])
+    actions = np.stack([row["actions"] for row in rows])
+    assert states.shape == (3, 7)
+    np.testing.assert_allclose(states[0], start["states"][0].numpy())
+    np.testing.assert_allclose(states[0, 1:], np.zeros(6), atol=1e-6)
+    np.testing.assert_allclose(actions, expected_actions)
+    pose = np.array([0.4, 0.05, 0.3, 0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4)])
+    relative_action = np.linalg.solve(
+        construct_adjoint_matrix(pose), [0, 0.25, 0, 0, 0, 0]
+    )
+    np.testing.assert_allclose(actions[:, :6], [relative_action] * 3, atol=1e-6)
+    assert actions.shape == (3, 7) and np.all(np.abs(actions) <= 1.0)
+    assert [np.asarray(row["segment_id"]).item() for row in rows] == [0, 1, 1]
+    assert all(np.asarray(row["intervene_flag"]).item() for row in rows)
+    assert all(np.asarray(row["is_success"]).item() for row in rows)
+    assert [np.asarray(row["done"]).item() for row in rows] == [False, False, True]
+    [metadata] = list((tmp_path / "lerobot_dataset").rglob("meta/info.json"))
+    dataset = LeRobotDataset(
+        "ur5e_collection_test", root=metadata.parent.parent, download_videos=False
+    )
+    first = dataset[0]
+    assert len(dataset) == 3
+    assert first["state"].shape == (7,)
+    assert first["actions"].shape == (7,)
+    assert first["image"].shape == (3, 48, 64)
+    assert first["task"] == "move the UR5e TCP"
+    np.testing.assert_allclose(first["state"].numpy(), states[0])
+    np.testing.assert_allclose(first["actions"].numpy(), actions[0])
+    np.testing.assert_allclose(
+        first["image"][:, 0, 0].numpy(), np.array([192, 96, 32]) / 255
+    )
+
+
+def test_ur_openpi_transforms_preserve_tcp_state_and_cartesian_delta_actions():
+    pytest.importorskip("openpi")
+    from openpi import transforms
+
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config("pi05_ur5e")
+    data = config.data.create(config.assets_dirs, config.model)
+    state = np.array([0.04, 0.01, -0.02, 0.03, 0.1, 0, -0.1], dtype=np.float32)
+    actions = np.tile(
+        np.array([0.25, -0.5, 0.1, 0.2, -0.1, 0.3, -1], dtype=np.float32),
+        (config.model.action_horizon, 1),
+    )
+    inputs = transforms.compose(
+        (*data.repack_transforms.inputs, *data.data_transforms.inputs)
+    )(
+        {
+            "image": np.zeros((48, 64, 3), dtype=np.uint8),
+            "state": state.copy(),
+            "actions": actions.copy(),
+            "prompt": "pick up the object",
+        }
+    )
+
+    np.testing.assert_array_equal(inputs["state"], state)
+    np.testing.assert_array_equal(inputs["actions"][:, :7], actions)
+    assert inputs["actions"].shape == (20, 32)
+    assert inputs["image_mask"] == {
+        "base_0_rgb": True,
+        "left_wrist_0_rgb": False,
+        "right_wrist_0_rgb": False,
+    }
+    output = transforms.compose(data.data_transforms.outputs)(
+        {"actions": inputs["actions"], "state": inputs["state"]}
+    )
+    np.testing.assert_array_equal(output["actions"], actions)
+
+
 def test_policy_input_compression_preserves_attached_env_parts(monkeypatch):
     """Trajectory requests remain lossless across split/compress/merge routing."""
     monkeypatch.setattr(

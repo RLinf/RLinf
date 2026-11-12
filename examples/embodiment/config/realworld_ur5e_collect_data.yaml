@@ -1,0 +1,63 @@
+defaults:
+  - env/realworld_ur5e_collect@env.eval
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: ur5e
+      placement: 0
+  node_groups:
+    - label: ur5e
+      node_ranks: 0
+      hardware:
+        type: UR5e
+        configs:
+          - robot_ip: ROBOT_IP
+            node_rank: 0
+            controller_node_rank: null
+            frequency: 500.0
+            lookahead_time: 0.1
+            gain: 300.0
+            gripper_type: robotiq
+            gripper_connection: "/dev/serial/by-id/ROBOTIQ_SERIAL"
+            end_effector_config:
+              max_width: 0.085
+            camera_serials: ["CAMERA_SERIAL"]
+            camera_type: orbbec
+            camera_resolution: [1280, 720]
+            camera_fps: 15
+            camera_node_rank: null
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "ur5e-spacemouse-collect"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 20
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    override_cfg:
+      camera_names:
+        "CAMERA_SERIAL": main
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}
+      export_format: [lerobot_dataset]
+      only_success: True
+      robot_type: "ur5e"
+      fps: 10

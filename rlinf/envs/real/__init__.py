@@ -39,6 +39,7 @@ _ROBOT_PACKAGES = (
     ".lekiwi",
     ".piper",
     ".so101",
+    ".ur5e",
     ".xsquare",
     ".yam",
 )

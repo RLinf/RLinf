@@ -35,6 +35,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 - [2026/11] 🔥 RLinf 支持 LIBERO-Mem，并为 OpenPI 提供受 MEM 启发的视觉短期记忆，用于监督微调和评测。文档：[LIBERO-Mem](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark)、[OpenPI Short Memory](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0/short_memory.html)。
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
+- [2026/11] 🔥 RLinf 支持 UR5e 笛卡尔空间演示数据采集、OpenPI π₀.₅ 监督微调和真机评测。文档：[UR5e](docs/source-zh/rst_source/examples/embodied/ur5e.rst)。
 - [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
 - [2026/11] 🔥 RLinf 支持 Psi0 VLA 模型与 SIMPLE 人形机器人仿真环境。文档：[Psi0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/psi0.html)、[SIMPLE](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html)。
 - [2026/11] 🔥 RLinf 支持将 [PhyAI](https://github.com/mingti-org/phyai) 作为进程内 rollout 后端，在 LIBERO 上用 PPO 训练 π₀.₅，并支持热权重同步。文档：[PhyAI rollout 后端](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/guides/rollout-engines/phyai.html)。
@@ -321,6 +322,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/ur5e.html">UR5e</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>

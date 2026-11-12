@@ -168,6 +168,8 @@ Select the data format with ``actor.model.openpi.config_name``:
      - LIBERO
    * - ``pi0_realworld``
      - Real-world Franka
+   * - ``pi05_ur5e``
+     - Real-world UR5e
    * - ``pi05_yam_joint``
      - Real-world Dual YAM
    * - ``pi0_aloha_robotwin``

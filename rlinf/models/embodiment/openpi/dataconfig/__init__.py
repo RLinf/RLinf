@@ -285,6 +285,20 @@ _CONFIGS = [
         save_interval=250,
     ),
     TrainConfig(
+        name="pi05_ur5e",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=20, discrete_state_input=True
+        ),
+        data=LeRobotFrankaEEDataConfig(
+            repo_id="ur5e",
+            base_config=DataConfig(prompt_from_task=True),
+            output_action_dim=7,
+            pad_state=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        batch_size=16,
+    ),
+    TrainConfig(
         name="pi05_franka_pnp",
         model=pi0_config.Pi0Config(
             pi05=True,

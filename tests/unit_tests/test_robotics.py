@@ -26,6 +26,7 @@ import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
 import unittest
 from collections.abc import Iterator
@@ -2008,6 +2009,34 @@ def test_disconnecting_a_spacemouse_stops_its_thread_and_closes_the_handle():
 
         assert not reader.thread.is_alive()
         assert handle.closed
+
+
+def test_spacemouse_yields_between_polls_without_holding_the_state_lock(monkeypatch):
+    import threading
+
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.teleop import spacemouse
+
+    with mocked_sdks() as made:
+        reader = spacemouse.SpaceMouseExpert.__new__(spacemouse.SpaceMouseExpert)
+        reader._device = made["pyspacemouse"].open()
+        reader.state_lock = threading.Lock()
+        reader.latest_data = {}
+        reader._stop = False
+        waits = []
+
+        def pause(seconds):
+            assert reader.state_lock.acquire(blocking=False)
+            reader.state_lock.release()
+            waits.append(seconds)
+            reader._stop = True
+
+        monkeypatch.setattr(spacemouse, "time", SimpleNamespace(sleep=pause))
+        reader._read_spacemouse()
+        assert waits == [0.005]
+        assert reader.get_action()[1] == [0, 0]
+        reader._device.close()
 
 
 def test_disconnecting_a_gello_stops_its_thread_and_releases_the_port():
@@ -6490,6 +6519,418 @@ def test_so101_reset_rejects_invalid_pacing_before_sending_targets(settings):
             arm.disconnect()
 
 
+@pytest.fixture
+def ur_arm(tmp_path, monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts import claims
+    from rlinf.robotics.parts.arms.ur_rtde import URRTDEArm
+
+    monkeypatch.setattr(claims, "_CLAIM_DIR", str(tmp_path))
+    with mocked_sdks() as made:
+        arm = URRTDEArm("10.42.0.101")
+        arm.connect()
+        try:
+            yield arm, made
+        finally:
+            arm.disconnect()
+
+
+def test_ur_declaration_and_observation_do_not_start_motion():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.ur_rtde import URRTDEArm
+
+    with mocked_sdks() as made:
+        control_cls = made["rtde_control"].RTDEControlInterface
+        receive_cls = made["rtde_receive"].RTDEReceiveInterface
+        arm = URRTDEArm.declare("10.42.0.101")
+        assert control_cls.instances == receive_cls.instances == []
+        assert not arm.is_connected
+        assert not arm.parts
+        assert set(arm.action_features) == {"tcp_pose"}
+
+        arm.connect()
+        try:
+            observation = arm.get_observation()
+            assert set(observation) == {
+                "tcp_pose",
+                "tcp_vel",
+                "arm_joint_position",
+                "arm_joint_velocity",
+            }
+            assert not control_cls.instances[-1].commands
+        finally:
+            arm.disconnect()
+        assert not arm.is_connected
+        assert not any(
+            name in ("servoL", "servoStop")
+            for name, _args in control_cls.instances[-1].commands
+        )
+
+
+def test_ur_state_reports_six_joints_and_a_quaternion(ur_arm):
+    arm, made = ur_arm
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    receive.pose = [0.3, -0.1, 0.25, 0.0, 0.0, np.pi / 2]
+    state = arm.get_state()
+    np.testing.assert_allclose(state.arm_joint_position, receive.joints)
+    np.testing.assert_allclose(state.arm_joint_velocity, receive.velocity)
+    np.testing.assert_allclose(state.tcp_vel, receive.tcp_speed)
+    np.testing.assert_allclose(state.tcp_pose[:3], receive.pose[:3])
+    np.testing.assert_allclose(
+        state.tcp_pose[3:], [0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)]
+    )
+    assert state.arm_joint_position.shape == state.arm_joint_velocity.shape == (6,)
+    assert state.tcp_pose.shape == (7,)
+    assert state.tcp_vel.shape == (6,)
+
+
+def test_ur_absolute_tcp_targets_reach_the_servo_in_rotation_vectors(ur_arm):
+    arm, made = ur_arm
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    target = np.array([0.35, -0.05, 0.25, 0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)])
+    arm.send_action({"tcp_pose": target})
+    assert control.servo_called.wait(2), "the TCP target did not reach RTDE servoL"
+    command = next(args for name, args in control.commands if name == "servoL")
+    np.testing.assert_allclose(command[0], [*target[:3], 0.0, 0.0, np.pi / 2])
+    assert command[3:] == pytest.approx((0.002, 0.1, 300))
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"joint_position": np.zeros(6)},
+        {"tcp_pose": np.zeros(6)},
+        {"tcp_pose": np.zeros(7)},
+        {"tcp_pose": [0.4, 0.0, 0.3, 0.0, 0.0, np.nan, 1.0]},
+        {"tcp_pose": [np.inf, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0]},
+    ],
+)
+def test_ur_rejects_invalid_targets_before_commanding_the_controller(ur_arm, action):
+    arm, made = ur_arm
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    with pytest.raises((ValueError, KeyError)):
+        arm.send_action(action)
+    assert not control.commands
+
+
+def test_ur_rejects_impedance_settings(ur_arm):
+    from rlinf.robotics.parts.arms.ur_rtde import URRTDEArm
+
+    with pytest.raises((ValueError, TypeError, NotImplementedError)):
+        URRTDEArm.declare("10.42.0.102", compliance={"translational_stiffness": 500})
+    arm, made = ur_arm
+    with pytest.raises((ValueError, TypeError, NotImplementedError)):
+        arm.reconfigure_compliance_params({"translational_stiffness": 500})
+    assert made["rtde_control"].RTDEControlInterface.instances[-1].commands == []
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"frequency": 0},
+        {"frequency": 501},
+        {"frequency": np.nan},
+        {"lookahead_time": 0.02},
+        {"lookahead_time": 0.21},
+        {"gain": 99},
+        {"gain": 2001},
+    ],
+)
+def test_ur_rejects_invalid_servo_settings_before_connecting(settings):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.ur_rtde import URRTDEArm
+
+    with mocked_sdks() as made:
+        with pytest.raises(ValueError):
+            URRTDEArm("10.42.0.101", **settings)
+        assert made["rtde_control"].RTDEControlInterface.instances == []
+        assert made["rtde_receive"].RTDEReceiveInterface.instances == []
+
+
+@pytest.mark.parametrize("failure", ["exception", "rejected"])
+def test_ur_servo_failures_surface_until_reconnect(ur_arm, failure):
+    arm, made = ur_arm
+    control_cls = made["rtde_control"].RTDEControlInterface
+    control = control_cls.instances[-1]
+    if failure == "exception":
+        control.servo_error = OSError("RTDE connection lost")
+    else:
+        control.servo_result = False
+    target = arm.get_observation()["tcp_pose"]
+    arm.send_action({"tcp_pose": target})
+    assert control.servo_called.wait(2)
+    control.servo_called.clear()
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            arm.get_state()
+        except RuntimeError:
+            break
+        assert time.monotonic() < deadline, (
+            "the failed servo loop still reports healthy"
+        )
+        control.servo_called.wait(0.001)
+    with pytest.raises(RuntimeError):
+        arm.send_action({"tcp_pose": target})
+    arm.disconnect()
+    arm.disconnect()
+    assert control.disconnect_count == 1
+    arm.connect()
+    assert arm.is_robot_up()
+    assert control_cls.instances[-1].commands == []
+
+
+@pytest.mark.parametrize("failed_interface", ["rtde_control", "rtde_receive"])
+def test_ur_failed_connect_releases_handles_and_the_endpoint(
+    tmp_path, monkeypatch, failed_interface
+):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts import claims
+    from rlinf.robotics.parts.arms.ur_rtde import URRTDEArm
+
+    monkeypatch.setattr(claims, "_CLAIM_DIR", str(tmp_path))
+    with mocked_sdks() as made:
+        control_cls = made["rtde_control"].RTDEControlInterface
+        receive_cls = made["rtde_receive"].RTDEReceiveInterface
+        failed = control_cls if failed_interface == "rtde_control" else receive_cls
+        failed.connect_error = OSError("RTDE setup failed")
+        arm = URRTDEArm("10.42.0.101")
+        with pytest.raises((OSError, RuntimeError), match="RTDE setup failed"):
+            arm.connect()
+        assert not arm.is_connected
+        assert all(not device.connected for device in control_cls.instances)
+        assert all(not device.connected for device in receive_cls.instances)
+        failed.connect_error = None
+        replacement = URRTDEArm("10.42.0.101")
+        replacement.connect()
+        replacement.disconnect()
+
+
+def test_ur_cleanup_retries_both_sessions_after_a_servo_stop_error(ur_arm, monkeypatch):
+    arm, made = ur_arm
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
+    arm.send_action({"tcp_pose": arm.get_state().tcp_pose})
+    assert control.servo_called.wait(2)
+
+    def stop_error():
+        raise OSError("servo stop failed")
+
+    monkeypatch.setattr(control, "servoStop", stop_error)
+    attempts = []
+    for name, session in (("control", control), ("receive", receive)):
+        disconnect = session.disconnect
+
+        def retry_disconnect(name=name, disconnect=disconnect):
+            attempts.append(name)
+            if attempts.count(name) == 1:
+                raise OSError(f"temporary {name} disconnect failure")
+            disconnect()
+
+        monkeypatch.setattr(session, "disconnect", retry_disconnect)
+    with pytest.raises(RuntimeError, match="servo"):
+        arm.disconnect()
+    assert attempts.count("control") == attempts.count("receive") == 2
+    assert not control.connected and not receive.connected
+    arm.connect()
+    assert made["rtde_control"].RTDEControlInterface.instances[-1].commands == []
+
+
+def test_ur_reconnect_cleans_old_sessions_before_opening_new_ones(ur_arm, monkeypatch):
+    arm, made = ur_arm
+    controls = made["rtde_control"].RTDEControlInterface.instances
+    receives = made["rtde_receive"].RTDEReceiveInterface.instances
+    control, receive = controls[-1], receives[-1]
+    disconnect = control.disconnect
+
+    def disconnect_error():
+        raise OSError("control disconnect failed")
+
+    monkeypatch.setattr(control, "disconnect", disconnect_error)
+    with pytest.raises(RuntimeError, match="control"):
+        arm.disconnect()
+    assert control.connected and not receive.connected
+    with pytest.raises(RuntimeError, match="control"):
+        arm.connect()
+    assert len(controls) == len(receives) == 1
+    monkeypatch.setattr(control, "disconnect", disconnect)
+    arm.connect()
+    assert not control.connected
+    assert len(controls) == len(receives) == 2
+    assert controls[-1].commands == []
+
+
+def test_ur_shutdown_timeout_preserves_sessions_until_reconnect(ur_arm, monkeypatch):
+    arm, made = ur_arm
+    control_cls = made["rtde_control"].RTDEControlInterface
+    receive_cls = made["rtde_receive"].RTDEReceiveInterface
+    control, receive = control_cls.instances[-1], receive_cls.instances[-1]
+    entered, unblock, closed = (threading.Event() for _ in range(3))
+    errors = []
+    availability = []
+    servo = control.servoL
+
+    def blocked_servo(*args):
+        entered.set()
+        unblock.wait()
+        return servo(*args)
+
+    def close():
+        try:
+            arm.disconnect()
+        except Exception as error:
+            errors.append(error)
+        try:
+            availability.append(arm.is_robot_up())
+        finally:
+            closed.set()
+
+    monkeypatch.setattr(arm, "JOIN_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(control, "servoL", blocked_servo)
+    target = {"tcp_pose": arm.get_state().tcp_pose}
+    arm.send_action(target)
+    thread = arm._thread
+    closer = threading.Thread(target=close, daemon=True)
+    try:
+        assert entered.wait(2)
+        closer.start()
+        assert closed.wait(1), "UR shutdown did not report its timeout"
+        assert len(errors) == 1 and isinstance(errors[0], TimeoutError)
+        assert "SDK sessions were left open" in str(errors[0])
+        assert arm._control is control and arm._receive is receive
+        assert control.connected and receive.connected and control.commands == []
+        assert availability == [False]
+        with pytest.raises(RuntimeError, match="disconnected"):
+            arm.get_state()
+        with pytest.raises(RuntimeError, match="disconnected"):
+            arm.send_action(target)
+        with pytest.raises(TimeoutError):
+            arm.connect()
+        assert len(control_cls.instances) == len(receive_cls.instances) == 1
+    finally:
+        unblock.set()
+        thread.join(2)
+        if closer.ident is not None:
+            closer.join(2)
+        arm.connect()
+        arm.disconnect()
+    assert not control.connected and not receive.connected
+    assert len(control_cls.instances) == len(receive_cls.instances) == 2
+    assert not any(name == "servoL" for name, _ in control_cls.instances[-1].commands)
+
+
+def test_ur_robot_registration_and_arm_declaration():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import UR5eConfig, UR5eRobot
+    from rlinf.robotics.parts.arms import URRTDEArm
+
+    config = UR5eConfig(node_rank=0, robot_ip="10.42.0.101")
+    assert not config.REQUIRES_CAMERA
+    assert Arm.backend("ur_rtde") is URRTDEArm
+    assert RobotDiscovery.registry["UR5e"].config_cls is UR5eConfig
+    with mocked_sdks() as made:
+        robot = UR5eRobot.build(robot_ip="10.42.0.101", node_rank=0)
+        assert set(robot.children) == {"arm"}
+        assert robot.child("arm", Arm).node_rank == 0
+        assert made["rtde_control"].RTDEControlInterface.instances == []
+        assert not robot.is_connected
+
+
+def test_ur_controller_rejects_invalid_offsets_without_commanding(ur_arm):
+    from rlinf.robotics import UR5eRobot
+    from toolkits.realworld_check.test_ur_controller import drive
+
+    arm, made = ur_arm
+    robot = UR5eRobot(arm=arm)
+    drive(
+        robot,
+        [
+            "offset 6 0 0",
+            "offset 3 4 1",
+            "offset nan 0 0",
+            "offset 0 inf 0",
+            "offset bad 0 0",
+            "move 1 0 0",
+            "where",
+            "quit",
+        ],
+    )
+    assert made["rtde_control"].RTDEControlInterface.instances[-1].commands == []
+
+
+def test_ur_controller_offsets_are_metres_in_the_base_frame(ur_arm):
+    from rlinf.robotics import UR5eRobot
+    from toolkits.realworld_check.test_ur_controller import drive
+
+    arm, made = ur_arm
+    start = arm.get_observation()["tcp_pose"]
+    control = made["rtde_control"].RTDEControlInterface.instances[-1]
+    drive(UR5eRobot(arm=arm), ["offset 1 -2 2", "quit"])
+    assert control.servo_called.wait(2), "the offset did not reach the RTDE servo"
+    command = [args[0] for name, args in control.commands if name == "servoL"][-1]
+    np.testing.assert_allclose(command[:3], start[:3] + [0.001, -0.002, 0.002])
+    np.testing.assert_allclose(
+        R.from_rotvec(command[3:]).as_matrix(),
+        R.from_quat(start[3:]).as_matrix(),
+        atol=1e-7,
+    )
+
+
+def test_ur_receive_cli_reads_bounded_feedback_without_control(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check import test_ur_controller
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ur-check",
+            "--robot-ip",
+            "10.42.0.101",
+            "--receive-only",
+            "--frequency",
+            "100",
+            "--samples",
+            "3",
+        ],
+    )
+    with mocked_sdks() as made:
+        receive_cls = made["rtde_receive"].RTDEReceiveInterface
+        made["rtde_control"].RTDEControlInterface.connect_error = AssertionError(
+            "A receive-only check must never open RTDE control."
+        )
+        test_ur_controller.main()
+        receive = receive_cls.instances[-1]
+        assert receive.frequency == 100
+        assert made["rtde_control"].RTDEControlInterface.instances == []
+        assert receive.disconnect_count == 1
+        assert not receive.connected
+
+
+def test_ur_receive_check_releases_the_connection_after_a_read_error(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_ur_controller import receive_only
+
+    with mocked_sdks() as made:
+        receive_cls = made["rtde_receive"].RTDEReceiveInterface
+
+        def fail(self):
+            raise OSError("receive failed")
+
+        monkeypatch.setattr(receive_cls, "getActualQ", fail)
+        with pytest.raises(OSError, match="receive failed"):
+            receive_only("10.42.0.101", samples=1)
+        assert receive_cls.instances[-1].disconnect_count == 1
+        assert made["rtde_control"].RTDEControlInterface.instances == []
+
+
 def test_piper_reset_waits_for_the_arm_to_stop_moving():
     """move_j returns while the arm is still travelling, so a reset waits."""
     from robot_mocks import mocked_sdks
@@ -7947,3 +8388,19 @@ def test_lekiwi_camera_save_failure_returns_error(monkeypatch, tmp_path, capsys)
     assert result == 1
     assert "Could not save camera frame" in output.err
     assert "Saved the last frame" not in output.out
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"camera_fps": 0},
+        {"camera_fps": 15.5},
+        {"camera_resolution": [640, 0]},
+        {"camera_resolution": [640]},
+    ],
+)
+def test_ur_rejects_invalid_camera_capture_settings(settings):
+    from rlinf.robotics import UR5eConfig
+
+    with pytest.raises(ValueError, match="camera_"):
+        UR5eConfig(node_rank=0, **settings)
