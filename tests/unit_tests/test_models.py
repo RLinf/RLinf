@@ -891,6 +891,37 @@ def test_empty_history_input_still_resets_shaping_state_on_done():
     assert model._success_streak.tolist() == [0, 1]
 
 
+def test_robotwin_t5_reward_scores_env_observations():
+    from rlinf.models.embodiment.reward import get_reward_model_class
+
+    model_cls = get_reward_model_class("robotwin_t5")
+    model = model_cls.__new__(model_cls)
+    torch.nn.Module.__init__(model)
+    model.batch_size = 2
+    model.register_buffer("_mean", torch.zeros(1, 3, 1, 1), False)
+    seen = []
+
+    def fake_logits(images, instructions):
+        seen.append((images, instructions))
+        return torch.zeros(images.shape[0])
+
+    model._logits = fake_logits
+    images = torch.tensor([0, 255, 51], dtype=torch.uint8).view(3, 1, 1, 1)
+
+    rewards = model.compute_reward(
+        {
+            "main_images": images.expand(3, 4, 4, 3),
+            "task_descriptions": ["a", "b", "c"],
+        }
+    )
+
+    assert rewards.tolist() == pytest.approx([0.5, 0.5, 0.5])
+    assert [batch.shape for batch, _ in seen] == [(2, 3, 4, 4), (1, 3, 4, 4)]
+    frames = torch.cat([batch for batch, _ in seen])
+    assert frames.amax(dim=(1, 2, 3)).tolist() == pytest.approx([0.0, 1.0, 0.2])
+    assert [texts for _, texts in seen] == [["a", "b"], ["c"]]
+
+
 VALUE_CLIP = 0.2
 HUBER_DELTA = 10.0
 
@@ -1409,6 +1440,26 @@ def test_so101_openpi_transforms_pad_six_joint_contract():
     assert result["actions"].shape == (20, 32)
     assert result["image"]["base_0_rgb"].shape == image.shape
     assert not result["image_mask"]["left_wrist_0_rgb"]
+
+
+def test_aloha_inputs_mask_wrist_views_missing_from_a_head_only_observation():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.aloha_policy import AlohaInputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = AlohaInputs(adapt_to_pi=False)(
+        {
+            "observation/image": image,
+            "observation/wrist_image": None,
+            "observation/state": np.zeros(14, dtype=np.float32),
+            "prompt": "adjust the bottle",
+        }
+    )
+    assert result["image_mask"]["base_0_rgb"]
+    for view in ("left_wrist_0_rgb", "right_wrist_0_rgb"):
+        assert not result["image_mask"][view]
+        assert result["image"][view].shape == image.shape
 
 
 def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
@@ -2154,6 +2205,22 @@ def phyai_example_cfg(monkeypatch):
         return compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
 
 
+@pytest.mark.parametrize(
+    ("path", "value"), [("env.train.chunk", 25), ("env.train.action_dim", 7)]
+)
+def test_world_model_env_must_match_the_policy_action_shape(monkeypatch, path, value):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="bwm_robotwin_adjust_bottle_ppo_openpi_pi05")
+    OmegaConf.update(cfg, path, value)
+
+    with pytest.raises(ValueError, match=f"Expected {path} to equal"):
+        validate_embodied_cfg(cfg)
+
+
 def test_phyai_example_config_validates_and_shares_the_actor_checkpoint(
     phyai_example_cfg,
 ):
@@ -2693,6 +2760,107 @@ def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
     with pytest.raises(ValueError, match="active right arm"):
         client.predict_action_batch({"history": [sample]}, mode="eval")
     client.close()
+
+
+@pytest.mark.parametrize(
+    ("detach_critic_input", "use_vlm_value", "expect_vl_grad", "expect_state_grad"),
+    [
+        pytest.param(True, False, False, False, id="detached-vl-and-state"),
+        pytest.param(True, True, False, False, id="detached-vl-only"),
+        pytest.param(False, False, True, True, id="attached-vl-and-state"),
+        pytest.param(False, True, True, False, id="attached-vl-only"),
+        pytest.param(None, False, True, True, id="default-vl-and-state"),
+        pytest.param(None, True, True, False, id="default-vl-only"),
+    ],
+)
+def test_gr00t_n1d7_value_gradient_routing(
+    monkeypatch, detach_critic_input, use_vlm_value, expect_vl_grad, expect_state_grad
+):
+    # Delayed-env tests stub imageio; vendor imports need its real module spec.
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    config_module = pytest.importorskip("gr00t.configs.model.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        FlowMatchingActionHeadForRLActionPrediction,
+    )
+
+    # Construct only the action head; no pretrained backbone or processor loads.
+    config = config_module.Gr00tN1d7Config(
+        backbone_embedding_dim=16,
+        hidden_size=16,
+        input_embedding_dim=16,
+        max_state_dim=8,
+        max_action_dim=7,
+        action_dim=7,
+        action_horizon=2,
+        max_num_embodiments=1,
+        state_history_length=1,
+        add_pos_embed=False,
+        use_alternate_vl_dit=False,
+        vl_self_attention_cfg={"num_layers": 0},
+        num_inference_timesteps=2,
+        num_timestep_buckets=4,
+        diffusion_model_cfg={
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "attention_head_dim": 8,
+            "output_dim": 16,
+            "norm_type": "ada_norm",
+            "dropout": 0.0,
+            "final_dropout": False,
+            "positional_embeddings": None,
+            "interleave_self_attention": False,
+        },
+    )
+    rl_head_config = {
+        "add_value_head": True,
+        "use_vlm_value": use_vlm_value,
+        "value_vlm_mode": "mean_token",
+    }
+    if detach_critic_input is not None:
+        rl_head_config["detach_critic_input"] = detach_critic_input
+    head = FlowMatchingActionHeadForRLActionPrediction(
+        config, rl_head_config, output_action_chunks=2
+    ).float()
+
+    # Positive activations make every value-head layer contribute to backward.
+    with torch.no_grad():
+        for module in head.value_head.modules():
+            if isinstance(module, torch.nn.Linear):
+                module.weight.fill_(0.01)
+                if module.bias is not None:
+                    module.bias.zero_()
+    vl_features = torch.linspace(0.1, 1.0, 96).reshape(2, 3, 16).requires_grad_()
+    state_features = torch.linspace(0.2, 1.1, 32).reshape(2, 1, 16).requires_grad_()
+
+    # Detachment must change gradient ownership, never the predicted values.
+    head.rl_config["detach_critic_input"] = False
+    with torch.no_grad():
+        attached_values = head.get_value(vl_features, state_features)
+    if detach_critic_input is None:
+        head.rl_config.pop("detach_critic_input")
+    else:
+        head.rl_config["detach_critic_input"] = detach_critic_input
+    values = head.get_value(vl_features, state_features)
+    assert values.shape == (2,)
+    torch.testing.assert_close(values, attached_values, rtol=0, atol=0)
+    values.sum().backward()
+
+    for parameter in head.value_head.parameters():
+        assert parameter.grad is not None
+        assert torch.count_nonzero(parameter.grad).item() > 0
+    for features, expect_grad in (
+        (vl_features, expect_vl_grad),
+        (state_features, expect_state_grad),
+    ):
+        if expect_grad:
+            assert features.grad is not None
+            assert torch.count_nonzero(features.grad).item() > 0
+        else:
+            assert features.grad is None
 
 
 def _accelerator_device() -> torch.device:
