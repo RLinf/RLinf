@@ -4622,7 +4622,7 @@ EOF
 }
 
 install_sglang_npu() {
-    local version="$1" source_dir kernel_dir archive chip
+    local version="$1" source_dir kernel_dir archive chip kernel_release=2026.05.01
     if [ "$version" != "0.5.12.post1" ] || [ "$TORCH_VERSION" != "2.8.0" ]; then
         echo "[install.sh] Ascend agentic requires SGLang 0.5.12.post1 and torch 2.8.0." >&2
         return 1
@@ -4633,20 +4633,22 @@ install_sglang_npu() {
     uv pip install --override "$SCRIPT_DIR/agentic/sglang_0.5.12.post1_npu_overrides.txt" \
         -r "$(agentic_requirements_file sglang "$version")" -e "$source_dir/python"
 
-    # The release bundles kernels and DeepEP built for CANN 8.5 / torch 2.8.
+    # This release matches Triton Ascend 3.2.0; post3 needs extra.cann.
     chip="${ASCEND_CHIP:-910b}"
     case "$chip" in
         910b|a3) ;;
         *) echo "[install.sh] ASCEND_CHIP must be 910b or a3; got ${chip}." >&2; return 1 ;;
     esac
-    kernel_dir="$VENV_DIR/sgl-kernel-npu"
+    kernel_dir="$VENV_DIR/sgl-kernel-npu/$kernel_release"
     mkdir -p "$kernel_dir"
-    archive="sgl-kernel-npu-2026.05.01.post3-torch2.8.0-py311-cann8.5.0-${chip}-$(uname -m).zip"
+    archive="sgl-kernel-npu-${kernel_release}-torch2.8.0-py311-cann8.5.0-${chip}-$(uname -m).zip"
     curl --fail --location --retry 3 \
-        "${GITHUB_PREFIX}https://github.com/sgl-project/sgl-kernel-npu/releases/download/2026.05.01.post3/${archive}" \
+        "${GITHUB_PREFIX}https://github.com/sgl-project/sgl-kernel-npu/releases/download/${kernel_release}/${archive}" \
         --output "$kernel_dir/$archive"
     python -m zipfile -e "$kernel_dir/$archive" "$kernel_dir"
-    uv pip install "$kernel_dir"/sgl_kernel_npu*.whl "$kernel_dir"/deep_ep*.whl \
+    uv pip install --reinstall-package sgl-kernel-npu --reinstall-package deep-ep \
+        --reinstall-package torch-memory-saver \
+        "$kernel_dir"/sgl_kernel_npu*.whl "$kernel_dir"/deep_ep*.whl \
         "$kernel_dir"/torch_memory_saver*.whl
     local site_dir library
     site_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')

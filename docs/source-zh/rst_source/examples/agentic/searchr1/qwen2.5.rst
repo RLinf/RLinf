@@ -202,6 +202,8 @@ Huawei Ascend CANN
 
 .. include:: ../_ascend_agentic.rst
 
+Ascend 配方使用 FP16 和动态梯度缩放，初始 scale 为 ``32768``，以减少训练初期的梯度溢出。训练过程中 scaler 会继续自动调整 scale。
+
 按前文步骤准备检索服务，并将 ``tools.search.server_addr`` 设置为可访问的 endpoint。检索服务可以运行在另一台机器上。修改 ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` 后启动训练：
 
 .. code-block:: bash
