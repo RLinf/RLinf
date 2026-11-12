@@ -46,9 +46,9 @@ drive the check so it cannot drift from the parser.
 
 Usage::
 
-    python3 .agents/skills/docs-check/check_rst_markup.py            # all docs
-    python3 .agents/skills/docs-check/check_rst_markup.py FILE...    # subset
-    python3 .agents/skills/docs-check/check_rst_markup.py --errors-only
+    python3 .agents/skills/docs/check_rst_markup.py            # all docs
+    python3 .agents/skills/docs/check_rst_markup.py FILE...    # subset
+    python3 .agents/skills/docs/check_rst_markup.py --errors-only
 
 Exit code is 1 when any ERROR is reported, 0 otherwise (warnings pass).
 """

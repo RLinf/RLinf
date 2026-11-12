@@ -37,9 +37,9 @@ go in ``ALLOWED`` below or in a ``--allow`` argument.
 
 Usage::
 
-    python3 .agents/skills/docs-check/check_doc_symbols.py           # all docs
-    python3 .agents/skills/docs-check/check_doc_symbols.py FILE...   # subset
-    python3 .agents/skills/docs-check/check_doc_symbols.py --allow Foo --allow Bar
+    python3 .agents/skills/docs/check_doc_symbols.py           # all docs
+    python3 .agents/skills/docs/check_doc_symbols.py FILE...   # subset
+    python3 .agents/skills/docs/check_doc_symbols.py --allow Foo --allow Bar
 
 Exit code is 1 when any unknown name is reported, 0 otherwise.
 """

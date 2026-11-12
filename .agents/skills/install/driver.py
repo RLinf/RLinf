@@ -16,7 +16,7 @@
 
 """Drive the embodied install + e2e pipeline for one model/env.
 
-This is the harness behind the `test-install` skill. It is the single source of
+This is the Verify step of the `install` skill. It is the single source of
 truth for "how does CI install and test <model>/<env>" — it reads that straight
 out of .github/workflows/embodied-e2e-tests.yml instead of hard-coding it, so it
 never drifts from CI.

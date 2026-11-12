@@ -1,14 +1,15 @@
 # RLinf Documentation Style Guide
 
 The standing contract for **writing and refining** every page in
-`docs/source-en` and `docs/source-zh`. It applies to new pages and to edits of
-existing ones. The goal is task-first, scannable, consistent docs at the
+`docs/source-en` and `docs/source-zh`, and the README text that links to them. It
+applies to new pages and to edits of existing ones. The goal is task-first,
+scannable, consistent docs at the
 [LeRobot](https://huggingface.co/docs/lerobot/en/index) /
 [Ray](https://docs.ray.io/en/latest/index.html) standard.
 
-This guide is the single source of truth for RLinf documentation. To apply it to
-a page, use the **`refine-docs`** skill; to validate doc-to-code and EN/ZH
-correctness, use the **`docs-check`** skill.
+This guide is the single source of truth for RLinf documentation. The **`docs`**
+skill (`.agents/skills/docs/SKILL.md`) says which parts of it to apply when you
+write a page, and its check runs the build and the mechanical checks.
 
 ## Voice and tone
 
@@ -141,6 +142,9 @@ sharp edge, and not selling anything.
   genuinely isn't obvious from the mechanism.
 - **Say the thing; don't announce it.** "`build` never mentions the gripper"
   beats "Notice that `build` never mentions the gripper".
+- **Keep Guides plain and technical.** Use simple task headings, one config
+  example, one worked example, and only the config keys a user writes. Leave out
+  equations and tensor-shape tables; they belong in Reference.
 
 ### Build a continuous article
 
@@ -445,6 +449,45 @@ Visualization and Results → TensorBoard / video / logger + link to Training me
                             link to Evaluation for standalone eval; results as a TABLE
 ```
 
+## Publication pages
+
+A publication page under `resources/publications/` summarizes one paper or
+technical report and sends the reader to the recipe that reproduces it. Both
+languages have these sections, in this order:
+
+1. The paper title as the H1.
+2. One link line: `**Paper:** <link>` (`**论文：**`), optionally followed by
+   `| **Models:** <link>` (`| **模型：**`). A page about something other than a
+   paper uses `**Documentation:**` (`**文档：**`).
+3. `Overview` (`概述`): what the work changes or which problem it solves, before
+   any project-specific name.
+4. `Results` (`结果`): tables as `list-table`, with as many `:widths:` values as
+   columns, and figures.
+5. `Quickstart` (`快速开始`): exactly one link, to the example page that runs the
+   work. When that page does not exist yet, write it first; the publication page
+   does not repeat install or run steps.
+6. `Citation` (`引用`): the BibTeX, when the work has one.
+
+The publications index lists each page as a row of its `list-table` and in its
+hidden toctree, in the order the list shows.
+
+## README highlights
+
+A feature worth announcing (a new model, env, algorithm, rollout or training
+backend, accelerator, robot, or major capability) is highlighted in `README.md`
+and `README.zh-CN.md` in the same change. Bug fixes, refactors with no
+user-visible change, and internal tooling get no entry.
+
+- Add a dated entry at the top of "What's NEW!" (`最新动态`), in the form
+  `- [YYYY/MM] 🔥 RLinf supports <feature> <with what, where>. Doc: [<page title>](<docs link>).`
+  Write the Chinese entry as Chinese rather than as a translation of the English one.
+- Add an item to the matching support list (the embodied Simulators, Models, or
+  Algorithms list, the Hardware Support table, or the Agentic AI table), above its
+  "More..." (`更多...`) item when there is one.
+- Link to the rendered page, `https://rlinf.readthedocs.io/en/latest/rst_source/<path>.html`,
+  from `README.md`, and to the `zh-cn` URL from `README.zh-CN.md`. READMEs use
+  these absolute links; docs pages use `:doc:` and `:ref:`.
+
 ## Headings and admonitions
 
 - **Title Case for all headings**, consistent: `Run It`, `Download the Model`,
@@ -574,10 +617,11 @@ above, the Chinese needs the same treatment in its own idiom:
 
 After each change:
 
-- `sphinx-build` both trees with **zero new warnings**:
-  `/opt/venv/docs/bin/sphinx-build -b html docs/source-en /tmp/build-en` and the
-  same for `source-zh`.
-- Run the **`docs-check`** skill (doc-to-code correctness + EN/ZH parity).
+- Run `python3 .agents/skills/docs/check.py`. It builds both trees the way Read
+  the Docs does, with **zero new warnings**, and checks inline markup, code-font
+  names, links, EN/ZH pairing, and Chinese line wrapping on the changed pages.
+- Do the judgment pass in the **`docs`** skill's Check (doc-to-code correctness,
+  EN/ZH parity, and the list below).
 - Confirm no new bullet-list index pages, no throat-clearing intros, and no
   `**bold**` glued between CJK characters.
 

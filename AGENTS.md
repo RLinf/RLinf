@@ -43,11 +43,10 @@ Embodied end-to-end tests need GPUs and model assets. `<config>` is a file name 
 REPO_PATH=$(pwd) bash tests/e2e_tests/embodied/run.sh <config>
 ```
 
-Docs must build in both languages with no new warnings:
+Docs must build in both languages with no new warnings. The docs check builds both the way Read the Docs does and checks the changed pages:
 
 ```bash
-sphinx-build -b html docs/source-en docs/build/html-en
-sphinx-build -b html docs/source-zh docs/build/html-zh
+python3 .agents/skills/docs/check.py
 ```
 
 ## Repository map
@@ -119,19 +118,20 @@ Each extension point is a registry or an enum. Register the component, select it
 
 ## Skills
 
-Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a symlink to each. Use the one that matches the task:
+Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a symlink to each ([.agents/skills/README.md](.agents/skills/README.md)). An area skill owns part of the repository: read it before you edit a file it owns, even when that edit is part of a larger change. The `paths:` list in each `SKILL.md` is exact; the table summarizes it.
+
+| Files | Skill |
+|---|---|
+| Code, tests, configs, and CI: `rlinf/`, `examples/`, `tests/`, `toolkits/`, `evaluations/`, `ray_utils/`, `.github/`, any `.py` file | `code` |
+| Docs: `docs/`, `README.md`, `README.zh-CN.md` | `docs` |
+| Install, Docker, and e2e: `requirements/`, `pyproject.toml`, `docker/`, `tests/e2e_tests/`, and their workflows | `install` |
 
 | Task | Skill |
 |---|---|
 | Open a PR, or fix a PR title or description | `create-pr` |
 | Review a PR, or post review comments on it | `review-pr` |
-| Write or restructure a docs page | `refine-docs` |
-| Check docs against the code and EN/ZH parity | `docs-check` |
-| Add the example page for a new model or env | `add-example-doc-model-env` |
-| Add a publication page | `add-publication-docs` |
-| Add install, Docker, CI, and e2e support for a new model or env | `add-install-docker-ci-e2e` |
-| Write or review `install.sh` and Dockerfile changes | `install-check` |
-| Build a model or env venv and run its e2e test | `test-install` |
+
+Before you report a change as done, run `python3 .agents/skills/route.py check`. It finds the areas the change touches and runs each one's check; fix every critical or major finding, or tell the user why it stays.
 
 ## Maintaining agent instructions
 
@@ -139,4 +139,4 @@ Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a s
 - Put guidance for one area in that area's docs page, in a skill, or in an `AGENTS.md` inside the directory, with a `CLAUDE.md` symlink beside it.
 - Refer to code by symbol or search pattern instead of copying lists that drift, such as supported models, envs, or test files. Check every path, command, and API you add against the code.
 - When a new rule supersedes an old one, remove or merge the old one in the same change.
-- Add a skill only under `.agents/skills/`, with a folder name that matches the `name` in its `SKILL.md`, and add its symlink in `.claude/skills/`.
+- Add a skill only under `.agents/skills/`, with a folder name that matches the `name` in its `SKILL.md`, and add its symlink in `.claude/skills/`. An area skill also declares `paths:` and ships a `check.py` ([.agents/skills/README.md](.agents/skills/README.md)).

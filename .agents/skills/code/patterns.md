@@ -1,6 +1,6 @@
 # RLinf code and design patterns
 
-This page is the standard a review measures a PR against. It summarizes the rules in [AGENTS.md](../../../AGENTS.md), [CONTRIBUTING.md](../../../CONTRIBUTING.md), and [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md) as patterns you can spot in a diff. Each pattern says what RLinf expects and what to flag. A finding that cites a pattern names the pattern, the code that breaks it, and the version that follows it.
+This page is the standard for code that goes into RLinf: authors follow it while writing a change, and a review measures the PR against it. It summarizes the rules in [AGENTS.md](../../../AGENTS.md) and [CONTRIBUTING.md](../../../CONTRIBUTING.md) as patterns you can spot in a diff. Each pattern says what RLinf expects and what to flag. A finding that cites a pattern names the pattern, the code that breaks it, and the version that follows it. Docs follow [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md) through the [docs](../docs/SKILL.md) skill.
 
 ## Design philosophy
 
@@ -109,13 +109,4 @@ Simulators, robot SDKs, and model-specific packages are imported inside the func
 - `tests/unit_tests/` holds one file per component. New cases go into the component's existing file. Only a new component justifies a new file, never a model, env, fix, symptom, or single function.
 - Prefer a few tests that exercise real objects through the public contract. Mock only what lies outside RLinf: vendor SDKs, hardware, and remote services. Robots are the usual case, through the fakes in `tests/robot_mocks/`.
 - Flag tests that are mostly mock setup, tests that only prove a mock was called, and tests that no named change would make fail.
-- A new model or env comes with an e2e config, an install path, and a CI path filter entry.
-
-## Docs
-
-- Follow [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md): the first sentence states the page's purpose, ideas come before names, pages describe what exists now, and English and Chinese change together.
-- A feature worth announcing (a new model, env, algorithm, backend, accelerator, robot, or major capability) is highlighted in both READMEs in the same PR: a dated "What's NEW!" entry and an item in the matching support list or hardware table, each linking to its docs page.
-- Pages are written for a first-time reader who has not read RLinf's code. They explain what a feature does, how it works, what to prepare, and how to run it, and they show code and paths only where the reader uses them: config examples, config keys, run commands, and, on Extending pages, the files a contributor edits.
-- Each language reads as if written in it rather than translated, and sentences, paragraphs, and sections follow one connected line of thought.
-- Guide pages are plain and technical: simple task headings, one config example, one worked example, and only the config keys a user writes. They leave out equations and tensor-shape tables.
-- Use the [docs-check](../docs-check/SKILL.md) skill for doc-to-code checks and EN/ZH parity, and [refine-docs](../refine-docs/SKILL.md) for structure and voice.
+- A new model or env comes with an e2e config, an install path, and a CI path filter entry ([install](../install/SKILL.md)), and docs ([docs](../docs/SKILL.md)).

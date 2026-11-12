@@ -31,9 +31,9 @@ Pass ``--strict-autodoc`` (in a full environment) to see them.
 
 Usage::
 
-    python3 .agents/skills/docs-check/build_docs.py             # en + zh
-    python3 .agents/skills/docs-check/build_docs.py --lang zh
-    python3 .agents/skills/docs-check/build_docs.py --keep-output
+    python3 .agents/skills/docs/build_docs.py             # en + zh
+    python3 .agents/skills/docs/build_docs.py --lang zh
+    python3 .agents/skills/docs/build_docs.py --keep-output
 
 Exit code is 1 when either language reports a warning, 0 otherwise.
 """
@@ -56,8 +56,8 @@ AUTODOC_NOISE = re.compile(
     r"|^\s*the following exception was raised:",
     re.MULTILINE,
 )
-# A warning record starts at "<path>:<line>: WARNING" or a bare "WARNING:".
-RECORD_START = re.compile(r"^(?:\S+:\d+: )?(?:WARNING|ERROR|SEVERE)[:\s]")
+# A warning record starts at "<path>[:<line>]: WARNING" or a bare "WARNING:".
+RECORD_START = re.compile(r"^(?:\S+: )?(?:WARNING|ERROR|SEVERE)[:\s]")
 
 
 def repo_root() -> Path:
@@ -131,7 +131,9 @@ def build(python: Path, source: Path, output: Path, strict_autodoc: bool) -> lis
         text=True,
         env={**os.environ, "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"},
     )
-    records = split_records(result.stderr)
+    # Other stderr output, such as a library's import-time notice, is not a
+    # Sphinx warning and does not fail Read the Docs.
+    records = [r for r in split_records(result.stderr) if RECORD_START.match(r)]
     if not strict_autodoc:
         records = [r for r in records if not AUTODOC_NOISE.search(r)]
     if result.returncode != 0 and not records:

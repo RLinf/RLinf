@@ -1,13 +1,13 @@
 ---
 name: review-pr
-description: Reviews an RLinf pull request for correctness, design, code reuse, tests, and docs against RLinf's code and design patterns and the docs style guide, reports the findings in a fixed format, and, after asking, posts them as one GitHub review with a main comment that answers the review questions and inline comments with suggested fixes. Use when the user asks to review a PR, check a PR before merge, or post review comments.
+description: Reviews an RLinf pull request for correctness, design, and code reuse against RLinf's design patterns, runs the check of every area the PR touches (code, docs, install) through those skills, reports the findings in a fixed format, and, after asking, posts them as one GitHub review with a main comment that answers the review questions and inline comments with suggested fixes. Use when the user asks to review a PR, check a PR before merge, or post review comments.
 ---
 
 # Review a PR
 
-A review produces two things: a report in the terminal for the user, in the fixed format of step 6, and, only if the user says yes, a GitHub review on the PR made of one main comment that answers the nine review questions and one inline comment per finding on a diff line, each with a suggested fix.
+A review produces two things: a report in the terminal for the user, in the fixed format of step 8, and, only if the user says yes, a GitHub review on the PR made of one main comment that answers the nine review questions and one inline comment per finding on a diff line, each with a suggested fix.
 
-Most of the review is about correctness, clean design, reuse of what RLinf already has, and changes that deviate from the existing codebase without need. Docs are checked twice: against the code and for completeness (question 7), and against [docs/STYLE_GUIDE.md](../../../docs/STYLE_GUIDE.md) in a section of their own (question 8). PR formatting and commit conventions are checked but should not dominate. [patterns.md](patterns.md) is the standard the PR is measured against: RLinf's code, design, test, and docs patterns. [reference.md](reference.md) is the checklist for each finding category. Read both before step 4.
+Most of the review is about correctness, clean design, reuse of what RLinf already has, and changes that deviate from the existing codebase without need. Everything else is checked by the skill that owns the area: code and tests by [code](../code/SKILL.md), docs by [docs](../docs/SKILL.md), and install, Docker, and e2e by [install](../install/SKILL.md). Step 3 finds every area the PR touches and step 6 runs each one's check, so no area goes unchecked. PR formatting and commit conventions are checked but should not dominate. [code/patterns.md](../code/patterns.md) is the design standard the PR is measured against, and [reference.md](reference.md) is the checklist for correctness, design, reuse, and style. Read both before step 5.
 
 ## 1. Set up
 
@@ -18,6 +18,7 @@ N=<PR number>
 REMOTE=$(git remote -v | awk '/github\.com[:\/]RLinf\/RLinf(\.git)? \(fetch\)/ {print $1; exit}')
 git fetch "$REMOTE" main "pull/$N/head:pr-$N"
 BASE="$REMOTE/main"; PR_HEAD="pr-$N"
+SKILLS="$(git rev-parse --show-toplevel)/.agents/skills"   # the skills this review follows
 
 gh pr view "$N" --repo RLinf/RLinf --json title,body,author,headRefOid,commits,files
 gh pr checks "$N" --repo RLinf/RLinf                     # CI status
@@ -28,19 +29,29 @@ git grep <pattern> "$BASE"                               # search main
 gh api "repos/RLinf/RLinf/pulls/$N/comments" --paginate  # earlier review threads
 ```
 
-When you need to run code, check out `$PR_HEAD` in a separate git worktree. Never edit the PR branch or push to it. Without `gh`, read the PR page, `<PR URL>.diff` (or `<PR URL>.patch`), and files on `https://github.com/RLinf/RLinf/blob/main/<path>`; the review can still run, but posting needs `gh`. If the PR is private and neither works, tell the user and ask for an exported diff and description.
+Check out `$PR_HEAD` in a separate git worktree; steps 3 and 6 run there, and so does any code you run to verify a finding. Never edit the PR branch or push to it. Without `gh`, read the PR page, `<PR URL>.diff` (or `<PR URL>.patch`), and files on `https://github.com/RLinf/RLinf/blob/main/<path>`; the review can still run, but posting needs `gh`. If the PR is private and neither works, tell the user and ask for an exported diff and description.
 
 On a second round of review, go through every earlier thread first. Note which ones the new commits fix and which are still open, and carry the open ones forward rather than writing them again.
 
 ## 2. Understand the PR
 
-Read the description, the linked issue, the commits, and the whole diff. Then write down, for step 6:
+Read the description, the linked issue, the commits, and the whole diff. Then write down, for step 8:
 
 - the problem the PR solves and its core idea, in one or two sentences;
 - the areas it touches (for example packaging, docs, CI, refactor) and what could regress (backends, envs, models, tasks);
 - the closest current sibling on `main` it should look like (`git log "$BASE" -- <dir>` shows which sibling is recent).
 
-## 3. Plan the reproduction
+## 3. Route the change
+
+In the PR worktree, list the areas the PR touches:
+
+```bash
+python3 "$SKILLS/route.py" list --base "$BASE"
+```
+
+It prints each touched area, the `SKILL.md` to read for it, and the area's files. Every listed area is checked in step 6 and gets a row in the report. Files no area owns, such as agent instructions, are listed as unrouted; review them yourself in step 5. The script takes the skills from `$SKILLS`, so a PR that predates them is checked by the current ones.
+
+## 4. Plan the reproduction
 
 A PR that adds or changes a user-facing workflow (a new model, env, algorithm, or feature with docs) or that claims metrics needs a reproduction. The review questions 1 to 3 report it. Follow this rule:
 
@@ -52,27 +63,43 @@ Ask the user once, with `AskUserQuestion`, which of these to use:
 - **A reproduction agent.** Start a fresh `general-purpose` agent in the background, never a fork, which would inherit what you read. Its brief holds only the PR URL, the head SHA, the doc pages to follow, the hardware it may use, and the host's install rules. It works in its own worktree at the PR head, reads only the user docs, does not open `rlinf/` or `tests/`, does not fix anything, and reports the settings of question 1, the first failure, every intervention, and the functional and metric results separately.
 - **No reproduction.** Questions 1 and 2 say so and what a run would need.
 
-You never reproduce the PR yourself: you have read the implementation. The unit tests you run while verifying findings are not a reproduction; they belong in question 7.
+You never reproduce the PR yourself: you have read the implementation. The unit tests and area checks you run are not a reproduction; they belong in question 7.
 
-## 4. Review
+## 5. Review the code
 
-Work through [reference.md](reference.md) in this order, and judge every design choice against [patterns.md](patterns.md): its patterns first, and its design philosophy when no pattern fits. Each finding gets one category, which also decides the question of the main comment that summarizes it:
+Work through [reference.md](reference.md) in this order, and judge every design choice against [code/patterns.md](../code/patterns.md): its patterns first, and its design philosophy when no pattern fits. Each finding gets one category, which also decides the question of the main comment that summarizes it:
 
 | Category | Covers | Question |
 |---|---|---|
 | `correctness` | bugs, edge cases, distributed and lifecycle errors, refactor regressions | 4 |
 | `design` | extension points, containment, special cases, abstractions, protection code, config, unnecessary changes | 5 |
 | `reuse` | duplicated logic and the existing helper to use | 6 |
-| `tests` | test coverage and layout, mocks, install, Docker, CI | 7 |
-| `docs` | docs against code, EN/ZH parity, README highlights, asset references, usability | 7 (3 for usability) |
-| `docs-style` | changed pages and README text against the docs style guide | 8 |
+| `tests` | test coverage and layout, mocks, install, Docker, CI, from the code and install checks | 7 |
+| `docs` | docs against code, EN/ZH parity, README highlights, asset references, usability, from the docs check | 7 (3 for usability) |
+| `docs-style` | changed pages and README text against the docs style guide, from the docs check | 8 |
 | `style` | code conventions, headers, commits, PR title and description | 9 |
 
 For every changed function, read the `main` version and the PR version side by side. Label a finding that came from reading `main` rather than the diff alone as a main-branch cross-check.
 
-Check docs style as a pass of its own, after the docs checks. Read every page the PR adds or changes in full and in both languages, because a page's lead, section order, and flow do not show in a diff hunk. Read it as a reader who is new to RLinf and has not seen its code: the page should tell that reader what the feature does, how it works, what to prepare, and how to run it. Classify each page as an index, recipe, concept or guide, reference, or extending page, and apply the rules for its type from [reference.md § docs-style](reference.md#docs-style-question-8).
+## 6. Check each area
 
-## 5. Verify every finding
+For each area step 3 listed, read `$SKILLS/<area>/SKILL.md`, section Check, and do all of it in the PR worktree: its script on the routed files, then its judgment list.
+
+```bash
+python3 "$SKILLS/route.py" check --base "$BASE"            # every touched area's script
+python3 "$SKILLS/create-pr/lint_pr.py" lint --pr "$N"      # PR title and description
+```
+
+`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do, and for docs it means reading every changed page in full in both languages. A script's finding becomes a review finding once step 7 settles it, filed under the category of its rule:
+
+- `tests`: `code/ci-filter`, `code/test-layout`, and every `install/*` rule;
+- `docs`: `docs/symbol`, `docs/rtd-link`, `docs/parity`, and the docs-to-code items of the docs judgment list;
+- `docs-style`: `docs/build`, `docs/markup`, `docs/zh-hard-wrap`, and the page reading;
+- `style`: `code/pre-commit`, `code/init`, `code/license`, and the PR lint.
+
+When an area's script cannot run, for example without a docs virtualenv or without GPUs for the install Verify step, the report says it did not run and what it needs. Never leave a routed area out.
+
+## 7. Verify every finding
 
 Before a finding goes in the report, settle it as one of:
 
@@ -80,19 +107,13 @@ Before a finding goes in the report, settle it as one of:
 - **unresolved**: plausible, but it needs hardware, assets, or the author's intent to settle. Say what would settle it.
 - **dismissed**: the trace shows it cannot happen, or the code matches the convention on `main`. Keep one line on why.
 
-Then give each confirmed or unresolved finding a severity:
-
-- **critical**: wrong results, a crash, data loss, a broken existing path or backend, or a documented workflow that cannot be completed.
-- **major**: a break with [patterns.md](patterns.md), or missing tests, docs, or CI for a user-facing change. It must change before merge.
-- **minor**: a local fix such as naming, a comment, or a small style issue. It should change but does not block.
-
-A docs-style finding is major when a page fails as a whole: a first-time reader cannot tell what the feature does or how to run it, the page explains code layout instead of behavior, it has no lead or no connected line of thought, the wrong structure for its page type, the wrong place in the docs tree, a Chinese page that tracks the English one sentence for sentence, or a new build warning. It is minor when the wording of a line or two fails.
+Then give each confirmed or unresolved finding a severity on the scale in [README.md § Findings](../README.md#findings): critical, major, or minor. A script's severity is where you start; change it when the evidence says otherwise. The docs skill's Check says when a docs-style finding is major.
 
 Report only problems. When correctness, design, and reuse yield nothing, the report says so and lists what was checked. Do not invent findings to fill a category.
 
-## 6. Report
+## 8. Report
 
-Print the review in exactly this shape. List findings by severity, and within one severity keep the category order of step 4, so tests, docs, docs-style, and style findings sit together after the code findings. The comment text of each finding is written exactly as it will be posted (step 8). The code walkthrough and the evidence stay in the terminal, so the user can check each finding before anything is posted. The walkthrough quotes the code itself; a reader should never have to chase bare line numbers ("at line 639, then at line 654") in another tab. The docs style section lists every page the PR adds or changes, so the user sees which pages passed and not only the ones with findings.
+Print the review in exactly this shape. List findings by severity, and within one severity keep the category order of step 5, so tests, docs, docs-style, and style findings sit together after the code findings. The comment text of each finding is written exactly as it will be posted (step 10). The code walkthrough and the evidence stay in the terminal, so the user can check each finding before anything is posted. The walkthrough quotes the code itself; a reader should never have to chase bare line numbers ("at line 639, then at line 654") in another tab. The area checks section lists every area `route.py` found and every docs page the PR adds or changes, so the user sees what passed and not only what failed.
 
 ````markdown
 # Review of #<N>: <PR title>
@@ -119,7 +140,7 @@ Print the review in exactly this shape. List findings by severity, and within on
 
 `rlinf/x.py:42`, compared with `main:rlinf/x.py:40` (main-branch cross-check)
 
-<The comment text from step 8, exactly as it will be posted.>
+<The comment text from step 10, exactly as it will be posted.>
 
 Code walkthrough:
 
@@ -127,16 +148,24 @@ Code walkthrough:
 
 Evidence: <the command and its result, or the trace; for an unresolved finding, what would settle it>
 
-## Docs style
+## Area checks
 
-Checked against `docs/STYLE_GUIDE.md` · build: <the build_docs.py result for en and zh, or why it did not run>
+`route.py check --base <base>`: <passed, or the areas with critical or major findings> · PR lint: <result>
+
+| Area | Files | Script | Findings |
+|---|---|---|---|
+| code | <n> | <rules that reported, or pass> | F1 |
+| docs | <n> | build en and zh: <clean, or warnings>; <rules that reported, or pass> | F2, F3 |
+| install | <n> | <did not run: what it needs> | — |
+
+Docs pages, read in full against `docs/STYLE_GUIDE.md`:
 
 | Page | Type | Result |
 |---|---|---|
 | `docs/source-en/rst_source/<path>.rst` | recipe | F3 |
 | `docs/source-zh/rst_source/<path>.rst` | recipe | pass |
 
-<Or, when the PR changes no docs: "The PR changes no docs.">
+<Or, when the PR changes no docs: "The PR changes no docs."> <Unrouted files and what was checked in them.>
 
 ## Dismissed
 
@@ -144,14 +173,14 @@ Checked against `docs/STYLE_GUIDE.md` · build: <the build_docs.py result for en
 
 ## Main comment
 
-<The nine sections from step 8, exactly as they will be posted.>
+<The nine sections from step 10, exactly as they will be posted.>
 ````
 
-## 7. Ask before posting
+## 9. Ask before posting
 
 Posting speaks for the user, so ask first with `AskUserQuestion`, every time: "Post this review to PR #N?" with the options **Post as a comment** (recommended), **Post as request changes**, and **Don't post**. The user can also answer with edits; apply them, show the changed text, and ask again. Approve only when the user asks for it.
 
-## 8. Post
+## 10. Post
 
 Write the review as the JSON payload of GitHub's create-review API in the scratchpad, with `json.dump` so the escaping is right, then lint it and post it:
 
@@ -238,6 +267,6 @@ The main comment holds only the nine sections, each under its question as a `###
 4. **Are there bugs or unresolved concerns?** The confirmed issues and the unresolved concerns, each with its trigger and evidence and a pointer to its inline comment, then the dismissed findings with one line each on why. "No issue found" says what was checked.
 5. **Does the integration follow RLinf's design?** The existing implementation compared against; whether interfaces, registration, config, worker conventions, and containment match it; mismatches; and anything that needs a senior maintainer's judgment.
 6. **Does it reuse existing modules/functions properly?** Avoidable duplication and the existing helper to reuse, or else the implementation compared against.
-7. **Are tests and documentation adequate?** Whether the tests cover the changed behavior; whether docs, EN/ZH updates, the README highlight for a feature worth announcing, and install and CI integration are there where needed; the tests that ran (command, hardware, result) and the ones skipped, with why.
-8. **Does the documentation follow the docs style guide?** Every page the PR adds or changes, in both languages, with its type and whether it follows `docs/STYLE_GUIDE.md`: whether a first-time reader learns what the feature does, how it works, what to prepare, and how to run it without knowing RLinf's code; the lead and the flow from sentence to section; voice and natural phrasing in each language; the structure its page type needs; and its place in the docs tree. For each rule that fails, the page, the rule, and a pointer to the inline comment that rewrites it, then the build result for both languages. Question 3 is whether the docs could be followed; this question is whether they are written to the guide. When the PR changes no docs, say so; a page that is missing belongs in question 7.
+7. **Are tests and documentation adequate?** Whether the tests cover the changed behavior; whether docs, EN/ZH updates, the README highlight for a feature worth announcing, and install and CI integration are there where needed, from the code, docs, and install checks; the tests and checks that ran (command, hardware, result) and the ones skipped, with why.
+8. **Does the documentation follow the docs style guide?** Every page the PR adds or changes, in both languages, with its type and whether it follows `docs/STYLE_GUIDE.md`: whether a first-time reader learns what the feature does, how it works, what to prepare, and how to run it without knowing RLinf's code; the lead and the flow from sentence to section; voice and natural phrasing in each language; the structure its page type needs; and its place in the docs tree. For each rule that fails, the page, the rule, and a pointer to the inline comment that rewrites it, then the docs check's build result for both languages. Question 3 is whether the docs could be followed; this question is whether they are written to the guide. When the PR changes no docs, say so; a page that is missing belongs in question 7.
 9. **What is your recommendation?** Exactly one of `Ready for senior review` (no open critical or major finding, and the reproduction succeeded or was not needed), `Changes requested` (open critical or major findings the author can fix), or `Blocked` (progress needs more than the author's fixes: a maintainer decision, hardware or assets nobody has, another PR, or a reproduction failure the docs cannot explain). Then the remaining actions as a list, and the expert review needed.
