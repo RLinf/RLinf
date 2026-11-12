@@ -17,16 +17,14 @@
 from __future__ import annotations
 
 import torch
-from omegaconf import OmegaConf
 
-from rlinf.models.embodiment.supermimic.interface import PolicyInterface
 from rlinf.scheduler import Worker
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
 class SuperMimicRolloutWorker(MultiStepRolloutWorker):
-    """Policy and motion critic of one rank, served to the env worker of that rank.
+    """Motion policy of one rank, served to the env worker of that rank.
 
     Training acts through :meth:`serve`; evaluation uses
     :meth:`MultiStepRolloutWorker.evaluate` with the packed ``states``
@@ -34,11 +32,6 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
     """
 
     def init_worker(self) -> None:
-        ckpt_path = self.cfg.runner.get("ckpt_path", None)
-        if ckpt_path:
-            model_cfg = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
-            expected = PolicyInterface.from_config(model_cfg, self.cfg.algorithm)
-            expected.validate(PolicyInterface.load(ckpt_path), ckpt_path)
         super().init_worker()
         amp = self.cfg.rollout.get("amp_autocast", None)
         dtype = None
@@ -46,40 +39,18 @@ class SuperMimicRolloutWorker(MultiStepRolloutWorker):
             dtype = torch_dtype_from_precision(amp.precision)
         self.hf_model.set_autocast(dtype)
 
-    async def sync_model_from_actor(self) -> None:
-        """Apply the actor's weights, then re-read the running-norm counts.
-
-        The patch syncer writes the norm buffers in place and so skips the
-        ``load_state_dict`` hook that keeps their host counts, which the next
-        fold relies on.
-        """
-        await super().sync_model_from_actor()
-        self.hf_model.refresh_norm_counts()
-
     @Worker.timer("serve")
     def serve(self, num_steps: int) -> None:
         """Answer ``num_steps`` control steps of the env worker of this rank.
 
-        Each step folds the env's merged input statistics into the policy
-        norms, returns the action and, when motion episodes ended, their
-        motion-critic values.
+        Each step acts with the input norms of the previous steps, then folds
+        the step's merged input moments into them.
         """
         env, rank = self.cfg.env.group_name, self._rank
         model = self.hf_model
         for _ in range(num_steps):
-            obs, counts = self.recv(env, rank)
-            if "obs_stats" in obs:
-                model.fold_policy_stats(
-                    obs["obs_stats"],
-                    counts["obs_count"],
-                    obs["goal_stats"],
-                    counts["goal_count"],
-                )
+            obs = self.recv(env, rank)
             with torch.no_grad():
-                action = model.act(
-                    obs["history"], obs["goal"], obs.get("command"), obs.get("task")
-                )
-            self.send(action, env, rank, piggyback_payload={})
-            features, _ = self.recv(env, rank)
-            if features is not None:
-                self.send(model.critic_value(features), env, rank, piggyback_payload={})
+                action = model.act(obs["enc"], obs["goal"])
+            self.send(action, env, rank)
+            model.fold_policy_stats(obs["enc_stats"], obs["goal_stats"])

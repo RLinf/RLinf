@@ -16,9 +16,10 @@
 
 Training talks to the rollout and actor workers of the same rank once per
 control step: the observation goes to the rollout worker, its action comes
-back, the transition goes to the actor's replay, and the motion-critic
-values of the episodes that just ended come back from the rollout worker
-before the env resets them. Evaluation uses :meth:`EnvWorker.evaluate`.
+back, and the transition goes to the actor's replay. Both messages carry the
+merged moments of the step's encodings and goals, which both workers fold
+into their copies of the policy input norms. Evaluation uses
+:meth:`EnvWorker.evaluate`.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ class SuperMimicEnvWorker(EnvWorker):
         self._actor_group_name = cfg.actor.group_name if not self.only_eval else None
 
     def init_worker(self) -> None:
-        # The reset bins and the policy input statistics are merged over every
+        # The reset statistics and the input moments are merged over every
         # training env rank, so those ranks share one process group.
         distributed = self.enable_train and self._world_size > 1
         if distributed and not dist.is_initialized():
@@ -70,33 +71,32 @@ class SuperMimicEnvWorker(EnvWorker):
         )
         for _ in range(num_steps):
             obs = env.observe()
-            stats, counts = env.policy_input_stats(obs)
-            self.send({**obs, **stats}, rollout, rank, piggyback_payload=counts)
-            action, _ = self.recv(rollout, rank)
-            transition = env.step(action)
-            self.send({**transition, **stats}, actor, rank, piggyback_payload=counts)
-            features = env.bootstrap_features()
-            self.send(features, rollout, rank, piggyback_payload={})
-            values = None
-            if features is not None:
-                values, _ = self.recv(rollout, rank)
-            env.finish_step(values)
+            stats = env.policy_input_stats(obs)
+            self.send(
+                {**obs, "enc_stats": stats["enc"], "goal_stats": stats["goal"]},
+                rollout,
+                rank,
+            )
+            transition = env.step(self.recv(rollout, rank))
+            transition["enc_stats"] = stats["enc"]
+            transition["goal_stats"] = stats["goal"]
+            self.send(transition, actor, rank)
 
     def consume_metrics(self) -> dict[str, float]:
-        """Simulator and reset-bin statistics since the last call, over every rank."""
+        """Simulator and reset statistics since the last call, over every rank."""
         return self.train_env.consume_metrics()
 
     def save_checkpoint(self, save_path: str) -> None:
-        """Reset bins and RNG of this rank; the simulator state is not saved."""
+        """Reset statistics and RNG of this rank; the simulator state is not saved."""
         os.makedirs(save_path, exist_ok=True)
         state = {"env": self.train_env.state_dict(), "rng": get_rng_state()}
         torch.save(state, os.path.join(save_path, _STATE_FILE.format(rank=self._rank)))
 
     def load_checkpoint(self, load_path: str) -> None:
-        """Restore the reset bins and, when this rank saved one, its RNG.
+        """Restore the reset statistics and, when this rank saved one, its RNG.
 
-        The bins are pooled over the ranks, so a run resumed on more ranks
-        takes them from rank 0 and keeps its freshly seeded generators.
+        The statistics are pooled over the ranks, so a run resumed on more
+        ranks takes them from rank 0 and keeps its freshly seeded generators.
         """
         path = os.path.join(load_path, _STATE_FILE.format(rank=self._rank))
         own = os.path.exists(path)

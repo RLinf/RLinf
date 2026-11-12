@@ -12,40 +12,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SiLU MLPs of SuperMimic: world model, motion policy, critics, termination."""
+"""World model, motion policy and critic of SuperMimic.
+
+Every network is a stack of ``Linear -> LayerNorm -> GELU`` blocks and a
+final ``Linear``.
+"""
 
 from __future__ import annotations
 
 import torch
-import torch.distributed as dist
 from torch import nn
 
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
-    HISTORY_LEN,
-    LATENT_DIM,
-    OBS_DIM,
-    RESIDUAL_DIM,
-    STATE_DIM,
-    XI_DIM,
+    ACTOR_GOAL_DIM,
+    SIM_CONTEXT_DIM,
+    WORLD_MODEL_GOAL_DIM,
 )
-from rlinf.envs.sim.g1_mimic.features import (
-    heading_invariant_features,
-    residual_target,
-    scale_context,
-)
+from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state, g1_action_scale
 from rlinf.models.embodiment.modules.utils import make_mlp
-from rlinf.models.embodiment.supermimic.normalization import RunningMeanStd
+from rlinf.models.embodiment.supermimic.normalization import EmpiricalNorm
+
+LATENT_DIM = 32
+POLICY_HIDDEN = (2048, 1024, 512, 256)
+CRITIC_HIDDEN = (256, 128)
+DYNAMICS_HIDDEN = (2048, 2048, 2048)
 
 
-def _mlp_forward(
-    owner: nn.Module, net: nn.Module, features: torch.Tensor
-) -> torch.Tensor:
-    """Run one linear stack, autocast to ``owner.autocast_dtype`` when set.
+def _stack(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> nn.Sequential:
+    layers = make_mlp(
+        in_dim,
+        [*hidden, out_dim],
+        act_builder=nn.GELU,
+        last_act=False,
+        use_layer_norm=True,
+    )
+    return nn.Sequential(*layers)
 
-    The result is cast back to ``features.dtype``. Heading features,
-    integration, kinematics and losses stay outside the autocast region.
+
+def hidden_matrix_names(module: nn.Module) -> list[str]:
+    """Weights of every ``Linear`` between the first and last of each stack.
+
+    These are the matrices Muon updates; Adam updates every other parameter.
     """
+    names = []
+    for seq_name, seq in module.named_modules():
+        if not isinstance(seq, nn.Sequential):
+            continue
+        linear = [str(i) for i, layer in enumerate(seq) if isinstance(layer, nn.Linear)]
+        names += [f"{seq_name}.{i}.weight" for i in linear[1:-1]]
+    return names
+
+
+def _run(owner: nn.Module, net: nn.Module, features: torch.Tensor) -> torch.Tensor:
+    """``net(features)``, autocast to ``owner.autocast_dtype`` when it is set."""
     dtype = getattr(owner, "autocast_dtype", None)
     if dtype is None:
         return net(features)
@@ -54,207 +74,65 @@ def _mlp_forward(
     return out.to(dtype=features.dtype)
 
 
-def _mlp(sizes: list[int], last_gain: float | None = None) -> nn.Sequential:
-    layers = make_mlp(sizes[0], sizes[1:], act_builder=nn.SiLU, last_act=False)
-    if last_gain is not None:
-        nn.init.xavier_uniform_(layers[-1].weight, gain=last_gain)
-        nn.init.zeros_(layers[-1].bias)
-    return nn.Sequential(*layers)
+class Dynamics(nn.Module):
+    """Velocity increments of the next control step.
 
-
-def _fold(norm: RunningMeanStd | None, values, group) -> None:
-    if norm is not None and values is not None:
-        norm.fold(values, group)
-
-
-class DynamicsNet(nn.Module):
-    """Paper Table A.4: MLP hidden widths 2048, 2048, 2048. Last layer is zero.
-
-    ``input_norm`` scales the context and applies a running norm to the MLP
-    input. ``output_norm`` maps the MLP output back to a physical residual
-    with the running mean and standard deviation of one-step targets.
+    Reads the normalized encoding, the normalized PD target
+    ``action * scale + default_pose`` and the sim context.
     """
 
-    def __init__(self, input_norm: bool = False, output_norm: bool = False):
+    def __init__(self, encoding_dim: int, prediction_dim: int):
         super().__init__()
-        width = STATE_DIM + ACTION_DIM + XI_DIM
-        self.net = _mlp([width, 2048, 2048, 2048, RESIDUAL_DIM])
-        last = self.net[-1]
-        nn.init.zeros_(last.weight)
-        nn.init.zeros_(last.bias)
-        self.in_norm = RunningMeanStd(width) if input_norm else None
-        self.out_norm = RunningMeanStd(RESIDUAL_DIM, eps=1e-4) if output_norm else None
-
-    def features(
-        self, state: torch.Tensor, action: torch.Tensor, xi: torch.Tensor
-    ) -> torch.Tensor:
-        """Heading-free state, action, and context. Running mode scales the context."""
-        if self.in_norm is not None:
-            xi = scale_context(xi)
-        return torch.cat((heading_invariant_features(state), action, xi), dim=-1)
-
-    def forward(
-        self, state: torch.Tensor, action: torch.Tensor, xi: torch.Tensor
-    ) -> torch.Tensor:
-        """Residual ``[B, 70]`` of the next state from heading-free features."""
-        feat = self.features(state, action, xi)
-        if self.in_norm is not None:
-            feat = self.in_norm(feat)
-        out = _mlp_forward(self, self.net, feat)
-        if self.out_norm is None:
-            return out
-        return out * self.out_norm.std() + self.out_norm.mean
-
-    def norm_rows(
-        self,
-        state: torch.Tensor,
-        action: torch.Tensor,
-        xi: torch.Tensor,
-        nxt: torch.Tensor,
-        frame: str,
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        """Rows the input and output norms fold. ``None`` where a norm is off."""
-        feat = None if self.in_norm is None else self.features(state, action, xi)
-        target = None if self.out_norm is None else residual_target(state, nxt, frame)
-        return feat, target
-
-    @torch.no_grad()
-    def fold_norm_rows(
-        self,
-        feat: torch.Tensor | None,
-        target: torch.Tensor | None,
-        group: dist.ProcessGroup | None = None,
-    ) -> None:
-        """Fold the rows of :meth:`norm_rows`, merged over ``group``."""
-        _fold(self.in_norm, feat, group)
-        _fold(self.out_norm, target, group)
-
-
-def normalize_history(norm: RunningMeanStd | None, history: torch.Tensor, obs_dim):
-    """Normalize each observation frame. A missing norm leaves history as stored."""
-    if norm is None:
-        return history
-    flat = history.reshape(-1, HISTORY_LEN, obs_dim)
-    return norm(flat).reshape(history.shape)
-
-
-class MotionEncoder(nn.Module):
-    """Reference-motion encoder: the 680/689/730-d goal to a 32-d tanh latent."""
-
-    def __init__(self, goal_dim: int, input_norm: bool = False):
-        super().__init__()
-        self.net = _mlp([goal_dim, 2048, 1024, 512, 256, LATENT_DIM])
-        self.goal_norm = RunningMeanStd(goal_dim) if input_norm else None
-
-    def forward(self, goal: torch.Tensor) -> torch.Tensor:
-        """Latent ``[B, 32]`` of a goal ``[B, goal_dim]``."""
-        if self.goal_norm is not None:
-            goal = self.goal_norm(goal)
-        return torch.tanh(_mlp_forward(self, self.net, goal))
-
-
-class MotionDecoder(nn.Module):
-    """Shared decoder: a goal latent and the normalized history to an action."""
-
-    def __init__(self, obs_dim: int = OBS_DIM):
-        super().__init__()
-        self.net = _mlp(
-            [LATENT_DIM + HISTORY_LEN * obs_dim, 2048, 1024, 512, 256, ACTION_DIM],
-            last_gain=0.01,
+        self.state_norm = EmpiricalNorm(encoding_dim)
+        self.action_norm = EmpiricalNorm(ACTION_DIM)
+        self.register_buffer("action_scale", g1_action_scale(), persistent=False)
+        self.register_buffer(
+            "action_offset", asset_default_state()[7:36].clone(), persistent=False
+        )
+        self.mlp = _stack(
+            encoding_dim + ACTION_DIM + SIM_CONTEXT_DIM, DYNAMICS_HIDDEN, prediction_dim
         )
 
-    def forward(self, latent: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
-        """Action ``[B, 29]`` from a latent and a flat normalized 10-frame history."""
-        return _mlp_forward(self, self.net, torch.cat((latent, history), dim=-1))
-
-
-class CriticNet(nn.Module):
-    """MLP(256, 128) on one prebuilt motion-critic feature vector."""
-
-    def __init__(self, in_dim: int, input_norm: bool = False):
-        super().__init__()
-        self.net = _mlp([in_dim, 256, 128, 1])
-        self.norm = RunningMeanStd(in_dim) if input_norm else None
-
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        """Value ``[B]`` from motion-critic features."""
-        if self.norm is not None:
-            features = self.norm(features)
-        return self.value_mlp(features)
-
-    def value_mlp(self, features: torch.Tensor) -> torch.Tensor:
-        """MLP value. The caller applies ``self.norm`` when that module exists."""
-        return _mlp_forward(self, self.net, features).squeeze(-1)
-
-
-class TerminationHead(nn.Module):
-    """Failure logit from height and tilt errors (Eq. 1 termination head).
-
-    Args:
-        bias_init: Output bias at construction; ``None`` keeps PyTorch's init.
-    """
-
-    def __init__(self, bias_init: float | None = None):
-        super().__init__()
-        self.net = _mlp([4, 64, 64, 1])
-        if bias_init is not None:
-            nn.init.constant_(self.net[-1].bias, float(bias_init))
-
-    def forward(self, term_feat: torch.Tensor) -> torch.Tensor:
-        """Failure logit ``[B]`` from ``termination_head_input`` features."""
-        return _mlp_forward(self, self.net, term_feat).squeeze(-1)
-
-
-class VelocityEncoder(nn.Module):
-    """MLP(256, 256) on the normalized command and the 10-frame observation."""
-
-    def __init__(self, obs_dim: int = OBS_DIM):
-        super().__init__()
-        self.net = _mlp([3 + HISTORY_LEN * obs_dim, 256, 256, LATENT_DIM])
-
-    def forward(self, command: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
-        """Latent ``[B, 32]`` of a normalized command and normalized history."""
-        packed = torch.cat((command, history), dim=-1)
-        return torch.tanh(_mlp_forward(self, self.net, packed))
-
-
-class VelocityCritic(nn.Module):
-    """One critic for the velocity interface: heading state, command, and context."""
-
-    def __init__(self, input_norm: bool = False):
-        super().__init__()
-        width = STATE_DIM + 3 + XI_DIM
-        self.net = _mlp([width, 256, 128, 1])
-        self.norm = RunningMeanStd(width) if input_norm else None
-
-    def features(
-        self, state: torch.Tensor, command: torch.Tensor, xi: torch.Tensor
-    ) -> torch.Tensor:
-        """Heading state, command, and context. Running mode scales the context."""
-        if self.norm is not None:
-            xi = scale_context(xi)
-        return torch.cat((heading_invariant_features(state), command, xi), dim=-1)
-
-    @torch.no_grad()
-    def fold_norm(
-        self,
-        state: torch.Tensor,
-        command: torch.Tensor,
-        xi: torch.Tensor,
-        group: dist.ProcessGroup | None = None,
-    ) -> None:
-        """Fold velocity-critic inputs into the running norm, merged over ``group``.
-
-        A rank without rows still has to call this when other ranks have rows.
-        """
-        if self.norm is not None:
-            self.norm.fold(self.features(state, command, xi), group)
+    def joint_target(self, action: torch.Tensor) -> torch.Tensor:
+        return action * self.action_scale + self.action_offset
 
     def forward(
-        self, state: torch.Tensor, command: torch.Tensor, xi: torch.Tensor
+        self, enc: torch.Tensor, action: torch.Tensor, context: torch.Tensor
     ) -> torch.Tensor:
-        """Value ``[B]`` of a state under a velocity command."""
-        packed = self.features(state, command, xi)
-        if self.norm is not None:
-            packed = self.norm(packed)
-        return _mlp_forward(self, self.net, packed).squeeze(-1)
+        features = torch.cat(
+            (
+                self.state_norm(enc),
+                self.action_norm(self.joint_target(action)),
+                context,
+            ),
+            dim=-1,
+        )
+        return _run(self, self.mlp, features)
+
+
+class MotionPolicy(nn.Module):
+    """Goal encoder to a 32-d tanh latent, decoded with the normalized encoding."""
+
+    def __init__(self, encoding_dim: int):
+        super().__init__()
+        self.obs_norm = EmpiricalNorm(encoding_dim)
+        self.goal_norm = EmpiricalNorm(ACTOR_GOAL_DIM)
+        self.encoder = _stack(ACTOR_GOAL_DIM, POLICY_HIDDEN, LATENT_DIM)
+        self.decoder = _stack(LATENT_DIM + encoding_dim, POLICY_HIDDEN, ACTION_DIM)
+
+    def forward(self, enc: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+        latent = torch.tanh(_run(self, self.encoder, self.goal_norm(goal)))
+        return _run(self, self.decoder, torch.cat((latent, self.obs_norm(enc)), dim=-1))
+
+
+class Critic(nn.Module):
+    """Value of the encoding, the world-model goal and the sim context."""
+
+    def __init__(self, encoding_dim: int):
+        super().__init__()
+        self.mlp = _stack(
+            encoding_dim + WORLD_MODEL_GOAL_DIM + SIM_CONTEXT_DIM, CRITIC_HIDDEN, 1
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return _run(self, self.mlp, features).squeeze(-1)

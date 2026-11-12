@@ -618,13 +618,13 @@ jobs:
             runner.max_epochs=5 \
             runner.resume_dir=/workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_3
 
-      - name: SuperMimic velocity tracking test on two GPUs
+      - name: SuperMimic MaxCoord test on two GPUs
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic_velocity
+          bash tests/e2e_tests/embodied/run.sh g1_mimic_supermimic_maxcoord
 
       - name: SuperMimic evaluation test
         timeout-minutes: 20

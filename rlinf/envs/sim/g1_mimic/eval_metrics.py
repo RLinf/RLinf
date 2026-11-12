@@ -32,22 +32,8 @@ from rlinf.envs.sim.g1_mimic.push_recovery import (
 )
 
 TRACKING = "tracking"
-VELOCITY_SMOKE = "velocity_smoke"
-VELOCITY_G2 = "velocity_g2"
 PUSH_RECOVERY = "push_recovery"
-EVAL_TASKS = (TRACKING, VELOCITY_SMOKE, VELOCITY_G2, PUSH_RECOVERY)
-
-# Seven fixed commands (vx, vy, yaw rate) for a quick functional check from a
-# reference start. A local choice, not the Appendix G.2 step test.
-DEFAULT_SMOKE_COMMANDS = {
-    "stand": (0.0, 0.0, 0.0),
-    "forward_0.5": (0.5, 0.0, 0.0),
-    "forward_1.0": (1.0, 0.0, 0.0),
-    "backward_0.5": (-0.5, 0.0, 0.0),
-    "left_0.5": (0.0, 0.5, 0.0),
-    "turn_left_1.0": (0.0, 0.0, 1.0),
-    "forward_turn": (0.8, 0.0, 0.5),
-}
+EVAL_TASKS = (TRACKING, PUSH_RECOVERY)
 
 
 def check_job_coverage(rows: dict[str, torch.Tensor], num_jobs: int) -> None:
@@ -82,7 +68,7 @@ def summarize_tracking(rows: dict[str, torch.Tensor]) -> dict[str, float]:
     fail_count = fail.sum().clamp_min(1.0)
     return {
         "normalized_return": _mean(rows["normalized_return"]),
-        "body_tracking": _mean(rows["body_tracking"]),
+        "body_pos_err": _mean(rows["body_pos_err"]),
         "torso_pos_err": _mean(rows["torso_pos_err"]),
         "torso_ori_err": _mean(rows["torso_ori_err"]),
         "free_root_pos_err": _mean(rows["free_root_pos_err"]),
@@ -97,68 +83,6 @@ def summarize_tracking(rows: dict[str, torch.Tensor]) -> dict[str, float]:
         "steps": _mean(rows["steps"]),
         "num_clips": float(rows["clip_id"].shape[0]),
     }
-
-
-def summarize_velocity_smoke(rows: dict[str, torch.Tensor]) -> dict[str, float]:
-    """Unweighted mean over the smoke commands. Not the Appendix G.2 metric."""
-    return {
-        "velocity_smoke/lin_vel_err": _mean(rows["lin_vel_err"]),
-        "velocity_smoke/yaw_rate_err": _mean(rows["yaw_rate_err"]),
-        "velocity_smoke/fall_rate": _mean(rows["fall"]),
-        "velocity_smoke/survival_s": _mean(rows["survival_s"]),
-        "velocity_smoke/num_commands": float(rows["command_index"].shape[0]),
-    }
-
-
-def step_test_table(
-    rows: dict[str, torch.Tensor], trials: int, num_commands: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """``relative_error`` and ``fell`` as ``[trials, commands]`` tables."""
-    errors = torch.full((trials, num_commands), float("nan"))
-    fell = torch.zeros((trials, num_commands), dtype=torch.long)
-    trial = rows["trial"].long()
-    index = rows["command_index"].long()
-    errors[trial, index] = rows["relative_error"].float()
-    fell[trial, index] = rows["fell"].long()
-    return errors, fell
-
-
-def summarize_step_test(
-    relative_error: torch.Tensor, fell: torch.Tensor, planes: list[str]
-) -> tuple[dict[str, float], dict[str, torch.Tensor]]:
-    """Per-command median over the trials that did not fall, then a summary.
-
-    A command whose every trial fell has a NaN value and is counted
-    separately, as the paper draws it at the cap.
-    """
-    per_command = torch.nanmedian(relative_error, dim=0).values
-    fell_trials = fell.sum(dim=0)
-    all_fell = fell_trials == fell.shape[0]
-    scored = per_command[~all_fell]
-    summary = {
-        "velocity_g2/median_relative_error": float(scored.median())
-        if scored.numel()
-        else float("nan"),
-        "velocity_g2/commands_all_trials_fell": float(all_fell.sum()),
-        "velocity_g2/trial_fall_rate": float(fell.float().mean()),
-        "velocity_g2/num_commands": float(relative_error.shape[1]),
-        "velocity_g2/num_trials": float(relative_error.shape[0]),
-    }
-    for plane in sorted(set(planes)):
-        mask = torch.tensor([p == plane for p in planes]) & ~all_fell
-        values = per_command[mask]
-        summary[f"velocity_g2/median_relative_error_{plane}"] = (
-            float(values.median()) if values.numel() else float("nan")
-        )
-    table = {
-        "relative_error": per_command,
-        "fell_trials": fell_trials,
-        **{
-            f"trial_{i}_relative_error": relative_error[i]
-            for i in range(relative_error.shape[0])
-        },
-    }
-    return summary, table
 
 
 def _optional(value: float) -> float | None:
@@ -276,19 +200,6 @@ def summarize_rows(
         metrics.update(summarize_tracking(part))
         names = [meta["clip_names"][int(i)] for i in part["clip_id"].tolist()]
         tables["per_clip"] = labeled_rows(part, names, "clip_name")
-    if VELOCITY_SMOKE in tasks:
-        part = _sorted(task_rows(rows, VELOCITY_SMOKE), "command_index")
-        metrics.update(summarize_velocity_smoke(part))
-        names = [meta["smoke_names"][int(i)] for i in part["command_index"].tolist()]
-        tables["velocity_smoke"] = labeled_rows(part, names, "command_name")
-    if VELOCITY_G2 in tasks:
-        part = task_rows(rows, VELOCITY_G2)
-        errors, fell = step_test_table(
-            part, int(meta["g2_trials"]), len(meta["g2_names"])
-        )
-        summary, table = summarize_step_test(errors, fell, meta["g2_planes"])
-        metrics.update(summary)
-        tables["velocity_g2"] = labeled_rows(table, meta["g2_names"], "command_name")
     if PUSH_RECOVERY in tasks:
         part = _sorted(task_rows(rows, PUSH_RECOVERY), "trial")
         records = push_trial_records(

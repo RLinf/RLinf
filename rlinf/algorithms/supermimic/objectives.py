@@ -12,126 +12,101 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pure-tensor SuperMimic objectives (paper Eq. 2 and Eq. 3)."""
+"""World-model loss, imagined return and critic targets."""
 
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 
-from rlinf.envs.sim.g1_mimic.constants import (
-    EPISODE_FAILURE,
-    JOINT_POS,
-    JOINT_VEL,
-    ROOT_ANG_VEL,
-    ROOT_LIN_VEL,
-    ROOT_POS,
-    STATE_LOSS_SCALES,
-)
-from rlinf.envs.sim.g1_mimic.features import (
-    error_floor,
-    frame_local_error,
-    so3_relative_rotvec,
-)
+from rlinf.envs.sim.g1_mimic.constants import DT, MAX_TRACKING_REWARD
 
-
-def survival_weights(d_hat: torch.Tensor) -> torch.Tensor:
-    """c_0 = 1, c_{t+1} = c_t (1 - d_{t+1}). ``d_hat`` is [B, H] and stays soft."""
-    ones = torch.ones(d_hat.shape[0], 1, device=d_hat.device, dtype=d_hat.dtype)
-    c_rest = torch.cumprod(1.0 - d_hat, dim=1)
-    return torch.cat((ones, c_rest), dim=1)
+# Bryson's rule: a channel group's squared error is divided by its nominal
+# error squared. Units are m, rad, rad/s and m/s.
+NOMINAL_ERRORS = {
+    "root_pos": 0.01,
+    "root_ori": 0.02,
+    "joint_pos": 0.1,
+    "joint_vel": 3.14,
+    "body_pos": 0.05,
+    "body_rot": 0.1,
+    "body_vel": 1.0,
+    "body_avel": 3.14,
+}
 
 
-def actor_objective(
+def value_ceiling(gamma: float) -> float:
+    """Largest discounted return: every step earns the tracking-kernel maximum."""
+    return MAX_TRACKING_REWARD / (1.0 - gamma)
+
+
+def world_model_loss(
+    pred: dict[str, torch.Tensor], true: dict[str, torch.Tensor]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Bryson-weighted state loss and the plain MSE of each channel group.
+
+    Each group's mean squared error is weighted by ``1 / nominal^2`` and by
+    its channel count, then divided by the total channel count. The groups
+    come out in ``pred``'s key order.
+    """
+    mse = torch.stack([(pred[name] - true[name]).square().mean() for name in pred])
+    widths = torch.tensor(
+        [float(pred[name].shape[-1]) for name in pred], device=mse.device
+    )
+    weights = torch.tensor(
+        [NOMINAL_ERRORS[name] ** -2 for name in pred], device=mse.device
+    )
+    return (mse * weights * widths).sum() / widths.sum(), mse
+
+
+def imagined_return(
     rewards: torch.Tensor,
-    d_hat: torch.Tensor,
-    v_last: torch.Tensor,
+    term_prob: torch.Tensor,
+    last_value: torch.Tensor,
     gamma: float,
 ) -> torch.Tensor:
-    """Paper Eq. 2. Mean over the batch. ``d_hat`` must not be detached or bool."""
+    """Discounted return of each imagined rollout, ``[B]``.
+
+    ``rewards`` and ``term_prob`` are ``[B, H]``. Step ``t`` counts with the
+    survival ``prod_{j<t} (1 - p_j)``; the critic value of the last state
+    counts with the survival of all ``H`` steps. ``term_prob`` stays soft so
+    the gradient reaches the termination test.
+    """
     horizon = rewards.shape[1]
-    weights = survival_weights(d_hat)
-    time = torch.arange(horizon, device=rewards.device, dtype=rewards.dtype)
-    discount = gamma**time
-    stepwise = (discount * weights[:, :-1] * rewards).sum(dim=1)
-    bootstrap = (gamma**horizon) * weights[:, -1] * v_last
-    return (stepwise + bootstrap).mean()
+    alive = torch.cumprod(1.0 - term_prob, dim=1)
+    before = torch.cat((torch.ones_like(alive[:, :1]), alive[:, :-1]), dim=1)
+    discount = gamma ** torch.arange(
+        horizon, device=rewards.device, dtype=rewards.dtype
+    )
+    return (discount * before * rewards).sum(1) + gamma**horizon * alive[
+        :, -1
+    ] * last_value
 
 
-def gae_targets(
-    rewards: torch.Tensor,
-    d_hat: torch.Tensor,
+def lambda_returns(
     values: torch.Tensor,
+    last_value: torch.Tensor,
+    rewards: torch.Tensor,
+    term_prob: torch.Tensor,
     gamma: float,
     lam: float,
 ) -> torch.Tensor:
-    """Paper Eq. 3. ``values`` is [B, H+1], ``rewards``/``d_hat`` are [B, H]."""
-    horizon = rewards.shape[1]
-    returns = torch.zeros_like(values)
-    returns[:, -1] = values[:, -1]
-    for t in range(horizon - 1, -1, -1):
-        survive = 1.0 - d_hat[:, t]
-        blend = (1.0 - lam) * values[:, t + 1] + lam * returns[:, t + 1]
-        returns[:, t] = rewards[:, t] + gamma * survive * blend
-    return returns[:, :-1]
+    """GAE value targets ``A_t + V_t`` of a time-major rollout, ``[H, B]``.
 
-
-def wm_termination_target(end_kind: torch.Tensor) -> torch.Tensor:
-    """BCE label: only failure termination is a positive dynamics event."""
-    return (end_kind == EPISODE_FAILURE).to(dtype=torch.float32)
-
-
-def state_prediction_loss(
-    pred: torch.Tensor, target: torch.Tensor, *, scaled: bool = False
-) -> torch.Tensor:
-    """Mean over the batch of summed squared state errors.
-
-    The paper loss is unweighted (``scaled=False``). ``scaled=True`` divides
-    each block by ``STATE_LOSS_SCALES``. Rotation is always the relative
-    rotvec: the stored root orientation is a quaternion, and ``q`` and ``-q``
-    are the same attitude.
+    A soft termination ``p_t`` discounts what follows step ``t`` by
+    ``(1 - p_t) gamma``.
     """
-    scales = STATE_LOSS_SCALES if scaled else dict.fromkeys(STATE_LOSS_SCALES, 1.0)
-    pos = (pred[..., ROOT_POS] - target[..., ROOT_POS]) / scales["root_pos"]
-    # Relative SO(3) error. Subtracting two absolute rotvecs is not a rotation.
-    rot = so3_relative_rotvec(pred[..., 3:7], target[..., 3:7]) / scales["root_rotvec"]
-    lin = (pred[..., ROOT_LIN_VEL] - target[..., ROOT_LIN_VEL]) / scales["root_lin_vel"]
-    ang = (pred[..., ROOT_ANG_VEL] - target[..., ROOT_ANG_VEL]) / scales["root_ang_vel"]
-    q = (pred[..., JOINT_POS] - target[..., JOINT_POS]) / scales["joint_pos"]
-    qd = (pred[..., JOINT_VEL] - target[..., JOINT_VEL]) / scales["joint_vel"]
-    stacked = torch.cat((pos, rot, lin, ang, q, qd), dim=-1)
-    return (stacked**2).sum(dim=-1).mean()
+    targets = torch.empty_like(values)
+    advantage = torch.zeros_like(last_value)
+    next_value = last_value
+    for t in reversed(range(values.shape[0])):
+        carry = (1.0 - term_prob[t]) * gamma
+        delta = rewards[t] + carry * next_value - values[t]
+        advantage = delta + carry * lam * advantage
+        targets[t] = advantage + values[t]
+        next_value = values[t]
+    return targets
 
 
-def running_state_loss(
-    pred: torch.Tensor, true: torch.Tensor, residual_std: torch.Tensor, frame: str
-) -> torch.Tensor:
-    """Frame-local state error divided by the running residual std.
-
-    ``residual_std`` is the std of the world model's running residual norm.
-    Each component's scale is at least :func:`error_floor`. The result is the
-    mean over the 70 components and over the batch.
-    """
-    err = frame_local_error(pred, true, frame)
-    scale = torch.maximum(residual_std, error_floor(err))
-    return (err / scale).square().mean()
-
-
-def termination_bce(logit: torch.Tensor, end_kind: torch.Tensor) -> torch.Tensor:
-    """BCE of the termination logit against failure-only labels."""
-    target = wm_termination_target(end_kind).to(device=logit.device, dtype=logit.dtype)
-    return F.binary_cross_entropy_with_logits(logit, target)
-
-
-def termination_bce_scale(
-    rows: int, motion_rows: int, total_rows: float, total_motion_rows: float
-) -> float:
-    """Weight of one rank's termination BCE inside its world-model loss.
-
-    Each rank's loss counts ``rows / total_rows`` of the update, but its BCE
-    averages only its ``motion_rows``. This weight makes the BCE part of the
-    update the mean over the motion rows of every rank.
-    """
-    if total_motion_rows <= 0:
-        return 0.0
-    return motion_rows * total_rows / (rows * total_motion_rows)
+def reward_per_second(mean_return: torch.Tensor, horizon: int) -> torch.Tensor:
+    """Mean imagined return per second of rollout, the logged policy reward."""
+    return mean_return / horizon / DT

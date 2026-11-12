@@ -20,7 +20,7 @@ It does not publish the T-pose joint angles, the speed grid, the direction,
 the trial count, the pre-push wait, or the numerical meaning of "settles".
 
 This module does not implement that T-pose. It holds mjlab's knees-bent
-keyframe, the same pose as ``q0`` and ``reset_standing``. Forward kinematics
+keyframe, the same pose as ``q0`` and the PD offset. Forward kinematics
 puts each wrist about 0.31 m below its shoulder and only about 0.07 m to
 the side. The asset has no T-pose keyframe, and the MJCF rest pose points
 the forearms forward rather than out to the sides. Because the paper does
@@ -43,6 +43,7 @@ import torch
 
 from rlinf.envs.sim.g1_mimic.constants import (
     DT,
+    GOAL_FRAMES,
     JOINT_POS,
     JOINT_VEL,
     ROOT_ANG_VEL,
@@ -57,7 +58,7 @@ from rlinf.envs.sim.g1_mimic.features import (
     rot_apply,
     yaw_rotation,
 )
-from rlinf.envs.sim.g1_mimic.motion import GOAL_FRAMES, MotionLibrary
+from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
 
 REFERENCE_POSE = "mjlab_knees_bent_keyframe"
 PROTOCOL_NAME = "stationary_standing_pose"

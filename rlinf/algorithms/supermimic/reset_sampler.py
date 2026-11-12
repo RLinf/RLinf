@@ -12,21 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Return-based reset sampling over 1 s bins.
+"""Reset frames drawn toward the parts of the library the policy tracks worst.
 
-Appendix D.1 specifies 1 s bins, the 50% / 40% / 10% mixture, and a softmax
-temperature on bin return. The temperature value 25, ``G_max``, and the two
-EMA rates below are community / local choices, not a printed paper table:
-
-* 50% uniform over bins;
-* 40% ``softmax(-25 * G_b / G_max)``;
-* 10% a slow EMA of that softmax.
-
-``G_b`` is an EMA (alpha 0.05) of the motion-tracking discounted return-to-go
-of the steps whose reference frame falls in the bin. A timeout bootstraps the
-tail with the motion critic. A failure and a clip end do not. Velocity-task
-envs neither log returns nor draw from the mixture: their return depends on
-the command, not on the reference point, so they start from ``sample_uniform``.
+The library timeline is cut into 0.2 s bins. ``value[b]`` estimates the
+discounted return the policy earns from bin ``b`` on its own simulator
+rollouts. The reset distribution mixes a uniform share over bins, a softmax
+focus on low-return bins and a keep share on bins that once held a sharp
+focus. Follows the return sampler of HybridRobotics/supermimic (Apache-2.0).
 """
 
 from __future__ import annotations
@@ -34,243 +26,168 @@ from __future__ import annotations
 import torch
 import torch.distributed as dist
 
-from rlinf.envs.sim.g1_mimic.constants import EPISODE_TIMEOUT
+from rlinf.algorithms.supermimic.objectives import value_ceiling
 
-RESET_BIN_FRAMES = 50
-UNIFORM_PROB = 0.5
-ADAPTIVE_PROB = 0.4
-MEMORY_PROB = 0.1
-TEMPERATURE = 25.0
-RETURN_EMA = 0.05
-MEMORY_EMA = 0.01
+BIN_FRAMES = 10
+RETURN_GAMMA = 0.99
+RECORD_STEPS = 20
+MEMORY = 256
+STEEPNESS = 25.0
+EXPLORE = 0.5
+KEEP = 0.1
 
 
-class BinResetSampler:
-    """One sampler shared by every env in the vector."""
+class ReturnResetSampler:
+    """One distribution over library frames shared by every env of every rank.
+
+    Args:
+        clip_ends: Exclusive end row of every clip in the library block.
+        num_envs: Envs on this rank.
+        device: Device of the statistics.
+        group: Env ranks whose bin statistics are summed; ``None`` for one.
+    """
 
     def __init__(
         self,
-        lengths: torch.Tensor,
+        clip_ends: torch.Tensor,
         num_envs: int,
-        g_max: float,
-        gamma: float,
-        max_episode_steps: int,
         device: torch.device,
+        group: dist.ProcessGroup | None = None,
     ):
         self.device = device
-        self.g_max = float(g_max)
-        self.gamma = float(gamma)
-        self.bin_frames = RESET_BIN_FRAMES
-        clips: list[int] = []
-        starts: list[int] = []
-        ends: list[int] = []
-        bins_per_clip: list[int] = []
-        for clip, length in enumerate(lengths.tolist()):
-            n_bins = max(1, (int(length) + RESET_BIN_FRAMES - 1) // RESET_BIN_FRAMES)
-            bins_per_clip.append(n_bins)
-            for bin_id in range(n_bins):
-                start = bin_id * RESET_BIN_FRAMES
-                end = min(int(length), start + RESET_BIN_FRAMES)
-                clips.append(clip)
-                starts.append(start)
-                ends.append(max(end, start + 1))
-        self.bin_clip = torch.tensor(clips, dtype=torch.long, device=device)
-        self.bin_start = torch.tensor(starts, dtype=torch.long, device=device)
-        self.bin_end = torch.tensor(ends, dtype=torch.long, device=device)
-        n = len(clips)
-        self.bin_return = torch.full((n,), self.g_max, device=device)
-        self.bin_memory = torch.full((n,), 1.0 / n, device=device)
-        max_local = max(bins_per_clip)
-        flat = torch.full(
-            (len(bins_per_clip), max_local), -1, dtype=torch.long, device=device
-        )
-        local = self.bin_start // RESET_BIN_FRAMES
-        flat[self.bin_clip, local] = torch.arange(n, device=device)
-        self._flat = flat
-        self._bins_per_clip = torch.tensor(
-            bins_per_clip, dtype=torch.long, device=device
-        )
-        horizon = max(int(max_episode_steps), 1)
-        self.ep_len = torch.zeros(num_envs, dtype=torch.long, device=device)
-        self._reward = torch.zeros(num_envs, horizon, device=device)
-        self._bin = torch.zeros(num_envs, horizon, dtype=torch.long, device=device)
-        # Multi-rank runs fold finished episodes here and apply the EMA once
-        # per vector step, after the ranks' sums and counts are added up.
-        self.deferred = False
-        self._pending_sum = torch.zeros(n, device=device)
-        self._pending_count = torch.zeros(n, device=device)
+        self.group = group
+        self.clip_ends = clip_ends.to(device=device, dtype=torch.long)
+        self.frame_count = int(self.clip_ends[-1])
+        self.bin_count = self.frame_count // BIN_FRAMES + 1
+        self.value_max = value_ceiling(RETURN_GAMMA)
+        self.value = torch.full((self.bin_count,), self.value_max, device=device)
+        self.count = torch.zeros(self.bin_count, device=device)
+        self.effort = torch.zeros(self.bin_count, dtype=torch.float64, device=device)
+        self.probs = torch.full((self.bin_count,), 1.0 / self.bin_count, device=device)
+        shape = (int(num_envs), RECORD_STEPS)
+        self._frames = torch.zeros(shape, dtype=torch.long, device=device)
+        self._rewards = torch.zeros(shape, device=device)
+        self._failed = torch.zeros(shape, dtype=torch.bool, device=device)
+        self._clip_end = torch.zeros(shape, dtype=torch.bool, device=device)
+        self._timed_out = torch.zeros(shape, dtype=torch.bool, device=device)
+        self._column = 0
 
-    @property
-    def num_bins(self) -> int:
-        """Number of 1 s reset bins over the whole motion library."""
-        return int(self.bin_return.shape[0])
+    def _bins(self, frames: torch.Tensor) -> torch.Tensor:
+        return frames * self.bin_count // self.frame_count
 
-    def bin_of(
-        self, motion_id: torch.Tensor, motion_time: torch.Tensor
-    ) -> torch.Tensor:
-        """Flat bin index of each ``(motion_id, motion_time)``."""
-        local = motion_time.long() // self.bin_frames
-        last = self._bins_per_clip[motion_id] - 1
-        local = torch.minimum(local, last).clamp_min(0)
-        return self._flat[motion_id, local]
+    def sample(self, n: int) -> torch.Tensor:
+        """``n`` library frames; a clip's last frame moves one frame back."""
+        bins = torch.multinomial(self.probs, n, replacement=True)
+        last = self.frame_count - 2
+        low = bins * last // self.bin_count
+        span = ((bins + 1) * last // self.bin_count - low).clamp(min=1)
+        jitter = (torch.rand(n, device=self.device) * span).long()
+        frames = (low + jitter).clamp(max=last)
+        on_last = torch.isin(frames, self.clip_ends - 1)
+        return torch.where(on_last, frames - 1, frames)
 
-    def log_step(
+    def record(
         self,
-        reward: torch.Tensor,
-        motion_id: torch.Tensor,
-        motion_time: torch.Tensor,
-        rows: torch.Tensor | None = None,
+        frames: torch.Tensor,
+        rewards: torch.Tensor,
+        failed: torch.Tensor,
+        clip_end: torch.Tensor,
+        timed_out: torch.Tensor,
     ) -> None:
-        """Append one step's reward. ``rows`` masks the envs whose reward counts."""
-        idx = self.ep_len
-        room = idx < self._reward.shape[1]
-        if rows is not None:
-            room = room & rows
-        # Every row writes; a row without room writes its old value back, so
-        # the step needs no host read of ``room``.
-        env = torch.arange(reward.shape[0], device=self.device)
-        col = idx.clamp_max(self._reward.shape[1] - 1)
-        self._reward[env, col] = torch.where(
-            room, reward.detach().to(self._reward.dtype), self._reward[env, col]
-        )
-        self._bin[env, col] = torch.where(
-            room, self.bin_of(motion_id, motion_time), self._bin[env, col]
-        )
-        self.ep_len = torch.where(room, idx + 1, idx)
+        """Buffer one vector step and refresh the distribution every 20 steps.
 
-    def mixture(self, update_memory: bool) -> torch.Tensor:
-        """Sampling distribution. Memory advances only when a start is drawn."""
-        n_bins = self.num_bins
-        hard = torch.softmax(-TEMPERATURE * self.bin_return / self.g_max, dim=0)
-        memory = self.bin_memory
-        if update_memory:
-            memory = (1.0 - MEMORY_EMA) * memory + MEMORY_EMA * hard
-            self.bin_memory = memory
-        probs = (
-            UNIFORM_PROB / n_bins
-            + ADAPTIVE_PROB * hard
-            + MEMORY_PROB * memory / memory.sum().clamp_min(1e-8)
-        )
-        return probs / probs.sum()
-
-    def sample(self, n: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Bin mixture, then a uniform frame inside the chosen bin."""
-        if n <= 0:
-            empty = torch.zeros(0, dtype=torch.long, device=self.device)
-            return empty, empty
-        probs = self.mixture(update_memory=True)
-        return self._frames_in(torch.multinomial(probs, n, replacement=True))
-
-    def sample_uniform(self, n: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Uniform over bins. Leaves ``G_b`` and the memory distribution alone."""
-        choice = torch.randint(self.num_bins, (max(n, 0),), device=self.device)
-        return self._frames_in(choice)
-
-    def _frames_in(self, choice: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        span = (self.bin_end[choice] - self.bin_start[choice]).clamp_min(1)
-        motion_time = (
-            self.bin_start[choice]
-            + (torch.rand(choice.shape[0], device=self.device) * span.float()).long()
-        )
-        return self.bin_clip[choice], motion_time
-
-    def finish(
-        self,
-        env_ids: torch.Tensor,
-        end_kind: torch.Tensor,
-        bootstrap: torch.Tensor | None,
-    ) -> None:
-        """Fold finished episodes into ``G_b`` and clear their step logs."""
-        if env_ids.numel() == 0:
-            return
-        # Use the log width rather than reading episode lengths to the host.
-        lens = self.ep_len[env_ids]
-        reward = self._reward[env_ids]
-        bins = self._bin[env_ids]
-        horizon = int(reward.shape[1])
-        steps = torch.arange(horizon, device=self.device)
-        valid = steps.unsqueeze(0) < lens.unsqueeze(1)
-        # A short episode's tail still holds the previous longer episode until
-        # it is masked. Discounted returns must not include those rewards.
-        reward = torch.where(valid, reward, torch.zeros_like(reward))
-        bins = torch.where(valid, bins, torch.zeros_like(bins))
-        # Double the summed interval each round without dividing by gamma**t.
-        returns = reward.clone()
-        stride = 1
-        while stride < horizon:
-            returns[:, :-stride] = (
-                returns[:, :-stride] + self.gamma**stride * returns[:, stride:]
-            )
-            stride *= 2
-        timeout = end_kind == EPISODE_TIMEOUT
-        if bootstrap is not None:
-            needs_tail = timeout & (lens > 0)
-            tail = torch.where(needs_tail, bootstrap, torch.zeros_like(bootstrap))
-            invalid = ~torch.isfinite(tail)
-            if bool(invalid.any()):
-                rows = env_ids[invalid].tolist()
-                raise RuntimeError(
-                    f"non-finite timeout bootstrap for reset-sampler envs {rows}"
-                )
-            remaining = (
-                (lens.unsqueeze(1) - steps.unsqueeze(0)).clamp_min(0).to(reward.dtype)
-            )
-            returns = returns + (self.gamma**remaining) * tail.unsqueeze(1)
-        flat_bins = bins.reshape(-1)
-        flat_returns = torch.where(valid, returns, torch.zeros_like(returns))
-        sums = torch.zeros_like(self.bin_return).index_add_(
-            0, flat_bins, flat_returns.reshape(-1)
-        )
-        counts = torch.zeros_like(self.bin_return).index_add_(
-            0, flat_bins, valid.reshape(-1).to(self.bin_return.dtype)
-        )
-        if self.deferred:
-            self._pending_sum += sums
-            self._pending_count += counts
-        else:
-            self._apply_returns(sums, counts)
-        self._reward[env_ids] = 0
-        self._bin[env_ids] = 0
-        self.ep_len[env_ids] = 0
-
-    def _apply_returns(self, sums: torch.Tensor, counts: torch.Tensor) -> None:
-        mean = sums / counts.clamp_min(1.0)
-        self.bin_return = torch.where(
-            counts > 0,
-            (1.0 - RETURN_EMA) * self.bin_return + RETURN_EMA * mean,
-            self.bin_return,
-        )
-
-    def sync(self, group: dist.ProcessGroup | None) -> None:
-        """Pool this vector step's bin returns over ``group``, then apply the EMA.
-
-        The memory distribution is averaged over ranks, since each rank
-        advances it only when it draws a start. Every rank of ``group`` calls
-        this once per vector step.
+        ``frames`` are the frames each env was scored against. An episode ends
+        by a fall (``failed``), by reaching its clip's last frame or by its
+        time limit; one end kind per env. Every rank of ``group`` records in
+        lockstep.
         """
-        if not self.deferred:
-            return
-        n = self.num_bins
-        buf = torch.cat((self._pending_sum, self._pending_count, self.bin_memory))
-        dist.all_reduce(buf, op=dist.ReduceOp.SUM, group=group)
-        self._apply_returns(buf[:n], buf[n : 2 * n])
-        self.bin_memory = buf[2 * n :] / float(dist.get_world_size(group))
-        self._pending_sum.zero_()
-        self._pending_count.zero_()
+        col = self._column
+        self._frames[:, col] = frames
+        self._rewards[:, col] = rewards
+        self._failed[:, col] = failed
+        self._clip_end[:, col] = clip_end
+        self._timed_out[:, col] = timed_out
+        self._column = (col + 1) % RECORD_STEPS
+        if self._column == 0:
+            self._fold()
+            self._refresh()
+
+    def _returns(self) -> torch.Tensor:
+        """Discounted return of every buffered step.
+
+        Where an episode ends, and after the last buffered step, the return
+        continues with the value of the following state: none after a fall,
+        the mean bin value after a clip's last frame, the next frame's bin
+        value otherwise.
+        """
+        after = (self._frames + 1).clamp(max=self.frame_count - 1)
+        following = torch.where(
+            self._failed,
+            0.0,
+            torch.where(
+                self._clip_end, self.value.mean(), self.value[self._bins(after)]
+            ),
+        )
+        ended = self._failed | self._clip_end | self._timed_out
+        returns = torch.empty_like(self._rewards)
+        tail = following[:, -1]
+        for t in reversed(range(RECORD_STEPS)):
+            tail = torch.where(ended[:, t], following[:, t], tail)
+            returns[:, t] = self._rewards[:, t] + RETURN_GAMMA * tail
+            tail = returns[:, t]
+        return returns
+
+    def _fold(self) -> None:
+        """Fold the buffer into the bin values.
+
+        An env's visits to one bin within one episode make one sample, their
+        mean return. A bin's earlier samples weigh at most ``MEMORY`` samples.
+        """
+        returns = self._returns()
+        ended = (self._failed | self._clip_end | self._timed_out).long()
+        num_envs = ended.shape[0]
+        episode = ended.cumsum(1) - ended
+        env = torch.arange(num_envs, device=self.device).unsqueeze(1)
+        key = (env * RECORD_STEPS + episode) * self.bin_count + self._bins(self._frames)
+        keys, inverse, visits = torch.unique(
+            key.reshape(-1), return_inverse=True, return_counts=True
+        )
+        samples = torch.zeros(keys.numel(), device=self.device)
+        samples.scatter_add_(0, inverse, returns.reshape(-1))
+        samples /= visits
+        bins = keys % self.bin_count
+        sums = torch.zeros(2, self.bin_count, device=self.device)
+        sums[0].scatter_add_(0, bins, torch.ones_like(samples))
+        sums[1].scatter_add_(0, bins, samples)
+        if self.group is not None and dist.get_world_size(self.group) > 1:
+            dist.all_reduce(sums, group=self.group)
+        new, total = sums
+        self.count = self.count.clamp(max=MEMORY) + new
+        self.value = torch.where(
+            new > 0, self.value + (total - new * self.value) / self.count, self.value
+        )
+
+    def _refresh(self) -> None:
+        focus = torch.softmax(-STEEPNESS * self.value / self.value_max, dim=0)
+        self.effort += focus.double().square()
+        keep = (self.effort / self.effort.sum()).float()
+        self.probs = (
+            EXPLORE / self.bin_count + (1.0 - EXPLORE - KEEP) * focus + KEEP * keep
+        )
 
     def state_dict(self) -> dict[str, torch.Tensor]:
-        """Bin returns and the memory distribution, on CPU, for checkpoints."""
+        """Bin values, sample counts, keep effort and the distribution, on CPU."""
         return {
-            "bin_return": self.bin_return.detach().cpu().clone(),
-            "bin_memory": self.bin_memory.detach().cpu().clone(),
+            name: getattr(self, name).detach().cpu().clone()
+            for name in ("value", "count", "effort", "probs")
         }
 
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """Restore ``state_dict()``; the bin count must match this library."""
-        if state["bin_return"].shape != self.bin_return.shape:
+        """Restore :meth:`state_dict`; the bin count must match this library."""
+        if state["value"].shape != self.value.shape:
             raise ValueError(
-                f"checkpoint has {state['bin_return'].shape[0]} reset bins, "
-                f"this motion library has {self.num_bins}"
+                f"checkpoint has {state['value'].shape[0]} reset bins, "
+                f"this motion library has {self.bin_count}"
             )
-        self.bin_return.copy_(state["bin_return"].to(self.device))
-        self.bin_memory = state["bin_memory"].to(self.device).clone()
+        for name in ("value", "count", "effort", "probs"):
+            setattr(self, name, state[name].to(self.device).clone())

@@ -23,37 +23,20 @@ import torch
 from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, DT, HISTORY_LEN
+from rlinf.algorithms.supermimic.representations import REPRESENTATIONS
+from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, DT
 from rlinf.utils.precision import torch_dtype_from_precision
 
 if TYPE_CHECKING:
     from rlinf.utils.placement import HybridComponentPlacement
 
-# Policy settings the G1 envs build observations, goals and critic inputs from,
-# and the compile switch they share with the policy.
-ENV_MODEL_KEYS = (
-    "goal_encoding",
-    "goal_anchor",
-    "obs_dim",
-    "velocity_tracking",
-    "critic_features",
-    "input_norm",
-    "torch_compile",
-)
-# Algorithm settings the G1 envs score and terminate with.
-ENV_ALGORITHM_KEYS = ("reward_anchor", "termination_body", "gamma")
+# Policy settings the G1 envs build observations from, and the compile switch
+# they share with the policy.
+ENV_MODEL_KEYS = ("representation", "torch_compile")
 
 _CHOICES = {
-    "goal_encoding": ("paper", "goal730"),
-    "critic_features": ("root4", "body_error"),
-    "input_norm": ("running", "none"),
-    "wm_state_loss": ("paper", "scaled", "running"),
-    "reward_anchor": ("pelvis", "torso"),
-    "termination_body": ("pelvis", "torso"),
-    "residual_frame": ("body", "heading"),
-    "termination_head": ("learned", "analytic"),
+    "representation": tuple(REPRESENTATIONS),
     "motion_format": ("lafan1", "bones_seed"),
-    "com_sampling": ("per_env", "per_reset"),
 }
 
 
@@ -95,31 +78,15 @@ def _check_number(
 
 
 def _check_model(model: DictConfig, prefix: str) -> None:
-    for name in ("goal_encoding", "critic_features", "input_norm", "wm_state_loss"):
-        _check_choice(model, name, prefix)
-    for name in ("goal_anchor", "velocity_tracking", "torch_compile"):
-        value = model.get(name, None)
-        if not isinstance(value, bool):
-            raise ValueError(f"{prefix}.{name} must be a bool, got {value!r}")
+    _check_choice(model, "representation", prefix)
+    if not isinstance(model.get("torch_compile", None), bool):
+        raise ValueError(
+            f"{prefix}.torch_compile must be a bool, got {model.get('torch_compile')!r}"
+        )
     if int(model.action_dim) != ACTION_DIM:
         raise ValueError(f"{prefix}.action_dim must be {ACTION_DIM}")
     if int(model.num_action_chunks) != 1:
         raise ValueError(f"{prefix}.num_action_chunks must be 1")
-    if model.obs_dim not in (93, 99):
-        raise ValueError(f"{prefix}.obs_dim must be 93 or 99, got {model.obs_dim!r}")
-    if model.goal_anchor and (model.goal_encoding != "paper" or model.obs_dim != 93):
-        raise ValueError(
-            f"{prefix}.goal_anchor needs goal_encoding=paper and obs_dim=93"
-        )
-    if model.velocity_tracking and (
-        model.goal_encoding != "paper" or model.obs_dim != 93 or model.goal_anchor
-    ):
-        raise ValueError(
-            f"{prefix}.velocity_tracking needs goal_encoding=paper, obs_dim=93 "
-            "and no goal_anchor"
-        )
-    if model.get("termination_bias_init", None) is not None:
-        _check_number(model, "termination_bias_init", prefix)
 
 
 def _is_float32(precision) -> bool:
@@ -169,23 +136,21 @@ def _check_actor_backend(actor: DictConfig) -> None:
         )
 
 
-def _sync_env(env: DictConfig, model: DictConfig, algorithm: DictConfig, prefix: str):
-    """Copy the policy and scoring settings into one env section."""
-    sources = [(name, model.get(name)) for name in ENV_MODEL_KEYS]
-    sources += [(name, algorithm.get(name)) for name in ENV_ALGORITHM_KEYS]
+def _sync_env(env: DictConfig, model: DictConfig, prefix: str):
+    """Copy the policy settings into one env section."""
     with open_dict(env):
-        for name, value in sources:
+        for name in ENV_MODEL_KEYS:
+            value = model.get(name)
             if env.get(name, None) is not None and env.get(name) != value:
                 raise ValueError(
                     f"{prefix}.{name}={env.get(name)!r} differs from the policy "
-                    f"or algorithm value {value!r}; set it in one place"
+                    f"value {value!r}; set it in one place"
                 )
             env[name] = value
 
 
 def _check_env(env: DictConfig, prefix: str, needs_motion: bool) -> None:
-    for name in ("motion_format", "com_sampling"):
-        _check_choice(env, name, prefix)
+    _check_choice(env, "motion_format", prefix)
     if needs_motion and not str(env.get("motion_path", "") or "").strip():
         raise ValueError(
             f"{prefix}.motion_path is empty; set it or SUPERMIMIC_MOTION_PATH"
@@ -193,37 +158,39 @@ def _check_env(env: DictConfig, prefix: str, needs_motion: bool) -> None:
     num_clips = env.get("num_clips", None)
     if num_clips is not None:
         _check_number(env, "num_clips", prefix, int, low=1)
-    _check_number(env, "action_noise_std", prefix, low=0.0)
-    _check_number(env, "max_episode_seconds", prefix, low=0.0, open_low=True)
-    _check_number(env, "G_max", prefix, low=0.0, open_low=True)
     if env.get("auto_reset", False):
         raise ValueError(f"{prefix}.auto_reset must be false; the env resets rows")
 
 
 def _check_training(cfg: DictConfig) -> None:
     alg = cfg.algorithm
-    if int(alg.k) != 8:
-        raise ValueError(f"algorithm.k must be 8, got {alg.k}")
-    if int(alg.H) != 32:
-        raise ValueError(f"algorithm.H must be 32, got {alg.H}")
-    for name in ("residual_frame", "termination_head"):
-        _check_choice(alg, name, "algorithm")
-    _check_number(alg, "updates_per_env_step", "algorithm", low=0.0, open_low=True)
+    _check_number(alg, "k", "algorithm", int, low=2)
+    _check_number(alg, "H", "algorithm", int, low=1)
     _check_number(
         alg, "gamma", "algorithm", low=0.0, high=1.0, open_low=True, open_high=True
     )
     _check_number(alg, "lam", "algorithm", low=0.0, high=1.0)
-    _check_number(alg, "bce_weight", "algorithm", low=0.0)
-    for name in ("wm_batches", "wm_window_batch", "imagine_batch", "critic_epochs"):
+    _check_number(alg, "replay_ratio", "algorithm", low=0.0, open_low=True)
+    for name in (
+        "wm_batches",
+        "wm_window_batch",
+        "imagine_batch",
+        "critic_epochs",
+        "critic_minibatches",
+    ):
         _check_number(alg, name, "algorithm", int, low=1)
-    _check_number(alg, "critic_minibatches", "algorithm", int, low=1)
-    for name in ("warmup_sim_steps", "wm_only_updates", "max_nonfinite_skips"):
-        _check_number(alg, name, "algorithm", int, low=0)
-    # A world-model window spans k steps and an imagination start needs its
-    # observation history in the replay.
-    _check_number(
-        alg, "replay_length", "algorithm", int, low=max(int(alg.k), HISTORY_LEN)
-    )
+    _check_number(alg, "max_nonfinite_skips", "algorithm", int, low=0)
+    _check_number(alg, "replay_length", "algorithm", int, low=int(alg.k))
+    env = cfg.env.train
+    _check_number(env, "action_noise_std", "env.train", low=0.0)
+    _check_number(env, "max_episode_seconds", "env.train", low=0.0, open_low=True)
+    episode_steps = round(float(env.max_episode_seconds) / DT)
+    if episode_steps < int(alg.k):
+        raise ValueError(
+            f"env.train.max_episode_seconds={env.max_episode_seconds} allows "
+            f"{episode_steps} control steps per episode; world-model windows "
+            f"need at least algorithm.k={alg.k}"
+        )
 
 
 def check_supermimic_placement(
@@ -251,14 +218,6 @@ def check_supermimic_placement(
                 f"algorithm.{name}={alg[name]} is global and must be divisible by "
                 f"the {world} actor ranks"
             )
-    if cfg.actor.model.velocity_tracking:
-        per_rank_envs = int(cfg.env.train.total_num_envs) // world
-        if per_rank_envs % 2 or (int(alg.imagine_batch) // world) % 2:
-            raise ValueError(
-                "velocity tracking splits each rank's envs and imagination batch "
-                "in half; env.train.total_num_envs and algorithm.imagine_batch "
-                f"must be divisible by 2 * {world}"
-            )
 
 
 def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictConfig:
@@ -272,15 +231,13 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
         only_eval: Whether the run only evaluates ``rollout.model``.
 
     Returns:
-        ``cfg`` with the policy and scoring settings copied into ``env.train``
-        and ``env.eval``.
+        ``cfg`` with the policy settings copied into ``env.train`` and
+        ``env.eval``.
     """
     model = cfg.rollout.model if only_eval else cfg.actor.model
     prefix = "rollout.model" if only_eval else "actor.model"
     _check_model(model, prefix)
     _check_weight_precision(cfg, only_eval)
-    for name in ("reward_anchor", "termination_body"):
-        _check_choice(cfg.algorithm, name, "algorithm")
     if cfg.rollout.pipeline_stage_num != 1:
         raise ValueError("SuperMimic needs rollout.pipeline_stage_num=1")
     if not only_eval:
@@ -291,20 +248,13 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
                     f"SuperMimic training needs {group}.enable_offload=False, got True"
                 )
         _check_actor_backend(cfg.actor)
-        _check_training(cfg)
-        _sync_env(cfg.env.train, model, cfg.algorithm, "env.train")
+        _sync_env(cfg.env.train, model, "env.train")
         _check_env(cfg.env.train, "env.train", needs_motion=True)
-        episode_steps = round(float(cfg.env.train.max_episode_seconds) / DT)
-        if episode_steps < int(cfg.algorithm.k):
-            raise ValueError(
-                f"env.train.max_episode_seconds={cfg.env.train.max_episode_seconds} "
-                f"allows {episode_steps} control steps per episode; world-model "
-                f"windows need at least algorithm.k={cfg.algorithm.k}"
-            )
+        _check_training(cfg)
     if only_eval or cfg.runner.get("val_check_interval", -1) > 0:
         tasks = list(cfg.env.eval.get("eval_tasks", None) or [])
         if not tasks:
             raise ValueError("env.eval.eval_tasks must name the evaluation tasks")
-        _sync_env(cfg.env.eval, model, cfg.algorithm, "env.eval")
+        _sync_env(cfg.env.eval, model, "env.eval")
         _check_env(cfg.env.eval, "env.eval", needs_motion=tasks != ["push_recovery"])
     return cfg

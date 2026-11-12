@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Reference clips and the 680-d goal. The 9-d anchor is not built here."""
+"""Reference clips, goal windows and the goal vectors built from them."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
     CONTROL_FPS,
     G1_JOINT_NAMES,
     GOAL_FRAMES,
-    GOAL_REF_DIM,
+    GOAL_STRIDE,
     JOINT_POS,
     JOINT_VEL,
     ROOT_ANG_VEL,
@@ -37,48 +37,45 @@ from rlinf.envs.sim.g1_mimic.constants import (
     STATE_DIM,
 )
 from rlinf.envs.sim.g1_mimic.features import (
-    heading_yaw,
-    projected_gravity,
     quat_mul,
     quat_to_rotmat,
-    rot_apply,
     rot_apply_t,
     rot_mul_t,
     rotmat_to_6d,
     rotvec_from_quat,
-    yaw_rotation,
 )
 
-# First and last goal frame relative to the robot's reference time t. The
-# step taken at t is scored against frame t+1, so the 680-d goal holds the
-# current reference frame and nine after it; the 730-d goal holds ten frames
-# after it. Checkpoints record the window they were trained with.
-GOAL_WINDOW = {"paper": (0, GOAL_FRAMES - 1), "goal730": (1, GOAL_FRAMES)}
 
+def assemble_goals(
+    content: torch.Tensor,
+    root_pos: torch.Tensor,
+    root_rot: torch.Tensor,
+    target_pos: torch.Tensor,
+    target_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """World-model goal and actor goal of one root pose.
 
-def _frame_goal(state: torch.Tensor, q0: torch.Tensor) -> torch.Tensor:
-    yaw = heading_yaw(state[..., 3:7])
-    r_heading = yaw_rotation(yaw)
-    lin_h = rot_apply_t(r_heading, state[..., ROOT_LIN_VEL])
-    return torch.cat(
-        (
-            state[..., JOINT_POS] - q0,
-            state[..., JOINT_VEL],
-            projected_gravity(state[..., 3:7]),
-            state[..., ROOT_ANG_VEL],
-            lin_h,
-            state[..., 2:3],
-        ),
-        dim=-1,
-    )
+    ``content`` is the joint part of the window ``[..., 580]``; ``target_pos``
+    and ``target_rot`` are the window's reference root ``[..., 10, 3]`` and
+    ``[..., 10, 3, 3]``. Both goals express the targets in the root frame;
+    the actor goal leaves out the relative positions.
+    """
+    frame = root_rot.unsqueeze(-3)
+    rel_pos = rot_apply_t(frame, target_pos - root_pos.unsqueeze(-2))
+    rel_rot = rotmat_to_6d(rot_mul_t(frame, target_rot)).flatten(-2)
+    world_model_goal = torch.cat((content, rel_pos.flatten(-2), rel_rot), dim=-1)
+    actor_goal = torch.cat((content, rel_rot), dim=-1)
+    return world_model_goal, actor_goal
 
 
 class MotionLibrary:
     """All clips in one contiguous ``[sum_T, 71]`` block.
 
-    Clip ``i`` is rows ``offsets[i] .. offsets[i] + lengths[i] - 1``. Memory
-    is ``O(sum_T)``; a short clip does not pay for the longest one. Queries
-    still take a clip id and a frame index.
+    Clip ``i`` is rows ``offsets[i] .. ends[i] - 1``. The simulator addresses
+    a frame by clip id and time; the replay buffer, the reset sampler and
+    the world model address it by its row in the block (a global frame).
+    Indexing stays on the storage device and only the gathered rows move to
+    the query device, so a CPU library is not copied onto the GPU.
     """
 
     def __init__(self, clips: list[torch.Tensor], q0: torch.Tensor | None = None):
@@ -91,14 +88,14 @@ class MotionLibrary:
                 f"{lengths.index(min(lengths))} has {min(lengths)}"
             )
         self.lengths = torch.tensor(lengths, dtype=torch.long)
-        self.offsets = torch.cumsum(self.lengths, dim=0) - self.lengths
+        self.ends = torch.cumsum(self.lengths, dim=0)
+        self.offsets = self.ends - self.lengths
         self.frames = torch.cat([c.float() for c in clips], dim=0)
-        self._index_cache: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = {}
-        # Body position, rotation, linear and angular velocity of every frame.
-        # The reference clip does not change, so training gathers these instead
-        # of walking the kinematic tree again. Cached on the frames' storage device.
-        self._kin_cache: dict[torch.device, tuple[torch.Tensor, ...]] = {}
-        # Source name per clip, for per-clip evaluation rows.
+        self._index_cache: dict[torch.device, tuple[torch.Tensor, ...]] = {}
+        # Body position, rotation, linear and angular velocity of every frame,
+        # on the frames' storage device. The clips do not change, so training
+        # gathers these instead of walking the kinematic tree again.
+        self._kin_cache: tuple[torch.Tensor, ...] | None = None
         self.clip_names = [f"clip_{i:03d}" for i in range(len(clips))]
         self.q0 = (
             q0.float()
@@ -121,192 +118,105 @@ class MotionLibrary:
         start = int(self.offsets[motion_id])
         return self.frames[start : start + int(self.lengths[motion_id])]
 
-    def _index(self, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    def _index(
+        self, device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if device not in self._index_cache:
             self._index_cache[device] = (
                 self.offsets.to(device=device),
                 self.lengths.to(device=device),
+                self.ends.to(device=device),
             )
         return self._index_cache[device]
+
+    def _store(self, frame: torch.Tensor) -> torch.Tensor:
+        return frame.to(device=self.frames.device, dtype=torch.long)
 
     def clip_length(self, motion_id: torch.Tensor) -> torch.Tensor:
         """Frame count of each clip in ``motion_id``."""
         return self._index(motion_id.device)[1][motion_id]
 
+    def global_frame(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
+        """Row of frame ``time`` of clip ``motion_id``, held at the clip's ends."""
+        offsets, lengths, _ = self._index(motion_id.device)
+        mid = motion_id.long()
+        index = torch.minimum(time.long().clamp_min(0), lengths[mid] - 1)
+        return offsets[mid] + index
+
+    def locate(self, frame: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Clip id and time of each global frame."""
+        offsets, _, ends = self._index(frame.device)
+        clip = torch.searchsorted(ends, frame.long(), right=True)
+        return clip, frame.long() - offsets[clip]
+
+    def clip_end(self, frame: torch.Tensor) -> torch.Tensor:
+        """Exclusive end row of the clip that holds each global frame."""
+        ends = self._index(frame.device)[2]
+        clip = torch.searchsorted(ends, frame.long(), right=True)
+        return ends[clip.clamp(max=self.num_clips - 1)]
+
+    def rows(self, frame: torch.Tensor) -> torch.Tensor:
+        """71-d reference states at global frames."""
+        return self.frames[self._store(frame)].to(device=frame.device)
+
+    def _kinematics(self) -> tuple[torch.Tensor, ...]:
+        if self._kin_cache is None:
+            from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
+
+            kin = g1_kinematics()
+            # The eager depth walk, not ``forward``: a 4096-row ``forward`` on
+            # CUDA would compile a tree walk that nothing else reuses.
+            walk = (
+                kin._forward_levels
+                if kin._level_specs is not None
+                else kin._forward_serial
+            )
+            parts: list[tuple[torch.Tensor, ...]] = []
+            with torch.no_grad():
+                for start in range(0, self.num_frames, 4096):
+                    batch = self.frames[start : start + 4096]
+                    parts.append(tuple(item.detach() for item in walk(batch)))
+            self._kin_cache = tuple(
+                torch.cat([part[i] for part in parts], dim=0) for i in range(4)
+            )
+        return self._kin_cache
+
+    def body_state(
+        self, frame: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Tracked-body world position, rotation, linear and angular velocity."""
+        rows = self._store(frame)
+        return tuple(item[rows].to(device=frame.device) for item in self._kinematics())
+
     def state_at(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
-        """Gather reference states without a Python loop.
-
-        Indexing stays on the stored device. Only the gathered rows move to
-        the query device, so a CPU library is not copied onto the GPU.
-        """
-        squeezed = motion_id.dim() == 0
-        if squeezed:
-            motion_id = motion_id.unsqueeze(0)
-            time = time.unsqueeze(0)
-        query_device = motion_id.device
-        store = self.frames.device
-        offsets, lengths = self._index(store)
-        mid = motion_id.to(device=store).long()
-        index = time.to(device=store).long().clamp_min(0)
-        index = torch.minimum(index, lengths[mid] - 1)
-        out = self.frames[offsets[mid] + index]
-        if out.device != query_device:
-            out = out.to(device=query_device)
-        return out.squeeze(0) if squeezed else out
-
-    def _kinematics(
-        self, device: torch.device
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        cached = self._kin_cache.get(device)
-        if cached is None:
-            cached = self._build_kinematics(device)
-            self._kin_cache[device] = cached
-        return cached
-
-    def _build_kinematics(
-        self, device: torch.device
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        from rlinf.envs.sim.g1_mimic.g1_fk import g1_kinematics
-
-        kin = g1_kinematics()
-        # The eager depth walk, not ``forward``. A 4096-row ``forward`` on
-        # CUDA would compile the tree, and the training scan inlines the
-        # walk itself, so that compile would never be reused.
-        walk = (
-            kin._forward_levels if kin._level_specs is not None else kin._forward_serial
-        )
-        parts: list[tuple[torch.Tensor, ...]] = []
-        frames = self.frames
-        with torch.no_grad():
-            for start in range(0, int(frames.shape[0]), 4096):
-                batch = frames[start : start + 4096].to(
-                    device=device, dtype=torch.float32
-                )
-                parts.append(tuple(item.detach() for item in walk(batch)))
-        return tuple(torch.cat([part[i] for part in parts], dim=0) for i in range(4))
+        """71-d reference states by clip id and time."""
+        return self.rows(self.global_frame(motion_id, time))
 
     def kinematics_at(
         self, motion_id: torch.Tensor, time: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Tracked-body pose and velocity of the reference frames.
+        """:meth:`body_state` by clip id and time."""
+        return self.body_state(self.global_frame(motion_id, time))
 
-        Cache and gather on the frames' storage device, then transfer queried
-        rows as in :meth:`state_at`. Reference tensors are detached; predicted
-        states still run FK online.
+    def goal_window(
+        self, frame: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Joint content ``[..., 580]`` and root targets of the goal window.
+
+        The window is ten frames ``GOAL_STRIDE`` apart from ``frame``, held at
+        the clip's last frame. Returns the content, the target root positions
+        ``[..., 10, 3]`` and rotations ``[..., 10, 3, 3]``.
         """
-        squeezed = motion_id.dim() == 0
-        if squeezed:
-            motion_id = motion_id.unsqueeze(0)
-            time = time.unsqueeze(0)
-        query_device = motion_id.device
-        store = self.frames.device
-        pos, rot, lin, ang = self._kinematics(store)
-        offsets, lengths = self._index(store)
-        mid = motion_id.to(device=store, dtype=torch.long)
-        index = time.to(device=store, dtype=torch.long).clamp_min(0)
-        index = torch.minimum(index, lengths[mid] - 1)
-        flat = offsets[mid] + index
-        out = (pos[flat], rot[flat], lin[flat], ang[flat])
-        if store != query_device:
-            out = tuple(item.to(device=query_device) for item in out)
-        if squeezed:
-            out = tuple(item.squeeze(0) for item in out)
-        return out
-
-    def goal_ref(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
-        """680-d reference: frames t .. t+9, last frame held past the clip end."""
-        q0 = self.q0.to(device=motion_id.device)
-        first, last = GOAL_WINDOW["paper"]
-        offsets = torch.arange(first, last + 1, device=motion_id.device)
-        times = time.long().unsqueeze(-1) + offsets
-        ids = motion_id.long().unsqueeze(-1).expand_as(times)
-        states = self.state_at(ids.reshape(-1), times.reshape(-1))
-        states = states.view(*times.shape, states.shape[-1])
-        goal = _frame_goal(states, q0.view(*([1] * (states.dim() - 1)), -1))
-        goal = goal.reshape(*motion_id.shape, -1)
-        if goal.shape[-1] != GOAL_REF_DIM:
-            raise RuntimeError(
-                f"goal_ref produced {goal.shape[-1]} dims, expected {GOAL_REF_DIM}"
-            )
-        return goal
-
-    def goal730(self, motion_id: torch.Tensor, time: torch.Tensor) -> torch.Tensor:
-        """730-d goal: 10 future frames, 73 numbers each.
-
-        This is not the 68-d paper frame. Frames are ``t+1`` through ``t+10``,
-        and a request past the clip repeats the last frame. Position and
-        yaw-removed rotation are expressed in the current reference heading.
-        Linear velocity is in that future root frame; angular velocity is
-        already stored in the root frame. Joint velocity is scaled by 0.1.
-        Joint angles are the raw reference, not ``q - q0``.
-        """
-        squeezed = motion_id.dim() == 0
-        if squeezed:
-            motion_id = motion_id.unsqueeze(0)
-            time = time.unsqueeze(0)
-        first, last = GOAL_WINDOW["goal730"]
-        offsets = torch.arange(first, last + 1, device=motion_id.device)
-        times = time.long().unsqueeze(-1) + offsets
-        length = self.clip_length(motion_id.long())
-        times = torch.minimum(times, (length - 1).unsqueeze(-1)).clamp_min(0)
-        current = self.state_at(motion_id, time.long())
-        flat_id = motion_id.long().unsqueeze(-1).expand_as(times).reshape(-1)
-        future = self.state_at(flat_id, times.reshape(-1)).view(*times.shape, STATE_DIM)
-        heading = yaw_rotation(heading_yaw(current[..., ROOT_QUAT])).unsqueeze(-3)
-        delta = future[..., :3] - current[..., :3].unsqueeze(-2)
-        rel_pos = rot_apply_t(heading, delta)
-        future_rot = quat_to_rotmat(future[..., ROOT_QUAT])
-        rel_rot = rotmat_to_6d(rot_mul_t(heading, future_rot))
-        lin_local = rot_apply_t(future_rot, future[..., ROOT_LIN_VEL])
-        frame = torch.cat(
-            (
-                rel_pos,
-                rel_rot,
-                lin_local,
-                future[..., ROOT_ANG_VEL],
-                future[..., JOINT_POS],
-                future[..., JOINT_VEL] * 0.1,
-            ),
-            dim=-1,
+        steps = GOAL_STRIDE * torch.arange(GOAL_FRAMES, device=frame.device)
+        window = torch.minimum(
+            frame.long().unsqueeze(-1) + steps,
+            (self.clip_end(frame) - 1).unsqueeze(-1),
         )
-        goal = frame.reshape(frame.shape[0], -1)
-        if goal.shape[-1] != 730:
-            raise RuntimeError(f"goal730 produced {goal.shape[-1]} dims, expected 730")
-        return goal.squeeze(0) if squeezed else goal
-
-    def reference_velocity_command(
-        self, motion_id: torch.Tensor, time: torch.Tensor, window: int = 25
-    ) -> torch.Tensor:
-        """Centered mean of heading-frame ``(vx, vy)`` and world yaw rate.
-
-        Appendix G uses 25 frames. The window is clipped to the clip, so the
-        first and last frames average fewer than 25 samples only at the edge
-        where the index is repeated by the clamp; the mean is still over 25
-        slots, with the end frame held.
-        """
-        half = window // 2
-        offsets = torch.arange(-half, half + 1, device=motion_id.device)
-        times = time.long().unsqueeze(-1) + offsets
-        length = self.clip_length(motion_id.long())
-        times = torch.minimum(times, (length - 1).unsqueeze(-1)).clamp_min(0)
-        flat_id = motion_id.long().unsqueeze(-1).expand_as(times).reshape(-1)
-        states = self.state_at(flat_id, times.reshape(-1)).view(*times.shape, STATE_DIM)
-        quat = states[..., ROOT_QUAT]
-        heading = yaw_rotation(heading_yaw(quat))
-        planar = rot_apply_t(heading, states[..., ROOT_LIN_VEL])[..., :2]
-        world_ang = rot_apply(quat_to_rotmat(quat), states[..., ROOT_ANG_VEL])
-        command = torch.cat((planar, world_ang[..., 2:3]), dim=-1)
-        return command.mean(dim=-2)
-
-    def past_clip_end(
-        self, motion_id: torch.Tensor, time: torch.Tensor
-    ) -> torch.Tensor:
-        """True once ``time`` is past the last stored frame.
-
-        ``state_at`` still returns that last frame, so a terminal step holds
-        the reference instead of reading off the end of the clip.
-        """
-        return time.long() >= self.clip_length(motion_id)
+        states = self.rows(window)
+        content = torch.cat(
+            (states[..., JOINT_POS], states[..., JOINT_VEL]), dim=-1
+        ).flatten(-2)
+        return content, states[..., :3], quat_to_rotmat(states[..., ROOT_QUAT])
 
 
 def _quat_inv(q: torch.Tensor) -> torch.Tensor:
@@ -440,7 +350,7 @@ def decode_motion_payload(
     A bare tensor is rejected: it does not say which joint is which, or
     whether the frames are 50 Hz. ``fps`` must be 50, or 30 so the clip can
     be resampled onto the control rate. ``joint_names`` must equal
-    ``G1_JOINT_NAMES``. ``q0`` is the default pose subtracted in the goal.
+    ``G1_JOINT_NAMES``. ``q0`` is the default pose the PD offset uses.
     """
     if torch.is_tensor(payload):
         raise ValueError(

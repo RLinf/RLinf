@@ -1,8 +1,8 @@
-# Tracking and velocity evaluation of the checkpoint that
-# g1_mimic_supermimic_velocity saves, on the clip in SUPERMIMIC_MOTION_PATH.
-# Mirrors evaluations/supermimic/supermimic_lafan1_goal730_eval.yaml.
+# Tracking evaluation on two ranks of the checkpoint that g1_mimic_supermimic
+# saves, on the clip in SUPERMIMIC_MOTION_PATH.
+# Mirrors evaluations/supermimic/supermimic_lafan1_eval.yaml.
 defaults:
-  - supermimic_lafan1_goal730
+  - supermimic_lafan1_gencoord
   - _self_
 
 hydra:
@@ -19,7 +19,7 @@ cluster:
 runner:
   task_type: embodied_eval
   only_eval: True
-  ckpt_path: /workspace/results/g1_mimic_supermimic_velocity/ci-test/checkpoints/global_step_3/actor/model_state_dict/full_weights.pt
+  ckpt_path: /workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_3/actor/model_state_dict/full_weights.pt
   logger:
     log_path: /workspace/results/g1_mimic_supermimic_eval
     experiment_name: ci-test
@@ -29,28 +29,16 @@ runner:
 rollout:
   model: ${actor.model}
 
-algorithm:
-  termination_head: learned
-
 actor:
   model:
     torch_compile: False
-    goal_encoding: paper
-    obs_dim: 93
-    critic_features: root4
-    input_norm: none
-    wm_state_loss: paper
-    velocity_tracking: True
 
 env:
   train:
     num_clips: 1
     motion_on_cpu: True
   eval:
-    total_num_envs: 8
+    total_num_envs: 2
     num_clips: 1
     motion_on_cpu: True
     max_steps_per_rollout_epoch: 64  # frames in the standing clip
-    eval_tasks: [tracking, velocity_smoke]
-    velocity_smoke:
-      seconds: 0.08

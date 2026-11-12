@@ -14,43 +14,26 @@
 
 """World-model and imagination scans.
 
-The arithmetic is the eager loop. Each scan has two compiled pieces: one
-recurrent step, called from Python once per step, and one batched score
-over every step at once. The step holds only what feeds the next state:
-policy, dynamics and the new observation. Kinematics, reward, termination,
-losses and critic features run once on ``[B * steps]`` rows after the loop.
-A step-sized graph compiles in minutes; an unrolled horizon took over an
-hour.
+Each scan has two compiled pieces: one recurrent step, called from Python
+once per step, and one batched score over every step at once. The step holds
+only what feeds the next state; kinematics, reward, termination and losses
+run once on all steps after the loop. A step-sized graph compiles in
+minutes; an unrolled horizon took over an hour.
 
-On a CUDA batch of at least 256 rows each piece is compiled once. A
-network's ``autocast_dtype`` autocasts that network's linear stack only;
-the scans do not cast the state, the kinematics or the loss. A cache built
-with ``enabled=False`` keeps every piece eager.
+On a CUDA batch of at least 256 rows each piece is compiled once. A cache
+built with ``enabled=False`` keeps every piece eager.
 """
 
 from __future__ import annotations
 
 import torch
 
-from rlinf.algorithms.supermimic.objectives import (
-    actor_objective,
-    running_state_loss,
-    state_prediction_loss,
-    termination_bce,
-)
+from rlinf.algorithms.supermimic.objectives import imagined_return, world_model_loss
 from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache, run_compiled
-from rlinf.envs.sim.g1_mimic.constants import HISTORY_LEN
-from rlinf.envs.sim.g1_mimic.features import integrate_residual
-from rlinf.envs.sim.g1_mimic.obs import add_sensor_noise, analytic_obs
-from rlinf.envs.sim.g1_mimic.reward import (
-    analytic_failure_prob,
-    analytic_reward,
-    differentiable_fk,
-    failure_signals,
-    rollout_critic_feature,
-    termination_head_input,
-)
-from rlinf.models.embodiment.supermimic.networks import normalize_history
+from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY
+from rlinf.envs.sim.g1_mimic.motion import assemble_goals
+from rlinf.envs.sim.g1_mimic.reward import termination_probability, tracking_reward
 
 
 def _caller(compile_name: str | None, cache: CompileCache | None):
@@ -64,262 +47,177 @@ def _caller(compile_name: str | None, cache: CompileCache | None):
     )
 
 
-def _rows(x: torch.Tensor) -> torch.Tensor:
-    """Merge the leading batch and step axes."""
-    return x.reshape(x.shape[0] * x.shape[1], *x.shape[2:])
+def root_goals(
+    root: torch.Tensor,
+    content: torch.Tensor,
+    target_pos: torch.Tensor,
+    target_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """World-model and actor goals of the goal window seen from ``root``."""
+    return assemble_goals(
+        content, root[..., :3], quat_to_rotmat(root[..., 3:7]), target_pos, target_rot
+    )
 
 
-def make_dynamics_window(
-    k: int,
-    learned: bool,
-    termination_body: str,
-    residual_frame: str = "heading",
-    loss_mode: str = "paper",
+def make_world_model_rollout(
+    representation,
     compile_name: str | None = None,
     compile_cache: CompileCache | None = None,
 ):
-    """k-step world-model loss. ``k`` and the flags are fixed for one run.
+    """Open-loop world-model rollout over replay windows and its state loss.
 
-    ``loss_mode`` is ``paper``, ``scaled`` or ``running``.
-    ``residual_frame`` is ``heading`` or ``body``. With ``compile_name`` the
-    step and the loss are compiled under that name.
-    ``compile_cache`` belongs to the worker; if omitted, this scan owns its cache.
-
-    Every per-step loss is a mean over the same batch, so ``k`` times the
-    mean over all ``B * k`` rows is the sum of the per-step losses.
+    The rollout starts from the window's first state and replays its actions;
+    the prediction after the last action is never scored, so a window of
+    ``L`` states yields ``L - 1`` predictions.
     """
     call = _caller(compile_name, compile_cache)
 
-    def state_loss(pred, target, dynamics):
-        if loss_mode == "running":
-            return running_state_loss(
-                pred, target, dynamics.out_norm.std(), residual_frame
-            )
-        return state_prediction_loss(pred, target, scaled=loss_mode == "scaled")
+    def step(dynamics, root, enc, action, context):
+        return representation.advance(root, enc, dynamics(enc, action, context))
 
-    def step(dynamics, pred, action, xi):
-        return integrate_residual(pred, dynamics(pred, action, xi), residual_frame)
+    def score(roots, encs, true_roots, true_encs):
+        return world_model_loss(
+            representation.loss_blocks(roots, encs),
+            representation.loss_blocks(true_roots, true_encs),
+        )
 
-    def score(dynamics, termination, preds, targets, refs, end_kind, bce_weight):
-        loss = k * state_loss(_rows(preds), _rows(targets), dynamics)
-        one = state_loss(preds[:, 0].detach(), targets[:, 0], dynamics)
-        last = state_loss(preds[:, -1].detach(), targets[:, -1], dynamics)
-        if learned:
-            height, tilt, _ = failure_signals(
-                _rows(preds), _rows(refs), termination_body=termination_body
-            )
-            logit = termination(termination_head_input(height, tilt))
-            bce = termination_bce(logit, _rows(end_kind))
-            loss = loss + float(bce_weight) * k * bce
-        return loss, one, last
-
-    def run(
-        dynamics,
-        termination,
-        state0,
-        actions,
-        xi,
-        targets,
-        refs,
-        end_kind,
-        bce_weight,
-    ):
-        pred = state0
-        preds = []
-        for t in range(k):
-            pred = call("step", step, dynamics, pred, actions[:, t], xi)
-            preds.append(pred)
+    def run(dynamics, states, actions, context):
+        encs = representation.encode(states)
+        roots = representation.root(states)
+        root, enc = roots[:, 0], encs[:, 0]
+        pred_roots, pred_encs = [], []
+        for t in range(states.shape[1] - 1):
+            root, enc = call("step", step, dynamics, root, enc, actions[:, t], context)
+            pred_roots.append(root)
+            pred_encs.append(enc)
         return call(
             "score",
             score,
-            dynamics,
-            termination,
-            torch.stack(preds, dim=1),
-            targets,
-            refs,
-            end_kind,
-            bce_weight,
+            torch.stack(pred_roots, dim=1),
+            torch.stack(pred_encs, dim=1),
+            roots[:, 1:],
+            encs[:, 1:],
         )
 
     return run
 
 
 def make_imagination(
+    representation,
     horizon: int,
-    learned: bool,
-    termination_body: str,
-    critic_features: str,
-    include_ref_ori: bool,
-    obs_dim: int,
     gamma: float,
-    reward_anchor: str = "torso",
-    residual_frame: str = "heading",
-    scale_xi: bool = False,
+    value_max: float,
     compile_name: str | None = None,
     compile_cache: CompileCache | None = None,
 ):
-    """H-step imagination. Goals and references are already gathered.
+    """H-step imagination of the motion policy through the world model.
 
-    The recurrent step carries policy, dynamics and the next observation.
-    Reward, termination and critic features never feed the next state, so
-    they run once on all ``B * H`` imagined rows after the loop. With
-    ``compile_name`` the step and the score are compiled under that name.
-    ``compile_cache`` belongs to the worker; if omitted, this scan owns its cache.
+    Step ``k`` builds the goals from the imagined root and the window at
+    reference time ``t_k``, acts, and predicts the next state, which is
+    scored against the reference bodies at ``t_k``. The critic value of the
+    state after ``H`` steps, capped at ``value_max``, closes the return.
     """
     call = _caller(compile_name, compile_cache)
 
-    def step(decoder, obs_norm, dynamics, state, latent, history, xi, q0, ref_quat):
-        action = decoder(latent, normalize_history(obs_norm, history, obs_dim))
-        state = integrate_residual(state, dynamics(state, action, xi), residual_frame)
-        obs_next = add_sensor_noise(
-            analytic_obs(state, action, xi, q0, ref_quat=ref_quat), True
-        )
-        hist2d = history.reshape(-1, HISTORY_LEN, obs_dim)
-        history = torch.cat((hist2d[:, 1:], obs_next.unsqueeze(1)), dim=1).reshape(
-            history.shape
-        )
-        return action, state, history
+    def step(actor, dynamics, root, enc, context, content, target_pos, target_rot):
+        world_goal, actor_goal = root_goals(root, content, target_pos, target_rot)
+        action = actor(enc, actor_goal)
+        root, enc = representation.advance(root, enc, dynamics(enc, action, context))
+        return action, root, enc, world_goal
 
     def score(
-        termination,
         critic,
-        states,
+        roots,
+        encs,
         actions,
-        prev,
-        xi,
+        prev_action,
+        world_goals,
+        context,
         refs,
-        goals,
-        ref_pos,
-        ref_rot,
-        ref_lin,
-        ref_ang,
-        joint_low,
-        joint_high,
+        soft_limits,
+        last_window,
     ):
-        batch = states.shape[0]
-        # The predicted states walk the tree with grad. Reference body poses
-        # come from the clip cache.
-        state_fk = tuple(
-            x.reshape(batch, horizon + 1, *x.shape[1:])
-            for x in differentiable_fk(_rows(states))
+        after_roots, after_encs = roots[:, 1:], encs[:, 1:]
+        root_rot = quat_to_rotmat(after_roots[..., 3:7])
+        joint_pos, _ = representation.joints(after_encs)
+        previous = torch.cat((prev_action.unsqueeze(1), actions[:, :-1]), dim=1)
+        rewards = tracking_reward(
+            after_roots[..., :3],
+            root_rot,
+            representation.bodies(after_roots, after_encs),
+            refs,
+            joint_pos,
+            actions,
+            previous,
+            soft_limits,
         )
-        ref_fk = (ref_pos, ref_rot, ref_lin, ref_ang)
-
-        def after(x):
-            return _rows(x[:, 1:])
-
-        prevs = torch.cat((prev.unsqueeze(1), actions[:, :-1]), dim=1)
-        rewards = analytic_reward(
-            after(states),
-            after(refs),
-            _rows(actions),
-            _rows(prevs),
-            joint_low,
-            joint_high,
-            tuple(after(x) for x in state_fk),
-            tuple(after(x) for x in ref_fk),
-            reward_anchor=reward_anchor,
-        )["reward"].reshape(batch, horizon)
-        height, tilt, _ = failure_signals(
-            after(states), after(refs), termination_body=termination_body
+        ref_pos, ref_rot = refs[0], refs[1]
+        term_prob = termination_probability(
+            after_roots[..., :3],
+            root_rot,
+            ref_pos[..., PELVIS_BODY, :],
+            ref_rot[..., PELVIS_BODY, :, :],
         )
-        if learned:
-            d_hat = torch.sigmoid(termination(termination_head_input(height, tilt)))
-        else:
-            d_hat = analytic_failure_prob(height, tilt)
-        d_hat = d_hat.reshape(batch, horizon)
-
-        # The actor reads only the terminal value. Every other feature goes
-        # back detached for the critic fit.
-        xi_rows = xi.unsqueeze(1).expand(-1, horizon + 1, -1)
-        features = rollout_critic_feature(
-            _rows(states),
-            _rows(goals[:, : horizon + 1]),
-            _rows(xi_rows),
-            _rows(refs),
-            critic_features,
-            tuple(_rows(x) for x in state_fk),
-            tuple(_rows(x) for x in ref_fk),
-            scale_xi=scale_xi,
-        ).reshape(batch, horizon + 1, -1)
-        terminal = rollout_critic_feature(
-            states[:, -1],
-            goals[:, horizon],
-            xi,
-            refs[:, horizon],
-            critic_features,
-            tuple(x[:, -1] for x in state_fk),
-            tuple(x[:, horizon] for x in ref_fk),
-            scale_xi=scale_xi,
-            keep_grad=True,
+        last_goal, _ = root_goals(roots[:, -1], *last_window)
+        terminal = torch.cat((encs[:, -1], last_goal, context), dim=-1)
+        value = critic(terminal).clamp(max=value_max)
+        ret = imagined_return(rewards, term_prob, value, gamma)
+        steps = torch.cat(
+            (
+                encs[:, :-1],
+                world_goals,
+                context.unsqueeze(1).expand(-1, horizon, -1),
+            ),
+            dim=-1,
         )
-        objective = actor_objective(rewards, d_hat, critic(terminal), gamma)
-        return features, rewards, d_hat, objective
+        return ret, rewards, term_prob, steps, terminal
 
     def run(
-        encoder,
-        decoder,
-        obs_norm,
+        actor,
         dynamics,
-        termination,
         critic,
-        state,
-        prev,
-        xi,
-        history,
+        start,
+        prev_action,
+        context,
+        windows,
         refs,
-        goals,
-        ref_pos,
-        ref_rot,
-        ref_lin,
-        ref_ang,
-        q0,
-        joint_low,
-        joint_high,
+        soft_limits,
     ):
-        # Goals ignore the predicted state, so the encoder runs once for every
-        # future frame.
-        step_goals = goals[:, :horizon]
-        latents = encoder(step_goals.reshape(-1, step_goals.shape[-1]))
-        latents = latents.reshape(step_goals.shape[0], horizon, -1)
-        states = [state]
-        actions = []
-        for t in range(horizon):
-            ref_quat = refs[:, t + 1, 3:7] if include_ref_ori else None
-            action, state, history = call(
+        """``windows`` holds the goal content and root targets at ``t_0 .. t_H``
+        and ``refs`` the reference bodies at ``t_0 .. t_{H-1}``."""
+        content, target_pos, target_rot = windows
+        root, enc = representation.root(start), representation.encode(start)
+        roots, encs, actions, world_goals = [root], [enc], [], []
+        for k in range(horizon):
+            action, root, enc, world_goal = call(
                 "step",
                 step,
-                decoder,
-                obs_norm,
+                actor,
                 dynamics,
-                state,
-                latents[:, t],
-                history,
-                xi,
-                q0,
-                ref_quat,
+                root,
+                enc,
+                context,
+                content[:, k],
+                target_pos[:, k],
+                target_rot[:, k],
             )
-            states.append(state)
+            roots.append(root)
+            encs.append(enc)
             actions.append(action)
-        states_t = torch.stack(states, dim=1)
-        feat_t, rewards_t, d_t, objective = call(
+            world_goals.append(world_goal)
+        return call(
             "score",
             score,
-            termination,
             critic,
-            states_t,
+            torch.stack(roots, dim=1),
+            torch.stack(encs, dim=1),
             torch.stack(actions, dim=1),
-            prev,
-            xi,
+            prev_action,
+            torch.stack(world_goals, dim=1),
+            context,
             refs,
-            goals,
-            ref_pos,
-            ref_rot,
-            ref_lin,
-            ref_ang,
-            joint_low,
-            joint_high,
+            soft_limits,
+            (content[:, horizon], target_pos[:, horizon], target_rot[:, horizon]),
         )
-        return states_t, goals, feat_t, rewards_t, d_t, objective
 
     return run

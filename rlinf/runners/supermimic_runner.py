@@ -17,7 +17,7 @@
 The env, rollout and actor workers of one rank exchange every control step
 point to point (see :class:`SuperMimicEnvWorker`). This runner decides how
 many steps to collect before the next update, launches the three workers
-for those steps, runs the owed updates on the actor, stopping on the next
+for those steps, runs the due updates on the actor, stopping on the next
 save or evaluation step, syncs the policy to the rollout workers, and
 handles logging, evaluation and checkpoints.
 """
@@ -54,6 +54,36 @@ if TYPE_CHECKING:
     )
 
 _RUNNER_STATE = "runner_state.json"
+
+
+def due_updates(step: int, anchor: float | None, ratio: float) -> tuple[int, float]:
+    """Updates that fall due after vector step ``step``, and the next anchor.
+
+    The first step makes one update due. After it, an update falls due each
+    time ``ratio`` times the steps since ``anchor`` passes a whole number,
+    and the anchor moves past the steps those updates paid for.
+    """
+    if anchor is None:
+        return 1, float(step)
+    count = int((step - anchor) * ratio)
+    return count, anchor + count / ratio
+
+
+def update_ratio(cfg: DictConfig) -> float:
+    """Global updates per vector step.
+
+    Each update draws ``wm_batches`` batches of ``wm_window_batch`` windows
+    of ``k`` steps, and the replay ratio is the number of times each
+    collected transition is drawn on average.
+    """
+    alg = cfg.algorithm
+    return (
+        int(cfg.env.train.total_num_envs)
+        / int(alg.wm_batches)
+        / int(alg.wm_window_batch)
+        / int(alg.k)
+        * float(alg.replay_ratio)
+    )
 
 
 def _boundary_distance(step: int, interval: int) -> int | None:
@@ -100,13 +130,14 @@ def boundary_update_spans(
 
 
 class SuperMimicRunner(EmbodiedRunner):
-    """Collect, update and sync at ``algorithm.updates_per_env_step``.
+    """Collect, update and sync at the replay ratio of :func:`update_ratio`.
 
-    Every control step adds ``updates_per_env_step`` owed updates. Collection
-    stops at the first step that makes an update due. The owed updates then
-    run, but a batch stops on the next save or evaluation step so that step
-    is checkpointed before the remaining updates. The new policy goes to the
-    rollout workers before collection resumes.
+    Collection stops at the first vector step that makes updates due while
+    the replay holds at least ``k`` steps; updates that fall due before that
+    are dropped. The due updates then run, but a batch stops on the next
+    save or evaluation step so that step is checkpointed before the
+    remaining updates. The new policy goes to the rollout workers before
+    collection resumes.
     """
 
     def __init__(
@@ -120,10 +151,12 @@ class SuperMimicRunner(EmbodiedRunner):
         if reward is not None:
             raise ValueError("SuperMimic computes its rewards in the env worker.")
         super().__init__(cfg, actor=actor, rollout=rollout, env=env)
-        self.updates_per_env_step = float(cfg.algorithm.updates_per_env_step)
-        self.warmup_steps = int(cfg.algorithm.warmup_sim_steps)
-        self.owed_updates = 0.0
+        self.ratio = update_ratio(cfg)
+        self.k = int(cfg.algorithm.k)
+        self.anchor: float | None = None
         self.env_steps = 0
+        # Vector steps in the replay; it is not checkpointed.
+        self.replay_steps = 0
         self.log_interval = int(cfg.runner.get("log_interval", 100))
         if self.log_interval < 1:
             raise ValueError(
@@ -171,16 +204,16 @@ class SuperMimicRunner(EmbodiedRunner):
         if not resume_dir:
             return
         self.logger.info(
-            f"Resuming from {resume_dir}. Networks, optimizers, reset bins and RNG "
-            "are restored; the replay and simulator state are not saved, so the "
-            "run refills the replay before its next update."
+            f"Resuming from {resume_dir}. Networks, optimizers, reset statistics "
+            "and RNG are restored; the replay and simulator state are not saved, "
+            "so the run refills the replay before its next update."
         )
         self.global_step = parse_global_step_from_checkpoint_path(resume_dir)
         self.actor.load_checkpoint(os.path.join(resume_dir, "actor")).wait()
         self.env.load_checkpoint(os.path.join(resume_dir, "env")).wait()
         with open(os.path.join(resume_dir, _RUNNER_STATE)) as file:
             state = json.load(file)
-        self.owed_updates = float(state["owed_updates"])
+        self.anchor = state["anchor"]
         self.env_steps = int(state["env_steps"])
 
     def _save_checkpoint(self) -> None:
@@ -192,34 +225,33 @@ class SuperMimicRunner(EmbodiedRunner):
         env_handle = self.env.save_checkpoint(os.path.join(base, "env"))
         actor_handle.wait()
         env_handle.wait()
-        state = {"owed_updates": self.owed_updates, "env_steps": self.env_steps}
+        state = {"anchor": self.anchor, "env_steps": self.env_steps}
         with open(os.path.join(base, _RUNNER_STATE), "w") as file:
             json.dump(state, file, indent=2)
 
     # -------------------------------------------------------------- training
 
-    def _collect(self, num_steps: int) -> tuple[float, Handle, Handle, Handle]:
-        """Run ``num_steps`` control steps on every rank.
-
-        Returns the replay windows summed over ranks and the three handles.
-        """
+    def _collect(self, num_steps: int) -> tuple[Handle, Handle]:
+        """Run ``num_steps`` control steps on every rank; returns the env and
+        rollout handles."""
         env_handle = self.env.collect(num_steps)
         rollout_handle = self.rollout.serve(num_steps)
-        actor_handle = self.actor.ingest(num_steps)
-        windows = sum(result["buffer/valid_windows"] for result in actor_handle.wait())
+        self.actor.ingest(num_steps).wait()
         env_handle.wait()
         rollout_handle.wait()
         self.env_steps += num_steps
-        return windows, env_handle, rollout_handle, actor_handle
+        self.replay_steps += num_steps
+        return env_handle, rollout_handle
 
-    def _steps_until_update(self) -> tuple[int, float]:
-        """Control steps until an update is due, and the owed count by then."""
-        steps, owed = 0, self.owed_updates
+    def _steps_until_update(self) -> tuple[int, int, float]:
+        """Vector steps to collect until updates fall due with a full enough
+        replay, those updates, and the anchor after them."""
+        steps, anchor = 0, self.anchor
         while True:
+            due, anchor = due_updates(self.env_steps + steps, anchor, self.ratio)
             steps += 1
-            owed += self.updates_per_env_step
-            if owed >= 1.0:
-                return steps, owed
+            if due and self.replay_steps + steps >= self.k:
+                return steps, due, anchor
 
     def evaluate(self) -> dict[str, float]:
         meta = self.env.eval_metadata().wait()[0]
@@ -255,12 +287,6 @@ class SuperMimicRunner(EmbodiedRunner):
         self._logged_step = start_step
         self._set_global_step()
         self.update_rollout_weights()
-        if self.global_step < self.max_steps and self.warmup_steps > 0:
-            # Warmup only fills the replay: it owes no updates and is not logged.
-            self._collect(self.warmup_steps)
-            self.env.consume_metrics().wait()
-            for group in (self.env, self.rollout, self.actor):
-                group.pop_execution_times().wait()
 
         while self.global_step < self.max_steps:
             step = self.global_step
@@ -269,17 +295,13 @@ class SuperMimicRunner(EmbodiedRunner):
                 self._open_profiling_window(profiled_step)
             with self.timer("step"):
                 with self.timer("generate_rollouts"):
-                    ready = 0
-                    while ready == 0:
-                        steps, self.owed_updates = self._steps_until_update()
-                        windows, env_handle, rollout_handle, _ = self._collect(steps)
-                        if windows > 0:
-                            ready = min(int(self.owed_updates), self.max_steps - step)
+                    steps, due, self.anchor = self._steps_until_update()
+                    env_handle, rollout_handle = self._collect(steps)
                 # check_progress matches exact multiples, so a batch that would
                 # pass a save or evaluation step stops on that step first.
                 spans = boundary_update_spans(
                     step,
-                    ready,
+                    due,
                     self.max_steps,
                     int(self.cfg.runner.save_interval),
                     int(self.cfg.runner.val_check_interval),
@@ -321,7 +343,6 @@ class SuperMimicRunner(EmbodiedRunner):
             actor_handle, training_metrics = self._run_update_count(
                 count, single, measured
             )
-            self.owed_updates -= count
             self.global_step += count
             self._sync_updated_weights(single, measured)
             last_step = self.global_step - 1
@@ -340,7 +361,7 @@ class SuperMimicRunner(EmbodiedRunner):
         self, count: int, single: bool, measured: dict[str, float]
     ) -> tuple[Handle, list[dict]]:
         def run() -> tuple[Handle, list[dict]]:
-            handle = self.actor.run_updates(count, self.global_step)
+            handle = self.actor.run_updates(count)
             return handle, handle.wait()
 
         if single:

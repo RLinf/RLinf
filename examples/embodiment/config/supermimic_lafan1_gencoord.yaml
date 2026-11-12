@@ -1,4 +1,4 @@
-# SuperMimic on LAFAN1 with the 730-d goal and the 99-d observation.
+# SuperMimic motion tracking on LAFAN1 with the generalized-coordinate state.
 # Batch sizes and env counts are global; every rank gets an equal share.
 defaults:
   - env/g1_mimic@env.train
@@ -24,10 +24,10 @@ runner:
   logger:
     log_path: ../results
     project_name: rlinf
-    experiment_name: supermimic_lafan1_goal730
+    experiment_name: supermimic_lafan1_gencoord
     logger_backends: ["tensorboard"]
 
-  max_epochs: 16000          # global updates
+  max_epochs: 400000         # global updates
   max_steps: -1
 
   only_eval: False
@@ -41,16 +41,16 @@ runner:
     output_dir: null
 
 algorithm:
-  adv_type: null             # lambda-returns are computed in the critic phases
+  adv_type: null             # lambda-returns are computed in the critic phase
   loss_type: supermimic
 
   k: 8                       # world-model training window
   H: 32                      # imagination horizon
   gamma: 0.99
   lam: 0.95
-  updates_per_env_step: 0.4
-  warmup_sim_steps: 64
-  wm_only_updates: 500
+  # Each transition is drawn this many times by the world model on average;
+  # with the batches below and 4096 envs that is 0.4 updates per env step.
+  replay_ratio: 16
 
   wm_batches: 10
   wm_window_batch: 2048
@@ -58,12 +58,6 @@ algorithm:
   critic_epochs: 5
   critic_minibatches: 4
   replay_length: 1000
-
-  reward_anchor: pelvis      # pelvis or torso
-  residual_frame: body       # body or heading
-  termination_head: analytic # learned or analytic
-  termination_body: pelvis   # pelvis or torso
-  bce_weight: 1.0
   max_nonfinite_skips: 20
 
 env:
@@ -71,7 +65,6 @@ env:
   train:
     total_num_envs: 4096
     num_clips: 40
-    com_sampling: per_env
   eval:
     total_num_envs: 40
     num_clips: 40
@@ -117,13 +110,9 @@ actor:
     schedule_repeat: 1
 
   model:
-    goal_encoding: goal730
-    obs_dim: 99
-    critic_features: body_error
-    input_norm: running
-    wm_state_loss: running
+    representation: gencoord
 
-  # Motion actor (goal encoder and action decoder).
+  # Adam on the motion policy's first and last layers, norms and biases.
   optim:
     lr: 2.0e-4
     adam_beta1: 0.9
@@ -131,32 +120,31 @@ actor:
     adam_eps: 1.0e-8
     clip_grad: 1.0
     clip_grad_value: 0.1
-    fused: True                # fused Adam on CUDA; skips non-finite steps on the device
-    lr_scheduler: ref_warmup_cosine
-    lr_warmup_steps: 0
-    total_training_steps: 250000
-    min_lr_rate: 0.03
+    lr_scheduler: constant
   world_model_optim:
     lr: ${actor.optim.lr}
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-8
     clip_grad: 1.0
-    fused: ${actor.optim.fused}
-    lr_scheduler: ${actor.optim.lr_scheduler}
-    lr_warmup_steps: 0
-    total_training_steps: ${actor.optim.total_training_steps}
-    min_lr_rate: ${actor.optim.min_lr_rate}
+    lr_scheduler: constant
   critic_optim: ${actor.world_model_optim}
-  velocity_actor_optim: ${actor.optim}
-  velocity_critic_optim: ${actor.world_model_optim}
+  # Muon on the hidden matrices of every network.
+  muon_optim:
+    optimizer: muon
+    lr: ${actor.optim.lr}
+    weight_decay: 0.1
+    momentum: 0.95
+    nesterov: True
+    adjust_lr_fn: match_rms_adamw
+    lr_scheduler: constant
 
   fsdp_config:
     strategy: fsdp2
     wrap_policy:
       module_classes_to_wrap: []
     amp_autocast:
-      enabled: True
+      enabled: False
       precision: bf16
 
 reward:

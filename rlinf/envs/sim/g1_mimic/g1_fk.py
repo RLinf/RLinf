@@ -522,23 +522,86 @@ class G1BodyKinematics:
         return out
 
 
+_MODEL: mujoco.MjModel | None = None
 _KINEMATICS: G1BodyKinematics | None = None
 
 
-def g1_kinematics() -> G1BodyKinematics:
-    """Compile the mjlab G1 spec once and reuse the tree."""
-    global _KINEMATICS
-    if _KINEMATICS is None:
+def g1_model() -> mujoco.MjModel:
+    """The mjlab G1 spec, compiled once per process. Body 0 is the world."""
+    global _MODEL
+    if _MODEL is None:
         from mjlab.asset_zoo.robots.unitree_g1.g1_constants import get_spec
 
-        _KINEMATICS = G1BodyKinematics(get_spec().compile())
+        _MODEL = get_spec().compile()
+    return _MODEL
+
+
+def g1_kinematics() -> G1BodyKinematics:
+    """Build the tree of :func:`g1_model` once and reuse it."""
+    global _KINEMATICS
+    if _KINEMATICS is None:
+        _KINEMATICS = G1BodyKinematics(g1_model())
     return _KINEMATICS
+
+
+def tracked_body_ids() -> list[int]:
+    """Body ids of ``TRACKED_BODY_NAMES`` in :func:`g1_model`."""
+    import mujoco
+
+    model = g1_model()
+    return [
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+        for name in TRACKED_BODY_NAMES
+    ]
+
+
+def joint_qpos_addresses() -> list[int]:
+    """``qpos`` address of every hinge in ``G1_JOINT_NAMES`` order."""
+    import mujoco
+
+    model = g1_model()
+    return [
+        int(
+            model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)]
+        )
+        for name in G1_JOINT_NAMES
+    ]
 
 
 def asset_joint_limits() -> tuple[torch.Tensor, torch.Tensor]:
     """Hinge ranges from the G1 MJCF, in ``G1_JOINT_NAMES`` order."""
     kin = g1_kinematics()
     return kin.joint_low.clone(), kin.joint_high.clone()
+
+
+def soft_joint_limits() -> torch.Tensor:
+    """mjlab's soft joint ranges ``[29, 2]``: the hard range shrunk about its center."""
+    from mjlab.asset_zoo.robots.unitree_g1.g1_constants import G1_ARTICULATION
+
+    factor = float(G1_ARTICULATION.soft_joint_pos_limit_factor)
+    low, high = asset_joint_limits()
+    center, half = 0.5 * (low + high), 0.5 * (high - low) * factor
+    return torch.stack((center - half, center + half), dim=-1)
+
+
+def g1_action_scale() -> torch.Tensor:
+    """Per-joint PD target scale of mjlab's G1 position actions."""
+    import re
+
+    from mjlab.asset_zoo.robots.unitree_g1.g1_constants import G1_ACTION_SCALE
+
+    scale = torch.zeros(ACTION_DIM)
+    hits = torch.zeros(ACTION_DIM, dtype=torch.long)
+    for pattern, value in G1_ACTION_SCALE.items():
+        for i, name in enumerate(G1_JOINT_NAMES):
+            if re.fullmatch(pattern, name):
+                scale[i] = float(value)
+                hits[i] += 1
+    if not torch.equal(hits, torch.ones(ACTION_DIM, dtype=torch.long)):
+        raise RuntimeError(
+            f"each G1 joint needs one action scale, hits={hits.tolist()}"
+        )
+    return scale
 
 
 def asset_default_state() -> torch.Tensor:

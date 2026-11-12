@@ -5,7 +5,7 @@ total_num_envs: null
 group_size: 1
 rollout_epoch: 1
 # Training collects one control step per runner request; evaluation must
-# cover the longest job (a full clip, smoke command, G.2 trial or push trial).
+# cover the longest job (a full clip or a push trial).
 max_steps_per_rollout_epoch: 1
 auto_reset: False
 ignore_terminations: False
@@ -16,23 +16,13 @@ motion_path: ${oc.env:SUPERMIMIC_MOTION_PATH,""}
 motion_format: lafan1       # lafan1 or bones_seed
 num_clips: null             # null loads every clip
 motion_on_cpu: False        # keep the library and its FK cache in host memory
-com_sampling: per_reset     # per_env or per_reset torso CoM offset
 
 # Simulation.
 max_episode_seconds: 10.0
 action_noise_std: 0.1
-G_max: 10.0                 # return scale of the reset-bin weights
 
-# Evaluation only: tracking and/or velocity_smoke, velocity_g2, or push_recovery.
+# Evaluation only: [tracking] or [push_recovery].
 eval_tasks: null
-velocity_smoke:
-  seconds: 10.0
-  start_clip: 0
-  commands: null            # null uses the built-in command set
-velocity_g2:
-  trials: 4
-  seconds: 5.0
-  steady_seconds: 2.0
 push_recovery:
   speeds: [0.5, 1.0, 2.0, 4.0]
   trials: 4

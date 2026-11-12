@@ -1,9 +1,8 @@
-# Motion-tracking evaluation of a supermimic_lafan1_goal730 checkpoint.
-# Set runner.ckpt_path to <run>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt.
-# Velocity evaluation of a velocity-tracking policy:
-#   env.eval.eval_tasks=[tracking,velocity_smoke] or env.eval.eval_tasks=[velocity_g2]
+# Motion-tracking evaluation of a SuperMimic LAFAN1 checkpoint.
+# Set runner.ckpt_path to <run>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt
+# and, for a MaxCoord run, actor.model.representation=maxcoord.
 defaults:
-  - supermimic_lafan1_goal730
+  - supermimic_lafan1_gencoord
   - _self_
 
 hydra:
@@ -19,7 +18,7 @@ runner:
   ckpt_path: null
   logger:
     log_path: ../results/eval
-    experiment_name: supermimic_lafan1_goal730_eval
+    experiment_name: supermimic_lafan1_eval
   eval_export:
     enabled: True
     output_dir: null         # default: <log_path>/<experiment_name>/eval_results

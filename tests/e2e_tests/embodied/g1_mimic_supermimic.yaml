@@ -1,8 +1,8 @@
-# Three updates of the goal730 recipe on the standing clip in
+# Three updates of the GenCoord recipe on the standing clip in
 # SUPERMIMIC_MOTION_PATH. Updates 2 and 3 evaluate, so the eval env runs twice
 # in one process; the last update saves a checkpoint.
 defaults:
-  - supermimic_lafan1_goal730
+  - supermimic_lafan1_gencoord
   - _self_
 
 hydra:
@@ -28,9 +28,7 @@ runner:
 
 algorithm:
   replay_length: 32
-  warmup_sim_steps: 16
-  updates_per_env_step: 2.0
-  wm_only_updates: 1
+  replay_ratio: 32           # two updates per env step with the sizes below
   wm_batches: 1
   wm_window_batch: 8
   imagine_batch: 8

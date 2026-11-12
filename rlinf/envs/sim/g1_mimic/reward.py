@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tracking reward, failure signals, and torso-anchored goal features.
+"""Tracking reward and failure tests shared by the simulator and the world model.
 
-BeyondMimic's anchor body is ``torso_link``: the root position and
-orientation terms compare it, the body pose terms re-anchor the reference at
-it, and the optional 9-d anchor goal expresses the reference torso in the
-robot torso frame. Failure termination and the critic root error read the
-pelvis, the floating base, as Appendix A states.
+The anchor is the pelvis, tracked body 0: the root terms compare it, the
+body pose terms re-anchor the reference at its xy and yaw, and failure reads
+its height and tilt.
 """
 
 from __future__ import annotations
@@ -26,42 +24,41 @@ from __future__ import annotations
 import torch
 
 from rlinf.envs.sim.g1_mimic.constants import (
-    ACTION_DIM,
     DT,
     FAILURE_HEIGHT_M,
     FAILURE_TILT,
-    JOINT_POS,
-    NUM_BODIES,
-    REWARD_WEIGHTS,
-    ROOT_POS,
     ROOT_QUAT,
 )
 from rlinf.envs.sim.g1_mimic.features import (
-    heading_invariant_features,
     heading_yaw,
     projected_gravity,
-    quat_to_rotmat,
-    root_error_4d,
     rot_apply,
-    rot_apply_t,
     rot_mul,
     rot_mul_nt,
-    rot_mul_t,
-    rotmat_to_6d,
-    scale_context,
     yaw_rotation,
 )
 from rlinf.envs.sim.g1_mimic.g1_fk import PELVIS_BODY, TORSO_BODY, g1_kinematics
 
-# Reward root is torso_link. Termination reads the pelvis.
 TORSO = TORSO_BODY
 PELVIS = PELVIS_BODY
+
+# (weight, std) of the six tracking kernels.
+ROOT_POS_KERNEL = (0.5, 0.3)
+ROOT_ORI_KERNEL = (0.5, 0.4)
+BODY_POS_KERNEL = (1.0, 0.3)
+BODY_ORI_KERNEL = (1.0, 0.4)
+BODY_LIN_VEL_KERNEL = (1.0, 1.0)
+BODY_ANG_VEL_KERNEL = (1.0, 3.14)
+ACTION_RATE_WEIGHT = -0.1
+JOINT_LIMIT_WEIGHT = -2.0
+# Width of the soft failure threshold, relative to the hard one.
+TERMINATION_SOFTNESS = 0.05
 
 
 def differentiable_fk(
     state: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """14 tracking bodies on the G1 kinematic tree."""
+    """14 tracked bodies of a 71-d state on the G1 kinematic tree."""
     return g1_kinematics().forward(state)
 
 
@@ -71,11 +68,7 @@ def forward_kinematics_pair(
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
 ]:
-    """Body poses of ``state`` and ``ref_state`` from one tree walk.
-
-    The two batches stay independent. Reference rows usually have no
-    gradient; they still share the walk so the tree is not launched twice.
-    """
+    """Body poses of ``state`` and ``ref_state`` from one tree walk."""
     if state.shape[0] != ref_state.shape[0]:
         return differentiable_fk(state), differentiable_fk(ref_state)
     pos, rot, lin, ang = differentiable_fk(torch.cat((state, ref_state), dim=0))
@@ -86,39 +79,82 @@ def forward_kinematics_pair(
     )
 
 
-def anchor_index(reward_anchor: str) -> int:
-    """Body index used to re-anchor the tracking reward."""
-    if reward_anchor == "torso":
-        return TORSO
-    if reward_anchor == "pelvis":
-        return PELVIS
-    raise ValueError(f"reward_anchor must be torso or pelvis, got {reward_anchor!r}")
+def rotation_angle(rot: torch.Tensor, ref_rot: torch.Tensor) -> torch.Tensor:
+    """Geodesic angle between ``[..., 3, 3]`` rotations."""
+    cos = ((rot * ref_rot).sum(dim=(-2, -1)) - 1.0) * 0.5
+    return torch.acos(cos.clamp(-1.0 + 1e-7, 1.0 - 1e-7))
 
 
-def reanchor_bodies(
-    pos: torch.Tensor,
-    rot: torch.Tensor,
-    ref_pos: torch.Tensor,
-    ref_rot: torch.Tensor,
-    reward_anchor: str = "torso",
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Reference body poses moved onto one robot body's xy and yaw.
+def _kernel(error: torch.Tensor, kernel: tuple[float, float]) -> torch.Tensor:
+    weight, std = kernel
+    return weight * torch.exp(-error / (std * std))
 
-    BeyondMimic's ``update_relative_body_poses``. ``torso`` uses
-    ``torso_link``. ``pelvis`` takes the robot pelvis xy, the reference
-    pelvis height, and the yaw of ``R_pelvis R_ref_pelvis^T``.
-    Inputs are ``[B, bodies, 3]`` positions and ``[B, bodies, 3, 3]``
-    rotations from ``differentiable_fk``.
+
+def tracking_terms(
+    root_pos: torch.Tensor,
+    root_rot: torch.Tensor,
+    body: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ref: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+) -> torch.Tensor:
+    """Sum of the six weighted tracking kernels, before ``DT``.
+
+    ``body`` and ``ref`` are world positions ``[..., 14, 3]``, rotations
+    ``[..., 14, 3, 3]`` and linear / angular velocities ``[..., 14, 3]``.
+    The reference bodies are re-anchored at the xy and yaw of the root pose
+    ``root_pos`` / ``root_rot``.
     """
-    anchor = anchor_index(reward_anchor)
+    pos, rot, lin, ang = body
+    ref_pos, ref_rot, ref_lin, ref_ang = ref
+    anchor = PELVIS
     turn = yaw_rotation(
-        heading_yaw_of_matrix(rot_mul_nt(rot[:, anchor], ref_rot[:, anchor]))
-    ).unsqueeze(1)
-    shift = torch.cat((pos[:, anchor, :2], ref_pos[:, anchor, 2:3]), dim=-1)
-    offset = ref_pos - ref_pos[:, anchor : anchor + 1]
-    anchored_pos = shift.unsqueeze(1) + rot_apply(turn, offset)
-    anchored_rot = rot_mul(turn, ref_rot)
-    return anchored_pos, anchored_rot
+        heading_yaw_of_matrix(rot_mul_nt(root_rot, ref_rot[..., anchor, :, :]))
+    ).unsqueeze(-3)
+    shift = torch.cat((root_pos[..., :2], ref_pos[..., anchor, 2:3]), dim=-1).unsqueeze(
+        -2
+    )
+    target_pos = shift + rot_apply(turn, ref_pos - ref_pos[..., anchor : anchor + 1, :])
+    target_rot = rot_mul(turn, ref_rot)
+    root_pos = (pos[..., anchor, :] - ref_pos[..., anchor, :]).square().sum(-1)
+    root_ori = rotation_angle(
+        rot[..., anchor, :, :], ref_rot[..., anchor, :, :]
+    ).square()
+    body_pos = (pos - target_pos).square().sum(-1).mean(-1)
+    body_ori = rotation_angle(rot, target_rot).square().mean(-1)
+    body_lin = (lin - ref_lin).square().sum(-1).mean(-1)
+    body_ang = (ang - ref_ang).square().sum(-1).mean(-1)
+    return (
+        _kernel(root_pos, ROOT_POS_KERNEL)
+        + _kernel(root_ori, ROOT_ORI_KERNEL)
+        + _kernel(body_pos, BODY_POS_KERNEL)
+        + _kernel(body_ori, BODY_ORI_KERNEL)
+        + _kernel(body_lin, BODY_LIN_VEL_KERNEL)
+        + _kernel(body_ang, BODY_ANG_VEL_KERNEL)
+    )
+
+
+def tracking_reward(
+    root_pos: torch.Tensor,
+    root_rot: torch.Tensor,
+    body: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ref: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    joint_pos: torch.Tensor,
+    action: torch.Tensor,
+    last_action: torch.Tensor,
+    soft_limits: torch.Tensor,
+) -> torch.Tensor:
+    """Per-step reward: tracking kernels, action rate and soft joint limits, times ``DT``.
+
+    ``action`` and ``last_action`` are raw policy outputs, before the PD scale.
+    """
+    rate = (action - last_action).square().sum(-1)
+    over = (soft_limits[:, 0] - joint_pos).clamp_min(0.0) + (
+        joint_pos - soft_limits[:, 1]
+    ).clamp_min(0.0)
+    return DT * (
+        tracking_terms(root_pos, root_rot, body, ref)
+        + ACTION_RATE_WEIGHT * rate
+        + JOINT_LIMIT_WEIGHT * over.sum(-1)
+    )
 
 
 def heading_yaw_of_matrix(rot: torch.Tensor) -> torch.Tensor:
@@ -126,313 +162,33 @@ def heading_yaw_of_matrix(rot: torch.Tensor) -> torch.Tensor:
     return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
 
 
-def body_error_critic_features(
-    state: torch.Tensor,
-    ref_state: torch.Tensor,
-    xi: torch.Tensor,
-    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    | None = None,
-    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
+def termination_probability(
+    root_pos: torch.Tensor,
+    root_rot: torch.Tensor,
+    ref_pos: torch.Tensor,
+    ref_rot: torch.Tensor,
 ) -> torch.Tensor:
-    """Per-body tracking-error critic features, without the goal.
+    """Soft pelvis failure test: a sigmoid of the larger normalized violation.
 
-    Layout: heading-invariant state (71), ``q_ref - q`` (29), 14 body-position
-    errors, root position error (3), relative root Rot6D (6), then ``xi``.
-    The reference bodies are moved to the robot pelvis xy at the reference
-    pelvis height and turned by the yaw of ``R R_ref^T``; the errors are
-    written in the robot heading frame. ``xi`` is used as given.
+    ``ref_pos`` / ``ref_rot`` are the reference pelvis position ``[..., 3]``
+    and rotation ``[..., 3, 3]``.
     """
-    invariant = heading_invariant_features(state)
-    joint_err = ref_state[..., JOINT_POS] - state[..., JOINT_POS]
-    position = state[..., ROOT_POS]
-    ref_position = ref_state[..., ROOT_POS]
-    rot = quat_to_rotmat(state[..., ROOT_QUAT])
-    ref_rot = quat_to_rotmat(ref_state[..., ROOT_QUAT])
-    heading = yaw_rotation(heading_yaw(state[..., ROOT_QUAT]))
-    turn = yaw_rotation(heading_yaw_of_matrix(rot_mul_nt(rot, ref_rot)))
-    if state_fk is None or ref_fk is None:
-        state_fk, ref_fk = forward_kinematics_pair(state, ref_state)
-    body = state_fk[0]
-    ref_body = ref_fk[0]
-    anchor = torch.cat((position[..., :2], ref_position[..., 2:3]), dim=-1)
-    offset = ref_body - ref_position.unsqueeze(-2)
-    anchored = anchor.unsqueeze(-2) + rot_apply(turn.unsqueeze(-3), offset)
-    delta = anchored - body
-    body_err = rot_apply_t(heading.unsqueeze(-3), delta).flatten(-2)
-    root_err = rot_apply_t(heading, ref_position - position)
-    relative = rotmat_to_6d(rot_mul_t(rot, ref_rot))
-    return torch.cat((invariant, joint_err, body_err, root_err, relative, xi), dim=-1)
-
-
-def motion_critic_input(
-    state: torch.Tensor,
-    goal: torch.Tensor,
-    xi: torch.Tensor,
-    ref_state: torch.Tensor,
-    critic_features: str,
-    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    | None = None,
-    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
-    scale_xi: bool = False,
-) -> torch.Tensor:
-    """Feature vector consumed by ``CriticNet``.
-
-    ``root4`` is the invariant state, goal, ``xi`` and the 4-d root error.
-    ``body_error`` appends the goal to :func:`body_error_critic_features`.
-    ``scale_xi`` applies :func:`scale_context` before either layout.
-    """
-    squeezed = state.dim() == 1
-    if squeezed:
-        state = state.unsqueeze(0)
-        goal = goal.unsqueeze(0)
-        xi = xi.unsqueeze(0)
-        ref_state = ref_state.unsqueeze(0)
-    if scale_xi:
-        xi = scale_context(xi)
-    if critic_features == "root4":
-        out = torch.cat(
-            (
-                heading_invariant_features(state),
-                goal,
-                xi,
-                root_error_4d(state, ref_state),
-            ),
-            dim=-1,
-        )
-    elif critic_features == "body_error":
-        out = torch.cat(
-            (body_error_critic_features(state, ref_state, xi, state_fk, ref_fk), goal),
-            dim=-1,
-        )
-    else:
-        raise ValueError(
-            f"critic_features must be root4 or body_error, got {critic_features!r}"
-        )
-    return out.squeeze(0) if squeezed else out
-
-
-def rollout_critic_feature(
-    state: torch.Tensor,
-    goal: torch.Tensor,
-    xi: torch.Tensor,
-    ref_state: torch.Tensor,
-    critic_features: str,
-    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    *,
-    scale_xi: bool = False,
-    keep_grad: bool = False,
-) -> torch.Tensor:
-    """Critic features at one imagined state.
-
-    The actor bootstraps from the terminal value only. ``keep_grad`` is for
-    that state, so the value stays on the predicted state. Earlier steps are
-    the critic's regression inputs and leave the rollout graph. Dynamics and
-    the reward keep the original tensors.
-    """
-    if not keep_grad:
-        state = state.detach()
-        goal = goal.detach()
-        xi = xi.detach()
-        ref_state = ref_state.detach()
-        state_fk = (
-            state_fk[0].detach(),
-            state_fk[1].detach(),
-            state_fk[2].detach(),
-            state_fk[3].detach(),
-        )
-        ref_fk = (
-            ref_fk[0].detach(),
-            ref_fk[1].detach(),
-            ref_fk[2].detach(),
-            ref_fk[3].detach(),
-        )
-    return motion_critic_input(
-        state,
-        goal,
-        xi,
-        ref_state,
-        critic_features,
-        state_fk,
-        ref_fk,
-        scale_xi=scale_xi,
-    )
-
-
-def torso_anchor_9d(state: torch.Tensor, ref_state: torch.Tensor) -> torch.Tensor:
-    """Reference torso pose in the robot torso frame: position (3) and Rot6D (6).
-
-    BeyondMimic's ``motion_anchor_pos_b`` / ``motion_anchor_ori_b``, the 9-d
-    anchor CuboiLeo appends to the 680-d goal. It depends on the current,
-    possibly imagined, state, so it is recomputed every step.
-    """
-    pos, rot, _, _ = differentiable_fk(state)
-    ref_pos, ref_rot, _, _ = differentiable_fk(ref_state)
-    torso = rot[:, TORSO]
-    offset = rot_apply_t(torso, ref_pos[:, TORSO] - pos[:, TORSO])
-    relative = rot_mul_t(torso, ref_rot[:, TORSO])
-    return torch.cat((offset, rotmat_to_6d(relative)), dim=-1)
-
-
-def compose_goal(
-    goal_ref: torch.Tensor,
-    state: torch.Tensor | None,
-    ref_state: torch.Tensor | None,
-    goal_anchor: bool,
-) -> torch.Tensor:
-    """680-d reference, optionally plus the 9-d torso anchor at the same time."""
-    if not goal_anchor:
-        return goal_ref
-    if state is None or ref_state is None:
-        raise ValueError(
-            "goal_anchor=True needs state and ref_state, got "
-            f"state={'None' if state is None else 'a tensor'}, "
-            f"ref_state={'None' if ref_state is None else 'a tensor'}"
-        )
-    return torch.cat((goal_ref, torso_anchor_9d(state, ref_state)), dim=-1)
-
-
-def _exp_sq(squared_error: torch.Tensor, scale: float) -> torch.Tensor:
-    """``exp(-mean(||e||^2) / std^2)``. ``squared_error`` is already squared."""
-    return torch.exp(-squared_error / (scale**2))
-
-
-def _rotation_angle_sq(rot: torch.Tensor, ref_rot: torch.Tensor) -> torch.Tensor:
-    """Squared geodesic angle. ``rot`` is [..., 3, 3]."""
-    trace = (ref_rot * rot).sum(dim=(-2, -1))
-    cos = ((trace - 1.0) * 0.5).clamp(-1.0 + 1e-6, 1.0 - 1e-6)
-    return torch.acos(cos).square()
-
-
-def analytic_reward(
-    state: torch.Tensor,
-    ref_state: torch.Tensor,
-    action: torch.Tensor,
-    prev_action: torch.Tensor,
-    joint_limit_low: torch.Tensor | None = None,
-    joint_limit_high: torch.Tensor | None = None,
-    state_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    | None = None,
-    ref_fk: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
-    reward_anchor: str = "torso",
-) -> dict[str, torch.Tensor]:
-    """Table A.2 terms, no self-collision, joint-limit weight -2, times dt.
-
-    ``reward_anchor`` selects the body whose xy and yaw snap the reference
-    for the four body terms, and whose world pose is the root position and
-    orientation error: ``torso`` or ``pelvis``.
-    """
-    squeezed = state.dim() == 1
-    if squeezed:
-        state = state.unsqueeze(0)
-        ref_state = ref_state.unsqueeze(0)
-        action = action.unsqueeze(0)
-        prev_action = prev_action.unsqueeze(0)
-    if state_fk is None or ref_fk is None:
-        state_fk, ref_fk = forward_kinematics_pair(state, ref_state)
-    pos, rot, lin, ang = state_fk
-    ref_pos, ref_rot, ref_lin, ref_ang = ref_fk
-    # Root terms stay in the world frame, so global drift stays in them.
-    # Body pose terms re-anchor the reference at ``reward_anchor``; body
-    # velocities are compared in the world frame, as in BeyondMimic.
-    anchor = anchor_index(reward_anchor)
-    e_root_pos = (pos[:, anchor] - ref_pos[:, anchor]).square().sum(dim=-1)
-    e_root_ori = _rotation_angle_sq(rot[:, anchor], ref_rot[:, anchor])
-    apos, arot = reanchor_bodies(pos, rot, ref_pos, ref_rot, reward_anchor)
-    e_body_pos = (pos - apos).square().sum(dim=-1).mean(dim=-1)
-    e_body_ori = _rotation_angle_sq(rot, arot).mean(dim=-1)
-    e_body_lin = (lin - ref_lin).square().sum(dim=-1).mean(dim=-1)
-    e_body_ang = (ang - ref_ang).square().sum(dim=-1).mean(dim=-1)
-
-    body_pos = REWARD_WEIGHTS["body_pos"] * _exp_sq(e_body_pos, 0.3)
-    body_ori = REWARD_WEIGHTS["body_ori"] * _exp_sq(e_body_ori, 0.4)
-    body_lin = REWARD_WEIGHTS["body_lin_vel"] * _exp_sq(e_body_lin, 1.0)
-    body_ang = REWARD_WEIGHTS["body_ang_vel"] * _exp_sq(e_body_ang, 3.14)
-    root_pos = REWARD_WEIGHTS["root_pos"] * _exp_sq(e_root_pos, 0.3)
-    root_ori = REWARD_WEIGHTS["root_ori"] * _exp_sq(e_root_ori, 0.4)
-    tracking = body_pos + body_ori + body_lin + body_ang + root_pos + root_ori
-
-    if joint_limit_low is None:
-        joint_limit_low = torch.full(
-            (ACTION_DIM,), -2.5, device=state.device, dtype=state.dtype
-        )
-    if joint_limit_high is None:
-        joint_limit_high = torch.full(
-            (ACTION_DIM,), 2.5, device=state.device, dtype=state.dtype
-        )
-    q = state[..., JOINT_POS]
-    over = (q - joint_limit_high).clamp_min(0.0) + (joint_limit_low - q).clamp_min(0.0)
-    limit = REWARD_WEIGHTS["joint_limit"] * over.sum(dim=-1)
-    smooth = REWARD_WEIGHTS["action_rate"] * (action - prev_action).pow(2).sum(dim=-1)
-    total = (tracking + limit + smooth) * DT
-
-    out = {
-        "reward": total,
-        "body_tracking": (body_pos + body_ori + body_lin + body_ang) * DT,
-        "root_pos": root_pos * DT,
-        "root_ori": root_ori * DT,
-        "joint_limit": limit * DT,
-        "action_smooth": smooth * DT,
-    }
-    if squeezed:
-        return {k: v.squeeze(0) for k, v in out.items()}
-    return out
+    height = (ref_pos[..., 2] - root_pos[..., 2]).abs() / FAILURE_HEIGHT_M
+    tilt = (ref_rot[..., 2, 2] - root_rot[..., 2, 2]).abs() / FAILURE_TILT
+    return torch.sigmoid((torch.maximum(height, tilt) - 1.0) / TERMINATION_SOFTNESS)
 
 
 def failure_signals(
-    state: torch.Tensor, ref_state: torch.Tensor, termination_body: str = "pelvis"
+    state: torch.Tensor, ref_state: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Height error, tilt error, and hard failure from the pelvis by default."""
-    squeezed = state.dim() == 1
-    if squeezed:
-        state = state.unsqueeze(0)
-        ref_state = ref_state.unsqueeze(0)
-    body = PELVIS if termination_body == "pelvis" else TORSO
-    # Signed errors. The hard threshold uses the absolute value.
-    # Tilt is the robot's projected gravity z minus the reference's.
-    if body == g1_kinematics().free_tracked:
-        # The tree walk copies the free-joint body's position from the state.
-        height_err = state[:, 2] - ref_state[:, 2]
-        tilt = (
-            projected_gravity(state[..., 3:7])[..., 2]
-            - projected_gravity(ref_state[..., 3:7])[..., 2]
-        )
-    else:
-        pos, rot, _, _ = differentiable_fk(state)
-        ref_pos, ref_rot, _, _ = differentiable_fk(ref_state)
-        height_err = pos[:, body, 2] - ref_pos[:, body, 2]
-        # Projected gravity's z component is -R[2, 2] for the selected body.
-        tilt = ref_rot[:, body, 2, 2] - rot[:, body, 2, 2]
+    """Pelvis height error, gravity-z error, and the hard failure test."""
+    height_err = state[..., 2] - ref_state[..., 2]
+    tilt = (
+        projected_gravity(state[..., ROOT_QUAT])[..., 2]
+        - projected_gravity(ref_state[..., ROOT_QUAT])[..., 2]
+    )
     failed = (height_err.abs() > FAILURE_HEIGHT_M) | (tilt.abs() > FAILURE_TILT)
-    if squeezed:
-        return height_err.squeeze(0), tilt.squeeze(0), failed.squeeze(0)
     return height_err, tilt, failed
-
-
-def analytic_failure_prob(height_err: torch.Tensor, tilt: torch.Tensor) -> torch.Tensor:
-    """Soft version of the hard failure test, with no learned weights.
-
-    Each threshold becomes a sigmoid of width 0.02 m (height) or 0.04 (tilt),
-    the same form as the velocity task's soft fall. Selected by
-    ``algorithm.termination_head: analytic``; the paper default is learned.
-    """
-    p_height = torch.sigmoid((height_err.abs() - FAILURE_HEIGHT_M) / 0.02)
-    p_tilt = torch.sigmoid((tilt.abs() - FAILURE_TILT) / 0.04)
-    return 1.0 - (1.0 - p_height) * (1.0 - p_tilt)
-
-
-def termination_head_input(
-    height_err: torch.Tensor, tilt: torch.Tensor
-) -> torch.Tensor:
-    """Termination-head features ``[height, tilt, |height|, |tilt|]``."""
-    if height_err.dim() == 0:
-        height_err = height_err.unsqueeze(0)
-        tilt = tilt.unsqueeze(0)
-        squeeze = True
-    else:
-        squeeze = False
-    feat = torch.stack((height_err, tilt, height_err.abs(), tilt.abs()), dim=-1)
-    return feat.squeeze(0) if squeeze else feat
 
 
 def xy_yaw_drift(
@@ -443,6 +199,3 @@ def xy_yaw_drift(
     yaw_drift = heading_yaw(state[..., 3:7]) - heading_yaw(ref_state[..., 3:7])
     yaw_drift = torch.atan2(torch.sin(yaw_drift), torch.cos(yaw_drift)).abs()
     return pos_drift, yaw_drift
-
-
-assert NUM_BODIES == 14, f"expected 14 tracked bodies, got {NUM_BODIES}"

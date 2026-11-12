@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Numerical checks of the SuperMimic objectives, reset sampler, evaluation
-guards, training config limits, input norms, forward kinematics and simulator.
-None needs Ray. The two-rank check needs Gloo, the kinematics and world-model
-checks need mjlab, the fused-Adam check needs a CUDA device, and the MuJoCo
-Warp checks need mjlab and a CUDA device.
+"""Numerical checks of the SuperMimic objectives, reset sampler, update
+cadence, evaluation guards, training config limits, input norms, state
+representations, networks and simulator. None needs Ray. The two-rank check
+needs Gloo, the kinematics, representation and network checks need mjlab, and
+the MuJoCo Warp check needs mjlab and a CUDA device.
 """
 
 import importlib.util
+import math
 import socket
 from pathlib import Path
 
@@ -29,43 +30,47 @@ import torch.distributed as dist
 from hydra import compose, initialize_config_dir
 
 from rlinf.algorithms.supermimic.objectives import (
-    actor_objective,
-    gae_targets,
-    termination_bce_scale,
+    NOMINAL_ERRORS,
+    imagined_return,
+    lambda_returns,
+    world_model_loss,
 )
-from rlinf.algorithms.supermimic.reset_sampler import RETURN_EMA, BinResetSampler
+from rlinf.algorithms.supermimic.reset_sampler import (
+    RECORD_STEPS,
+    RETURN_GAMMA,
+    ReturnResetSampler,
+)
 from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
+    ACTOR_GOAL_DIM,
     DT,
-    EPISODE_CLIP_END,
-    EPISODE_CONT,
-    EPISODE_FAILURE,
-    EPISODE_TIMEOUT,
-    G1_JOINT_NAMES,
     JOINT_POS,
+    JOINT_VEL,
+    MAX_TRACKING_REWARD,
     ROOT_LIN_VEL,
-    XI_DIM,
+    ROOT_POS,
+    ROOT_QUAT,
+    SIM_CONTEXT_DIM,
+    STATE_DIM,
+    WORLD_MODEL_GOAL_DIM,
 )
 from rlinf.envs.sim.g1_mimic.eval_metrics import check_job_coverage
-from rlinf.envs.sim.g1_mimic.features import default_state
+from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
 from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
-    G1MimicEvalEnv,
-    checked_eval_states,
+    check_eval_states,
     checked_policy_action,
 )
 from rlinf.envs.sim.g1_mimic.motion import MotionLibrary
-from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, failure_signals
-from rlinf.models import get_model
+from rlinf.envs.sim.g1_mimic.reward import failure_signals
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.normalization import (
-    RunningMeanStd,
-    merged_batch_stats,
+    EmpiricalNorm,
+    merged_moments,
+    pack_moments,
 )
-from rlinf.models.embodiment.supermimic.supermimic_policy import (
-    SuperMimicPolicy,
-    migrate_legacy_obs_norm_state_dict,
-)
+from rlinf.runners.supermimic_runner import boundary_update_spans, due_updates
+from rlinf.workers.actor.fsdp_supermimic_policy_worker import clip_step
 
 CPU = torch.device("cpu")
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
@@ -76,36 +81,51 @@ needs_gloo = pytest.mark.skipif(
     not dist.is_available() or not dist.is_gloo_available(),
     reason="torch.distributed with Gloo is not available",
 )
-needs_cuda = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="fused Adam needs a CUDA device"
-)
 needs_warp = pytest.mark.skipif(
     not torch.cuda.is_available() or importlib.util.find_spec("mjlab") is None,
     reason="MuJoCo Warp needs mjlab and a CUDA device",
 )
-VELOCITY_MODEL = [
-    "actor.model.goal_encoding=paper",
-    "actor.model.obs_dim=93",
-    "actor.model.critic_features=root4",
-    "actor.model.input_norm=none",
-    "actor.model.velocity_tracking=true",
-    "actor.model.torch_compile=false",
-]
 
 
-def _compose(overrides: list[str]):
+def _compose(config_name: str, overrides: list[str]):
     with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base="1.1"):
-        return compose(config_name="supermimic_lafan1_goal730", overrides=overrides)
+        return compose(config_name=config_name, overrides=overrides)
 
 
-def test_actor_objective_value_and_gradient():
+def _standing_state(rows: int) -> torch.Tensor:
+    state = torch.zeros(rows, STATE_DIM)
+    state[:, 2] = 0.78
+    state[:, 3] = 1.0
+    return state
+
+
+def _pitched(angle: torch.Tensor) -> torch.Tensor:
+    zero = torch.zeros_like(angle)
+    return torch.stack((torch.cos(angle / 2), zero, torch.sin(angle / 2), zero), -1)
+
+
+def _rotmat_to_quat(rot: torch.Tensor) -> torch.Tensor:
+    """wxyz quaternion of rotations well away from a half turn."""
+    w = 0.5 * torch.sqrt(1.0 + rot[..., 0, 0] + rot[..., 1, 1] + rot[..., 2, 2])
+    return torch.stack(
+        (
+            w,
+            (rot[..., 2, 1] - rot[..., 1, 2]) / (4 * w),
+            (rot[..., 0, 2] - rot[..., 2, 0]) / (4 * w),
+            (rot[..., 1, 0] - rot[..., 0, 1]) / (4 * w),
+        ),
+        dim=-1,
+    )
+
+
+def test_imagined_return_value_and_gradient():
     rewards = torch.tensor([[2.0, 3.0]], requires_grad=True)
-    failure = torch.tensor([[0.25, 0.5]], requires_grad=True)
-    bootstrap = torch.tensor([4.0], requires_grad=True)
-    result = actor_objective(rewards, failure, bootstrap, gamma=0.5)
+    term_prob = torch.tensor([[0.25, 0.5]], requires_grad=True)
+    last_value = torch.tensor([4.0], requires_grad=True)
+    result = imagined_return(rewards, term_prob, last_value, gamma=0.5)
     # 2 + .5*.75*3 + .5**2*.75*.5*4.
-    torch.testing.assert_close(result, torch.tensor(3.5))
-    gradients = torch.autograd.grad(result, (rewards, failure, bootstrap))
+    torch.testing.assert_close(result, torch.tensor([3.5]))
+    gradients = torch.autograd.grad(result.sum(), (rewards, term_prob, last_value))
     for actual, expected in zip(
         gradients,
         (
@@ -118,63 +138,81 @@ def test_actor_objective_value_and_gradient():
         torch.testing.assert_close(actual, expected)
 
 
-def test_gae_matches_discounted_returns_at_lambda_one():
-    rewards = torch.tensor([[1.0, 2.0, 3.0]])
-    failure = torch.tensor([[0.0, 1.0, 0.0]])
-    values = torch.tensor([[99.0, -4.0, 17.0, 4.0]])
-    actual = gae_targets(rewards, failure, values, gamma=0.5, lam=1.0)
-    torch.testing.assert_close(actual, torch.tensor([[2.0, 2.0, 5.0]]))
+def test_lambda_returns_span_one_step_to_full_returns():
+    values = torch.tensor([[99.0], [-4.0], [17.0]])
+    last_value = torch.tensor([4.0])
+    rewards = torch.tensor([[1.0], [2.0], [3.0]])
+    term_prob = torch.tensor([[0.0], [1.0], [0.0]])
+    full = lambda_returns(values, last_value, rewards, term_prob, gamma=0.5, lam=1.0)
+    torch.testing.assert_close(full, torch.tensor([[2.0], [2.0], [5.0]]))
+    one_step = lambda_returns(values, last_value, rewards, term_prob, 0.5, lam=0.0)
+    torch.testing.assert_close(one_step, torch.tensor([[-1.0], [2.0], [5.0]]))
 
 
-@pytest.mark.parametrize("gamma", [0.01, 0.8, 0.99])
-def test_reset_returns_match_backward_recurrence(gamma):
-    horizon = 500
-    lengths = [horizon, 7, 1]
-    sampler = BinResetSampler(torch.tensor([horizon]), 3, 10.0, gamma, horizon, CPU)
-    rewards = torch.rand(3, horizon, generator=torch.Generator().manual_seed(17))
-    for step in range(horizon):
-        active = torch.tensor([step < length for length in lengths])
-        sampler.log_step(
-            rewards[:, step],
-            torch.zeros(3, dtype=torch.long),
-            torch.full((3,), step),
-            active,
-        )
-    kinds = torch.tensor([EPISODE_TIMEOUT, EPISODE_FAILURE, EPISODE_CLIP_END])
-    # Failure and clip-end do not bootstrap, including non-finite predictions.
-    bootstrap = torch.tensor([3.0, float("nan"), float("inf")])
-    sums = torch.zeros(sampler.num_bins, dtype=torch.float64)
-    counts = torch.zeros_like(sums)
-    for row, length in enumerate(lengths):
-        value = 3.0 if row == 0 else 0.0
-        for step in range(length - 1, -1, -1):
-            value = float(rewards[row, step]) + gamma * value
-            bin_id = step // sampler.bin_frames
-            sums[bin_id] += value
-            counts[bin_id] += 1
-    sampler.finish(torch.arange(3), kinds, bootstrap)
-    expected = torch.where(
-        counts > 0,
-        (1 - RETURN_EMA) * 10 + RETURN_EMA * sums / counts.clamp_min(1),
-        10.0,
-    )
-    torch.testing.assert_close(
-        sampler.bin_return.double(), expected, atol=2e-5, rtol=2e-6
-    )
-    assert torch.isfinite(sampler.mixture(update_memory=False)).all()
-    assert sampler.sample(4)[0].numel() == 4
+def test_world_model_loss_weights_each_group_by_its_width():
+    pred = {"root_pos": torch.zeros(4, 3), "joint_vel": torch.zeros(4, 29)}
+    true = {"root_pos": torch.ones(4, 3), "joint_vel": 2 * torch.ones(4, 29)}
+    loss, mse = world_model_loss(pred, true)
+    torch.testing.assert_close(mse, torch.tensor([1.0, 4.0]))
+    expected = (
+        3 / NOMINAL_ERRORS["root_pos"] ** 2 + 29 * 4 / NOMINAL_ERRORS["joint_vel"] ** 2
+    ) / 32
+    torch.testing.assert_close(loss, torch.tensor(expected))
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
-def test_invalid_timeout_bootstrap_is_rejected(value):
-    sampler = BinResetSampler(torch.tensor([50]), 1, 10.0, 0.99, 2, CPU)
-    sampler.log_step(torch.tensor([1.0]), torch.tensor([0]), torch.tensor([0]))
-    before = sampler.bin_return.clone()
-    with pytest.raises(RuntimeError, match="non-finite timeout bootstrap"):
-        sampler.finish(
-            torch.tensor([0]), torch.tensor([EPISODE_TIMEOUT]), torch.tensor([value])
-        )
-    torch.testing.assert_close(sampler.bin_return, before)
+def test_reset_frames_skip_the_last_frame_of_every_clip():
+    torch.manual_seed(0)
+    sampler = ReturnResetSampler(torch.tensor([5, 12, 30]), 1, CPU)
+    frames = sampler.sample(4000)
+    assert int(frames.min()) >= 0 and int(frames.max()) <= 28
+    assert not torch.isin(frames, torch.tensor([4, 11, 29])).any()
+
+
+def test_reset_values_fold_the_mean_return_of_each_episode_visit():
+    frame_count = 200
+    sampler = ReturnResetSampler(torch.tensor([frame_count]), 2, CPU)
+    rewards = torch.rand(2, RECORD_STEPS, generator=torch.Generator().manual_seed(7))
+    frames = torch.stack((torch.arange(RECORD_STEPS), 50 + torch.arange(RECORD_STEPS)))
+    failed = torch.zeros(2, RECORD_STEPS, dtype=torch.bool)
+    timed_out = torch.zeros_like(failed)
+    clip_end = torch.zeros_like(failed)
+    failed[0, 9] = True
+    timed_out[1, 4] = True
+    for t in range(RECORD_STEPS):
+        ends = (failed[:, t], clip_end[:, t], timed_out[:, t])
+        sampler.record(frames[:, t], rewards[:, t], *ends)
+
+    start = sampler.value_max
+    samples: dict[int, list[float]] = {}
+    for env in range(2):
+        # A fall ends the return; a time limit and the buffer end bootstrap
+        # from the next frame's bin, which still holds its initial value.
+        returns, tail = [0.0] * RECORD_STEPS, start
+        for t in reversed(range(RECORD_STEPS)):
+            if failed[env, t]:
+                tail = 0.0
+            elif timed_out[env, t]:
+                tail = start
+            returns[t] = float(rewards[env, t]) + RETURN_GAMMA * tail
+            tail = returns[t]
+        visits, episode = {}, 0
+        for t in range(RECORD_STEPS):
+            bin_id = int(frames[env, t]) * sampler.bin_count // frame_count
+            visits.setdefault((episode, bin_id), []).append(returns[t])
+            episode += int(failed[env, t] or timed_out[env, t])
+        for (_, bin_id), values in visits.items():
+            samples.setdefault(bin_id, []).append(sum(values) / len(values))
+    expected = torch.full((sampler.bin_count,), start)
+    for bin_id, values in samples.items():
+        expected[bin_id] = sum(values) / len(values)
+    torch.testing.assert_close(sampler.value, expected)
+    assert float(sampler.count.sum()) == sum(map(len, samples.values()))
+    torch.testing.assert_close(sampler.probs.sum(), torch.tensor(1.0))
+    assert int(sampler.probs.argmax()) == int(sampler.value.argmin())
+
+    other = ReturnResetSampler(torch.tensor([frame_count + 10]), 2, CPU)
+    with pytest.raises(ValueError, match="reset bins"):
+        other.load_state_dict(sampler.state_dict())
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
@@ -189,17 +227,12 @@ def test_evaluation_rejects_active_nonfinite_rows_and_masks_finished_rows(value)
     action[0, 0] = value
     with pytest.raises(RuntimeError, match=r"active evaluation rows \[0\]"):
         checked_policy_action(action, active)
-    for field in ("next_state", "ref_state"):
-        state = default_state(2, "cpu", torch.float32)
-        reference = state.clone()
-        state[1] = reference[1] = value
-        assert all(
-            torch.isfinite(part).all()
-            for part in checked_eval_states(state, reference, active)
-        )
-        (state if field == "next_state" else reference)[0, 0] = value
-        with pytest.raises(RuntimeError, match=r"active rows \[0\]"):
-            checked_eval_states(state, reference, active)
+    state = _standing_state(2)
+    state[1] = value
+    check_eval_states(state, active)
+    state[0, 0] = value
+    with pytest.raises(RuntimeError, match=r"active rows \[0\]"):
+        check_eval_states(state, active)
 
 
 @pytest.mark.parametrize(
@@ -224,7 +257,10 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
     "overrides,error",
     [
         (["env.train.max_episode_seconds=0.1"], "allows 5 control steps"),
-        (["algorithm.replay_length=9"], r"replay_length must be in \[10, inf\]"),
+        (["algorithm.replay_length=7"], r"replay_length must be in \[8, inf\]"),
+        (["algorithm.gamma=1.0"], r"gamma must be in \(0.0, 1.0\)"),
+        (["actor.model.representation=paper"], "representation must be one of"),
+        (["+env.train.representation=maxcoord"], "differs from the policy value"),
         (["actor.fsdp_config.strategy=fsdp"], "strategy=fsdp2"),
         (["actor.model.precision=bf16"], "actor.model.precision must be 32"),
         (
@@ -235,11 +271,13 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
             ["actor.fsdp_config.grad_scaler.enabled=True"],
             "grad_scaler.enabled must be False",
         ),
-        (["env.train.max_episode_seconds=0.16", "algorithm.replay_length=10"], None),
+        (["env.train.max_episode_seconds=0.16", "algorithm.replay_length=8"], None),
     ],
 )
 def test_training_config_rejects_unsupported_values(overrides, error):
-    cfg = _compose(["env.train.motion_path=/data/clips", *overrides])
+    cfg = _compose(
+        "supermimic_lafan1_gencoord", ["env.train.motion_path=/data/clips", *overrides]
+    )
     if error is None:
         validate_supermimic_cfg(cfg)
         return
@@ -247,18 +285,32 @@ def test_training_config_rejects_unsupported_values(overrides, error):
         validate_supermimic_cfg(cfg)
 
 
-def test_norm_written_in_place_folds_like_its_source():
-    source, copy = RunningMeanStd(3), RunningMeanStd(3)
-    source.fold(torch.full((100, 3), 10.0))
-    with torch.no_grad():
-        for name, buffer in source.named_buffers():
-            copy.get_buffer(name).copy_(buffer)
-    copy.refresh_host_count()
-    for norm in (source, copy):
-        norm.fold(torch.full((1, 3), 20.0))
-    torch.testing.assert_close(copy.mean, torch.full((3,), 1020.0 / 101))
-    for name, buffer in source.named_buffers():
-        torch.testing.assert_close(copy.get_buffer(name), buffer)
+def test_maxcoord_config_shares_its_representation_with_the_envs():
+    cfg = validate_supermimic_cfg(
+        _compose(
+            "supermimic_lafan1_maxcoord",
+            [
+                "env.train.motion_path=/data/clips",
+                "env.eval.motion_path=/data/clips",
+                "runner.val_check_interval=1",
+            ],
+        )
+    )
+    assert cfg.env.train.representation == cfg.env.eval.representation == "maxcoord"
+
+
+def test_norm_folds_batches_like_their_union():
+    gen = torch.Generator().manual_seed(1)
+    first, second = torch.randn(5, 3, generator=gen), torch.randn(9, 3, generator=gen)
+    norm = EmpiricalNorm(3)
+    torch.testing.assert_close(norm(first), first / 1.01)
+    norm.fold(pack_moments(first))
+    norm.fold(pack_moments(second))
+    union = torch.cat((first, second))
+    var, mean = torch.var_mean(union, dim=0, correction=0)
+    torch.testing.assert_close(norm.mean, mean)
+    torch.testing.assert_close(norm.var, var)
+    assert float(norm.count) == 14.0
 
 
 _RANK_ROWS = (
@@ -267,167 +319,49 @@ _RANK_ROWS = (
 )
 
 
-def _fold_merged_stats(rank: int, port: int, out: str) -> None:
+def _fold_merged_moments(rank: int, port: int, out: str) -> None:
     dist.init_process_group(
         "gloo", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=2
     )
     try:
-        norm = RunningMeanStd(2)
-        norm.update_from_packed(*merged_batch_stats(_RANK_ROWS[rank], dist.group.WORLD))
+        norm = EmpiricalNorm(2)
+        norm.fold(merged_moments(_RANK_ROWS[rank], dist.group.WORLD))
         torch.save(dict(norm.named_buffers()), f"{out}/rank{rank}.pt")
     finally:
         dist.destroy_process_group()
 
 
 @needs_gloo
-def test_policy_input_stats_merge_over_ranks_like_one_batch(tmp_path):
+def test_merged_moments_over_ranks_fold_like_one_batch(tmp_path):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     torch.multiprocessing.spawn(
-        _fold_merged_stats, args=(port, str(tmp_path)), nprocs=2, join=True
+        _fold_merged_moments, args=(port, str(tmp_path)), nprocs=2, join=True
     )
-    one_batch = RunningMeanStd(2)
-    one_batch.fold(torch.cat(_RANK_ROWS))
+    one_batch = EmpiricalNorm(2)
+    one_batch.fold(pack_moments(torch.cat(_RANK_ROWS)))
     for rank in range(2):
         buffers = torch.load(tmp_path / f"rank{rank}.pt")
         for name, buffer in one_batch.named_buffers():
             torch.testing.assert_close(buffers[name], buffer)
 
 
-def _legacy_obs_norm_state(policy):
-    legacy = {}
-    for key, value in policy.state_dict().items():
-        cloned = value.detach().clone()
-        if key.startswith("obs_norm."):
-            legacy["decoder." + key] = cloned
-        else:
-            legacy[key] = cloned
-    return legacy
-
-
-def test_legacy_obs_norm_buffers_load_and_current_keys_win():
-    untouched = {"obs_norm.mean": torch.zeros(1)}
-    assert migrate_legacy_obs_norm_state_dict(untouched) is untouched
-    prefixed = migrate_legacy_obs_norm_state_dict(
-        {
-            "module.decoder.obs_norm.mean": torch.tensor([1.0]),
-            "module.decoder.obs_norm.var": torch.tensor([2.0]),
-            "module.decoder.obs_norm.count": torch.tensor(3.0),
-            "not_decoder.obs_norm.mean": torch.tensor([4.0]),
-        }
-    )
-    assert torch.equal(prefixed["module.obs_norm.mean"], torch.tensor([1.0]))
-    assert "module.decoder.obs_norm.mean" not in prefixed
-    assert torch.equal(prefixed["not_decoder.obs_norm.mean"], torch.tensor([4.0]))
-
-    policy = SuperMimicPolicy(input_norm=True, torch_compile=True)
-    norm = policy.obs_norm
-    with torch.no_grad():
-        norm.mean.copy_(torch.linspace(-1, 1, norm.mean.numel()))
-        norm.var.copy_(torch.linspace(0.5, 1.5, norm.var.numel()))
-        norm.count.fill_(11)
-    norm.refresh_host_count()
-    legacy = _legacy_obs_norm_state(policy)
-    assert not any(key.startswith("obs_norm.") for key in legacy)
-
-    fresh = SuperMimicPolicy(input_norm=True, torch_compile=True)
-    fresh.load_state_dict(legacy)
-    assert "decoder.obs_norm.mean" in legacy
-    for key, value in policy.state_dict().items():
-        assert torch.equal(fresh.state_dict()[key], value)
-    assert fresh.obs_norm._count_cpu == 11.0
-
-    fresh.load_state_dict(policy.state_dict())
-    for key, value in policy.state_dict().items():
-        assert torch.equal(fresh.state_dict()[key], value)
-
-    mixed = {key: value.detach().clone() for key, value in policy.state_dict().items()}
-    for suffix in ("mean", "var", "count"):
-        mixed[f"decoder.obs_norm.{suffix}"] = torch.full_like(
-            mixed[f"obs_norm.{suffix}"], -4
-        )
-    fresh.load_state_dict(mixed)
-    assert "decoder.obs_norm.mean" in mixed
-    for key, value in policy.state_dict().items():
-        assert torch.equal(fresh.state_dict()[key], value)
-
-    plain = SuperMimicPolicy(input_norm=False, torch_compile=True)
-    rejected = plain.state_dict()
-    rejected["decoder.obs_norm.mean"] = torch.zeros(plain.obs_dim)
-    rejected["decoder.obs_norm.var"] = torch.ones(plain.obs_dim)
-    rejected["decoder.obs_norm.count"] = torch.zeros(())
-    with pytest.raises(RuntimeError, match="decoder.obs_norm"):
-        plain.load_state_dict(rejected)
-
-
-def test_legacy_obs_norm_dcp_metadata_loads_into_current_names(tmp_path):
-    import torch.distributed.checkpoint as dcp
-
-    from rlinf.hybrid_engines.fsdp.strategy.base import _MetadataRewritingReader
-    from rlinf.models.embodiment.supermimic.supermimic_policy import (
-        migrate_legacy_obs_norm_metadata,
-    )
-
-    def save_and_load(saved, dest, path):
-        dcp.save(saved, checkpoint_id=path, no_dist=True)
-        reader = _MetadataRewritingReader(path, migrate_legacy_obs_norm_metadata)
-        dcp.load(dest, storage_reader=reader, no_dist=True)
-
-    legacy_path = tmp_path / "legacy"
-    legacy_dest = {
-        "model": {
-            "obs_norm.mean": torch.zeros(4),
-            "obs_norm.var": torch.ones(4),
-            "obs_norm.count": torch.zeros(()),
-            "decoder.weight": torch.zeros(2),
-        }
-    }
-    save_and_load(
-        {
-            "model": {
-                "decoder.obs_norm.mean": torch.arange(4, dtype=torch.float32),
-                "decoder.obs_norm.var": torch.arange(4, dtype=torch.float32) + 2,
-                "decoder.obs_norm.count": torch.tensor(9.0),
-                "decoder.weight": torch.tensor([5.0, 6.0]),
-            }
-        },
-        legacy_dest,
-        legacy_path,
-    )
-    model = legacy_dest["model"]
-    assert torch.equal(model["obs_norm.mean"], torch.arange(4, dtype=torch.float32))
-    assert torch.equal(model["obs_norm.var"], torch.arange(4, dtype=torch.float32) + 2)
-    assert torch.equal(model["obs_norm.count"], torch.tensor(9.0))
-    assert torch.equal(model["decoder.weight"], torch.tensor([5.0, 6.0]))
-
-    current_dest = {
-        "model": {
-            "obs_norm.mean": torch.zeros(4),
-            "obs_norm.var": torch.ones(4),
-            "obs_norm.count": torch.zeros(()),
-        }
-    }
-    save_and_load(
-        {
-            "model": {
-                "obs_norm.mean": torch.arange(4, dtype=torch.float32) + 1,
-                "obs_norm.var": torch.arange(4, dtype=torch.float32) + 3,
-                "obs_norm.count": torch.tensor(8.0),
-            }
-        },
-        current_dest,
-        tmp_path / "current",
-    )
-    assert torch.equal(
-        current_dest["model"]["obs_norm.mean"], torch.arange(4, dtype=torch.float32) + 1
-    )
-    assert torch.equal(current_dest["model"]["obs_norm.count"], torch.tensor(8.0))
+def test_due_updates_follow_the_replay_ratio():
+    counts, anchor = [], None
+    for step in range(11):
+        count, anchor = due_updates(step, anchor, 0.4)
+        counts.append(count)
+    assert counts == [1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1]
+    for ratio in (0.4, 2.5):
+        total, anchor = 0, None
+        for step in range(1000):
+            count, anchor = due_updates(step, anchor, ratio)
+            total += count
+        assert total == 1 + math.floor(999 * ratio)
 
 
 def test_batched_updates_stop_on_save_and_eval_boundaries():
-    from rlinf.runners.supermimic_runner import boundary_update_spans
-
     # global_step 1998, three owed updates, save every 2000: two, then one.
     assert boundary_update_spans(1998, 3, 16000, 2000, -1) == [2, 1]
     assert boundary_update_spans(1998, 1, 16000, 2000, -1) == [1]
@@ -440,146 +374,191 @@ def test_batched_updates_stop_on_save_and_eval_boundaries():
     assert boundary_update_spans(1990, 30, 16000, 2000, 1000) == [10, 20]
     assert boundary_update_spans(1990, 1020, 16000, 2000, 1000) == [10, 1000, 10]
 
-    step = 0
-    saved = []
-    while step < 4000:
-        ready = min(3, 16000 - step)
-        for span in boundary_update_spans(step, ready, 16000, 2000, -1):
-            step += span
-            if step % 2000 == 0:
-                saved.append(step)
-    assert saved == [2000, 4000]
-    assert step == 4002
+
+def test_clip_step_clips_the_norm_then_each_element():
+    first = torch.nn.Parameter(torch.zeros(2))
+    second = torch.nn.Parameter(torch.zeros(1))
+    optimizers = [torch.optim.SGD([first], lr=1.0), torch.optim.SGD([second], lr=1.0)]
+    first.grad, second.grad = torch.tensor([3.0, 0.0]), torch.tensor([4.0])
+    # Norm 5 scales to [0.6, 0, 0.8]; the element clip then caps 0.8 at 0.7.
+    clip_step(optimizers, [first, second], 5.0, max_norm=1.0, value_clip=0.7)
+    torch.testing.assert_close(first.detach(), torch.tensor([-0.6, 0.0]))
+    torch.testing.assert_close(second.detach(), torch.tensor([-0.7]))
+    assert first.grad is None and second.grad is None
+    first.grad, second.grad = torch.tensor([0.1, 0.2]), torch.tensor([0.3])
+    clip_step(optimizers, [first, second], 0.37, max_norm=1.0, value_clip=None)
+    torch.testing.assert_close(first.detach(), torch.tensor([-0.7, -0.2]))
+    torch.testing.assert_close(second.detach(), torch.tensor([-1.0]))
 
 
-@needs_cuda
-def test_fused_adam_step_matches_host_step_and_skips_nonfinite():
-    from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
-        clip_step,
-        fused_clip_step,
-    )
-
-    device = torch.device("cuda:0")
-    gen = torch.Generator().manual_seed(5)
-    init = [torch.randn(4, 3, generator=gen), torch.randn(3, generator=gen)]
-    host_params = [torch.nn.Parameter(p.to(device)) for p in init]
-    fused_params = [torch.nn.Parameter(p.to(device)) for p in init]
-    host = torch.optim.Adam(host_params, lr=1e-2)
-    fused = torch.optim.Adam(fused_params, lr=1e-2, fused=True)
-
-    def set_grads(grads):
-        for params in (host_params, fused_params):
-            for param, grad in zip(params, grads, strict=True):
-                param.grad = grad.to(device)
-
-    def fused_step():
-        grads = [param.grad for param in fused_params]
-        norm = torch.nn.utils.get_total_norm(grads)
-        return fused_clip_step(fused, grads, norm, 1.0, 0.1)
-
-    # The first step stays under the norm limit; the others are clipped.
-    for scale in (0.1, 5.0, 30.0):
-        set_grads([scale * torch.randn(p.shape, generator=gen) for p in init])
-        norm = torch.nn.utils.get_total_norm([param.grad for param in host_params])
-        clip_step(host, host_params, float(norm), 1.0, 0.1)
-        assert float(fused_step()) == 0.0
-    for host_param, fused_param in zip(host_params, fused_params, strict=True):
-        torch.testing.assert_close(fused_param, host_param)
-        for key in ("exp_avg", "exp_avg_sq"):
-            torch.testing.assert_close(
-                fused.state[fused_param][key], host.state[host_param][key]
-            )
-        assert float(fused.state[fused_param]["step"]) == 3.0
-
-    before = [
-        (
-            param.clone(),
-            {key: value.clone() for key, value in fused.state[param].items()},
-        )
-        for param in fused_params
-    ]
-    for bad in (float("nan"), float("inf")):
-        grads = [torch.ones(p.shape) for p in init]
-        grads[0][1, 2] = bad
-        set_grads(grads)
-        assert float(fused_step()) == 1.0
-        for param, (value, state) in zip(fused_params, before, strict=True):
-            assert param.grad is None
-            assert torch.equal(param, value)
-            for key, saved in state.items():
-                assert torch.equal(fused.state[param][key], saved), key
+def test_pelvis_falls_on_height_or_tilt():
+    reference = _standing_state(3)
+    state = reference.clone()
+    angle = torch.tensor([0.0, 1.4, 0.4])
+    state[:, ROOT_QUAT] = _pitched(angle)
+    state[0, 2] -= 0.3
+    height, tilt, failed = failure_signals(state, reference)
+    torch.testing.assert_close(height, torch.tensor([-0.3, 0.0, 0.0]))
+    torch.testing.assert_close(tilt, 1.0 - torch.cos(angle))
+    assert failed.tolist() == [True, True, False]
 
 
 @needs_mjlab
-def test_world_model_bce_over_two_ranks_matches_one_batch():
-    cfg = validate_supermimic_cfg(
-        _compose(
-            [
-                "env.train.motion_path=/data/clips",
-                "algorithm.termination_head=learned",
-                *VELOCITY_MODEL,
-            ]
-        )
+def test_perfect_tracking_earns_the_reward_ceiling():
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state, soft_joint_limits
+    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk, tracking_reward
+
+    state = asset_default_state().repeat(2, 1)
+    bodies = differentiable_fk(state)
+    action = torch.zeros(2, ACTION_DIM)
+    action[1] = 1.0
+    reward = tracking_reward(
+        state[:, ROOT_POS],
+        quat_to_rotmat(state[:, ROOT_QUAT]),
+        bodies,
+        bodies,
+        state[:, JOINT_POS],
+        action,
+        torch.zeros(2, ACTION_DIM),
+        soft_joint_limits(),
     )
+    rate_penalty = DT * 0.1 * ACTION_DIM
+    torch.testing.assert_close(
+        reward, torch.tensor([MAX_TRACKING_REWARD, MAX_TRACKING_REWARD - rate_penalty])
+    )
+
+
+def _random_states(rows: int, seed: int) -> torch.Tensor:
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits
+
+    gen = torch.Generator().manual_seed(seed)
+    low, high = asset_joint_limits()
+    state = _standing_state(rows)
+    state[:, :3] += 0.2 * torch.randn(rows, 3, generator=gen)
+    state[:, ROOT_QUAT] += 0.2 * torch.randn(rows, 4, generator=gen)
+    state[:, ROOT_QUAT] /= state[:, ROOT_QUAT].norm(dim=-1, keepdim=True)
+    middle = 0.3 + 0.4 * torch.rand(rows, ACTION_DIM, generator=gen)
+    state[:, JOINT_POS] = low + (high - low) * middle
+    state[:, ROOT_LIN_VEL.start :] = torch.randn(rows, 35, generator=gen)
+    return state
+
+
+def _stored(representation, states: torch.Tensor) -> torch.Tensor:
+    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+
+    flat = states.reshape(-1, STATE_DIM)
+    pos, rot, lin, ang = differentiable_fk(flat)
+    full = representation.stored_state(flat, (pos, _rotmat_to_quat(rot), lin, ang))
+    return full.reshape(*states.shape[:-1], -1)
+
+
+@needs_mjlab
+@pytest.mark.parametrize("name", ["gencoord", "maxcoord"])
+def test_representation_reproduces_the_tracked_bodies(name):
+    from rlinf.algorithms.supermimic.representations import make_representation
+    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+
+    representation = make_representation(name)
+    state = _random_states(32, seed=0)
+    full = _stored(representation, state)
+    enc = representation.encode(full)
+    assert full.shape[-1] == representation.state_dim
+    assert enc.shape[-1] == representation.encoding_dim
+    root = representation.root(full)
+    for actual, expected in zip(
+        representation.bodies(root, enc), differentiable_fk(state), strict=True
+    ):
+        torch.testing.assert_close(actual, expected, atol=1e-4, rtol=1e-4)
+    q, qd = representation.joints(enc)
+    torch.testing.assert_close(q, state[:, JOINT_POS], atol=1e-3, rtol=0)
+    torch.testing.assert_close(qd, state[:, JOINT_VEL], atol=1e-3, rtol=0)
+    blocks = representation.loss_blocks(root, enc)
+    assert {k: v.shape[-1] for k, v in blocks.items()} == representation.block_widths
+
+
+@needs_mjlab
+@pytest.mark.parametrize("name", ["gencoord", "maxcoord"])
+def test_each_training_phase_reaches_only_its_network(name):
+    from omegaconf import OmegaConf
+
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        SuperMimicPolicy,
+    )
+
     torch.manual_seed(0)
-    model = get_model(cfg.actor.model).to(CPU)
-    model.configure_training(cfg.algorithm)
-    rows, k = 8, model.k
-    gen = torch.Generator().manual_seed(3)
-    pose = default_state(rows, "cpu", torch.float32)
-    end_kind = torch.full((rows, k), EPISODE_CONT)
-    end_kind[0] = EPISODE_FAILURE
-    batch = {
-        "state0": pose + 0.01 * torch.randn(pose.shape, generator=gen),
-        "actions": 0.1 * torch.randn(rows, k, ACTION_DIM, generator=gen),
-        "xi": 0.1 * torch.randn(rows, XI_DIM, generator=gen),
-        "targets": pose.unsqueeze(1)
-        + 0.02 * torch.randn(rows, k, pose.shape[-1], generator=gen),
-        "refs": pose.unsqueeze(1).expand(-1, k, -1),
-        "end_kind": end_kind,
-        # Rank 0: one failing motion row; rank 1: three motion rows that hold.
-        "task": torch.tensor([0, 1, 1, 1, 0, 0, 0, 1]),
+    pose = asset_default_state()
+    clips = []
+    for length in (40, 30):
+        clip = pose.repeat(length, 1)
+        clip[:, 0] = torch.linspace(0.0, 1.0, length)
+        clip[:, JOINT_POS] += 0.05 * torch.sin(torch.linspace(0, 3, length))[:, None]
+        clips.append(clip)
+    motion = MotionLibrary(clips, q0=pose[JOINT_POS])
+    policy = SuperMimicPolicy(name, torch_compile=False)
+    policy.configure_training(OmegaConf.create({"H": 4, "gamma": 0.99}))
+    assert all(".weight" in n for n in hidden_matrix_names(policy))
+    rows, k, horizon = 6, 8, 4
+    frames = torch.randint(0, motion.num_frames - k, (rows,))
+    states = torch.stack([motion.rows(frames + i) for i in range(k)], dim=1)
+    full = _stored(policy.representation, states)
+    actions = 0.1 * torch.randn(rows, k, ACTION_DIM)
+    context = 0.3 * torch.randn(rows, SIM_CONTEXT_DIM)
+    networks = {
+        "dynamics": policy.dynamics,
+        "actor": policy.actor,
+        "critic": policy.critic,
     }
-    motion_total = int((batch["task"] == 0).sum())
 
-    def gradients(part: slice, share: float) -> dict[str, torch.Tensor]:
-        part_rows = int(batch["task"][part].numel())
-        motion = int((batch["task"][part] == 0).sum())
-        model.zero_grad(set_to_none=True)
-        loss = model(
-            forward_type=ForwardType.SUPERMIMIC_WORLD_MODEL,
-            **{name: value[part] for name, value in batch.items()},
-            bce_scale=termination_bce_scale(part_rows, motion, rows, motion_total),
-        )["loss"]
-        (loss * share).backward()
-        return {name: p.grad.clone() for name, p in model.named_parameters()}
+    def reached(forward_type, **inputs):
+        policy.zero_grad(set_to_none=True)
+        policy.set_trainable(forward_type)
+        out = policy(forward_type=forward_type, **inputs)
+        assert torch.isfinite(out["loss"])
+        out["loss"].backward()
+        names = {
+            name
+            for name, net in networks.items()
+            if any(
+                p.grad is not None and p.grad.abs().sum() > 0 for p in net.parameters()
+            )
+        }
+        return out, names
 
-    merged = gradients(slice(None), 1.0)
-    # FSDP averages the rank gradients and the actor weights each rank's loss
-    # by its share of the rows, so the update sums the row-weighted gradients.
-    first, second = gradients(slice(0, 4), 0.5), gradients(slice(4, 8), 0.5)
-    head = [g for name, g in merged.items() if name.startswith("termination.")]
-    assert head and max(g.abs().max().item() for g in head) > 0.1, head
-    for name, gradient in merged.items():
-        torch.testing.assert_close(first[name] + second[name], gradient)
-
-
-@needs_mjlab
-@pytest.mark.parametrize("joint", ["waist_roll_joint", "waist_pitch_joint"])
-def test_torso_tilt_and_gradient_match_joint_rotation(joint):
-    state = default_state(2, "cpu", torch.float32)
-    reference = state.clone()
-    index = JOINT_POS.start + G1_JOINT_NAMES.index(joint)
-    angles, ref_angles = torch.tensor([1.4, 0.4]), torch.tensor([0.0, 0.2])
-    state[:, index], reference[:, index] = angles, ref_angles
-    state.requires_grad_()
-    _, torso_tilt, torso_failed = failure_signals(state, reference, "torso")
-    _, pelvis_tilt, pelvis_failed = failure_signals(state, reference, "pelvis")
-    torch.testing.assert_close(torso_tilt, ref_angles.cos() - angles.cos())
-    torch.testing.assert_close(pelvis_tilt, torch.zeros(2))
-    assert bool(torso_failed[0]) and not bool(pelvis_failed.any())
-    gradient = torch.autograd.grad(torso_tilt.sum(), state)[0]
-    torch.testing.assert_close(gradient[:, index], angles.sin())
+    _, names = reached(
+        ForwardType.SUPERMIMIC_WORLD_MODEL,
+        states=full,
+        actions=actions,
+        context=context,
+    )
+    assert names == {"dynamics"}
+    last = motion.clip_end(frames) - 1
+    times = torch.minimum(frames[:, None] + torch.arange(horizon + 1), last[:, None])
+    out, names = reached(
+        ForwardType.SUPERMIMIC_ACTOR,
+        start=full[:, 0],
+        prev_action=actions[:, 0],
+        context=context,
+        windows=motion.goal_window(times),
+        refs=motion.body_state(times[:, :horizon]),
+    )
+    assert names == {"actor"}
+    enc_dim = policy.representation.encoding_dim
+    width = enc_dim + WORLD_MODEL_GOAL_DIM + SIM_CONTEXT_DIM
+    assert out["steps"].shape == (rows, horizon, width)
+    _, names = reached(
+        ForwardType.SUPERMIMIC_CRITIC,
+        features=out["steps"].reshape(-1, width),
+        targets=torch.zeros(rows * horizon),
+    )
+    assert names == {"critic"}
+    obs = torch.cat(
+        (policy.representation.encode(full[:, 0]), torch.zeros(rows, ACTOR_GOAL_DIM)),
+        dim=-1,
+    )
+    action, _ = policy.predict_action_batch({"states": obs})
+    assert action.shape == (rows, 1, ACTION_DIM)
 
 
 @needs_mjlab
@@ -588,9 +567,12 @@ def test_torso_tilt_and_gradient_match_joint_rotation(joint):
     [("cpu", "cpu"), ("cpu", "cuda:0"), ("cuda:0", "cuda:0"), ("cuda:0", "cpu")],
 )
 def test_reference_fk_matches_online_fk(storage, query):
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.envs.sim.g1_mimic.reward import differentiable_fk
+
     if "cuda" in storage + query and not torch.cuda.is_available():
         pytest.skip("a CUDA/HIP device is required for cross-device queries")
-    clips = [default_state(n, storage, torch.float32) for n in (3, 4)]
+    clips = [asset_default_state().repeat(n, 1).to(storage) for n in (3, 4)]
     for index, clip in enumerate(clips):
         clip[:, 0] = index + 0.1 * torch.arange(len(clip), device=storage)
         clip[:, JOINT_POS.start] = 0.05 * torch.arange(len(clip), device=storage)
@@ -601,11 +583,7 @@ def test_reference_fk_matches_online_fk(storage, query):
     )
     result = motion.kinematics_at(ids, times)
     expected = differentiable_fk(motion.state_at(ids, times))
-    assert set(motion._kin_cache) == {motion.frames.device}
-    assert all(
-        part.device == motion.frames.device
-        for part in motion._kin_cache[motion.frames.device]
-    )
+    assert all(part.device == motion.frames.device for part in motion._kin_cache)
     for actual, wanted in zip(result, expected, strict=True):
         assert actual.device == ids.device
         torch.testing.assert_close(actual, wanted, atol=2e-5, rtol=2e-5)
@@ -621,7 +599,7 @@ def test_push_writes_only_the_horizontal_root_velocity(mode):
     pose = default_standing_state()
     pose[ROOT_LIN_VEL] = torch.tensor([0.3, -0.1, 0.4])
     motion = MotionLibrary([pose.repeat(30, 1)], q0=pose[JOINT_POS])
-    env = MjlabG1Env(2, motion, device, eval_mode=True)
+    env = MjlabG1Env(2, motion, device, randomize=False)
     ids = torch.arange(2, device=device)
     env.reset(ids, torch.zeros_like(ids), torch.zeros_like(ids))
     before = env.state.clone()
@@ -632,68 +610,6 @@ def test_push_writes_only_the_horizontal_root_velocity(mode):
     expected = before.clone()
     expected[1, xy] = push[0] + (before[1, xy] if mode == "add" else 0.0)
     torch.testing.assert_close(after, expected, atol=1e-5, rtol=1e-5)
-    next_state = env.step(torch.zeros(2, ACTION_DIM, device=device))["next_state"]
-    moved = next_state[1, :2] - after[1, :2]
+    env.step(torch.zeros(2, ACTION_DIM, device=device))
+    moved = env.state[1, :2] - after[1, :2]
     torch.testing.assert_close(moved, expected[1, xy] * DT, atol=5e-3, rtol=0)
-
-
-@needs_warp
-def test_velocity_step_test_repeats_for_its_seed(tmp_path):
-    from rlinf.envs.sim.g1_mimic.push_recovery import default_standing_state
-
-    pose = default_standing_state()
-    clips = tmp_path / "clips"
-    clips.mkdir()
-    torch.save(
-        {
-            "fps": 50.0,
-            "joint_names": list(G1_JOINT_NAMES),
-            "q0": pose[JOINT_POS],
-            "state": pose.repeat(64, 1),
-        },
-        clips / "clip_000.pt",
-    )
-    cfg = validate_supermimic_cfg(
-        _compose(
-            [
-                f"env.train.motion_path={clips}",
-                f"env.eval.motion_path={clips}",
-                "env.eval.num_clips=1",
-                "env.eval.total_num_envs=2",
-                "env.eval.eval_tasks=[velocity_g2]",
-                "env.eval.velocity_g2.trials=1",
-                "env.eval.velocity_g2.seconds=0.2",
-                "env.eval.velocity_g2.steady_seconds=0.1",
-                "env.eval.max_steps_per_rollout_epoch=10",
-                # Two envs cover the 672 step commands in 336 chunks.
-                "env.eval.rollout_epoch=336",
-                "runner.val_check_interval=1",
-                *VELOCITY_MODEL,
-            ]
-        )
-    ).env.eval
-
-    def evaluate(env):
-        obs, _ = env.reset()
-        terminated = torch.zeros(1, dtype=torch.bool)
-        while not terminated.all():
-            _, _, terminated, _, infos = env.chunk_step(torch.zeros(2, 1, ACTION_DIM))
-        for _ in range(int(cfg.rollout_epoch)):
-            env.update_reset_state_ids()
-        return obs["states"], infos[0]["episode"]
-
-    torch.manual_seed(1)
-    env = G1MimicEvalEnv(cfg, num_envs=2, seed_offset=0, total_num_processes=1)
-    first = evaluate(env)
-    torch.manual_seed(2)
-    torch.rand(100, device="cuda")
-    process_rng = torch.get_rng_state()
-    repeated = evaluate(env)
-    assert torch.equal(torch.get_rng_state(), process_rng)
-    rebuilt = evaluate(
-        G1MimicEvalEnv(cfg, num_envs=2, seed_offset=0, total_num_processes=1)
-    )
-    for states, rows in (repeated, rebuilt):
-        torch.testing.assert_close(states, first[0])
-        for name, value in first[1].items():
-            torch.testing.assert_close(rows[name], value)

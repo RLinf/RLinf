@@ -14,6 +14,6 @@
 
 """Unitree G1 motion tracking for SuperMimic on MuJoCo Warp (mjlab).
 
-Reference motion, kinematics, reward, observation, and the simulator adapter.
+Reference motion, kinematics, reward, and the simulator adapter.
 Submodules are imported explicitly so mjlab loads only with the simulator.
 """

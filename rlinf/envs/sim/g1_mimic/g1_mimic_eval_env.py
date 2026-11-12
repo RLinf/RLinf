@@ -14,57 +14,45 @@
 
 """G1 evaluation vector for SuperMimic, driven by the generic eval loop.
 
-Evaluation is a table of jobs: one per reference clip (motion tracking), per
-smoke-test command, per Appendix G.2 trial and command, or per push trial.
-The jobs are dealt round-robin to the env ranks, and every rollout epoch
-starts the next ``num_envs`` jobs of this rank together; after
+Evaluation is a table of jobs: one per reference clip (motion tracking) or
+per push trial. The jobs are dealt round-robin to the env ranks, and every
+rollout epoch starts the next ``num_envs`` jobs of this rank together; after
 ``rollout_epoch`` epochs the next evaluation starts from the first jobs
-again. Rows run without
-sensor or action noise until their job ends. The vector reports done only
-when every row has ended, and then returns one result row per env in
-``infos["episode"]``. Rows past this rank's last job are padding with
-``valid = 0``.
+again. Rows run without randomization, reset noise or action noise until
+their job ends. The vector reports done only when every row has ended, and
+then returns one result row per env in ``infos["episode"]``. Rows past this
+rank's last job are padding with ``valid = 0``.
 
-Supported task sets: ``tracking`` and ``velocity_smoke`` (alone or
-together), ``velocity_g2`` alone, ``push_recovery`` alone. The G.2 test
-draws the sim context from the training distribution; push recovery holds a
-static standing reference.
+``tracking`` starts every clip at its first frame, as training resets do:
+the state is written at a frame and the reference clock points at the next
+one. ``push_recovery`` holds a static standing reference.
 """
 
 from __future__ import annotations
 
-import contextlib
-
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.algorithms.supermimic.representations import make_representation
+from rlinf.algorithms.supermimic.scan import root_goals
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     DT,
-    EPISODE_CLIP_END,
-    EPISODE_CONT,
-    EPISODE_FAILURE,
     MAX_TRACKING_REWARD,
     ROOT_LIN_VEL,
     ROOT_POS,
     ROOT_QUAT,
 )
-from rlinf.envs.sim.g1_mimic.eval_metrics import (
-    DEFAULT_SMOKE_COMMANDS,
-    EVAL_TASKS,
-    PUSH_RECOVERY,
-    TRACKING,
-    VELOCITY_G2,
-    VELOCITY_SMOKE,
+from rlinf.envs.sim.g1_mimic.eval_metrics import EVAL_TASKS, PUSH_RECOVERY, TRACKING
+from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.g1_fk import (
+    PELVIS_BODY,
+    TORSO_BODY,
+    asset_joint_limits,
+    set_kinematics_compile,
 )
-from rlinf.envs.sim.g1_mimic.g1_fk import asset_joint_limits, set_kinematics_compile
-from rlinf.envs.sim.g1_mimic.g1_mimic_env import (
-    build_motion_library,
-    env_device,
-    make_goal,
-)
+from rlinf.envs.sim.g1_mimic.g1_mimic_env import build_motion_library, env_device
 from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
-from rlinf.envs.sim.g1_mimic.obs import RollingHistory, analytic_obs
 from rlinf.envs.sim.g1_mimic.push_recovery import (
     OUTCOMES,
     REASONS,
@@ -84,27 +72,12 @@ from rlinf.envs.sim.g1_mimic.push_recovery import (
     world_push_xy,
 )
 from rlinf.envs.sim.g1_mimic.reward import (
-    TORSO,
-    analytic_reward,
     failure_signals,
-    forward_kinematics_pair,
+    rotation_angle,
+    tracking_reward,
     xy_yaw_drift,
 )
-from rlinf.envs.sim.g1_mimic.velocity import (
-    heading_velocity,
-    normalize_command,
-    step_test_commands,
-    velocity_fall,
-)
-from rlinf.scheduler import Worker
 
-_TASK_SETS = (
-    {TRACKING},
-    {VELOCITY_SMOKE},
-    {TRACKING, VELOCITY_SMOKE},
-    {VELOCITY_G2},
-    {PUSH_RECOVERY},
-)
 _PADDING = -1
 
 
@@ -119,48 +92,17 @@ def checked_policy_action(action: torch.Tensor, active: torch.Tensor) -> torch.T
     return torch.where(active.unsqueeze(-1), action, torch.zeros_like(action))
 
 
-def checked_eval_states(
-    next_state: torch.Tensor, ref_state: torch.Tensor, running: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Reject invalid active states and keep the other rows finite."""
-    invalid = running & (
-        ~torch.isfinite(next_state).all(dim=-1) | ~torch.isfinite(ref_state).all(dim=-1)
-    )
+def check_eval_states(state: torch.Tensor, active: torch.Tensor) -> None:
+    """Reject non-finite simulator states on active rows."""
+    invalid = ~torch.isfinite(state).all(dim=-1) & active
     if bool(invalid.any()):
         rows = invalid.nonzero(as_tuple=True)[0].tolist()
         raise RuntimeError(f"non-finite evaluation states in active rows {rows}")
-    next_state = next_state.clone()
-    ref_state = ref_state.clone()
-    inactive = ~running
-    if bool(inactive.any()):
-        replacement = ref_state[inactive]
-        bad = ~torch.isfinite(replacement).all(dim=-1)
-        if bool(bad.any()):
-            replacement = replacement.clone()
-            replacement[bad] = 0
-            replacement[bad, 3] = 1
-        finite_next = next_state[inactive]
-        use_ref = ~torch.isfinite(finite_next).all(dim=-1)
-        if bool(use_ref.any()):
-            finite_next = finite_next.clone()
-            finite_next[use_ref] = replacement[use_ref]
-        next_state[inactive] = finite_next
-        ref_state[inactive] = replacement
-    return next_state, ref_state
-
-
-def _rot_angle(rot: torch.Tensor, ref_rot: torch.Tensor) -> torch.Tensor:
-    trace = (ref_rot * rot).sum(dim=(-2, -1))
-    return torch.acos(((trace - 1.0) * 0.5).clamp(-1.0, 1.0))
 
 
 def _quat_geodesic(q: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
     dot = (q * ref).sum(dim=-1).abs().clamp(0.0, 1.0)
     return 2.0 * torch.acos(dot)
-
-
-def _seconds_to_steps(seconds: float) -> int:
-    return int(round(float(seconds) / DT))
 
 
 class G1MimicEvalEnv:
@@ -183,70 +125,24 @@ class G1MimicEvalEnv:
         self.device = env_device()
         set_kinematics_compile(bool(cfg.torch_compile))
         self.tasks = [str(task) for task in cfg.eval_tasks]
-        if set(self.tasks) not in _TASK_SETS or len(set(self.tasks)) != len(self.tasks):
+        if self.tasks not in ([TRACKING], [PUSH_RECOVERY]):
             raise ValueError(
-                "env.eval.eval_tasks must be tracking and/or velocity_smoke, "
-                f"velocity_g2 alone, or push_recovery alone; got {self.tasks}"
+                "env.eval.eval_tasks must be [tracking] or [push_recovery], "
+                f"got {self.tasks}"
             )
-        self.velocity = bool(cfg.velocity_tracking)
-        if not self.velocity and (
-            VELOCITY_SMOKE in self.tasks or VELOCITY_G2 in self.tasks
-        ):
-            raise ValueError(
-                "velocity evaluation needs a policy trained with velocity_tracking=true"
-            )
-        self.obs_dim = int(cfg.obs_dim)
-        self.include_ref_ori = self.obs_dim == 99
-        self.goal_encoding = str(cfg.goal_encoding)
-        self.goal_anchor = bool(cfg.goal_anchor)
-        self.reward_anchor = str(cfg.reward_anchor)
-        self.termination_body = str(cfg.termination_body)
+        self.representation = make_representation(str(cfg.representation)).to(
+            self.device
+        )
         self._chunk = 0
         self._t = 0
-
-        on_accelerator = self.device.type != "cpu"
-        self._rng_devices = [self.device] if on_accelerator else []
-        self._rng_device_type = self.device.type if on_accelerator else None
-        with self._fork_rng():
-            torch.manual_seed(self.seed + self.seed_offset)
-            self._save_rng()
-        with self._own_rng():
-            self._build_sim()
+        self._build_sim()
         joint_low, joint_high = asset_joint_limits()
         self.joint_low = joint_low.to(self.device)
         self.joint_high = joint_high.to(self.device)
-        self.q0 = self.motion.q0.to(self.device)
         self._build_jobs()
         self._allocate_rows()
 
     # ----------------------------------------------------------------- setup
-
-    def _fork_rng(self):
-        return torch.random.fork_rng(
-            devices=self._rng_devices, device_type=self._rng_device_type
-        )
-
-    def _save_rng(self) -> None:
-        self._cpu_rng = torch.get_rng_state()
-        self._device_rng = (
-            Worker.torch_platform.get_rng_state(self.device)
-            if self._rng_devices
-            else None
-        )
-
-    @contextlib.contextmanager
-    def _own_rng(self):
-        """Draw from this env's generator, leaving the process generator as it was.
-
-        The training env shares the process; evaluation must not shift its
-        random stream.
-        """
-        with self._fork_rng():
-            torch.set_rng_state(self._cpu_rng)
-            if self._device_rng is not None:
-                Worker.torch_platform.set_rng_state(self._device_rng, self.device)
-            yield
-            self._save_rng()
 
     def _build_sim(self) -> None:
         cfg = self.cfg
@@ -277,81 +173,40 @@ class G1MimicEvalEnv:
                 default_standing_state(),
                 reference_steps(self.settle_steps, self.post_steps),
             )
-            eval_mode = True
         else:
             self.motion = build_motion_library(cfg, self.device)
-            eval_mode = VELOCITY_G2 not in self.tasks
         self.sim = MjlabG1Env(
             num_envs=self.num_envs,
             motion=self.motion,
             device=self.device,
-            max_episode_seconds=1.0e6,
-            termination_body=self.termination_body,
-            eval_mode=eval_mode,
-            com_sampling="per_reset",
+            max_episode_seconds=None,
+            randomize=False,
         )
 
     def _build_jobs(self) -> None:
         """Global job table, then this rank's share of it."""
-        task_ids, args, trials, lengths = [], [], [], []
+        task_ids, args, lengths = [], [], []
 
-        def add(task, arg, trial, length):
+        def add(task, arg, length):
             task_ids.append(EVAL_TASKS.index(task))
             args.append(int(arg))
-            trials.append(int(trial))
             lengths.append(int(length))
 
-        cfg = self.cfg
         if TRACKING in self.tasks:
             clip_lengths = self.motion.clip_length(
                 torch.arange(self.motion.num_clips, device=self.device)
             ).tolist()
             for clip, length in enumerate(clip_lengths):
-                add(TRACKING, clip, 0, length)
-        if VELOCITY_SMOKE in self.tasks:
-            smoke = cfg.velocity_smoke
-            commands = smoke.get("commands", None)
-            commands = (
-                OmegaConf.to_container(commands, resolve=True)
-                if commands
-                else DEFAULT_SMOKE_COMMANDS
-            )
-            self.smoke_names = list(commands)
-            self.smoke_commands = torch.tensor(
-                [[float(x) for x in commands[name]] for name in self.smoke_names],
-                device=self.device,
-            )
-            self.smoke_start_clip = int(smoke.start_clip)
-            steps = int(round(float(smoke.seconds) / 0.02))
-            for index in range(len(self.smoke_names)):
-                add(VELOCITY_SMOKE, index, 0, steps)
-        if VELOCITY_G2 in self.tasks:
-            g2 = cfg.velocity_g2
-            table, self.g2_names, self.g2_planes = step_test_commands()
-            self.g2_commands = table.to(self.device)
-            self.g2_trials = int(g2.trials)
-            steps = _seconds_to_steps(g2.seconds)
-            self.g2_steady_steps = _seconds_to_steps(g2.steady_seconds)
-            if not 0 < self.g2_steady_steps <= steps:
-                raise ValueError(
-                    "velocity_g2.steady_seconds must be positive and at most "
-                    f"velocity_g2.seconds, got {g2.steady_seconds} and {g2.seconds}"
-                )
-            for trial in range(self.g2_trials):
-                for index in range(len(self.g2_names)):
-                    add(VELOCITY_G2, index, trial, steps)
+                # The first frame is the start state; every later frame is
+                # one control step.
+                add(TRACKING, clip, max(length - 1, 1))
         if PUSH_RECOVERY in self.tasks:
-            push = cfg.push_recovery
+            push = self.cfg.push_recovery
             self.push_plan = trial_plan(
                 self.push_speeds, int(push.trials), push.direction, self.seed
             )
             for item in self.push_plan:
-                add(
-                    PUSH_RECOVERY,
-                    item["trial"],
-                    item["trial"],
-                    self.settle_steps + self.post_steps,
-                )
+                add(PUSH_RECOVERY, item["trial"], self.settle_steps + self.post_steps)
             self.push_directions = torch.tensor(
                 [[item["direction_x"], item["direction_y"]] for item in self.push_plan],
                 device=self.device,
@@ -366,7 +221,6 @@ class G1MimicEvalEnv:
         self.job_task = torch.tensor(task_ids[local], dtype=torch.long)
         self.job_id = torch.arange(len(task_ids))[local]
         self.job_arg = torch.tensor(args[local], dtype=torch.long)
-        self.job_trial = torch.tensor(trials[local], dtype=torch.long)
         self.job_length = torch.tensor(lengths[local], dtype=torch.long)
         num_jobs = int(self.job_task.numel())
         rollout_epoch = int(self.cfg.rollout_epoch)
@@ -393,16 +247,14 @@ class G1MimicEvalEnv:
         self.row_task = torch.full((n,), _PADDING, dtype=torch.long, device=device)
         self.row_job = torch.full_like(self.row_task, _PADDING)
         self.row_arg = torch.zeros_like(self.row_task)
-        self.row_trial = torch.zeros_like(self.row_task)
         self.row_length = torch.zeros_like(self.row_task)
         self.alive = zeros(dtype=torch.bool)
         self.prev = zeros(ACTION_DIM)
-        self.command = zeros(3)
         self.acc = {
             name: zeros()
             for name in (
                 "return_sum",
-                "body_tracking",
+                "body_pos_err",
                 "torso_pos_err",
                 "torso_ori_err",
                 "free_root_pos_err",
@@ -413,15 +265,8 @@ class G1MimicEvalEnv:
                 "fail",
                 "clip_end",
                 "fail_step",
-                "lin_vel_err",
-                "yaw_rate_err",
-                "count",
-                "fall",
-                "fall_step",
-                "fell",
             )
         }
-        self.error_sum = zeros(3)
         if PUSH_RECOVERY in self.tasks:
             self.outcome = zeros(dtype=torch.long)
             self.reason = zeros(dtype=torch.long)
@@ -442,8 +287,7 @@ class G1MimicEvalEnv:
 
     def reset(self, *args, **kwargs):
         """Start the ``num_envs`` jobs of the current chunk of this rank."""
-        with self._own_rng():
-            self._start_jobs()
+        self._start_jobs()
         return self._observe(), {}
 
     def update_reset_state_ids(self) -> None:
@@ -463,9 +307,8 @@ class G1MimicEvalEnv:
                 f"G1 evaluation steps one action per call, got chunks of "
                 f"{actions.shape[1]}"
             )
-        with self._own_rng():
-            if bool(self.alive.any()):
-                self._step(actions[:, 0].to(self.device))
+        if bool(self.alive.any()):
+            self._step(actions[:, 0].to(self.device))
         done = bool((~self.alive).all())
         infos = {"episode": self._result_rows()} if done else {}
         terminations = torch.full((self.num_envs, 1), done, dtype=torch.bool)
@@ -481,15 +324,6 @@ class G1MimicEvalEnv:
             "num_clips": int(self.motion.num_clips),
             "clip_names": list(self.motion.clip_names),
         }
-        if VELOCITY_SMOKE in self.tasks:
-            meta["smoke_names"] = list(self.smoke_names)
-        if VELOCITY_G2 in self.tasks:
-            meta.update(
-                g2_names=list(self.g2_names),
-                g2_planes=list(self.g2_planes),
-                g2_trials=self.g2_trials,
-                g2_commands=self.g2_commands.cpu().tolist(),
-            )
         if PUSH_RECOVERY in self.tasks:
             push = self.cfg.push_recovery
             meta.update(
@@ -518,50 +352,23 @@ class G1MimicEvalEnv:
         self.row_task.fill_(_PADDING)
         self.row_job.fill_(_PADDING)
         self.row_arg.zero_()
-        self.row_trial.zero_()
         self.row_length.zero_()
         self.row_task[:count] = self.job_task[take].to(self.device)
         self.row_job[:count] = self.job_id[take].to(self.device)
         self.row_arg[:count] = self.job_arg[take].to(self.device)
-        self.row_trial[:count] = self.job_trial[take].to(self.device)
         self.row_length[:count] = self.job_length[take].to(self.device)
         self.alive = self.row_task != _PADDING
         self.prev.zero_()
-        self.command.zero_()
         for value in self.acc.values():
             value.zero_()
-        self.error_sum.zero_()
 
         ids = torch.arange(n, device=self.device)
-        if VELOCITY_G2 in self.tasks:
-            # The step test reseeds once per vector of trials; with one rank
-            # the seeds follow the job chunks.
-            torch.manual_seed(
-                self.seed + self._chunk * self.total_num_processes + self.seed_offset
-            )
-            self.sim.reset_standing(ids)
-            g2 = self._is(VELOCITY_G2)
-            self.command[g2] = self.g2_commands[self.row_arg[g2]]
-        else:
-            clip = torch.zeros_like(ids)
-            tracking = self._is(TRACKING)
-            clip[tracking] = self.row_arg[tracking]
-            if VELOCITY_SMOKE in self.tasks:
-                smoke = self._is(VELOCITY_SMOKE)
-                clip[smoke] = self.smoke_start_clip
-                self.command[smoke] = self.smoke_commands[self.row_arg[smoke]]
-            self.sim.reset(ids, clip, torch.zeros_like(ids))
-
-        sim = self.sim
-        state, ref = checked_eval_states(sim.state, sim.reference_state(), self.alive)
-        self.history = RollingHistory(
-            analytic_obs(state, self.prev, sim.xi, self.q0, ref_quat=self._quat(ref))
-        )
+        clip = torch.where(self._is(TRACKING), self.row_arg, torch.zeros_like(ids))
+        self.sim.reset(ids, clip, torch.zeros_like(ids))
+        self.sim.motion_time += 1
+        check_eval_states(self.sim.state, self.alive)
         if PUSH_RECOVERY in self.tasks:
             self._start_push_trials()
-
-    def _quat(self, ref: torch.Tensor) -> torch.Tensor | None:
-        return ref[..., ROOT_QUAT] if self.include_ref_ori else None
 
     def _start_push_trials(self) -> None:
         self.outcome.fill_(OUTCOMES.index("initialization_failed"))
@@ -574,9 +381,7 @@ class G1MimicEvalEnv:
         if self.save_trajectory:
             self.trajectory.fill_(float("nan"))
         sim = self.sim
-        _, _, failed = failure_signals(
-            sim.state, sim.reference_state(), termination_body=self.termination_body
-        )
+        _, _, failed = failure_signals(sim.state, sim.reference_state())
         self._stop_before_push(
             self.alive,
             initialization_reason(sim.state, self.joint_low, self.joint_high, failed),
@@ -597,68 +402,57 @@ class G1MimicEvalEnv:
         running = self.alive.clone()
         action = checked_policy_action(action, running)
         result = self.sim.step(action)
-        end_kind = result["end_kind"]
-        next_raw, ref_raw = result["next_state"], result["ref_state"]
         is_push = self._is(PUSH_RECOVERY)
-        next_state, ref_state = checked_eval_states(
-            next_raw, ref_raw, running & ~is_push
-        )
+        check_eval_states(self.sim.state, running & ~is_push)
         if TRACKING in self.tasks:
             rows = running & self._is(TRACKING)
-            self._track(rows, action, next_state, ref_state)
-            self._count_ends(t, rows, end_kind)
-            self.alive = torch.where(rows, end_kind == EPISODE_CONT, self.alive)
-        if VELOCITY_SMOKE in self.tasks or VELOCITY_G2 in self.tasks:
-            self._follow_command(t, running, next_state)
+            self._track(rows, action, result)
+            self._count_ends(t, rows, result)
+            ended = result["failure"] | result["clip_end"]
+            self.alive = torch.where(rows, ~ended, self.alive)
         self.prev = torch.where(running.unsqueeze(-1), action, self.prev)
-
-        sim = self.sim
-        fresh = analytic_obs(
-            sim.state, self.prev, sim.xi, self.q0, ref_quat=self._quat(ref_raw)
-        )
-        # Tracking and push rows keep the frame of the step they ran; velocity
-        # rows stop updating once they fall.
-        velocity_rows = self._is(VELOCITY_SMOKE) | self._is(VELOCITY_G2)
-        rows = torch.where(velocity_rows, self.alive, running)
-        use = rows.unsqueeze(-1) & torch.isfinite(fresh)
-        self.history.push(torch.where(use, fresh, self.history.last()))
-
         if PUSH_RECOVERY in self.tasks:
             self._push_step(t, running & is_push, result)
         self.alive = self.alive & (t + 1 < self.row_length)
 
-    def _track(self, rows, action, next_state, ref_state) -> None:
-        state_fk, ref_fk = forward_kinematics_pair(next_state, ref_state)
-        pack = analytic_reward(
-            next_state,
-            ref_state,
+    def _track(self, rows, action, result) -> None:
+        sim = self.sim
+        state, ref_state = sim.state, result["ref_state"]
+        pos, quat, lin, ang = sim.body_state()
+        body = (pos, quat_to_rotmat(quat), lin, ang)
+        ref = self.motion.body_state(result["frame"])
+        reward = tracking_reward(
+            state[:, ROOT_POS],
+            quat_to_rotmat(state[:, ROOT_QUAT]),
+            body,
+            ref,
+            state[:, 7:36],
             action,
             self.prev,
-            self.joint_low,
-            self.joint_high,
-            state_fk=state_fk,
-            ref_fk=ref_fk,
-            reward_anchor=self.reward_anchor,
+            sim.soft_limits,
         )
-        xy, yaw = xy_yaw_drift(next_state, ref_state)
-        body_pos, body_rot, _, _ = state_fk
-        ref_body_pos, ref_body_rot, _, _ = ref_fk
+        relative = pos - pos[:, PELVIS_BODY : PELVIS_BODY + 1]
+        ref_relative = ref[0] - ref[0][:, PELVIS_BODY : PELVIS_BODY + 1]
+        xy, yaw = xy_yaw_drift(state, ref_state)
         acc = self.acc
         for name, value in (
-            ("return_sum", pack["reward"]),
-            ("body_tracking", pack["body_tracking"]),
+            ("return_sum", reward),
+            ("body_pos_err", (relative - ref_relative).norm(dim=-1).mean(-1)),
             (
                 "torso_pos_err",
-                (body_pos[:, TORSO] - ref_body_pos[:, TORSO]).norm(dim=-1),
+                (pos[:, TORSO_BODY] - ref[0][:, TORSO_BODY]).norm(dim=-1),
             ),
-            ("torso_ori_err", _rot_angle(body_rot[:, TORSO], ref_body_rot[:, TORSO])),
+            (
+                "torso_ori_err",
+                rotation_angle(body[1][:, TORSO_BODY], ref[1][:, TORSO_BODY]),
+            ),
             (
                 "free_root_pos_err",
-                (next_state[..., :3] - ref_state[..., :3]).norm(dim=-1),
+                (state[:, ROOT_POS] - ref_state[:, ROOT_POS]).norm(dim=-1),
             ),
             (
                 "free_root_ori_err",
-                _quat_geodesic(next_state[..., 3:7], ref_state[..., 3:7]),
+                _quat_geodesic(state[:, ROOT_QUAT], ref_state[:, ROOT_QUAT]),
             ),
         ):
             acc[name] = torch.where(rows, acc[name] + value, acc[name])
@@ -666,64 +460,30 @@ class G1MimicEvalEnv:
             acc[name] = torch.where(rows, torch.maximum(acc[name], value), acc[name])
         acc["steps"] = torch.where(rows, acc["steps"] + 1, acc["steps"])
 
-    def _count_ends(self, t, rows, end_kind) -> None:
+    def _count_ends(self, t, rows, result) -> None:
+        """A fall on the clip's last frame counts as reaching the clip end."""
         acc = self.acc
-        new_fail = rows & (end_kind == EPISODE_FAILURE)
+        clip_end = rows & result["clip_end"]
+        new_fail = rows & result["failure"] & ~result["clip_end"]
         acc["fail"] = acc["fail"] + new_fail.float()
-        acc["clip_end"] = acc["clip_end"] + (rows & (end_kind == EPISODE_CLIP_END))
+        acc["clip_end"] = acc["clip_end"] + clip_end.float()
         acc["fail_step"] = torch.where(
             new_fail, torch.full_like(acc["fail_step"], float(t)), acc["fail_step"]
         )
 
-    def _follow_command(self, t, running, next_state) -> None:
-        acc = self.acc
-        planar, yaw_rate = heading_velocity(next_state)
-        error = torch.cat(
-            (
-                planar - self.command[:, :2],
-                (yaw_rate - self.command[:, 2]).unsqueeze(-1),
-            ),
-            dim=-1,
-        )
-        fallen = velocity_fall(next_state) | ~torch.isfinite(next_state).all(dim=-1)
-
-        smoke = running & self._is(VELOCITY_SMOKE)
-        acc["lin_vel_err"] = torch.where(
-            smoke, acc["lin_vel_err"] + error[:, :2].norm(dim=-1), acc["lin_vel_err"]
-        )
-        acc["yaw_rate_err"] = torch.where(
-            smoke, acc["yaw_rate_err"] + error[:, 2].abs(), acc["yaw_rate_err"]
-        )
-        acc["count"] = torch.where(smoke, acc["count"] + 1, acc["count"])
-        new_fall = smoke & fallen
-        acc["fall"] = acc["fall"] + new_fall.float()
-        acc["fall_step"] = torch.where(
-            new_fall, torch.full_like(acc["fall_step"], float(t)), acc["fall_step"]
-        )
-
-        g2 = running & self._is(VELOCITY_G2)
-        if VELOCITY_G2 in self.tasks:
-            steady = g2 & (t >= self.row_length - self.g2_steady_steps)
-            self.error_sum = torch.where(
-                steady.unsqueeze(-1), self.error_sum + error, self.error_sum
-            )
-            acc["fell"] = torch.where(g2 & fallen, 1.0, acc["fell"])
-        self.alive = self.alive & ~((smoke | g2) & fallen)
-
     def _push_step(self, t: int, rows: torch.Tensor, result: dict) -> None:
         if not bool(rows.any()):
             return
-        if bool((rows & (result["end_kind"] == EPISODE_CLIP_END)).any()):
+        if bool((rows & result["clip_end"]).any()):
             raise RuntimeError("the static reference clip ended during push recovery")
         sim = self.sim
-        state, ref = result["next_state"], result["ref_state"]
+        state, ref = sim.state, result["ref_state"]
         if t < self.settle_steps:
-            self._record(rows, t, 0, sim.state, sim.reference_state())
-            failed = result["motion_failure"] | (result["end_kind"] == EPISODE_FAILURE)
+            self._record(rows, t, 0, state, sim.reference_state())
             self._stop_before_push(
                 rows,
                 initialization_reason(
-                    sim.state, self.joint_low, self.joint_high, failed
+                    state, self.joint_low, self.joint_high, result["failure"]
                 ),
             )
             if t == self.settle_steps - 1:
@@ -732,7 +492,7 @@ class G1MimicEvalEnv:
         index = t - self.settle_steps
         self._record(rows, self.settle_steps + 1 + index, 2, state, ref)
         nonfinite = ~torch.isfinite(state).all(dim=-1)
-        failed = nonfinite | result["motion_failure"]
+        failed = nonfinite | result["failure"]
         stable = is_stable(
             state,
             ref,
@@ -812,28 +572,13 @@ class G1MimicEvalEnv:
     # ---------------------------------------------------------------- output
 
     def _observe(self) -> dict[str, torch.Tensor]:
-        """``states``: history, goal and, with velocity tracking, command and task.
-
-        Velocity rows carry task 1 and read the normalized command; the other
-        rows read the goal.
-        """
+        """``states``: the representation's encoding and the actor goal."""
         sim = self.sim
-        goal = make_goal(
-            self.motion,
-            self.goal_encoding,
-            self.goal_anchor,
-            sim.motion_id,
-            sim.motion_time,
-            sim.state,
+        full = self.representation.stored_state(sim.state, sim.body_state())
+        _, goal = root_goals(
+            self.representation.root(full), *self.motion.goal_window(sim.frame())
         )
-        parts = [self.history.flat(), goal]
-        if self.velocity:
-            velocity_rows = self._is(VELOCITY_SMOKE) | self._is(VELOCITY_G2)
-            parts += [
-                normalize_command(self.command),
-                velocity_rows.float().unsqueeze(-1),
-            ]
-        return {"states": torch.cat(parts, dim=-1)}
+        return {"states": torch.cat((self.representation.encode(full), goal), dim=-1)}
 
     def _result_rows(self) -> dict[str, torch.Tensor]:
         acc = self.acc
@@ -850,10 +595,10 @@ class G1MimicEvalEnv:
                     "tracking.clip_id": self.row_arg,
                     "tracking.normalized_return": acc["return_sum"]
                     / (MAX_TRACKING_REWARD * scheduled),
-                    "tracking.body_tracking": acc["body_tracking"],
                     **{
                         f"tracking.{name}": acc[name] / steps
                         for name in (
+                            "body_pos_err",
                             "torso_pos_err",
                             "torso_ori_err",
                             "free_root_pos_err",
@@ -870,37 +615,6 @@ class G1MimicEvalEnv:
                     "tracking.steps": acc["steps"].long(),
                     "tracking.return_sum": acc["return_sum"],
                     "tracking.scheduled_steps": scheduled.long(),
-                }
-            )
-        if VELOCITY_SMOKE in self.tasks:
-            count = acc["count"].clamp_min(1.0)
-            rows.update(
-                {
-                    "velocity_smoke.command_index": self.row_arg,
-                    "velocity_smoke.command": self.command,
-                    "velocity_smoke.lin_vel_err": acc["lin_vel_err"] / count,
-                    "velocity_smoke.yaw_rate_err": acc["yaw_rate_err"] / count,
-                    "velocity_smoke.fall": acc["fall"].long(),
-                    "velocity_smoke.fall_time_s": (acc["fall_step"] + 1.0)
-                    * DT
-                    * acc["fall"],
-                    "velocity_smoke.survival_s": acc["count"] * DT,
-                    "velocity_smoke.scheduled_s": self.row_length.float() * DT,
-                }
-            )
-        if VELOCITY_G2 in self.tasks:
-            relative = (self.error_sum / float(self.g2_steady_steps)).norm(
-                dim=-1
-            ) / self.command.norm(dim=-1)
-            fell = acc["fell"] > 0
-            rows.update(
-                {
-                    "velocity_g2.trial": self.row_trial,
-                    "velocity_g2.command_index": self.row_arg,
-                    "velocity_g2.relative_error": torch.where(
-                        fell, torch.full_like(relative, float("nan")), relative
-                    ),
-                    "velocity_g2.fell": fell.long(),
                 }
             )
         if PUSH_RECOVERY in self.tasks:

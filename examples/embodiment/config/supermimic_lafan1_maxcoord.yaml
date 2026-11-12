@@ -1,0 +1,14 @@
+# SuperMimic motion tracking on LAFAN1 with the maximal-coordinate state:
+# the tracked bodies' poses and twists in the pelvis frame. Everything else
+# follows supermimic_lafan1_gencoord.
+defaults:
+  - supermimic_lafan1_gencoord
+  - _self_
+
+runner:
+  logger:
+    experiment_name: supermimic_lafan1_maxcoord
+
+actor:
+  model:
+    representation: maxcoord
