@@ -1,0 +1,19 @@
+-r agentlightning_constraints.txt
+
+# Install into the SGLang 0.5.12.post1 / Torch 2.8 Ascend environment.
+torch==2.8.0
+agentlightning==0.3.0
+autogen-agentchat==0.7.5
+autogen-ext[openai,mcp]==0.7.5
+mcp==1.12.4
+mcp-server-calculator==0.2.1
+
+# Match SGLang's SDK/audio pins and AgentOps' packaging<25 constraint.
+openai==2.6.1
+soundfile==0.13.1
+litellm[proxy]==1.79.2
+typer==0.24.2
+virtualenv==20.31.2
+
+# MCP 1.12 imports eval_type_backport, removed in Pydantic 2.14.
+pydantic==2.12.5
