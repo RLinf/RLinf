@@ -1184,6 +1184,23 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     )
 
 
+def _validate_env_pipeline_shards(
+    total_num_envs: int, env_world_size: int, stage_num: int, split: str
+) -> None:
+    """Validate that a split has a nonempty shard for each worker and stage."""
+    assert env_world_size > 0 and stage_num > 0, (
+        f"Expected positive environment worker and pipeline stage counts, "
+        f"got {env_world_size} and {stage_num}."
+    )
+    # Each worker-stage pair gets one equal-sized environment shard.
+    num_shards = env_world_size * stage_num
+    assert total_num_envs > 0 and total_num_envs % num_shards == 0, (
+        f"Expected env.{split}.total_num_envs to be a positive multiple of "
+        f"{num_shards} ({env_world_size} workers × {stage_num} stages), "
+        f"got {total_num_envs}."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1559,17 +1576,8 @@ def validate_embodied_cfg(cfg):
             "env.eval config is required when runner.val_check_interval > 0, "
             "runner.only_eval=True, or runner.task_type=embodied_eval."
         )
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        _validate_env_pipeline_shards(
+            cfg.env.eval.total_num_envs, env_world_size, stage_num, "eval"
         )
         assert (
             cfg.env.eval.total_num_envs
@@ -1609,17 +1617,8 @@ def validate_embodied_cfg(cfg):
             )
 
     if not only_eval:
-        assert cfg.env.train.total_num_envs > 0, (
-            "Total number of parallel environments for training must be greater than 0"
-        )
-        assert cfg.env.train.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for training must be divisible by the number of environment processes"
-        )
-        assert cfg.env.train.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for training must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.train.total_num_envs // env_world_size // stage_num > 0, (
-            "env.train.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        _validate_env_pipeline_shards(
+            cfg.env.train.total_num_envs, env_world_size, stage_num, "train"
         )
         assert (
             cfg.env.train.total_num_envs
@@ -1766,17 +1765,8 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
         component_placement = HybridComponentPlacement(cfg, Cluster())
         stage_num = cfg.rollout.pipeline_stage_num
         env_world_size = component_placement.get_world_size("env")
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+        _validate_env_pipeline_shards(
+            cfg.env.eval.total_num_envs, env_world_size, stage_num, "eval"
         )
         assert (
             cfg.env.eval.total_num_envs
