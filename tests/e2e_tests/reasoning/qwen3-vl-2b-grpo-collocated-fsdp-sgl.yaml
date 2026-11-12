@@ -17,7 +17,7 @@ runner:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: 1
@@ -115,7 +115,7 @@ rollout:
   print_outputs: False
 
   max_running_requests: 64
-  cuda_graph_max_bs: 128
+  cuda_graph_max_bs: 32
 
 data:
   type: vlm

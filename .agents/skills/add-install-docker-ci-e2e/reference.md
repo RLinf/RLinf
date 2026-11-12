@@ -84,6 +84,6 @@ So `run.sh <name>` runs the config `<name>.yaml`.
 - Job id: `embodied-<model>-<env>-test`
 - “Create embodied environment”: set `UV_PATH`, `UV_LINK_MODE`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and any path vars (`GR00T_PATH`, `BEHAVIOR_PATH`, etc.), then `bash requirements/install.sh embodied --model <model> --env <env>`
 - “<Description> test”: `source .venv/bin/activate`, `export REPO_PATH=$(pwd)`, then `bash tests/e2e_tests/embodied/run.sh <config_name>` (or `run_async.sh` for async)
-- “Clean up”: `rm -rf .venv`, `uv cache prune`
+- “Clean up”: `rm -rf .venv` (do not run `uv cache prune` on the shared CI cache)
 
 All e2e jobs use `runs-on: embodied`.

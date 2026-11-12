@@ -31,7 +31,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   dynamic-scheduler-reason-qwen-grpo-test:
     runs-on: reason
@@ -90,4 +89,3 @@ jobs:
       - name: Clean up
         run: |
           rm -rf rlinf/.venv rlinf/.venv-vllm
-          uv cache prune

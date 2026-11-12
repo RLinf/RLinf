@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/genesis_cubepick_ppo_mlp
     project_name: rlinf
     experiment_name: ci-test
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1

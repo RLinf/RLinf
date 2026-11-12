@@ -31,7 +31,11 @@ from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
 )
 from rlinf.data.schema.reasoning_requests import get_batch_size, get_seq_length
-from rlinf.data.schema.reasoning_results import BatchResizingIterator, RolloutResult
+from rlinf.data.schema.reasoning_results import (
+    BatchResizingIterator,
+    DynamicRolloutResult,
+    RolloutResult,
+)
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
@@ -274,7 +278,7 @@ class MegatronWorker(MegatronModelManager, Worker):
 
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
-    ) -> tuple[dict[str, torch.Tensor], RolloutResult]:
+    ) -> tuple[dict[str, torch.Tensor], RolloutResult | DynamicRolloutResult]:
         if tag is not None:
             # for pipeline mode to filter channel communicate time.
             start_time = time.perf_counter()
@@ -300,11 +304,16 @@ class MegatronWorker(MegatronModelManager, Worker):
                 ],
             )
 
-        batch = result.to_actor_batch(
-            self.cfg.data.max_prompt_length,
-            self.role_cfg.model.encoder_seq_length,
-            self.tokenizer.eos_token_id,
-        )
+        if isinstance(result, DynamicRolloutResult):
+            batch = result.to_actor_batch(
+                self.role_cfg.model.encoder_seq_length, self.tokenizer.eos_token_id
+            )
+        else:
+            batch = result.to_actor_batch(
+                self.cfg.data.max_prompt_length,
+                self.role_cfg.model.encoder_seq_length,
+                self.tokenizer.eos_token_id,
+            )
 
         if tag is not None:
             duration = time.perf_counter() - start_time
