@@ -171,6 +171,39 @@ LLM 推理任务的配置与具身任务的配置有相似之处。
       ...
        
 
+3.3. 多轮 Agent 任务
+~~~~~~~~~~~~~~~~~~~~
+
+模型和数据准备参见 :doc:`Search-R1 训练 </rst_source/examples/agentic/searchr1/qwen2.5>`。使用 ``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``，关键配置如下：
+
+.. code-block:: yaml
+
+   runner:
+     synchronous: true
+
+   algorithm:
+     group_size: 1
+     adv_type: gae_dynamic
+     gamma: 1.0
+     gae_lambda: 1.0
+     normalize_advantages: true
+     use_valid_token_scale: true
+     kl_beta: 0.0
+     loss_scales: []
+     recompute_logprobs: false
+
+   critic:
+     use_critic_model: true
+
+   rollout:
+     return_logprobs: true
+
+通过 Search-R1 训练脚本启动 PPO：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
+
 4. 注意事项
 -----------
 
