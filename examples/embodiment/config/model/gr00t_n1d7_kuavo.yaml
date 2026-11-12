@@ -1,0 +1,12 @@
+defaults:
+  - gr00t_n1d7
+  - _self_
+
+action_dim: 16
+num_action_chunks: 16
+obs_converter_type: kuavo
+embodiment_tag: new_embodiment
+
+rl_head_config:
+  # Absolute joint targets can lie outside the exploration clamp's [-1, 1] range.
+  action_noise_scale: 0.0

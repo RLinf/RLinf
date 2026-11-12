@@ -33,6 +33,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] RLinf 支持 Kuavo 4pro、5 和 5w 机器人的关节控制接口。文档：[Kuavo 硬件配置](docs/source-zh/rst_source/guides/realworld_robot.rst#kuavo-硬件配置)。
 - [2026/11] 🔥 RLinf 支持 DiffusionART，使用 OCR 奖励微调 SD3 图像生成模型和 Wan2.2 视频生成模型。文档：[DiffusionART](docs/source-zh/rst_source/examples/diffusion_art.rst)。
 - [2026/11] 🔥 RLinf 支持 LIBERO-Mem，并为 OpenPI 提供受 MEM 启发的视觉短期记忆，用于监督微调和评测。文档：[LIBERO-Mem](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark)、[OpenPI Short Memory](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0/short_memory.html)。
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
@@ -323,6 +324,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
+          <li><a href="docs/source-zh/rst_source/guides/realworld_robot.rst#kuavo-硬件配置">Kuavo（4pro / 5 / 5w）</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
           <li>More...</li>
         </ul>
