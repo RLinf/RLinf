@@ -2490,6 +2490,70 @@ def test_lingbotvlav2_replay_reproduces_the_sampled_sde_step():
     assert weight.grad is not None and torch.isfinite(weight.grad)
 
 
+def test_lingbotvlav2_sft_loss_averages_masked_coordinates_on_the_rollout_path():
+    from rlinf.models.embodiment.lingbotvlav2.utils import (
+        flow_matching_loss,
+        sample_with_one_sde_step,
+    )
+
+    torch.manual_seed(0)
+    actions, noise = torch.randn(2, 50, 55), torch.randn(2, 50, 55)
+    mask = torch.zeros(2, 50, 55)
+    mask[..., :14] = 1
+    time = torch.tensor([0.3, 0.8])
+    target = noise - actions
+    # Velocity error 2 on kept coordinates and 100 on masked ones.
+    offset = torch.where(mask.bool(), 2.0, 100.0)
+
+    loss = flow_matching_loss(actions, mask, lambda x, t: target + offset, time, noise)
+    torch.testing.assert_close(loss, torch.tensor(4.0))
+
+    # The target velocity carries the rollout from noise to the actions.
+    final, _, _ = sample_with_one_sde_step(
+        noise, lambda x, t: target, torch.linspace(1, 0, 11), 0.3, None
+    )
+    torch.testing.assert_close(final, actions)
+
+    with pytest.raises(ValueError, match="one shape"):
+        flow_matching_loss(actions, mask[:, 0], lambda x, t: target, time, noise)
+
+
+def test_lingbotvlav2_sft_draws_the_flow_matching_noise_before_the_time():
+    from rlinf.models.embodiment.lingbotvlav2.utils import (
+        sample_flow_matching_inputs,
+    )
+
+    actions = torch.zeros(2, 50, 55)
+
+    # The V2 package samples the time from two torch.rand calls, so it shares
+    # the global RNG with the noise and the draw order decides both values.
+    def sample_time(bsize, device):
+        return torch.rand((bsize,), device=device)
+
+    torch.manual_seed(0)
+    noise, time = sample_flow_matching_inputs(actions, sample_time)
+    torch.manual_seed(0)
+    expected_noise = torch.randn_like(actions)
+    expected_time = torch.rand(2)
+
+    torch.testing.assert_close(noise, expected_noise, rtol=0, atol=0)
+    torch.testing.assert_close(time, expected_time, rtol=0, atol=0)
+
+
+def test_lingbotvlav2_eval_noise_is_independent_of_global_rng_and_advances():
+    from rlinf.models.embodiment.lingbotvlav2.utils import EvalNoiseSampler
+
+    first, second = EvalNoiseSampler(7), EvalNoiseSampler(7)
+    shape, device = (2, 50, 55), torch.device("cpu")
+    initial = first.sample(shape, device)
+    torch.randn(1000)
+    torch.testing.assert_close(initial, second.sample(shape, device), rtol=0, atol=0)
+    following = first.sample(shape, device)
+    assert not torch.equal(initial, following)
+    torch.testing.assert_close(following, second.sample(shape, device), rtol=0, atol=0)
+    assert not torch.equal(initial, EvalNoiseSampler(8).sample(shape, device))
+
+
 def test_lingbotvlav2_rl_trains_the_action_expert_but_not_its_routers():
     from rlinf.models.embodiment.lingbotvlav2.utils import is_rl_trainable
 
@@ -2600,6 +2664,37 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
+
+    
+def test_lingbotvlav2_grpo_smoke_config_composes(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_embodied_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", "/explicit/asset")
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", "/explicit/lingbot-vla-v2")
+    with initialize_config_dir(
+        config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_grpo_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+    assert cfg.algorithm.adv_type == "grpo" and cfg.algorithm.loss_type == "actor"
+    assert not cfg.actor.model.add_value_head
+    assert cfg.env.train.group_size == cfg.algorithm.group_size == 2
+    assert cfg.env.train.total_num_envs % cfg.algorithm.group_size == 0
+    assert (
+        cfg.actor.model.forward_micro_batch_size
+        == cfg.actor.micro_batch_size
+        == cfg.env.train.total_num_envs // 2
+    )
+    # Two ranks, one pipeline stage: neither pass may split a rollout worker's
+    # envs into chunks of unequal shape.
+    assert (
+        cfg.env.eval.total_num_envs // 2
+    ) % cfg.actor.model.forward_micro_batch_size == 0
+    validate_embodied_cfg(cfg)
 
 
 @pytest.mark.parametrize(

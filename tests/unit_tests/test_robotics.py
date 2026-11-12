@@ -1714,11 +1714,11 @@ def test_env_packages_live_under_sim_or_real():
             "    except ModuleNotFoundError:\n"
             "        continue\n"
             "    raise AssertionError(name + ' still resolves')\n"
-            # maniskill imports every task on import, and those reach sapien,
-            # which a venv without the simulator extras does not have.
+            # maniskill imports every task on import, so probe mani_skill
+            # itself: a RoboTwin venv has sapien without the maniskill extras.
             "import rlinf.envs.real, rlinf.envs.utils\n"
             "import importlib.util\n"
-            "if importlib.util.find_spec('sapien') is not None:\n"
+            "if importlib.util.find_spec('mani_skill') is not None:\n"
             "    import rlinf.envs.sim.maniskill\n",
         ],
         cwd=_ROOT,

@@ -136,7 +136,7 @@ Open a model page for the full workflow and its supported environments.
          <a href="embodied/lingbotvla_index.html" style="text-decoration: underline; color: blue;">
            <b>RL with LingbotVLA Models</b>
          </a><br>
-         Support LingbotVLA 1.0 (GRPO) and 2.0 (PPO) + RoboTwin
+         Support LingbotVLA 1.0 (GRPO) and 2.0 (SFT, PPO, GRPO) + RoboTwin
        </p>
      </div>
 
