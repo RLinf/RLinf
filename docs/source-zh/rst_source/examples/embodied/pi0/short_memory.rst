@@ -8,7 +8,38 @@ Short Memory 让 OpenPI π₀.₅ 在 SFT 和评测时读取近期的相机历�
 
 单张图像能显示碗放在盘子上，却未必能判断机器人此前是否已经举起过碗。Short Memory 把此前的画面也交给模型，供下一步动作使用。每个相机的输入从单帧变为同一 episode 内从旧到新的一组图像；state、prompt 和训练 action target 仍属于当前时刻。
 
-这些帧一起进入 SigLIP。在指定层，每个图像 patch 先沿时间轴，关注相同网格位置在当前及过去有效帧中的特征；相对时间编码表示各帧距当前时刻有多久。随后再在每帧内部做空间 attention，使用原来的 Q、K 和刚经过时间混合的 V。两步复用 SigLIP 原有的 attention 投影，时间编码也是固定的，因此没有新增可学习参数。
+这些帧一起进入 SigLIP。在指定层，先沿时间轴混合同一 patch 位置的历史特征，再在每帧内部混合不同 patch。下面按一个 attention head 说明这两步，省略 batch 维度。
+
+设有 :math:`T` 帧、每帧 :math:`P` 个 patch，每个 head 的特征维度为 :math:`d`。帧索引 :math:`t=1,\ldots,T` 从旧到新，:math:`t=T` 是当前帧；:math:`p=1,\ldots,P` 表示 patch 位置。各帧先加入固定相对时间编码 :math:`e(\tau_t)=\mathrm{PE}(\tau_t)-\mathrm{PE}(0)`。PE 是固定的正余弦编码，:math:`\tau_t` 是相对当前帧的时间差，单位为秒；减去 PE(0) 使当前帧的时间编码为零。经过该层的 LayerNorm 和 SigLIP 原有投影，得到 :math:`Q,K,V\in\mathbb{R}^{T\times P\times d}`，分别表示 query、key 和 value。
+
+Attention 用 Q 与 K 的相似度确定 V 的加权和：
+
+.. math::
+
+   \operatorname{Attn}(Q,K,V;M)
+   = \operatorname{softmax}_{\mathrm{row}}\!\left(
+       \frac{QK^\top}{\sqrt{d}}+M
+     \right)V.
+
+这里 softmax 对每个 query 对应的一行 key 分数归一化；:math:`1/\sqrt{d}` 缩放相似度，:math:`M` 是加性 mask：允许读取的位置为零，禁止的位置为 :math:`-\infty`，对应权重为零。
+
+**时间混合。** 固定 patch 位置 :math:`p`，沿帧维度计算：
+
+.. math::
+
+   \widetilde V_{:,p,:}
+   = \operatorname{Attn}(Q_{:,p,:},K_{:,p,:},V_{:,p,:};M_{\mathrm{time}}).
+
+冒号表示保留该维度的全部元素，因此这里的输入都是 :math:`T\times d` 矩阵。对有效 query 帧 :math:`t`，:math:`M_{\mathrm{time}}[t,s]` 仅在 :math:`s\leq t` 且第 :math:`s` 帧有效时为零，其余为 :math:`-\infty`。也就是说，同一网格位置只读取当前和过去的有效帧，得到带历史信息的 :math:`\widetilde V`；padding 帧的输出在每层结束时清零。
+
+**空间混合。** 固定帧 :math:`t`，沿 patch 维度计算：
+
+.. math::
+
+   O_{t,:,:}
+   = \operatorname{Attn}(Q_{t,:,:},K_{t,:,:},\widetilde V_{t,:,:};0).
+
+这一步的输入是 :math:`P\times d` 矩阵，帧内所有 patch 互相可见。Q、K 仍是最初的投影结果，只有 V 换成时间混合后的 :math:`\widetilde V`，而不是再从 :math:`\widetilde V` 生成一套 Q、K、V。各个 head 的输出 O 拼接后经过原有输出投影、残差连接和 MLP。整个过程复用 SigLIP 的参数，固定时间编码也没有可学习权重。
 
 默认在零起始的第 ``[3, 7, 11, 15]`` 层混合时间信息。第 15 层结束后，只留下已融合历史信息的当前帧特征，交给剩余视觉层和语言模型。因此，送入语言模型的视觉 token 数保持不变，增加历史主要增加前半段的视觉计算量。SFT 仍用原有的 flow-matching loss 更新网络权重。
 

@@ -14,13 +14,61 @@ when choosing its next action. Each camera supplies frames from the same
 episode, ordered from oldest to current; state, prompt and action targets still
 belong to the current step.
 
-The frames enter SigLIP together. At selected layers, each image patch first
-attends along time to the same patch position in current and earlier valid
-frames. Relative-time encoding tells the model how old each frame is. Spatial
-attention then mixes patches within each frame. It uses the original queries
-and keys, with the values produced by temporal attention. Both operations reuse
-SigLIP's attention projections; the time encoding is fixed, so this introduces
-no new learned parameters.
+The frames enter SigLIP together. At selected layers, attention first mixes
+history at each patch position, then mixes patches within each frame. The
+equations below describe one attention head, omitting the batch dimension.
+
+Let :math:`T` be the number of frames, :math:`P` the patches per frame, and
+:math:`d` the feature width of one head. Frames :math:`t=1,\ldots,T` run from
+oldest to current, so :math:`t=T` is current; :math:`p=1,\ldots,P` indexes patch
+positions. Each frame receives fixed relative-time encoding
+:math:`e(\tau_t)=\mathrm{PE}(\tau_t)-\mathrm{PE}(0)`, where :math:`\tau_t` is its
+time offset from current in seconds. PE is a fixed sinusoidal encoding;
+subtracting PE(0) gives the current frame a zero time encoding. The layer's
+LayerNorm and existing SigLIP projections then produce queries, keys
+and values :math:`Q,K,V\in\mathbb{R}^{T\times P\times d}`.
+
+Attention uses query/key similarity to form a weighted sum of values:
+
+.. math::
+
+   \operatorname{Attn}(Q,K,V;M)
+   = \operatorname{softmax}_{\mathrm{row}}\!\left(
+       \frac{QK^\top}{\sqrt{d}}+M
+     \right)V.
+
+Softmax normalizes the key scores in each query row. The factor
+:math:`1/\sqrt{d}` scales similarity scores. The additive mask :math:`M` is zero
+for allowed keys and :math:`-\infty` for excluded keys, giving them zero weight.
+
+**Temporal mixing.** Hold patch position :math:`p` fixed and attend over frames:
+
+.. math::
+
+   \widetilde V_{:,p,:}
+   = \operatorname{Attn}(Q_{:,p,:},K_{:,p,:},V_{:,p,:};M_{\mathrm{time}}).
+
+A colon retains all entries along an axis, so these inputs are
+:math:`T\times d` matrices. For a valid query frame :math:`t`,
+:math:`M_{\mathrm{time}}[t,s]` is zero only when :math:`s\leq t` and frame
+:math:`s` is valid; otherwise it is :math:`-\infty`. Each grid position thus
+reads its current and past valid frames to produce history-aware values
+:math:`\widetilde V`. Padded frame outputs are zeroed after each layer.
+
+**Spatial mixing.** Hold frame :math:`t` fixed and attend over its patches:
+
+.. math::
+
+   O_{t,:,:}
+   = \operatorname{Attn}(Q_{t,:,:},K_{t,:,:},\widetilde V_{t,:,:};0).
+
+These inputs are :math:`P\times d` matrices, and every patch in the frame can
+attend to every other patch. Q and K retain their original projections; only
+V is replaced by :math:`\widetilde V`. The model does not derive a second set
+of Q/K/V projections from the temporally mixed values. Head outputs O are
+concatenated and passed through the existing output projection, residual
+connections and MLP. Both attention stages reuse SigLIP parameters, and the
+fixed time encoding adds no learned weights.
 
 By default, temporal mixing runs at zero-based layers ``[3, 7, 11, 15]``.
 After layer 15, the encoder discards historical frames and keeps the current
