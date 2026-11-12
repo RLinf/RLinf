@@ -340,6 +340,9 @@ class PicoTcp(Pico):
     #: Absolute pose commands are clipped into the environment action space.
     CLIPS_TO_ACTION_SPACE = True
 
+    #: Keep emitted hold commands applied after operator release.
+    APPLIES_WHILE_IDLE = True
+
     def __init__(
         self,
         gripper: bool = True,

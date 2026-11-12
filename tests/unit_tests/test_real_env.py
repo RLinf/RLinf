@@ -23,6 +23,7 @@ import io
 import os
 import pickle
 import re
+import signal
 import subprocess
 import sys
 import textwrap
@@ -5753,3 +5754,275 @@ def test_robotwin_env_passes_its_camera_near_to_robotwin(
     assert handed_over["task_config"]["task_name"] == "place_shoe"
     assert "camera_near" not in env.cfg.task_config  # the config is not modified
     assert camera_cls._rlinf_camera_near_installed
+
+
+@pytest.mark.parametrize("state", ["parked", "unparked", "faulted", "close_error"])
+def test_arx5_close_releases_sessions_and_executors(monkeypatch, state):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    signals = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    env = DualARX5Env(
+        {
+            "require_camera": False,
+            "close_joint_timeout_s": 0.01,
+            "joint_return_stall_timeout_s": 0.01,
+        },
+        robot_info=_robot_info(DualARX5Config(node_rank=0)),
+    )
+    robot = env.robot
+    executors = env._arm_executors
+    # Start the workers so shutdown is exercised as well as SDK release.
+    for executor in executors:
+        executor.submit(lambda: None).result(timeout=5)
+    devices = sdk.SingleArm.instances
+    for device in devices:
+        if state == "unparked":
+            device.joints[1:3] = 1.0
+            device.stalled = True
+        elif state == "faulted":
+            device.fault = "latched fault"
+    if state == "close_error":
+        devices[-1].close_error = True
+        with pytest.raises(RuntimeError, match="SDK close failed"):
+            env.close()
+    else:
+        env.close()
+    env.close()
+    assert all(device.close_count == 1 for device in devices)
+    assert all(not owner.is_connected for owner in robot.owners())
+    assert env.robot is None
+    assert env._arms is None
+    assert env._arm_executors is None
+    assert env._closed
+    assert {s: signal.getsignal(s) for s in signals} == signals
+    for executor in executors:
+        with pytest.raises(RuntimeError, match="shutdown"):
+            executor.submit(lambda: None)
+
+
+@pytest.mark.parametrize("failed_component", ["right_arm", "camera"])
+def test_arx5_failed_startup_rolls_back_open_sessions(monkeypatch, failed_component):
+    import cv2
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    hardware = DualARX5Config(node_rank=0)
+    if failed_component == "right_arm":
+        sdk.SingleArm.fail_can_port = "can3"
+        message, opened_count = "CAN open failed", 1
+    else:
+        hardware.camera_type = "v4l2"
+        hardware.base_camera_serials = ["/dev/video-test"]
+        monkeypatch.setattr(
+            cv2, "VideoCapture", Mock(side_effect=RuntimeError("camera open failed"))
+        )
+        message, opened_count = "camera open failed", 2
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    signals = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    with pytest.raises(RuntimeError, match=message):
+        DualARX5Env(
+            {"require_camera": False},
+            robot_info=_robot_info(hardware),
+        )
+    assert len(sdk.SingleArm.instances) == opened_count
+    assert all(device.close_count == 1 for device in sdk.SingleArm.instances)
+    assert {s: signal.getsignal(s) for s in signals} == signals
+
+
+def test_arx5_empty_camera_config_explains_how_to_find_devices():
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    with pytest.raises(ValueError, match="ls -l /dev/v4l/by-path/"):
+        DualARX5Env({}, robot_info=_robot_info(DualARX5Config(node_rank=0)))
+
+
+@pytest.mark.parametrize(
+    "teleop",
+    ["none", "pico", [{"pico": {"drives": "left"}}, {"pico": {"drives": "right"}}]],
+)
+def test_arx5_episode_controls_follow_teleop_selection(monkeypatch, teleop):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.envs.real.wrappers.episode import PicoEpisodeControlWrapper
+    from rlinf.robotics import DualARX5Config
+
+    monkeypatch.setitem(sys.modules, "bimanual", arx5()["bimanual"])
+    env = DualARX5Env(
+        {"require_camera": False}, robot_info=_robot_info(DualARX5Config(node_rank=0))
+    )
+    try:
+        expected = () if teleop == "none" else (PicoEpisodeControlWrapper,)
+        assert env.episode_wrappers({"teleop": teleop}) == expected
+    finally:
+        env.close()
+    dummy = DualARX5Env({"is_dummy": True})
+    try:
+        assert dummy.episode_wrappers({"teleop": teleop}) == ()
+    finally:
+        dummy.close()
+
+
+@pytest.mark.parametrize("max_step", [0, 0.02])
+def test_arx5_can_move_back_from_outside_workspace(monkeypatch, max_step):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    env = DualARX5Env(
+        {"require_camera": False, "max_step": max_step, "reset_joint_timeout_s": 0.01},
+        robot_info=_robot_info(DualARX5Config(node_rank=0)),
+    )
+    try:
+        for device in sdk.SingleArm.instances:
+            device.pose[0] = 1.01
+        action = np.tile([0.9, 0, 0, 1, 0, 0, 0, 1, 0, 0], 2)
+        env.step(action)
+        expected_x = 0.9 if max_step == 0 else 0.99
+        for device in sdk.SingleArm.instances:
+            assert device.cartesian_targets[-1][0] == pytest.approx(expected_x)
+        # An out-of-range request is still clipped to the workspace boundary.
+        action[0] = action[10] = 2.0
+        env.step(action)
+        for device in sdk.SingleArm.instances:
+            assert device.cartesian_targets[-1][0] <= 1.0
+            device.pose[0] = 1.01
+            device.stalled = True
+        with pytest.raises(ValueError, match="reset pose is outside the workspace"):
+            env.reset()
+    finally:
+        env.close()
+
+
+def test_arx5_joint_reset_qpos_uses_radians():
+    from rlinf.envs.real.arx5 import DualARX5Env, DualARX5EnvConfig
+
+    target = np.array([[0.1, 0.2, 0.3, -0.1, 0.1, 0.1]] * 2)
+    config = DualARX5EnvConfig(joint_reset_qpos=target.tolist())
+    np.testing.assert_array_equal(config.joint_reset_qpos, target)
+    override = {
+        "is_dummy": True,
+        "joint_reset_qpos": target.tolist(),
+        "max_step": 0.03,
+        "max_step_rad": 0.4,
+    }
+    env = DualARX5Env(override)
+    try:
+        np.testing.assert_allclose(env.config.joint_reset_qpos, target)
+        assert env.config.max_step == 0.03
+        assert env.config.max_step_rad == 0.4
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"joint_reset_qpos": [[0] * 5] * 2},
+        {"joint_reset_qpos": [[0, 5, 5, 0, 0, 0]] * 2},
+        {"joint_reset_qpos": [[float("nan")] * 6] * 2},
+        {"max_step": -0.01},
+        {"max_step_rad": float("inf")},
+        {"rotation_repr": "euler"},
+    ],
+)
+def test_arx5_rejects_invalid_shared_control_settings(override):
+    from rlinf.envs.real.arx5 import DualARX5EnvConfig
+
+    with pytest.raises(ValueError):
+        DualARX5EnvConfig(**override)
+
+
+def test_arx5_collection_composes_shared_names_and_preserves_run_settings(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.envs.real.arx5 import DualARX5EnvConfig
+    from rlinf.robotics import DualARX5Config
+
+    root = Path(__file__).resolve().parents[2]
+    config_dir = root / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        arx = compose(config_name="collect_data_dual_arx5")
+    base = OmegaConf.load(config_dir / "env/realworld_dual_arx5_tcp_rot6d.yaml")
+    base_cfg = DualARX5EnvConfig(**OmegaConf.to_container(base.override_cfg))
+    assert base_cfg.enforce_workspace_bounds is True
+    assert base_cfg.max_step_rad == 0.15
+    assert base_cfg.step_frequency == 10
+    assert base_cfg.joint_return_speed_deg_s == 10
+    assert base_cfg.joint_return_acceleration_deg_s2 == 30
+    assert base_cfg.joint_return_slowdown_deg == 3
+    assert base_cfg.joint_return_stall_timeout_s == 2
+    assert arx.env.eval.auto_reset is False
+    assert arx.env.eval.max_episode_steps == 1000
+    assert arx.env.eval.ignore_terminations is False
+    assert arx.env.eval.no_gripper is False
+    cfg = DualARX5EnvConfig(
+        **OmegaConf.to_container(arx.env.eval.override_cfg, resolve=True)
+    )
+    assert cfg.step_frequency == arx.env.eval.data_collection.fps == 30
+    assert cfg.enforce_workspace_bounds is False
+    assert cfg.max_step == 0.02
+    assert cfg.max_step_rad == 0.5
+    assert cfg.reset_joint_timeout_s == 10
+    assert cfg.close_joint_timeout_s == 30
+    assert cfg.close_park_max_deg == 0.5
+    hardware = arx.cluster.node_groups[0].hardware.configs[0]
+    hardware_cfg = DualARX5Config(**OmegaConf.to_container(hardware))
+    assert hardware_cfg.base_camera_serials == []
+    assert hardware_cfg.left_camera_serials == []
+    assert hardware_cfg.right_camera_serials == []
+    assert hardware_cfg.camera_rotations == {}
+    assert "pico_reward_wrapper" not in arx.env.eval
+    assert hardware_cfg.left_urdf_path is None
+    assert hardware_cfg.right_urdf_path is None
+    assert arx.env.eval.data_collection.get("resume", False) is False
+    assert arx.env.eval.data_collection.export_format == "lerobot_dataset"
+    for name in ("joint_reset_qpos", "rotation_repr"):
+        assert name in arx.env.eval.override_cfg
+    disabled = DualARX5EnvConfig(max_step=0, max_step_rad=0)
+    assert disabled.max_step == 0
+    assert disabled.max_step_rad == 0
+
+
+def test_arx5_collection_preserves_pico_control_and_calibration_defaults(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.envs.real.wrappers.teleop.pico_config import split_dual_config
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(config_name="collect_data_dual_arx5")
+    pico_cfg = OmegaConf.to_container(cfg.env.eval.pico, resolve=True)
+    assert pico_cfg.pop("hold_current_when_inactive") is True
+    for side_cfg in split_dual_config(pico_cfg):
+        reader = PicoExpert(**side_cfg)
+        assert reader.zmq_addr == "tcp://127.0.0.1:5555"
+        assert reader.control_trigger == "grip"
+        assert reader.control_threshold == 0.85
+        assert reader.gripper_close_threshold == 0.5
+        assert reader.gripper_trigger == "trigger"
+        assert reader.position_scale == reader.rotation_scale == 1.0
+        assert reader.max_stale_s == 0.2
+        assert reader.calibration_enabled is True
+        assert reader.require_calibration is True
+        assert reader.auto_calibrate_on_start is True
+        assert reader.calibration_button is None
+        assert reader.calibration_threshold == 0.5
+        np.testing.assert_array_equal(reader.head_forward_axis, [0, 0, -1])
+        np.testing.assert_array_equal(reader.base_position, [0, 0, 0])

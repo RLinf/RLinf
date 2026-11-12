@@ -17,6 +17,14 @@ reinforcement learning (PPO / GRPO) across several simulators using RLinf. For t
 method, see the paper
 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__.
 
+Use :doc:`Short Memory <pi0/short_memory>` to condition OpenPI on past camera
+frames during SFT and evaluation.
+
+.. toctree::
+   :hidden:
+
+   Short Memory <pi0/short_memory>
+
 Overview
 --------
 
