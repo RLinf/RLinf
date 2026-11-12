@@ -21,8 +21,6 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
 _CAUSAL_MASK_CACHE: dict[tuple[str, torch.dtype], torch.Tensor] = {}
 _CAUSAL_MASK_SIZE = 2048
-_ORIGINAL_QWEN2_UPDATE_CAUSAL_MASK = None
-_ORIGINAL_QWEN2_CREATE_CAUSAL_MASK = None
 
 
 def _get_actual_seq_lengths(position_ids: torch.Tensor) -> tuple[int, ...]:
@@ -131,62 +129,6 @@ def ascend_fusion_attention_forward(
     return output.view(batch_size, sequence_length, num_heads, head_dim), None
 
 
-def _patch_qwen2_causal_mask() -> None:
-    """Skip dense mask construction for packed Ascend fusion attention.
-
-    Transformers 4.x implements this in ``Qwen2Model._update_causal_mask``.
-    Newer Transformers releases construct masks through the module-level
-    ``create_causal_mask`` helper instead. Patch the applicable interface so
-    the custom backend always receives ``attention_mask=None``.
-    """
-    global _ORIGINAL_QWEN2_UPDATE_CAUSAL_MASK, _ORIGINAL_QWEN2_CREATE_CAUSAL_MASK
-
-    from transformers.models.qwen2 import modeling_qwen2
-
-    qwen2_model = modeling_qwen2.Qwen2Model
-    if hasattr(qwen2_model, "_update_causal_mask"):
-        if _ORIGINAL_QWEN2_UPDATE_CAUSAL_MASK is not None:
-            return
-
-        original_update_causal_mask = qwen2_model._update_causal_mask
-
-        def update_causal_mask(self, attention_mask, *args, **kwargs):
-            if (
-                self.config._attn_implementation == "ascend_fusion"
-                and attention_mask is None
-            ):
-                return None
-            return original_update_causal_mask(self, attention_mask, *args, **kwargs)
-
-        qwen2_model._update_causal_mask = update_causal_mask
-        _ORIGINAL_QWEN2_UPDATE_CAUSAL_MASK = original_update_causal_mask
-        return
-
-    if _ORIGINAL_QWEN2_CREATE_CAUSAL_MASK is not None:
-        return
-    if not hasattr(modeling_qwen2, "create_causal_mask"):
-        raise RuntimeError(
-            "Unsupported Transformers Qwen2 mask API; expected "
-            "_update_causal_mask or create_causal_mask."
-        )
-
-    original_create_causal_mask = modeling_qwen2.create_causal_mask
-
-    def create_causal_mask(*args, **kwargs):
-        config = kwargs.get("config")
-        if (
-            config is not None
-            and config._attn_implementation == "ascend_fusion"
-            and kwargs.get("attention_mask") is None
-        ):
-            return None
-        return original_create_causal_mask(*args, **kwargs)
-
-    modeling_qwen2.create_causal_mask = create_causal_mask
-    _ORIGINAL_QWEN2_CREATE_CAUSAL_MASK = original_create_causal_mask
-
-
 def register_ascend_fusion_attention() -> None:
     """Register the Ascend fused attention backend with Transformers."""
     ALL_ATTENTION_FUNCTIONS.register("ascend_fusion", ascend_fusion_attention_forward)
-    _patch_qwen2_causal_mask()

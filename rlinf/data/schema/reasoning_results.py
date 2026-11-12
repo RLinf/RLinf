@@ -28,6 +28,7 @@ from rlinf.utils.data_iter_utils import (
     split_list,
 )
 from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
+from rlinf.utils.utils import get_current_device
 
 if TYPE_CHECKING:
     from vllm.outputs import CompletionOutput
@@ -1027,12 +1028,7 @@ class DynamicRolloutResult:
         available_keys: list[str],
     ) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
-        if Worker.torch_device_type == "cpu":
-            target_device = torch.device("cpu")
-        else:
-            target_device = torch.device(
-                Worker.torch_device_type, Worker.torch_platform.current_device()
-            )
+        target_device = get_current_device()
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
             *pad_seq_shape, dtype=torch.bool, device=target_device
@@ -1069,10 +1065,10 @@ class DynamicRolloutResult:
                 *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "values": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "returns": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
         }
         batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}

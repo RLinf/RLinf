@@ -23,10 +23,10 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 3
-  max_steps: 5
+  max_steps: -1
 
   val_check_interval: 1
-  save_interval: -1
+  save_interval: 10
 
   seq_length: 8192
 
@@ -34,8 +34,8 @@ runner:
   max_tokens_per_mbs: 8192
 
   resume_dir: null
-  experiment_name: coding-grpo-fsdp-smoke-${now:%Y%m%d%H%M%S}
-  output_dir: /path/to/RLinf/logs
+  experiment_name: Qwen2.5-Coder-1.5B-grpo-llm_judge
+  output_dir: ./results
 
 
 algorithm:

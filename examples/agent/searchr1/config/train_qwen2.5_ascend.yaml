@@ -26,15 +26,15 @@ runner:
   max_steps: 201
 
   val_check_interval: 25
-  save_interval: -1
+  save_interval: 25
 
   seq_length: 7096
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 8192
+  max_tokens_per_mbs: 11008
 
   resume_dir: null
-  experiment_name: searchr1-grpo-qwen2.5-3b-instruct-fsdp-${now:%Y%m%d%H%M%S}
+  experiment_name: searchr1-grpo-qwen2.5-3b-instruct-fsdp
   output_dir: ./logs
 
 
@@ -101,7 +101,7 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/path/to/data/train.jsonl"]
+  train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
 
 
 agentloop:
@@ -117,7 +117,7 @@ agentloop:
 # Tools configuration for AgentLoop
 tools:
   search:
-    server_addr: 127.0.0.1:8001
+    server_addr: 0.0.0.0:8000
     topk: 3
 
 
@@ -125,10 +125,9 @@ rollout:
   group_name: "RolloutGroup"
   gpu_memory_utilization: 0.75
   model:
-    model_path: /path/to/model/Qwen2.5-3B-Instruct
+    model_path: /path/to/model/Qwen2.5-3B-Instruct  # https://huggingface.co/Qwen/Qwen2.5-3B-Instruct
     model_type: qwen2.5
     precision: fp16
-    trust_remote_code: True
   enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.
   distributed_executor_backend: mp   # ray or mp
   disable_log_stats: False
@@ -211,7 +210,6 @@ actor:
   tokenizer:
     tokenizer_model: ${rollout.model.model_path}
     use_fast: False
-    trust_remote_code: True
     padding_side: right
 
   fsdp_config:
@@ -221,7 +219,7 @@ actor:
     cpu_offload: False
     offload_pin_memory: True
     reshard_after_forward: True
-    enable_gradient_accumulation: False
+    enable_gradient_accumulation: True
     forward_prefetch: False
     limit_all_gathers: False
     backward_prefetch: null
@@ -233,7 +231,7 @@ actor:
       buffer_dtype: fp32
     amp_autocast:
       enabled: False
-      precision: bf16
+      precision: fp16
     grad_scaler:
       enabled: True
 

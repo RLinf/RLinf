@@ -15,7 +15,11 @@
 try:
     from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
 except ImportError:
-    # Older SGLang releases do not manage CUDA graphs as a separate memory type.
+    from packaging.version import Version
+    from sglang import __version__
+
     GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache"]
+    if Version(__version__) >= Version("0.5.3"):
+        GPU_MEMORY_ALL_TYPES.append("cuda_graph")
 
 __all__ = ["GPU_MEMORY_ALL_TYPES"]

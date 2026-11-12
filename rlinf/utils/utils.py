@@ -32,6 +32,15 @@ from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 
 
+def get_current_device() -> torch.device:
+    """Return the worker's assigned accelerator device, or CPU without one."""
+    if Worker.torch_device_type in (None, "cpu"):
+        return torch.device("cpu")
+    return torch.device(
+        Worker.torch_device_type, Worker.torch_platform.current_device()
+    )
+
+
 def clear_memory(sync=True):
     if sync:
         Worker.torch_platform.synchronize()
@@ -232,9 +241,11 @@ def retrieve_model_state_dict_in_cpu(
             if name in offloaded_buffer:
                 offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
             else:
-                item = item.detach().to(device="cpu", non_blocking=True, copy=True)
-                if not isinstance(item, DTensor):
-                    item = item.pin_memory()
+                item = (
+                    item.detach()
+                    .to(device="cpu", non_blocking=True, copy=True)
+                    .pin_memory()
+                )
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item

@@ -1205,3 +1205,58 @@ def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
         result = source.to("cpu")
     assert not result.is_pinned()
     torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+@pytest.mark.parametrize("device_type", [None, "cpu"])
+def test_dynamic_rollout_padding_without_accelerator(monkeypatch, device_type):
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", device_type)
+    monkeypatch.setattr(Worker, "torch_platform", None)
+    keys = ["input_ids", "attention_mask", "response_mask", "values", "returns"]
+    batch = DynamicRolloutResult.get_batch_pad(8, keys)
+    assert set(batch) == set(keys)
+    for tensor in batch.values():
+        assert tensor.device == torch.device("cpu")
+        assert tensor.shape == (1, 8)
+    assert batch["attention_mask"].sum().item() == 1
+    assert not batch["response_mask"].any()
+
+
+def test_dynamic_rollout_padding_propagates_accelerator_failure(monkeypatch):
+    from rlinf.scheduler import Worker
+
+    def unavailable():
+        raise RuntimeError("accelerator initialization failed")
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda")
+    monkeypatch.setattr(
+        Worker, "torch_platform", SimpleNamespace(current_device=unavailable)
+    )
+    with pytest.raises(RuntimeError, match="accelerator initialization failed"):
+        DynamicRolloutResult.get_batch_pad(8, ["input_ids"])
+
+
+def test_dynamic_microbatches_on_cpu(monkeypatch, tmp_path):
+    import torch.distributed as dist
+
+    from rlinf.scheduler import Worker
+    from rlinf.utils.data_iter_utils import get_iterator_dynamic
+
+    monkeypatch.setattr(Worker, "torch_device_type", None)
+    monkeypatch.setattr(Worker, "torch_platform", None)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'gloo'}", rank=0, world_size=1
+    )
+    try:
+        batch = {
+            "input_ids": torch.arange(24).reshape(3, 8),
+            "attention_mask": torch.ones(3, 8, dtype=torch.bool),
+        }
+        microbatches = list(get_iterator_dynamic(batch, max_tokens_per_mbs=8))
+        assert len(microbatches) == 3
+        rows = sorted(row.tolist() for mb in microbatches for row in mb["input_ids"])
+        assert rows == batch["input_ids"].tolist()
+        assert all(mb["input_ids"].device.type == "cpu" for mb in microbatches)
+    finally:
+        dist.destroy_process_group()

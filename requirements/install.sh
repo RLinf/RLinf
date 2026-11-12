@@ -840,6 +840,10 @@ configure_ascend() {
     # but do not install the wheel — see PLATFORM_UV_SYNC_ARGS below.
     PLATFORM_TORCHCODEC_SPEC="torchcodec>=0.5"
     PLATFORM_EXTRA_OVERRIDES=()
+    if [ "$TARGET" = "agentic" ]; then
+        PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+    fi
     # PyPI torchcodec>=0.11 ships CUDA wheels by default (0.16.0 dlopens
     # libnvrtc.so.13). Ascend is CPU torch + torch-npu, so that import raises
     # OSError. GR00T n1.5 only catches ImportError/RuntimeError around
@@ -1242,6 +1246,9 @@ EOF
     # torch-npu imports a few packages at runtime (`yaml`, `decorator`) but
     # doesn't declare them in its wheel metadata, so install them explicitly.
     uv pip install pyyaml decorator
+    if [ "$TARGET" = "agentic" ] && [ "$(effective_engine)" = "sglang" ]; then
+        torch_ver="${torch_ver}.post2"
+    fi
     echo "[install.sh] Installing torch-npu==${torch_ver} to match torch"
     uv pip install "torch-npu==${torch_ver}" \
         || (echo "[install.sh] Pinned torch-npu==${torch_ver} failed; falling back to latest compatible build." >&2 \
@@ -1547,6 +1554,10 @@ sglang_torch_version() {
 }
 
 agentic_torch_for_engine() {
+    if [ "$PLATFORM" = "ascend" ] && [ "$(effective_engine)" = "sglang" ]; then
+        echo "2.8.0"
+        return 0
+    fi
     case "$(effective_engine):$(effective_engine_version)" in
         sglang:*)   sglang_torch_version "$(effective_engine_version)" ;;
         vllm:0.8.5) echo "2.6.0" ;;
@@ -1569,6 +1580,7 @@ agentic_requirements_file() {
     # $1 = engine (sglang|vllm|phyai), $2 = version
     local line path
     line=$(agentic_cuda_line)
+    [ "$PLATFORM" = "ascend" ] && line="npu"
     path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
     if [ ! -f "$path" ]; then
         echo "[install.sh] ERROR: no $1 $2 build for ${line}. Available:" >&2
@@ -1618,6 +1630,10 @@ install_engine_requirements() {
 install_sglang() {
     local version="$1" extra extra_req
     shift
+    if [ "$PLATFORM" = "ascend" ]; then
+        install_sglang_npu "$version"
+        return 0
+    fi
     install_engine_requirements "$(agentic_requirements_file sglang "$version")"
     for extra in "$@"; do
         extra_req="$SCRIPT_DIR/agentic/sglang_${version}_${extra}.txt"
@@ -4605,6 +4621,39 @@ EOF
     echo "[install.sh] NCCL LD_LIBRARY_PATH export added to $VENV_DIR/bin/activate."
 }
 
+install_sglang_npu() {
+    local version="$1" source_dir kernel_dir archive chip
+    if [ "$version" != "0.5.12.post1" ] || [ "$TORCH_VERSION" != "2.8.0" ]; then
+        echo "[install.sh] Ascend agentic requires SGLang 0.5.12.post1 and torch 2.8.0." >&2
+        return 1
+    fi
+    python -c 'import sys; assert sys.version_info[:2] == (3, 11), "Ascend SGLang requires Python 3.11"'
+    source_dir=$(clone_or_reuse_repo SGLANG_PATH "$VENV_DIR/sglang" ${GITHUB_PREFIX}https://github.com/sgl-project/sglang.git -b "v${version}")
+    cp "$source_dir/python/pyproject_npu.toml" "$source_dir/python/pyproject.toml"
+    uv pip install --override "$SCRIPT_DIR/agentic/sglang_0.5.12.post1_npu_overrides.txt" \
+        -r "$(agentic_requirements_file sglang "$version")" -e "$source_dir/python"
+
+    # The release bundles kernels and DeepEP built for CANN 8.5 / torch 2.8.
+    chip="${ASCEND_CHIP:-910b}"
+    case "$chip" in
+        910b|a3) ;;
+        *) echo "[install.sh] ASCEND_CHIP must be 910b or a3; got ${chip}." >&2; return 1 ;;
+    esac
+    kernel_dir="$VENV_DIR/sgl-kernel-npu"
+    mkdir -p "$kernel_dir"
+    archive="sgl-kernel-npu-2026.05.01.post3-torch2.8.0-py311-cann8.5.0-${chip}-$(uname -m).zip"
+    curl --fail --location --retry 3 \
+        "${GITHUB_PREFIX}https://github.com/sgl-project/sgl-kernel-npu/releases/download/2026.05.01.post3/${archive}" \
+        --output "$kernel_dir/$archive"
+    python -m zipfile -e "$kernel_dir/$archive" "$kernel_dir"
+    uv pip install "$kernel_dir"/sgl_kernel_npu*.whl "$kernel_dir"/deep_ep*.whl
+    local site_dir library
+    site_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+    for library in "$site_dir"/deep_ep/deep_ep_cpp*.so; do
+        [ -e "$library" ] && ln -sf "$library" "$site_dir/"
+    done
+}
+
 install_agentic() {
     local engine engine_ver torch211_stack=0
     engine=$(effective_engine)
@@ -4627,6 +4676,12 @@ install_agentic() {
     uv pip check || echo "[install.sh] WARNING: dependency conflicts reported above"
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
+    fi
+
+    if [ "$PLATFORM" = "ascend" ]; then
+        [ -n "$TRANSFORMERS_VERSION" ] && uv pip install "transformers==${TRANSFORMERS_VERSION}"
+        [ -n "$XGRAMMAR_VERSION" ] && uv pip install "xgrammar==${XGRAMMAR_VERSION}"
+        return 0
     fi
 
     # Megatron-LM
