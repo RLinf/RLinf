@@ -131,6 +131,12 @@ class Pi0(model.BaseModel):
             use_gradient_checkpointing=False,
             pytorch_numerics=config.pytorch_numerics,
             dtype_mm=config.dtype,
+            temporal_layers=(
+                config.short_memory_temporal_layers if config.short_memory else ()
+            ),
+            drop_history_layer=(
+                config.short_memory_drop_history_layer if config.short_memory else None
+            ),
         )
 
         action_expert_width = action_expert_config.width
@@ -214,15 +220,39 @@ class Pi0(model.BaseModel):
         # concatenates ``list(observation.images.values())``.
         image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
         image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
+        current_only_by_camera = {}
+        if self._config.short_memory:
+            history_names = [
+                name
+                for name in image_names
+                if obs.images[name].ndim == 5 and obs.images[name].shape[1] > 1
+            ]
+            if history_names:
+                # Transfer all camera decisions together instead of syncing per camera.
+                current_only = torch.stack(
+                    [
+                        (obs.image_masks[name].sum(dim=1) <= 1).all()
+                        for name in history_names
+                    ]
+                ).tolist()
+                current_only_by_camera = dict(zip(history_names, current_only))
         for name in image_names:
-            image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
+            image_mask = obs.image_masks[name]
+            if self._config.short_memory:
+                image_tokens, _ = self.img(
+                    obs.images[name],
+                    frame_mask=image_mask,
+                    time_offsets=obs.history_time_offsets,
+                    current_only=current_only_by_camera.get(name),
+                )
+                image_mask = image_mask[:, -1]
+            else:
+                image_tokens, _ = self.img(obs.images[name])
             tokens.append(image_tokens)
 
             # Image tokens use bidirectional attention
             input_mask.append(
-                einops.repeat(
-                    obs.image_masks[name], "b -> b s", s=image_tokens.shape[1]
-                )
+                einops.repeat(image_mask, "b -> b s", s=image_tokens.shape[1])
             )
             ar_mask += [False] * image_tokens.shape[1]
 
@@ -752,6 +782,7 @@ class Pi0(model.BaseModel):
             token_ar_mask=_move(observation.token_ar_mask),
             token_loss_mask=_move(observation.token_loss_mask),
             pcd_xyz=_move(observation.pcd_xyz),
+            history_time_offsets=_move(observation.history_time_offsets),
         )
 
     def _actions_to_device(self, actions: Any) -> torch.Tensor:

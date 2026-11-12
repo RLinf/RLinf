@@ -1114,6 +1114,8 @@ class MultiStepRolloutWorker(Worker):
                     merged[key] = torch.cat(values, dim=0)
                 elif isinstance(first_non_none, list):
                     merged[key] = [item for sublist in values for item in sublist]
+                elif isinstance(first_non_none, dict):
+                    merged[key] = _merge_obs_dicts(values)
                 else:
                     merged[key] = values
             return merged

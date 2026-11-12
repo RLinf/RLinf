@@ -39,6 +39,11 @@ class Pi0Config:
     pi05: bool = False
     discrete_state_input: bool | None = None
     pcd: bool = False
+    short_memory: bool = False
+    # Mix history every fourth block through index 15; later blocks use only
+    # the current frame.
+    short_memory_temporal_layers: tuple[int, ...] = (3, 7, 11, 15)
+    short_memory_drop_history_layer: int = 15
 
     def __post_init__(self):
         if self.pi05 and self.max_token_len == 48:
@@ -49,6 +54,9 @@ class Pi0Config:
     def fake_obs(self, batch_size: int = 1) -> model.Observation:
         image = torch.ones(batch_size, *model.IMAGE_RESOLUTION, 3)
         image_mask = torch.ones(batch_size, dtype=torch.bool)
+        if self.short_memory:
+            image = image[:, None]
+            image_mask = image_mask[:, None]
         return model.Observation(
             images={
                 "base_0_rgb": image,
@@ -68,6 +76,9 @@ class Pi0Config:
                 batch_size, self.max_token_len, dtype=torch.bool
             ),
             pcd_xyz=torch.ones(batch_size, 16, 2025, 3) if self.pcd else None,
+            history_time_offsets=(
+                torch.zeros(batch_size, 1) if self.short_memory else None
+            ),
         )
 
     def fake_act(self, batch_size: int = 1) -> torch.Tensor:
