@@ -878,11 +878,11 @@ class MultiStepRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
-                if not policy_input.requires_inference:
-                    actions = policy_input.external_actions
-                    forward_inputs = None
-                    policy_output = None
-                else:
+                # Omit raw observations when the collector does not consume them.
+                transition_obs = (
+                    policy_input.obs if self.collect_raw_transition_obs else {}
+                )
+                if policy_input.requires_inference:
                     actions, result = self._predict_rollout_actions(
                         policy_input.obs,
                         rlt_switch_flags=policy_input.rlt_switch_flags,
@@ -890,27 +890,24 @@ class MultiStepRolloutWorker(Worker):
                     )
                     forward_inputs = result.get("forward_inputs")
                     policy_output = self._build_policy_output(actions, result)
-                self._send_actions(
-                    output_channel,
-                    actions.contiguous(),
-                    stage_id,
-                    split_sizes,
-                )
-                # Omit raw observations when the collector does not consume them.
-                transition_obs = (
-                    policy_input.obs if self.collect_raw_transition_obs else {}
-                )
-                if not policy_input.requires_inference:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        external_actions=actions,
+                    self._send_actions(
+                        output_channel,
+                        actions.contiguous(),
+                        stage_id,
+                        split_sizes,
                     )
-                else:
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
                         output=policy_output,
+                    )
+                else:
+                    # The env runs the actions it supplied, so nothing goes back.
+                    forward_inputs = None
+                    trajectory_part = PolicyPart(
+                        sources=policy_input.sources,
+                        obs=transition_obs,
+                        external_actions=policy_input.external_actions,
                     )
                 # Publish model-owned data immediately; its environment half
                 # arrives later through an EnvPart with the same key.

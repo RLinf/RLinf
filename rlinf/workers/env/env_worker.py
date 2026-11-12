@@ -196,6 +196,8 @@ class EnvWorker(Worker):
         )
         if self.smooth_intervene.enabled and self.env_decoupled_mode:
             raise ValueError("smooth_intervene does not support decoupled env mode")
+        # Actions a stage sent with its request, run without waiting for a reply.
+        self._supplied_actions: dict[int, torch.Tensor] = {}
 
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
@@ -883,6 +885,11 @@ class EnvWorker(Worker):
             policy_input.sources = [
                 TrajectorySource(key=key, size=self.train_num_envs_per_stage)
             ]
+        # Rollout does not reply to a request that carries its own actions, so
+        # the stage runs them at once while the request is still in transit.
+        supplies_actions = not policy_input.requires_inference
+        if supplies_actions:
+            self._supplied_actions[stage_id] = policy_input.external_actions
         self.send_to(
             group_name=self.cfg.rollout.group_name,
             channel=rollout_channel,
@@ -890,6 +897,7 @@ class EnvWorker(Worker):
             mode="train",
             tag="policy_final" if policy_input.is_last else "policy",
             route_key=stage_id if not self.env_decoupled_mode else None,
+            async_op=supplies_actions,
             batch_size=self.train_batch_size,
             split_fn=self._policy_input_split_fn or PolicyInput.split,
             decoupled_mode=self.env_decoupled_mode,
@@ -1101,7 +1109,10 @@ class EnvWorker(Worker):
         return int(actions.shape[0])
 
     def _recv_actions(self, input_channel: Channel, stage_id: int) -> torch.Tensor:
-        """Receive actions using the route paired with the policy request."""
+        """Return the actions the stage supplied, else receive the policy's reply."""
+        supplied = self._supplied_actions.pop(stage_id, None)
+        if supplied is not None:
+            return supplied
         return self.recv_from(
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,
