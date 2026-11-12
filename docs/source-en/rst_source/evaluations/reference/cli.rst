@@ -62,13 +62,14 @@ main training recipe, run:
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh supermimic_lafan1_goal730_eval \
-       runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/data/runs/lafan1/eval
+   bash evaluations/run_eval.sh supermimic_lafan1_eval \
+       runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
+       env.eval.action_noise_std=0 \
+       runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
-The ``supermimic_interface.json`` beside the weights must match the config.
-For the overrides of other variants and the protocol definitions, see the
-Evaluate section of :doc:`SuperMimic <../../examples/embodied/supermimic>`.
+A MaxCoord checkpoint also needs ``actor.model.representation=maxcoord``.
+The protocol is in the Evaluate section of
+:doc:`SuperMimic <../../examples/embodied/supermimic>`.
 
 Config Fallback
 ---------------

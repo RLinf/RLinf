@@ -34,8 +34,8 @@ Typical data flow:
 4. **Metric aggregation** — Task-level metrics such as ``success_once`` and ``return`` are computed and logged.
 
 SuperMimic uses the same entry with its own ``SuperMimicEvalRunner``, which
-evaluates motion tracking, velocity tracking and standing-pose push recovery
-and writes result tables; see the Evaluate section of
+evaluates motion tracking and knees-bent standing push recovery and writes
+result tables; see the Evaluate section of
 :doc:`../../examples/embodied/supermimic`.
 
 Next Steps

@@ -59,11 +59,12 @@ SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh supermimic_lafan1_goal730_eval \
-       runner.ckpt_path=/data/runs/lafan1/supermimic_lafan1_goal730/checkpoints/global_step_16000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/data/runs/lafan1/eval
+   bash evaluations/run_eval.sh supermimic_lafan1_eval \
+       runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
+       env.eval.action_noise_std=0 \
+       runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
-权重旁边的 ``supermimic_interface.json`` 必须与配置一致。其他变体的覆盖项和协议定义见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节。
+MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。协议见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节。
 
 配置回退
 --------
