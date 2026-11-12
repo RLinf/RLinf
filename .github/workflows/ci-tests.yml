@@ -97,6 +97,7 @@ jobs:
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
@@ -196,11 +197,13 @@ jobs:
               - 'examples/embodiment/config/ogbench_qam_offline.yaml'
               - 'tests/parity_tests/test_qam_reference.py'
               - 'rlinf/robotics/**'
+              - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
+              - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
