@@ -1,7 +1,7 @@
 Prefix Fine-Tune: Frozen VLA Features and Pluggable Policies
 ============================================================
 
-Use Prefix Fine-Tune to train a small off-policy actor-critic from an existing VLA checkpoint. Start with the ManiSkill example below, then adapt its feature representation, policy heads, or update algorithm to your task.
+Add a feature model, policy head, or update rule to Prefix Fine-Tune. Download the checkpoints, launch ManiSkill training, and calibrate STEAM from :doc:`Prefix Fine-Tune <../examples/embodied/prefix>`. This page starts from that running config and shows the observation contract and the registration points you change.
 
 Here, *prefix* means the image and language hidden states that the VLA computes before generating actions. The VLA stays frozen during online RL. A separate actor learns to use those features, the robot state, and the VLA's reference actions to produce an action chunk.
 
@@ -14,104 +14,13 @@ Online updates train only the actor and critic heads, rather than backpropagatin
 
 The RLT-specific AC and TD3 policy/worker implementations are replaced by one ``prefix_policy`` model and one ``prefix_off_policy`` worker. Choose the actor head, critic head, and algorithm separately in the config. Chunk-reward discounting, BC targets, and weight schedules are shared by AC and TD3. This is useful when comparing a new representation or head without copying the training loop. Evaluate pooled and learned features on your task before choosing between them.
 
-Training and Running
---------------------
+Run the Example
+---------------
 
-The ManiSkill peg-insertion preset is a complete example: ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``. It trains TD3 with ``deterministic_mlp`` and ``twin_q_mlp`` on frozen, masked-mean VLA features. A separate STEAM value model decides when to switch from the base VLA to the learned actor. Activate the OpenPI and ManiSkill environment described in :doc:`../examples/embodied/rlt` and run the commands from the repository root.
-
-Download the Checkpoints
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-The preset uses a base VLA, an expert VLA, a STEAM value model, and a calibrated phase head. Download each resource to the local path used by its config field:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 40 40
-
-   * - Resource
-     - Hugging Face Repository
-     - Preset Field
-   * - Base / feature SFT, step 1000
-     - `ChikaYokoyama/maniskill_rlt_1000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_1000_new>`_
-     - ``rollout.prefix_feature_model.model_path``
-   * - Expert SFT, step 3000
-     - `ChikaYokoyama/maniskill_rlt_3000_new <https://huggingface.co/ChikaYokoyama/maniskill_rlt_3000_new>`_
-     - ``rollout.expert_model.model_path``
-   * - STEAM value model, step 5000
-     - `ChikaYokoyama/rlt_steam_value_model_sft_step_5000 <https://huggingface.co/ChikaYokoyama/rlt_steam_value_model_sft_step_5000>`_
-     - ``rollout.routing_gate.model.model_path``
-   * - Phase head and gate recommendation
-     - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
-     - ``rollout.routing_gate.actor_switch.phase_head_path``
-
-Choose a local checkpoint directory for the weights, normalization statistics, and processor files. For hf-mirror, first run ``export HF_ENDPOINT=https://hf-mirror.com``.
-
-.. code:: bash
-
-   CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
-
-   hf download ChikaYokoyama/maniskill_rlt_1000_new \
-     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
-     --exclude '*/dcp_checkpoint/*'
-   hf download ChikaYokoyama/maniskill_rlt_3000_new \
-     --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
-     --exclude '*/dcp_checkpoint/*'
-   hf download ChikaYokoyama/rlt_steam_value_model_sft_step_5000 \
-     --local-dir "$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor" \
-     --exclude 'dcp_checkpoint/*'
-   hf download ChikaYokoyama/rlt_steam_phase_head \
-     --local-dir "$CHECKPOINT_ROOT"
-
-   hf download google/siglip-so400m-patch14-384 \
-     --local-dir "$CHECKPOINT_ROOT/siglip-so400m-patch14-384"
-   hf download google/gemma-3-270m \
-     --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
-
-The first two repositories include ``global_step_1000/actor`` and ``global_step_3000/actor`` in their paths. The STEAM repository has the actor directory's contents at its root, so its download target includes ``global_step_5000/actor``. These commands skip distributed training state and retain the files used for inference.
-
-Replace ``/path/to`` in the preset's four checkpoint paths with the expanded absolute value of ``CHECKPOINT_ROOT``. Keep ``openpi_data.repo_id: maniskill_peginsertionside_joint`` and ``norm_stats_path: null`` so each OpenPI checkpoint uses its own ``<model_path>/<repo_id>/norm_stats.json``.
-
-The STEAM checkpoint also records local backbone paths. Edit ``$CHECKPOINT_ROOT/rlt_steam_value_model_sft/checkpoints/global_step_5000/actor/config.json``: set ``vision_repo_id`` to the expanded absolute path of ``$CHECKPOINT_ROOT/siglip-so400m-patch14-384`` and ``language_repo_id`` to that of ``$CHECKPOINT_ROOT/gemma-3-270m``. Keep the tokenizer and image-processor files alongside the STEAM weights; the gate loads them from that directory.
-
-.. warning::
-
-   Leave the preset's phase/expert threshold, patience, and expert warmup fields at ``null`` to use the loaded phase head's metadata. The published head recommends ``enter_threshold: 0.940951`` and ``patience_chunks: 1``. Explicit values override metadata and log a warning when they disagree. The expert candidate threshold ``-0.568753`` produced zero predicted takeovers and zero oracle-stall recall on the validation split. Keep expert takeover in ``shadow`` mode: it records decisions without executing them. Calibrate and validate the expert threshold on actor-controlled episodes before switching to ``active``. If you use ``steam_gate_recommendation.yaml``, replace its source-machine phase-head path and retain shadow mode.
-
-Run Training
-^^^^^^^^^^^^
-
-After updating those paths, launch the preset:
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
-
-This starts the actor, rollout, and environment workers. The feature model uses ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``. Only image tokens enter ``z_rl``; language still conditions the reference actions. STEAM controls the base-to-actor switch, while expert takeover remains in shadow mode. ``rollout.routing_gate.cameras`` maps STEAM processor camera keys to the corresponding environment observation keys.
-
-Collect Calibration Traces
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-To fit a phase head for your setup, use the collection preset. It sets ``rollout.routing_gate.actor_switch.collect_phase_features: true`` to return STEAM features and ``algorithm.rlt_gate_calibration.enable: true`` to save them with geometry labels and gate diagnostics. It clears the phase-head path, uses the environment geometry gate for routing, and keeps expert takeover in shadow mode.
-
-.. code:: bash
-
-   STEPS=20 SAVE_INTER=-1 bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam_calibration
-
-The learner writes ``trace_*.pt`` under ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/``. Each launch creates its run directory under ``logs/``; change ``algorithm.rlt_gate_calibration.save_path`` to save elsewhere. These 20 rollout rounds check collection. If both geometry labels occur, they can also supply an initial phase head, but they do not finish the preset's 30,000-update warmup or validate expert takeover.
-
-Point ``TRACE_DIR`` at that run's trace directory and fit the initial head without a minimum-version filter:
-
-.. code:: bash
-
-   TRACE_DIR=/path/to/run_log_dir/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration
-   python toolkits/rlt/calibrate_steam_gates.py "$TRACE_DIR" \
-     --phase-head-output "$CHECKPOINT_ROOT/steam_phase_head.pt" \
-     --yaml-output "$CHECKPOINT_ROOT/steam_gate_recommendation.yaml" --device cpu
-
-The tool writes ``steam_phase_head.pt`` and ``steam_gate_recommendation.yaml`` outside the training loop. Check the validation metrics, then set the training preset's phase-head path to the new output. Leave the gate settings at ``null`` to read that checkpoint's recommendations. Deployment expert thresholds need later, actor-controlled episodes. Use the training preset for normal runs; it keeps both collection flags false.
+The ManiSkill peg-insertion preset, checkpoint layout, routing settings, and STEAM calibration commands are documented in :doc:`Prefix Fine-Tune <../examples/embodied/prefix>`. Use that page to launch ``maniskill_prefix_stage2_td3_mlp_steam``. The sections below explain the data the run stores and the code you change to add a component.
 
 Replay and Updates
-^^^^^^^^^^^^^^^^^^
+------------------
 
 Routing may execute a base, actor, or expert action. Its ``ActionPayload`` carries the executable actions and optional feedback. The gate declares the feedback keys in ``rollout_info_keys``; a gate-enabled environment must implement ``RolloutInfoReceiver.set_rollout_infos``, which the env worker checks at startup.
 

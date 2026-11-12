@@ -58,7 +58,7 @@
       :link: prefix
       :link-type: doc
 
-      在冻结 VLA 特征上训练 actor-critic，再接入自己的特征模型、head 或算法。
+      为 Prefix Fine-Tune 注册其他 VLA、actor/critic head 或更新规则。ManiSkill 的运行步骤在示例页。
 
    .. grid-item-card:: 高级集成
       :link: advanced-integrations/index

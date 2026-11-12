@@ -3,7 +3,7 @@ RL Token: Online Reinforcement Learning with a Compressed VLA Representation
 
 Train an RL Token (RLT) representation from demonstrations, then use it to train a small actor-critic online. This recipe covers Stage 1 SFT and Stage 2 execution for Franka peg insertion and ManiSkill ``PegInsertionSideWideClearance-v1`` joint-control simulation.
 
-RLT learns a compact token representation from the VLA's image and language features. Stage 2 freezes that representation and trains the actor and critic through the Prefix runtime. If you want to start directly from an existing VLA checkpoint without token-transformer training, use the pooling route in :doc:`../../extending/prefix`. That page also explains how to replace the feature model, heads, or algorithm.
+RLT learns a compact token representation from the VLA's image and language features. Stage 2 freezes that representation and trains the actor and critic through the Prefix runtime. If you want to start directly from an existing VLA checkpoint without token-transformer training, follow the pooling route in :doc:`Prefix Fine-Tune <prefix>`. To add another feature model, head, or algorithm in code, see :doc:`../../extending/prefix`.
 
 The method is described in **RL Token: Bootstrapping Online RL with Vision-Language-Action Models**. Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_. When adapting this recipe, align the demonstration fields, environment actions, robot state, and OpenPI data config.
 
@@ -38,7 +38,7 @@ Stage 1 jointly trains the VLA and token transformer on demonstrations. Its comp
 Provided Configuration Files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Choose the Stage 1 and Stage 2 configs for your environment. The STEAM preset uses pooled VLA features rather than the RLT token transformer; its weights and calibration steps are documented on the Prefix page.
+Choose the Stage 1 and Stage 2 configs for your environment. The STEAM preset uses pooled VLA features rather than the RLT token transformer; its weights and calibration steps are documented in :doc:`Prefix Fine-Tune <prefix>`.
 
 .. list-table::
    :header-rows: 1
@@ -664,13 +664,13 @@ This variant is currently configured only for ManiSkill simulation. It keeps
 the frozen Stage 1 features and transition replay path, while replacing the
 Stage 2 policy and update objective with a direct TD3 actor and twin-Q critic.
 
-For pooled features instead of a learned RLT representation, use ``maniskill_prefix_stage2_td3_mlp_steam.yaml``. It sets ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``, so it can use an existing SFT VLA without a trained ``rlt_module``. Download the feature, expert, STEAM value-model, and phase-head checkpoints following :doc:`../../extending/prefix`, set their local paths, then launch:
+For pooled features instead of a learned RLT representation, use ``maniskill_prefix_stage2_td3_mlp_steam.yaml``. It sets ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``, so it can use an existing SFT VLA without a trained ``rlt_module``. Download the feature, expert, STEAM value-model, and phase-head checkpoints following :doc:`Prefix Fine-Tune <prefix>`, set their local paths, then launch:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. The Prefix page explains the published threshold's validation limits and how to collect calibration traces.
+The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. :doc:`Prefix Fine-Tune <prefix>` explains the published threshold's validation limits and how to collect calibration traces.
 
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
 freezes ``rollout.prefix_feature_model`` and only synchronizes the Stage 2 MLP

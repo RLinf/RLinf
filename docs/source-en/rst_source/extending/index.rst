@@ -62,7 +62,7 @@ SFT, then use Advanced Integrations for backend integration and weight transport
       :link: prefix
       :link-type: doc
 
-      Train actor-critic heads on frozen VLA features, then add your own components.
+      Register another VLA, actor or critic head, or update rule. The ManiSkill run is the Prefix Fine-Tune example.
 
    .. grid-item-card:: Advanced Integrations
       :link: advanced-integrations/index
