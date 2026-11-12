@@ -1343,6 +1343,11 @@ class ScopedTimer:
             durations are not consumed before starting a new measurement for the
             same name.
 
+        add_duration(name, duration):
+            Add seconds to a name, summing with a record already stored.
+            Use this when one iteration crosses more than one boundary and
+            the same name must be timed again before consume_durations().
+
     Raises:
         ValueError: If attempting to start a new timing section for a name that
                     already has a recorded duration without consuming the previous
@@ -1377,3 +1382,17 @@ class ScopedTimer:
                     f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements."
                 )
             self._duration_log[name] = self._timer.get(name=name)
+
+    def has_duration(self, name: str) -> bool:
+        """Whether ``name`` already holds a measurement for this iteration."""
+        return name in self._duration_log
+
+    def add_duration(self, name: str, duration: float) -> None:
+        """Add ``duration`` seconds to ``name``, summing with any current record.
+
+        :meth:`__call__` stores one measurement per name and raises if that
+        name is timed again before :meth:`consume_durations`. A runner that
+        crosses more than one save or evaluation step in one iteration uses
+        this to keep a single total.
+        """
+        self._duration_log[name] = self._duration_log.get(name, 0.0) + duration

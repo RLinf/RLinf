@@ -351,8 +351,7 @@ class SuperMimicRunner(EmbodiedRunner):
                 eval_metrics = segment_eval
         if not single:
             for name, duration in measured.items():
-                logged = self.timer._duration_log.get(name, 0.0)
-                self.timer._duration_log[name] = logged + duration
+                self.timer.add_duration(name, duration)
         if actor_handle is None:
             raise RuntimeError("An update batch produced no actor call.")
         return actor_handle, training_metrics, eval_metrics, last_step
@@ -390,9 +389,11 @@ class SuperMimicRunner(EmbodiedRunner):
             Tracer.trace_end(name, cat="runner")
 
     def _maybe_eval_and_checkpoint(self, step: int) -> dict:
-        # One iteration can evaluate at more than one boundary. The runner
-        # timer accepts the eval name once, so later evals add to that time.
-        if "eval" not in self.timer._duration_log:
+        # One iteration can evaluate at more than one boundary. The first
+        # uses the parent path. ScopedTimer records each name once, so a
+        # later evaluation adds to that record instead of entering the
+        # parent's ``with self.timer("eval")`` again.
+        if not self.timer.has_duration("eval"):
             return super()._maybe_eval_and_checkpoint(step)
         run_val, save_model, _ = check_progress(
             self.global_step,
@@ -409,7 +410,7 @@ class SuperMimicRunner(EmbodiedRunner):
             evaluated = self.evaluate()
             eval_metrics = {f"eval/{key}": value for key, value in evaluated.items()}
             self.metric_logger.log(data=eval_metrics, step=step)
-            self.timer._duration_log["eval"] += time.perf_counter() - started
+            self.timer.add_duration("eval", time.perf_counter() - started)
         if save_model:
             self._save_checkpoint()
         return eval_metrics

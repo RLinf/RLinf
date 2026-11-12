@@ -376,6 +376,22 @@ def test_batched_updates_stop_on_save_and_eval_boundaries():
     assert boundary_update_spans(1990, 1020, 16000, 2000, 1000) == [10, 1000, 10]
 
 
+def test_scoped_timer_sums_a_second_record_of_the_same_name():
+    from rlinf.utils.distributed import ScopedTimer
+
+    timer = ScopedTimer(trace=False)
+    timer.add_duration("eval", 1.25)
+    timer.add_duration("eval", 0.75)
+    assert timer.has_duration("eval")
+    assert timer.consume_durations() == {"eval": 2.0}
+    assert not timer.has_duration("eval")
+    with timer("actor_training"):
+        pass
+    with pytest.raises(ValueError, match="actor_training"):
+        with timer("actor_training"):
+            pass
+
+
 def test_clip_step_clips_the_norm_then_each_element():
     first = torch.nn.Parameter(torch.zeros(2))
     second = torch.nn.Parameter(torch.zeros(1))
