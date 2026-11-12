@@ -24,9 +24,9 @@ runner:
     log_path: /workspace/results/maniskill_sac_mlp
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
-  max_epochs: 10
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -34,7 +34,7 @@ runner:
   save_interval: -1
 
 algorithm:
-  update_epoch: 32
+  update_epoch: 1
   group_size: 1
   agg_q: min
 
@@ -108,8 +108,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 1024
-  global_batch_size: 1024
+  micro_batch_size: 8
+  global_batch_size: 8
   seed: 1234
   enable_offload: False
 

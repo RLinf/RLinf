@@ -26,7 +26,7 @@ runner:
     log_path: "../results/metaworld_50_ppo_openvlaoft"
     project_name: rlinf
     experiment_name: "test_openvlaoft"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1

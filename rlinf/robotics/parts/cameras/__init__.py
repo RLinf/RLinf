@@ -26,6 +26,7 @@ from .orbbec import OrbbecCamera
 from .realsense import RealSenseCamera
 from .ros import ROSCamera, ROSCameraInfo
 from .uvc import UVCCamera
+from .v4l2 import V4L2Camera
 from .zed import ZEDCamera
 
 __all__ = [
@@ -38,5 +39,6 @@ __all__ = [
     "ROSCamera",
     "ROSCameraInfo",
     "UVCCamera",
+    "V4L2Camera",
     "ZEDCamera",
 ]

@@ -338,8 +338,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
-        cfg.sglang = validate_sglang_cfg(cfg.sglang)
-        cfg.vllm = validate_vllm_cfg(cfg.vllm)
+        if cfg.rollout_backend == "sglang":
+            cfg.sglang = validate_sglang_cfg(cfg.sglang)
+        else:
+            cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
 
@@ -1197,6 +1199,27 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.OPENPI:
+        if only_eval and model_cfg.openpi.get("short_memory", False):
+            assert cfg.env.eval.get("short_memory") is not None, (
+                "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "
+                "got no environment history configuration."
+            )
+    for split in ("train", "eval"):
+        env_cfg = cfg.get("env", {}).get(split)
+        if env_cfg is None or env_cfg.get("env_type") != "world_model":
+            continue
+        for env_key, model_key in (
+            ("chunk", "num_action_chunks"),
+            ("action_dim", "action_dim"),
+        ):
+            env_value = env_cfg.get(env_key)
+            model_value = model_cfg.get(model_key)
+            if env_value is not None and env_value != model_value:
+                raise ValueError(
+                    f"Expected env.{split}.{env_key} to equal the policy's "
+                    f"{model_key} ({model_value}), got {env_value}."
+                )
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
@@ -1494,6 +1517,130 @@ def validate_embodied_cfg(cfg):
             f"total_num_envs must equal the environment worker count ({env_world_size}), "
             f"got {psi0_env_cfg.total_num_envs}."
         )
+
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert not algorithm_cfg.get("filter_rewards", False), (
+            "DiffusionART requires algorithm.filter_rewards=False; got True."
+        )
+        assert model_type in DIFFUSION_MODELS, (
+            "algorithm.loss_type='embodied_art' requires a diffusion model."
+        )
+        assert cfg.actor.training_backend == "fsdp", (
+            "algorithm.loss_type='embodied_art' currently requires actor.training_backend='fsdp'."
+        )
+        assert stage_num == 1, (
+            "algorithm.loss_type='embodied_art' requires rollout.pipeline_stage_num=1."
+        )
+        art_updates = int(algorithm_cfg.get("art_updates_per_rollout", 2))
+        assert art_updates in {1, 2} and algorithm_cfg.group_size % art_updates == 0, (
+            "DiffusionART art_updates_per_rollout must be 1 or 2 and divide "
+            "algorithm.group_size."
+        )
+        assert int(algorithm_cfg.get("update_epoch", 1)) == 1, (
+            "DiffusionART requires algorithm.update_epoch=1."
+        )
+        assert cfg.runner.get("weight_sync_interval", 1) == 1, (
+            "DiffusionART requires runner.weight_sync_interval=1."
+        )
+        assert cfg.env.train.group_size == algorithm_cfg.group_size, (
+            "DiffusionART requires env.train.group_size to match algorithm.group_size."
+        )
+        assert (
+            cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
+        ), "DiffusionART requires one generated sample per rollout epoch."
+        expected_global_batch_size = (
+            cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch // art_updates
+        )
+        assert cfg.actor.global_batch_size == expected_global_batch_size, (
+            "DiffusionART actor.global_batch_size must equal one disjoint update "
+            f"window ({expected_global_batch_size})."
+        )
+        actor_world_size = component_placement.get_world_size("actor")
+        shard_count = math.lcm(env_world_size, actor_world_size)
+        assert (
+            cfg.env.train.total_num_envs % (shard_count * algorithm_cfg.group_size) == 0
+        ), (
+            "DiffusionART requires every actor trajectory shard to contain complete "
+            "prompt groups."
+        )
+        timestep_fraction = float(algorithm_cfg.get("art_timestep_fraction", 1.0))
+        assert 0 < timestep_fraction <= 1, (
+            "algorithm.art_timestep_fraction must be in (0, 1]."
+        )
+        assert algorithm_cfg.get("art_loss_space", "velocity_linear_sigma") in {
+            "velocity_linear_sigma",
+            "velocity_uniform",
+        }, "Unsupported algorithm.art_loss_space."
+        assert algorithm_cfg.get("art_covariance_reduction", "unbiased") in {
+            "unbiased",
+            "population",
+        }, "Unsupported algorithm.art_covariance_reduction."
+        assert algorithm_cfg.get("art_direction_mode", "historical") in {
+            "historical",
+            "normalized_aggregate",
+        }, "Unsupported algorithm.art_direction_mode."
+        assert algorithm_cfg.get("art_scale_mode", "unit_normalized_covariance") in {
+            "reward_mad",
+            "raw_covariance",
+            "reward_std_normalized_covariance",
+            "unit_normalized_covariance",
+        }, "Unsupported algorithm.art_scale_mode."
+        assert algorithm_cfg.get("art_zero_signal_mode", "exact") == "exact", (
+            "Scalar DiffusionART requires algorithm.art_zero_signal_mode='exact'."
+        )
+        supported_art_options = {
+            "art_updates_per_rollout",
+            "art_covariance_reduction",
+            "art_direction_mode",
+            "art_scale_mode",
+            "art_guidance_gain",
+            "art_zero_signal_mode",
+            "art_zero_signal_atol",
+            "art_loss_space",
+            "art_mask_metric",
+            "art_mask_threshold",
+            "art_reference_noise_level",
+            "art_corrective_mask_enabled",
+            "art_exclude_final_step",
+            "art_timestep_fraction",
+            "art_reward_reduction",
+            "art_eps",
+        }
+        unsupported_art_options = sorted(
+            option
+            for option in algorithm_cfg
+            if option.startswith("art_") and option not in supported_art_options
+        )
+        assert not unsupported_art_options, (
+            f"Unsupported DiffusionART options: {unsupported_art_options}."
+        )
+        assert algorithm_cfg.get("art_mask_metric", "sde_kl") in {
+            "fixed_mse",
+            "sde_kl",
+        }, "Unsupported algorithm.art_mask_metric."
+        for option, default in (
+            ("art_mask_threshold", 1e-5),
+            ("art_reference_noise_level", 0.8),
+        ):
+            value = algorithm_cfg.get(option, default)
+            assert type(value) in (int, float) and math.isfinite(value) and value > 0, (
+                f"algorithm.{option} must be a positive finite number."
+            )
+        assert type(algorithm_cfg.get("art_corrective_mask_enabled", True)) is bool, (
+            "algorithm.art_corrective_mask_enabled must be boolean."
+        )
+        assert algorithm_cfg.get("art_reward_reduction", "mean") in {"mean", "sum"}, (
+            "algorithm.art_reward_reduction must be 'mean' or 'sum'."
+        )
+        model_options = model_cfg.get(model_type.value)
+        assert model_options.get("rl_mode") == "art", (
+            f"actor.model.{model_type.value}.rl_mode must be 'art'."
+        )
+        if model_type == SupportedModel.SD3:
+            assert (
+                model_options.get("train_sampler") == "ode"
+                and float(model_options.get("noise_level", 0.0)) == 0.0
+            ), "SD3 DiffusionART requires deterministic ODE rollout."
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
@@ -1796,10 +1943,20 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
         model_type = cfg.actor.model.get("model_type", None)
-        if (
-            model_type is not None
-            and SupportedModel(model_type) == SupportedModel.DREAMZERO
-        ):
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
+            openpi_cfg = cfg.actor.model.openpi
+            history_cfg = cfg.data.get("short_memory")
+            if openpi_cfg.get("short_memory", False):
+                assert history_cfg is not None, (
+                    "actor.model.openpi.short_memory=True requires data.short_memory; "
+                    "got no history sampling configuration."
+                )
+            if history_cfg is not None:
+                assert not openpi_cfg.get("use_rlt", False), (
+                    "OpenPI use_rlt=True requires the RLT loader; "
+                    "got short_memory enabled in the model or data configuration."
+                )
+        elif SupportedModel(model_type) == SupportedModel.DREAMZERO:
             from rlinf.models.embodiment.dreamzero.dreamzero_config import (
                 validate_dreamzero_sft_model_cfg,
             )
@@ -1891,6 +2048,8 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
 
+    with open_dict(cfg.agentloop):
+        cfg.agentloop.setdefault("truncate_response", True)
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
     if not cfg.actor.get("enable_dp_load_balance", False):
@@ -1939,7 +2098,64 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
 
+    if cfg.critic.get("use_critic_model", False):
+        if not cfg.runner.get("synchronous", False):
+            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
+        if (
+            cfg.actor.training_backend != "megatron"
+            or cfg.critic.training_backend != "megatron"
+            or cfg.rollout.rollout_backend != "sglang"
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
+            )
+        if "sglang" not in cfg.rollout:
+            cfg.rollout.sglang = {}
+        cfg.rollout.sglang.setdefault("backend_type", "server")
+        if (
+            cfg.algorithm.adv_type != "gae_dynamic"
+            or cfg.algorithm.kl_beta != 0
+            or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires gae_dynamic and zero KL reward/loss coefficients."
+            )
+        if cfg.algorithm.group_size != 1:
+            raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
+        if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.loss_agg_func=token-mean."
+            )
+        if not cfg.algorithm.get("use_valid_token_scale", False):
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.use_valid_token_scale=True."
+            )
+        if cfg.algorithm.get("loss_scales", []):
+            raise ValueError("SearchR1 PPO requires uniform action-token loss weights.")
+        for role in ("actor", "critic"):
+            if (
+                cfg[role].model.tensor_model_parallel_size != 1
+                or cfg[role].model.pipeline_model_parallel_size != 1
+                or cfg[role].model.get("context_parallel_size", 1) != 1
+            ):
+                raise ValueError(
+                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
+                )
+        if cfg.algorithm.get("importance_sampling_fix", False):
+            raise ValueError(
+                "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
+            )
+
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if cfg.critic.get("use_critic_model", False) and (
+        not component_placement.is_collocated
+        or component_placement.get_hardware_ranks("critic")
+        != component_placement.get_hardware_ranks("actor")
+    ):
+        raise ValueError(
+            "Synchronous SearchR1 PPO requires actor, critic, and rollout "
+            "to share the same GPUs."
+        )
     if not component_placement.is_collocated:
         raise ValueError(
             "SearchR1 multi-agent actors support only collocated component placement."

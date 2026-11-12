@@ -15,5 +15,6 @@
 """Interfaces and drivers for mobile robot bases."""
 
 from .base import MobileBase
+from .lekiwi import LeKiwiBase, body_to_wheel_raw, limit_wheel_raw
 
-__all__ = ["MobileBase"]
+__all__ = ["LeKiwiBase", "MobileBase", "body_to_wheel_raw", "limit_wheel_raw"]
