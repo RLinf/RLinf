@@ -1,0 +1,15 @@
+defaults:
+  - train_qwen2.5_fsdp
+  - _self_
+
+cluster:
+  component_placement:
+    actor: 0-1
+    rollout: 2
+    reward: 2
+
+runner:
+  experiment_name: searchr1-grpo-qwen2.5-fsdp2-disaggregated-${now:%Y%m%d%H%M%S}
+
+actor:
+  enable_offload: False

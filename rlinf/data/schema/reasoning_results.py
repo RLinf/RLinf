@@ -1010,52 +1010,50 @@ class DynamicRolloutResult:
 
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
-            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            *pad_seq_shape, dtype=torch.bool, device=Worker.torch_device_type
         )
         attention_mask[:, :1] = True
         batch_pad = {
             "input_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=Worker.torch_device_type
             ),
             "attention_mask": attention_mask,
             "response_mask": torch.zeros(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.bool, device=Worker.torch_device_type
             ),
             "position_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=Worker.torch_device_type
             ),
-            "is_end": torch.zeros(
-                1, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
-            "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
+            "is_end": torch.zeros(1, dtype=torch.bool, device=Worker.torch_device_type),
+            "prompt_lengths": torch.ones(
+                1, dtype=torch.int32, device=Worker.torch_device_type
             ),
             "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
+                1, dtype=torch.int32, device=Worker.torch_device_type
             ),
             "ref_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "recomputed_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "rollout_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "rewards": torch.zeros(
-                1, dtype=torch.float32, device=torch.cuda.current_device()
+                1, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "advantages": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "loss_scales": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "values": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
             "returns": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=Worker.torch_device_type
             ),
         }
         batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}
@@ -1248,7 +1246,12 @@ class DynamicRolloutResult:
                     split_params["loss_scales"][idx].masked_fill(
                         ~split_params["response_mask"][idx], 0
                     )
-                    * (masked_count_all / masked_counts[i])
+                    * (
+                        masked_count_all / max(masked_counts[i], 1)
+                        if context.get("loss_agg_func", "token-mean")
+                        != "seq-mean-token-sum"
+                        else 1
+                    )
                     for i, idx in enumerate(idxes)
                 ]
                 split_params["loss_scales"][suffix] = torch.stack(value).sum(dim=0)
@@ -1285,7 +1288,9 @@ class DynamicRolloutResult:
         packed_batch["idx_to_traj"] = new_idx_to_traj
         num_sequence_after = len(new_idx_to_traj)
         folding_scale = context.get("folding_scale", [])
-        if "group_level" in folding_scale:
+        if "group_level" in folding_scale and not context.get(
+            "group_scale_in_loss", False
+        ):
             packed_batch["loss_scales"] *= num_sequence_after / num_sequence
 
         return packed_batch
