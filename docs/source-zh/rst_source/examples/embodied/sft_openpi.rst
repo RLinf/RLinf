@@ -9,7 +9,9 @@ OpenPI 监督微调
 
 在 RLinf 里对 π₀ / π₀.₅ 做 **全量 SFT** 或 **LoRA**。策略统一为 ``model_type: openpi``：这是与 JAX 参考对齐的 PyTorch 实现（官方 openpi 仓库自带的 PyTorch 代码并未对齐）。SFT 通常是强化学习前的冷启动：先模仿示范，再在较好先验上做 RL。
 
-配方一览
+在 LIBERO-Mem 上使用视觉历史时，参阅 :doc:`OpenPI Short Memory 评测与训练 </rst_source/examples/embodied/pi0/short_memory>`，了解历史帧采样配置与 FSDP1 SFT 配置。
+
+配置一览
 ----------------------------------------
 
 实验配置通过 Hydra ``defaults`` 引入模型模板，再覆盖路径和任务字段。启动前把 ``/path/to/...`` 换成本地路径。
@@ -83,7 +85,7 @@ OpenPI 监督微调
 
 官方 LeRobot SFT 的数据窗口也来自 ``TrainConfig.model.action_horizon``，不读 ``num_action_chunks``。常见官方 horizon：BEHAVIOR ``pi05_behavior`` **32**\ ，RoboTwin ``pi0_aloha_robotwin`` / LIBERO ``pi0_libero`` **50**\ ，真机 ``pi0_realworld`` **10**。只有 checkpoint 的 horizon 和该 ``TrainConfig`` 不一致时，才覆写 ``openpi.action_horizon``。
 
-BEHAVIOR / dual-Franka 的流式 SFT 加载器目前仍用 ``num_action_chunks`` 当数据窗口，这两份配方里才需要把它设成和官方 horizon 一样。
+BEHAVIOR / dual-Franka 的流式 SFT 加载器目前仍用 ``num_action_chunks`` 当数据窗口，这两份配置里才需要把它设成和官方 horizon 一样。
 
 设置 ``actor.model.precision: fp32``，让原始参数和优化器更新使用 FP32。
 设置 ``actor.model.openpi.embed_dtype: bf16``，让主干激活和残差使用 BF16。
@@ -91,18 +93,18 @@ BEHAVIOR / dual-Franka 的流式 SFT 加载器目前仍用 ``num_action_chunks``
 ``precision: null`` 对应 BF16 激活。
 单独配置 FSDP：前向和反向计算使用 BF16 参数，梯度归约和 buffer 使用 FP32。
 共享模型模板使用 ``precision: null``，采用 OpenPI 的选择性 BF16/FP32 参数 dtype。
-BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配方设置 ``precision: fp32``。
+BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配置设置 ``precision: fp32``。
 
 选择 ``hybrid_engines/openpi_fsdp``，让 projection、RMSNorm 权重和视觉 embedding
-使用 FP32。该配方保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
-RLT Stage 1 配方还让 ``rlt_module`` 使用 FP32。
+使用 FP32。该配置保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
+RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
 OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
 均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
 ``shard_grad_op`` 对梯度和优化器状态分片；``full_shard`` 还在模块执行之间对参数分片。
 选择分片模式可降低每个 rank 的显存占用。设置 ``gradient_checkpointing: true`` 和
 ``gradient_checkpointing_use_reentrant: false`` 可进一步降低激活显存。
-BEHAVIOR / RoboTwin 配方使用 ``openpi_cosine`` 学习率调度。
+BEHAVIOR / RoboTwin 配置使用 ``openpi_cosine`` 学习率调度。
 
 .. code:: yaml
 
@@ -208,7 +210,7 @@ Tokenizer 由 OpenPI 的 ``ModelTransformFactory`` 按基础模型加载，YAML 
 
 - ``--repo-id`` 可以是本地路径或 LeRobot HF repo id；可用 ``HF_LEROBOT_HOME`` 改缓存父目录。
 - ``--config-name`` 必须和训练用的 dataconfig 一致。
-- ``calculate_norm_stats.py`` 默认写到 ``./assets/<config_name>/<repo_id>/norm_stats.json``\ （``TrainConfig.assets_dirs / repo_id``）。训练和评测\ **不会**\ 自动从 SFT 的 ``full_weights.pt`` 目录找这份文件：要用 ``openpi_data.norm_stats_path`` 显式指过去。省略该字段时，OpenPI 按 TrainConfig 默认读取 ``{assets_dir}/{asset_id}/norm_stats.json``\ （会在 ``model_path`` 覆盖之后），并打一条 warning。RoboTwin 配方把统计钉在基础权重旁的 ``physical-intelligence/robotwin/<task>/norm_stats.json``。
+- ``calculate_norm_stats.py`` 默认写到 ``./assets/<config_name>/<repo_id>/norm_stats.json``\ （``TrainConfig.assets_dirs / repo_id``）。训练和评测\ **不会**\ 自动从 SFT 的 ``full_weights.pt`` 目录找这份文件：要用 ``openpi_data.norm_stats_path`` 显式指过去。省略该字段时，OpenPI 按 TrainConfig 默认读取 ``{assets_dir}/{asset_id}/norm_stats.json``\ （会在 ``model_path`` 覆盖之后），并打一条 warning。RoboTwin 配置把统计钉在基础权重旁的 ``physical-intelligence/robotwin/<task>/norm_stats.json``。
 
 若标准差过小或 q99–q01 过窄，适当放大通常更稳，尤其是 SFT 之后还要做在线训练时。
 
@@ -306,7 +308,7 @@ YAML 中的 ``/path/to/...`` 是占位路径，请替换为服务器上的实际
      --action-horizon 32 \
      --max-token-len 200
 
-转换器默认处理 π₀.₅，不要添加 ``--no-pi05``。其他 π₀.₅ SFT 配方使用相同流程，
+转换器默认处理 π₀.₅，不要添加 ``--no-pi05``。其他 π₀.₅ SFT 配置使用相同流程，
 转换参数中的 ``--action-horizon`` 按已有配置填写：ManiSkill RLT 为 10，Franka RLT 和
 dual-Franka 为 20。无需为转换修改 YAML 中的动作维度、图像数或训练参数。
 

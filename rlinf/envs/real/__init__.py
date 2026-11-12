@@ -33,9 +33,11 @@ __all__ = ["RealWorldEnv", "load_tasks"]
 
 #: Robot packages whose import registers their Gymnasium tasks.
 _ROBOT_PACKAGES = (
+    ".arx5",
     ".dosw1",
     ".franka",
     ".gim_arm",
+    ".lekiwi",
     ".piper",
     ".so101",
     ".xsquare",
