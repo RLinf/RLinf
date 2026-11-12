@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional, Union
 import gym
 import numpy as np
 
-from rlinf.envs.sim.libero.utils import get_libero_type
+from rlinf.envs.sim.libero.utils import import_libero_module
 from rlinf.envs.venv import (
     BaseVectorEnv,
     CloudpickleWrapper,
@@ -32,44 +32,6 @@ from rlinf.envs.venv import (
     _setup_buf,
 )
 
-# ---------------------------------------------------------------------------
-# Dynamic Module Import Logic for Libero Pro / Plus
-# ---------------------------------------------------------------------------
-libero_type = get_libero_type()
-
-if libero_type == "pro":
-    try:
-        from liberopro.liberopro.envs import OffScreenRenderEnv
-    except ImportError as e:
-        print(
-            f"[Venv] Warning: LIBERO_TYPE=pro but import failed ({e}). Falling back to standard libero..."
-        )
-        from libero.libero.envs import OffScreenRenderEnv
-
-elif libero_type == "plus":
-    try:
-        from liberoplus.liberoplus.envs import OffScreenRenderEnv
-    except ImportError as e:
-        print(
-            f"[Venv] Warning: LIBERO_TYPE=plus but import failed ({e}). Falling back to standard libero..."
-        )
-        from libero.libero.envs import OffScreenRenderEnv
-
-else:
-    try:
-        from libero.libero.envs import OffScreenRenderEnv
-    except ImportError:
-        try:
-            from liberopro.liberopro.envs import OffScreenRenderEnv
-        except ImportError:
-            try:
-                from liberoplus.liberoplus.envs import OffScreenRenderEnv
-            except ImportError:
-                raise ImportError(
-                    "Could not import OffScreenRenderEnv from libero, liberopro, or liberoplus."
-                )
-
-
 gym_old_venv_step_type = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 gym_new_venv_step_type = tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
@@ -77,6 +39,21 @@ gym_new_venv_step_type = tuple[
 warnings.simplefilter("once", DeprecationWarning)
 
 LIBERO_CAMERA_OBS_NAMES = ("agentview_image", "robot0_eye_in_hand_image")
+
+
+def _update_subgoal_progress(env) -> dict[str, float | int | bool]:
+    """Advance the ordered goals once per control step."""
+    core = env.env
+    core._check_success(inc=True)
+    completed = len(core._satisfied_subgoals)
+    total = core.get_goal_sequence_len()
+    return {
+        "strict_success": completed >= total and bool(core._check_success()),
+        "subgoals_completed": completed,
+        "subgoals_total": total,
+        "subgoal_progress": completed / total,
+        "overshot": bool(core._overshot),
+    }
 
 
 def _set_camera_rendering(env, enabled: bool) -> None:
@@ -97,6 +74,7 @@ def _worker(
     p: connection.Connection,
     env_fn_wrapper: CloudpickleWrapper,
     obs_bufs: Optional[Union[dict, tuple, ShArray]] = None,
+    is_libero_mem: bool = False,
 ) -> None:
     def _encode_obs(
         obs: Union[dict, tuple, np.ndarray], buffer: Union[dict, tuple, ShArray]
@@ -113,6 +91,8 @@ def _worker(
 
     parent.close()
     env = env_fn_wrapper.data()
+    # Reset settling steps must not advance LIBERO-Mem subgoals.
+    track_subgoals = False
     try:
         while True:
             try:
@@ -122,11 +102,21 @@ def _worker(
                 break
             if cmd == "step":
                 env_return = env.step(data)
+                if is_libero_mem and track_subgoals:
+                    obs, reward, _done, info = env_return
+                    progress = _update_subgoal_progress(env)
+                    env_return = (
+                        obs,
+                        reward,
+                        progress["strict_success"],
+                        {**info, **progress},
+                    )
                 if obs_bufs is not None:
                     _encode_obs(env_return[0], obs_bufs)
                     env_return = (None, *env_return[1:])
                 p.send(env_return)
             elif cmd == "reset":
+                track_subgoals = False
                 retval = env.reset(**data)
                 reset_returns_info = (
                     isinstance(retval, (tuple, list))
@@ -170,10 +160,19 @@ def _worker(
                 obs = env.set_init_state(data)
                 p.send(obs)
             elif cmd == "reconfigure":
+                OffScreenRenderEnv = import_libero_module("envs").OffScreenRenderEnv
                 env.close()
                 seed = data.pop("seed")
                 env = OffScreenRenderEnv(**data)
                 env.seed(seed)
+                track_subgoals = False
+                p.send(None)
+            elif cmd == "reset_memory_progress":
+                core = env.env
+                core.reset_subgoal_progress()
+                # LIBERO-Mem 0eee0def workaround: reset leaves the overshoot latch set.
+                core._overshot = False
+                track_subgoals = True
                 p.send(None)
             elif cmd == "get_camera_meta":
                 # Compute camera intrinsics/extrinsics and depth near/far
@@ -244,7 +243,12 @@ def _worker(
 
 
 class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
-    def __init__(self, env_fn: Callable[[], gym.Env], share_memory: bool = False):
+    def __init__(
+        self,
+        env_fn: Callable[[], gym.Env],
+        share_memory: bool = False,
+        is_libero_mem: bool = False,
+    ):
         ctx = multiprocessing.get_context("spawn")
         self.parent_remote, self.child_remote = ctx.Pipe()
         self.share_memory = share_memory
@@ -260,6 +264,7 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
             self.child_remote,
             CloudpickleWrapper(env_fn),
             self.buffer,
+            is_libero_mem,
         )
         self.process = ctx.Process(target=_worker, args=args, daemon=True)
         self.process.start()
@@ -283,9 +288,22 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
 
 
 class ReconfigureSubprocEnv(SubprocVectorEnv):
-    def __init__(self, env_fns: list[Callable[[], gym.Env]], **kwargs: Any) -> None:
+    """Run reconfigurable simulators in subprocesses.
+
+    ``is_libero_mem`` selects ordered subgoal tracking in the worker that owns
+    each simulator; visual observation history is managed by ``LiberoEnv``.
+    """
+
+    def __init__(
+        self,
+        env_fns: list[Callable[[], gym.Env]],
+        is_libero_mem: bool = False,
+        **kwargs: Any,
+    ) -> None:
         def worker_fn(fn: Callable[[], gym.Env]) -> ReconfigureSubprocEnvWorker:
-            return ReconfigureSubprocEnvWorker(fn, share_memory=False)
+            return ReconfigureSubprocEnvWorker(
+                fn, share_memory=False, is_libero_mem=is_libero_mem
+            )
 
         BaseVectorEnv.__init__(self, env_fns, worker_fn, **kwargs)
 
@@ -297,6 +315,15 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
 
         for j, i in enumerate(id):
             self.workers[i].reconfigure_env_fn(env_fns[j])
+
+    def reset_memory_progress(self, id=None):
+        """Start goal tracking after reset settling has completed."""
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        for i in id:
+            self.workers[i].parent_remote.send(["reset_memory_progress", None])
+        for i in id:
+            self.workers[i].parent_remote.recv()
 
     def set_camera_rendering(self, enabled: bool, id=None):
         self._assert_is_not_closed()

@@ -19,7 +19,7 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
    .. grid-item-card:: 算法
       :text-align: center
 
-      带搜索工具调用的多轮强化学习
+      GRPO 或 PPO
 
    .. grid-item-card:: 工具
       :text-align: center
@@ -34,8 +34,7 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
 在8*H100上训练
 ----------------------------------------
 
-从huggingface上下载\ `训练集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__
-，并将路径写入 `examples/agent/searchr1/config/train_qwen2.5.yaml`:
+从 HuggingFace 下载 `训练集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__，在 ``examples/agent/searchr1/config/`` 下选择配置并填写模型和数据路径。GRPO 使用 ``train_qwen2.5.yaml``，PPO 使用 ``train_qwen2.5_ppo.yaml``：
 
 .. code-block:: yaml
 
@@ -43,7 +42,7 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
      ……
      train_data_paths: ["/path/to/train.jsonl"]
 
-修改 `train_qwen2.5.yaml` 中 `rollout.model.model_path` 的路径
+在同一配置中设置 ``rollout.model.model_path``：
 
 .. code-block:: yaml
 
@@ -65,23 +64,22 @@ Qwen2.5-3B-Instruct 的 Search-R1 训练
       disable_log_stats: False
       detokenize: True
 
-response 在 token 层面截断于 `</search>`,始终是生成结果的前缀,因此 rollout 的 log-probability 保持对齐。
-`recompute_logprobs` 可以为 True 或 False,提供的配置使用 True。
-`rollout.return_logprobs` 必须等于 `not algorithm.recompute_logprobs`,启动时会检查。
+GRPO 配置重算 logprobs，PPO 配置直接使用 rollout logprobs。``rollout.return_logprobs`` 应等于 ``not algorithm.recompute_logprobs``。
 
-.. code-block:: yaml
+启动时传入对应的配置名：
 
-   algorithm:
-      ……
-      recompute_logprobs: True
-      shuffle_rollout: False
+.. code-block:: bash
 
-运行 `bash examples/agent/searchr1/run_train.sh` 启动训练。
+   # GRPO
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5
+
+   # PPO
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
 MA-FSDP 训练
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 同时提供基于 FSDP2 的 Search-R1 多智能体 Actor 实现。使用
+RLinf 同时提供基于 FSDP2 的 Search-R1 GRPO 多智能体 Actor 实现。使用
 `examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`，按上文设置相同的模型和数据集路径，然后运行：
 
 .. code-block:: bash
@@ -124,6 +122,8 @@ checkpoint 的导出方式取决于训练后端。
    rm -f "${CKPT_PATH_HF}"/*.done
    shopt -s extglob
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
+
+PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` 两个目录。导出模型时，用上面的命令转换 ``actor`` 目录。恢复训练时，将 ``runner.resume_dir`` 设为该 ``global_step_xxx`` 目录，RLinf 会同时恢复 actor 和 critic。
 
 对于 FSDP，请使用内置的 FSDP 转换器，而不是上面的 Megatron 转换命令。将保存的 FSDP checkpoint 与对应训练运行生成的解析后配置文件传入转换器，并指定 HuggingFace 模型输出目录：
 
@@ -181,4 +181,13 @@ checkpoint 的导出方式取决于训练后端。
        <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1_orig_impl_time.png" style="width: 35%;"/>
        <p><em>Qwen2.5-3B-Instruct in original implementation at PeterGriffinJin/Search-R1</em></p>
      </div>
+   </div>
+
+下图比较 GRPO 和 PPO 的训练 reward：
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Qwen2.5-3B Search-R1 reward：橙色为 GRPO，蓝色为 PPO" style="width: 100%; max-width: 410px;"/>
+     <p><em>橙色为 GRPO，蓝色为 PPO。两组实验均使用 8×A800 80 GB，有效 batch size 均为 1024，TensorBoard 平滑系数为 0.6。</em></p>
    </div>

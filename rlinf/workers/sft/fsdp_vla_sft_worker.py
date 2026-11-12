@@ -21,6 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.distributed import all_reduce_dict
@@ -236,6 +237,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
+        self._save_data_checkpoint(save_path)
 
         if self._is_openwam() and self._openwam_normalization_stats_path:
             stats_path = Path(self._openwam_normalization_stats_path)
@@ -247,8 +249,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 shutil.copy2(stats_path, Path(save_path) / "normalization_stats.npy")
             torch.distributed.barrier()
 
+    def _save_data_checkpoint(self, save_path: str) -> None:
+        """Save per-rank data order and RNG state alongside the model checkpoint."""
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()
+            state["_rlinf_data_epoch"] = self._data_epoch
 
             all_states = [None] * self._world_size
             torch.distributed.all_gather_object(all_states, state)
@@ -268,7 +273,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
+        self._load_data_checkpoint(load_path)
 
+    def _load_data_checkpoint(self, load_path: str) -> None:
+        """Restore data order before the RNG state used by the next model forward."""
         if isinstance(self.data_loader, StatefulDataLoader):
             runner_cfg = getattr(getattr(self, "cfg", None), "runner", None)
             strict_resume = bool(
@@ -280,24 +288,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             if os.path.exists(data_path):
                 all_states = torch.load(data_path, weights_only=False)
                 state = all_states[self._rank]
-                # Creating the iterator forks the loader workers before it
-                # restores the sampler, so an epoch-aware dataset (OpenWAM's
-                # MixtureDataset) must reach the saved epoch here first.
-                saved_epoch = _saved_sampler_epoch(state)
-                sampler = getattr(self.data_loader, "sampler", None)
-                if saved_epoch is not None and hasattr(sampler, "set_epoch"):
-                    sampler.set_epoch(saved_epoch)
+                # Older OpenWAM checkpoints keep the epoch in sampler state.
+                saved_epoch = state.pop("_rlinf_data_epoch", None)
+                if saved_epoch is None:
+                    saved_epoch = _saved_sampler_epoch(state)
+                self._data_epoch = int(saved_epoch) if saved_epoch is not None else 0
+                forward_set_epoch(self.data_loader, self._data_epoch)
                 self.data_loader.load_state_dict(state)
                 self.data_iter = iter(self.data_loader)
-                # Creating the iterator applies the sampler state. Continue the
-                # shuffle epoch it recorded instead of replaying epoch 0 after
-                # the first exhaustion (samplers without an epoch keep the
-                # default).
-                epoch = getattr(
-                    getattr(self.data_loader, "sampler", None), "epoch", None
-                )
-                if epoch is not None:
-                    self._data_epoch = int(epoch)
             else:
                 # Checkpoints written before the data loader became stateful
                 # (or by a plain DataLoader) carry no data position.

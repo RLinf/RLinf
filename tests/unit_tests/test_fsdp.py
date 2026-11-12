@@ -1438,7 +1438,10 @@ def test_openwam_sft_model_provider_uses_the_model_registry(monkeypatch):
     assert cfg.model_path == "/ckpt"
 
 
-def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(tmp_path, monkeypatch):
+@pytest.mark.parametrize("explicit_epoch", [False, True])
+def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(
+    tmp_path, monkeypatch, explicit_epoch
+):
     """A resumed epoch-aware dataset reshuffles for the restored epoch, not epoch 0."""
     pytest.importorskip("torchdata")
     from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
@@ -1456,7 +1459,10 @@ def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(tmp_path, monkeypa
     next(iterator)
     ckpt = tmp_path / "global_step_1" / "actor"
     ckpt.mkdir(parents=True)
-    torch.save([source.state_dict()], ckpt / "data.pt")
+    state = source.state_dict()
+    if explicit_epoch:
+        state["_rlinf_data_epoch"] = 2
+    torch.save([state], ckpt / "data.pt")
 
     loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
     stub = object.__new__(FSDPVlaSftWorker)

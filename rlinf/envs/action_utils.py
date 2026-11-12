@@ -528,6 +528,10 @@ def prepare_actions(
                 model_type=model_type,
                 env_cfg=env_cfg,
             )
+        elif wm_env_type == "robotwin":
+            # Joint angles, as the simulator takes them; a backend trained on another
+            # action space converts them itself.
+            chunk_actions = raw_chunk_actions
         else:
             raise NotImplementedError(f"Env type {wm_env_type} not implemented")
     elif (
