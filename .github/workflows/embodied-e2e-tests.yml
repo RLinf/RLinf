@@ -318,7 +318,6 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-realworld-dual-yam-collect-data-mock-test:
     runs-on: embodied
