@@ -248,7 +248,7 @@ For a policy that needs recent motion as well as the current observation, set ``
 
 ``get_prefix_feature_dim`` computes this runtime width. Rollout and actor both use ``actor.model.state_history``, so leave ``actor.model.z_dim`` at the original feature-model width.
 
-History is indexed by mode, environment rank, pipeline stage, and source-row offset. Terminal observations read the preceding episode's history before current observations reset or advance it. Terminal reads do not commit history, and evaluation keeps its history separate from training.
+History is indexed by mode, environment rank, pipeline stage, and source-row offset. Terminal observations read the preceding episode's history before current observations reset or advance it. Terminal reads do not commit history, and evaluation keeps its history separate from training. The STEAM gate uses the same source identity for image history and routing latches, so splitting or reordering a request does not reset other environments.
 
 PrefixPolicy Forward Contract
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -463,7 +463,7 @@ This example reuses the shared BC/Q objective with minimum-Q aggregation and get
 
 The optional ``_actor_loss`` helper shares intervention-aware BC targets, BC/Q weight schedules, and Q aggregation between AC and TD3. Implement ``actor_loss`` directly for a different objective. Import the algorithm module from the registry's ``_load_builtin_algorithms`` and select ``algorithm.name: my_algorithm`` with ``loss_type: prefix_off_policy``.
 
-The built-in ``ac`` uses the online stochastic actor for next actions and requires ``algorithm.actor_agg_q: q1``. ``td3`` uses a deterministic target actor, action noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. The critic target in either algorithm is the minimum of the first two Q heads. Extra ``multi_q_mlp`` heads regress to the same target, so leave ``algorithm.agg_q`` unset or set it to ``min``. Both algorithms require ``algorithm.entropy_tuning.alpha_type: fixed_alpha``; they do not train an entropy temperature. These settings are checked when the algorithm is built.
+The built-in ``ac`` uses the online stochastic actor for next actions and requires ``algorithm.actor_agg_q: q1``. ``td3`` uses noise-free target actions, rollout exploration noise, and ``min``, ``q1``, or ``mean`` actor-Q aggregation. It does not apply target policy smoothing. ``algorithm.actor_update_action_noise`` separately controls noise during actor updates. The critic target in either algorithm is the minimum of the first two Q heads. Extra ``multi_q_mlp`` heads regress to the same target, so leave ``algorithm.agg_q`` unset or set it to ``min``. Both algorithms require ``algorithm.entropy_tuning.alpha_type: fixed_alpha``; they do not train an entropy temperature. These settings are checked when the algorithm is built.
 
 Implementation and Checkpoints
 ------------------------------

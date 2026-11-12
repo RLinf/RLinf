@@ -899,6 +899,37 @@ def test_empty_history_input_still_resets_shaping_state_on_done():
     assert model._success_streak.tolist() == [0, 1]
 
 
+def test_robotwin_t5_reward_scores_env_observations():
+    from rlinf.models.embodiment.reward import get_reward_model_class
+
+    model_cls = get_reward_model_class("robotwin_t5")
+    model = model_cls.__new__(model_cls)
+    torch.nn.Module.__init__(model)
+    model.batch_size = 2
+    model.register_buffer("_mean", torch.zeros(1, 3, 1, 1), False)
+    seen = []
+
+    def fake_logits(images, instructions):
+        seen.append((images, instructions))
+        return torch.zeros(images.shape[0])
+
+    model._logits = fake_logits
+    images = torch.tensor([0, 255, 51], dtype=torch.uint8).view(3, 1, 1, 1)
+
+    rewards = model.compute_reward(
+        {
+            "main_images": images.expand(3, 4, 4, 3),
+            "task_descriptions": ["a", "b", "c"],
+        }
+    )
+
+    assert rewards.tolist() == pytest.approx([0.5, 0.5, 0.5])
+    assert [batch.shape for batch, _ in seen] == [(2, 3, 4, 4), (1, 3, 4, 4)]
+    frames = torch.cat([batch for batch, _ in seen])
+    assert frames.amax(dim=(1, 2, 3)).tolist() == pytest.approx([0.0, 1.0, 0.2])
+    assert [texts for _, texts in seen] == [["a", "b"], ["c"]]
+
+
 VALUE_CLIP = 0.2
 HUBER_DELTA = 10.0
 
@@ -1417,6 +1448,26 @@ def test_so101_openpi_transforms_pad_six_joint_contract():
     assert result["actions"].shape == (20, 32)
     assert result["image"]["base_0_rgb"].shape == image.shape
     assert not result["image_mask"]["left_wrist_0_rgb"]
+
+
+def test_aloha_inputs_mask_wrist_views_missing_from_a_head_only_observation():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.aloha_policy import AlohaInputs
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    result = AlohaInputs(adapt_to_pi=False)(
+        {
+            "observation/image": image,
+            "observation/wrist_image": None,
+            "observation/state": np.zeros(14, dtype=np.float32),
+            "prompt": "adjust the bottle",
+        }
+    )
+    assert result["image_mask"]["base_0_rgb"]
+    for view in ("left_wrist_0_rgb", "right_wrist_0_rgb"):
+        assert not result["image_mask"][view]
+        assert result["image"][view].shape == image.shape
 
 
 def test_so101_dataconfig_repacks_lerobot_task_as_prompt():
@@ -2162,6 +2213,22 @@ def phyai_example_cfg(monkeypatch):
         return compose(config_name="libero_spatial_ppo_openpi_pi05_phyai")
 
 
+@pytest.mark.parametrize(
+    ("path", "value"), [("env.train.chunk", 25), ("env.train.action_dim", 7)]
+)
+def test_world_model_env_must_match_the_policy_action_shape(monkeypatch, path, value):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="bwm_robotwin_adjust_bottle_ppo_openpi_pi05")
+    OmegaConf.update(cfg, path, value)
+
+    with pytest.raises(ValueError, match=f"Expected {path} to equal"):
+        validate_embodied_cfg(cfg)
+
+
 def test_phyai_example_config_validates_and_shares_the_actor_checkpoint(
     phyai_example_cfg,
 ):
@@ -2667,6 +2734,9 @@ def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
 
         def record_target(module, args, kwargs, output):
             target_calls.append(kwargs["forward_type"])
+            if kwargs["forward_type"] == PrefixForwardType.ACTOR:
+                assert kwargs["deterministic"] is True
+                assert kwargs["apply_action_noise"] is False
 
         context.model.register_forward_hook(record_online, with_kwargs=True)
         context.target_model.register_forward_hook(record_target, with_kwargs=True)
@@ -2936,7 +3006,7 @@ def test_prefix_e2e_config_builds_current_policy_and_algorithm(monkeypatch):
     assert actions.shape == (2, 80)
     q_values, _ = model(forward_type=PrefixForwardType.CRITIC, obs=obs, actions=actions)
     assert q_values.shape == (2, 2)
-    assert cfg.runner.max_epochs == 2
+    assert cfg.runner.max_epochs == 1
     assert cfg.env.train.total_num_envs == 8
     assert cfg.rollout.prefix_feature_model.model_path == (
         "/workspace/dataset/RLinf-Maniskill-RLT-Stage1/"
@@ -3374,7 +3444,7 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
         "/explicit/lingbot-vla-v2/"
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
-    assert cfg.runner.max_steps == 2 and cfg.env.train.total_num_envs == 4
+    assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
 class _PrefixFeatureModel:
@@ -3625,6 +3695,24 @@ def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm
     assert torch.equal(torch.get_rng_state(), rng_after_dropout)
 
 
+def test_prefix_td3_target_actions_are_noise_free():
+    from rlinf.models.embodiment.prefix import PrefixForwardType
+
+    algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
+    rng_state = torch.get_rng_state().clone()
+    first = algorithm.target_actions(context, batch["next_obs"])
+    second = algorithm.target_actions(context, batch["next_obs"])
+    expected, _, _ = context.target_model(
+        forward_type=PrefixForwardType.ACTOR,
+        obs=batch["next_obs"],
+        deterministic=True,
+        apply_action_noise=False,
+    )
+    torch.testing.assert_close(first, expected)
+    torch.testing.assert_close(second, expected)
+    assert torch.equal(torch.get_rng_state(), rng_state)
+
+
 @pytest.mark.parametrize("raw", [-1.2, 1.2])
 def test_prefix_td3_exploration_adds_noise_before_clamping(raw):
     from rlinf.models.embodiment.prefix.heads.mlp import DeterministicMLPActor
@@ -3796,3 +3884,297 @@ def test_prefix_runtime_terminal_history_is_source_scoped_and_nonmutating():
         result["forward_inputs"]["z_rl"][:, 2:],
         torch.tensor([[0.0, 100.0, 101.0], [2.0, 3.0, 5.0]]),
     )
+
+
+@pytest.mark.parametrize(
+    ("detach_critic_input", "use_vlm_value", "expect_vl_grad", "expect_state_grad"),
+    [
+        pytest.param(True, False, False, False, id="detached-vl-and-state"),
+        pytest.param(True, True, False, False, id="detached-vl-only"),
+        pytest.param(False, False, True, True, id="attached-vl-and-state"),
+        pytest.param(False, True, True, False, id="attached-vl-only"),
+        pytest.param(None, False, True, True, id="default-vl-and-state"),
+        pytest.param(None, True, True, False, id="default-vl-only"),
+    ],
+)
+def test_gr00t_n1d7_value_gradient_routing(
+    monkeypatch, detach_critic_input, use_vlm_value, expect_vl_grad, expect_state_grad
+):
+    # Delayed-env tests stub imageio; vendor imports need its real module spec.
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    config_module = pytest.importorskip("gr00t.configs.model.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        FlowMatchingActionHeadForRLActionPrediction,
+    )
+
+    # Construct only the action head; no pretrained backbone or processor loads.
+    config = config_module.Gr00tN1d7Config(
+        backbone_embedding_dim=16,
+        hidden_size=16,
+        input_embedding_dim=16,
+        max_state_dim=8,
+        max_action_dim=7,
+        action_dim=7,
+        action_horizon=2,
+        max_num_embodiments=1,
+        state_history_length=1,
+        add_pos_embed=False,
+        use_alternate_vl_dit=False,
+        vl_self_attention_cfg={"num_layers": 0},
+        num_inference_timesteps=2,
+        num_timestep_buckets=4,
+        diffusion_model_cfg={
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "attention_head_dim": 8,
+            "output_dim": 16,
+            "norm_type": "ada_norm",
+            "dropout": 0.0,
+            "final_dropout": False,
+            "positional_embeddings": None,
+            "interleave_self_attention": False,
+        },
+    )
+    rl_head_config = {
+        "add_value_head": True,
+        "use_vlm_value": use_vlm_value,
+        "value_vlm_mode": "mean_token",
+    }
+    if detach_critic_input is not None:
+        rl_head_config["detach_critic_input"] = detach_critic_input
+    head = FlowMatchingActionHeadForRLActionPrediction(
+        config, rl_head_config, output_action_chunks=2
+    ).float()
+
+    # Positive activations make every value-head layer contribute to backward.
+    with torch.no_grad():
+        for module in head.value_head.modules():
+            if isinstance(module, torch.nn.Linear):
+                module.weight.fill_(0.01)
+                if module.bias is not None:
+                    module.bias.zero_()
+    vl_features = torch.linspace(0.1, 1.0, 96).reshape(2, 3, 16).requires_grad_()
+    state_features = torch.linspace(0.2, 1.1, 32).reshape(2, 1, 16).requires_grad_()
+
+    # Detachment must change gradient ownership, never the predicted values.
+    head.rl_config["detach_critic_input"] = False
+    with torch.no_grad():
+        attached_values = head.get_value(vl_features, state_features)
+    if detach_critic_input is None:
+        head.rl_config.pop("detach_critic_input")
+    else:
+        head.rl_config["detach_critic_input"] = detach_critic_input
+    values = head.get_value(vl_features, state_features)
+    assert values.shape == (2,)
+    torch.testing.assert_close(values, attached_values, rtol=0, atol=0)
+    values.sum().backward()
+
+    for parameter in head.value_head.parameters():
+        assert parameter.grad is not None
+        assert torch.count_nonzero(parameter.grad).item() > 0
+    for features, expect_grad in (
+        (vl_features, expect_vl_grad),
+        (state_features, expect_state_grad),
+    ):
+        if expect_grad:
+            assert features.grad is not None
+            assert torch.count_nonzero(features.grad).item() > 0
+        else:
+            assert features.grad is None
+
+
+def _accelerator_device() -> torch.device:
+    """Device the OpenVLA checkpoint smoke test should run on."""
+    npu = getattr(torch, "npu", None)
+    if npu is not None and npu.is_available():
+        return torch.device("npu")
+    musa = getattr(torch, "musa", None)
+    if musa is not None and musa.is_available():
+        return torch.device("musa")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    pytest.fail("OpenVLA accelerator test found no NPU, MUSA, or CUDA device")
+
+
+def _openvla_checkpoint(env_var: str, default: str) -> str:
+    path = os.environ.get(env_var, default)
+    if not os.path.isdir(path):
+        pytest.fail(f"OpenVLA checkpoint directory does not exist: {path}")
+    return path
+
+
+def _skip_unless_openvla_accelerator_test(package: str) -> None:
+    """Load a real checkpoint only when the platform unit-test job asks for it."""
+    if os.environ.get("RLINF_RUN_OPENVLA_ACCELERATOR_TEST") != "1":
+        pytest.skip("set RLINF_RUN_OPENVLA_ACCELERATOR_TEST=1 to load this checkpoint")
+    pytest.importorskip(package)
+
+
+def _rgb_observation(task: str) -> dict:
+    return {
+        "task_descriptions": [task],
+        "main_images": torch.randint(0, 255, (1, 224, 224, 3), dtype=torch.uint8),
+        "states": torch.zeros(1, 8),
+    }
+
+
+def test_openvla_predicts_a_finite_action_on_the_accelerator():
+    _skip_unless_openvla_accelerator_test("prismatic")
+    from rlinf.models.embodiment.openvla import get_model
+
+    model_path = _openvla_checkpoint(
+        "RLINF_OPENVLA_MODEL_PATH", "/workspace/dataset/openvla-7b"
+    )
+    cfg = OmegaConf.create(
+        {
+            "model_path": model_path,
+            "precision": "bf16",
+            "action_dim": 7,
+            "num_action_chunks": 1,
+            "use_proprio": False,
+            "unnorm_key": "bridge_orig",
+            "center_crop": True,
+            "hidden_size": 4096,
+            "add_value_head": False,
+            "max_prompt_length": 30,
+            "is_lora": False,
+            "attn_implementation": "flash_attention_2",
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True,
+        }
+    )
+    device = _accelerator_device()
+    model = get_model(cfg, torch_dtype=torch.bfloat16).to(device).eval()
+
+    actions, result = model.predict_action_batch(
+        env_obs=_rgb_observation("pick up the carrot"),
+        do_sample=False,
+        max_new_tokens=7,
+    )
+
+    assert tuple(actions.shape) == (1, 1, 7)
+    assert torch.isfinite(actions).all()
+    assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
+    _skip_unless_openvla_accelerator_test("prismatic")
+    from rlinf.models.embodiment.openvla_oft import get_model
+
+    model_path = _openvla_checkpoint(
+        "RLINF_OPENVLA_OFT_MODEL_PATH",
+        "/workspace/dataset/Openvla-oft-SFT-libero-goal-traj1",
+    )
+    cfg = OmegaConf.create(
+        {
+            "model_type": "openvla_oft",
+            "implement_version": "rlinf",
+            "model_path": model_path,
+            "precision": "bf16",
+            "action_dim": 7,
+            "num_action_chunks": 8,
+            "use_proprio": False,
+            "use_film": False,
+            "unnorm_key": "libero_goal_no_noops",
+            "center_crop": True,
+            "max_prompt_length": 128,
+            "hidden_size": 4096,
+            "add_value_head": False,
+            "num_images_in_input": 1,
+            "is_lora": False,
+            "low_cpu_mem_usage": True,
+            "trust_remote_code": True,
+        }
+    )
+    device = _accelerator_device()
+    model = get_model(cfg, torch_dtype=torch.bfloat16).to(device).eval()
+
+    actions, result = model.predict_action_batch(
+        env_obs=_rgb_observation("open the drawer"),
+        do_sample=False,
+    )
+
+    assert tuple(actions.shape) == (1, 8, 7)
+    assert torch.isfinite(actions).all()
+    assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def test_steam_gate_preserves_source_state_across_rebatching(tmp_path):
+    from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import SteamRoutingGate
+    from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
+    from rlinf.data.schema.embodied_types import TrajectoryKey, TrajectorySource
+
+    head = SteamPhaseHead(input_dim=6, hidden_dim=2)
+    for parameter in head.parameters():
+        parameter.data.zero_()
+    path = tmp_path / "head.pt"
+    head.save_checkpoint(path)
+    gate = SteamRoutingGate(
+        _FakeSteamCritic(),
+        _steam_gate_cfg(
+            actor_switch={
+                "enable": True,
+                "phase_head_path": str(path),
+                "enter_threshold": 0.4,
+                "patience_chunks": 1,
+                "collect_phase_features": True,
+            }
+        ),
+    )
+
+    def source(rank, offset=0, size=1, stage=0):
+        return TrajectorySource(TrajectoryKey(0, 0, rank, stage, 0), size, offset)
+
+    def step(pixels, sources, *, reset=None, mode="train"):
+        images = torch.tensor(pixels, dtype=torch.uint8)[:, None, None, None]
+        return gate.step(
+            {
+                "main_images": images.expand(-1, 2, 2, 3),
+                "task_descriptions": ["insert"] * len(pixels),
+            },
+            mode=mode,
+            stage_id=0,
+            sources=sources,
+            reset_mask=reset,
+        )
+
+    full = [source(7, size=2), source(9)]
+    for _ in range(3):
+        result = step([10, 20, 30], full)
+    assert result.actor_switch.all() and result.expert_requested.all()
+    result = step([30], [source(9)])
+    assert result.actor_switch.all() and result.expert_requested.all()
+    # Reordering same-source rows must also preserve their image-pair histories.
+    result = step([21, 12], [source(7, offset=1), source(7)])
+    torch.testing.assert_close(
+        result.diagnostics["rlt_gate_score_min"][:, 0], torch.tensor([1.0, 2.0])
+    )
+    assert result.actor_switch.all() and result.expert_requested.all()
+    result = step(
+        [30, 12, 21],
+        [source(9), source(7), source(7, offset=1)],
+        reset=torch.tensor([False, True, False]),
+    )
+    assert result.actor_switch[:, 0].tolist() == [True, False, True]
+    assert result.expert_requested[:, 0].tolist() == [True, False, True]
+    assert result.diagnostics["rlt_gate_score_ready"][:, 0].tolist() == [
+        True,
+        False,
+        True,
+    ]
+    assert torch.count_nonzero(result.phase_features[1]) == 0
+    # Growing one source must not clear its existing rows or other stages/modes.
+    result = step([40, 21], [source(7, offset=2), source(7, offset=1)])
+    assert result.actor_switch[:, 0].tolist() == [False, True]
+    assert result.expert_requested[:, 0].tolist() == [False, True]
+    assert not step([30], [source(9)], mode="eval").actor_switch.any()
+    assert not step([30], [source(9, stage=1)]).actor_switch.any()
+    gate.reset(mode="eval")
+    gate.reset(mode="train", stage_id=1)
+    assert step([30], [source(9)]).expert_requested.all()
+    # All ready rows still share one batched STEAM inference.
+    assert 3 in gate.model.prediction_batch_sizes

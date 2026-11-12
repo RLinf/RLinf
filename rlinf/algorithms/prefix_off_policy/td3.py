@@ -66,9 +66,11 @@ class PrefixTD3Algorithm(PrefixOffPolicyAlgorithm):
         context: PrefixOffPolicyContext,
         next_obs: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        """Sample next-state actions from the target actor."""
+        """Return noise-free next-state actions from the target actor."""
         actions, _, _ = context.target_model(
             forward_type=PrefixForwardType.ACTOR,
             obs=next_obs,
+            deterministic=True,
+            apply_action_noise=False,
         )
         return actions

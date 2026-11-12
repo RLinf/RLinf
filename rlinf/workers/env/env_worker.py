@@ -14,7 +14,7 @@
 
 import asyncio
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -34,7 +34,7 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.models.embodiment.prefix.config import is_prefix_off_policy_loss
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Cluster, Worker, merge_batches
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -1173,14 +1173,34 @@ class EnvWorker(Worker):
             return payload.actions
         return payload
 
-    def _recv_actions(self, input_channel: Channel, stage_id: int) -> Any:
-        """Receive actions using the route paired with the policy request."""
+    @staticmethod
+    def _merge_action_batches(batches: list[Any]) -> Any:
+        """Merge action feedback while preserving other backends' payloads."""
+        if len(batches) > 1 and isinstance(batches[0], ActionPayload):
+            return ActionPayload.merge(batches)
+        return merge_batches(batches)
+
+    def _recv_actions(
+        self,
+        input_channel: Channel,
+        stage_id: int,
+        *,
+        mode: Literal["train", "eval"] = "train",
+    ) -> Any:
+        """Receive actions and feedback on the request's training or evaluation route."""
+        if mode == "eval":
+            tag = "eval_rollout_results"
+            batch_size = self.eval_batch_size
+        else:
+            tag = "train_policy" if self.env_decoupled_mode else "policy"
+            batch_size = self.train_batch_size
         return self.recv_from(
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,
-            tag="train_policy" if self.env_decoupled_mode else "policy",
+            tag=tag,
             route_key=stage_id if not self.env_decoupled_mode else None,
-            batch_size=self.train_batch_size,
+            batch_size=batch_size,
+            merge_fn=self._merge_action_batches,
             infer_batch_size_fn=self._infer_action_batch_size,
             decoupled_mode=self.env_decoupled_mode,
         )
@@ -1368,16 +1388,8 @@ class EnvWorker(Worker):
             eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    action_payload = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.eval_batch_size,
-                        infer_batch_size_fn=self._infer_rollout_batch_size
-                        if self.env_decoupled_mode
-                        else None,
-                        decoupled_mode=self.env_decoupled_mode,
+                    action_payload = self._recv_actions(
+                        input_channel, stage_id, mode="eval"
                     )
                     raw_chunk_actions = self._consume_action_payload(
                         action_payload,

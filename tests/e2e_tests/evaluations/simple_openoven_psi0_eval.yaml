@@ -37,8 +37,8 @@ env:
     ignore_terminations: false
     seed: 0
     group_size: 1
-    max_episode_steps: 47
-    max_steps_per_rollout_epoch: 48
+    max_episode_steps: 24
+    max_steps_per_rollout_epoch: 24
     rollout_epoch: 1
     reset_dataset:
       path: /workspace/dataset/psi0_simple/reset-states/G1WholebodyOpenOvenTeleop-v0

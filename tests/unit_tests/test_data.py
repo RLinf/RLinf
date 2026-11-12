@@ -2846,6 +2846,7 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
         tag="train_policy",
         route_key=None,
         batch_size=32,
+        merge_fn=env._merge_action_batches,
         infer_batch_size_fn=env._infer_action_batch_size,
         decoupled_mode=True,
     )
@@ -3764,6 +3765,7 @@ def test_action_payload_routes_feedback_and_preserves_plain_action_responses():
     assert EnvWorker._consume_action_payload(actions, env) is actions
     response = SimpleNamespace(actions=actions)
     assert EnvWorker._consume_action_payload(response, env) is actions
+    assert EnvWorker._merge_action_batches([response]) is response
     worker = object.__new__(EnvWorker)
     worker.collect_rlt_gate_trace = True
     selected = worker._select_trajectory_infos(
@@ -3771,6 +3773,76 @@ def test_action_payload_routes_feedback_and_preserves_plain_action_responses():
     )
     assert set(selected) == {"custom_sensor"}
     torch.testing.assert_close(selected["custom_sensor"], actions[:, -1:])
+
+
+@pytest.mark.parametrize("mode", ["train", "eval"])
+@pytest.mark.parametrize("typed", [False, True])
+@pytest.mark.parametrize("decoupled,rollout_ranks", [(False, 1), (False, 2), (True, 2)])
+def test_env_receives_actions_and_feedback_in_both_modes(
+    mode, typed, decoupled, rollout_ranks
+):
+    from rlinf.scheduler.worker.routing import build_route_channel_key
+
+    env = object.__new__(EnvWorker)
+    env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
+    env.env_decoupled_mode = decoupled
+    env.train_batch_size = 4
+    env.eval_batch_size = 8
+    env._rank, env._world_size = 0, 1
+    env._worker_address = SimpleNamespace(root_group_name="EnvGroup")
+    env._manager_proxy = SimpleNamespace(
+        get_worker_info=lambda _address: SimpleNamespace(group_world_size=rollout_ranks)
+    )
+    env.batch_router = {}
+    batch_size = env.eval_batch_size if mode == "eval" else env.train_batch_size
+    actions = torch.arange(batch_size * 6).reshape(batch_size, 2, 3).float()
+    feedback = {"actor_active": torch.arange(batch_size) % 2 == 0}
+    payload = (
+        ActionPayload(actions=actions, rollout_infos=feedback) if typed else actions
+    )
+    shards = split_batch_value(payload, [batch_size // rollout_ranks] * rollout_ranks)
+    base_tag = "rollout_results" if mode == "eval" else "policy"
+    tag = f"{mode}_{base_tag}" if decoupled or mode == "eval" else base_tag
+    ranks = list(range(rollout_ranks))
+    # Decoupled responses may arrive out of source-row order.
+    if decoupled:
+        ranks.reverse()
+    items = iter(
+        (
+            build_route_channel_key(
+                "RolloutGroup",
+                "EnvGroup",
+                None if decoupled else rank,
+                0,
+                tag,
+                route_key=None if decoupled else 3,
+            ),
+            {
+                "batch_index": f"0_{rank}_{mode}_{base_tag}",
+                "batch": shards[rank],
+            }
+            if decoupled
+            else shards[rank],
+        )
+        for rank in ranks
+    )
+
+    def receive(*, key):
+        expected_key, item = next(items)
+        assert key == expected_key
+        return item
+
+    result = env._recv_actions(SimpleNamespace(get=receive), stage_id=3, mode=mode)
+    if rollout_ranks == 1:
+        assert result is shards[0]
+    if typed:
+        assert isinstance(result, ActionPayload)
+        torch.testing.assert_close(result.actions, actions)
+        torch.testing.assert_close(
+            result.rollout_infos["actor_active"], feedback["actor_active"]
+        )
+    else:
+        torch.testing.assert_close(result, actions)
 
 
 def test_prefix_replay_rejects_recorded_row_without_current_observation():
@@ -3788,3 +3860,39 @@ def test_prefix_replay_rejects_recorded_row_without_current_observation():
     )
     with pytest.raises(ValueError, match="curr_obs.*row index 0"):
         replay.ingest([trajectory])
+
+
+def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3], [1, 2, 3, 4]],
+        prompt_lengths=[1, 2],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        rollout_logprobs=[[-0.1, -0.2], [-0.3, -0.4]],
+        values=torch.arange(8, dtype=torch.float32).reshape(2, 4),
+        advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
+        returns=torch.ones(2, 4),
+    )
+    batch = result.to_actor_batch(4, 0)
+    batch["loss_scales"] = batch["response_mask"].float()
+    assert (batch["response_mask"][0] & batch["response_mask"][1]).sum() == 1
+    packed = DynamicRolloutResult.pack_traj_batch({}, batch)
+    assert packed["idx_to_traj"] == [0, 0]
+    for key in (
+        "input_ids",
+        "response_mask",
+        "values",
+        "advantages",
+        "returns",
+        "rollout_logprobs",
+        "loss_scales",
+    ):
+        torch.testing.assert_close(packed[key], batch[key])

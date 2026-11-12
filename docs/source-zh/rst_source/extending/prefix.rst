@@ -248,7 +248,7 @@ State history
 
 ``get_prefix_feature_dim`` 计算追加后的宽度。rollout 和 actor 共用 ``actor.model.state_history``，因此 ``actor.model.z_dim`` 仍填写特征模型的原始输出宽度。
 
-历史按 mode、环境 rank、pipeline stage 和 source-row offset 索引。terminal observation 会在当前 observation 重置或推进历史前读取上一 episode 的历史，且不提交修改。evaluation 的历史与训练分开保存。
+历史按 mode、环境 rank、pipeline stage 和 source-row offset 索引。terminal observation 会在当前 observation 重置或推进历史前读取上一 episode 的历史，且不提交修改。evaluation 的历史与训练分开保存。 STEAM gate 的图像历史和 routing latch 也按同一 source 身份保存，请求拆分或行顺序变化不会重置其他环境。
 
 PrefixPolicy 的 forward contract
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -463,7 +463,7 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
 
 可选的 ``_actor_loss`` helper 为 AC、TD3 复用 intervention-aware BC target、BC/Q weight schedule 和 Q 聚合。其他 objective 可以直接实现 ``actor_loss``。在 registry 的 ``_load_builtin_algorithms`` 中导入模块后，设置 ``algorithm.name: my_algorithm``，继续使用 ``loss_type: prefix_off_policy``。
 
-内置 ``ac`` 用在线 stochastic actor 生成下一动作，要求 ``algorithm.actor_agg_q: q1``。``td3`` 使用 deterministic target actor 和 action noise，actor Q 聚合支持 ``min``、``q1``、``mean``。两种算法的 critic target 都取前两个 Q head 的最小值；``multi_q_mlp`` 的其余 head 回归到同一个 target，因此应省略 ``algorithm.agg_q`` 字段或将它设为 ``min``。两者都要求 ``algorithm.entropy_tuning.alpha_type: fixed_alpha``，不训练 entropy temperature。构建算法时会校验这些设置。
+内置 ``ac`` 用在线 stochastic actor 生成下一动作，要求 ``algorithm.actor_agg_q: q1``。``td3`` 的 target action 不加噪声，也不使用 target policy smoothing；rollout 保留探索噪声，actor 更新时是否加噪声由 ``algorithm.actor_update_action_noise`` 单独控制。actor Q 聚合支持 ``min``、``q1``、``mean``。两种算法的 critic target 都取前两个 Q head 的最小值；``multi_q_mlp`` 的其余 head 回归到同一个 target，因此应省略 ``algorithm.agg_q`` 字段或将它设为 ``min``。两者都要求 ``algorithm.entropy_tuning.alpha_type: fixed_alpha``，不训练 entropy temperature。构建算法时会校验这些设置。
 
 实现位置与检查点
 ----------------

@@ -239,6 +239,7 @@ class PrefixRolloutRuntime:
                 request.obs,
                 mode=mode,
                 stage_id=stage_id,
+                sources=sources,
                 reset_mask=request.dones,
                 external_actor_switch=actor_switch,
                 actor_routing_enabled=self.route.actor_routing_enabled(version),

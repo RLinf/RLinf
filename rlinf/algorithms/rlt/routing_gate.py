@@ -19,6 +19,8 @@ from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 import torch
 
+from rlinf.data.schema.embodied_types import TrajectorySource
+
 RLT_GATE_INFO_KEYS = (
     "rlt_gate_entered",
     "rlt_gate_entry_step",
@@ -67,12 +69,13 @@ class RoutingGate(Protocol):
         *,
         mode: Literal["train", "eval"],
         stage_id: int,
+        sources: list[TrajectorySource] | None = None,
         reset_mask: torch.Tensor | None = None,
         external_actor_switch: torch.Tensor | None = None,
         actor_routing_enabled: bool = True,
         expert_routing_enabled: bool = True,
     ) -> RoutingDecision:
-        """Advance the gate once and return routing decisions."""
+        """Advance only the source rows in this request and return routing decisions."""
 
     def reset(
         self,

@@ -174,6 +174,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             value_vlm_mode=str(
                 OmegaConf.select(model_cfg, "value_vlm_mode", default="mean_token")
             ),
+            value_head_hidden_sizes=_value_head_hidden_sizes(model_cfg),
             detach_critic_input=bool(
                 OmegaConf.select(model_cfg, "detach_critic_input", default=False)
             ),
@@ -395,6 +396,13 @@ def _require_config_name(model_cfg, task: str) -> str:
             "(it selects the upstream openpi TrainConfig)."
         )
     return config_name
+
+
+def _value_head_hidden_sizes(model_cfg):
+    from omegaconf import OmegaConf
+
+    sizes = OmegaConf.select(model_cfg, "value_head_hidden_sizes", default=None)
+    return None if sizes is None else tuple(int(x) for x in sizes)
 
 
 def _resolve_data_kwargs(cfg):

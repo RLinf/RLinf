@@ -29,6 +29,7 @@ from rlinf.algorithms.rlt.routing_gate import (
 )
 from rlinf.data.datasets.steam import BinaryPairDataCollator
 from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
+from rlinf.data.schema.embodied_types import TrajectorySource
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -221,7 +222,7 @@ class SteamRoutingGate:
                 f"{sorted(processor_keys)} to an env observation key; missing "
                 f"{sorted(missing_keys)} in {self.camera_mapping}."
             )
-        self._states: dict[tuple[str, int], _GateState] = {}
+        self._states: dict[tuple[str, int, int], _GateState] = {}
 
     @staticmethod
     def _calibrated_value(
@@ -327,7 +328,7 @@ class SteamRoutingGate:
             self._states.clear()
             return
         for key in list(self._states):
-            key_mode, key_stage = key
+            key_mode, _, key_stage = key
             if (mode is None or key_mode == mode) and (
                 stage_id is None or key_stage == int(stage_id)
             ):
@@ -376,9 +377,11 @@ class SteamRoutingGate:
             )
         return result
 
-    def _new_state(self, images: dict[str, np.ndarray]) -> _GateState:
-        first_images = next(iter(images.values()))
-        batch_size = first_images.shape[0]
+    def _new_state(
+        self, images: dict[str, np.ndarray], *, batch_size: int | None = None
+    ) -> _GateState:
+        if batch_size is None:
+            batch_size = next(iter(images.values())).shape[0]
         history_len = self.lookback_chunks + 1
         image_history = {
             key: np.zeros(
@@ -440,6 +443,64 @@ class SteamRoutingGate:
                 f"{switch.numel()} values for batch size {batch_size}"
             )
         return switch.reshape(batch_size, -1)[:, -1]
+
+    def _gather_state(
+        self,
+        images: dict[str, np.ndarray],
+        shards: list[tuple[tuple[str, int, int], slice]],
+    ) -> _GateState:
+        for key, rows in shards:
+            previous = self._states.get(key)
+            if previous is not None and previous.valid_count.shape[0] >= rows.stop:
+                continue
+            state = self._new_state(images, batch_size=rows.stop)
+            if previous is not None:
+                count = previous.valid_count.shape[0]
+                for name, history in previous.image_history.items():
+                    state.image_history[name][:count] = history
+                for name in self._STATE_TENSOR_FIELDS:
+                    getattr(state, name)[:count] = getattr(previous, name)
+            self._states[key] = state
+        if len(shards) == 1:
+            key, rows = shards[0]
+            state = self._states[key]
+            if rows.start == 0 and rows.stop == state.valid_count.shape[0]:
+                return state
+        return _GateState(
+            image_history={
+                name: np.concatenate(
+                    [
+                        self._states[key].image_history[name][rows]
+                        for key, rows in shards
+                    ]
+                )
+                for name in images
+            },
+            **{
+                name: torch.cat(
+                    [getattr(self._states[key], name)[rows] for key, rows in shards]
+                )
+                for name in self._STATE_TENSOR_FIELDS
+            },
+        )
+
+    def _commit_state(
+        self,
+        state: _GateState,
+        shards: list[tuple[tuple[str, int, int], slice]],
+    ) -> None:
+        if len(shards) == 1 and self._states[shards[0][0]] is state:
+            return
+        offset = 0
+        for key, rows in shards:
+            size = rows.stop - rows.start
+            batch_rows = slice(offset, offset + size)
+            destination = self._states[key]
+            for name, history in state.image_history.items():
+                destination.image_history[name][rows] = history[batch_rows]
+            for name in self._STATE_TENSOR_FIELDS:
+                getattr(destination, name)[rows] = getattr(state, name)[batch_rows]
+            offset += size
 
     @staticmethod
     def _to_device(value: Any, device: torch.device) -> Any:
@@ -525,19 +586,33 @@ class SteamRoutingGate:
         *,
         mode: Literal["train", "eval"],
         stage_id: int,
+        sources: list[TrajectorySource] | None = None,
         reset_mask: torch.Tensor | None = None,
         external_actor_switch: torch.Tensor | None = None,
         actor_routing_enabled: bool = True,
         expert_routing_enabled: bool = True,
     ) -> RoutingDecision:
+        """Advance source rows without resetting environments absent from the batch."""
         images = self._extract_images(env_obs)
         batch_size = next(iter(images.values())).shape[0]
         prompts = self._extract_prompts(env_obs, batch_size)
-        key = (mode, int(stage_id))
-        state = self._states.get(key)
-        if state is None or state.valid_count.shape[0] != batch_size:
-            state = self._new_state(images)
-            self._states[key] = state
+        shards = (
+            [
+                (
+                    (mode, source.key.env_rank, source.key.stage_id),
+                    slice(source.offset, source.offset + source.size),
+                )
+                for source in sources
+            ]
+            if sources
+            else [((mode, -1, int(stage_id)), slice(0, batch_size))]
+        )
+        source_batch_size = sum(rows.stop - rows.start for _, rows in shards)
+        if source_batch_size != batch_size:
+            raise ValueError(
+                f"STEAM gate expected {batch_size} source rows, got {source_batch_size}."
+            )
+        state = self._gather_state(images, shards)
 
         reset = self._normalize_reset_mask(
             reset_mask,
@@ -678,6 +753,7 @@ class SteamRoutingGate:
             "rlt_route_expert_entry_step": state.route_expert_entry_step[:, None],
         }
         state.chunk_index = state.chunk_index + 1
+        self._commit_state(state, shards)
         return RoutingDecision(
             actor_switch=route_flags[:, None],
             expert_requested=route_expert_flags[:, None],
