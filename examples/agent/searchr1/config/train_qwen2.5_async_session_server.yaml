@@ -1,0 +1,70 @@
+# Search-R1 (GRPO) training on Qwen2.5-3B-Instruct, async runner, with the
+# unified session server data plane.
+#
+# Same recipe and layout as train_qwen2.5_async.yaml: actor (megatron) on
+# global hardware ranks 0-7 (node 0), rollout (sglang server) + reward on
+# ranks 8-15 (node 1). The difference: agents talk to session servers
+# instead of the rollout workers directly. Each session server keeps a
+# group's multi-turn state (prefix reuse, payload collection) on the
+# rollout side and hands the actor a payload reference; the rollout
+# buffer sees only group metadata.
+#
+# Requires the same cluster prerequisites as the parent config (unique
+# RLINF_NODE_RANK per node before `ray start`, entry script from the head
+# node):
+#   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
+#
+# With session_server.enable, the entry script additionally launches one
+# session server worker group per session_server.num_servers (round-robin
+# over the rollout nodes, so with one rollout node everything data-plane
+# side — session servers, router, payload channels — sits on that node)
+# plus the single sglang router the servers forward generates through.
+
+defaults:
+  - train_qwen2.5_async
+  - _self_
+
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+runner:
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins-async-session-server
+
+
+# Unified session server data plane. Defaults are filled by
+# rlinf.config.validate_session_server_cfg; the keys worth knowing:
+#   - num_servers: how many session server instances to launch. Each
+#     holds its share of the groups and their payloads; more instances
+#     spread that state (round-robin over the rollout nodes).
+#   - payload_shards: payload channels per session server, one channel
+#     worker process each; groups map to exactly one shard.
+#   - payload_put_timeout_s: how long a payload write may take before the
+#     group is flagged write-failed and voided.
+#   - max_pending_payload_bytes: backpressure budget per session server;
+#     payload writes past it are awaited inline instead of in the
+#     background.
+#   - generate_timeout_s (and per_task overrides): wall-clock cap on one
+#     forwarded generate; the router's request_timeout_secs must cover it.
+#   - verify_assembly: extra correctness check — the agent loop attaches
+#     its own assembly of each group as a reference and the actor
+#     compares field by field. Costs throughput; for debugging and
+#     first-time bring-up.
+session_server:
+  enable: true
+
+
+# The sglang router the session servers forward generates through.
+#   - policy: manual keeps every group's requests on the engine the
+#     router picked at the group's first request (per-group affinity,
+#     even load). cache_aware is the alternative: it routes by token
+#     prefix match, but when prompts share a long common prefix (system
+#     prompts, instruction templates — as searchr1 does), the default
+#     parameters funnel new requests onto one engine until the load
+#     imbalance threshold trips, so prefer manual for that workload.
+rollout:
+  router:
+    policy: manual
