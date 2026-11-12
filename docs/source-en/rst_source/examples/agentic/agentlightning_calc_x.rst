@@ -51,7 +51,9 @@ example:
    uv pip install -r requirements/agentic/agentlightning_constraints.txt
    uv pip install "agentlightning==0.3.0" "litellm<1.95" \
      "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
-     "mcp-server-calculator" "openai==2.32.0"
+     "mcp-server-calculator" "openai==2.6.1" "virtualenv==20.31.2"
+
+The OpenAI SDK version matches SGLang. The virtualenv pin preserves AgentOps' ``packaging<25`` requirement. The protobuf override retains RLinf's 6.x runtime despite AutoGen 0.7.5 declaring a 5.x requirement; this remains a package metadata conflict even when the Calc-X workflow passes.
 
 For other installation options and supported platforms, see
 :doc:`RLinf Installation </rst_source/start/installation>`.
