@@ -84,7 +84,6 @@ jobs:
           rm -rf .venv .venv-vllm
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
 
   agentlightning-test:
@@ -126,78 +125,9 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
 
-  reason-qwen-grpo-test-rollout-logprobs:
-    runs-on: reason
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create reason environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          # One venv per engine: sglang and vllm pin the same kernel libraries to
-          # different versions, so a shared venv breaks whichever is installed first.
-          bash requirements/install.sh agentic --engine sglang
-          bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
-
-      - name: Megatron SGLang Collocated mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-sgl-rollout-logprobs
-
-      - name: Megatron vLLM Collocated mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv-vllm/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-vllm-rollout-logprobs
-
-      - name: Megatron SGLang Pipeline mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl-rollout-logprobs
-
-      - name: Megatron vLLM Pipeline mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv-vllm/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm-rollout-logprobs
-
-      - name: FSDP SGLang Collocated mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-sgl-rollout-logprobs
-
-      - name: FSDP vLLM Collocated mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv-vllm/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm-rollout-logprobs
-
-      - name: Clean up
-        run: |
-          rm -rf .venv .venv-vllm
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
-               -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
-
-  reason-qwen-ppo-test:
+  reason-qwen-algorithms-test:
     runs-on: reason
     steps:
       - name: Checkout code
@@ -213,67 +143,21 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
 
-      - name: Megatron SGLang Collocated mode
+      - name: PPO Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-ppo-collocated-mg-sgl.yaml
 
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
-               -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
-
-  reason-qwen-importance-sampling-test:
-    runs-on: reason
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create reason environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
-  
-      - name: Megatron SGLang Collocated mode
+      - name: Importance Sampling Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-is-collocated-mg-sgl
 
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
-               -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
-
-  reason-qwen-reinforcepp-test:
-    runs-on: reason
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create reason environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
-  
-      - name: Megatron SGLang Collocated mode
+      - name: Reinforce++ Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
@@ -285,42 +169,6 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
-
-  coding-online-rl-qwen-ppo-test:
-    runs-on: reason
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create reason environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
-
-      - name: Install dependencies
-        run: |
-          source .venv/bin/activate
-          uv pip install httpx asyncio fuzzywuzzy
-
-      - name: SGLang Pipeline mode
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/agent/coding_online_rl/run.sh
-
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
-               -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
   rstar2-qwen-grpo-test:
     runs-on: reason
@@ -405,7 +253,6 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
           tmux kill-session -t server 2>/dev/null || true
           tmux kill-session -t worker 2>/dev/null || true
           pkill redis-server 2>/dev/null || true
@@ -434,6 +281,20 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-megatron
 
+      - name: Check multi-agent Megatron numerical equivalence
+        timeout-minutes: 5
+        run: |
+          export PYTHONPATH=$(pwd):$PYTHONPATH
+          source .venv/bin/activate
+          python -m pytest -q tests/unit_tests/test_utils.py -k "valid_token_scaling or critic_packing"
+
+      - name: Train PPO with SGLang Megatron Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-ppo-megatron
+
       - name: Train with SGLang MA-FSDP Collocated mode
         timeout-minutes: 20
         run: |
@@ -453,7 +314,6 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
   wideseek-r1-qwen-grpo-test:
     runs-on: reason
@@ -485,12 +345,19 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/agent/wideseek/run-eval.sh
 
+      - name: Coding Online RL PPO SGLang Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          uv pip install httpx asyncio fuzzywuzzy
+          bash tests/e2e_tests/agent/coding_online_rl/run.sh
+
       - name: Clean up
         run: |
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
   qwen-vl-grpo-test:
     runs-on: reason
@@ -525,12 +392,39 @@ jobs:
           source .venv-vllm/bin/activate
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-vl-3b-grpo-collocated-fsdp-vllm
 
+      - name: Rollout-logprobs Megatron SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-mg-sgl-rollout-logprobs
+
+      - name: Rollout-logprobs FSDP vLLM Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv-vllm/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collocated-fsdp-vllm-rollout-logprobs
+
+      - name: Rollout-logprobs Megatron SGLang Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-sgl-rollout-logprobs
+
+      - name: Rollout-logprobs Megatron vLLM Pipeline mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv-vllm/bin/activate
+          bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-pipeline-mg-vllm-rollout-logprobs
+
       - name: Clean up
         run: |
           rm -rf .venv .venv-vllm
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
   qwen3-vl-grpo-test:
     runs-on: reason
@@ -561,7 +455,6 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
   qwen-moe-grpo-test:
     runs-on: reason
@@ -662,7 +555,6 @@ jobs:
           rm -rf .venv
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
   fusco-moe-qwen-grpo-test:
     runs-on: reason
@@ -716,9 +608,8 @@ jobs:
           rm -rf FUSCO
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
 
-  megatron-bridge-qwen-grpo-test:
+  megatron-bridge-grpo-test:
     runs-on: reason
     steps:
       - name: Checkout code
@@ -734,7 +625,7 @@ jobs:
           export MEGATRON_PATH=/workspace/dataset/Megatron-LM
           bash requirements/install.sh agentic
 
-      - name: Train with SGLang Megatron-Bridge Collocated mode
+      - name: Train Qwen2.5-1.5B with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
@@ -742,29 +633,6 @@ jobs:
           export CUDA_DEVICE_MAX_CONNECTIONS=1
           bash tests/e2e_tests/reasoning/run.sh qwen2.5-1.5b-grpo-collacated-mbridge-sgl
           rm -rf /workspace/results/grpo-1.5b-megatron-mbridge/
-
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
-               -prune -exec rm -rf {} + 2>/dev/null || true
-          uv cache prune
-
-  moonlight-mbridge-grpo-test:
-    runs-on: reason
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create reason environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
 
       - name: Train Moonlight-16B with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20
@@ -774,27 +642,6 @@ jobs:
           export CUDA_DEVICE_MAX_CONNECTIONS=1
           bash tests/e2e_tests/reasoning/run.sh moonlight-16b-grpo-mbridge-sgl
           rm -rf /workspace/results/moonlight-16b-megatron-mbridge/
-
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          uv cache prune
-
-  glm47-flash-mbridge-grpo-test:
-    runs-on: reason
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create reason environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
-          bash requirements/install.sh agentic
 
       - name: Train GLM-4.7-Flash with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20
@@ -808,4 +655,5 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true

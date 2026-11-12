@@ -338,8 +338,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
-        cfg.sglang = validate_sglang_cfg(cfg.sglang)
-        cfg.vllm = validate_vllm_cfg(cfg.vllm)
+        if cfg.rollout_backend == "sglang":
+            cfg.sglang = validate_sglang_cfg(cfg.sglang)
+        else:
+            cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
 
@@ -1197,6 +1199,21 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    for split in ("train", "eval"):
+        env_cfg = cfg.get("env", {}).get(split)
+        if env_cfg is None or env_cfg.get("env_type") != "world_model":
+            continue
+        for env_key, model_key in (
+            ("chunk", "num_action_chunks"),
+            ("action_dim", "action_dim"),
+        ):
+            env_value = env_cfg.get(env_key)
+            model_value = model_cfg.get(model_key)
+            if env_value is not None and env_value != model_value:
+                raise ValueError(
+                    f"Expected env.{split}.{env_key} to equal the policy's "
+                    f"{model_key} ({model_value}), got {env_value}."
+                )
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "
@@ -2015,6 +2032,8 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
 
+    with open_dict(cfg.agentloop):
+        cfg.agentloop.setdefault("truncate_response", True)
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
     if not cfg.actor.get("enable_dp_load_balance", False):
@@ -2063,7 +2082,64 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             f"rollout.sglang.tool_call_parser={actual_parser!r}."
         )
 
+    if cfg.critic.get("use_critic_model", False):
+        if not cfg.runner.get("synchronous", False):
+            raise ValueError("SearchR1 PPO requires runner.synchronous=True.")
+        if (
+            cfg.actor.training_backend != "megatron"
+            or cfg.critic.training_backend != "megatron"
+            or cfg.rollout.rollout_backend != "sglang"
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires Megatron actor/critic and SGLang rollout."
+            )
+        if "sglang" not in cfg.rollout:
+            cfg.rollout.sglang = {}
+        cfg.rollout.sglang.setdefault("backend_type", "server")
+        if (
+            cfg.algorithm.adv_type != "gae_dynamic"
+            or cfg.algorithm.kl_beta != 0
+            or cfg.algorithm.get("reinpp_kl_beta", 0) != 0
+        ):
+            raise ValueError(
+                "SearchR1 PPO requires gae_dynamic and zero KL reward/loss coefficients."
+            )
+        if cfg.algorithm.group_size != 1:
+            raise ValueError("SearchR1 PPO requires algorithm.group_size=1.")
+        if cfg.algorithm.get("loss_agg_func", "token-mean") != "token-mean":
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.loss_agg_func=token-mean."
+            )
+        if not cfg.algorithm.get("use_valid_token_scale", False):
+            raise ValueError(
+                "SearchR1 PPO requires algorithm.use_valid_token_scale=True."
+            )
+        if cfg.algorithm.get("loss_scales", []):
+            raise ValueError("SearchR1 PPO requires uniform action-token loss weights.")
+        for role in ("actor", "critic"):
+            if (
+                cfg[role].model.tensor_model_parallel_size != 1
+                or cfg[role].model.pipeline_model_parallel_size != 1
+                or cfg[role].model.get("context_parallel_size", 1) != 1
+            ):
+                raise ValueError(
+                    "Synchronous SearchR1 PPO currently requires TP=PP=CP=1."
+                )
+        if cfg.algorithm.get("importance_sampling_fix", False):
+            raise ValueError(
+                "Synchronous SearchR1 PPO uses a fixed old policy without importance_sampling_fix."
+            )
+
     component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if cfg.critic.get("use_critic_model", False) and (
+        not component_placement.is_collocated
+        or component_placement.get_hardware_ranks("critic")
+        != component_placement.get_hardware_ranks("actor")
+    ):
+        raise ValueError(
+            "Synchronous SearchR1 PPO requires actor, critic, and rollout "
+            "to share the same GPUs."
+        )
     if not component_placement.is_collocated:
         raise ValueError(
             "SearchR1 multi-agent actors support only collocated component placement."

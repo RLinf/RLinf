@@ -48,6 +48,7 @@ class Pi0RLConfig:
     ignore_last: bool = False
     value_after_vlm: bool = False
     value_vlm_mode: str = "mean_token"
+    value_head_hidden_sizes: tuple[int, ...] | None = None
     detach_critic_input: bool = False
     chunk_critic_input: bool = False
     train_expert_only: bool = False
@@ -93,6 +94,8 @@ class Pi0RL(EnvIO, Pi0):
                 for name in ("pi05_maniskill", "pi05_libero", "pi05_droid_polaris")
             ):
                 hidden = (1024, 512, 256)
+            if rl_cfg.value_head_hidden_sizes is not None:
+                hidden = tuple(rl_cfg.value_head_hidden_sizes)
             # Stay fp32 like OpenPI: action/value heads sit outside
             # paligemma_with_expert and are never converted to bf16.
             self.value_head = ValueHead(
