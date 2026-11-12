@@ -1,7 +1,7 @@
 RL with Real-World Robots
 =========================
 
-Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, Robbyant R2, AgileX Piper, and SO101.
+Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, Robbyant R2, AgileX Piper, SO101, and LeKiwi.
 
 Choose a guide for hardware checks, teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
 
@@ -79,10 +79,10 @@ Robbyant R2
 
       Run hardware checks, whole-body PICO VR teleoperation, and ``R2ReachEnv-v1`` on the Robbyant R2 wheeled humanoid.
 
-Piper and SO101 Setup
----------------------
+Piper, SO101, and LeKiwi Setup
+------------------------------
 
-Use these guides to connect an arm and run its hardware test script. Piper and SO101 do not yet have supported real-world tasks or training workflows.
+Use these guides to connect a robot and run its hardware test script. Piper, SO101, and LeKiwi do not yet have supported real-world training workflows.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -99,6 +99,12 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
 
       Set up motors, calibrate an SO-101, and run the joint and gripper test script.
 
+   .. grid-item-card:: LeKiwi
+      :link: embodied/lekiwi
+      :link-type: doc
+
+      Set up the wheel motors, check the front webcam, and drive the mobile base.
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -112,3 +118,4 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
    Robbyant R2 <embodied/r2>
    Piper <embodied/piper>
    SO101 <embodied/so101>
+   LeKiwi <embodied/lekiwi>

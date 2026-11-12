@@ -123,6 +123,7 @@ def _assert_legacy_transition(env) -> None:
             "FrankaEnv",
             {"step_frequency": 10000.0},
         ),
+        ("rlinf.envs.real.lekiwi", "LeKiwiDriveEnv", {}),
         ("rlinf.envs.real.so101", "SO101ReachEnv", {}),
         ("rlinf.envs.real.r2", "R2ReachEnv", {}),
     ],
@@ -167,6 +168,199 @@ def test_a_hardware_free_env_repeats_with_a_seed(module_name, class_name, overri
 
     assert np.array_equal(observe(7), observe(7)), "the same seed must repeat"
     assert not np.array_equal(observe(7), observe(8)), "a different seed must differ"
+
+
+def test_lekiwi_step_drives_for_one_period_then_stops():
+    """A step commands velocity for one period, then stops the wheels.
+
+    The stop-after-step contract is the dead-man's grip: a base whose
+    controller stops stepping must stop moving.
+    """
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    with mocked_sdks() as made:
+        env = LeKiwiDriveEnv(
+            {
+                "is_dummy": False,
+                "enable_camera_player": False,
+                "step_frequency": 1000.0,
+                "camera_names": {"0": "front"},
+                "frame_size": [64, 48],
+            },
+            worker_info=None,
+            env_idx=0,
+            robot_info=_robot_info(
+                LeKiwiConfig(
+                    node_rank=None,
+                    serial_port="/dev/ttyACM0",
+                    camera_serials=["0"],
+                    camera_type="uvc",
+                )
+            ),
+        )
+        try:
+            observation, _ = env.reset()
+            # A named camera reports under its configured frame name.
+            assert set(observation["frames"]) == {"front"}
+            assert observation["frames"]["front"].shape == (48, 64, 3)
+            np.testing.assert_allclose(
+                observation["state"]["velocity"], np.zeros(3), atol=1e-6
+            )
+
+            observation, reward, terminated, truncated, _ = env.step(
+                np.array([0.1, 0.0, 0.0])
+            )
+            # The reward is nominal: a task, not the env, decides success.
+            assert reward == 0.0
+            assert not terminated and not truncated
+            np.testing.assert_allclose(
+                observation["state"]["velocity"], [0.1, 0.0, 0.0], atol=0.02
+            )
+
+            bus = made["lerobot.motors.feetech"].FeetechMotorsBus.instances[-1]
+            # The step's wheel commands, then the dead-man stop.
+            assert any(bus.commands[-2].values())
+            assert not any(bus.commands[-1].values())
+
+            # A command beyond the limits is clipped, never passed through.
+            observation, *_ = env.step(np.array([9.0, 9.0, 900.0]))
+            limits = np.array([0.5, 0.5, 90.0])
+            assert np.all(np.abs(observation["state"]["velocity"]) <= limits + 1e-6)
+        finally:
+            env.close()
+        assert not bus.is_connected
+
+
+@pytest.mark.parametrize("frame_size", [(32, 32), (64, 32), (32, 64)])
+def test_lekiwi_camera_keeps_object_proportions(monkeypatch, frame_size):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    # A square centered in a 4:3 capture must stay square in every observation.
+    delivered = np.zeros((480, 640, 3), dtype=np.uint8)
+    delivered[180:300, 260:380] = 255
+    with mocked_sdks() as made:
+        capture = made["cv2"].VideoCapture
+        read = capture.read
+        requested_shapes = []
+
+        def read_pattern(device):
+            ok, requested = read(device)
+            requested_shapes.append(requested.shape)
+            return ok, delivered.copy()
+
+        monkeypatch.setattr(capture, "read", read_pattern)
+        env = LeKiwiDriveEnv(
+            {
+                "enable_camera_player": False,
+                "frame_size": frame_size,
+                "camera_names": {"0": "front"},
+            },
+            robot_info=_robot_info(
+                LeKiwiConfig(
+                    node_rank=None,
+                    serial_port="/dev/ttyACM0",
+                    camera_serials=["0"],
+                    camera_type="uvc",
+                )
+            ),
+        )
+        try:
+            observation, _ = env.reset()
+            assert requested_shapes and set(requested_shapes) == {(480, 640, 3)}
+            frame = observation["frames"]["front"]
+            assert frame.shape == (*frame_size[::-1], 3)
+            y, x = np.where(frame[:, :, 0] > 200)
+            assert x.size > 0
+            assert x.max() - x.min() == y.max() - y.min()
+        finally:
+            env.close()
+
+
+def test_lekiwi_registers_the_versioned_task():
+    from rlinf.envs.real import lekiwi
+
+    spec = gym.spec("LeKiwiDriveEnv-v1")
+    assert spec.version == 1
+    assert spec.entry_point == f"{lekiwi.__name__}:create_LeKiwiDriveEnv"
+
+
+def test_lekiwi_accepts_a_zero_camera_max_age():
+    """Zero is the synchronous mode: every step waits for a fresh frame."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    robot_info = _robot_info(
+        LeKiwiConfig(
+            node_rank=None,
+            serial_port="/dev/ttyACM0",
+            camera_serials=["0"],
+            camera_type="uvc",
+        )
+    )
+    cfg = {
+        "is_dummy": False,
+        "enable_camera_player": False,
+        "camera_names": {"0": "front"},
+    }
+    with mocked_sdks():
+        env = LeKiwiDriveEnv(
+            {**cfg, "camera_max_age": 0.0},
+            worker_info=None,
+            env_idx=0,
+            robot_info=robot_info,
+        )
+        try:
+            assert env.config.camera_max_age == 0.0
+        finally:
+            env.close()
+
+        with pytest.raises(
+            ValueError, match="camera_max_age must be finite and nonnegative"
+        ):
+            LeKiwiDriveEnv(
+                {**cfg, "camera_max_age": -0.1},
+                worker_info=None,
+                env_idx=0,
+                robot_info=robot_info,
+            )
+
+
+def test_lekiwi_rejects_duplicate_frame_names():
+    """Two cameras mapped to one frame name would overwrite each other."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    with mocked_sdks():
+        # The names are resolved while the robot is composed, before any
+        # connection opens.
+        with pytest.raises(ValueError, match="frame names must be unique"):
+            LeKiwiDriveEnv(
+                {
+                    "is_dummy": False,
+                    "enable_camera_player": False,
+                    "camera_names": {"0": "front", "1": "front"},
+                },
+                worker_info=None,
+                env_idx=0,
+                robot_info=_robot_info(
+                    LeKiwiConfig(
+                        node_rank=None,
+                        serial_port="/dev/ttyACM0",
+                        camera_serials=["0", "1"],
+                        camera_type="uvc",
+                    )
+                ),
+            )
 
 
 def test_a_franka_observation_comes_from_one_snapshot():
@@ -5720,6 +5914,77 @@ def test_r2_env_on_hardware_uses_the_measured_waist_and_refuses_a_failed_reset()
             controller.report_health("M.ARM-E-501")
             with pytest.raises(RuntimeError, match="rest pose"):
                 env.reset()
+        finally:
+            env.close()
+
+
+def test_lekiwi_stops_when_wheel_observation_fails():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    with mocked_sdks() as made:
+        env = LeKiwiDriveEnv(
+            {"enable_camera_player": False, "step_frequency": 1000.0},
+            robot_info=_robot_info(LeKiwiConfig(node_rank=None, serial_port="fake")),
+        )
+        bus_cls = made["lerobot.motors.feetech"].FeetechMotorsBus
+        bus = bus_cls.instances[-1]
+        try:
+            bus_cls.fail_read = True
+            with pytest.raises(OSError, match="simulated read failure"):
+                env.step(np.array([0.1, 0.0, 0.0]))
+            assert any(bus.commands[-2].values())
+            assert not any(bus.velocity.values())
+        finally:
+            bus_cls.fail_read = False
+            env.close()
+
+
+def test_lekiwi_stops_before_camera_retries_and_error(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.envs.real.lekiwi import LeKiwiDriveEnv
+    from rlinf.robotics import LeKiwiConfig
+
+    with mocked_sdks() as made:
+        monkeypatch.setattr(
+            made["cv2"].VideoCapture, "read", lambda self: (False, None)
+        )
+        env = LeKiwiDriveEnv(
+            {
+                "enable_camera_player": False,
+                "step_frequency": 1000.0,
+                "camera_names": {"0": "front"},
+                "camera_max_age": 0.0,
+            },
+            robot_info=_robot_info(
+                LeKiwiConfig(
+                    node_rank=None,
+                    serial_port="fake",
+                    camera_serials=["0"],
+                    camera_type="uvc",
+                )
+            ),
+        )
+        bus = made["lerobot.motors.feetech"].FeetechMotorsBus.instances[-1]
+        initial_commands = len(bus.commands)
+        initial_opens = len(made["cv2"].opens)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(env.step, np.array([0.1, 0.0, 0.0]))
+                deadline = time.monotonic() + 2
+                while len(bus.commands) < initial_commands + 2:
+                    assert time.monotonic() < deadline, "Camera wait delayed the stop"
+                    time.sleep(0.01)
+                assert not future.done(), "Camera should still be waiting for a frame"
+                assert any(bus.commands[-2].values())
+                assert not any(bus.velocity.values())
+                with pytest.raises(RuntimeError, match="still delivers no frame"):
+                    future.result(timeout=15)
+            assert not any(bus.velocity.values())
+            assert len(made["cv2"].opens) == initial_opens + 2
         finally:
             env.close()
 

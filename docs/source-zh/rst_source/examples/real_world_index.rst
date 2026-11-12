@@ -1,7 +1,7 @@
 真实机器人强化学习
 ========================================
 
-按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、Robbyant R2、AgileX Piper 和 SO101 请进入对应页面。
+按机器人硬件选择配置与使用指南。Franka 机械臂及其组合设备请从 Franka 页面开始；YAM、GimArm、XSquare Turtle2、Dexmal DOS-W1、Robbyant R2、AgileX Piper、SO101 和 LeKiwi 请进入对应页面。
 
 根据硬件检查、遥操作、数据采集、Sim-to-Real 迁移、部署或在线 RL 的需求，选择相应指南。
 
@@ -79,10 +79,10 @@ Robbyant R2
 
       在 Robbyant R2 轮式双臂人形机器人上运行硬件检查、全身 PICO VR 遥操作与 ``R2ReachEnv-v1``。
 
-Piper 与 SO101 配置
+Piper、SO101 与 LeKiwi 配置
 --------------------------------
 
-通过以下指南连接机械臂并运行硬件测试脚本。Piper 和 SO101 目前尚未提供真机任务或训练流程。
+通过以下指南连接机器人并运行硬件测试脚本。Piper、SO101 和 LeKiwi 目前尚未提供真机训练流程。
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -99,6 +99,12 @@ Piper 与 SO101 配置
 
       配置电机、标定 SO-101，并运行关节与夹爪测试脚本。
 
+   .. grid-item-card:: LeKiwi
+      :link: embodied/lekiwi
+      :link-type: doc
+
+      配置轮电机、检查前置摄像头，并驱动移动底盘。
+
 .. toctree::
    :hidden:
    :maxdepth: 3
@@ -112,3 +118,4 @@ Piper 与 SO101 配置
    Robbyant R2 <embodied/r2>
    Piper <embodied/piper>
    SO101 <embodied/so101>
+   LeKiwi <embodied/lekiwi>
