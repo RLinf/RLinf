@@ -19,12 +19,6 @@ from typing import Any, Callable, Literal
 import torch
 from omegaconf import DictConfig
 from packaging.version import parse
-
-try:
-    from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
-except ImportError:
-    # sglang 0.5.2/0.5.4 lack this symbol; these values are stable across versions.
-    GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache", "cuda_graph"]
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -35,6 +29,7 @@ from sglang.srt.managers.scheduler import (
     run_scheduler_process as _run_scheduler_process,
 )
 
+from rlinf.hybrid_engines.sglang.common import GPU_MEMORY_ALL_TYPES
 from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,

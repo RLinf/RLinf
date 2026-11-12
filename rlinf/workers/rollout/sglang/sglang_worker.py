@@ -26,6 +26,7 @@ from transformers import AutoTokenizer
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
+from rlinf.hybrid_engines.sglang.common import GPU_MEMORY_ALL_TYPES
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
@@ -490,7 +491,9 @@ class SGLangWorker(Worker):
         """
         if not self._is_model_instance_entry:
             return
-        await self._backend.onload(tags=["kv_cache", "cuda_graph"])
+        await self._backend.onload(
+            tags=[tag for tag in GPU_MEMORY_ALL_TYPES if tag != "weights"]
+        )
 
     async def abort_generation(self):
         """Abort the generation."""
