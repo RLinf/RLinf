@@ -17,11 +17,7 @@ import numpy as np
 
 
 class OGBenchDataset:
-    """An append-only offline/online replay with explicit episode boundaries.
-
-    Capacity is fixed for a run; refusing overflow prevents chunks crossing the
-    chronological discontinuity of a circular buffer.
-    """
+    """An immutable OGBench dataset with episode-aware action chunks."""
 
     keys = (
         "observations",
@@ -32,29 +28,25 @@ class OGBenchDataset:
         "next_observations",
     )
 
-    def __init__(self, data, seed=0, extra_capacity=0):
+    def __init__(self, data, seed=0):
         self.size = len(data["observations"])
-        self.capacity = self.size + extra_capacity
         self.rng = np.random.RandomState(seed)
         self.data = {}
         for key in self.keys:
             value = np.asarray(data[key], dtype=np.float32)
             if len(value) != self.size:
                 raise ValueError(f"OGBench field {key} has inconsistent length")
-            self.data[key] = np.empty((self.capacity, *value.shape[1:]), np.float32)
-            self.data[key][: self.size] = value
-        self.data["actions"][: self.size] = np.clip(
-            self.data["actions"][: self.size], -1 + 1e-5, 1 - 1e-5
-        )
-        self.offline_size = self.size
+            self.data[key] = value.copy()
+        self.data["actions"] = np.clip(self.data["actions"], -1 + 1e-5, 1 - 1e-5)
 
     @classmethod
-    def from_task(cls, task_name, seed=0, extra_capacity=0):
+    def from_task(cls, task_name, seed=0, dataset_dir=None):
         import ogbench
 
-        env, train, _ = ogbench.make_env_and_datasets(task_name)
+        kwargs = {"dataset_dir": dataset_dir} if dataset_dir is not None else {}
+        env, train, _ = ogbench.make_env_and_datasets(task_name, **kwargs)
         env.close()
-        return cls(train, seed, extra_capacity)
+        return cls(train, seed)
 
     def sample(self, batch_size, horizon, discount, indices=None):
         if not 1 <= horizon <= self.size:
@@ -86,31 +78,12 @@ class OGBenchDataset:
         result["valid"] = valid
         return result
 
-    def add(self, transition):
-        if self.size >= self.capacity:
-            raise RuntimeError(
-                "OGBench replay capacity exceeded; increase online_steps capacity"
-            )
-        for key in self.keys:
-            self.data[key][self.size] = transition[key]
-        self.size += 1
-
     def state_dict(self):
-        return {
-            "rng": self.rng.get_state(),
-            "offline_size": self.offline_size,
-            "online": {
-                k: v[self.offline_size : self.size].copy() for k, v in self.data.items()
-            },
-        }
+        return {"rng": self.rng.get_state(), "size": self.size}
 
     def load_state_dict(self, state):
-        if state["offline_size"] != self.offline_size:
+        if state.get("size", state.get("offline_size")) != self.size:
             raise ValueError("Checkpoint and current offline dataset sizes differ")
-        count = len(state["online"]["observations"])
-        if self.offline_size + count > self.capacity:
-            raise ValueError("Checkpoint replay exceeds configured capacity")
-        self.size = self.offline_size + count
-        for k, v in state["online"].items():
-            self.data[k][self.offline_size : self.size] = v
+        if "online" in state and len(state["online"]["observations"]):
+            raise ValueError("Cannot resume an online replay in offline QAM")
         self.rng.set_state(state["rng"])

@@ -433,7 +433,7 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
-    elif env_type == SupportedEnvType.D4RL:
+    elif env_type in (SupportedEnvType.D4RL, SupportedEnvType.OGBENCH):
         chunk_actions = prepare_actions_for_d4rl(
             raw_chunk_actions=raw_chunk_actions,
             action_dim=action_dim,

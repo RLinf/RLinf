@@ -13,22 +13,18 @@
 # limitations under the License.
 
 
-import copy
-
 import numpy as np
+import torch
 
 
 class OGBenchEnv:
-    """Keep terminated and truncated separate for bootstrap masks.
-
-    This adapter exposes Gymnasium's single-env API. QAMRunner deliberately uses
-    it in a colocated evaluation/collection component, not the vector EnvWorker.
-    """
+    """Expose the OGBench Gymnasium environment to the evaluation adapter."""
 
     def __init__(self, cfg, **kwargs):
         import ogbench
 
-        self.env = ogbench.make_env_and_datasets(cfg.task_name, env_only=True)
+        kwargs = {"dataset_dir": cfg.dataset_dir} if cfg.get("dataset_dir") else {}
+        self.env = ogbench.make_env_and_datasets(cfg.task_name, env_only=True, **kwargs)
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
 
@@ -41,83 +37,66 @@ class OGBenchEnv:
     def close(self):
         self.env.close()
 
-    def state_dict(self):
-        """Save AntMaze physics, goal, RNG and wrapper progress explicitly."""
-        import mujoco
 
-        raw = self.env.unwrapped
-        if not hasattr(raw, "cur_goal_xy"):
-            raise NotImplementedError(
-                "Exact online resume is currently validated for AntMaze only"
-            )
-        spec = mujoco.mjtState.mjSTATE_INTEGRATION
-        state = np.empty(mujoco.mj_stateSize(raw.model, spec))
-        mujoco.mj_getState(raw.model, raw.data, state, spec)
-        wrappers, wrapper = [], self.env
-        while wrapper is not raw:
-            keys = (
-                "_elapsed_steps",
-                "_has_reset",
-                "checked_reset",
-                "checked_step",
-                "checked_render",
-                "close_called",
-            )
-            wrappers.append(
-                {k: getattr(wrapper, k) for k in keys if k in vars(wrapper)}
-            )
-            wrapper = wrapper.env
-        return {
-            "physics": state,
-            "rng": copy.deepcopy(raw.np_random.bit_generator.state),
-            "task": {
-                k: copy.deepcopy(getattr(raw, k))
-                for k in ("cur_task_id", "cur_task_info", "cur_goal_xy")
-            },
-            "wrappers": wrappers,
-        }
+class OGBenchEvalEnv:
+    """One OGBench episode per RLinf EnvWorker evaluation epoch."""
 
-    def load_state_dict(self, state):
-        """Restore the same AntMaze continuation without pickling MuJoCo."""
-        import mujoco
-
-        self.reset(seed=0)
-        raw = self.env.unwrapped
-        for k, v in state["task"].items():
-            setattr(raw, k, copy.deepcopy(v))
-        raw.np_random.bit_generator.state = copy.deepcopy(state["rng"])
-        mujoco.mj_setState(
-            raw.model, raw.data, state["physics"], mujoco.mjtState.mjSTATE_INTEGRATION
+    def __init__(self, cfg, num_envs=1, seed_offset=0, **kwargs):
+        if num_envs != 1:
+            raise ValueError("OGBench evaluation currently requires one environment")
+        self.env = OGBenchEnv(cfg)
+        self.num_envs = num_envs
+        self.seed = (
+            int(cfg.seed) + int(cfg.get("evaluation_seed_offset", 0)) + seed_offset
         )
-        mujoco.mj_forward(raw.model, raw.data)
-        wrapper = self.env
-        for fields in state["wrappers"]:
-            for k, v in fields.items():
-                setattr(wrapper, k, v)
-            wrapper = wrapper.env
+        self.episode_index = 0
+        self.is_start = True
+        self.elapsed_steps = np.zeros(1, dtype=np.int32)
+        self.info_logging_keys = []
+        self.episode_return = 0.0
+        self.success = 0.0
 
-    def evaluate(self, policy, episodes, seed):
-        """Evaluate stochastic flow actions; report success in [0, 1]."""
-        returns, lengths, successes = [], [], []
-        for episode in range(episodes):
-            obs, _ = self.reset(seed=seed + episode)
-            done, total, length, success = False, 0.0, 0, 0.0
-            while not done:
-                chunks, _ = policy.predict_action_batch(observations=obs[None])
-                for action in chunks[0]:
-                    obs, reward, terminated, truncated, info = self.step(action)
-                    total += float(reward)
-                    length += 1
-                    success = max(success, float(info.get("success", 0)))
-                    done = terminated or truncated
-                    if done:
-                        break
-            returns.append(total)
-            lengths.append(length)
-            successes.append(success)
-        return {
-            "success": float(np.mean(successes)),
-            "episode_return": float(np.mean(returns)),
-            "episode_length": float(np.mean(lengths)),
-            "eval_episodes": episodes,
-        }
+    def reset(self, **kwargs):
+        obs, _ = self.env.reset(seed=self.seed + self.episode_index)
+        self.episode_index += 1
+        self.elapsed_steps[:] = 0
+        self.episode_return = 0.0
+        self.success = 0.0
+        self.is_start = False
+        return {"states": torch.as_tensor(obs[None], dtype=torch.float32)}, {}
+
+    def chunk_step(self, chunk_actions):
+        actions = np.asarray(chunk_actions, dtype=np.float32)
+        if actions.shape != (1, 1, self.env.action_space.shape[0]):
+            raise ValueError(f"Expected one OGBench action chunk, got {actions.shape}")
+        obs, reward, terminated, truncated, info = self.env.step(actions[0, 0])
+        self.elapsed_steps += 1
+        self.episode_return += float(reward)
+        self.success = max(self.success, float(info.get("success", 0)))
+        done = terminated or truncated
+        infos = (
+            {
+                "episode": {
+                    "success": torch.tensor([self.success], dtype=torch.float32),
+                    "return": torch.tensor([self.episode_return], dtype=torch.float32),
+                    "episode_len": torch.tensor(
+                        self.elapsed_steps.copy(), dtype=torch.float32
+                    ),
+                }
+            }
+            if done
+            else {}
+        )
+        return (
+            [{"states": torch.as_tensor(obs[None], dtype=torch.float32)}],
+            torch.tensor([[reward]], dtype=torch.float32),
+            torch.tensor([[terminated]], dtype=torch.bool),
+            torch.tensor([[truncated]], dtype=torch.bool),
+            [infos],
+        )
+
+    def close(self):
+        self.env.close()
+
+    def update_reset_state_ids(self):
+        """The task sampler advances on each reset; no extra state is needed."""

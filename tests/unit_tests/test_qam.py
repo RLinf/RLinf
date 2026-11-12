@@ -71,7 +71,7 @@ def test_dataset_boundaries_and_rng_restore():
         "masks": np.array([1, 0, 1, 1, 1, 1]),
         "terminals": np.array([0, 1, 0, 0, 0, 1]),
     }
-    ds = OGBenchDataset(data, seed=42, extra_capacity=2)
+    ds = OGBenchDataset(data, seed=42)
     batch = ds.sample(1, 3, 0.5, indices=[0])
     np.testing.assert_array_equal(batch["valid"], [[1, 1, 0]])
     np.testing.assert_allclose(batch["rewards"], [[1, 1.5, 1.5]])

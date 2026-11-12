@@ -83,6 +83,7 @@ jobs:
               - 'rlinf/robotics/**'
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
               - 'rlinf/workers/actor/fsdp_iql_policy_worker.py'
+              - 'rlinf/workers/actor/qam_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/runners/offline_runner.py'
               - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
@@ -104,6 +105,7 @@ jobs:
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
               - 'examples/embodiment/config/*/**'
+              - 'examples/embodiment/config/ogbench_qam_offline.yaml'
               - 'examples/diffusion/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
@@ -180,9 +182,9 @@ jobs:
               - *shared
               - 'rlinf/models/embodiment/qam_policy.py'
               - 'rlinf/workers/actor/qam_policy_worker.py'
-              - 'rlinf/runners/qam_runner.py'
-              - 'examples/embodiment/train_qam.py'
-              - 'examples/embodiment/config/ogbench_qam_antmaze.yaml'
+              - 'rlinf/runners/offline_runner.py'
+              - 'examples/embodiment/train_offline_rl.py'
+              - 'examples/embodiment/config/ogbench_qam_offline.yaml'
               - 'tests/parity_tests/test_qam_reference.py'
               - 'rlinf/robotics/**'
               # Unit tests import env modules directly (robot task envs, the
