@@ -14,8 +14,12 @@
 
 """Utils for evaluating policies in LIBERO simulation environments."""
 
+from __future__ import annotations
+
 import math
 import os
+from importlib import import_module
+from types import ModuleType
 from typing import TYPE_CHECKING, Union
 
 import numpy as np
@@ -36,63 +40,56 @@ def get_libero_type() -> str:
 
 libero_type = get_libero_type()
 
-if libero_type == "pro":
-    try:
-        import liberopro.liberopro.benchmark as benchmark
-        from liberopro.liberopro.benchmark import Benchmark
-    except ImportError:
-        print(
-            "[Utils] Warning: LIBERO_TYPE=pro but 'liberopro' not found. Falling back to 'libero'."
-        )
-        import libero.libero.benchmark as benchmark
-        from libero.libero.benchmark import Benchmark
 
-elif libero_type == "plus":
-    try:
-        import liberoplus.liberoplus.benchmark as benchmark
-        from liberoplus.liberoplus.benchmark import Benchmark
-    except ImportError:
-        print(
-            "[Utils] Warning: LIBERO_TYPE=plus but 'liberoplus' not found. Falling back to 'libero'."
-        )
-        import libero.libero.benchmark as benchmark
-        from libero.libero.benchmark import Benchmark
+def import_libero_module(module_name: str) -> ModuleType:
+    """Import a LIBERO module using the selected variant's fallback order."""
+    if libero_type in ("pro", "plus"):
+        variant = f"libero{libero_type}"
+        packages = (f"{variant}.{variant}", "libero.libero")
+    else:
+        packages = ("libero.libero", "liberopro.liberopro", "liberoplus.liberoplus")
 
-else:
-    try:
-        import libero.libero.benchmark as benchmark
-        from libero.libero.benchmark import Benchmark
-    except ImportError:
+    for package in packages:
         try:
-            import liberopro.liberopro.benchmark as benchmark
-            from liberopro.liberopro.benchmark import Benchmark
-        except ImportError:
-            try:
-                import liberoplus.liberoplus.benchmark as benchmark
-                from liberoplus.liberoplus.benchmark import Benchmark
-            except ImportError:
+            return import_module(f"{package}.{module_name}")
+        except ImportError as error:
+            if package == packages[-1]:
                 raise ImportError(
-                    "No valid LIBERO package (libero, liberopro, or liberoplus) found."
+                    f"Cannot import LIBERO {module_name}; tried {', '.join(packages)}."
+                ) from error
+            if libero_type in ("pro", "plus"):
+                get_logger().warning(
+                    f"LIBERO_TYPE={libero_type}: failed to import "
+                    f"{package}.{module_name} ({error}); falling back to libero.libero."
                 )
 
 
-def get_libero_image(obs: dict[str, np.ndarray]) -> np.ndarray:
+def get_libero_image(
+    obs: dict[str, np.ndarray], *, is_libero_mem: bool = False
+) -> np.ndarray:
     """
     Extracts image from observations and preprocesses it.
 
     Args:
         obs: Observation dictionary from LIBERO environment
+        is_libero_mem: Match LIBERO-Mem's demonstration image orientation.
 
     Returns:
         Preprocessed image as numpy array
     """
-    img = obs["agentview_image"]
-    img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
-    return img
+    return _orient_libero_image(obs["agentview_image"], is_libero_mem=is_libero_mem)
+
+
+def _orient_libero_image(img: np.ndarray, *, is_libero_mem: bool) -> np.ndarray:
+    # LIBERO-Mem refinement flips columns before rotating both cameras by 180 degrees.
+    return img[::-1] if is_libero_mem else img[::-1, ::-1]
 
 
 def get_libero_wrist_image(
-    obs: dict[str, np.ndarray], resize_size: Union[int, tuple[int, int]] = 224
+    obs: dict[str, np.ndarray],
+    resize_size: Union[int, tuple[int, int]] = 224,
+    *,
+    is_libero_mem: bool = False,
 ) -> np.ndarray:
     """
     Extracts wrist camera image from observations and preprocesses it.
@@ -100,13 +97,14 @@ def get_libero_wrist_image(
     Args:
         obs: Observation dictionary from LIBERO environment
         resize_size: Target size for resizing
+        is_libero_mem: Match LIBERO-Mem's demonstration image orientation.
 
     Returns:
         Preprocessed wrist camera image as numpy array
     """
-    img = obs["robot0_eye_in_hand_image"]
-    img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
-    return img
+    return _orient_libero_image(
+        obs["robot0_eye_in_hand_image"], is_libero_mem=is_libero_mem
+    )
 
 
 def quat2axisangle(quat: np.ndarray) -> np.ndarray:
@@ -136,7 +134,7 @@ def quat2axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
-def get_benchmark_overridden(benchmark_name) -> Benchmark:
+def get_benchmark_overridden(benchmark_name: str) -> type[Benchmark]:
     """
     Return the Benchmark class for a given name.
     For "libero_130": return a dynamically aggregated class from all suites.
@@ -148,7 +146,15 @@ def get_benchmark_overridden(benchmark_name) -> Benchmark:
     Returns:
         Benchmark class
     """
+    benchmark = import_libero_module("benchmark")
+    Benchmark = benchmark.Benchmark
+
     name = str(benchmark_name).lower()
+    if name == "libero_mem" and name not in benchmark.BENCHMARK_MAPPING:
+        raise ImportError(
+            "task_suite_name='libero_mem' requires the LIBERO-Mem fork "
+            "installed as libero.libero in the environment's Python environment."
+        )
     if name != "libero_130":
         return benchmark.get_benchmark(benchmark_name)
 
@@ -224,6 +230,8 @@ def record_completed_episode_task_stats(
     eval_seen_trials: set[tuple[int, int]],
     task_success_stats: dict[int, dict[str, int]],
     logger=None,
+    *,
+    success_key: str = "success_once",
 ) -> np.ndarray:
     """Record per-task eval stats and return which envs count toward metrics.
 
@@ -235,10 +243,10 @@ def record_completed_episode_task_stats(
     count_mask = np.zeros(num_envs, dtype=bool)
 
     episode = final_info.get("episode")
-    if not episode or "success_once" not in episode:
+    if not episode or success_key not in episode:
         return count_mask
 
-    success = episode["success_once"]
+    success = episode[success_key]
     if isinstance(success, torch.Tensor):
         success = success.cpu().numpy()
     else:
