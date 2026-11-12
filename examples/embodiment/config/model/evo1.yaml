@@ -46,6 +46,8 @@ evo1:
   num_inference_timesteps: 32
   image_size: 448
   num_view_slots: 3
+  # NPU frames per frozen vision attention matrix; 0 keeps the native call.
+  vision_attention_batch_size: 0
 
   # Normalization stats keys inside norm_stats.json (must match the checkpoint).
   # For the Evo-1 LIBERO checkpoint the top-level key is "libero_robot"

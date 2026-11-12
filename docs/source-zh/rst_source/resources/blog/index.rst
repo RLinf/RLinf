@@ -6,6 +6,12 @@
 .. grid:: 1 2 2 3
    :gutter: 2
 
+   .. grid-item-card:: 具身模型的 Ascend 优化
+      :link: ascend_embodied_optimization
+      :link-type: doc
+
+      从完整调用的数据依赖，解释控制信息复用、通信重叠和执行图的设计与收益。
+
    .. grid-item-card:: 与 VeRL 的对比
       :link: compare_with_verl
       :link-type: doc
@@ -46,6 +52,7 @@
    :hidden:
    :maxdepth: 1
 
+   Ascend 具身模型优化 <ascend_embodied_optimization>
    compare_with_verl
    build_a_coding_online_rl_case
    behavior_system_optimization

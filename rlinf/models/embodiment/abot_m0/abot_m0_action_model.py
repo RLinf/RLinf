@@ -18,6 +18,9 @@ Provides rollout action generation and training-time logprob recomputation
 through the `BasePolicy` interface.
 """
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Literal, Mapping, Optional
 
 import numpy as np
@@ -26,6 +29,44 @@ import torch.nn as nn
 from PIL import Image
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+
+
+@contextmanager
+def _override_vggt_model_path() -> Iterator[None]:
+    """Redirect ``VGGT.from_pretrained('facebook/VGGT-1B')`` to ``VGGT_MODEL_PATH``."""
+    vggt_model_path = os.environ.get("VGGT_MODEL_PATH", "").strip()
+    if not vggt_model_path:
+        yield
+        return
+
+    from vggt.models.vggt import VGGT
+
+    own_attr = VGGT.__dict__.get("from_pretrained")
+    orig_from_pretrained = VGGT.from_pretrained
+
+    @classmethod
+    def _from_pretrained(
+        cls: type,
+        pretrained_model_name_or_path: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        if pretrained_model_name_or_path == "facebook/VGGT-1B":
+            pretrained_model_name_or_path = vggt_model_path
+        if cls is VGGT or not hasattr(orig_from_pretrained, "__func__"):
+            return orig_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        return orig_from_pretrained.__func__(
+            cls, pretrained_model_name_or_path, *args, **kwargs
+        )
+
+    VGGT.from_pretrained = _from_pretrained
+    try:
+        yield
+    finally:
+        if own_attr is None:
+            delattr(VGGT, "from_pretrained")
+        else:
+            VGGT.from_pretrained = own_attr
 
 
 class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
@@ -181,7 +222,8 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
     ) -> "ABotM0ForRLActionPrediction":
         from ABot.model.framework.base_framework import baseframework
 
-        base_model = baseframework.from_pretrained(pretrained_checkpoint)
+        with _override_vggt_model_path():
+            base_model = baseframework.from_pretrained(pretrained_checkpoint)
 
         if denoising_steps is not None:
             base_model.action_model.num_inference_timesteps = denoising_steps

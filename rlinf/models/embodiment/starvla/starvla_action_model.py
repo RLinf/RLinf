@@ -31,6 +31,7 @@ from .dispatch import get_default_forward_handler, get_rollout_handler
 from .utils import action_space as action_space_utils
 from .utils import data_pipeline as data_pipeline_utils
 from .utils import state as state_utils
+from .utils import vlm_preprocess as vlm_input_utils
 from .utils.profile import (
     infer_hidden_size,
     infer_policy_profile,
@@ -112,6 +113,36 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
 
         # 6) Rollout/training caches.
         self._rollout_prompt_seq_len: Optional[int] = None
+
+    @property
+    def _no_split_modules(self) -> list[str]:
+        """Return FSDP wrap target class names for the VLM and action submodules."""
+        names: list[str] = []
+        iface = getattr(self.starvla_model, "qwen_vl_interface", None)
+        vlm = getattr(iface, "model", None)
+        for name in getattr(vlm, "_no_split_modules", None) or ():
+            if name not in names:
+                names.append(name)
+        for attr in ("action_model", "dino_encoder"):
+            submodule = getattr(self.starvla_model, attr, None)
+            if not isinstance(submodule, nn.Module):
+                continue
+            sub_names = getattr(submodule, "_no_split_modules", None)
+            if sub_names:
+                for name in sub_names:
+                    if name not in names:
+                        names.append(name)
+                continue
+            params = list(submodule.parameters())
+            if (
+                params
+                and len({p.dtype for p in params}) == 1
+                and len({p.requires_grad for p in params}) == 1
+            ):
+                cls_name = type(submodule).__name__
+                if cls_name not in names:
+                    names.append(cls_name)
+        return names
 
     @property
     def uses_state_input(self) -> bool:
@@ -222,8 +253,18 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
         del return_obs
 
         # Build examples based on env_obs and state adapter.
+        # Device-tensor views feed the Qwen batched processor path; PIL-based
+        # backbones (Florence, Cosmos) and Dual DINO heads keep host PIL views.
+        iface = vlm_input_utils.resolve_vlm_interface(self.starvla_model)
+        use_device_images = (
+            self.vlm_type == "qwen"
+            and self.action_head_type != "dual"
+            and hasattr(iface, "processor")
+        )
+        image_device = next(self.parameters()).device if use_device_images else None
         examples = data_pipeline_utils.build_examples_from_env_obs(
             env_obs=env_obs,
+            image_device=image_device,
             state_adapter_name=self.state_adapter_type,
             prepare_state_tensor=partial(
                 state_utils.prepare_state_tensor,

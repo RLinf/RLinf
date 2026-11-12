@@ -3043,7 +3043,6 @@ install_gr00t_n1d6_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/RLinf/Isaac-GR00T.git" -b n1.6.1-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -3056,6 +3055,10 @@ install_gr00t_n1d6_model() {
             ;;
     esac
 
+    # Environment installs may resolve a different Transformers version;
+    # apply the Eagle3-compatible model pins last.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
+
     uv pip uninstall pynvml || true
 }
 
@@ -3066,7 +3069,6 @@ install_gr00t_n1d7_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -3078,6 +3080,9 @@ install_gr00t_n1d7_model() {
             exit 1
             ;;
     esac
+
+    # Apply the backbone's version pins after environment dependency resolution.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     uv pip uninstall pynvml || true
 }

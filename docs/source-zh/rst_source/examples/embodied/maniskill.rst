@@ -178,6 +178,16 @@
 2. 连接（或启动）Ray，并按 ``cluster.component_placement`` 放置 actor、rollout、env 各 worker。
 3. 运行 PPO 训练循环，并将日志与检查点写入 ``runner.logger.log_path``。
 
+当 PPO rollout 在终止状态 bootstrap 上逐个切片推理，或为 OpenVLA 解码未使用的动作 token 时，可在配置中开启批量与仅价值 bootstrap：
+
+.. code-block:: yaml
+
+   rollout:
+     batch_bootstrap_inference: True
+     value_only_bootstrap: True
+
+``rollout.batch_bootstrap_inference`` 将待处理的终止观测合并为单个 rollout 批次推理，再按原有路由拆回结果；``rollout.value_only_bootstrap`` 在策略带有价值头（如 OpenVLA PPO）时直接通过 ``predict_value_batch`` 从提示隐藏状态估计价值，跳过动作 token 的自回归生成。两项默认均为 ``False``。
+
 .. admonition:: 进一步配置
    :class: note
 
