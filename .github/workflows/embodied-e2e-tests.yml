@@ -67,10 +67,17 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_sac_flow_state
 
+      - name: ManiSkill OpenVLA PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
+
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-ogbench-qam-test:
     runs-on: embodied
@@ -162,7 +169,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-cnn-realworld-sac-test:
     runs-on: embodied
@@ -222,7 +228,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-mlp-realworld-dosw1-sac-test:
     runs-on: embodied
@@ -258,7 +263,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-realworld-franka-mock-test:
     runs-on: embodied
@@ -303,7 +307,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-mlp-realworld-so101-mock-sac-test:
     runs-on: embodied
@@ -331,7 +334,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-realworld-dual-yam-collect-data-mock-test:
     runs-on: embodied
@@ -372,7 +374,6 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-mlp-realworld-piper-mock-sac-test:
     runs-on: embodied
@@ -400,7 +401,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-mlp-frankasim-test:
     runs-on: embodied
@@ -437,7 +437,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-mlp-ppo-genesis-cubepick-test:
     runs-on: embodied
@@ -465,35 +464,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
-
-  embodied-openvla-maniskill-libero-test:
-    runs-on: embodied
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Create embodied environment
-        run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh embodied --model openvla --env maniskill_libero
-
-      - name: ManiSkill PPO test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openvla
-
-      - name: Clean up
-        run: |
-          rm -rf .venv
-          uv cache prune
 
   embodied-openpi-libero-rocm-test:
     runs-on: rocm
@@ -523,7 +493,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-gr00t-libero-rocm-test:
     runs-on: rocm
@@ -553,7 +522,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-maniskill-libero-musa-test:
     runs-on: musa
@@ -593,7 +561,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-gr00t-libero-musa-test:
     runs-on: musa
@@ -622,7 +589,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-reward-model-maniskill-test:
     runs-on: embodied
@@ -658,7 +624,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openvlaoft-robotwin-test:
     runs-on: embodied
@@ -700,7 +665,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-behavior-test:
     runs-on: embodied
@@ -742,7 +706,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
           rm -rf /tmp/tmp*
 
   embodied-gr00t-maniskill-libero-test:
@@ -772,7 +735,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-gr00t-libero-ascend-test:
     runs-on: ascend
@@ -782,17 +744,15 @@ jobs:
 
       - name: Create Ascend embodied environment
         run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
           export DECORD_PATH=/workspace/dataset/decord
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |
+          cd "$ASCEND_WORK_DIR"
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
@@ -800,9 +760,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          uv cache prune
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   embodied-openpi-libero-ascend-test:
     runs-on: ascend
@@ -812,15 +772,13 @@ jobs:
 
       - name: Create Ascend embodied environment
         run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model openpi --env libero
 
       - name: LIBERO-10 PPO OpenPI Pi05 test
         timeout-minutes: 30
         run: |
+          cd "$ASCEND_WORK_DIR"
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           export ROBOT_PLATFORM=LIBERO
@@ -829,9 +787,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          uv cache prune
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   embodied-gr00t-isaaclab-test:
     runs-on: embodied
@@ -862,7 +820,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
           rm -rf /tmp/tmp*
 
   embodied-openpi-isaaclab-test:
@@ -893,7 +850,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
           rm -rf /tmp/tmp*
           
   embodied-openpi-maniskill-libero-test:
@@ -981,7 +937,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-libero-phyai-test:
     runs-on: embodied
@@ -1031,7 +986,6 @@ jobs:
           source .venv/bin/activate 2>/dev/null || true
           ray stop --force || true
           rm -rf "$GITHUB_WORKSPACE/.venv"
-          uv cache prune
 
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
@@ -1069,7 +1023,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-metaworld-test:
     runs-on: embodied
@@ -1097,7 +1050,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-calvin-test:
     runs-on: embodied
@@ -1126,7 +1078,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-robocasa-test:
     runs-on: embodied
@@ -1155,7 +1106,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-roboverse-test:
     runs-on: embodied
@@ -1185,7 +1135,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-robocasa365-test:
     runs-on: embodied
@@ -1218,7 +1167,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-robodojo-test:
     runs-on: embodied
@@ -1248,7 +1196,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
           rm -rf /tmp/tmp*
 
   embodied-dexbotic-maniskill-libero-test:
@@ -1278,7 +1225,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-starvla-maniskill-libero-test:
     runs-on: embodied
@@ -1307,7 +1253,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-starvla-libero-ascend-test:
     runs-on: ascend
@@ -1317,17 +1262,15 @@ jobs:
 
       - name: Create Ascend embodied environment
         run: |
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export STARVLA_PATH=/workspace/dataset/starVLA-v1.6
           export DECORD_PATH=/workspace/dataset/decord
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend embodied --model starvla --env libero
 
       - name: Libero-10 GRPO test
         timeout-minutes: 20
         run: |
+          cd "$ASCEND_WORK_DIR"
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
@@ -1335,9 +1278,9 @@ jobs:
           ray stop
 
       - name: Clean up
+        if: always()
         run: |
-          rm -rf .venv
-          uv cache prune
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   embodied-openvlaoft-opensora-test:
     runs-on: embodied
@@ -1366,7 +1309,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openvlaoft-wan-test:
     runs-on: embodied
@@ -1395,7 +1337,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-lingbotvla-robotwin-test:
     runs-on: embodied
@@ -1429,7 +1370,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openvlaoft-liberopro-test:
     runs-on: embodied
@@ -1459,7 +1399,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openvlaoft-liberoplus-test:
     runs-on: embodied
@@ -1489,7 +1428,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-evo1-libero-test:
     runs-on: embodied
@@ -1520,7 +1458,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-abot-m0-libero-test:
     runs-on: embodied
@@ -1556,7 +1493,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-abot-m0-liberoplus-test:
     runs-on: embodied
@@ -1593,7 +1529,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-embodichain-test:
     runs-on: embodied
@@ -1625,7 +1560,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-gr00t_n1d6-libero-test:
     runs-on: embodied
@@ -1654,7 +1588,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-gr00t_n1d7-libero-test:
     runs-on: embodied
@@ -1683,7 +1616,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openpi-polaris-test:
     runs-on: embodied
@@ -1714,7 +1646,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-molmoact2-libero-eval-test:
     runs-on: embodied
@@ -1745,7 +1676,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-pi0-fast-libero-test:
     runs-on: embodied
@@ -1779,7 +1709,6 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-lingbotvlav2-robotwin-test:
     runs-on: embodied
@@ -1814,7 +1743,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-psi0-simple-test:
     runs-on: embodied
@@ -1855,4 +1783,3 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
-          uv cache prune
