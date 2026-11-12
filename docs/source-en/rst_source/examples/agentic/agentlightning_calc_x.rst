@@ -139,7 +139,18 @@ Huawei Ascend CANN
 
 .. include:: _ascend_agentic.rst
 
-Install the AgentLightning dependencies listed above into this environment. Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
+Install the calculator dependencies while preserving the Ascend package versions. ``--no-config`` prevents uv from applying the repository's default CUDA dependency overrides:
+
+.. code-block:: bash
+
+   uv --no-config pip install --torch-backend cpu \
+     --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
+     -r requirements/agentic/agentlightning_constraints.txt \
+     "torch==2.8.0" "agentlightning==0.3.0" "litellm<1.95" \
+     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
+     "mcp-server-calculator" "openai==2.32.0"
+
+Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
 
 .. code-block:: bash
 
