@@ -36,7 +36,6 @@ RLinf's distributed trainer.
 Installation
 ------------
 
-For the FSDP2 and SGLang recipe on Ascend CANN, see :doc:`Run RLinf on Ascend CANN <../../guides/ascend_cann>`.
 
 AgentLightning 0.3.0 requires the OpenTelemetry versions constrained by RLinf
 because OpenTelemetry 1.45 changed the exporter implementation used to route
@@ -129,3 +128,19 @@ For HF evaluation, set ``rollout.model.model_path`` in the matching ``*_eval.yam
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+
+.. _agentlightning-calc-x-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+Install the AgentLightning dependencies listed above into this environment. Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
+
+.. code-block:: bash
+
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend
