@@ -439,15 +439,25 @@ class CollectorIntegrationWorker(Worker):
         return os.getpid()
 
 
+_cluster_reset_count = 0
+
+
 def _reset_cluster_singleton() -> None:
+    global _cluster_reset_count
     if ray.is_initialized():
         ray.shutdown()
+        _cluster_reset_count += 1
     if hasattr(Cluster, "_instance"):
         instance = getattr(Cluster, "_instance")
         if instance is not None:
             instance._has_initialized = False
         delattr(Cluster, "_instance")
-    Cluster.NAMESPACE = Cluster.SYS_NAME
+    # Use a fresh namespace per reset so dying named actors on a pre-started Ray head cannot collide.
+    Cluster.NAMESPACE = (
+        f"{Cluster.SYS_NAME}_reset_{_cluster_reset_count}"
+        if _cluster_reset_count > 0
+        else Cluster.SYS_NAME
+    )
 
 
 def test_cluster_launch_collects_real_worker_logs(tmp_path: Path):

@@ -76,7 +76,14 @@ jobs:
               - 'rlinf/hybrid_engines/**'
               - 'rlinf/config.py'
               - 'rlinf/__init__.py'
-              - 'rlinf/*/__init__.py'
+              - 'rlinf/algorithms/__init__.py'
+              - 'rlinf/data/__init__.py'
+              - 'rlinf/hybrid_engines/__init__.py'
+              - 'rlinf/models/__init__.py'
+              - 'rlinf/runners/__init__.py'
+              - 'rlinf/scheduler/__init__.py'
+              - 'rlinf/utils/__init__.py'
+              - 'rlinf/workers/__init__.py'
               - 'toolkits/auto_placement/**'
             embodied_filter: &embodied
               - *shared
@@ -113,6 +120,7 @@ jobs:
               - 'tests/robot_mocks/**'
               - 'evaluations/**'
               - '.github/workflows/embodied-e2e-tests.yml'
+              - '.github/scripts/ascend_ci_workspace.sh'
             toolkits_no_ci_filter: &toolkits_no_ci
               - 'toolkits/standalone_eval_scripts/**'
               - 'toolkits/realworld_check/**'
@@ -136,6 +144,7 @@ jobs:
               - 'rlinf/workers/rollout/sglang/**'
               - 'rlinf/workers/rollout/vllm/**'
               - 'rlinf/runners/agent_runner.py'
+              - 'rlinf/runners/agent_ppo_runner.py'
               - 'rlinf/runners/agentlightning_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
@@ -154,6 +163,7 @@ jobs:
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
+              - '.github/scripts/ascend_ci_workspace.sh'
               - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
@@ -188,13 +198,13 @@ jobs:
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
+              - '.github/scripts/ascend_ci_workspace.sh'
               # ROCm, MUSA, and Ascend unit jobs load these checkpoints.
               - 'rlinf/models/embodiment/openvla/**'
               - 'rlinf/models/embodiment/openvla_oft/**'
               - 'rlinf/models/embodiment/prismatic/**'
             scheduler_test_filter: &scheduler
               - *shared
-              - *embodied
               - *agent
               - 'tests/e2e_tests/auto_placement/**'
               - 'tests/e2e_tests/dynamic_scheduler/**'

@@ -22,7 +22,7 @@ retrieval server.
    .. grid-item-card:: Algorithm
       :text-align: center
 
-      Multi-turn RL with search-tool calls
+      GRPO or PPO
 
    .. grid-item-card:: Tools
       :text-align: center
@@ -38,7 +38,9 @@ Training on 8×H100
 ------------------
 
 Download the `training dataset <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__ from HuggingFace
-and write its path into `examples/agent/searchr1/config/train_qwen2.5.yaml`:
+and set the model and dataset paths in your chosen configuration under
+``examples/agent/searchr1/config/``. Use ``train_qwen2.5.yaml``
+for GRPO or ``train_qwen2.5_ppo.yaml`` for PPO:
 
 .. code-block:: yaml
 
@@ -47,7 +49,7 @@ and write its path into `examples/agent/searchr1/config/train_qwen2.5.yaml`:
      train_data_paths: ["/path/to/train.jsonl"]
      val_data_paths: ["/path/to/train.jsonl"]
 
-Modify `rollout.model.model_path` in `train_qwen2.5.yaml`:
+Set ``rollout.model.model_path`` in the same configuration:
 
 .. code-block:: yaml
 
@@ -69,25 +71,24 @@ If you use `sampling_params.stop` to control model stop and save training time, 
       disable_log_stats: False
       detokenize: True
 
-The response is truncated at `</search>` in token space, so it stays a prefix of
-the generated tokens and the rollout log-probabilities remain aligned.
-`recompute_logprobs` can be True or False; the provided configurations use True.
-`rollout.return_logprobs` must equal `not algorithm.recompute_logprobs`, which is
-checked at startup.
+The GRPO configuration recomputes logprobs, while the PPO configuration uses
+rollout logprobs directly. Keep ``rollout.return_logprobs`` equal to
+``not algorithm.recompute_logprobs``.
 
-.. code-block:: yaml
+Start training with the configuration name:
 
-   algorithm:
-      ……
-      recompute_logprobs: True
-      shuffle_rollout: False
+.. code-block:: bash
 
-Run `bash examples/agent/searchr1/run_train.sh` to start training.
+   # GRPO
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5
+
+   # PPO
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo
 
 MA-FSDP Training
 ~~~~~~~~~~~~~~~~
 
-RLinf also provides an FSDP2 implementation of the Search-R1 multi-agent actor.
+RLinf also provides an FSDP2 implementation of the Search-R1 GRPO multi-agent actor.
 Use `examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`, set the same
 model and dataset paths described above, and start it with:
 
@@ -134,6 +135,11 @@ HuggingFace model:
    rm -f "${CKPT_PATH_HF}"/*.done
    shopt -s extglob
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
+
+A PPO run saves an ``actor`` and a ``critic`` directory under each
+``global_step_xxx``. Export the ``actor`` directory with the commands above.
+To resume training, set ``runner.resume_dir`` to the ``global_step_xxx``
+directory; RLinf restores both the actor and the critic.
 
 For FSDP, use the built-in FSDP converter rather than the Megatron
 commands above. Point it at the saved FSDP checkpoint and the matching resolved
@@ -198,4 +204,13 @@ Compared to the original performance (133s per step after response length stabil
        <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1_orig_impl_time.png" style="width: 35%;"/>
        <p><em>Qwen2.5-3B-Instruct in original implementation at PeterGriffinJin/Search-R1</em></p>
      </div>
+   </div>
+
+The following compares GRPO and PPO training rewards:
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Qwen2.5-3B Search-R1 reward: GRPO in orange and PPO in blue" style="width: 100%; max-width: 410px;"/>
+     <p><em>GRPO (orange) and PPO (blue) on 8×A800 80 GB, both with effective batch size 1024. TensorBoard smoothing: 0.6.</em></p>
    </div>

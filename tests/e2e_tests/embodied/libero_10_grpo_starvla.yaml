@@ -101,7 +101,7 @@ rollout:
   generation_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: ${actor.model.unnorm_key}
-  enable_offload: False
+  enable_offload: True
   pipeline_stage_num: 1
   model:
     model_path: /workspace/dataset/Qwen2.5-VL-OFT-LIBERO-4in1

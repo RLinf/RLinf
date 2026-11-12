@@ -353,6 +353,8 @@ After fine-tuning, the system generates ``metadata.json`` and other statistical 
 
 - The maintained RLinf N1.7 RL example is ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``.
 - The current RL setup uses PPO with ``algorithm.loss_type: actor_critic``, so ``actor.model.add_value_head`` must be ``True`` during training.
+- With ``rl_head_config.detach_critic_input: true``, the value head learns from detached features, so its loss does not update shared policy features. Setting it to ``false`` retains joint gradient flow.
+- For BF16 N1.7 models, the loader disables ``torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction`` in each worker process. This process-wide setting persists for all CUDA BF16 GEMMs in that worker. This keeps higher-precision GEMM reductions to address observed batch-size-dependent backbone drift between rollout and actor scoring. This setting does not change parameter or optimizer storage dtypes.
 - The repository's validated LIBERO example uses ``num_action_chunks: 16`` and ``denoising_steps: 4``.
 
 ---------------
