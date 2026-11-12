@@ -32,6 +32,7 @@ from omegaconf import OmegaConf
 from torch.distributed import distributed_c10d
 
 from rlinf.scheduler import (
+    AcceleratorType,
     Cluster,
     CollectiveGroupOptions,
     NodePlacementStrategy,
@@ -72,6 +73,9 @@ RECEIVER_GROUP_NAME = "receiver_worker_group"
 # --- Helper Functions ---
 
 
+MAX_NON_NV_ACCELERATORS = 2
+
+
 def accelerator_is_available():
     """Return whether the Worker accelerator backend is available."""
     return (
@@ -88,6 +92,18 @@ def accelerator_device_count():
     ):
         return 0
     return Worker.torch_platform.device_count()
+
+
+def is_nvidia_accelerator() -> bool:
+    """Return whether the Worker accelerator backend is NVIDIA GPU."""
+    return Worker.accelerator_type == AcceleratorType.NV_GPU
+
+
+def available_accelerators(total: int) -> int:
+    """Return accelerator count capped to MAX_NON_NV_ACCELERATORS off NVIDIA."""
+    if is_nvidia_accelerator():
+        return total
+    return min(total, MAX_NON_NV_ACCELERATORS)
 
 
 ACCELERATOR_DEVICE_TYPE = Worker.torch_device_type or "accelerator"
@@ -1030,18 +1046,35 @@ def cluster():
     )
 
 
+def _close_worker_groups(*groups) -> None:
+    """Release driver-side IPC tensor mappings before killing worker groups."""
+    gc.collect()
+    if (
+        accelerator_is_available()
+        and hasattr(Worker.torch_platform, "is_initialized")
+        and Worker.torch_platform.is_initialized()
+    ):
+        Worker.torch_platform.synchronize()
+        if hasattr(Worker.torch_platform, "ipc_collect"):
+            Worker.torch_platform.ipc_collect()
+    for group in groups:
+        group._close()
+
+
 @pytest.fixture(scope="class")
 def worker_groups(cluster: Cluster):
     """Creates and yields the sender and receiver worker groups."""
     if cluster.num_accelerators > 0:
-        if cluster.num_accelerators < 4:
+        num_accels = available_accelerators(cluster.num_accelerators)
+        min_accels = 4 if is_nvidia_accelerator() else 2
+        if num_accels < min_accels:
             pytest.skip(
-                f"NPU send/recv tests require at least 4 accelerator devices, "
+                f"Send/recv tests require at least {min_accels} accelerator devices, "
                 f"found {cluster.num_accelerators}."
             )
-        half = cluster.num_accelerators // 2
+        half = num_accels // 2
         sender_placement = PackedPlacementStrategy(0, half - 1)
-        receiver_placement = PackedPlacementStrategy(half, cluster.num_accelerators - 1)
+        receiver_placement = PackedPlacementStrategy(half, num_accels - 1)
         sender_group = SenderWorker.create_group().launch(
             cluster=cluster, placement_strategy=sender_placement, name=SENDER_GROUP_NAME
         )
@@ -1059,25 +1092,20 @@ def worker_groups(cluster: Cluster):
             cluster=cluster, placement_strategy=placement, name=RECEIVER_GROUP_NAME
         )
     yield sender_group, receiver_group
-    sender_group._close()
-    receiver_group._close()
+    _close_worker_groups(sender_group, receiver_group)
 
 
 @pytest.fixture(scope="class")
 def collective_group(cluster: Cluster):
     """Creates and yields the collective worker group."""
     if cluster.num_accelerators > 0:
-        # cross_collective_groups occupies the lower devices (0..cross_size-1) and is
-        # alive at the same time as this fixture within TestCollective. Place
-        # collective workers on the upper devices to avoid HCCL conflicts.
-        cross_size = 4 if cluster.num_accelerators > 4 else 2
-        if cluster.num_accelerators <= cross_size:
+        num_accels = available_accelerators(cluster.num_accelerators)
+        if num_accels < 2:
             pytest.skip(
-                f"collective_group requires more than {cross_size} accelerator devices "
-                f"so it can run alongside cross_collective_groups without sharing devices. "
-                f"Found {cluster.num_accelerators}."
+                f"collective_group requires at least 2 accelerator devices, "
+                f"found {cluster.num_accelerators}."
             )
-        placement = PackedPlacementStrategy(cross_size, cluster.num_accelerators - 1)
+        placement = PackedPlacementStrategy(0, num_accels - 1)
         group = CommCollectiveWorker.create_group().launch(
             cluster=cluster, placement_strategy=placement, name="collective_group"
         )
@@ -1087,16 +1115,17 @@ def collective_group(cluster: Cluster):
             cluster=cluster, placement_strategy=placement, name="collective_group"
         )
     yield group
-    group._close()
+    _close_worker_groups(group)
 
 
 @pytest.fixture(scope="class")
 def cross_collective_groups(cluster: Cluster):
     """Creates and yields two collective worker groups for cross-group tests."""
     if accelerator_is_available():
-        if cluster.num_accelerators < 2:
+        num_accels = available_accelerators(cluster.num_accelerators)
+        if num_accels < 2:
             pytest.skip("Skipping cross-group tests with insufficient accelerators.")
-        if cluster.num_accelerators > 4:
+        if num_accels >= 4:
             group_a_size = 2
             group_b_size = 2
         else:
@@ -1119,8 +1148,7 @@ def cross_collective_groups(cluster: Cluster):
         cluster=cluster, placement_strategy=placement_b, name="collective_group_b"
     )
     yield group_a, group_b, group_a_size, group_b_size
-    group_a._close()
-    group_b._close()
+    _close_worker_groups(group_a, group_b)
 
 
 # --- Test Class ---
@@ -1603,8 +1631,8 @@ class TestCommunication:
         """Ensures async_wait() of async comm correctly yields control so other
         asyncio tasks can run while waiting."""
         sender_group, receiver_group = worker_groups
-        # Run on rank 0 only to avoid multi-worker timing; receiver waits, sender sends after delay.
-        recv_ref = receiver_group.execute_on(1).test_async_wait_yields_control()
+        recv_rank = get_send_peer_rank(0, len(receiver_group.worker_info_list))
+        recv_ref = receiver_group.execute_on(recv_rank).test_async_wait_yields_control()
 
         def delayed_send():
             time.sleep(0.15)
@@ -1817,6 +1845,46 @@ class TestCollective:
             for i, key in enumerate(sorted(res.payload_dict.keys())):
                 assert torch.equal(res.payload_dict[key].cpu(), torch.ones(2, 2) * i)
 
+    @pytest.mark.parametrize(
+        "on_cpu", [True, False], ids=["cpu", ACCELERATOR_DEVICE_TYPE]
+    )
+    def test_collective_asyncio_broadcast(self, collective_group, on_cpu):
+        if not on_cpu and not accelerator_is_available():
+            pytest.skip("Skipping accelerator test without an accelerator.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_tensor_asyncio", on_cpu
+        )
+        expected = torch.ones(3, 3) * 5
+        for res in results:
+            assert torch.equal(res.cpu(), expected)
+
+    @pytest.mark.parametrize(
+        "on_cpu", [True, False], ids=["cpu", ACCELERATOR_DEVICE_TYPE]
+    )
+    def test_collective_asyncio_broadcast_tensor_dataclass(
+        self, collective_group, on_cpu
+    ):
+        if not on_cpu and not accelerator_is_available():
+            pytest.skip("Skipping accelerator test without an accelerator.")
+        results = self._run_collective_test(
+            collective_group, "test_broadcast_tensor_dataclass_asyncio", on_cpu
+        )
+        expected_payload = torch.ones(3, 3) * 5
+        for res in results:
+            assert isinstance(res, TensorMessage)
+            assert res.id == 5
+            assert res.note == "async broadcast from rank 0"
+            assert torch.equal(res.payload.cpu(), expected_payload)
+
+
+@pytest.mark.usefixtures("cross_collective_groups")
+class TestCrossGroupCollective:
+    """Cross-group collective broadcast tests.
+
+    Kept in a separate class from TestCollective so collective_group closes its
+    workers before cross_collective_groups launches on the same two devices.
+    """
+
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_cross_group_broadcast_object(self, cross_collective_groups, async_op):
         group_a, group_b, group_a_size, group_b_size = cross_collective_groups
@@ -1982,37 +2050,6 @@ class TestCollective:
             assert isinstance(res, TensorMessage)
             assert res.id == 13
             assert res.note == "broadcast with src"
-            assert torch.equal(res.payload.cpu(), expected_payload)
-
-    @pytest.mark.parametrize(
-        "on_cpu", [True, False], ids=["cpu", ACCELERATOR_DEVICE_TYPE]
-    )
-    def test_collective_asyncio_broadcast(self, collective_group, on_cpu):
-        if not on_cpu and not accelerator_is_available():
-            pytest.skip("Skipping accelerator test without an accelerator.")
-        results = self._run_collective_test(
-            collective_group, "test_broadcast_tensor_asyncio", on_cpu
-        )
-        expected = torch.ones(3, 3) * 5
-        for res in results:
-            assert torch.equal(res.cpu(), expected)
-
-    @pytest.mark.parametrize(
-        "on_cpu", [True, False], ids=["cpu", ACCELERATOR_DEVICE_TYPE]
-    )
-    def test_collective_asyncio_broadcast_tensor_dataclass(
-        self, collective_group, on_cpu
-    ):
-        if not on_cpu and not accelerator_is_available():
-            pytest.skip("Skipping accelerator test without an accelerator.")
-        results = self._run_collective_test(
-            collective_group, "test_broadcast_tensor_dataclass_asyncio", on_cpu
-        )
-        expected_payload = torch.ones(3, 3) * 5
-        for res in results:
-            assert isinstance(res, TensorMessage)
-            assert res.id == 5
-            assert res.note == "async broadcast from rank 0"
             assert torch.equal(res.payload.cpu(), expected_payload)
 
     @pytest.mark.parametrize(
@@ -3229,7 +3266,7 @@ class IpcReceiverWorker(Worker):
                 work.wait()
             else:
                 self.async_wait(work)
-        return tensor
+        return tensor.cpu()
 
     def recv_tensor_list(self, async_op, group_name):
         """Receives a list of tensors using recv."""
@@ -3237,10 +3274,12 @@ class IpcReceiverWorker(Worker):
         work = self.recv(group_name, src_rank=self._rank, async_op=is_async)
         if is_async and work:
             if async_op == 1:
-                return work.wait()
+                tensors = work.wait()
             else:
-                return self.async_wait(work)
-        return work
+                tensors = self.async_wait(work)
+        else:
+            tensors = work
+        return [t.cpu() for t in tensors]
 
 
 # --- Pytest Setup ---
@@ -3283,7 +3322,11 @@ def single_shared_gpu_groups(ipc_cluster):
     global IPC_SENDER_GROUP_NAME, IPC_RECEIVER_GROUP_NAME
     IPC_SENDER_GROUP_NAME = "sender_ipc_worker_group_single"
     IPC_RECEIVER_GROUP_NAME = "receiver_ipc_worker_group_single"
-    yield create_worker_groups(ipc_cluster, sender_gpus=[0], receiver_gpus=[0])
+    sender_group, receiver_group = create_worker_groups(
+        ipc_cluster, sender_gpus=[0], receiver_gpus=[0]
+    )
+    yield sender_group, receiver_group
+    _close_worker_groups(sender_group, receiver_group)
 
 
 @pytest.fixture(scope="class")
@@ -3292,23 +3335,21 @@ def multi_shared_gpu_groups(ipc_cluster):
     global IPC_SENDER_GROUP_NAME, IPC_RECEIVER_GROUP_NAME
     IPC_SENDER_GROUP_NAME = "sender_ipc_worker_group_multi"
     IPC_RECEIVER_GROUP_NAME = "receiver_ipc_worker_group_multi"
-    if accelerator_device_count() < 2:
+    num_gpus = available_accelerators(accelerator_device_count())
+    if num_gpus < 2:
         pytest.skip("Multi-accelerator tests require at least 2 accelerators.")
-    all_gpus = list(range(accelerator_device_count()))
-    yield create_worker_groups(
+    all_gpus = list(range(num_gpus))
+    sender_group, receiver_group = create_worker_groups(
         ipc_cluster, sender_gpus=all_gpus, receiver_gpus=all_gpus
     )
+    yield sender_group, receiver_group
+    _close_worker_groups(sender_group, receiver_group)
 
 
 # --- Test Class ---
 
 
-class TestSameDeviceCommunication:
-    """
-    Tests for send/recv when sender and receiver might share GPU resources,
-    triggering IPC or uncertain peer logic.
-    """
-
+class _SameDeviceCommunicationMixin:
     def _run_test(
         self, worker_groups, sender_method, receiver_method, sender_args, receiver_args
     ):
@@ -3320,6 +3361,10 @@ class TestSameDeviceCommunication:
         results = receiver_results.wait()
         # Return only the receiver's result for verification
         return results
+
+
+class TestSameDeviceCommunication(_SameDeviceCommunicationMixin):
+    """Tests for send/recv when sender and receiver share a single GPU (direct IPC)."""
 
     @pytest.mark.parametrize("async_op", [0, 1, 2], ids=["sync", "async", "asyncio"])
     def test_single_tensor_on_single_shared_gpu(
@@ -3352,6 +3397,10 @@ class TestSameDeviceCommunication:
         for i, tensor in enumerate(results):
             expected = torch.ones(2, 2) * i  # Sender rank 0 + i
             assert torch.equal(tensor.cpu(), expected)
+
+
+class TestSameDeviceCommunicationMulti(_SameDeviceCommunicationMixin):
+    """Multi-GPU shared-pool IPC tests, kept separate so single_shared_gpu_groups closes first."""
 
     @pytest.mark.parametrize("async_op", [0, 1, 2], ids=["sync", "async", "asyncio"])
     def test_single_tensor_on_multi_shared_gpu(self, multi_shared_gpu_groups, async_op):
@@ -3386,7 +3435,7 @@ class TestSameDeviceCommunication:
             ),
         )
         assert isinstance(results, list)
-        num_gpus = accelerator_device_count()
+        num_gpus = available_accelerators(accelerator_device_count())
         assert len(results) == num_gpus
         for i, tensor in enumerate(results):
             tensor = tensor[0]
@@ -3714,8 +3763,7 @@ def same_gpu_groups(broadcast_cluster):
         name=_ROLLOUT_SAME,
     )
     yield actor, rollout
-    actor._close()
-    rollout._close()
+    _close_worker_groups(actor, rollout)
 
 
 @pytest.fixture(scope="class")
@@ -3734,8 +3782,7 @@ def diff_gpu_groups(broadcast_cluster):
         name=_ROLLOUT_DIFF,
     )
     yield actor, rollout
-    actor._close()
-    rollout._close()
+    _close_worker_groups(actor, rollout)
 
 
 @pytest.fixture(scope="class")
@@ -3760,8 +3807,7 @@ def mixed_gpu_groups(broadcast_cluster):
         name=_ROLLOUT_MIXED,
     )
     yield actor, rollout
-    actor._close()
-    rollout._close()
+    _close_worker_groups(actor, rollout)
 
 
 @pytest.fixture(scope="class")
@@ -3798,9 +3844,7 @@ def shared_diff_gpu_groups(broadcast_cluster):
         name=_ROLLOUT_SHARED_B,
     )
     yield actor, rollout_a, rollout_b
-    actor._close()
-    rollout_a._close()
-    rollout_b._close()
+    _close_worker_groups(actor, rollout_a, rollout_b)
 
 
 @pytest.fixture(scope="class")
@@ -3813,6 +3857,8 @@ def split_diff_gpu_groups(broadcast_cluster):
     src + one representative per distinct device (GPU 1 and GPU 2), and the
     GPU-1 representative re-broadcasts to its peer via IPC.
     """
+    if not is_nvidia_accelerator():
+        pytest.skip("3-accelerator broadcast test only runs on NVIDIA hardware.")
     if accelerator_device_count() < 3:
         pytest.skip("Split shared/distinct broadcast test requires at least 3 GPUs.")
     actor = _BroadcastWorker.create_group().launch(
@@ -3836,23 +3882,19 @@ def split_diff_gpu_groups(broadcast_cluster):
         name=_ROLLOUT_SPLIT_C,
     )
     yield actor, rollout_a, rollout_b, rollout_c
-    actor._close()
-    rollout_a._close()
-    rollout_b._close()
-    rollout_c._close()
+    _close_worker_groups(actor, rollout_a, rollout_b, rollout_c)
 
 
-class TestBroadcastHybridSync:
-    """Integration tests for the hybrid IPC / NCCL-sub-group broadcast routing.
-
-    Skipped entirely on NPU because CUDA IPC is not available there.
-    """
-
+class _BroadcastHybridSyncMixin:
     def _run(self, actor_g, rollout_g, actor_name, rollout_name, value=42.0):
         groups = [(actor_name, [0]), (rollout_name, [0])]
         actor_h = actor_g.run(groups, value, is_src=True)
         rollout_h = rollout_g.run(groups, value, is_src=False)
         return actor_h.wait()[0], rollout_h.wait()[0]
+
+
+class TestBroadcastHybridSync(_BroadcastHybridSyncMixin):
+    """Same-GPU hybrid broadcast tests; each topology uses its own class so fixtures close between topologies."""
 
     def test_same_gpu_broadcast_value(self, same_gpu_groups):
         """Both groups on GPU 0: broadcast takes the IPC path and delivers the correct value."""
@@ -3880,6 +3922,10 @@ class TestBroadcastHybridSync:
             expected = torch.full((4, 4), v)
             assert torch.equal(rollout_r.cpu(), expected), f"Mismatch at value={v}"
 
+
+class TestBroadcastHybridSyncDiffGpu(_BroadcastHybridSyncMixin):
+    """Different-GPU hybrid broadcast tests."""
+
     def test_diff_gpu_broadcast_value(self, diff_gpu_groups):
         """Actor on GPU 0, rollout on GPU 1: broadcast uses the NCCL sub-group path."""
         actor_g, rollout_g = diff_gpu_groups
@@ -3887,6 +3933,10 @@ class TestBroadcastHybridSync:
         expected = torch.full((4, 4), 42.0)
         assert torch.equal(actor_r.cpu(), expected)
         assert torch.equal(rollout_r.cpu(), expected)
+
+
+class TestBroadcastHybridSyncMixedGpu:
+    """Mixed same-GPU and different-GPU hybrid broadcast tests."""
 
     def _run_mixed(self, actor_g, rollout_g, value=17.0):
         """Drive a broadcast with one same-GPU receiver and one diff-GPU receiver."""
@@ -3920,6 +3970,10 @@ class TestBroadcastHybridSync:
             expected = torch.full((4, 4), v)
             for r in rollout_results:
                 assert torch.equal(r.cpu(), expected), f"Mismatch at value={v}"
+
+
+class TestBroadcastHybridSyncSharedDiffGpu:
+    """Shared different-GPU receiver hybrid broadcast tests."""
 
     def _run_shared(self, actor_g, rollout_a_g, rollout_b_g, value=23.0):
         """Broadcast where both receivers share GPU 1 (different from src on GPU 0)."""
@@ -3958,6 +4012,10 @@ class TestBroadcastHybridSync:
             for r in (a_r, b_r):
                 assert torch.equal(r.cpu(), expected), f"Mismatch at value={v}"
 
+
+class TestBroadcastHybridSyncSplitDiffGpu:
+    """Split shared/distinct different-GPU hybrid broadcast tests."""
+
     def _run_split(self, actor_g, a_g, b_g, c_g, value=31.0):
         """Broadcast with a shared GPU-1 pair plus a distinct GPU-2 receiver."""
         groups = [
@@ -3994,6 +4052,26 @@ class TestBroadcastHybridSync:
             expected = torch.full((4, 4), v)
             for r in (a_r, b_r, c_r):
                 assert torch.equal(r.cpu(), expected), f"Mismatch at value={v}"
+
+
+def test_close_worker_groups_collects_ipc_before_closing_groups(monkeypatch):
+    """Driver IPC handles are synchronized and collected before workers are killed."""
+    events: list[str] = []
+    fake_platform = SimpleNamespace(
+        is_available=lambda: True,
+        is_initialized=lambda: True,
+        synchronize=lambda: events.append("synchronize"),
+        ipc_collect=lambda: events.append("ipc_collect"),
+    )
+    monkeypatch.setattr(Worker, "torch_platform", fake_platform)
+    group_a = SimpleNamespace(_close=lambda: events.append("close_a"))
+    group_b = SimpleNamespace(_close=lambda: events.append("close_b"))
+
+    _close_worker_groups(group_a, group_b)
+
+    assert events == ["synchronize", "ipc_collect", "close_a", "close_b"], (
+        f"Expected synchronize and ipc_collect before group close, got {events}"
+    )
 
 
 if __name__ == "__main__":
