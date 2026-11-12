@@ -131,7 +131,18 @@ Huawei Ascend CANN
 
 .. include:: _ascend_agentic.rst
 
-在此环境中安装前文列出的 AgentLightning 依赖，准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
+安装计算器依赖时保留 Ascend 的配套版本。``--no-config`` 可以避免 uv 应用仓库默认的 CUDA 依赖覆盖配置：
+
+.. code-block:: bash
+
+   uv --no-config pip install --torch-backend cpu \
+     --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
+     -r requirements/agentic/agentlightning_constraints.txt \
+     "torch==2.8.0" "agentlightning==0.3.0" "litellm<1.95" \
+     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
+     "mcp-server-calculator" "openai==2.32.0"
+
+准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
 
 .. code-block:: bash
 
