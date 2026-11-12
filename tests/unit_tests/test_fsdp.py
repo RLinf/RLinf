@@ -1272,3 +1272,44 @@ def test_art_metrics_weight_active_samples_across_microbatches(
         assert "actor/active_count" not in results[0]
     finally:
         dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("kv_heads", [2, 4])
+def test_ascend_packed_attention_matches_separate_sequences(dtype, kv_heads):
+    if Worker.torch_device_type != "npu":
+        pytest.skip("Ascend fused attention requires an NPU")
+    from rlinf.hybrid_engines.fsdp.ascend_attention import (
+        ascend_fusion_attention_forward,
+    )
+
+    device = torch.device("npu", Worker.torch_platform.current_device())
+    generator = torch.Generator().manual_seed(17)
+    shapes = [(1, 4, 5, 16), (1, kv_heads, 5, 16), (1, kv_heads, 5, 16)]
+    inputs = [torch.randn(shape, generator=generator).to(dtype) for shape in shapes]
+    actual_inputs = [x.to(device).requires_grad_() for x in inputs]
+    reference_inputs = [x.float().requires_grad_() for x in inputs]
+    position_ids = torch.tensor([[0, 1, 2, 0, 1]], device=device)
+    actual, _ = ascend_fusion_attention_forward(
+        nn.Identity(), *actual_inputs, attention_mask=None, position_ids=position_ids
+    )
+    parts = []
+    for start, end in [(0, 3), (3, 5)]:
+        q, k, v = [x[:, :, start:end] for x in reference_inputs]
+        parts.append(
+            torch.nn.functional.scaled_dot_product_attention(
+                q,
+                k.repeat_interleave(4 // kv_heads, dim=1),
+                v.repeat_interleave(4 // kv_heads, dim=1),
+                is_causal=True,
+            ).transpose(1, 2)
+        )
+    expected = torch.cat(parts, dim=1)
+    torch.testing.assert_close(actual.cpu().float(), expected, atol=0.02, rtol=0.02)
+    gradient = torch.randn(expected.shape, generator=generator).to(dtype)
+    actual.backward(gradient.to(device))
+    expected.backward(gradient.float())
+    for actual_input, reference_input in zip(actual_inputs, reference_inputs):
+        torch.testing.assert_close(
+            actual_input.grad.cpu().float(), reference_input.grad, atol=0.03, rtol=0.03
+        )

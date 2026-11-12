@@ -60,7 +60,6 @@
 
 先安装 RLinf，再补充本配方使用的轻量 HTTP 客户端依赖：
 
-如需在 Ascend CANN 上运行离线 FSDP2 和 SGLang 配方，请参阅 :doc:`在 Ascend CANN 上运行 RLinf <../../guides/ascend_cann>`\ 。
 
 .. code-block:: bash
 
@@ -267,3 +266,19 @@
    确保 Continue 配置中的 API 端点地址正确，检查网络连接。还可使用 ``simple_online_coding_client.py`` 测试是否能正常收到反馈数据。
 
 该流程形成在线闭环：Continue 发送请求，RLinf 收集反馈，训练服务更新策略。
+
+.. _coding-online-rl-hardware:
+
+运行于不同硬件后端
+------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+此配方使用 LLM judge 运行离线训练。准备 Code-FIM 数据和 Qwen2.5-Coder checkpoint，配置 judge 服务所需的 ``LLMASJUDGE_API_URL``、``LLMASJUDGE_API_KEY`` 和 ``LLMASJUDGE_MODEL``。修改 ``qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend.yaml`` 中的路径后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend

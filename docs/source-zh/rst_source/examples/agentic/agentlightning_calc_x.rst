@@ -35,7 +35,6 @@ agent 会读取题目，生成推理过程与答案，并根据反馈做强化�
 安装
 ----------------------------------------
 
-如需在 Ascend CANN 上使用 FSDP2 和 SGLang，请参阅 :doc:`在 Ascend CANN 上运行 RLinf <../../guides/ascend_cann>`。
 
 AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 OpenTelemetry 1.45 修改了将 rollout span 路由到 Lightning Store 的 exporter 实现。创建基础环境后，请先安装兼容的 OpenTelemetry 依赖，再安装本示例的其他依赖：
 
@@ -121,3 +120,19 @@ HF 评测时在对应的 ``*_eval.yaml`` 里设置 ``rollout.model.model_path``�
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+
+.. _agentlightning-calc-x-hardware:
+
+运行于不同硬件后端
+------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+在此环境中安装前文列出的 AgentLightning 依赖，准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend
