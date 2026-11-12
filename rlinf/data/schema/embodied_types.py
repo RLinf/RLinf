@@ -1701,27 +1701,18 @@ class EnvOutput:
         return self.transition.rlt_switch_flags
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
-        image_tensor = obs["main_images"] if "main_images" in obs else None
-        wrist_image_tensor = obs["wrist_images"] if "wrist_images" in obs else None
-        extra_view_image_tensor = (
-            obs["extra_view_images"] if "extra_view_images" in obs else None
-        )
-        states = obs["states"] if "states" in obs else None
-        task_descriptions = (
-            list(obs["task_descriptions"])
-            if "task_descriptions" in obs and obs["task_descriptions"] is not None
-            else None
-        )
-
+        """Select policy inputs and normalize task descriptions."""
         prepared = {
-            "main_images": image_tensor,  # [N_ENV, H, W, C]
-            "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
-            "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
-            "states": states,
-            "task_descriptions": task_descriptions,
+            key: obs.get(key)
+            for key in ("main_images", "wrist_images", "extra_view_images", "states")
         }
-        if "reset_mask" in obs:
-            prepared["reset_mask"] = obs["reset_mask"]
+        for key in ("reset_mask", "history"):
+            if key in obs:
+                prepared[key] = obs[key]
+        task_descriptions = obs.get("task_descriptions")
+        prepared["task_descriptions"] = (
+            list(task_descriptions) if task_descriptions is not None else None
+        )
         return prepared
 
     def to_dict(self) -> dict[str, Any]:
