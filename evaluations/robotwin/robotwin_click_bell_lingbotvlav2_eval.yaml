@@ -73,5 +73,3 @@ rollout:
   # Retain the value head so RLinf PPO checkpoints reload without key changes.
   model:
     add_value_head: true
-    lingbotvlav2:
-      attention_implementation: flex_cached

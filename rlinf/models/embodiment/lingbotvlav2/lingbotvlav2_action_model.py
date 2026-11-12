@@ -144,27 +144,14 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
             read_checkpoint_config(weights), config.tokenizer_path
         )
         training_config = load_training_config(config.lingbotvlav2.training_config_path)
-        training_model_config = dict(training_config["model"])
-        training_model_config.update(training_config["train"])
         configured_attention = OmegaConf.select(
             config, "lingbotvlav2.attention_implementation"
         )
-        training_attention = training_model_config.get("attention_implementation")
-        if configured_attention and training_attention:
-            if configured_attention != training_attention:
-                raise ValueError(
-                    "LingBot-VLA V2 attention_implementation mismatch: model config "
-                    f"has {configured_attention!r}, but "
-                    f"{config.lingbotvlav2.training_config_path} has "
-                    f"{training_attention!r}."
-                )
-        attention_implementation = configured_attention or training_attention
-        if not attention_implementation:
+        if not configured_attention:
             raise KeyError(
-                "Missing `model.attention_implementation` in LingBot-VLA V2 "
-                f"training config: {config.lingbotvlav2.training_config_path}"
+                "Missing `lingbotvlav2.attention_implementation` in RLinf config"
             )
-        model_config.attention_implementation = attention_implementation
+        model_config.attention_implementation = configured_attention
         model_config.use_cache = True
         # Fixed-grid caches are batch-size dependent; actor micro-batches and
         # rollout batches need not have the same size.

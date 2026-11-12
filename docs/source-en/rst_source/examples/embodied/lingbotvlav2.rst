@@ -265,51 +265,7 @@ instead of the released weights, pass its full weights file:
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
-Supervised Fine-Tuning
-----------------------
-
-RLinf provides a RoboTwin SFT entry point for the same adapter. Training and
-evaluation must use the same ``attention_implementation``; the SFT config uses
-the upstream ``flex_cached`` setting and the evaluation config sets it to the
-same value.
-This action-only recipe disables auxiliary alignment losses while keeping the
-checkpoint query modules loaded. SFT updates the action expert and projection
-layers selected by the shared RL trainable scope; the Qwen-VL backbone and MoE
-routers remain frozen. Evaluation uses BF16, matching the rollout configuration.
-
-Set the model, source checkout, and dataset paths before converting data:
-
-.. code-block:: bash
-
-    export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
-    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
-    export LINGBOT_VLA_V2_CHECKPOINT=$LINGBOT_VLA_V2_MODEL_ROOT/checkpoints/global_step_50000/hf_ckpt
-    export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
-    export LINGBOT_VLA_SFT_DATASET=/path/to/robotwin2_lerobot/click_bell_clean_50
-
-Convert one or more extracted RoboTwin releases. Each input directory must
-contain ``data/episode<i>.hdf5`` and ``instructions/episode<i>.json``:
-
-.. code-block:: bash
-
-    python toolkits/lerobot/convert_robotwin_to_lerobot.py \
-      --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
-      --output-root "$LINGBOT_VLA_SFT_DATASET"
-
-Start SFT with the RLinf configuration:
-
-.. code-block:: bash
-
-    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
-
-The released checkpoint remains the evaluation base. To evaluate an RLinf SFT
-checkpoint, pass its full weights file through ``runner.ckpt_path`` in the
-RoboTwin evaluation config:
-
-.. code-block:: bash
-
-    bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+For the RoboTwin SFT workflow, see :doc:`LingbotVLA 2.0 SFT <sft_lingbotvlav2>`.
 
 Visualization and Results
 -------------------------

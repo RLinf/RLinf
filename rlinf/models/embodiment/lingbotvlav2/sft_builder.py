@@ -178,23 +178,12 @@ def build_lingbot_v2_sft_dataloader(
     training_model_config["attn_implementation"] = getattr(
         model_cfg, "attn_implementation", "flash_attention_2"
     )
-    attention_implementation = training_model_config.get("attention_implementation")
     configured_attention = getattr(lingbotvla_cfg, "attention_implementation", None)
-    if attention_implementation and configured_attention:
-        if attention_implementation != configured_attention:
-            raise ValueError(
-                "LingBot-VLA V2 attention_implementation mismatch: "
-                f"model config has {configured_attention!r}, but "
-                f"{training_config_path} has {attention_implementation!r}."
-            )
-    training_model_config["attention_implementation"] = (
-        configured_attention or attention_implementation
-    )
-    if not training_model_config["attention_implementation"]:
+    if not configured_attention:
         raise KeyError(
-            "Missing `model.attention_implementation` in LingBot-VLA V2 "
-            f"training config: {training_config_path}"
+            "Missing `lingbotvlav2.attention_implementation` in RLinf SFT config"
         )
+    training_model_config["attention_implementation"] = configured_attention
     training_model_config["tokenizer_path"] = str(model_cfg.tokenizer_path)
     training_model_config["return_image_grid_thw"] = True
 
