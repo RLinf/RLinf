@@ -12,6 +12,8 @@ RLinf 集成了 Diffusion-NFT，用于对 SD3 和 Wan2.2 进行强化学习微�
 打分，再使用 reward 更新扩散模型。当前示例以文字渲染为目标，支持图像级 OCR
 reward 和面向视频帧的 Video OCR reward。
 
+使用 ImageReward 微调 SD3 的流程见 :doc:`embodied/refl`。
+
 概览
 ----
 

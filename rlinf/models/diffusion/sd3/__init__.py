@@ -61,6 +61,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             pipeline.transformer = get_peft_model(pipeline.transformer, lora_config)
 
     move_pipeline_modules(pipeline, inference_dtype=inference_dtype)
+    if model_config.rl_mode == "refl":
+        pipeline.vae.enable_gradient_checkpointing()
 
     return StableDiffusion3(model_config, pipeline=pipeline)
 

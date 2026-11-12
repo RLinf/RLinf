@@ -195,6 +195,64 @@ same as OpenPI, but it is recommended to guarantee two things: first,
 second, ``default_forward`` should output at least the fields actually required
 by the training algorithm, such as ``logprobs``, ``values``, and ``entropy``.
 
+.. _refl-model-interface:
+
+Train from Differentiable Rewards
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To train directly from a differentiable reward, the model must generate samples
+whose scores retain gradients to its trainable parameters. Implement
+``refl_forward(forward_inputs, xt_source="rollout", **kwargs)`` and return a
+dict containing ``samples``, a tensor with batch dimension first. The model owns
+state selection, time units, noising, and decoding; the scorer defines the
+sample layout it accepts. Rollout stores the inputs both need in
+``forward_inputs``.
+
+``BasePolicy.forward`` dispatches ``ForwardType.REFL`` to this method. If your
+model overrides ``forward``, keep that dispatch in the override. The actor
+passes ``xt_source`` from ``algorithm.refl_xt_source`` and feeds the returned
+samples to ``scorer(samples, forward_inputs)``.
+
+The scorer returns one reward per sample, shape ``[B]``, with larger values
+preferred. Freeze its model parameters while preserving the gradient through
+its input. The actor checks the reward shape before computing the loss.
+
+Register a builder accepting ``(cfg, device)`` to select a scorer by config.
+The following extension module registers the existing ImageReward scorer under
+a new name, so you can check the registration path with the
+:doc:`SD3 recipe </rst_source/examples/embodied/refl>`:
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+Make ``my_refl_ext.py`` importable and set ``RLINF_EXT_MODULE=my_refl_ext``
+before launching. As described in the registration section above, each worker
+calls ``register()`` in its own process. Keep the model and dataset paths from
+the SD3 recipe and change only the scorer type:
+
+.. code-block:: yaml
+
+   actor:
+     refl_reward_model:
+       type: custom_image_reward
+
+The builder receives the full ``actor.refl_reward_model`` config and the actor
+device. It loads the same ImageReward checkpoint fields as the recipe. To use
+your own scorer, register a builder returning a callable with the same contract.
+When ``type`` is omitted, the factory selects ``image_reward``.
+
 3. Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
