@@ -202,7 +202,11 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     if not self.is_pipeline:
                         agent_metrics = rollout_handle.wait()[0]
                         offload_handles = []
-                        if self.use_pre_process_policy:
+                        # HTTP rollouts do not run the worker's offload loop.
+                        if (
+                            self.component_placement.is_collocated
+                            or self.component_placement.is_auto
+                        ):
                             offload_handles.append(self.rollout.offload_engine())
                         for handle in offload_handles:
                             handle.wait()
