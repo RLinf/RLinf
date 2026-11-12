@@ -98,6 +98,16 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/prefix.html" style="display: flex; align-items: center; justify-content: center; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #f4f1ea; color: #1f2933; font-weight: 600; text-decoration: none;">Prefix Fine-Tune</a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/prefix.html" style="text-decoration: underline; color: blue;">
+           <b>Prefix Fine-Tune</b>
+         </a><br>
+         Train a compact policy online from a frozen VLA, with STEAM stage routing
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -112,3 +122,4 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RL Token <embodied/rlt>
+   Prefix <embodied/prefix>

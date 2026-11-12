@@ -3,7 +3,7 @@ RL Token 在线强化学习
 
 按本页步骤，可以从示范数据训练 RL Token（RLT）表示，再用它在线训练小型 actor-critic。示例覆盖 Franka peg insertion 真机任务和 ManiSkill ``PegInsertionSideWideClearance-v1`` joint-control 仿真，包括 Stage 1 SFT 和 Stage 2 运行。
 
-RLT 从 VLA 的图像、语言特征中学习紧凑的 token 表示。Stage 2 冻结这部分表示，通过 Prefix runtime 训练 actor 和 critic。如果希望跳过 token transformer 训练，直接使用已有 VLA checkpoint 的特征，请参考 :doc:`../../extending/prefix` 中的 pooling 路线；该页也介绍如何替换特征模型、head 和算法。
+RLT 从 VLA 的图像、语言特征中学习紧凑的 token 表示。Stage 2 冻结这部分表示，通过 Prefix runtime 训练 actor 和 critic。如果希望跳过 token transformer 训练，直接使用已有 VLA checkpoint 的特征，按 :doc:`Prefix Fine-Tune <prefix>` 中的池化路线运行。要在代码里增加特征模型、head 或算法，见 :doc:`../../extending/prefix`。
 
 方法来自 **RL Token: Bootstrapping Online RL with Vision-Language-Action Models**，官方项目页为 `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_。迁移到其他任务时，需要对齐示范数据字段、环境动作、机器人状态和 OpenPI data config。
 
@@ -38,7 +38,7 @@ Stage 1 在示范数据上联合训练 VLA 和 token transformer，完整的 ``a
 提供的配置文件
 ~~~~~~~~~~~~~~
 
-按环境选择 Stage 1 和 Stage 2 配置。STEAM preset 使用 pooled VLA 特征，而非 RLT token transformer；权重下载和校准步骤见 Prefix 页面。
+按环境选择 Stage 1 和 Stage 2 配置。STEAM preset 使用 pooled VLA 特征，而非 RLT token transformer；权重下载和校准步骤见 :doc:`Prefix Fine-Tune <prefix>`。
 
 .. list-table::
    :header-rows: 1
@@ -622,13 +622,13 @@ Stage 1 checkpoint，然后执行：
 目前该变体只提供 ManiSkill 仿真配置。它保留冻结的 Stage 1 特征和 transition
 replay 路径，仅将 Stage 2 策略和更新目标替换为直接 TD3 actor 与 twin-Q critic。
 
-如果要用 pooled 特征替代 RLT 表示，选择 ``maniskill_prefix_stage2_td3_mlp_steam.yaml``。它设置 ``prefix.pool: masked_mean``、``prefix.image_only: true`` 和 ``use_rlt: false``，可以直接使用已有 SFT VLA，不要求 checkpoint 中有训练过的 ``rlt_module``。按 :doc:`../../extending/prefix` 下载 feature、expert、STEAM value model 和 phase head，填好本地路径后执行：
+如果要用 pooled 特征替代 RLT 表示，选择 ``maniskill_prefix_stage2_td3_mlp_steam.yaml``。它设置 ``prefix.pool: masked_mean``、``prefix.image_only: true`` 和 ``use_rlt: false``，可以直接使用已有 SFT VLA，不要求 checkpoint 中有训练过的 ``rlt_module``。按 :doc:`Prefix Fine-Tune <prefix>` 下载 feature、expert、STEAM value model 和 phase head，填好本地路径后执行：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-learner 仍使用 ``algorithm.name: td3``、``deterministic_mlp`` 和 ``twin_q_mlp``，``rollout.routing_gate.type: steam`` 选择学习到的 base-to-actor gate。expert takeover 保持 ``shadow`` 模式，只记录判断，不执行接管动作。已发布阈值的验证限制和校准数据的采集方法见 Prefix 页面。
+learner 仍使用 ``algorithm.name: td3``、``deterministic_mlp`` 和 ``twin_q_mlp``，``rollout.routing_gate.type: steam`` 选择学习到的 base-to-actor gate。expert takeover 保持 ``shadow`` 模式，只记录判断，不执行接管动作。已发布阈值的验证限制和校准数据的采集方法见 :doc:`Prefix Fine-Tune <prefix>`。
 
 这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结
 ``rollout.prefix_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route
