@@ -46,9 +46,7 @@ AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 
    uv pip install -r requirements/agentic/agentlightning_constraints.txt
    uv pip install "agentlightning==0.3.0" "litellm<1.95" \
      "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
-     "mcp-server-calculator" "openai==2.6.1" "virtualenv==20.31.2"
-
-OpenAI SDK 版本与 SGLang 保持一致；固定 virtualenv 版本以满足 AgentOps 的 ``packaging<25`` 要求。protobuf override 保留 RLinf 的 6.x runtime，而 AutoGen 0.7.5 声明依赖 5.x；即使 Calc-X 流程通过，包元数据中的这一冲突仍然存在。
+     "mcp-server-calculator" "openai==2.32.0"
 
 其他安装选项和支持的平台请参考 :doc:`RLinf Installation </rst_source/start/installation>`。
 
@@ -139,10 +137,9 @@ Huawei Ascend CANN
 
    uv --no-config pip install --torch-backend cpu \
      --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
-     -r requirements/agentic/agentlightning_constraints.txt \
-     "torch==2.8.0" "agentlightning==0.3.0" "litellm<1.95" \
-     "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" \
-     "mcp-server-calculator" "openai==2.32.0"
+     -r requirements/agentic/agentlightning_npu.txt
+
+这些版本约束使 OpenAI SDK 和音频依赖与 SGLang 保持兼容，满足 AgentOps 的 ``packaging<25`` 要求，并保留 MCP 使用的 Pydantic 接口。protobuf override 保留 RLinf 的 6.x runtime，而 AutoGen 0.7.5 声明依赖 5.x；即使 Calc-X 流程通过，包元数据中的这一冲突仍然存在。
 
 准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
 
