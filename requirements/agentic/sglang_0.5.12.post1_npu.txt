@@ -11,3 +11,7 @@ psutil
 wheel==0.45.1
 setuptools<80
 transformers==5.6.1
+# Newer releases require torch >= 2.10 or protobuf 7.
+compressed-tensors==0.12.2
+grpcio-health-checking==1.81.1
+grpcio-reflection==1.81.1

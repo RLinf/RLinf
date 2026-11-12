@@ -1255,7 +1255,9 @@ def test_dynamic_microbatches_on_cpu(monkeypatch, tmp_path):
             "prompt_lengths": torch.full((3,), 3),
             "response_lengths": torch.full((3,), 5),
         }
-        microbatches = list(get_iterator_dynamic(batch, max_tokens_per_mbs=8))
+        iterator, _, count = get_iterator_dynamic(batch, max_tokens_per_mbs=8)
+        microbatches = list(iterator)
+        assert count == 3
         assert len(microbatches) == 3
         rows = sorted(row.tolist() for mb in microbatches for row in mb["input_ids"])
         assert rows == batch["input_ids"].tolist()
