@@ -43,6 +43,7 @@ _STAYS_LOCAL: frozenset[str] = frozenset(
         "parts",
         "children",
         "child",
+        "batch_commands",
     }
 )
 

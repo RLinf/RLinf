@@ -38,6 +38,7 @@ _ROBOT_PACKAGES = (
     ".gim_arm",
     ".lekiwi",
     ".piper",
+    ".r2",
     ".so101",
     ".xsquare",
     ".yam",

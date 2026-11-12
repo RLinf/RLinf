@@ -260,6 +260,54 @@ def ros() -> dict[str, types.ModuleType]:
     )
     rospy.published = published
 
+    class _PoseMsg:
+        def __init__(self, position=None, orientation=None) -> None:
+            self.position = (
+                position
+                if position is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+            self.orientation = (
+                orientation
+                if orientation is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+            )
+
+    class _TwistMsg:
+        def __init__(self, linear=None, angular=None) -> None:
+            self.linear = (
+                linear
+                if linear is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+            self.angular = (
+                angular
+                if angular is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+
+    class _WrenchMsg:
+        def __init__(self, force=None, torque=None) -> None:
+            self.force = (
+                force
+                if force is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+            self.torque = (
+                torque
+                if torque is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+
+    class _WrenchStampedMsg:
+        def __init__(self, header=None, wrench=None) -> None:
+            self.header = (
+                header
+                if header is not None
+                else types.SimpleNamespace(stamp=0.0, frame_id="")
+            )
+            self.wrench = wrench if wrench is not None else _WrenchMsg()
+
     pose = _message(
         header=types.SimpleNamespace(stamp=0.0, frame_id=""),
         pose=types.SimpleNamespace(
@@ -270,9 +318,13 @@ def ros() -> dict[str, types.ModuleType]:
     geometry = module(
         "geometry_msgs.msg",
         PoseStamped=pose,
-        Pose=_message(),
+        Pose=_PoseMsg,
         Point=_message(x=0.0, y=0.0, z=0.0),
         Quaternion=_message(x=0.0, y=0.0, z=0.0, w=1.0),
+        Vector3=_message(x=0.0, y=0.0, z=0.0),
+        Twist=_TwistMsg,
+        Wrench=_WrenchMsg,
+        WrenchStamped=_WrenchStampedMsg,
     )
     franka_msgs = module(
         "franka_msgs.msg",
@@ -313,7 +365,35 @@ def ros() -> dict[str, types.ModuleType]:
         GraspActionGoal=_message(goal=_gripper_goal()),
         MoveActionGoal=_message(goal=_gripper_goal()),
     )
-    sensor_msgs = module("sensor_msgs.msg", JointState=_message(position=[0.0, 0.0]))
+
+    class _ImuMsg:
+        def __init__(self) -> None:
+            self.header = types.SimpleNamespace(stamp=0.0, frame_id="")
+            self.orientation = types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+            self.angular_velocity = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.linear_acceleration = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+    sensor_msgs = module(
+        "sensor_msgs.msg",
+        JointState=_message(
+            name=[],
+            position=[0.0, 0.0],
+            velocity=[],
+            effort=[],
+        ),
+        Image=_message(
+            height=480,
+            width=640,
+            encoding="rgb8",
+            data=bytes(480 * 640 * 3),
+        ),
+        CompressedImage=_message(
+            format="jpeg",
+            data=bytes(480 * 640 * 3),
+        ),
+        Imu=_ImuMsg,
+        BatteryState=_message(percentage=95.0),
+    )
     bridge = module(
         "cv_bridge",
         CvBridge=lambda: types.SimpleNamespace(
