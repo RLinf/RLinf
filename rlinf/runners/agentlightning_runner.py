@@ -183,6 +183,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         if len(epoch_iter) <= 0:
             return
 
+        stop_training = False
         for _ in epoch_iter:
             for batch in self.train_dataloader:
                 with self.timer("step"):
@@ -248,18 +249,6 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     if save_model:
                         self._save_checkpoint()
 
-                    if is_train_end:
-                        logging.info(
-                            f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
-                        )
-                        return
-
-                    if run_time_exceeded:
-                        logging.info(
-                            f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
-                        )
-                        return
-
                 time_metrics = self.timer.consume_durations()
                 time_metrics["training"] = actor_handle.consume_duration()
                 time_metrics["rollout"] = rollout_handle.consume_duration()
@@ -303,6 +292,17 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
+
+                if is_train_end or run_time_exceeded:
+                    logging.info(
+                        "Stopping training after step %s: %s reached",
+                        self.global_steps,
+                        "step limit" if is_train_end else "time limit",
+                    )
+                    stop_training = True
+                    break
+            if stop_training:
+                break
 
         # Stop HTTP servers on all rollout workers
         if hasattr(self.rollout, "http_server_stop"):
