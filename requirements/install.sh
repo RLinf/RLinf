@@ -4646,7 +4646,8 @@ install_sglang_npu() {
         "${GITHUB_PREFIX}https://github.com/sgl-project/sgl-kernel-npu/releases/download/2026.05.01.post3/${archive}" \
         --output "$kernel_dir/$archive"
     python -m zipfile -e "$kernel_dir/$archive" "$kernel_dir"
-    uv pip install "$kernel_dir"/sgl_kernel_npu*.whl "$kernel_dir"/deep_ep*.whl
+    uv pip install "$kernel_dir"/sgl_kernel_npu*.whl "$kernel_dir"/deep_ep*.whl \
+        "$kernel_dir"/torch_memory_saver*.whl
     local site_dir library
     site_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
     for library in "$site_dir"/deep_ep/deep_ep_cpp*.so; do
