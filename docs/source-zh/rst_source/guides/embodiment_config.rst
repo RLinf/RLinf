@@ -524,7 +524,7 @@ actor
 训练前校准 GPU 共享配额
 ----------------------------------------
 
-使用 NVIDIA MPS，在训练前调整环境仿真与 policy 推理共享 GPU 的配额。自动调优通过短测搜索配额，再用完整 rollout epoch 验证；如果 MPS 100/100 比初始无 MPS 短测更慢，则关闭 MPS 进行训练。
+环境仿真与 policy 推理共享 GPU 时，它们的 kernel 通常按时间片轮流执行。NVIDIA MPS（Multi-Process Service）允许两者并发执行，配额（quota）则限制每个 worker 可使用的 GPU 计算单元份额。RLinf 可以在训练前为 env 和 rollout worker 自动选择配额：先通过短测搜索，再用完整 rollout epoch 验证最优配额，最后使用选定配额训练。每次校准都会重新启动 worker；默认配置下，首次训练前最多运行约 30 次校准，也可能提前结束。如果 MPS 100/100 比无 MPS 短测更慢，则关闭 MPS 进行训练。
 
 在训练配置中开启自动调优：
 

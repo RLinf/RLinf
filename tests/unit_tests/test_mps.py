@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -179,7 +180,11 @@ def config(tmp_path):
             },
             "env": {
                 "group_name": "Env",
-                "train": {"total_num_envs": 16, "max_steps_per_rollout_epoch": 20},
+                "train": {
+                    "total_num_envs": 16,
+                    "max_steps_per_rollout_epoch": 20,
+                    "video_base_dir": "${runner.logger.log_path}/video/train",
+                },
             },
             "rollout": {"group_name": "Rollout", "pipeline_stage_num": 2},
             "mps": {
@@ -228,7 +233,11 @@ elif command.startswith("get_client_list"):
 @pytest.mark.parametrize(
     "group,quota", [("Env", 80), ("Rollout", 100), ("Actor", None)]
 )
-def test_worker_environment_injection(config, fake_mps, monkeypatch, group, quota):
+@pytest.mark.parametrize("visible", ["0,1", "1"])
+def test_worker_environment_injection(
+    config, fake_mps, monkeypatch, group, quota, visible
+):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
     previous = dict(os.environ)
     with mps_session(config, fake_mps, caps={"env": 80, "rollout": 100}) as environment:
         assert dict(os.environ) == previous
@@ -253,6 +262,34 @@ def test_worker_environment_injection(config, fake_mps, monkeypatch, group, quot
                 Worker.verify_mps_client(None)
     assert dict(os.environ) == previous
     assert not pipes.exists()
+
+
+@pytest.mark.parametrize("training_fails", [False, True])
+def test_session_shutdown_timeout(
+    config, fake_mps, monkeypatch, caplog, training_fails
+):
+    run = subprocess.run
+
+    def run_with_slow_shutdown(command, **kwargs):
+        if command == ["nvidia-cuda-mps-control"] and kwargs.get("input") == "quit\n":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run_with_slow_shutdown)
+    outcome = (
+        pytest.raises(RuntimeError, match="training failed")
+        if training_fails
+        else nullcontext()
+    )
+    with outcome:
+        with mps_session(
+            config, fake_mps, caps={"env": 80, "rollout": 100}
+        ) as environment:
+            pipes = Path(json.loads(environment[SESSION_ENV])["pipe_directory"])
+            if training_fails:
+                raise RuntimeError("training failed")
+    assert "MPS daemon shutdown timed out" in caplog.text
+    assert not pipes.parent.exists()
 
 
 @pytest.fixture
@@ -336,6 +373,8 @@ cfg = OmegaConf.load(Path(args[args.index("--config-path") + 1]) / (args[args.in
 session = json.loads(os.environ.get("RLINF_MPS_SESSION", "null"))
 mode = os.environ["FAKE_TRAINING_MODE"]
 assert "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE" not in os.environ
+assert cfg.env.train.video_base_dir == str(Path(cfg.runner.logger.log_path) / "video/train")
+assert not OmegaConf.is_interpolation(cfg.env.train, "video_base_dir")
 if cfg.mps.get("trial", False):
     if mode == "trial_failure" and session:
         sys.exit(9)

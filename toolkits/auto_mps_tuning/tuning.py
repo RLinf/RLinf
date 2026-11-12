@@ -46,7 +46,7 @@ def launch_config(cfg: DictConfig, training_script: Path) -> int:
         The shell exit code (128 + signal for signal termination). The caller's
         configuration is unchanged.
     """
-    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
     log_dir = Path(cfg.runner.logger.log_path).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
     caps = tune_before_training(cfg, log_dir, training_script)
@@ -59,7 +59,7 @@ def launch_config(cfg: DictConfig, training_script: Path) -> int:
             "job": {"chdir": False},
         }
     # Freeze the composed configuration so edits during calibration cannot change training.
-    OmegaConf.save(cfg, log_dir / "training.yaml")
+    OmegaConf.save(cfg, log_dir / "training.yaml", resolve=True)
     command = [
         sys.executable,
         str(training_script),

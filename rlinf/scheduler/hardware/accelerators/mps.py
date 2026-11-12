@@ -25,6 +25,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from rlinf.utils.logging import get_logger
+
 SESSION_ENV = "RLINF_MPS_SESSION"
 
 
@@ -83,14 +85,9 @@ def _inventory() -> dict[str, str]:
         devices[index] = uuid
     if not devices:
         raise RuntimeError("No NVIDIA GPUs available for MPS")
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if visible is not None:
-        allowed = {item.strip() for item in visible.split(",")}
-        if any(item.startswith("MIG-") for item in allowed):
-            raise ValueError("Managed MPS does not support MIG devices")
-        devices = {i: u for i, u in devices.items() if i in allowed or u in allowed}
-        if not devices:
-            raise ValueError("CUDA_VISIBLE_DEVICES selects no GPUs for MPS")
+    # RLinf places workers by physical index independently of the shell's mask.
+    if "MIG-" in os.environ.get("CUDA_VISIBLE_DEVICES", ""):
+        raise ValueError("Managed MPS does not support MIG devices")
     return devices
 
 
@@ -132,7 +129,13 @@ def mps_daemon(log_dir: Path) -> Iterator[tuple[dict[str, str], dict[str, str]]]
         yield environment, devices
     finally:
         if started:
-            _control(environment, "quit")
+            try:
+                _control(environment, "quit")
+            except subprocess.TimeoutExpired:
+                get_logger().warning(
+                    "MPS daemon shutdown timed out; it will exit when remaining "
+                    "clients disconnect"
+                )
         shutil.rmtree(pipe_root, ignore_errors=True)
 
 

@@ -543,10 +543,15 @@ using LIBERO-10 as an example.
 Tune GPU Sharing Before Training
 ----------------------------------------
 
-Use NVIDIA MPS to tune GPU sharing between environment simulation and policy
-inference before training. Automatic tuning compares short trials and validates
-quotas with full rollout epochs. If MPS at 100/100 is slower than the initial
-no-MPS trial, training proceeds without MPS.
+When environment simulation and policy inference share a GPU, their kernels
+normally take turns. NVIDIA MPS (Multi-Process Service) lets them run at the same
+time, and a quota caps the share of the GPU's compute units each worker may use.
+RLinf can pick the quotas for the env and rollout workers before training: it
+runs short calibration trials, checks the best quotas on full rollout epochs,
+and then trains with them. Each trial launches the workers again; with default
+settings, calibration runs up to about 30 trials before the first training step,
+but can stop earlier. If MPS at 100/100 is slower than a trial without MPS,
+training runs without MPS.
 
 Enable automatic tuning in your training configuration:
 
