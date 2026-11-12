@@ -16,9 +16,10 @@ Overview
 --------
 
 Use this recipe to train GLM-4.7-Flash asynchronously on two 8-GPU nodes:
-the Megatron actor occupies node 0 and the SGLang server rollout plus the
-reward worker occupy node 1, and generation runs continuously while training
-consumes the data of an earlier weight version.
+the Megatron actor occupies node 0 and the SGLang server rollout occupies
+node 1, and generation runs continuously while training consumes the data of
+an earlier weight version. Rewards are computed inside the agent loop, so no
+reward worker is launched.
 
 .. grid:: 2 4 4 4
    :gutter: 2

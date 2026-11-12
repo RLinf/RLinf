@@ -6,7 +6,7 @@ Search-R1 异步训练
 概述
 --------------------------------
 
-使用本配方在两台 8 卡机器上异步训练 GLM-4.7-Flash：Megatron actor 占用 node 0，SGLang server rollout 和 reward worker 占用 node 1，生成持续进行，训练消费的是更早权重版本上的数据。
+使用本配方在两台 8 卡机器上异步训练 GLM-4.7-Flash：Megatron actor 占用 node 0，SGLang server rollout 占用 node 1，生成持续进行，训练消费的是更早权重版本上的数据。reward 在 agent loop 内计算，不启动 reward worker。
 
 .. grid:: 2 4 4 4
    :gutter: 2
