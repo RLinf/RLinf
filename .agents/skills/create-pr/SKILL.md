@@ -28,16 +28,6 @@ with `strict: true`. Every title rule that job enforces is an ERROR in the
 linter, so a clean `lint` means the check passes. Paths below are relative to
 the repo root.
 
-## Why this exists
-
-Over the 25 most recently merged PRs the linter reports errors on **11 of
-them**. The dominant failures, in order: template sections dropped (14),
-`Types of changes` / `Checklist` with nothing ticked (9), template
-`<!--- ... -->` hints left in (9), prose above the first heading (5). PR
-[#1421](https://github.com/RLinf/RLinf/pull/1421) is the worst case — the whole
-body was pasted with a two-space indent, which nests every `###` heading inside
-the Description and breaks the results table outright.
-
 ## 1. Gather the facts before writing a word
 
 Never describe the PR from memory of what you intended. Read the diff:
@@ -56,6 +46,16 @@ You need, concretely:
 - **What you actually ran to verify it** — the e2e config name, the eval
   numbers, `pre-commit run --all-files`. "Tested locally" is not an answer.
 - **The issue it closes**, if any.
+
+Then run the check of every area the branch touches, and fix each finding or
+say in the description why it stays:
+
+```bash
+python3 .agents/skills/route.py check
+```
+
+Its result goes into `How has this been tested?` with the other commands you
+ran.
 
 ## 2. Title
 
