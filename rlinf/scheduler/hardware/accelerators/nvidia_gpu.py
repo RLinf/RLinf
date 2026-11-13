@@ -462,6 +462,10 @@ class NvidiaGPUManager(AcceleratorManager):
 
         if visible_devices is None or visible_devices == "":
             return []
+        if os.environ.get("RLINF_MPS_SESSION"):
+            from .mps import visible_device_indices
+
+            return visible_device_indices(visible_devices)
         else:
             try:
                 visible_devices = [int(v.strip()) for v in visible_devices.split(",")]

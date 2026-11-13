@@ -383,6 +383,12 @@ class Worker(metaclass=WorkerMeta):
         # Load user-provided extension modules (e.g., for registering custom envs/models)
         self._load_user_extensions()
 
+    def verify_mps_client(self) -> None:
+        """Verify an opted-in MPS client after workload initialization."""
+        from rlinf.scheduler.hardware.accelerators.mps import wait_for_clients
+
+        wait_for_clients(dict(os.environ), {os.getpid()})
+
     def _load_user_extensions(self):
         """Load extension modules specified via EXT_MODULE environment variable.
 

@@ -520,3 +520,64 @@ actor
      - 相机图像高度（像素）。
    * - ``init_params.camera_widths``
      - 相机图像宽度（像素）。
+
+训练前校准 GPU 共享配额
+----------------------------------------
+
+环境仿真与 policy 推理共享 GPU 时，它们的 kernel 通常按时间片轮流执行。NVIDIA MPS（Multi-Process Service）允许两者并发执行，配额（quota）则限制每个 worker 可使用的 GPU 计算单元份额。RLinf 可以在训练前为 env 和 rollout worker 自动选择配额：先通过短测搜索，再用完整 rollout epoch 验证最优配额，最后使用选定配额训练。每次校准都会重新启动 worker；默认配置下，首次训练前最多运行约 30 次校准，也可能提前结束。如果 MPS 100/100 比无 MPS 短测更慢，则关闭 MPS 进行训练。
+
+在训练配置中开启自动调优：
+
+.. code-block:: yaml
+
+   mps:
+     enabled: true
+
+运行 ``bash examples/embodiment/run_embodiment.sh <config-name>``，先校准再训练。``mps.enabled`` 为 false 或省略时，使用普通训练。在硬件与工作量不变时，可在 ``mps`` 下填写配额以复用已有结果：
+
+.. code-block:: yaml
+
+   mps:
+     enabled: true
+     env_percentage: 100
+     rollout_percentage: 89
+
+填写任意一侧即使用固定配额并跳过校准，未填写的一侧默认为 100。两侧均省略或均为 ``null`` 时自动调优。
+
+在 ``mps.auto_tuning`` 下覆盖相应字段即可调整测量预算；省略的字段使用 ``toolkits/auto_mps_tuning/defaults.yaml`` 中的默认值：
+
+.. list-table:: 自动调优参数
+   :header-rows: 1
+   :widths: 28 12 60
+
+   * - 参数
+     - 默认值
+     - 含义
+   * - ``warmup_windows``
+     - 1
+     - 每轮短测的预热窗口数，不计入报告耗时。
+   * - ``measure_windows``
+     - 2
+     - 每轮短测的测量窗口数，使用耗时中位数比较。
+   * - ``window_chunks``
+     - 4
+     - 短测每个 epoch 的 action chunk 数，不超过原始 epoch 长度；``null`` 表示完整 epoch。
+   * - ``validation_warmup_windows``
+     - 1
+     - 完整窗口验证的预热 epoch 数。
+   * - ``validation_windows``
+     - 1
+     - 每轮完整窗口验证的测量 epoch 数，使用耗时中位数。
+   * - ``min_percentage``
+     - 10
+     - 配额搜索下限，单位为百分比。
+   * - ``max_trials``
+     - 24
+     - MPS 短测次数上限，包含 100/100 对照；无 MPS 基线与完整窗口验证另计。
+   * - ``trial_timeout_s``
+     - 3600
+     - 每轮校准的超时秒数，包含初始化和测量；退出清理使用单独的超时。
+
+MPS 管理要求单节点、Volta 或更新架构 NVIDIA GPU，且 ``PATH`` 中有 ``nvidia-cuda-mps-control``；暂不支持 MIG 设备。自动调优还要求可见 GPU 同构、env 与 rollout 的 placement 相同、rollout 至少有两个 pipeline stage。校准仅测量同步训练 rollout，训练流水线、仅评估模式或带 reward model 的任务请使用固定配额。校准使用固定权重，整体训练性能需通过端到端耗时评估。
+
+以下产物路径均相对于 ``runner.logger.log_path``。主日志 ``run_embodiment.log`` 记录各轮结果、回退决定，以及最终配额、耗时和提升。每轮校准的 worker 输出位于 ``mps_tuning/<trial>/run.log``，同目录的 ``measurement.json`` 保存耗时，``input.yaml`` 保存运行配置。硬件实测映射保存在 ``mps_tuning/resource_probe/resources.json``，最终训练配置保存在 ``training.yaml``。
