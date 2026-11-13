@@ -443,6 +443,10 @@ def prepare_actions(
             action_dim=action_dim,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.MUJOCO_WARP:
+        # Continuous locomotion actions; the env clamps them to the actuator
+        # control range.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.ROBOVERSE:
         chunk_actions = prepare_actions_for_roboverse(
             raw_chunk_actions=raw_chunk_actions,

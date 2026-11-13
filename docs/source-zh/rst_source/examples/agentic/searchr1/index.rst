@@ -7,7 +7,7 @@ Search-R1的强化学习训练
 
 .. raw:: html
 
-   <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 640px; margin: 0 auto;">
+   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 960px; margin: 0 auto;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="qwen2.5.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
             style="width: 100%; height: 200px; object-fit: cover; object-position: left center; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
@@ -27,6 +27,17 @@ Search-R1的强化学习训练
           <b>GLM-4.7-Flash Search-R1</b>
          </a><br>
          在 8×A100 上训练 MoE 模型（激活参数约 3B）
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="async.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/glm_searchr1_async_step_time.png"
+            style="width: 100%; height: 200px; object-fit: cover; object-position: left center; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="async.html" style="text-decoration: underline; color: blue;">
+          <b>Search-R1 异步训练</b>
+         </a><br>
+         rollout 与训练重叠：2×8 A100 上步时从 278.6 s 降到 139.0 s
        </p>
      </div>
    </div>
@@ -160,3 +171,4 @@ Asearcher: https://github.com/inclusionAI/ASearcher
 
    Qwen2.5-3B Search-R1 <qwen2.5>
    GLM-4.7-Flash Search-R1 <glm4.7_flash>
+   Search-R1 异步训练 <async>

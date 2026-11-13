@@ -447,6 +447,34 @@ jobs:
         run: |
           rm -rf .venv
 
+  embodied-mlp-ppo-mujoco-warp-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install MuJoCo Warp dependencies
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env mujoco_warp
+
+      - name: Run MuJoCo Warp PPO MLP e2e test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh mujoco_warp_ppo_mlp
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+
   embodied-openpi-libero-rocm-test:
     runs-on: rocm
     steps:
