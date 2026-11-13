@@ -658,6 +658,7 @@ class LerobotOutput(TrajectoryOutput):
         self._accumulators: dict[SourceID, LeRobotEpisodeAccumulator] = {}
         online_cfg = self._cfg.algorithm.dagger.online_lerobot
         self._only_success = bool(online_cfg.get("only_success", False))
+        self._intervene_step_filter = int(online_cfg.get("intervene_step_filter", 0))
 
     def emit(self, chunk: JoinedChunk) -> Iterator[CollectedItem]:
         """Append episode data and drain completed episodes at step boundaries."""
@@ -672,6 +673,7 @@ class LerobotOutput(TrajectoryOutput):
             LeRobotEpisodeAccumulator(
                 num_envs=self._cfg.env.train.total_num_envs // self._source_count,
                 only_success=self._only_success,
+                intervene_step_filter=self._intervene_step_filter,
                 num_action_chunks=self._cfg.actor.model.num_action_chunks,
                 action_dim=self._cfg.actor.model.action_dim,
             ),
@@ -785,39 +787,12 @@ class LeRobotEpisodeState:
 
     # Frames retained until this environment terminates or truncates.
     frames: list[LeRobotFrame] = field(default_factory=list)
-    # Auto-reset observation paired with the next executed action.
-    pending_observation: Any | None = None
-    # Metadata paired with pending_observation.
-    pending_info: Any | None = None
+    # Observation preceding the next action, including after auto-reset.
+    previous_observation: Any | None = None
     # Whether any retained frame reported success.
     success: bool = False
     # Real-world recording segment local to this episode.
     segment_id: int = 0
-
-    def restart_recording(self, observation: Any, info: Any) -> None:
-        """Start a fresh recording with the current observation as its seed."""
-        self.frames.clear()
-        self.success = False
-        self.segment_id = 0
-        self.pending_observation = observation
-        self.pending_info = info if isinstance(info, dict) else {}
-
-    def take_observation(self, observation: Any, info: Any) -> tuple[Any, Any]:
-        """Use a pending auto-reset seed before the current step observation."""
-        if self.pending_observation is None:
-            return observation, info
-        observation = self.pending_observation
-        info = self.pending_info if self.pending_info is not None else {}
-        self.pending_observation = None
-        self.pending_info = None
-        return observation, info
-
-    def retain_reset(self, observation: Any, info: Any) -> None:
-        """Retain an auto-reset seed for the next action."""
-        if observation is None:
-            return
-        self.pending_observation = observation
-        self.pending_info = info
 
     def append(self, frame: LeRobotFrame) -> None:
         """Append a frame and update episode-level success."""
@@ -837,7 +812,7 @@ class LeRobotEpisodeState:
         ]
 
     def reset_episode(self) -> None:
-        """Clear the completed episode while retaining an auto-reset seed."""
+        """Clear recording state while retaining the next action's observation."""
         self.frames.clear()
         self.success = False
         self.segment_id = 0
@@ -851,6 +826,8 @@ class LeRobotEpisodeAccumulator:
     num_envs: int = 1
     # Export only successful natural terminations when enabled.
     only_success: bool = False
+    # Minimum intervention frames per episode; zero disables filtering.
+    intervene_step_filter: int = 0
     # Action chunk width C from actor.model.num_action_chunks.
     num_action_chunks: int = 1
     # Single-action width A from actor.model.action_dim.
@@ -886,13 +863,18 @@ class LeRobotEpisodeAccumulator:
         *,
         policy_output: PolicyOutput | None,
         chunk_actions: Any,
+        initial_observation: Any,
         obs_list: Any,
         terminations: Any,
         truncations: Any,
         infos_list: Any,
         valid_action_mask: Any = None,
     ) -> None:
-        """Normalize and append one vectorized action chunk."""
+        """Append a chunk using its pre-action ``initial_observation``.
+
+        ``obs_list`` contains post-action observations. Intervention and terminal
+        metadata remain paired with the actions that produced them.
+        """
         chunk = LeRobotChunk.from_data(
             policy_output=policy_output,
             chunk_actions=chunk_actions,
@@ -905,6 +887,10 @@ class LeRobotEpisodeAccumulator:
             action_dim=self.action_dim,
             valid_action_mask=valid_action_mask,
         )
+        for env_index, state in enumerate(self._states):
+            state.previous_observation = LeRobotChunk._slice_env(
+                initial_observation, env_index, self.num_envs
+            )
         for step in self._converter.convert(chunk):
             self._append_step(step)
 
@@ -915,29 +901,32 @@ class LeRobotEpisodeAccumulator:
         return episodes
 
     def clear(self) -> None:
-        """Discard in-progress frames, pending reset data, and completed output."""
+        """Discard in-progress frames, preceding observations, and completed output."""
         self._states = [LeRobotEpisodeState() for _ in range(self.num_envs)]
         self._episodes = []
 
     def _append_step(self, step: LeRobotStep) -> None:
         """Apply recording controls and advance one environment state."""
         state = self._states[step.env_index]
+        observation = state.previous_observation
+        state.previous_observation = (
+            step.reset_observation
+            if step.reset_observation is not None
+            else step.observation
+        )
 
         if step.info_flag("record_reset"):
-            state.restart_recording(step.observation, step.info)
+            state.reset_episode()
             return
         if step.info_flag("pre_record"):
-            state.retain_reset(step.reset_observation, step.reset_info)
             return
         if step.info_flag("segment_advance"):
             state.segment_id += 1
 
-        observation, info = state.take_observation(step.observation, step.info)
-        state.retain_reset(step.reset_observation, step.reset_info)
         frame = self._converter.to_frame(
             step,
             observation=observation,
-            info=info,
+            info=step.info,
             segment_id=state.segment_id,
             action_dim=self.action_dim,
         )
@@ -949,6 +938,11 @@ class LeRobotEpisodeAccumulator:
             return
 
         should_emit = not self.only_success or (state.success and step.terminated)
+        if should_emit and self.intervene_step_filter > 0:
+            should_emit = (
+                sum(frame.intervene_flag for frame in state.frames)
+                >= self.intervene_step_filter
+            )
         if should_emit:
             episode = state.finish()
             if episode:

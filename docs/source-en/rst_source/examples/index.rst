@@ -59,11 +59,11 @@ Beyond embodiment:
 .. grid:: 1 2 3 3
    :gutter: 3
 
-   .. grid-item-card:: Video Generation Models
+   .. grid-item-card:: Image and Video Generation
       :link: video_models
       :link-type: doc
 
-      Fine-tune SD3 and Wan2.2 image/video generation models with Diffusion-NFT.
+      Prepare SD3 and Wan2.2 models, then train with Diffusion-NFT or DiffusionART.
 
    .. grid-item-card:: Agents
       :link: agentic/index
@@ -88,6 +88,6 @@ Beyond embodiment:
    Reward Models <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
-   Video Generation Models <video_models>
+   Image and Video Generation <video_models>
    Agents <agentic/index>
    Systems <system/index>

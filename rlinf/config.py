@@ -1209,6 +1209,12 @@ def validate_embodied_cfg(cfg):
         )
 
         build_prefix_off_policy_algorithm(cfg)
+    if model_type == SupportedModel.OPENPI:
+        if only_eval and model_cfg.openpi.get("short_memory", False):
+            assert cfg.env.eval.get("short_memory") is not None, (
+                "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "
+                "got no environment history configuration."
+            )
     for split in ("train", "eval"):
         env_cfg = cfg.get("env", {}).get(split)
         if env_cfg is None or env_cfg.get("env_type") != "world_model":
@@ -1522,6 +1528,130 @@ def validate_embodied_cfg(cfg):
             f"got {psi0_env_cfg.total_num_envs}."
         )
 
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert not algorithm_cfg.get("filter_rewards", False), (
+            "DiffusionART requires algorithm.filter_rewards=False; got True."
+        )
+        assert model_type in DIFFUSION_MODELS, (
+            "algorithm.loss_type='embodied_art' requires a diffusion model."
+        )
+        assert cfg.actor.training_backend == "fsdp", (
+            "algorithm.loss_type='embodied_art' currently requires actor.training_backend='fsdp'."
+        )
+        assert stage_num == 1, (
+            "algorithm.loss_type='embodied_art' requires rollout.pipeline_stage_num=1."
+        )
+        art_updates = int(algorithm_cfg.get("art_updates_per_rollout", 2))
+        assert art_updates in {1, 2} and algorithm_cfg.group_size % art_updates == 0, (
+            "DiffusionART art_updates_per_rollout must be 1 or 2 and divide "
+            "algorithm.group_size."
+        )
+        assert int(algorithm_cfg.get("update_epoch", 1)) == 1, (
+            "DiffusionART requires algorithm.update_epoch=1."
+        )
+        assert cfg.runner.get("weight_sync_interval", 1) == 1, (
+            "DiffusionART requires runner.weight_sync_interval=1."
+        )
+        assert cfg.env.train.group_size == algorithm_cfg.group_size, (
+            "DiffusionART requires env.train.group_size to match algorithm.group_size."
+        )
+        assert (
+            cfg.env.train.max_steps_per_rollout_epoch == model_cfg.num_action_chunks
+        ), "DiffusionART requires one generated sample per rollout epoch."
+        expected_global_batch_size = (
+            cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch // art_updates
+        )
+        assert cfg.actor.global_batch_size == expected_global_batch_size, (
+            "DiffusionART actor.global_batch_size must equal one disjoint update "
+            f"window ({expected_global_batch_size})."
+        )
+        actor_world_size = component_placement.get_world_size("actor")
+        shard_count = math.lcm(env_world_size, actor_world_size)
+        assert (
+            cfg.env.train.total_num_envs % (shard_count * algorithm_cfg.group_size) == 0
+        ), (
+            "DiffusionART requires every actor trajectory shard to contain complete "
+            "prompt groups."
+        )
+        timestep_fraction = float(algorithm_cfg.get("art_timestep_fraction", 1.0))
+        assert 0 < timestep_fraction <= 1, (
+            "algorithm.art_timestep_fraction must be in (0, 1]."
+        )
+        assert algorithm_cfg.get("art_loss_space", "velocity_linear_sigma") in {
+            "velocity_linear_sigma",
+            "velocity_uniform",
+        }, "Unsupported algorithm.art_loss_space."
+        assert algorithm_cfg.get("art_covariance_reduction", "unbiased") in {
+            "unbiased",
+            "population",
+        }, "Unsupported algorithm.art_covariance_reduction."
+        assert algorithm_cfg.get("art_direction_mode", "historical") in {
+            "historical",
+            "normalized_aggregate",
+        }, "Unsupported algorithm.art_direction_mode."
+        assert algorithm_cfg.get("art_scale_mode", "unit_normalized_covariance") in {
+            "reward_mad",
+            "raw_covariance",
+            "reward_std_normalized_covariance",
+            "unit_normalized_covariance",
+        }, "Unsupported algorithm.art_scale_mode."
+        assert algorithm_cfg.get("art_zero_signal_mode", "exact") == "exact", (
+            "Scalar DiffusionART requires algorithm.art_zero_signal_mode='exact'."
+        )
+        supported_art_options = {
+            "art_updates_per_rollout",
+            "art_covariance_reduction",
+            "art_direction_mode",
+            "art_scale_mode",
+            "art_guidance_gain",
+            "art_zero_signal_mode",
+            "art_zero_signal_atol",
+            "art_loss_space",
+            "art_mask_metric",
+            "art_mask_threshold",
+            "art_reference_noise_level",
+            "art_corrective_mask_enabled",
+            "art_exclude_final_step",
+            "art_timestep_fraction",
+            "art_reward_reduction",
+            "art_eps",
+        }
+        unsupported_art_options = sorted(
+            option
+            for option in algorithm_cfg
+            if option.startswith("art_") and option not in supported_art_options
+        )
+        assert not unsupported_art_options, (
+            f"Unsupported DiffusionART options: {unsupported_art_options}."
+        )
+        assert algorithm_cfg.get("art_mask_metric", "sde_kl") in {
+            "fixed_mse",
+            "sde_kl",
+        }, "Unsupported algorithm.art_mask_metric."
+        for option, default in (
+            ("art_mask_threshold", 1e-5),
+            ("art_reference_noise_level", 0.8),
+        ):
+            value = algorithm_cfg.get(option, default)
+            assert type(value) in (int, float) and math.isfinite(value) and value > 0, (
+                f"algorithm.{option} must be a positive finite number."
+            )
+        assert type(algorithm_cfg.get("art_corrective_mask_enabled", True)) is bool, (
+            "algorithm.art_corrective_mask_enabled must be boolean."
+        )
+        assert algorithm_cfg.get("art_reward_reduction", "mean") in {"mean", "sum"}, (
+            "algorithm.art_reward_reduction must be 'mean' or 'sum'."
+        )
+        model_options = model_cfg.get(model_type.value)
+        assert model_options.get("rl_mode") == "art", (
+            f"actor.model.{model_type.value}.rl_mode must be 'art'."
+        )
+        if model_type == SupportedModel.SD3:
+            assert (
+                model_options.get("train_sampler") == "ode"
+                and float(model_options.get("noise_level", 0.0)) == 0.0
+            ), "SD3 DiffusionART requires deterministic ODE rollout."
+
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
     if use_reward_model and not standalone_realworld:
@@ -1823,10 +1953,20 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
         model_type = cfg.actor.model.get("model_type", None)
-        if (
-            model_type is not None
-            and SupportedModel(model_type) == SupportedModel.DREAMZERO
-        ):
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
+            openpi_cfg = cfg.actor.model.openpi
+            history_cfg = cfg.data.get("short_memory")
+            if openpi_cfg.get("short_memory", False):
+                assert history_cfg is not None, (
+                    "actor.model.openpi.short_memory=True requires data.short_memory; "
+                    "got no history sampling configuration."
+                )
+            if history_cfg is not None:
+                assert not openpi_cfg.get("use_rlt", False), (
+                    "OpenPI use_rlt=True requires the RLT loader; "
+                    "got short_memory enabled in the model or data configuration."
+                )
+        elif SupportedModel(model_type) == SupportedModel.DREAMZERO:
             from rlinf.models.embodiment.dreamzero.dreamzero_config import (
                 validate_dreamzero_sft_model_cfg,
             )
@@ -2027,9 +2167,202 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "to share the same GPUs."
         )
     if not component_placement.is_collocated:
-        raise ValueError(
-            "SearchR1 multi-agent actors support only collocated component placement."
+        # The Megatron MA actor gathers the full rollout batch before
+        # training, so it also runs under disaggregated placement. The FSDP
+        # MA actor still asserts collocated placement internally.
+        if cfg.actor.training_backend != "megatron":
+            raise ValueError(
+                "SearchR1 multi-agent actors support only collocated component "
+                "placement unless actor.training_backend is megatron."
+            )
+    if cfg.runner.get("async_mode", False):
+        if not component_placement.is_disaggregated:
+            raise ValueError(
+                "SearchR1 async training requires the actor and the rollout "
+                "to be deployed on separate GPUs (disaggregated placement); "
+                "the current placement mode is "
+                f"{component_placement.placement_mode.name}."
+            )
+        # Deliberately no setdefault for backend_type: this runs after
+        # validate_sglang_cfg, and filling a default here would bypass its
+        # mutual-exclusion check between serving_mode and the server backend.
+        rollout_backend = cfg.rollout.get("rollout_backend", None)
+        backend_type = OmegaConf.select(
+            cfg, "rollout.sglang.backend_type", default="engine"
         )
+        if rollout_backend != "sglang" or backend_type != "server":
+            raise ValueError(
+                "SearchR1 async training requires "
+                "rollout.rollout_backend: sglang with "
+                "rollout.sglang.backend_type: server: the weight sync "
+                "pauses and resumes generation through the SGLang server "
+                f"HTTP interface. Found rollout.rollout_backend="
+                f"{rollout_backend!r} and rollout.sglang.backend_type="
+                f"{backend_type!r}."
+            )
+        if cfg.algorithm.get("staleness_threshold", None) is not None:
+            raise ValueError(
+                f"algorithm.staleness_threshold is the embodied async "
+                f"runner's admission setting and is not used by async agent "
+                f"training (found {cfg.algorithm.staleness_threshold}). "
+                "Admission is controlled by rollout_buffer."
+                "max_inflight_groups and rollout_buffer.max_buffered_groups; "
+                "how stale training data may be is bounded by "
+                "rollout_buffer.max_buffered_groups and agentloop."
+                "max_actor_accept_staleness. Remove the field."
+            )
+        task_name = OmegaConf.select(cfg, "agentloop.task_name", default=None)
+        if task_name is None:
+            raise ValueError(
+                "agentloop.task_name is required in async training: it keys "
+                "the rollout buffer's per-task state and is stamped on "
+                "every rollout request. Set it to the agent task's name "
+                "(e.g. 'searchr1')."
+            )
+        max_actor_accept_staleness = OmegaConf.select(
+            cfg, "agentloop.max_actor_accept_staleness", default=None
+        )
+        if max_actor_accept_staleness is not None and (max_actor_accept_staleness < 0):
+            raise ValueError(
+                f"agentloop.max_actor_accept_staleness must be >= 0, found "
+                f"{max_actor_accept_staleness}: a negative value would drop "
+                "every group as stale."
+            )
+        # Defaults are set here once; the async runner and the rollout
+        # buffer read the fields without further fallbacks.
+        with open_dict(cfg):
+            if cfg.rollout.get("pause_mode", None) is None:
+                cfg.rollout.pause_mode = "retract"
+            rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+            max_running_requests = cfg.rollout.get("max_running_requests", None)
+            if cfg.get("rollout_buffer", None) is None:
+                cfg.rollout_buffer = {}
+            if cfg.rollout_buffer.get("max_dropped_groups_per_step", None) is None:
+                if rollout_batch_size is not None:
+                    cfg.rollout_buffer.max_dropped_groups_per_step = (
+                        10 * rollout_batch_size
+                    )
+            if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+                if rollout_batch_size is not None and max_running_requests is not None:
+                    group_size = cfg.algorithm.group_size
+                    num_instances = component_placement.rollout_num_model_instances
+                    # In-flight groups' trajectories run at about 1.2x the
+                    # engine capacity: the margin covers in-flight groups
+                    # whose trajectories are waiting on tools or on the
+                    # group's slowest member.
+                    cfg.rollout_buffer.max_inflight_groups = math.ceil(
+                        max_running_requests * num_instances * 1.2 / group_size
+                    )
+            if cfg.rollout_buffer.get("max_buffered_groups", None) is None:
+                if rollout_batch_size is not None:
+                    cfg.rollout_buffer.max_buffered_groups = 2 * rollout_batch_size
+        if cfg.rollout_buffer.get("max_inflight_groups", None) is None:
+            raise ValueError(
+                "rollout_buffer.max_inflight_groups is not set and cannot "
+                "be derived: async training derives it from "
+                "rollout.max_running_requests. Set rollout."
+                "max_running_requests or rollout_buffer.max_inflight_groups."
+            )
+        if cfg.rollout_buffer.max_inflight_groups < 1:
+            raise ValueError(
+                f"rollout_buffer.max_inflight_groups must be >= 1, found "
+                f"{cfg.rollout_buffer.max_inflight_groups}."
+            )
+        rollout_batch_size = cfg.data.get("rollout_batch_size", None)
+        if rollout_batch_size is not None and (
+            cfg.rollout_buffer.max_buffered_groups < rollout_batch_size
+        ):
+            raise ValueError(
+                f"rollout_buffer.max_buffered_groups "
+                f"({cfg.rollout_buffer.max_buffered_groups}) must be >= "
+                f"data.rollout_batch_size ({rollout_batch_size}): a smaller "
+                "buffer can never hold a full training batch."
+            )
+        if cfg.rollout_buffer.max_dropped_groups_per_step < 1:
+            raise ValueError(
+                f"rollout_buffer.max_dropped_groups_per_step must be >= 1, "
+                f"found {cfg.rollout_buffer.max_dropped_groups_per_step}."
+            )
+        if (
+            max_actor_accept_staleness is not None
+            and rollout_batch_size is not None
+            and max_actor_accept_staleness
+            < math.ceil(cfg.rollout_buffer.max_buffered_groups / rollout_batch_size)
+        ):
+            # When the actor is the bottleneck, the oldest buffered group
+            # has waited about max_buffered_groups / rollout_batch_size
+            # steps; a stricter staleness cap would systematically drop it
+            # and waste the generate compute behind it.
+            logging.warning(
+                f"agentloop.max_actor_accept_staleness "
+                f"({max_actor_accept_staleness}) is below the buffer's "
+                f"depth in steps (rollout_buffer.max_buffered_groups "
+                f"{cfg.rollout_buffer.max_buffered_groups} / "
+                f"data.rollout_batch_size {rollout_batch_size}). When "
+                "training is the bottleneck, the oldest buffered groups "
+                "have waited about that many steps and will be dropped "
+                "as stale, wasting the generate compute behind them; the "
+                "actor only waits for new groups when so many are dropped "
+                "that the buffer cannot fill a batch. Raise "
+                "max_actor_accept_staleness or lower max_buffered_groups."
+            )
+        down_sampling_cfg = cfg.algorithm.get("down_sampling", None) or {}
+        if down_sampling_cfg.get("do_down_sampling", False):
+            down_sampling_config = (
+                down_sampling_cfg.get("down_sampling_config", None) or {}
+            )
+            if not down_sampling_config.get("reject_equal_reward", False):
+                raise ValueError(
+                    "Async runs support only reject_equal_reward under "
+                    "algorithm.down_sampling.down_sampling_config: group "
+                    "filtering runs in the RolloutBufferWorker and "
+                    "within-group down sampling is not implemented there."
+                )
+            unsupported = {
+                key: value
+                for key, value in down_sampling_config.items()
+                if key != "reject_equal_reward" and value
+            }
+            if unsupported:
+                raise ValueError(
+                    f"Async runs support only reject_equal_reward under "
+                    f"algorithm.down_sampling.down_sampling_config; found "
+                    f"enabled options {sorted(unsupported.keys())}. Group "
+                    "filtering runs in the RolloutBufferWorker and "
+                    "within-group down sampling is not implemented there."
+                )
+            if cfg.runner.get("max_steps", -1) < 0:
+                raise ValueError(
+                    "algorithm.down_sampling.down_sampling_config."
+                    "reject_equal_reward requires an explicit "
+                    "runner.max_steps: dropped groups consume prompts "
+                    "faster than steps, so the epoch-derived step count "
+                    "is wrong."
+                )
+        if cfg.rollout.pause_mode not in ("in_place", "retract", "drain"):
+            raise ValueError(
+                f"rollout.pause_mode must be one of in_place/retract/drain, "
+                f"found {cfg.rollout.pause_mode!r}."
+            )
+        if cfg.data.get("rollout_batch_size", None) is not None:
+            actor_dp_size = component_placement.actor_dp_size
+            if cfg.data.rollout_batch_size % actor_dp_size != 0:
+                raise ValueError(
+                    f"data.rollout_batch_size ({cfg.data.rollout_batch_size}) "
+                    f"must be divisible by the actor data-parallel size "
+                    f"({actor_dp_size}): each DP rank takes "
+                    f"rollout_batch_size // {actor_dp_size} groups per step, "
+                    "and a remainder would leave groups behind in "
+                    "rollout_channel to be picked up by the next step."
+                )
+        if cfg.rollout.pause_mode == "in_place":
+            logging.warning(
+                "rollout.pause_mode=in_place keeps the prefix cache across "
+                "weight syncs, so later requests reuse prefix KV computed "
+                "with older weights; this staleness is not reflected in "
+                "version_start/version_end. retract is recommended for "
+                "training."
+            )
     return cfg
 
 

@@ -96,6 +96,7 @@ jobs:
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
@@ -142,8 +143,10 @@ jobs:
               - 'rlinf/workers/rollout/server/**'
               - 'rlinf/workers/rollout/sglang/**'
               - 'rlinf/workers/rollout/vllm/**'
+              - 'rlinf/workers/rollout_buffer/**'
               - 'rlinf/runners/agent_runner.py'
               - 'rlinf/runners/agent_ppo_runner.py'
+              - 'rlinf/runners/async_agent_runner.py'
               - 'rlinf/runners/agentlightning_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
@@ -191,12 +194,22 @@ jobs:
               - 'rlinf/models/embodiment/openpi/prefix.py'
               - 'examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam*.yaml'
               - 'rlinf/robotics/**'
+              - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
+              # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor
+              # and async agent runner have unit tests that import them.
+              - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
+              - 'rlinf/workers/megatron_worker.py'
+              - 'rlinf/workers/agent/**'
+              - 'rlinf/workers/rollout_buffer/**'
+              - 'rlinf/runners/async_agent_runner.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'

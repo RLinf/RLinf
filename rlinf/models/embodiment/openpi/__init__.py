@@ -111,6 +111,16 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     max_token_len = OmegaConf.select(model_cfg, "max_token_len", default=None)
     if max_token_len is not None:
         pi0_kwargs["max_token_len"] = int(max_token_len)
+    pi0_kwargs["short_memory"] = bool(
+        OmegaConf.select(model_cfg, "short_memory", default=False)
+    )
+    if pi0_kwargs["short_memory"]:
+        temporal_layers = model_cfg.get("short_memory_temporal_layers")
+        if temporal_layers is not None:
+            pi0_kwargs["short_memory_temporal_layers"] = tuple(temporal_layers)
+        drop_history_layer = model_cfg.get("short_memory_drop_history_layer")
+        if drop_history_layer is not None:
+            pi0_kwargs["short_memory_drop_history_layer"] = int(drop_history_layer)
 
     pi0_config = Pi0Config(**pi0_kwargs)
     rlt_cfg = build_rlt_config(model_cfg, parent_cfg=cfg)
@@ -122,6 +132,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     task = OmegaConf.select(model_cfg, "task", default="sft")
     task = str(task).lower() if task is not None else "sft"
+    if pi0_config.short_memory and task not in ("eval", "sft"):
+        raise ValueError(
+            f"openpi.short_memory supports task='eval' or 'sft'; got {task!r}. "
+            "RL replay does not carry camera history."
+        )
 
     if task == "sft":
         model = Pi0(

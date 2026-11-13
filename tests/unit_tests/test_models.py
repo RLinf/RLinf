@@ -46,7 +46,16 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
-from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS
+from rlinf.models.embodiment.openpi.modules.model import (
+    IMAGE_KEYS,
+    Observation,
+    preprocess_observation,
+)
+from rlinf.models.embodiment.openpi.modules.siglip import (
+    Encoder,
+    Encoder1DBlock,
+    SigLIPViT,
+)
 from rlinf.models.embodiment.prefix import (
     PREFIX_OBS_KEYS,
     PrefixFeatureModel,
@@ -162,6 +171,510 @@ def test_custom_model_registration_with_fsdp_wrap_policy():
     assert wrap_policy(module=model.block, recurse=False, nonwrapped_numel=0)
     assert wrap_policy(module=model.head, recurse=False, nonwrapped_numel=0)
     assert wrap_policy(module=model.extra, recurse=False, nonwrapped_numel=0)
+
+
+@pytest.mark.parametrize(
+    "memory_enabled,history_config,use_rlt,error",
+    [
+        (False, None, False, None),
+        (False, None, True, None),
+        (False, {"num_frames": 8, "stride": 70}, False, None),
+        (True, {"num_frames": 8, "stride": 70}, False, None),
+        (True, None, False, "requires data.short_memory"),
+        (False, {"num_frames": 8, "stride": 70}, True, "requires the RLT loader"),
+        (True, {"num_frames": 8, "stride": 70}, True, "requires the RLT loader"),
+    ],
+)
+def test_openpi_sft_validates_history_config(
+    memory_enabled, history_config, use_rlt, error
+):
+    from rlinf.config import validate_sft_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {},
+            "data": {"train_data_paths": "dataset", "short_memory": history_config},
+            "actor": {
+                "global_batch_size": 8,
+                "micro_batch_size": 2,
+                "model": {
+                    "model_type": "openpi",
+                    "openpi": {"short_memory": memory_enabled, "use_rlt": use_rlt},
+                },
+            },
+        }
+    )
+    if error is None:
+        validate_sft_cfg(cfg)
+        assert cfg.actor.model.openpi.short_memory is memory_enabled
+        assert cfg.data.short_memory == history_config
+    else:
+        with pytest.raises(AssertionError, match=error):
+            validate_sft_cfg(cfg)
+
+
+def test_openpi_eval_requires_history():
+    cfg = OmegaConf.create(
+        {
+            "runner": {"task_type": "embodied_eval"},
+            "env": {"eval": {"short_memory": None}},
+            "rollout": {
+                "model": {
+                    "model_type": "openpi",
+                    "num_action_chunks": 5,
+                    "num_steps": 5,
+                    "openpi": {
+                        "config_name": "pi05_libero",
+                        "task": "eval",
+                        "short_memory": True,
+                    },
+                }
+            },
+        }
+    )
+    with pytest.raises(AssertionError, match="requires env.eval.short_memory"):
+        validate_embodied_cfg(cfg)
+
+
+@pytest.fixture
+def siglip_with_history():
+    torch.manual_seed(0)
+    vision = SigLIPViT(variant="mu/32", pool_type="none")
+    vision.encoder = Encoder(
+        vision.width,
+        3,
+        vision.num_heads,
+        vision.mlp_dim,
+        temporal_layers=(0, 1),
+        drop_history_layer=1,
+    )
+    return vision
+
+
+@pytest.mark.parametrize("num_frames", [1, 3, 8])
+@pytest.mark.parametrize("precomputed", [False, True])
+def test_siglip_current_only_matches_single_frame(
+    siglip_with_history, num_frames, precomputed
+):
+    vision = siglip_with_history.eval()
+    images = torch.randn(2, num_frames, 224, 224, 3)
+    frame_mask = torch.zeros(2, num_frames, dtype=torch.bool)
+    frame_mask[:, -1] = True
+    time_offsets = torch.arange(1 - num_frames, 1).float().expand(2, -1)
+
+    with torch.no_grad():
+        expected = vision(images[:, -1])[0]
+        actual, _ = vision(
+            images,
+            frame_mask=frame_mask,
+            time_offsets=time_offsets,
+            current_only=True if precomputed else None,
+        )
+
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+def test_siglip_attention_preserves_outputs_and_gradients():
+    torch.manual_seed(0)
+    block = Encoder1DBlock(dim=32, num_heads=2).double().train()
+    reference = copy.deepcopy(block)
+
+    def request_weights(module, args, kwargs):
+        return args, {**kwargs, "need_weights": True}
+
+    reference.attn.register_forward_pre_hook(request_weights, with_kwargs=True)
+    returned_weights = []
+    block.attn.register_forward_hook(
+        lambda module, args, output: returned_weights.append(output[1])
+    )
+    inputs = torch.randn(2, 5, 32, dtype=torch.float64, requires_grad=True)
+    reference_inputs = inputs.detach().clone().requires_grad_()
+
+    actual = block(inputs)
+    expected = reference(reference_inputs)
+    assert returned_weights == [None]
+    torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-10)
+    actual.square().sum().backward()
+    expected.square().sum().backward()
+    torch.testing.assert_close(
+        inputs.grad, reference_inputs.grad, rtol=1e-10, atol=1e-10
+    )
+    for parameter, reference_parameter in zip(
+        block.parameters(), reference.parameters()
+    ):
+        torch.testing.assert_close(
+            parameter.grad, reference_parameter.grad, rtol=1e-10, atol=1e-10
+        )
+
+
+def _reference_space_time_attention(attention, tokens, frame_mask):
+    """Compute S(TV) with explicit frame, patch, and head indexing."""
+    batch_size, num_frames, num_patches, width = tokens.shape
+    num_heads = attention.num_heads
+    head_dim = width // num_heads
+    projected = tokens @ attention.in_proj_weight.T + attention.in_proj_bias
+    queries, keys, values = projected.chunk(3, dim=-1)
+    temporal_values = torch.zeros_like(tokens)
+    mixed_values = torch.zeros_like(tokens)
+    for batch in range(batch_size):
+        for frame_index in range(num_frames):
+            valid_times = [
+                past
+                for past in range(frame_index + 1)
+                if frame_mask[batch, past] or past == frame_index
+            ]
+            for patch in range(num_patches):
+                for head in range(num_heads):
+                    channels = slice(head * head_dim, (head + 1) * head_dim)
+                    query = queries[batch, frame_index, patch, channels]
+                    scores = torch.stack(
+                        [
+                            query @ keys[batch, past, patch, channels]
+                            for past in valid_times
+                        ]
+                    ) / math.sqrt(head_dim)
+                    weights = scores.softmax(dim=0)
+                    temporal_values[batch, frame_index, patch, channels] = sum(
+                        weight * values[batch, past, patch, channels]
+                        for weight, past in zip(weights, valid_times)
+                    )
+        for frame_index in range(num_frames):
+            for patch in range(num_patches):
+                for head in range(num_heads):
+                    channels = slice(head * head_dim, (head + 1) * head_dim)
+                    query = queries[batch, frame_index, patch, channels]
+                    scores = torch.stack(
+                        [
+                            query @ keys[batch, frame_index, other, channels]
+                            for other in range(num_patches)
+                        ]
+                    ) / math.sqrt(head_dim)
+                    weights = scores.softmax(dim=0)
+                    mixed_values[batch, frame_index, patch, channels] = sum(
+                        weights[other]
+                        * temporal_values[batch, frame_index, other, channels]
+                        for other in range(num_patches)
+                    )
+    return mixed_values @ attention.out_proj.weight.T + attention.out_proj.bias
+
+
+def test_siglip_attention_matches_space_time_reference():
+    from rlinf.models.embodiment.openpi.modules.short_memory import (
+        factorized_space_time_attention,
+    )
+
+    torch.manual_seed(0)
+    batch_size, num_frames, num_patches, width, num_heads = 3, 3, 2, 4, 2
+    attention = torch.nn.MultiheadAttention(width, num_heads).double().eval()
+    torch.nn.init.normal_(attention.in_proj_bias)
+    torch.nn.init.normal_(attention.out_proj.bias)
+    tokens = torch.randn(
+        batch_size, num_frames, num_patches, width, dtype=torch.float64
+    )
+    frame_mask = torch.tensor([[False, True, True], [True, True, True], [False] * 3])
+
+    with torch.no_grad():
+        expected = _reference_space_time_attention(attention, tokens, frame_mask)
+        actual = factorized_space_time_attention(attention, tokens, frame_mask)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_siglip_time_encoding_preserves_timestamp_precision():
+    from rlinf.models.embodiment.openpi.modules.short_memory import (
+        fixed_relative_time_encoding,
+    )
+
+    block = Encoder1DBlock(dim=32, num_heads=2).eval()
+    for parameter in block.parameters():
+        torch.nn.init.zeros_(parameter)
+    tokens = torch.zeros(1, 3, 2, 32, dtype=torch.bfloat16)
+    time_offsets = torch.tensor([[-24.57, -0.12345, 0.0]])
+
+    actual = block(
+        tokens,
+        frame_mask=torch.ones(1, 3, dtype=torch.bool),
+        time_offsets=time_offsets,
+    )
+    expected = fixed_relative_time_encoding(time_offsets, 32).to(tokens.dtype)
+    torch.testing.assert_close(
+        actual, expected[:, :, None].expand_as(tokens).float(), rtol=0, atol=0
+    )
+
+
+def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+
+    vision = siglip_with_history.eval()
+    masks = {
+        "base_0_rgb": torch.tensor([[False, True, True], [False, False, True]]),
+        "left_wrist_0_rgb": torch.tensor([[False, False, True]] * 2),
+        "right_wrist_0_rgb": torch.zeros(2, 3, dtype=torch.bool),
+    }
+    observation = Observation(
+        images={key: torch.randn(2, 3, 224, 224, 3) for key in masks},
+        image_masks=masks,
+        state=torch.zeros(2, 8),
+        history_time_offsets=torch.tensor([[-0.2, -0.1, 0.0]] * 2),
+    )
+    policy = SimpleNamespace(
+        img=vision, _config=SimpleNamespace(short_memory=True), pcd=False
+    )
+    with torch.no_grad():
+        expected = torch.cat(
+            [
+                vision(
+                    observation.images[name],
+                    frame_mask=mask,
+                    time_offsets=observation.history_time_offsets,
+                )[0]
+                for name, mask in masks.items()
+            ],
+            dim=1,
+        )
+        decisions = []
+
+        def record_decision(module, args, kwargs):
+            decisions.append(kwargs["current_only"])
+
+        handle = vision.register_forward_pre_hook(record_decision, with_kwargs=True)
+        actual, input_mask, _ = Pi0.embed_prefix(policy, observation)
+        handle.remove()
+
+    assert decisions == [False, True, True]
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    expected_mask = torch.cat(
+        [mask[:, -1:].expand(-1, 49) for mask in masks.values()], dim=1
+    )
+    torch.testing.assert_close(input_mask, expected_mask)
+
+
+@pytest.mark.parametrize("num_frames", [3, 8])
+def test_siglip_checkpoint_preserves_outputs_and_gradients(
+    siglip_with_history, num_frames
+):
+    vision = siglip_with_history.train()
+    reference = copy.deepcopy(vision)
+    vision.encoder.gradient_checkpointing = True
+    images = torch.randn(3, num_frames, 224, 224, 3, requires_grad=True)
+    frame_mask = torch.ones(3, num_frames, dtype=torch.bool)
+    frame_mask[0, :-1] = False
+    frame_mask[1, 0] = False
+    time_offsets = torch.arange(1 - num_frames, 1).float().expand(3, -1)
+    calls = []
+
+    def record_call(module, args):
+        calls.append((module, args[0].ndim))
+
+    owners = [vision, vision.stem, vision.encoder, *vision.encoder.layers]
+    handles = [owner.register_forward_pre_hook(record_call) for owner in owners]
+    tokens, _ = vision(images, frame_mask=frame_mask, time_offsets=time_offsets)
+    for handle in handles:
+        handle.remove()
+
+    # Mixed histories must preserve the vision encoder's module boundaries.
+    assert calls == list(zip(owners, [5, 4, 4, 4, 4, 3]))
+    assert tokens.shape == (3, 49, vision.width)
+    assert torch.isfinite(tokens).all()
+    changed_padding = images.detach().clone()
+    changed_padding[~frame_mask] = torch.randn_like(changed_padding[~frame_mask]) * 100
+    with torch.no_grad():
+        current_only = vision(images[:1, -1])[0]
+        torch.testing.assert_close(tokens[:1], current_only, rtol=1e-5, atol=1e-5)
+        changed_tokens, _ = vision(
+            changed_padding,
+            frame_mask=frame_mask,
+            time_offsets=time_offsets,
+        )
+    torch.testing.assert_close(changed_tokens, tokens, rtol=0, atol=0)
+
+    reference_images = images.detach().clone().requires_grad_()
+    reference_tokens, _ = reference(
+        reference_images, frame_mask=frame_mask, time_offsets=time_offsets
+    )
+    torch.testing.assert_close(tokens, reference_tokens, rtol=0, atol=0)
+    recomputed = []
+    handles = [
+        layer.register_forward_pre_hook(lambda module, args: recomputed.append(module))
+        for layer in vision.encoder.layers
+    ]
+    upstream_gradient = torch.randn_like(tokens)
+    (tokens * upstream_gradient).sum().backward()
+    for handle in handles:
+        handle.remove()
+    (reference_tokens * upstream_gradient).sum().backward()
+    assert set(recomputed) == set(vision.encoder.layers)
+    torch.testing.assert_close(images.grad, reference_images.grad)
+    reference_parameters = dict(reference.named_parameters())
+    for name, parameter in vision.named_parameters():
+        assert parameter.grad is not None, name
+        torch.testing.assert_close(parameter.grad, reference_parameters[name].grad)
+    assert torch.isfinite(images.grad).all()
+    assert torch.count_nonzero(images.grad[~frame_mask]) == 0
+    assert images.grad[1, 1:-1].abs().sum() > 0
+    assert vision.stem.weight.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("missing", ["frame_mask", "time_offsets"])
+def test_siglip_history_requires_mask_and_time(siglip_with_history, missing):
+    inputs = {
+        "frame_mask": torch.ones(1, 3, dtype=torch.bool),
+        "time_offsets": torch.tensor([[-2.0, -1.0, 0.0]]),
+    }
+    inputs.pop(missing)
+    with pytest.raises(ValueError, match="must be provided together"):
+        siglip_with_history(torch.randn(1, 3, 224, 224, 3), **inputs)
+
+
+def test_siglip_temporal_attention_is_causal():
+    torch.manual_seed(0)
+    block = Encoder1DBlock(dim=32, num_heads=2).eval()
+    tokens = torch.randn(1, 4, 3, 32)
+    frame_mask = torch.ones(1, 4, dtype=torch.bool)
+    time_offsets = torch.tensor([[-3.0, -2.0, -1.0, 0.0]])
+    changed_tokens = tokens.clone()
+    changed_tokens[:, -1] += torch.randn_like(changed_tokens[:, -1]) * 100
+
+    with torch.no_grad():
+        original = block(tokens, frame_mask=frame_mask, time_offsets=time_offsets)
+        changed = block(
+            changed_tokens, frame_mask=frame_mask, time_offsets=time_offsets
+        )
+
+    torch.testing.assert_close(changed[:, :-1], original[:, :-1], rtol=0, atol=0)
+    assert not torch.allclose(changed[:, -1], original[:, -1])
+
+
+def test_openpi_augmentation_aligns_history_frames():
+    generator = torch.Generator().manual_seed(0)
+    image_keys = ("base_0_rgb", "left_wrist_0_rgb")
+    images = {
+        key: torch.rand(2, 16, 16, 3, generator=generator) * 2 - 1 for key in image_keys
+    }
+    time_offsets = torch.tensor([[-2.0, -1.0, 0.0]]).expand(2, -1)
+    current = Observation(images=images, image_masks={}, state=torch.zeros(2, 8))
+    history = Observation(
+        images={
+            key: image[:, None].expand(-1, 3, -1, -1, -1)
+            for key, image in images.items()
+        },
+        image_masks={},
+        state=current.state,
+        history_time_offsets=time_offsets,
+    )
+    outputs = [
+        preprocess_observation(
+            observation,
+            train=True,
+            image_keys=image_keys,
+            image_resolution=(16, 16),
+            rng=torch.Generator().manual_seed(7),
+        )
+        for observation in (current, history)
+    ]
+
+    for key in image_keys:
+        expected = outputs[0].images[key][:, None].expand_as(outputs[1].images[key])
+        torch.testing.assert_close(outputs[1].images[key], expected, rtol=0, atol=0)
+    torch.testing.assert_close(outputs[1].history_time_offsets, time_offsets)
+
+
+def test_hf_rollout_merges_nested_observations():
+    from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
+
+    def observation(values):
+        values = torch.tensor(values, dtype=torch.float32)
+        return {
+            "states": values[:, None],
+            "task_descriptions": [f"task {value}" for value in values.tolist()],
+            "history": {
+                "main_images": values[:, None, None, None, None].expand(-1, 3, 2, 2, 3),
+                "wrist_images": (values + 10)[:, None, None, None, None].expand(
+                    -1, 3, 2, 2, 3
+                ),
+                "frame_mask": torch.tensor([[False, True, True]] * len(values)),
+                "time_offsets": torch.tensor([[0.0, -0.1, 0.0]] * len(values)),
+            },
+        }
+
+    first, second, terminal = observation([1, 2]), observation([3]), observation([7])
+    worker = object.__new__(MultiStepRolloutWorker)
+    merged = worker._merge_obs_batches(
+        [
+            {"obs": first, "final_obs": None},
+            {"obs": second, "final_obs": terminal, "eval_epoch_done": True},
+        ]
+    )
+
+    expected = observation([1, 2, 3])
+    expected_terminal = observation([1, 2, 7])
+    for key in ("states", "history"):
+        torch.testing.assert_close(merged["obs"][key], expected[key])
+        torch.testing.assert_close(merged["final_obs"][key], expected_terminal[key])
+    assert merged["obs"]["task_descriptions"] == expected["task_descriptions"]
+    assert (
+        merged["final_obs"]["task_descriptions"]
+        == expected_terminal["task_descriptions"]
+    )
+    assert merged["eval_epoch_done"] is True
+
+
+def test_openpi_env_io_reads_history():
+    from rlinf.models.embodiment.openpi.env_io import EnvIO
+
+    def frame_transform(sample):
+        return {
+            "image": {
+                "base_0_rgb": sample["observation/image"],
+                "left_wrist_0_rgb": sample["observation/wrist_image"],
+            },
+            "image_mask": {"base_0_rgb": True, "left_wrist_0_rgb": True},
+            "state": sample["observation/state"],
+            "prompt": sample["prompt"],
+        }
+
+    tokenized_prompts = []
+
+    def sample_transform(sample):
+        tokenized_prompts.append(sample.pop("prompt"))
+        sample["tokenized_prompt"] = np.array([1, 2])
+        sample["tokenized_prompt_mask"] = np.array([True, True])
+        return sample
+
+    adapter = EnvIO()
+    adapter.config_name = "pi05_libero"
+    adapter.state_indices = ()
+    adapter.device = torch.device("cpu")
+    adapter._frame_transform = frame_transform
+    adapter._sample_transform = sample_transform
+    images = torch.arange(6, dtype=torch.float32).reshape(2, 3, 1, 1, 1)
+    history = {
+        "main_images": images.expand(-1, -1, 2, 2, 3),
+        "wrist_images": (images + 10).expand(-1, -1, 2, 2, 3),
+        "frame_mask": torch.tensor([[False, True, True], [False, False, True]]),
+        "time_offsets": torch.tensor([[0.0, -0.1, 0.0], [0.0, 0.0, 0.0]]),
+    }
+    states = torch.arange(8, dtype=torch.float32).reshape(2, 4)
+
+    observation = adapter._history_to_observation(
+        {
+            "history": history,
+            "states": states,
+            "task_descriptions": ["first task", "second task"],
+        }
+    )
+
+    assert sorted(tokenized_prompts) == ["first task", "second task"]
+    torch.testing.assert_close(observation.images["base_0_rgb"], history["main_images"])
+    torch.testing.assert_close(
+        observation.images["left_wrist_0_rgb"], history["wrist_images"]
+    )
+    for mask in observation.image_masks.values():
+        torch.testing.assert_close(mask, history["frame_mask"])
+    torch.testing.assert_close(observation.state, states)
+    torch.testing.assert_close(
+        observation.history_time_offsets, history["time_offsets"]
+    )
 
 
 def _make_model(*, prefix_seq_len: int = 5) -> RLTTokenTransformer:

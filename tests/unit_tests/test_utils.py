@@ -39,7 +39,13 @@ from rlinf.algorithms.utils import (
 )
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.reasoning_runner import ReasoningRunner
-from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
+from rlinf.utils.metric_utils import (
+    VersionedTrajectoryRecord,
+    aggregate_agent_metrics,
+    compute_evaluate_metrics,
+    compute_rollout_metrics,
+    compute_staleness_metrics,
+)
 from rlinf.utils.utils import masked_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
@@ -823,6 +829,175 @@ def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
 
     _flash_availability(monkeypatch)
     assert resolve_attn_implementation("eager") == "eager"
+
+
+class TestComputeStalenessMetrics:
+    """The pure metric function over per-trajectory records."""
+
+    @staticmethod
+    def _record(
+        group_index: int,
+        earliest_version: int,
+        completion_version: int,
+        generated_tokens: int,
+        call_count: int = 1,
+        cross_version_calls: int = 0,
+        reward: float = 0.0,
+        token_weighted: int | None = None,
+    ):
+        if token_weighted is None:
+            token_weighted = earliest_version * generated_tokens
+        return VersionedTrajectoryRecord(
+            group_index=group_index,
+            earliest_version=earliest_version,
+            completion_version=completion_version,
+            generated_tokens=generated_tokens,
+            call_count=call_count,
+            cross_version_calls=cross_version_calls,
+            reward=reward,
+            token_weighted_version_start_sum=token_weighted,
+        )
+
+    def test_metric_values_on_a_known_step(self):
+        # Two groups of two trajectories each. Group 0 started on version 8
+        # and finished on version 9; group 1 started and finished on 9.
+        records = [
+            self._record(0, 8, 9, 100, 2, 1, reward=1.0, token_weighted=800),
+            self._record(0, 8, 8, 100, 1, 0, reward=1.0, token_weighted=800),
+            self._record(1, 9, 9, 200, 1, 0, reward=0.0, token_weighted=1800),
+            self._record(1, 9, 9, 300, 1, 0, reward=0.0, token_weighted=2700),
+        ]
+        metrics = compute_staleness_metrics(records, version=10)
+
+        assert metrics["data_staleness_2/ratio"] == 0.5
+        assert metrics["data_staleness_1/ratio"] == 0.5
+        # Tokens: staleness 2 carries group 0's 200 tokens, staleness 1 the
+        # remaining 500 of the 700 total.
+        assert metrics["data_staleness_2/token_ratio"] == 200 / 700
+        assert metrics["data_staleness_1/token_ratio"] == 500 / 700
+        assert metrics["data_staleness/mean"] == 1.5
+        assert metrics["data_staleness/max"] == 2
+        assert metrics["data_staleness/token_mean"] == pytest.approx(10 - 6100 / 700)
+        # Group 0 spans versions 8..9, group 1 spans nothing.
+        assert metrics["version_span/mean"] == 0.5
+        assert metrics["version_span/max"] == 1
+        assert metrics["queue_steps/mean"] == 1.0
+        assert metrics["queue_steps/max"] == 1
+        # 1 cross-version call out of 5 total.
+        assert metrics["cross_version_call_ratio"] == 1 / 5
+        # Trajectory staleness by length quartile (all lengths distinct).
+        assert metrics["data_staleness/length_q1"] == 2
+        assert metrics["data_staleness/length_q2"] == 2
+        assert metrics["data_staleness/length_q3"] == 1
+        assert metrics["data_staleness/length_q4"] == 1
+        # Group rewards: [1.0, 1.0] and [0.0, 0.0].
+        assert metrics["equal_reward_group_ratio"] == 1.0
+        assert metrics["zero_reward_group_ratio"] == 0.5
+
+    def test_self_consistency(self):
+        # staleness = version_span + queue_steps per group; ratio sets sum
+        # to 1; token_ratio sets sum to 1.
+        records = [
+            self._record(0, 7, 8, 40),
+            self._record(1, 8, 10, 60),
+            self._record(1, 9, 9, 10),
+            self._record(2, 6, 7, 25),
+            self._record(3, 7, 7, 75),
+        ]
+        metrics = compute_staleness_metrics(records, version=11)
+
+        assert (
+            metrics["data_staleness/mean"]
+            == metrics["version_span/mean"] + metrics["queue_steps/mean"]
+        )
+        assert sum(
+            v
+            for k, v in metrics.items()
+            if k.startswith("data_staleness_") and k.endswith("/ratio")
+        ) == pytest.approx(1.0)
+        assert sum(
+            v
+            for k, v in metrics.items()
+            if k.startswith("data_staleness_") and k.endswith("/token_ratio")
+        ) == pytest.approx(1.0)
+        # queue_steps is version - completion, never negative.
+        assert metrics["queue_steps/mean"] >= 0
+        assert metrics["queue_steps/max"] >= 0
+
+    def test_length_quartiles(self):
+        # Four trajectories with increasing token counts and decreasing
+        # staleness: each quartile holds exactly one trajectory.
+        records = [
+            self._record(0, 10, 10, 10),
+            self._record(1, 11, 11, 20),
+            self._record(2, 12, 12, 30),
+            self._record(3, 13, 13, 40),
+        ]
+        metrics = compute_staleness_metrics(records, version=15)
+        assert metrics["data_staleness/length_q1"] == 5
+        assert metrics["data_staleness/length_q2"] == 4
+        assert metrics["data_staleness/length_q3"] == 3
+        assert metrics["data_staleness/length_q4"] == 2
+
+    def test_length_quartiles_skipped_below_four_trajectories(self):
+        records = [self._record(0, 10, 10, 10) for _ in range(3)]
+        metrics = compute_staleness_metrics(records, version=12)
+        assert not any(k.startswith("data_staleness/length_q") for k in metrics)
+
+    def test_empty_records_return_empty_dict(self):
+        assert compute_staleness_metrics([], version=5) == {}
+
+    def test_zero_generated_tokens_do_not_divide_by_zero(self):
+        records = [self._record(0, 10, 10, 0), self._record(0, 10, 10, 0)]
+        metrics = compute_staleness_metrics(records, version=12)
+        assert metrics["data_staleness_2/ratio"] == 1.0
+        # No tokens anywhere: no token-weighted metric is defined.
+        assert "data_staleness/token_mean" not in metrics
+        assert not any(k.endswith("token_ratio") for k in metrics)
+
+
+class TestAggregateAgentMetrics:
+    """aggregate_agent_metrics over per-group agent metric dicts."""
+
+    def test_aggregates_each_stat_kind(self):
+        aggregated = aggregate_agent_metrics(
+            [
+                {"__sum__/a": 1, "__max__/b": 3, "__min__/c": 2, "__mean__/d": (1, 4)},
+                {"__sum__/a": 2, "__max__/b": 5, "__min__/c": 1, "__mean__/d": (2, 4)},
+            ]
+        )
+        assert aggregated == {"a": 3, "b": 5, "c": 1, "d": 3 / 8}
+
+    def test_drops_keys_without_a_stat_prefix(self):
+        assert aggregate_agent_metrics([{"stray": 1}]) == {}
+
+    def test_empty_list_returns_empty(self):
+        assert aggregate_agent_metrics([]) == {}
+
+
+class TestRewardsAllEqual:
+    """rewards_all_equal over per-trajectory reward views."""
+
+    def test_equal_rewards_are_detected(self):
+        from rlinf.utils.down_sampling import rewards_all_equal
+
+        assert rewards_all_equal([1.0, 1.0, 1.0])
+        assert rewards_all_equal([0.5, 0.5])
+
+    def test_unequal_rewards_are_kept(self):
+        from rlinf.utils.down_sampling import rewards_all_equal
+
+        assert not rewards_all_equal([1.0, 0.0])
+        assert not rewards_all_equal([0.0, 0.0, 0.1])
+
+    def test_none_or_empty_rewards_are_kept(self):
+        """A None reward cannot be judged; the group is kept, not crashed."""
+        from rlinf.utils.down_sampling import rewards_all_equal
+
+        assert not rewards_all_equal(None)
+        assert not rewards_all_equal([])
+        assert not rewards_all_equal([1.0, None])
+        assert not rewards_all_equal([None, None])
 
 
 def test_pinned_offload_context_restores_after_overlapping_exits():

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import copy
 from collections import defaultdict
 from typing import Any, Literal
 
@@ -38,7 +39,6 @@ from rlinf.scheduler import Channel, Cluster, Worker, merge_batches
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
-    copy_dict_tensor,
     update_nested_cfg,
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
@@ -423,8 +423,8 @@ class EnvWorker(Worker):
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """Execute a chunk and build environment output and LeRobot payload.
 
-        ``obs_list`` in the payload stays post-action. The caller prepends the
-        observation from before this chunk when a valid-action mask is present.
+        ``obs_list`` in the payload stays post-action. The caller snapshots the
+        observation from before this chunk for LeRobot action pairing.
         """
         exec_actions = prepare_actions(
             raw_chunk_actions=chunk_actions["raw_actions"]
@@ -597,13 +597,7 @@ class EnvWorker(Worker):
         return env_output, env_info
 
     def _build_chunk_final_obs(self, obs_list, infos_list):
-        """Build per-env terminal observations for a whole chunk.
-
-        Matches the old wrapper semantics:
-        - default to the last rollout observation for each env
-        - if an env terminated earlier in the chunk, replace that env's observation
-          with the true `final_observation` captured at that substep
-        """
+        """Copy the last observation and restore completed environments' terminal rows."""
         if not isinstance(obs_list, (list, tuple)) or len(obs_list) == 0:
             return None
 
@@ -611,7 +605,30 @@ class EnvWorker(Worker):
         if not isinstance(last_obs, dict):
             return None
 
-        merged_final_obs = copy_dict_tensor(last_obs)
+        def replace_terminal_rows(
+            observation: dict[str, Any], terminal: dict[str, Any], done_mask: np.ndarray
+        ) -> None:
+            for key, value in observation.items():
+                if key not in terminal:
+                    continue
+                final_value = terminal[key]
+                if isinstance(value, dict) and isinstance(final_value, dict):
+                    replace_terminal_rows(value, final_value, done_mask)
+                elif isinstance(value, torch.Tensor) and isinstance(
+                    final_value, torch.Tensor
+                ):
+                    dst_mask = torch.as_tensor(done_mask, device=value.device)
+                    src_mask = dst_mask.to(device=final_value.device)
+                    value[dst_mask] = final_value[src_mask]
+                elif isinstance(value, np.ndarray) and isinstance(
+                    final_value, np.ndarray
+                ):
+                    value[done_mask] = final_value[done_mask]
+                elif isinstance(value, list) and isinstance(final_value, list):
+                    for index in np.flatnonzero(done_mask):
+                        value[index] = copy.deepcopy(final_value[index])
+
+        merged_final_obs = copy.deepcopy(last_obs)
 
         if not isinstance(infos_list, (list, tuple)):
             return merged_final_obs
@@ -642,21 +659,7 @@ class EnvWorker(Worker):
             if not done_mask.any():
                 continue
 
-            for key, value in merged_final_obs.items():
-                if key not in final_obs:
-                    continue
-
-                final_value = final_obs[key]
-                if isinstance(value, torch.Tensor) and isinstance(
-                    final_value, torch.Tensor
-                ):
-                    dst_mask = torch.as_tensor(done_mask, device=value.device)
-                    src_mask = dst_mask.to(device=final_value.device)
-                    merged_final_obs[key][dst_mask] = final_value[src_mask]
-                elif isinstance(value, np.ndarray) and isinstance(
-                    final_value, np.ndarray
-                ):
-                    merged_final_obs[key][done_mask] = final_value[done_mask]
+            replace_terminal_rows(merged_final_obs, final_obs, done_mask)
 
         return merged_final_obs
 
@@ -1249,26 +1252,17 @@ class EnvWorker(Worker):
                     )
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
+                    if self.enable_online_lerobot:
+                        # Snapshot before stepping; environments may reuse obs buffers.
+                        initial_observation = clone_nested_to_cpu(
+                            env_outputs[stage_id].obs
+                        )
                     env_output, env_info, chunk_step_data = self.env_interact_step(
                         actions,
                         stage_id,
                     )
-
-                    # LeRobot stores the observation from before each action.
-                    # The env returns the frame after each action, so prepend the
-                    # frame sent to the policy and drop the last post-action frame.
-                    if (
-                        self.enable_online_lerobot
-                        and chunk_step_data.get("valid_action_mask") is not None
-                    ):
-                        post_action_obs = chunk_step_data["obs_list"]
-                        if not isinstance(post_action_obs, (list, tuple)):
-                            post_action_obs = [post_action_obs]
-                        chunk_step_data["obs_list"] = [
-                            env_outputs[stage_id].obs,
-                            *post_action_obs[:-1],
-                        ]
-
+                    if self.enable_online_lerobot:
+                        chunk_step_data["initial_observation"] = initial_observation
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)
 
