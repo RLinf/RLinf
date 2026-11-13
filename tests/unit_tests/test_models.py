@@ -391,8 +391,14 @@ def test_siglip_time_encoding_preserves_timestamp_precision():
 @pytest.mark.parametrize(
     "camera_names",
     [
-        ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
-        ("side_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
+        pytest.param(
+            ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
+            id="canonical-cameras",
+        ),
+        pytest.param(
+            ("side_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
+            id="configured-cameras",
+        ),
     ],
 )
 def test_openpi_prefix_preserves_camera_inputs(siglip_with_history, camera_names):
@@ -405,7 +411,7 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history, camera_names
         "right_wrist_0_rgb": torch.zeros(2, 3, dtype=torch.bool),
     }
     observation = Observation(
-        images={key: torch.randn(2, 3, 224, 224, 3) for key in masks},
+        images={key: torch.randn(2, 3, 224, 224, 3) for key in reversed(camera_names)},
         image_masks=masks,
         state=torch.zeros(2, 8),
         history_time_offsets=torch.tensor([[-0.2, -0.1, 0.0]] * 2),
@@ -421,10 +427,10 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history, camera_names
             [
                 vision(
                     observation.images[name],
-                    frame_mask=mask,
+                    frame_mask=masks[name],
                     time_offsets=observation.history_time_offsets,
                 )[0]
-                for name, mask in masks.items()
+                for name in camera_names
             ],
             dim=1,
         )
@@ -440,7 +446,7 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history, camera_names
     assert decisions == [False, True, True]
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     expected_mask = torch.cat(
-        [mask[:, -1:].expand(-1, 49) for mask in masks.values()], dim=1
+        [masks[name][:, -1:].expand(-1, 49) for name in camera_names], dim=1
     )
     torch.testing.assert_close(input_mask, expected_mask)
 

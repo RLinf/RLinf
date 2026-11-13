@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CPU contracts for the Bench2Dex evaluation protocol."""
+"""Bench2Dex evaluation, scene lifecycle, rewards and recipe contracts."""
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -167,19 +168,45 @@ class _UnresponsiveCloseRuntime(_CPURuntime):
 
 
 @pytest.fixture
-def cpu_env_factory(monkeypatch):
+def bench2dex_params(tmp_path):
+    source = tmp_path / "bench2dex"
+    metadata = {
+        "scenes/test.yaml": {"metrics": {"expert_time_step": 4}},
+        "robots/active_dof_maps.yml": {
+            "robots": {
+                "test": {
+                    "full_dof": 1,
+                    "active_dof": 1,
+                    "full_joint_names": ["joint"],
+                    "active_indices": [0],
+                }
+            }
+        },
+        "configs/collect/default.yaml": {},
+    }
+    for name, value in metadata.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+    return {
+        "source_path": str(source),
+        "assets_path": str(tmp_path / "assets"),
+        "task": "test",
+        "embodiment": "test",
+        "collect_config": "configs/collect/default.yaml",
+        "physics_dt": 0.1,
+        "control_decimation": 3,
+        "cameras": {"main": "main"},
+        "start_episode": 1,
+    }
+
+
+@pytest.fixture
+def cpu_env_factory(monkeypatch, bench2dex_params):
     from omegaconf import OmegaConf
 
     from rlinf.envs.sim.bench2dex import bench2dex_env
 
-    spec = SimpleNamespace(
-        action_dim=1,
-        full_dof=1,
-        main_camera="main",
-        extra_cameras=(),
-        wrist_cameras=(),
-    )
-    monkeypatch.setattr(bench2dex_env.Bench2DexSpec, "from_config", lambda config: spec)
     monkeypatch.setattr(bench2dex_env, "make_bench2dex_runtime", _CPURuntime)
 
     def create(*, fixed_ids=False, lazy=True):
@@ -191,7 +218,7 @@ def cpu_env_factory(monkeypatch):
                 "use_fixed_reset_state_ids": fixed_ids,
                 "enable_offload": lazy,
                 "skip_intermediate_renders": True,
-                "init_params": {"start_episode": 1},
+                "init_params": bench2dex_params,
             }
         )
         return bench2dex_env.Bench2DexEnv(cfg, 2, 0, 1, None)
@@ -272,56 +299,83 @@ def test_offload_reaps_child_ignoring_termination(cpu_env_factory, monkeypatch):
         env.close()
 
 
-def test_runner_waits_for_environment_release():
+def test_runner_waits_for_environment_release(cpu_env_factory):
     from contextlib import nullcontext
 
+    import torch
     from omegaconf import OmegaConf
 
     from rlinf.runners.embodied_runner import EmbodiedRunner
 
-    events = []
+    env = cpu_env_factory()
+    pools, episodes = [], []
 
     class Handle:
-        def __init__(self, event):
-            self.event = event
+        def __init__(self, finish=lambda: {}):
+            self.finish = finish
+            self.completed = False
 
         def wait(self):
-            events.append(self.event)
+            if not self.completed:
+                self.result = self.finish()
+                self.completed = True
+            return self.result
+
+    def ready(*args, **kwargs):
+        return Handle()
+
+    def interact(**kwargs):
+        _, info = env.reset()
+        episodes.append(info["episode_index"])
+        pools.append(list(env.env.workers))
+
+        def finish():
+            env.chunk_step(torch.zeros((2, 1, 1)))
+            env.update_reset_state_ids()
+            env.offload()
             return {}
 
-    class WorkerGroup:
-        def __init__(self, name):
-            self.name = name
+        return Handle(finish)
 
-        def __getattr__(self, method):
-            def dispatch(*args, **kwargs):
-                if method == "run_training":
-                    assert "env.interact" in events
-                return Handle(f"{self.name}.{method}")
+    def train():
+        assert env.env is None
+        assert all(not worker.process.is_alive() for worker in pools[-1])
+        return Handle()
 
-            return dispatch
-
-    runner = EmbodiedRunner.__new__(EmbodiedRunner)
+    runner = object.__new__(EmbodiedRunner)
     runner.cfg = OmegaConf.create(
         {"runner": {}, "env": {"train": {"enable_offload": True}}}
     )
-    runner.actor = WorkerGroup("actor")
-    runner.rollout = WorkerGroup("rollout")
-    runner.env = WorkerGroup("env")
+    runner.actor = SimpleNamespace(
+        set_global_step=ready,
+        recv_rollout_trajectories=ready,
+        compute_advantages_and_returns=ready,
+        run_training=train,
+    )
+    runner.rollout = SimpleNamespace(set_global_step=ready, generate=ready)
+    runner.env = SimpleNamespace(set_global_step=ready, interact=interact)
     runner.reward = None
     runner.global_step = 0
-    runner.max_steps = runner.weight_sync_interval = 1
+    runner.max_steps = 2
+    runner.weight_sync_interval = 1
     runner.overlap_env_bootstrap = False
     runner.env_channel = runner.rollout_channel = runner.actor_channel = None
     runner.reward_channel = None
     runner.timer = lambda *args, **kwargs: nullcontext()
     runner._should_profile_step = lambda step: False
     runner.update_rollout_weights = lambda: None
-    runner._maybe_eval_and_checkpoint = lambda step: None
+    runner._maybe_eval_and_checkpoint = lambda step: {}
     runner._log_step_metrics = lambda **kwargs: None
     runner._finish_run = lambda: None
-    runner.run()
-    assert events.index("env.interact") < events.index("actor.run_training")
+    try:
+        runner.run()
+        assert runner.global_step == 2
+        assert episodes == [[1, 2], [3, 4]]
+        assert {w.process.pid for w in pools[0]}.isdisjoint(
+            w.process.pid for w in pools[1]
+        )
+    finally:
+        env.close()
 
 
 @pytest.mark.parametrize(
@@ -334,14 +388,11 @@ def test_runner_waits_for_environment_release():
         ("algorithm.loss_type", "decoupled_actor_critic"),
     ],
 )
-def test_environment_offload_config_contract(monkeypatch, key, value):
+def test_environment_offload_config_contract(bench2dex_params, key, value):
     from omegaconf import OmegaConf
 
     from rlinf.config import validate_bench2dex_cfg
-    from rlinf.envs.sim.bench2dex.spec import Bench2DexSpec
 
-    spec = SimpleNamespace(action_dim=1, max_control_steps=2)
-    monkeypatch.setattr(Bench2DexSpec, "from_config", lambda config: spec)
     cfg = OmegaConf.create(
         {
             "runner": {},
@@ -359,7 +410,7 @@ def test_environment_offload_config_contract(monkeypatch, key, value):
                     "auto_reset": False,
                     "max_episode_steps": 2,
                     "max_steps_per_rollout_epoch": 2,
-                    "init_params": {},
+                    "init_params": bench2dex_params,
                 }
             },
         }
@@ -373,14 +424,8 @@ def test_environment_offload_config_contract(monkeypatch, key, value):
         validate_bench2dex_cfg(cfg, model, 1, False)
 
 
-@pytest.mark.parametrize("capture_intermediate", [False, True])
-@pytest.mark.parametrize("stage_bonus", [0.0, 0.1])
-@pytest.mark.parametrize(
-    "success_bonus,complete_on_success", [(1.0, False), (0.2, True)]
-)
-def test_runtime_stage_rewards_preserve_chunk_and_camera_semantics(
-    monkeypatch, capture_intermediate, stage_bonus, success_bonus, complete_on_success
-):
+@pytest.fixture
+def runtime_factory(monkeypatch):
     import sys
     from types import ModuleType
 
@@ -388,10 +433,12 @@ def test_runtime_stage_rewards_preserve_chunk_and_camera_semantics(
 
     class ExternalStageTracker:
         def __init__(self, stages, *, dt):
-            pass
+            self.stage_ids = [stage["id"] for stage in stages]
 
         def update(self, states, *, sim_step):
-            return SimpleNamespace(current_completed={"place": states["placed"]})
+            return SimpleNamespace(
+                current_completed={sid: states[sid] for sid in self.stage_ids}
+            )
 
     benchmark = ModuleType("benchmark")
     benchmark.__path__ = []
@@ -400,45 +447,54 @@ def test_runtime_stage_rewards_preserve_chunk_and_camera_semantics(
     monkeypatch.setitem(sys.modules, "benchmark", benchmark)
     monkeypatch.setitem(sys.modules, "benchmark.stage_tracker", stage_module)
 
-    runtime = Bench2DexRuntime.__new__(Bench2DexRuntime)
-    runtime.config = {
-        "stage_reward_coef": stage_bonus,
-        "success_reward_coef": success_bonus,
-        "complete_stage_rewards_on_success": complete_on_success,
-    }
-    runtime.task = {"metrics": {"stages": [{"id": "place"}]}}
-    runtime.spec = SimpleNamespace(
-        physics_dt=0.1, control_decimation=1, max_control_steps=30
-    )
-    runtime.dof = SimpleNamespace(
-        active_joint_names=("joint",), full_joint_names=("joint",)
-    )
-    runtime.contact_reader = None
-    runtime.joint_limits = None
-    runtime.early_stop = True
-    state = {"placed": False}
-    observations = []
+    def create(*, stages=("place",), initial=(), bonus=0.1, complete=False):
+        states = dict.fromkeys(stages, False)
+        states.update(dict.fromkeys(initial, True))
+        observations = []
+        runtime = object.__new__(Bench2DexRuntime)
+        runtime.config = {
+            "stage_reward_coef": bonus,
+            "success_reward_coef": 0.2,
+            "complete_stage_rewards_on_success": complete,
+        }
+        runtime.task = {"metrics": {"stages": [{"id": sid} for sid in stages]}}
+        runtime.spec = SimpleNamespace(
+            physics_dt=0.1, control_decimation=1, max_control_steps=30
+        )
+        runtime.dof = SimpleNamespace(
+            active_joint_names=("joint",), full_joint_names=("joint",)
+        )
+        runtime.contact_reader = runtime.joint_limits = None
+        runtime.early_stop = True
 
-    def advance():
-        state["placed"] = True
+        def observe():
+            observations.append(runtime.control_steps)
+            return {"frame": len(observations)}
 
-    def observe():
-        observations.append(runtime.control_steps)
-        return {"frame": len(observations)}
+        runtime._advance_physics = lambda: None
+        runtime._set_action = lambda action, layout: {}
+        runtime._read_object_states = lambda: states
+        runtime._read_robot_state = lambda: {}
+        runtime._observe = observe
+        runtime._info = lambda: {"episode_return": runtime.episode_return}
+        runtime.metrics = SimpleNamespace(
+            success=False,
+            update=lambda *args, **kwargs: None,
+            finalize=lambda **kwargs: _MetricsResult(),
+        )
+        runtime._reset_episode_counters()
+        return runtime, states, observations
 
-    runtime._advance_physics = advance
-    runtime._set_action = lambda action, layout: {}
-    runtime._read_object_states = lambda: state
-    runtime._read_robot_state = lambda: {}
-    runtime._observe = observe
-    runtime._info = lambda: {"episode_return": runtime.episode_return}
-    runtime.metrics = SimpleNamespace(
-        success=False,
-        update=lambda *args, **kwargs: None,
-        finalize=lambda **kwargs: _MetricsResult(),
-    )
-    runtime._reset_episode_counters()
+    return create
 
+
+@pytest.mark.parametrize("capture_intermediate", [False, True])
+@pytest.mark.parametrize("stage_bonus", [0.0, 0.1])
+def test_runtime_stage_rewards_preserve_chunk_and_camera_semantics(
+    runtime_factory, capture_intermediate, stage_bonus
+):
+    runtime, states, observations = runtime_factory(bonus=stage_bonus)
+    states["place"] = True
     transitions = runtime.chunk_step(
         np.zeros((20, 1)), capture_intermediate_observations=capture_intermediate
     )
@@ -452,47 +508,36 @@ def test_runtime_stage_rewards_preserve_chunk_and_camera_semantics(
 
     runtime.metrics.success = True
     final = runtime.step(np.zeros(1))
-    assert final[1] == success_bonus
+    assert final[1] == pytest.approx(0.2)
     assert final[2] is True
-    assert final[4]["metrics"]["success_reward_return"] == success_bonus
+    assert final[4]["metrics"]["success_reward_return"] == pytest.approx(0.2)
     assert final[4]["metrics"]["stage_reward_return"] == pytest.approx(stage_bonus)
     assert final[4]["metrics"]["stage_reward_count"] == int(stage_bonus > 0)
-    assert runtime.episode_return == pytest.approx(success_bonus + stage_bonus)
+    assert runtime.episode_return == pytest.approx(0.2 + stage_bonus)
+    assert runtime.step(np.zeros(1))[1] == 0.0
 
 
-@pytest.mark.parametrize("initial_count", range(5))
-def test_runtime_success_settles_four_stage_reward_budget(initial_count):
-    from rlinf.envs.sim.bench2dex.runtime import Bench2DexRuntime
-
-    runtime = Bench2DexRuntime.__new__(Bench2DexRuntime)
+@pytest.mark.parametrize("complete", [False, True])
+@pytest.mark.parametrize("initial_count", [0, 2, 4])
+def test_runtime_success_pays_unfinished_stages_only_when_enabled(
+    runtime_factory, initial_count, complete
+):
     stages = ("phillips", "flat", "wrench", "drill")
-    runtime._stage_reward = StageCompletionReward(stages, bonus=0.2)
-    runtime._stage_reward.reset(
-        {sid: index < initial_count for index, sid in enumerate(stages)}
+    runtime, states, _ = runtime_factory(
+        stages=stages, initial=stages[:initial_count], bonus=0.2, complete=complete
     )
-    runtime._pending_stage_reward = runtime._stage_reward.update(
-        dict.fromkeys(stages, True)
-    )
-    runtime.control_steps = runtime.physics_steps = 0
-    runtime.episode_return = 0.0
-    runtime.episode_success_reward = runtime.episode_stage_reward = 0.0
-    runtime.success_once = False
-    runtime.early_stop = True
-    runtime.success_reward_coef = 0.2
-    runtime.complete_stage_rewards_on_success = True
-    runtime.spec = SimpleNamespace(max_control_steps=681, control_decimation=3)
-    runtime.metrics = SimpleNamespace(
-        success=True, finalize=lambda **kwargs: _MetricsResult()
-    )
-    runtime._info = lambda: {"success_once": runtime.success_once}
+    if initial_count < len(stages):
+        states[stages[initial_count]] = True
+    runtime.metrics.success = True
 
-    first = runtime._finish_action({"terminal_frame": True})
-    assert first[1] == pytest.approx(1.0)
+    first = runtime.step(np.zeros(1))
+    expected_stage = 0.8 if complete else 0.2 * (initial_count < len(stages))
+    assert first[1] == pytest.approx(0.2 + expected_stage)
     assert first[2] is True
     assert runtime.success_once is True
     assert runtime.episode_success_reward == pytest.approx(0.2)
-    assert runtime.episode_stage_reward == pytest.approx(0.8)
-    assert runtime._finish_action({})[1] == 0.0
+    assert runtime.episode_stage_reward == pytest.approx(expected_stage)
+    assert runtime.step(np.zeros(1))[1] == 0.0
 
 
 def test_stage_reward_is_immediate_and_cannot_be_farmed():
@@ -542,6 +587,31 @@ def test_success_completes_stage_budget_once(initial_count):
     assert reward.total_reward == pytest.approx(0.8)
     assert reward.complete() == 0.0
     assert reward.update(dict.fromkeys(stages, True)) == 0.0
+
+
+@pytest.fixture
+def compose_bench2dex_recipe(monkeypatch):
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    repo = Path(__file__).resolve().parents[2]
+    for key, value in {
+        "REPO_PATH": str(repo),
+        "EMBODIED_PATH": str(repo / "examples/embodiment"),
+        "BENCH2DEX_PATH": "/bench",
+        "BENCH2DEX_ASSETS_PATH": "/assets",
+        "BENCH2DEX_PI05_PATH": "/model",
+        "BENCH2DEX_ANCHOR_DIR": "/anchors",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    def load(config_dir, config_name):
+        with initialize_config_dir(str(repo / config_dir), version_base="1.1"):
+            cfg = compose(config_name=config_name)
+        OmegaConf.resolve(cfg)
+        return cfg
+
+    return load
 
 
 @pytest.mark.parametrize(
@@ -606,27 +676,11 @@ def test_success_completes_stage_budget_once(initial_count):
     ],
 )
 def test_bench2dex_recipes(
-    monkeypatch, config_name, task, embodiment, action_dim, budget, slots
+    compose_bench2dex_recipe, config_name, task, embodiment, action_dim, budget, slots
 ):
-    from hydra import compose, initialize_config_dir
-    from omegaconf import OmegaConf
-
-    repo = Path(__file__).resolve().parents[2]
-    monkeypatch.setenv("EMBODIED_PATH", str(repo / "examples/embodiment"))
-    for key, value in {
-        "BENCH2DEX_PATH": "/bench",
-        "BENCH2DEX_ASSETS_PATH": "/assets",
-        "BENCH2DEX_PI05_PATH": "/model",
-        "BENCH2DEX_ANCHOR_DIR": "/anchors",
-    }.items():
-        monkeypatch.setenv(key, value)
     only_eval = config_name.endswith("_eval")
-    config_dir = repo / (
-        "evaluations/bench2dex" if only_eval else "examples/embodiment/config"
-    )
-    with initialize_config_dir(str(config_dir), version_base="1.1"):
-        cfg = compose(config_name=config_name)
-    OmegaConf.resolve(cfg)
+    config_dir = "evaluations/bench2dex" if only_eval else "examples/embodiment/config"
+    cfg = compose_bench2dex_recipe(config_dir, config_name)
     model = cfg.rollout.model if only_eval else cfg.actor.model
     assert model.action_dim == model.openpi.model_action_dim == action_dim
     assert model.num_action_chunks == model.openpi.action_horizon == 20
@@ -670,25 +724,8 @@ def test_bench2dex_recipes(
 @pytest.mark.parametrize(
     "config_name", ["bench2dex_ppo_openpi_pi05", "bench2dex_async_ppo_openpi_pi05"]
 )
-def test_bench2dex_e2e_recipes(monkeypatch, config_name):
-    from hydra import compose, initialize_config_dir
-    from omegaconf import OmegaConf
-
-    repo = Path(__file__).resolve().parents[2]
-    for key, value in {
-        "REPO_PATH": str(repo),
-        "EMBODIED_PATH": str(repo / "examples/embodiment"),
-        "BENCH2DEX_PATH": "/bench",
-        "BENCH2DEX_ASSETS_PATH": "/assets",
-        "BENCH2DEX_PI05_PATH": "/model",
-        "BENCH2DEX_ANCHOR_DIR": "/anchors",
-    }.items():
-        monkeypatch.setenv(key, value)
-    with initialize_config_dir(
-        str(repo / "tests/e2e_tests/embodied"), version_base="1.1"
-    ):
-        cfg = compose(config_name=config_name)
-    OmegaConf.resolve(cfg)
+def test_bench2dex_e2e_recipes(compose_bench2dex_recipe, config_name):
+    cfg = compose_bench2dex_recipe("tests/e2e_tests/embodied", config_name)
     assert cfg.runner.max_steps == cfg.runner.save_interval == 2
     assert cfg.runner.val_check_interval == 10
     assert (
@@ -696,3 +733,21 @@ def test_bench2dex_e2e_recipes(monkeypatch, config_name):
         == cfg.actor.global_batch_size
     )
     assert cfg.env.train.enable_offload is ("_async_" not in config_name)
+
+
+def test_bench2dex_e2e_evaluation_recipe(compose_bench2dex_recipe):
+    cfg = compose_bench2dex_recipe(
+        "tests/e2e_tests/evaluations", "bench2dex_openpi_pi05_eval"
+    )
+    assert cfg.runner.only_eval is True
+    assert cfg.runner.task_type == "embodied_eval"
+    assert cfg.runner.save_interval == -1
+    assert cfg.env.eval.total_num_envs * cfg.env.eval.rollout_epoch == 4
+    assert cfg.env.eval.max_episode_steps == 681
+    assert cfg.env.eval.max_steps_per_rollout_epoch == 700
+    assert cfg.env.eval.skip_intermediate_renders is False
+    assert cfg.env.eval.video_cfg.save_video is False
+    assert cfg.env.eval.init_params.task == "22_tool_box_loading"
+    assert cfg.rollout.model.openpi.task == "eval"
+    assert cfg.rollout.model.openpi.noise_rng == "jax"
+    assert cfg.rollout.rollout_backend == "huggingface"

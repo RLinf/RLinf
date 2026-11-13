@@ -1208,6 +1208,71 @@ def test_infer_obs_batch_size_raises_when_unbatched():
         infer_obs_batch_size({"obs": {}})
 
 
+@pytest.mark.parametrize("auto_reset", [False, True])
+@pytest.mark.parametrize("has_value", [False, True])
+def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
+    auto_reset, has_value
+):
+    transition = EnvTransition(
+        rewards=torch.ones(3, 2),
+        dones=torch.tensor([[False, True], [False, True], [False, False]]),
+        truncations=torch.tensor([[False, True], [False, False], [False, False]]),
+        terminations=torch.tensor([[False, False], [False, True], [False, False]]),
+    )
+    rewards = transition.compute_rewards(
+        bootstrap_values=torch.full((3, 1), 4.0) if has_value else None,
+        env_reward_weight=1.0,
+        reward_weight=1.0,
+        auto_reset=auto_reset,
+        bootstrap_type="standard",
+        gamma=0.5,
+        previous_dones=torch.zeros(3, 2, dtype=torch.bool),
+    )
+    expected = torch.ones(3, 2)
+    if has_value:
+        expected[0, -1] = 3.0
+    assert torch.equal(rewards, expected)
+    assert torch.equal(transition.rewards, torch.ones(3, 2))
+
+
+def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding():
+    truncations = torch.tensor(
+        [
+            [False, True, True, True],
+            [True, True, True, True],
+            [True, True, True, True],
+            [False, True, True, True],
+        ]
+    )
+    transition = EnvTransition(
+        rewards=torch.zeros(4, 4),
+        dones=truncations.clone(),
+        truncations=truncations,
+        terminations=torch.tensor(
+            [
+                [False, False, False, False],
+                [False, False, False, False],
+                [False, False, False, False],
+                [False, True, True, True],
+            ]
+        ),
+    )
+    previous = torch.zeros(4, 4, dtype=torch.bool)
+    previous[2] = True
+    rewards = transition.compute_rewards(
+        bootstrap_values=torch.tensor([[4.0], [6.0], [8.0], [10.0]]),
+        env_reward_weight=1.0,
+        reward_weight=1.0,
+        auto_reset=False,
+        bootstrap_type="standard",
+        gamma=0.5,
+        previous_dones=previous,
+    )
+    expected = torch.zeros(4, 4)
+    expected[0, 1], expected[1, 0] = 2.0, 3.0
+    assert torch.equal(rewards, expected)
+
+
 def test_env_output_composes_one_transition_object():
     transition = EnvTransition(
         rewards=torch.ones(2, 1),
@@ -2170,6 +2235,36 @@ def test_rollout_materializes_each_epoch_boundary_and_final_value_in_order():
     assert torch.equal(
         trajectory.prev_values,
         torch.tensor([[[0.0]], [[5.0]], [[0.0]], [[5.0]]]),
+    )
+
+
+def test_nonreset_collector_bootstraps_once_per_episode_after_reset():
+    cfg = _config(
+        env={
+            "train": {
+                "auto_reset": False,
+                "rollout_epoch": 2,
+                "max_steps_per_rollout_epoch": 3,
+            }
+        }
+    )
+    collector = _make(cfg, chunk_count=3)
+    outputs = []
+    for epoch in range(2):
+        for chunk in range(3):
+            key = TrajectoryKey(3, epoch, 0, 0, chunk)
+            initial = EnvTransition(dones=torch.zeros(1, 1, dtype=torch.bool))
+            env = _env_part(key, initial_transition=initial if chunk == 0 else None)
+            env.transition.rewards = torch.tensor([[1.0, 2.0, 0.0][chunk]]).reshape(
+                1, 1
+            )
+            env.transition.dones[:] = chunk > 0
+            env.transition.truncations[:] = chunk > 0
+            env.bootstrap_values = torch.tensor([[4.0 if chunk == 1 else 9.0]])
+            outputs.extend(_collect(collector, _policy(key), env))
+    [(_, trajectory)] = outputs
+    assert torch.equal(
+        trajectory.rewards[:, 0, 0], torch.tensor([1.0, 4.0, 0.0, 1.0, 4.0, 0.0])
     )
 
 
@@ -4299,104 +4394,3 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
-
-
-@pytest.mark.parametrize("auto_reset", [False, True])
-@pytest.mark.parametrize("has_value", [False, True])
-def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
-    auto_reset, has_value
-):
-    transition = EnvTransition(
-        rewards=torch.ones(3, 2),
-        dones=torch.tensor([[False, True], [False, True], [False, False]]),
-        truncations=torch.tensor([[False, True], [False, False], [False, False]]),
-        terminations=torch.tensor([[False, False], [False, True], [False, False]]),
-    )
-    rewards = transition.compute_rewards(
-        bootstrap_values=torch.full((3, 1), 4.0) if has_value else None,
-        env_reward_weight=1.0,
-        reward_weight=1.0,
-        auto_reset=auto_reset,
-        bootstrap_type="standard",
-        gamma=0.5,
-        previous_dones=torch.zeros(3, 2, dtype=torch.bool),
-    )
-    expected = torch.ones(3, 2)
-    if has_value:
-        expected[0, -1] = 3.0
-    assert torch.equal(rewards, expected)
-    assert torch.equal(transition.rewards, torch.ones(3, 2))
-
-
-def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding():
-    transition = EnvTransition(
-        rewards=torch.zeros(4, 4),
-        dones=torch.tensor(
-            [
-                [False, True, True, True],
-                [True, True, True, True],
-                [True, True, True, True],
-                [False, True, True, True],
-            ]
-        ),
-        truncations=torch.tensor(
-            [
-                [False, True, True, True],
-                [True, True, True, True],
-                [True, True, True, True],
-                [False, True, True, True],
-            ]
-        ),
-        terminations=torch.tensor(
-            [
-                [False, False, False, False],
-                [False, False, False, False],
-                [False, False, False, False],
-                [False, True, True, True],
-            ]
-        ),
-    )
-    previous = torch.zeros(4, 4, dtype=torch.bool)
-    previous[2] = True
-    rewards = transition.compute_rewards(
-        bootstrap_values=torch.tensor([[4.0], [6.0], [8.0], [10.0]]),
-        env_reward_weight=1.0,
-        reward_weight=1.0,
-        auto_reset=False,
-        bootstrap_type="standard",
-        gamma=0.5,
-        previous_dones=previous,
-    )
-    expected = torch.zeros(4, 4)
-    expected[0, 1], expected[1, 0] = 2.0, 3.0
-    assert torch.equal(rewards, expected)
-
-
-def test_nonreset_collector_bootstraps_once_per_episode_after_reset():
-    cfg = _config(
-        env={
-            "train": {
-                "auto_reset": False,
-                "rollout_epoch": 2,
-                "max_steps_per_rollout_epoch": 3,
-            }
-        }
-    )
-    collector = _make(cfg, chunk_count=3)
-    outputs = []
-    for epoch in range(2):
-        for chunk in range(3):
-            key = TrajectoryKey(3, epoch, 0, 0, chunk)
-            initial = EnvTransition(dones=torch.zeros(1, 1, dtype=torch.bool))
-            env = _env_part(key, initial_transition=initial if chunk == 0 else None)
-            env.transition.rewards = torch.tensor([[1.0, 2.0, 0.0][chunk]]).reshape(
-                1, 1
-            )
-            env.transition.dones[:] = chunk > 0
-            env.transition.truncations[:] = chunk > 0
-            env.bootstrap_values = torch.tensor([[4.0 if chunk == 1 else 9.0]])
-            outputs.extend(_collect(collector, _policy(key), env))
-    [(_, trajectory)] = outputs
-    assert torch.equal(
-        trajectory.rewards[:, 0, 0], torch.tensor([1.0, 4.0, 0.0, 1.0, 4.0, 0.0])
-    )
