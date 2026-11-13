@@ -209,7 +209,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         if kwargs["loss_mask_sum"] is not None:
             self.rollout_batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
 
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
+        rollout_metrics = compute_rollout_metrics(
+            self.rollout_batch, reward_type=self.cfg.algorithm.reward_type
+        )
         return rollout_metrics
 
     @torch.inference_mode()

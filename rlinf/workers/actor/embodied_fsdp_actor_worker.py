@@ -352,7 +352,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if kwargs["loss_mask_sum"] is not None:
             self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
 
-        rollout_metrics = compute_rollout_metrics(self.rollout_batch)
+        rollout_metrics = compute_rollout_metrics(
+            self.rollout_batch, reward_type=self.cfg.algorithm.reward_type
+        )
         rollout_metrics.update(self._group_success_metrics)
         return rollout_metrics
 

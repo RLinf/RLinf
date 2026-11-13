@@ -1515,3 +1515,108 @@ def test_openpi_worker_passes_dual_clip_to_real_loss(enabled, monkeypatch):
     assert model.logprob.grad.item() == pytest.approx(
         0 if enabled else 29.78136, rel=1e-5
     )
+
+
+def test_rollout_moments_exclude_padding_and_keep_legacy_reward(single_rank_reduction):
+    metrics = compute_rollout_metrics(
+        {
+            "loss_mask": torch.tensor([[[True], [False]], [[True], [True]]]),
+            "rewards": torch.tensor(
+                [[[0.0, 2.0], [100.0, 100.0]], [[0.0, 4.0], [0.0, 6.0]]]
+            ),
+            "advantages": torch.tensor([[[1.0], [100.0]], [[3.0], [5.0]]]),
+            "returns": torch.tensor([[[2.0], [100.0]], [[4.0], [6.0]]]),
+            "rollout_values": torch.tensor([[[0.0], [100.0]], [[1.0], [2.0]]]),
+            "advantages_raw": torch.tensor([[[2.0], [100.0]], [[3.0], [4.0]]]),
+        },
+        reward_type="chunk_level",
+    )
+    assert metrics["rewards"] == pytest.approx(2.0)
+    assert metrics["rewards_mean"] == pytest.approx(4.0)
+    assert metrics["rewards_std"] == pytest.approx(math.sqrt(8 / 3))
+    assert metrics["returns_mean"] == pytest.approx(4.0)
+    assert metrics["returns_std"] == pytest.approx(math.sqrt(8 / 3))
+    assert metrics["advantages_mean"] == pytest.approx(3.0)
+    assert metrics["advantages_std"] == pytest.approx(math.sqrt(8 / 3))
+    assert metrics["values_mean"] == pytest.approx(1.0)
+    assert metrics["values_std"] == pytest.approx(math.sqrt(2 / 3))
+    assert metrics["advantages_raw_mean"] == pytest.approx(3.0)
+    assert metrics["advantages_raw_std"] == pytest.approx(math.sqrt(2 / 3))
+
+
+@pytest.mark.parametrize("mask", [True, False])
+def test_rollout_moments_singleton_and_empty_mask(single_rank_reduction, mask):
+    metrics = compute_rollout_metrics(
+        {"rewards": torch.tensor([[[7.0]]]), "loss_mask": torch.tensor([[[mask]]])}
+    )
+    if mask:
+        assert metrics["rewards_mean"] == 7.0
+        assert metrics["rewards_std"] == 0.0
+    else:
+        assert math.isnan(metrics["rewards_mean"])
+        assert math.isnan(metrics["rewards_std"])
+
+
+def test_gae_diagnostics_exclude_bootstrap_and_preserve_normalized_advantages():
+    import rlinf.algorithms  # noqa: F401
+
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="gae",
+        reward_type="chunk_level",
+        rewards=torch.tensor([[[0.0, 0.0]], [[0.0, 1.0]]]),
+        dones=torch.tensor([[[False]], [[False]], [[True]]]),
+        values=torch.tensor([[[0.2]], [[0.4]], [[999.0]]]),
+        gamma=1.0,
+        gae_lambda=1.0,
+        loss_mask=torch.ones(2, 1, 1, dtype=torch.bool),
+        loss_mask_sum=None,
+    )
+    torch.testing.assert_close(
+        result["rollout_values"], torch.tensor([[[0.2]], [[0.4]]])
+    )
+    torch.testing.assert_close(result["returns"], torch.ones(2, 1, 1))
+    torch.testing.assert_close(
+        result["advantages_raw"], torch.tensor([[[0.8]], [[0.6]]])
+    )
+    assert result["advantages"].mean().item() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_episode_return_moments_are_distinct_from_gae_targets():
+    metrics = compute_evaluate_metrics(
+        [{"return": torch.tensor([0.0, 1.0])}, {"return": torch.tensor([1.0])}]
+    )
+    assert metrics["return"] == pytest.approx(2 / 3)
+    assert metrics["return_mean"] == pytest.approx(2 / 3)
+    assert metrics["return_std"] == pytest.approx(math.sqrt(2 / 9))
+
+
+def _distributed_rollout_moments_worker(rank, rendezvous_path):
+    from rlinf.scheduler.worker.worker import Worker
+
+    Worker.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
+    torch.distributed.init_process_group(
+        "gloo", init_method=f"file://{rendezvous_path}", rank=rank, world_size=3
+    )
+    try:
+        rewards = (
+            torch.tensor([0.0])
+            if rank == 0
+            else torch.tensor([2.0, 4.0])
+            if rank == 1
+            else torch.empty(0)
+        )
+        metrics = compute_rollout_metrics({"rewards": rewards})
+        assert metrics["rewards_mean"] == pytest.approx(2.0)
+        assert metrics["rewards_std"] == pytest.approx(math.sqrt(8 / 3))
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_rollout_moments_reduce_unequal_ranks_and_empty_rank(tmp_path):
+    torch.multiprocessing.spawn(
+        _distributed_rollout_moments_worker,
+        args=(str(tmp_path / "rendezvous"),),
+        nprocs=3,
+        join=True,
+    )

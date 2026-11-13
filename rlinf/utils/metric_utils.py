@@ -632,6 +632,13 @@ def compute_evaluate_metrics(eval_metrics_list):
             if stacked.numel() > 0
             else np.asarray(0.0, dtype=np.float64)
         )
+        if key == "return":
+            aggregated_eval_metrics["return_mean"] = aggregated_eval_metrics[key]
+            aggregated_eval_metrics["return_std"] = (
+                stacked.std(correction=0).detach().cpu().numpy()
+                if stacked.numel() > 0
+                else np.asarray(float("nan"), dtype=np.float64)
+            )
 
     # Add total trajectory count to metrics
     aggregated_eval_metrics["num_trajectories"] = sum(trajectory_counts)
@@ -639,11 +646,14 @@ def compute_evaluate_metrics(eval_metrics_list):
     return aggregated_eval_metrics
 
 
-def compute_rollout_metrics(data_buffer: dict) -> dict:
+def compute_rollout_metrics(
+    data_buffer: dict, *, reward_type: str | None = None
+) -> dict:
+    """Reduce masked rollout statistics across ranks using population std."""
     rollout_metrics = {}
     loss_mask = data_buffer.get("loss_mask", None)
 
-    def reduce_metrics(values: torch.Tensor) -> tuple[float, float, float]:
+    def reduce_metrics(values: torch.Tensor) -> tuple[float, float, float, float]:
         from rlinf.scheduler.worker.worker import Worker
 
         device = Worker.torch_platform.current_device()
@@ -654,7 +664,7 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
             min_value = float("inf")
             max_value = float("-inf")
         else:
-            values = values.to(device)
+            values = values.detach().to(device=device, dtype=torch.float32)
             count = torch.tensor(
                 values.numel(), device=values.device, dtype=torch.float32
             )
@@ -676,8 +686,15 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         reduced_min, reduced_max = reduce_min_max.tolist()
 
         if reduced_count <= 0:
-            return float("nan"), float("nan"), float("nan")
-        return reduced_sum / reduced_count, -reduced_min, reduced_max
+            return (float("nan"),) * 4
+        mean = reduced_sum / reduced_count
+        # Center before reducing to avoid cancellation in E[x^2] - E[x]^2.
+        squared_deviations = (values.to(device) - mean).square().sum()
+        torch.distributed.all_reduce(
+            squared_deviations, op=torch.distributed.ReduceOp.SUM
+        )
+        std = math.sqrt(max(squared_deviations.item() / reduced_count, 0.0))
+        return mean, std, -reduced_min, reduced_max
 
     def valid_values(values: torch.Tensor) -> torch.Tensor:
         if loss_mask is None:
@@ -693,26 +710,28 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         # Every metric below is taken over the mask, and filter_rewards can mask
         # out whole groups, so they can read as clean simply because little
         # survived. Report the share of the batch that did.
-        mean_coverage, _, _ = reduce_metrics(loss_mask.float().reshape(-1))
+        mean_coverage, _, _, _ = reduce_metrics(loss_mask.float().reshape(-1))
         rollout_metrics["loss_mask_fraction"] = mean_coverage
 
     if "rewards" in data_buffer:
         rewards = data_buffer["rewards"]
-        rewards = valid_values(rewards)
-        mean_rewards, _, _ = reduce_metrics(rewards)
-
-        rewards_metrics = {
-            "rewards": mean_rewards,
-        }
-        rollout_metrics.update(rewards_metrics)
+        mean_rewards, _, _, _ = reduce_metrics(valid_values(rewards))
+        rollout_metrics["rewards"] = mean_rewards
+        if reward_type == "chunk_level":
+            rewards = rewards.sum(dim=-1, keepdim=True)
+        mean_rewards, std_rewards, _, _ = reduce_metrics(valid_values(rewards))
+        rollout_metrics.update(
+            {"rewards_mean": mean_rewards, "rewards_std": std_rewards}
+        )
 
     if "advantages" in data_buffer:
         advantages = data_buffer["advantages"]
         advantages = valid_values(advantages)
-        mean_adv, min_adv, max_adv = reduce_metrics(advantages)
+        mean_adv, std_adv, min_adv, max_adv = reduce_metrics(advantages)
 
         advantages_metrics = {
             "advantages_mean": mean_adv,
+            "advantages_std": std_adv,
             "advantages_max": max_adv,
             "advantages_min": min_adv,
         }
@@ -721,14 +740,24 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
     if data_buffer.get("returns", None) is not None:
         returns = data_buffer["returns"]
         returns = valid_values(returns)
-        mean_ret, min_ret, max_ret = reduce_metrics(returns)
+        mean_ret, std_ret, min_ret, max_ret = reduce_metrics(returns)
 
         returns_metrics = {
             "returns_mean": mean_ret,
+            "returns_std": std_ret,
             "returns_max": max_ret,
             "returns_min": min_ret,
         }
         rollout_metrics.update(returns_metrics)
+
+    for tensor_key, metric_key in (
+        ("advantages_raw", "advantages_raw"),
+        ("rollout_values", "values"),
+    ):
+        if data_buffer.get(tensor_key) is not None:
+            mean, std, _, _ = reduce_metrics(valid_values(data_buffer[tensor_key]))
+            rollout_metrics[f"{metric_key}_mean"] = mean
+            rollout_metrics[f"{metric_key}_std"] = std
 
     return rollout_metrics
 
