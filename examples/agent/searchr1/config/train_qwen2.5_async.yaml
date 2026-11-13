@@ -267,7 +267,7 @@ actor:
   enable_dp_load_balance: True
   calculate_flops: False
   seed: 1234
-  
+
   pack_traj: True
   # megatron config
   mcore_gpt: True

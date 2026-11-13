@@ -54,6 +54,12 @@
 
       将新模型接入 SFT 训练流程。
 
+   .. grid-item-card:: Prefix policy 与可插拔组件
+      :link: prefix
+      :link-type: doc
+
+      为 Prefix Fine-Tune 注册其他 VLA、actor/critic head 或更新规则。ManiSkill 的运行步骤在示例页。
+
    .. grid-item-card:: 高级集成
       :link: advanced-integrations/index
       :link-type: doc
@@ -71,4 +77,5 @@
    Megatron 新模型 <new_model_megatron>
    SGLang 具身模型 <sglang_embodied_model>
    新 SFT 模型 <new_model_sft>
+   Prefix policy 与可插拔组件 <prefix>
    高级集成 <advanced-integrations/index>

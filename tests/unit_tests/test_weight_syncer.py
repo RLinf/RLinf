@@ -2080,7 +2080,8 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.train_enable_offload = False
         self.worker.use_training_pipeline = False
         self.worker.collect_transitions = False
-        self.worker.enable_rlt = False
+        self.worker.enable_prefix = False
+        self.worker.collect_rlt_gate_trace = False
         self.worker.collect_prev_infos = True
         self.worker.reward_mode = self.cfg.get("reward", {}).get(
             "reward_mode", "per_step"

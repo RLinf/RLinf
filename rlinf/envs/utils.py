@@ -13,11 +13,26 @@
 # limitations under the License.
 
 import os
-from typing import Any, Optional, Union
+from typing import Any, Optional, Protocol, Union
 
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
+
+
+class RolloutInfoReceiver(Protocol):
+    """Optional environment capability for policy routing feedback."""
+
+    def set_rollout_infos(self, infos: dict[str, torch.Tensor]) -> None:
+        """Consume batched diagnostics before the associated actions execute."""
+
+
+class TrajectoryInfoProvider(Protocol):
+    """Optional environment capability for exporting trace-only step data."""
+
+    def trajectory_info_spec(self) -> dict[str, torch.dtype]:
+        """Declare info keys and dtypes; each value has leading axis num_envs."""
+
 
 _tf = None
 

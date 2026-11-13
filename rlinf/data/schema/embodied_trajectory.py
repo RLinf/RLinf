@@ -391,7 +391,7 @@ class AccumulatorOutput(TrajectoryOutput):
         ] = {}
         self._collect_prev_infos = cfg.rollout.get("collect_prev_infos", True)
         self._collect_transitions = cfg.rollout.get("collect_transitions", False)
-        self._enable_rlt = cfg.algorithm.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self._enable_prefix = cfg.algorithm.get("loss_type") == "prefix_off_policy"
         self._env_reward_weight = cfg.get("reward", {}).get("env_reward_weight", 1.0)
         self._reward_weight = cfg.get("reward", {}).get("reward_weight", 1.0)
 
@@ -448,7 +448,7 @@ class AccumulatorOutput(TrajectoryOutput):
             rewards=rewards,
             collect_prev_infos=self._collect_prev_infos,
             collect_transitions=self._collect_transitions,
-            enable_rlt=self._enable_rlt,
+            enable_prefix=self._enable_prefix,
             include_final_value=chunk.key.chunk_id == self._chunk_count - 1,
         )
         accumulator.append(step)

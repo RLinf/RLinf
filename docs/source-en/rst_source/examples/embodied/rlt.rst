@@ -1,28 +1,16 @@
-RL Token: Bootstrapping Online RL with Vision-Language-Action Models
-====================================================================
+RL Token: Online Reinforcement Learning with a Compressed VLA Representation
+=============================================================================
 
-**RL Token: Bootstrapping Online RL with Vision-Language-Action Models** trains
-a compact reinforcement-learning policy on top of a frozen VLA feature model.
-In RLinf configs and code, this workflow is abbreviated as **RLT**. It has two
-stages:
+Train an RL Token (RLT) representation from demonstrations, then use it to train a small actor-critic online. This recipe covers Stage 1 SFT and Stage 2 execution for Franka peg insertion and ManiSkill ``PegInsertionSideWideClearance-v1`` joint-control simulation.
 
-1. Train a VLA checkpoint together with an RLT token transformer on
-   demonstration data.
-2. Freeze that feature model and train a lightweight off-policy actor-critic
-   policy using the extracted RLT state.
+RLT learns a compact token representation from the VLA's image and language features. Stage 2 freezes that representation and trains the actor and critic through the Prefix runtime. If you want to start directly from an existing VLA checkpoint without token-transformer training, follow the pooling route in :doc:`Prefix Fine-Tune <prefix>`. To add another feature model, head, or algorithm in code, see :doc:`../../extending/prefix`.
 
-The checked-in examples target Franka peg insertion and the ManiSkill
-``PegInsertionSideWideClearance-v1`` joint-control simulation. The pipeline is
-not tied to either task. Reuse the same two-stage structure when the
-demonstrations, environment config, action shape, state semantics, and OpenPI
-dataconfig stay aligned.
-
-Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_.
+The method is described in **RL Token: Bootstrapping Online RL with Vision-Language-Action Models**. Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_. When adapting this recipe, align the demonstration fields, environment actions, robot state, and OpenPI data config.
 
 Overview
 --------
 
-RLT separates representation learning from online RL control.
+Stage 1 jointly trains the VLA and token transformer on demonstrations. Its complete ``actor`` checkpoint supplies the frozen features and reference actions for Stage 2, where only the small actor-critic is updated. During rollout, the phase switch chooses whether to execute the VLA or actor action; expert takeover can supply intervention actions when enabled.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -30,30 +18,27 @@ RLT separates representation learning from online RL control.
    .. grid-item-card:: Stage 1
       :text-align: center
 
-      VLA SFT + RLT token transformer
+      Joint VLA and RLT token training
 
    .. grid-item-card:: Stage 2
       :text-align: center
 
-      Compact off-policy actor-critic
+      Train actor-critic on frozen features
 
-   .. grid-item-card:: State
+   .. grid-item-card:: Action source
       :text-align: center
 
-      ``z_rl`` + proprio + reference chunk
+      VLA, actor, or expert
 
-   .. grid-item-card:: Deployment
+   .. grid-item-card:: Runtime
       :text-align: center
 
-      Franka real robot / ManiSkill simulation
-
-| **You'll do:** prepare demonstrations -> train Stage 1 -> point Stage 2 at
-  the Stage 1 checkpoint -> launch actor-critic training -> monitor replay-buffer and task
-  success metrics.
-| **Prerequisites:** `OpenPI π₀.₅ base weights <https://huggingface.co/lerobot/pi05_base>`__, plus the environment for your example—either :doc:`Franka real-world <../embodied/franka>` or :doc:`ManiSkill simulation <../embodied/maniskill>`.
+      Franka real robot and ManiSkill simulation
 
 Provided Configuration Files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Choose the Stage 1 and Stage 2 configs for your environment. The STEAM preset uses pooled VLA features rather than the RLT token transformer; its weights and calibration steps are documented in :doc:`Prefix Fine-Tune <prefix>`.
 
 .. list-table::
    :header-rows: 1
@@ -65,7 +50,7 @@ Provided Configuration Files
    * - Franka Stage 1
      - ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml``
      - SFT π₀.₅ together with the RLT token transformer on Franka demonstrations.
-   * - Franka Stage 2
+   * - Franka Stage 2 (RL token)
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
      - Run real-world RLT actor-critic training with the frozen Stage 1 feature model.
    * - Dual Franka Stage 2
@@ -80,6 +65,9 @@ Provided Configuration Files
    * - ManiSkill Stage 2 (TD3)
      - ``examples/embodiment/config/maniskill_rlt_stage2_td3_mlp.yaml``
      - Run the simulated TD3-MLP variant with the same frozen Stage 1 feature model and replay route.
+   * - ManiSkill Stage 2 (STEAM + TD3)
+     - ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``
+     - Train TD3 on pooled VLA features, with STEAM deciding when to switch to the actor.
 
 Installation
 ------------
@@ -172,6 +160,9 @@ Important Stage 1 fields:
        action_dim: 7
        num_steps: 4
        add_value_head: False
+       prefix:
+         pool: rlt_token
+         image_only: false
        openpi:
          task: sft
          config_name: "pi05_franka_state"
@@ -191,7 +182,6 @@ Important Stage 1 fields:
          use_rlt: True
          rlt_alpha: 1.0
          rlt_prefix_seq_len: 1024
-         rlt_image_only: False
          rlt_use_mask: True
 
 Keep ``repo_id``, ``config_name``, and normalization stats consistent with the
@@ -205,23 +195,19 @@ Stage 2 feature-model config. ``openpi_data`` belongs under ``actor.model``.
    the processed OpenPI ``observation.state`` as ``proprio``. Stage 1, Stage 2,
    and OpenPI normalization therefore see the same state semantics.
 
-Stage 2: Train the Actor-Critic Policy
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Stage 2: Train the RLT Actor-Critic
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Stage 2 freezes the Stage 1 feature model and trains only the compact RLT MLP
-actor and critic.
+Load the Stage 1 ``actor`` checkpoint, including ``rlt_module``, as the frozen feature model. It returns ``{z_rl, proprio, ref_chunk}`` for the trainable ``prefix_policy``. Set ``algorithm.loss_type: prefix_off_policy`` and choose AC or TD3 with ``algorithm.name``; both use chunk-reward TD targets and a weighted Q/BC actor objective.
 
-.. note::
-
-   The current Stage 2 implementation is not standard maximum-entropy SAC.
+Action routing is separate from those updates. ``rlt_policy_switch`` selects the VLA or actor chunk, and expert takeover can replace it with an intervention. The STEAM variant uses a learned gate for these decisions; the common feature and policy interfaces are described in :doc:`../../extending/prefix`.
 
 During rollout:
 
 1. The environment returns raw observations and task metadata.
-2. ``rollout.rlt_feature_model`` runs the frozen Stage 1 model and converts the
-   raw observation into:
+2. The frozen feature model converts the raw observation into:
 
-   - ``z_rl``: the compact RLT representation.
+   - ``z_rl``: compact representation emitted by the Stage 1 RLT token transformer.
    - ``proprio``: the selected robot or simulator state.
    - ``ref_chunk``: the VLA reference action chunk.
 
@@ -263,7 +249,8 @@ Important Stage 2 fields:
 
    # examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml
    algorithm:
-     loss_type: rlt_ac
+     loss_type: prefix_off_policy
+     name: ac
      q_weight: 0.1
      bc_weight: 5
      reference_dropout_prob: 0.5
@@ -280,7 +267,7 @@ Important Stage 2 fields:
        action_dim: ${actor.model.action_dim}
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
-     rlt_feature_model:
+     prefix_feature_model:
        model_type: "openpi"
        precision: bf16
        is_lora: False
@@ -292,6 +279,9 @@ Important Stage 2 fields:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
          norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
+       prefix:
+         pool: rlt_token
+         image_only: false
        openpi:
          task: eval
          config_name: "pi05_franka_state"
@@ -301,8 +291,8 @@ Important Stage 2 fields:
          # / num_action_chunks, which is the env-executed (RLT) window.
          action_horizon: 20
          action_chunk: ${actor.model.ref_num_action_chunks}
-         action_env_dim: ${rollout.rlt_feature_model.action_dim}
-         num_steps: ${rollout.rlt_feature_model.num_steps}
+         action_env_dim: ${rollout.prefix_feature_model.action_dim}
+         num_steps: ${rollout.prefix_feature_model.num_steps}
          model_action_dim: 32
          paligemma_variant: "gemma_2b"
          action_expert_variant: "gemma_300m"
@@ -311,17 +301,21 @@ Important Stage 2 fields:
          state_indices: []      # keep the full raw state, e.g. 19D
          use_rlt: True
          rlt_prefix_seq_len: 1024
-         rlt_image_only: False
          rlt_use_mask: True
 
    actor:
      model:
-       model_type: "rlt_mlp_policy"
+       model_type: "prefix_policy"
        precision: fp32
-       add_value_head: False
-       add_q_head: True
-       q_head_type: "default"
-       fixed_std: 0.002
+       actor_head:
+         name: fixed_std_mlp
+         hidden_dims: [256, 256, 256]
+         activation: tanh
+         fixed_std: 0.002
+       critic_head:
+         name: multi_q_mlp
+         hidden_dims: [256, 256, 256]
+         num_q_heads: 2
        is_lora: False
        z_dim: 2048
        proprio_dim: 19
@@ -374,7 +368,7 @@ which directly contains ``data/`` and ``meta/``. After collection, place that
 shard on the training node and compute
 normalization statistics for the RLT OpenPI dataconfig. ``repo_id`` should
 match ``actor.openpi_data.repo_id`` and
-``rollout.rlt_feature_model.openpi_data.repo_id`` in the Stage 1 / Stage 2
+``rollout.prefix_feature_model.openpi_data.repo_id`` in the Stage 1 / Stage 2
 configs:
 
 .. code:: bash
@@ -418,7 +412,7 @@ The saved checkpoint directory should look like:
 
    logs/<run-name>/checkpoints/global_step_<step>/actor
 
-Use this ``actor`` directory as ``rollout.rlt_feature_model.model_path`` in Stage 2.
+Use this ``actor`` directory as ``rollout.prefix_feature_model.model_path`` in Stage 2.
 Do not put the Stage 1 checkpoint under ``rollout.model.model_path`` or
 ``actor.model.model_path``; those fields do not load the Stage 1 feature model.
 
@@ -432,7 +426,7 @@ Edit the Stage 2 config:
    rollout:
      model:
        model_path: null
-     rlt_feature_model:
+     prefix_feature_model:
        model_path: /path/to/stage1/checkpoint/actor
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
@@ -480,7 +474,7 @@ recipe: 7-dimensional actions and one camera. This file is 20-dimensional
 tcp_rot6d. The arms execute 10 steps; the Stage 1 reference horizon is 20.
 
 Replace the arm IPs, camera serials, gripper paths, ``TASK_DESCRIPTION``, and
-target poses. Point ``rollout.rlt_feature_model.model_path`` at the dual-arm
+target poses. Point ``rollout.prefix_feature_model.model_path`` at the dual-arm
 Stage 1 checkpoint and set ``openpi_data.repo_id`` to that checkpoint's dataset
 id. Leave ``keyboard_device`` null and export ``RLINF_KEYBOARD_DEVICE``, or set
 the evdev path under both ``env.train`` and ``env.eval``. Keep
@@ -573,7 +567,7 @@ When you compute normalization statistics, keep ``--config-name`` and
 
 .. warning::
 
-   The Stage 1 checkpoint, Stage 2 ``rollout.rlt_feature_model``, and OpenPI
+   The Stage 1 checkpoint, Stage 2 ``rollout.prefix_feature_model``, and OpenPI
    assets must use the same ``norm_stats.json``. If the SFT base policy and
    Stage 2 load stats from different ``repo_id`` directories, the scale of VLA
    reference actions shifts. Set ``openpi_data.norm_stats_path`` to that ``norm_stats.json`` when you need an explicit path.
@@ -614,7 +608,7 @@ The saved FSDP checkpoint usually looks like:
    logs/<run-name>/checkpoints/global_step_<step>/actor
 
 Point this ``actor`` directory directly at
-``rollout.rlt_feature_model.model_path`` in Stage 2, for example
+``rollout.prefix_feature_model.model_path`` in Stage 2, for example
 ``/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor``.
 
 Stage 2: Run ManiSkill RLT Actor-Critic
@@ -640,7 +634,7 @@ Edit the Stage 1 checkpoint in
          trigger_mode: auto
 
    rollout:
-     rlt_feature_model:
+     prefix_feature_model:
        model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
        openpi_data:
          repo_id: maniskill_peginsertionside_joint
@@ -670,8 +664,16 @@ This variant is currently configured only for ManiSkill simulation. It keeps
 the frozen Stage 1 features and transition replay path, while replacing the
 Stage 2 policy and update objective with a direct TD3 actor and twin-Q critic.
 
+For pooled features instead of a learned RLT representation, use ``maniskill_prefix_stage2_td3_mlp_steam.yaml``. It sets ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``, so it can use an existing SFT VLA without a trained ``rlt_module``. Download the feature, expert, STEAM value-model, and phase-head checkpoints following :doc:`Prefix Fine-Tune <prefix>`, set their local paths, then launch:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
+
+The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. :doc:`Prefix Fine-Tune <prefix>` explains the published threshold's validation limits and how to collect calibration traces.
+
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
-freezes ``rollout.rlt_feature_model`` and only synchronizes the Stage 2 MLP
+freezes ``rollout.prefix_feature_model`` and only synchronizes the Stage 2 MLP
 actor. Before ``ready_for_online``, the ManiSkill route executes the VLA
 ``ref_chunk``. After ``algorithm.rlt_schedule.warmup_post_collect_updates``,
 the actor can take over in the automatic critical phase.
@@ -761,9 +763,9 @@ rollout; eval rollout runs without expert takeover and measures the learned acto
 Replay Buffer Behavior
 ----------------------
 
-For ``loss_type: rlt_ac``, the replay buffer does not store raw image
-observations as the RL state. The rollout worker returns RLT features, and the
-learner side stores those features as transitions:
+For ``loss_type: prefix_off_policy``, the replay buffer does not store raw image
+observations as the RL state. The rollout worker returns prefix features, and
+the learner side stores those features as transitions:
 
 .. code:: text
 
@@ -817,12 +819,12 @@ Useful RLT signals:
   - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
 
-  RLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
+  Prefix schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
 
-  - ``train/rlt/ready_for_online``: whether learner ``update_step`` has passed ``warmup_post_collect_updates``.
-  - ``train/rlt/actor_updates_run``, ``train/rlt/critic_updates_run``, and ``train/rlt/pending_update_budget``: actor/critic updates executed in the step and remaining learner backlog.
-  - ``train/rlt/updates_to_run``, ``train/rlt/should_train``, and ``train/rlt/skip_reason``: scheduled training for the step and why training may be skipped.
-  - ``train/rlt/global_transitions_since_train`` and ``train/rlt/global_total_transitions_added``: global replay ingest counters since the last training burst.
+  - ``train/prefix/ready_for_online``: whether learner ``update_step`` has passed ``warmup_post_collect_updates``.
+  - ``train/prefix/actor_updates_run``, ``train/prefix/critic_updates_run``, and ``train/prefix/pending_update_budget``: actor/critic updates executed in the step and remaining learner backlog.
+  - ``train/prefix/updates_to_run``, ``train/prefix/should_train``, and ``train/prefix/skip_reason``: scheduled training for the step and why training may be skipped.
+  - ``train/prefix/global_transitions_since_train`` and ``train/prefix/global_total_transitions_added``: global replay ingest counters since the last training burst.
 
 Experimental Results
 --------------------
@@ -845,17 +847,6 @@ Practical Notes
   ``config_name``, ``action_dim``, ``proprio_dim``, ``ref_num_action_chunks``,
   and ``z_dim`` must agree. To keep the full raw state, use
   ``state_indices: []``.
-- ``rollout.rlt_feature_model`` should point to the Stage 1 checkpoint, while
-  ``actor.model`` is the Stage 2 MLP policy updated by the actor-critic
-  worker.
-- ``rollout.model`` is the synced Stage 2 MLP copy on rollout workers. Keep
-  ``rollout.model.model_path: null`` for scratch Stage 2 training; use
-  ``runner.resume_dir`` to resume a Stage 2 run or ``runner.ckpt_path`` to load
-  a single Stage 2 weight file.
-- Do not configure ``actor.model.model_path`` for Stage 1. ``actor.model`` only
-  describes the Stage 2 MLP input/output shape and Q-head settings.
-- Stage 2 MLP settings are defined inline under ``actor.model`` in each Stage 2
-  YAML, not in a separate model defaults file.
 - ``keyboard_reward_wrapper: rlt_policy_switch`` is only needed for
   operator-controlled critical-phase switching.
 - The ManiSkill joint example uses ``env.*.rlt_policy_switch``. Do not use the
@@ -864,7 +855,9 @@ Practical Notes
   When you add a new simulator dataconfig, check the dataset ``state``, OpenPI
   transform, and Stage 2 ``proprio_dim`` together.
 - Stage 1, Stage 2, and checkpoint assets must load ``norm_stats.json`` from the same data semantics and ``repo_id``. Prefer setting ``openpi_data.norm_stats_path`` explicitly so Stage 1 runs still work when the checkpoint does not embed norm stats.
-- ``rollout.rlt_feature_model.model_path`` should point to the Stage 1 FSDP ``actor`` directory, for example ``.../checkpoints/global_step_<step>/actor``. Do not convert the RLT Stage 1 checkpoint to a bare ``model.safetensors`` for Stage 2, because the RLT token module is stored in the full wrapper checkpoint.
+- ``rollout.prefix_feature_model.model_path`` should point to the Stage 1 FSDP ``actor`` directory, for example ``.../checkpoints/global_step_<step>/actor``. Do not convert the RLT Stage 1 checkpoint to a bare ``model.safetensors`` for Stage 2, because the RLT token module is stored in the full wrapper checkpoint.
 - To add a simulator example, create a simulator environment config, keep
-  ``loss_type: rlt_ac`` and ``rollout.rlt_feature_model``, and replace the
-  real-robot phase-switching logic with simulator-appropriate behavior.
+  ``loss_type: prefix_off_policy`` and the appropriate frozen feature-model
+  block, then replace the real-robot phase-switching logic with
+  simulator-appropriate routing.
+- Read :doc:`../../extending/prefix` for Prefix pooling, feature-model, MLP-head, and algorithm extensions.

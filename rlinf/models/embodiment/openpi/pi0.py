@@ -698,7 +698,7 @@ class Pi0(model.BaseModel):
         prefix_mask: torch.Tensor,
         lang_tokens: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.rlt_cfg.rlt_image_only and lang_tokens is not None:
+        if self.rlt_cfg.prefix_image_only and lang_tokens is not None:
             num_image_tokens = prefix_output.shape[1] - lang_tokens.shape[1]
             prefix_output = prefix_output[:, :num_image_tokens]
             prefix_mask = prefix_mask[:, :num_image_tokens]

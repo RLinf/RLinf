@@ -377,6 +377,17 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
             )
         policies.append(q_head_policy)
 
+    from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
+
+    policies.append(
+        functools.partial(
+            lambda_auto_wrap_policy,
+            lambda_fn=lambda candidate: (
+                getattr(candidate, "_fsdp_wrap_role", None) is not None
+            ),
+        )
+    )
+
     if module_classes_to_wrap:
         module_classes_to_wrap = _resolve_module_classes_to_wrap(
             module, module_classes_to_wrap

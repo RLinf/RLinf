@@ -16,17 +16,16 @@ from __future__ import annotations
 
 from typing import Any, Literal, Sequence
 
-import numpy as np
 import torch
 
 from rlinf.models.embodiment.openpi.env_io import EnvIO
-from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
 from rlinf.models.embodiment.openpi.pi0 import Pi0
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+from rlinf.models.embodiment.openpi.prefix import OpenPiPrefixMixin
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 
 
-class Pi0Eval(EnvIO, Pi0):
+class Pi0Eval(OpenPiPrefixMixin, EnvIO, Pi0):
     """Inference-only: deterministic Euler sampling, optional RTC guidance."""
 
     def __init__(
@@ -116,51 +115,6 @@ class Pi0Eval(EnvIO, Pi0):
                 "model_action": model_actions.reshape(B, -1).contiguous(),
             },
             "model_actions": model_actions,
-        }
-
-    @torch.no_grad()
-    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
-        """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""
-        self._require_rlt()
-        observation = self.env_obs_to_observation(env_obs)
-
-        prepared_observation = preprocess_observation(observation, train=False)
-        prefix_output, prefix_mask, kv_cache = self.build_prefix_cache(
-            prepared_observation
-        )
-        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
-            prefix_output, prefix_mask, prepared_observation.tokenized_prompt
-        )
-        z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
-            dtype=torch.float32
-        )
-
-        model_actions = self._sample_actions_from_prefix_cache(
-            prepared_observation,
-            prefix_mask,
-            kv_cache,
-        )
-        ref_chunk = self.output_transform(
-            {"actions": model_actions, "state": observation.state}
-        )["actions"]
-
-        raw_proprio = self._select_configured_state(env_obs["states"])
-        if "maniskill" in self.config_name.lower():
-            state_dim = (
-                raw_proprio.shape[-1]
-                if hasattr(raw_proprio, "shape")
-                else np.asarray(raw_proprio).shape[-1]
-            )
-            proprio = observation.state[..., :state_dim]
-        else:
-            proprio = raw_proprio
-        if not torch.is_tensor(proprio):
-            proprio = torch.as_tensor(proprio)
-
-        return {
-            "z_rl": z_rl,
-            "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
-            "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
         }
 
     def _sample_actions_from_prefix_cache(

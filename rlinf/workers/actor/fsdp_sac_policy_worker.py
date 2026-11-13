@@ -590,8 +590,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         all_critic_metrics = {
             f"critic/{key}": np.mean(value) for key, value in all_critic_metrics.items()
         }
-        qf_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.critic_optim.clip_grad
+        qf_grad_norm = self.clip_optimizer_grad_norm(
+            self.qf_optimizer, self.cfg.actor.critic_optim.clip_grad
         )
 
         self.qf_optimizer.step()
@@ -606,6 +606,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
         if self.update_step % self.critic_actor_ratio == 0 and train_actor:
             self.optimizer.zero_grad()
+            self.before_actor_update()
             gbs_actor_loss = []
             gbs_entropy = []
             all_actor_metrics = {}
@@ -620,8 +621,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 f"actor/{key}": np.mean(value)
                 for key, value in all_actor_metrics.items()
             }
-            actor_grad_norm = self.model.clip_grad_norm_(
-                max_norm=self.cfg.actor.optim.clip_grad
+            actor_grad_norm = self.clip_optimizer_grad_norm(
+                self.optimizer, self.cfg.actor.optim.clip_grad
             )
             self.optimizer.step()
             self.lr_scheduler.step()
@@ -669,6 +670,13 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.soft_update_target_model()
 
         return metrics_data
+
+    def clip_optimizer_grad_norm(self, optimizer, max_norm):
+        """Clip training gradients using the wrapped model's distributed norm."""
+        return self.model.clip_grad_norm_(max_norm=max_norm)
+
+    def before_actor_update(self) -> None:
+        """Prepare optimizer-owned state before actor gradient accumulation."""
 
     def process_train_metrics(self, metrics):
         replay_buffer_stats = self.replay_buffer.get_stats()

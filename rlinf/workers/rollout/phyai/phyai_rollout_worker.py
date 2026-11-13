@@ -53,6 +53,7 @@ from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
 from rlinf.models.embodiment.openpi.transforms.pipeline import (
     build_openpi_transforms,
 )
+from rlinf.models.embodiment.prefix.config import is_prefix_off_policy_loss
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
     new_to_old_state_dict,
@@ -201,7 +202,9 @@ class PhyAIRolloutWorker(Worker):
         )
         self.collect_transitions = bool(cfg.rollout.get("collect_transitions", False))
         self.algorithm_cfg = cfg.get("algorithm", {})
-        self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self.enable_prefix = is_prefix_off_policy_loss(
+            self.algorithm_cfg.get("loss_type")
+        )
         self.collect_prev_infos = bool(cfg.rollout.get("collect_prev_infos", True))
         self.version = 0
         self.weight_syncer = None
@@ -242,7 +245,7 @@ class PhyAIRolloutWorker(Worker):
     @property
     def collect_raw_transition_obs(self) -> bool:
         """Whether trajectory parts carry raw observations for the actor."""
-        return self.collect_transitions and not self.enable_rlt
+        return self.collect_transitions and not self.enable_prefix
 
     def init_worker(self) -> None:
         """Build the PhyAI engine and the OpenPI transforms on this worker's GPU.

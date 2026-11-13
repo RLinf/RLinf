@@ -48,6 +48,7 @@ from rlinf.data.schema.embodied_trajectory import (
     select_trajectory_dispatcher,
 )
 from rlinf.data.schema.embodied_types import (
+    ActionPayload,
     EnvOutput,
     EnvPart,
     EnvTransition,
@@ -1690,7 +1691,7 @@ def test_trajectory_step_owns_intervention_and_transition_conversion():
         rewards=env.transition.rewards,
         collect_prev_infos=True,
         collect_transitions=True,
-        enable_rlt=False,
+        enable_prefix=False,
         include_final_value=True,
     )
 
@@ -1700,6 +1701,59 @@ def test_trajectory_step_owns_intervention_and_transition_conversion():
     assert "task_descriptions" not in step.curr_obs
     assert "task_descriptions" not in step.next_obs
     assert torch.equal(step.final_prev_values, torch.full((1, 1), 5.0))
+
+
+@pytest.mark.parametrize("collect_prev_infos", [False, True])
+def test_trajectory_step_preserves_gate_features_with_executed_action_mask(
+    collect_prev_infos,
+):
+    sources = [TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 2)]
+    actions = torch.ones(2, 3, 4)
+    logprobs = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+    executed_mask = torch.tensor([[True, False, False], [True, True, False]])
+    phase_features = torch.ones(2, 1, 6)
+    policy = PolicyPart(
+        sources=sources,
+        obs={"states": torch.zeros(2, 4)},
+        output=PolicyOutput(forward_inputs={"action": actions}, prev_logprobs=logprobs),
+    )
+    env = EnvPart(
+        sources=sources,
+        transition=EnvTransition(
+            rewards=torch.ones(2, 3),
+            executed_mask=executed_mask,
+            trajectory_infos={"rlt_gate_phase_features": phase_features},
+        ),
+    )
+
+    step = TrajectoryStep.from_parts(
+        policy,
+        env,
+        rewards=env.transition.rewards,
+        collect_prev_infos=collect_prev_infos,
+        collect_transitions=False,
+        enable_prefix=False,
+        include_final_value=False,
+    )
+
+    torch.testing.assert_close(step.forward_inputs["action"], actions)
+    torch.testing.assert_close(
+        step.trajectory_infos["rlt_gate_phase_features"], phase_features
+    )
+    assert "rlt_gate_phase_features" not in step.forward_inputs
+    trajectory = Trajectory.from_steps([step])
+    torch.testing.assert_close(
+        trajectory.split([1, 1])[1].trajectory_infos["rlt_gate_phase_features"],
+        phase_features[None, 1:2],
+    )
+    torch.testing.assert_close(step.forward_inputs["executed_mask"], executed_mask)
+    if collect_prev_infos:
+        torch.testing.assert_close(
+            step.prev_logprobs, logprobs.masked_fill(~executed_mask.unsqueeze(-1), 0)
+        )
+    else:
+        assert step.prev_logprobs is None
+    torch.testing.assert_close(policy.output.prev_logprobs, logprobs)
 
 
 def test_trajectory_owns_step_materialization_splitting_and_batching():
@@ -2221,9 +2275,13 @@ def test_history_reward_assignment_matches_main_across_chunks():
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
 
 
-@pytest.mark.parametrize("loss_type", ["rlt_ac", "rlt_td3"])
-def test_rlt_output_matches_main_transition_and_intervention_behavior(loss_type):
-    collector = _make(_config(algorithm={"loss_type": loss_type}))
+@pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
+def test_prefix_output_matches_main_transition_and_intervention_behavior(
+    algorithm_name,
+):
+    collector = _make(
+        _config(algorithm={"loss_type": "prefix_off_policy", "name": algorithm_name})
+    )
     key = TrajectoryKey(3, 0, 0, 0, 0)
     current_ref_chunk = torch.tensor([[1.0, 2.0]])
     intervened_chunk = torch.tensor([[9.0, 8.0]])
@@ -3059,6 +3117,7 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.prefix_runtime = None
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -3132,6 +3191,7 @@ def test_decoupled_gather_returns_a_partial_batch_at_the_deadline():
     route_key = ("route",)
     plan = SimpleNamespace(entries=[SimpleNamespace(key=route_key)] * 3)
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.prefix_runtime = None
     rollout.batch_router = {"policy": []}
     rollout._world_size = 2
     rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
@@ -3210,6 +3270,7 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
         tag="train_policy",
         route_key=None,
         batch_size=32,
+        merge_fn=env._merge_action_batches,
         infer_batch_size_fn=env._infer_action_batch_size,
         decoupled_mode=True,
     )
@@ -3346,10 +3407,12 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.prefix_runtime = None
+    rollout.cfg = OmegaConf.create({"env": {"train": {"auto_reset": True}}})
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
-    rollout.enable_rlt = False
+    rollout.enable_prefix = False
     rollout.collect_transitions = False
     rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
@@ -3424,6 +3487,7 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
             ),
         ]
     )
+    rollout.predict = rollout._predict_rollout_actions
     actor_channel = Mock()
     generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
     while hasattr(generate_one_epoch, "__wrapped__"):
@@ -3452,10 +3516,12 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.prefix_runtime = None
+    rollout.cfg = OmegaConf.create({"env": {"train": {"auto_reset": True}}})
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
-    rollout.enable_rlt = False
+    rollout.enable_prefix = False
     rollout.collect_transitions = False
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
@@ -3661,12 +3727,38 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
+@pytest.mark.parametrize("early_stop", [False, True])
+def test_rollout_merges_episode_boundaries_and_eval_early_stop(early_stop):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.prefix_runtime = None
+    dones = torch.tensor([[False, True]])
+    batches = [
+        {"obs": {"states": torch.zeros(1, 4)}, "dones": dones},
+        {
+            "obs": {"states": torch.ones(1, 4)},
+            "eval_epoch_done": early_stop,
+        },
+    ]
+
+    merged = rollout._merge_obs_batches(batches)
+
+    torch.testing.assert_close(
+        merged["obs"]["states"],
+        torch.cat([batch["obs"]["states"] for batch in batches]),
+    )
+    torch.testing.assert_close(
+        merged["dones"], torch.cat([dones, torch.zeros_like(dones)])
+    )
+    assert merged["eval_epoch_done"] is early_stop
+
+
 def test_rollout_runs_requested_terminal_inference_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.enable_rlt = False
+    rollout.prefix_runtime = None
+    rollout.enable_prefix = False
     rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.collect_transitions = False
-    rollout._predict_rollout_actions = Mock(
+    rollout.predict = Mock(
         return_value=(
             torch.zeros(1, 1),
             {
@@ -3685,7 +3777,7 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
     rollout._publish_env_part(completion, None, None, actor_channel)
 
-    rollout._predict_rollout_actions.assert_called_once_with(completion.next_obs)
+    rollout.predict.assert_called_once_with(completion.next_obs)
     part = actor_channel.put.call_args.args[0]
     assert torch.equal(part.bootstrap_values, torch.zeros(1, 1))
     assert torch.equal(part.final_prev_values, torch.zeros(1, 1))
@@ -3695,7 +3787,8 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
 def test_rollout_reuses_policy_obs_for_transition_next_obs():
     rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.enable_rlt = False
+    rollout.prefix_runtime = None
+    rollout.enable_prefix = False
     rollout.collect_transitions = True
     actor_channel = Mock()
     policy_obs = {"states": torch.ones(1, 4)}
@@ -3716,42 +3809,10 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
     assert part.next_rlt_obs is None
 
 
-def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
-    rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.enable_rlt = True
-    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
-    rollout.collect_transitions = True
-    rollout.hf_model = SimpleNamespace()
-    rollout._predict_rollout_actions = Mock(
-        return_value=(
-            torch.zeros(1, 1),
-            {
-                "forward_inputs": {
-                    "rlt_transition_z_rl": torch.ones(1, 2),
-                    "rlt_transition_proprio": torch.ones(1, 3),
-                    "rlt_transition_ref_chunk": torch.ones(1, 4),
-                }
-            },
-        )
-    )
-    actor_channel = Mock()
-    completion = EnvPart(
-        sources=[TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 1)],
-        transition=EnvTransition(),
-        next_obs={"states": torch.zeros(1, 4)},
-        requires_inference=True,
-    )
-
-    rollout._publish_env_part(completion, None, None, actor_channel)
-
-    rollout._predict_rollout_actions.assert_called_once()
-    part = actor_channel.put.call_args.args[0]
-    assert torch.equal(part.next_rlt_obs["z_rl"], torch.ones(1, 2))
-
-
 def test_rollout_keeps_next_forward_inputs_only_for_rlt():
     rollout = object.__new__(MultiStepRolloutWorker)
-    rollout.enable_rlt = True
+    rollout.prefix_runtime = None
+    rollout.enable_prefix = True
     rollout.collect_transitions = True
     actor_channel = Mock()
     key = TrajectoryKey(0, 0, 0, 0, 0)
@@ -4098,6 +4159,131 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+def test_action_payload_routes_feedback_and_preserves_plain_action_responses():
+    from rlinf.envs.utils import RolloutInfoReceiver
+
+    class Env(RolloutInfoReceiver):
+        num_envs = 3
+
+        def trajectory_info_spec(self):
+            return {"custom_sensor": torch.float32}
+
+        def set_rollout_infos(self, infos):
+            self.infos = infos
+
+    env = Env()
+    actions = torch.arange(12).reshape(3, 4).float()
+    infos = {"actor_active": torch.tensor([True, False, True])}
+    payload = ActionPayload(actions=actions, rollout_infos=infos)
+    first, second = split_batch_value(payload, [1, 2])
+    merged = merge_batch_values([first, second])
+    torch.testing.assert_close(merged.actions, actions)
+    torch.testing.assert_close(
+        merged.rollout_infos["actor_active"], infos["actor_active"]
+    )
+    assert EnvWorker._infer_action_batch_size(second) == 2
+    assert EnvWorker._consume_action_payload(merged, env) is merged.actions
+    torch.testing.assert_close(env.infos["actor_active"], infos["actor_active"])
+    assert EnvWorker._consume_action_payload(actions, env) is actions
+    response = SimpleNamespace(actions=actions)
+    assert EnvWorker._consume_action_payload(response, env) is actions
+    assert EnvWorker._merge_action_batches([response]) is response
+    worker = object.__new__(EnvWorker)
+    worker.collect_rlt_gate_trace = True
+    selected = worker._select_trajectory_infos(
+        {"custom_sensor": actions, "unexported": actions}, env
+    )
+    assert set(selected) == {"custom_sensor"}
+    torch.testing.assert_close(selected["custom_sensor"], actions[:, -1:])
+
+
+@pytest.mark.parametrize("mode", ["train", "eval"])
+@pytest.mark.parametrize("typed", [False, True])
+@pytest.mark.parametrize("decoupled,rollout_ranks", [(False, 1), (False, 2), (True, 2)])
+def test_env_receives_actions_and_feedback_in_both_modes(
+    mode, typed, decoupled, rollout_ranks
+):
+    from rlinf.scheduler.worker.routing import build_route_channel_key
+
+    env = object.__new__(EnvWorker)
+    env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
+    env.env_decoupled_mode = decoupled
+    env.train_batch_size = 4
+    env.eval_batch_size = 8
+    env._rank, env._world_size = 0, 1
+    env._worker_address = SimpleNamespace(root_group_name="EnvGroup")
+    env._manager_proxy = SimpleNamespace(
+        get_worker_info=lambda _address: SimpleNamespace(group_world_size=rollout_ranks)
+    )
+    env.batch_router = {}
+    batch_size = env.eval_batch_size if mode == "eval" else env.train_batch_size
+    actions = torch.arange(batch_size * 6).reshape(batch_size, 2, 3).float()
+    feedback = {"actor_active": torch.arange(batch_size) % 2 == 0}
+    payload = (
+        ActionPayload(actions=actions, rollout_infos=feedback) if typed else actions
+    )
+    shards = split_batch_value(payload, [batch_size // rollout_ranks] * rollout_ranks)
+    base_tag = "rollout_results" if mode == "eval" else "policy"
+    tag = f"{mode}_{base_tag}" if decoupled or mode == "eval" else base_tag
+    ranks = list(range(rollout_ranks))
+    # Decoupled responses may arrive out of source-row order.
+    if decoupled:
+        ranks.reverse()
+    items = iter(
+        (
+            build_route_channel_key(
+                "RolloutGroup",
+                "EnvGroup",
+                None if decoupled else rank,
+                0,
+                tag,
+                route_key=None if decoupled else 3,
+            ),
+            {
+                "batch_index": f"0_{rank}_{mode}_{base_tag}",
+                "batch": shards[rank],
+            }
+            if decoupled
+            else shards[rank],
+        )
+        for rank in ranks
+    )
+
+    def receive(*, key):
+        expected_key, item = next(items)
+        assert key == expected_key
+        return item
+
+    result = env._recv_actions(SimpleNamespace(get=receive), stage_id=3, mode=mode)
+    if rollout_ranks == 1:
+        assert result is shards[0]
+    if typed:
+        assert isinstance(result, ActionPayload)
+        torch.testing.assert_close(result.actions, actions)
+        torch.testing.assert_close(
+            result.rollout_infos["actor_active"], feedback["actor_active"]
+        )
+    else:
+        torch.testing.assert_close(result, actions)
+
+
+def test_prefix_replay_rejects_recorded_row_without_current_observation():
+    from rlinf.algorithms.prefix_off_policy.replay import PrefixReplayService
+
+    cfg = OmegaConf.create(
+        {"algorithm": {"rlt_transition_replay": True}, "env": {"train": {}}}
+    )
+    replay = PrefixReplayService(cfg)
+    replay.bind_buffers(TrajectoryReplayBuffer(), None)
+    trajectory = Trajectory(
+        actions=torch.zeros(1, 1, 2),
+        rewards=torch.zeros(1, 1, 1),
+        forward_inputs={"record_transition": torch.ones(1, 1, 1, dtype=torch.bool)},
+    )
+    with pytest.raises(ValueError, match="curr_obs.*row index 0"):
+        replay.ingest([trajectory])
 
 
 class TestVersionFieldPreservation:

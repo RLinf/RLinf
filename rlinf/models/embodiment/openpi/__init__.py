@@ -123,7 +123,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             pi0_kwargs["short_memory_drop_history_layer"] = int(drop_history_layer)
 
     pi0_config = Pi0Config(**pi0_kwargs)
-    rlt_cfg = build_rlt_config(model_cfg)
+    rlt_cfg = build_rlt_config(model_cfg, parent_cfg=cfg)
     runtime = {
         "num_steps": num_steps,
         "action_env_dim": action_env_dim,
