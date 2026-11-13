@@ -1145,7 +1145,8 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     """Require per-step observations when online LeRobot collection is enabled.
 
     The collector stores one observation/action pair per environment step.
-    RoboTwin, LIBERO, and Behavior share ``env.train.skip_intermediate_renders``;
+    RoboTwin, LIBERO, Behavior, and Bench2Dex share
+    ``env.train.skip_intermediate_renders``;
     online LeRobot requires it to be false. Eval does not write the dataset.
     """
     enabled = bool(
@@ -1167,6 +1168,7 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
         SupportedEnvType.ROBOTWIN: True,
         SupportedEnvType.LIBERO: False,
         SupportedEnvType.BEHAVIOR: False,
+        SupportedEnvType.BENCH2DEX: False,
     }
     env_type = SupportedEnvType(train_env.env_type)
     if env_type not in skip_intermediate_renders_default:
@@ -1218,12 +1220,47 @@ def validate_bench2dex_cfg(
             )
         if cfg.env.get("enable_offload", False):
             raise ValueError(
-                "Bench2Dex scene workers must use env.enable_offload=false"
+                "Set Bench2Dex offload per split with env.train.enable_offload "
+                "or env.eval.enable_offload, not env.enable_offload"
             )
+        if env_cfg.get("enable_offload", False):
+            if env_cfg.auto_reset or (
+                env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+            ):
+                raise ValueError(
+                    "Bench2Dex offload requires auto_reset=false and a rollout "
+                    "budget covering the full episode"
+                )
+            if split == "train" and (
+                cfg.runner.get("use_training_pipeline", False)
+                or cfg.runner.get("enable_decoupled_mode", False)
+                or cfg.algorithm.get("loss_type") == "decoupled_actor_critic"
+            ):
+                raise ValueError(
+                    "Bench2Dex environment offload requires synchronous, "
+                    "non-pipelined training without bootstrap prefetch"
+                )
         if env_cfg.get("ignore_terminations", False):
             raise ValueError(
                 "Bench2Dex uses ignore_terminations=false; select early_stop in init_params"
             )
+        if env_cfg.get("skip_intermediate_renders", False):
+            needs_per_action_observations = (
+                OmegaConf.select(env_cfg, "video_cfg.save_video", default=False)
+                or OmegaConf.select(env_cfg, "data_collection.enabled", default=False)
+                or OmegaConf.select(
+                    env_cfg, "init_params.tactile.enabled", default=False
+                )
+                or (
+                    cfg.get("reward", {}).get("use_reward_model", False)
+                    and not cfg.get("reward", {}).get("standalone_realworld", False)
+                )
+            )
+            if needs_per_action_observations:
+                raise ValueError(
+                    "Bench2Dex video, data collection, tactile sensors and external "
+                    "reward models require skip_intermediate_renders=false"
+                )
         if split == "train":
             group_size = int(env_cfg.get("group_size", 1))
             if group_size != int(cfg.algorithm.group_size) or group_size < 1:

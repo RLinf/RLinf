@@ -536,6 +536,9 @@ class EmbodiedRunner:
                     rollout_handle.wait()
                     if self.reward is not None:
                         reward_handle.wait()
+                    if self.cfg.env.train.get("enable_offload", False):
+                        # Environment resources must be released before actor onload.
+                        env_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):

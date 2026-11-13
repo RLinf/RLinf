@@ -26,6 +26,7 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.data.schema.embodied_types import JointPositionTargets
+from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 
 from .evaluation import Bench2DexResults, normalize_profile
@@ -35,7 +36,7 @@ from .venv import Bench2DexSubprocEnvWorker, Bench2DexVectorEnv
 
 
 class Bench2DexEnv(gym.Env):
-    """Batch independent scene processes using RLinf's vector environment."""
+    """Expose batched transitions from independently owned simulator processes."""
 
     def __init__(
         self,
@@ -55,7 +56,11 @@ class Bench2DexEnv(gym.Env):
                 "Use ignore_terminations=false; early_stop selects the Bench2Dex evaluation protocol"
             )
         self.cfg, self.num_envs = cfg, num_envs
+        self.seed = int(cfg.seed) + seed_offset
         self.auto_reset = bool(cfg.auto_reset)
+        self.skip_intermediate_renders = bool(
+            cfg.get("skip_intermediate_renders", False)
+        )
         self.group_size = int(cfg.get("group_size", 1))
         self.use_fixed_reset_state_ids = bool(cfg.use_fixed_reset_state_ids)
         if self.group_size < 1 or num_envs % self.group_size:
@@ -106,7 +111,10 @@ class Bench2DexEnv(gym.Env):
         self.action_space = gym.spaces.Box(
             -np.inf, np.inf, shape=(spec.action_dim,), dtype=np.float32
         )
-        env_fns = [
+        self.env = None
+        self._closed = False
+        self._episode_indices = None
+        self._env_fns = [
             partial(
                 make_bench2dex_runtime,
                 params,
@@ -116,16 +124,10 @@ class Bench2DexEnv(gym.Env):
             )
             for env_id in range(num_envs)
         ]
-        workers = []
-
-        def worker_fn(env_fn):
-            worker = Bench2DexSubprocEnvWorker(env_fn)
-            workers.append(worker)
-            return worker
-
-        try:
-            self.env = Bench2DexVectorEnv(env_fns, worker_fn)
-            if cfg.get("is_eval", False) and params.get("output_dir"):
+        if not cfg.get("enable_offload", False):
+            self._start_envs()
+        if cfg.get("is_eval", False) and params.get("output_dir"):
+            try:
                 profile = normalize_profile(
                     params.get("generalization_profile", "none")
                 )
@@ -136,9 +138,38 @@ class Bench2DexEnv(gym.Env):
                 self.results = Bench2DexResults(
                     spec.source_path, output, f"{params['policy_name']}:{channel}"
                 )
+            except BaseException:
+                self.close()
+                raise
+
+    def _start_envs(self) -> None:
+        if self._closed:
+            raise RuntimeError("Cannot restart a closed Bench2Dex environment")
+        if self.env is not None:
+            return
+        workers = []
+
+        def worker_fn(env_fn):
+            worker = Bench2DexSubprocEnvWorker(env_fn)
+            workers.append(worker)
+            return worker
+
+        try:
+            self.env = Bench2DexVectorEnv(self._env_fns, worker_fn)
+            if self._episode_indices is not None:
+                for env_id, episode_index in enumerate(self._episode_indices):
+                    self.env.set_env_attr("episode_index", episode_index, id=env_id)
+            get_logger().info(
+                "Bench2Dex simulator pool started: pids=%s",
+                [worker.process.pid for worker in workers],
+            )
         except BaseException:
-            for worker in workers:
-                worker.close()
+            if self.env is not None:
+                self.env.close()
+            else:
+                for worker in workers:
+                    worker.close()
+            self.env = None
             raise
 
     @property
@@ -150,10 +181,10 @@ class Bench2DexEnv(gym.Env):
         images = raw["images"]
         tactile = raw["tactile"]
         obs = {
-            "main_images": torch.from_numpy(images[self.spec["main_camera"]]).unsqueeze(
+            "main_images": torch.as_tensor(images[self.spec["main_camera"]]).unsqueeze(
                 0
             ),
-            "states": torch.from_numpy(raw["state"]).unsqueeze(0),
+            "states": torch.as_tensor(raw["state"]).unsqueeze(0),
             "task_descriptions": [raw["instruction"]],
             "extra_obs": {
                 "policy_sampling": {
@@ -161,7 +192,7 @@ class Bench2DexEnv(gym.Env):
                     "query_index": torch.tensor([self.policy_queries[env_id]]),
                 },
                 "bench2dex": {
-                    "full_joint_positions": torch.from_numpy(
+                    "full_joint_positions": torch.as_tensor(
                         raw["full_joint_positions"]
                     ).unsqueeze(0),
                     "active_joint_names": [list(raw["active_joint_names"])],
@@ -183,8 +214,8 @@ class Bench2DexEnv(gym.Env):
             ("wrist_images", self.spec["wrist_cameras"]),
         ):
             if cameras:
-                obs[field] = torch.from_numpy(
-                    np.stack([images[name] for name in cameras])
+                obs[field] = torch.stack(
+                    [torch.as_tensor(images[name]) for name in cameras]
                 ).unsqueeze(0)
         return obs
 
@@ -238,6 +269,7 @@ class Bench2DexEnv(gym.Env):
             )
         if reset_state_ids is None and self.use_fixed_reset_state_ids:
             reset_state_ids = self.reset_state_ids[ids]
+        self._start_envs()
         observations, infos = self.env.reset(
             id=ids, seed=seed, reset_state_ids=reset_state_ids
         )
@@ -268,7 +300,11 @@ class Bench2DexEnv(gym.Env):
         return obs[-1], reward[:, 0], terminated[:, 0], truncated[:, 0], info[-1]
 
     def chunk_step(self, actions) -> tuple:
-        """Return C post-action observation batches and outcome tensors [N,C]."""
+        """Return post-action observations and outcome tensors [N,C].
+
+        With ``skip_intermediate_renders``, return one observation batch at
+        the chunk boundary; otherwise return C batches, one per action.
+        """
         return self._execute_chunk(actions, auto_reset=self.auto_reset)
 
     def _execute_chunk(self, actions, *, auto_reset: bool) -> tuple:
@@ -312,14 +348,20 @@ class Bench2DexEnv(gym.Env):
             )
             for i in ids
         ]
-        transitions = self.env.chunk_step(commands, env_ids=ids)
+        transitions = self.env.chunk_step(
+            commands,
+            env_ids=ids,
+            capture_intermediate_observations=not self.skip_intermediate_renders,
+        )
         all_ids = list(range(self.num_envs))
         for t in range(count):
             for i, scene_transitions in zip(ids, transitions, strict=True):
                 if t >= len(scene_transitions):
                     continue
                 obs, reward, term, trunc, info = scene_transitions[t]
-                self._observations[i], self._infos[i] = obs, info
+                if obs is not None:
+                    self._observations[i] = obs
+                self._infos[i] = info
                 self._terminated[i], self._truncated[i] = bool(term), bool(trunc)
                 rewards[i, t] = float(reward) * self.reward_coef
                 valid[i, t] = info["action_steps"] > 0
@@ -342,7 +384,8 @@ class Bench2DexEnv(gym.Env):
                         info, int(self.policy_queries[i]), self.query_at_success[i]
                     )
                     self._episode_recorded[i] = True
-            observations.append(self._batch_obs(all_ids))
+            if not self.skip_intermediate_renders or t == count - 1:
+                observations.append(self._batch_obs(all_ids))
             info = self._wrap_info(all_ids)
             info["action_steps"] = valid[:, t].to(torch.int64)
             infos.append(info)
@@ -388,6 +431,38 @@ class Bench2DexEnv(gym.Env):
         )
         self._next_reset_state_id += self._reset_state_stride
 
+    def offload(self) -> None:
+        """Release simulator GPU resources after all initialized episodes end.
+
+        Close and join this environment's simulator children, retaining episode
+        cursors and parent-side results on CPU. The next reset creates a new
+        pool with the same shard assignments and next-episode indices.
+
+        Raises:
+            RuntimeError: An initialized episode is still in progress. Live
+                physics state cannot be restored after process shutdown.
+        """
+        if self.env is None:
+            return
+        active = self._initialized & ~(
+            self._terminated.numpy() | self._truncated.numpy()
+        )
+        if active.any():
+            raise RuntimeError(
+                "Bench2Dex offload requires completed episodes; "
+                "use auto_reset=false and a full episode rollout budget"
+            )
+        self._episode_indices = self.env.get_env_attr("episode_index")
+        pids = [worker.process.pid for worker in self.env.workers]
+        self.env.close()
+        self.env = None
+        self._initialized[:] = False
+        self.is_start = True
+        get_logger().info("Bench2Dex simulator pool offloaded: exited_pids=%s", pids)
+
     def close(self) -> None:
-        if not self.env.is_closed:
+        """Permanently close owned simulators; subsequent reset is invalid."""
+        self._closed = True
+        if self.env is not None and not self.env.is_closed:
             self.env.close()
+        self.env = None

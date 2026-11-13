@@ -54,7 +54,13 @@ def _worker(parent: Connection, remote: Connection, env_fn: CloudpickleWrapper) 
             if command == "step":
                 remote.send(runtime.step(data))
             elif command == "chunk_step":
-                remote.send(runtime.chunk_step(data))
+                actions, capture_intermediate_observations = data
+                remote.send(
+                    runtime.chunk_step(
+                        actions,
+                        capture_intermediate_observations=capture_intermediate_observations,
+                    )
+                )
             elif command == "reset":
                 remote.send(runtime.reset(**data))
             elif command == "getattr":
@@ -138,10 +144,14 @@ class Bench2DexSubprocEnvWorker(SubprocEnvWorker):
         self.parent_remote.send([command, data])
         return self.recv()
 
-    def send_chunk(self, actions: Any) -> None:
+    def send_chunk(
+        self, actions: Any, *, capture_intermediate_observations: bool = True
+    ) -> None:
         """Send a scene's complete action chunk without waiting for its result."""
         self.is_reset = False
-        self.parent_remote.send(["chunk_step", actions])
+        self.parent_remote.send(
+            ["chunk_step", (actions, capture_intermediate_observations)]
+        )
 
     def reset(self, **kwargs: Any) -> tuple[dict, dict]:
         """Reset this scene through the same protocol as batched resets."""
@@ -174,9 +184,16 @@ class Bench2DexSubprocEnvWorker(SubprocEnvWorker):
                 self.process.terminate()
                 self.process.join(timeout=5)
             if self.process.is_alive():
+                get_logger().warning(
+                    f"Bench2Dex subprocess {self.process.pid} did not exit after "
+                    "termination; killing this worker's child"
+                )
+                self.process.kill()
+                self.process.join(timeout=5)
+            if self.process.is_alive():
                 raise RuntimeError(
                     f"Expected Bench2Dex subprocess {self.process.pid} to exit "
-                    "after termination; it is still alive"
+                    "after killing; it is still alive"
                 )
             self.process.join()
         finally:
@@ -213,7 +230,13 @@ class Bench2DexVectorEnv(BaseVectorEnv):
             [result[1] for result in results],
         )
 
-    def chunk_step(self, commands: list, env_ids=None) -> list[list[tuple]]:
+    def chunk_step(
+        self,
+        commands: list,
+        env_ids=None,
+        *,
+        capture_intermediate_observations: bool = True,
+    ) -> list[list[tuple]]:
         """Send to all selected scenes, then collect their executed transitions.
 
         Each command contains one scene's complete chunk. Results follow
@@ -228,5 +251,8 @@ class Bench2DexVectorEnv(BaseVectorEnv):
             )
         self._assert_id(ids)
         for command, env_id in zip(commands, ids, strict=True):
-            self.workers[env_id].send_chunk(command)
+            self.workers[env_id].send_chunk(
+                command,
+                capture_intermediate_observations=capture_intermediate_observations,
+            )
         return [self.workers[env_id].recv() for env_id in ids]
