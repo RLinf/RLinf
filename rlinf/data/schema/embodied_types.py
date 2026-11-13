@@ -313,11 +313,12 @@ class EnvTransition:
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
+        previous_dones: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         """Build the reward tensor consumed by trajectory training.
 
         Reward-model scores are weighted into environment rewards first.
-        Auto-reset truncations then receive the configured bootstrap value.
+        Truncations then receive the configured bootstrap value once.
 
         The result has independent storage for later in-place reward updates.
         """
@@ -331,10 +332,27 @@ class EnvTransition:
             )
         else:
             rewards = rewards.clone()
-        if bootstrap_values is None or not auto_reset or self.dones is None:
+        if bootstrap_values is None or self.dones is None:
             return rewards
 
         terminal = self.truncations if bootstrap_type == "standard" else self.dones
+        if not auto_reset:
+            if bootstrap_type != "standard" or terminal is None:
+                return rewards
+            # Non-reset environments retain done flags in later padding chunks.
+            indices = self.dones.long().argmax(dim=-1)
+            mask = self.dones.any(dim=-1) & terminal.gather(
+                1, indices[:, None]
+            ).squeeze(1)
+            if self.terminations is not None:
+                mask &= ~self.terminations.gather(1, indices[:, None]).squeeze(1)
+            if previous_dones is not None:
+                mask &= ~previous_dones[:, -1]
+            rewards[mask, indices[mask]] += gamma * bootstrap_values[mask].reshape(
+                -1
+            ).to(rewards.dtype)
+            return rewards
+
         if terminal is None or not terminal[:, -1].any():
             return rewards
 
@@ -645,6 +663,7 @@ class EnvPart:
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
+        previous_dones: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         """Return the training rewards represented by this environment part."""
         return self.transition.compute_rewards(
@@ -654,6 +673,7 @@ class EnvPart:
             auto_reset=auto_reset,
             bootstrap_type=bootstrap_type,
             gamma=gamma,
+            previous_dones=previous_dones,
         )
 
 
