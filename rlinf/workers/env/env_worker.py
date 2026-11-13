@@ -38,7 +38,6 @@ from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
-    copy_dict_tensor,
     update_nested_cfg,
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
@@ -159,6 +158,11 @@ class EnvWorker(Worker):
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
             self.eval_batch_size = self.cfg.env.eval.total_num_envs // self.stage_num
+            self.eval_early_stop_on_done = bool(
+                eval_env_cfg.get("early_stop_on_done", False)
+            )
+        else:
+            self.eval_early_stop_on_done = False
         self.n_train_chunk_steps = 0
         if self.enable_train:
             self.n_train_chunk_steps = (
@@ -404,8 +408,8 @@ class EnvWorker(Worker):
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """Execute a chunk and build environment output and LeRobot payload.
 
-        ``obs_list`` in the payload stays post-action. The caller prepends the
-        observation from before this chunk when a valid-action mask is present.
+        ``obs_list`` in the payload stays post-action. The caller snapshots the
+        observation from before this chunk for LeRobot action pairing.
         """
         exec_actions = prepare_actions(
             raw_chunk_actions=chunk_actions["raw_actions"]
@@ -491,6 +495,10 @@ class EnvWorker(Worker):
                 intervene_actions=intervene_actions,
                 intervene_flags=intervene_flags,
                 rlt_switch_flags=rlt_switch_flags,
+                executed_mask=infos["executed_mask"]
+                if SupportedEnvType(self.cfg.env.train.env_type)
+                is SupportedEnvType.SIMPLE
+                else None,
             ),
         )
         chunk_step_payload = {
@@ -564,18 +572,17 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
-            transition=EnvTransition(rlt_switch_flags=rlt_switch_flags),
+            transition=EnvTransition(
+                dones=chunk_dones,
+                terminations=chunk_terminations,
+                truncations=chunk_truncations,
+                rlt_switch_flags=rlt_switch_flags,
+            ),
         )
         return env_output, env_info
 
     def _build_chunk_final_obs(self, obs_list, infos_list):
-        """Build per-env terminal observations for a whole chunk.
-
-        Matches the old wrapper semantics:
-        - default to the last rollout observation for each env
-        - if an env terminated earlier in the chunk, replace that env's observation
-          with the true `final_observation` captured at that substep
-        """
+        """Copy the last observation and restore completed environments' terminal rows."""
         if not isinstance(obs_list, (list, tuple)) or len(obs_list) == 0:
             return None
 
@@ -583,7 +590,30 @@ class EnvWorker(Worker):
         if not isinstance(last_obs, dict):
             return None
 
-        merged_final_obs = copy_dict_tensor(last_obs)
+        def replace_terminal_rows(
+            observation: dict[str, Any], terminal: dict[str, Any], done_mask: np.ndarray
+        ) -> None:
+            for key, value in observation.items():
+                if key not in terminal:
+                    continue
+                final_value = terminal[key]
+                if isinstance(value, dict) and isinstance(final_value, dict):
+                    replace_terminal_rows(value, final_value, done_mask)
+                elif isinstance(value, torch.Tensor) and isinstance(
+                    final_value, torch.Tensor
+                ):
+                    dst_mask = torch.as_tensor(done_mask, device=value.device)
+                    src_mask = dst_mask.to(device=final_value.device)
+                    value[dst_mask] = final_value[src_mask]
+                elif isinstance(value, np.ndarray) and isinstance(
+                    final_value, np.ndarray
+                ):
+                    value[done_mask] = final_value[done_mask]
+                elif isinstance(value, list) and isinstance(final_value, list):
+                    for index in np.flatnonzero(done_mask):
+                        value[index] = copy.deepcopy(final_value[index])
+
+        merged_final_obs = copy.deepcopy(last_obs)
 
         if not isinstance(infos_list, (list, tuple)):
             return merged_final_obs
@@ -614,42 +644,7 @@ class EnvWorker(Worker):
             if not done_mask.any():
                 continue
 
-            def replace_extra_obs(destination, source):
-                for key, value in destination.items():
-                    if key not in source:
-                        continue
-                    final_value = source[key]
-                    if isinstance(value, dict):
-                        replace_extra_obs(value, final_value)
-                    elif isinstance(value, torch.Tensor):
-                        mask = torch.as_tensor(done_mask, device=value.device)
-                        value[mask] = final_value[mask.to(final_value.device)]
-                    elif isinstance(value, np.ndarray):
-                        value[done_mask] = final_value[done_mask]
-                    elif isinstance(value, list):
-                        destination[key] = [
-                            copy.deepcopy(final_value[index]) if done else item
-                            for index, (done, item) in enumerate(zip(done_mask, value))
-                        ]
-
-            if "extra_obs" in final_obs:
-                replace_extra_obs(merged_final_obs["extra_obs"], final_obs["extra_obs"])
-
-            for key, value in merged_final_obs.items():
-                if key not in final_obs:
-                    continue
-
-                final_value = final_obs[key]
-                if isinstance(value, torch.Tensor) and isinstance(
-                    final_value, torch.Tensor
-                ):
-                    dst_mask = torch.as_tensor(done_mask, device=value.device)
-                    src_mask = dst_mask.to(device=final_value.device)
-                    merged_final_obs[key][dst_mask] = final_value[src_mask]
-                elif isinstance(value, np.ndarray) and isinstance(
-                    final_value, np.ndarray
-                ):
-                    merged_final_obs[key][done_mask] = final_value[done_mask]
+            replace_terminal_rows(merged_final_obs, final_obs, done_mask)
 
         return merged_final_obs
 
@@ -1170,26 +1165,17 @@ class EnvWorker(Worker):
                     actions = self._recv_actions(input_channel, stage_id)
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
+                    if self.enable_online_lerobot:
+                        # Snapshot before stepping; environments may reuse obs buffers.
+                        initial_observation = clone_nested_to_cpu(
+                            env_outputs[stage_id].obs
+                        )
                     env_output, env_info, chunk_step_data = self.env_interact_step(
                         actions,
                         stage_id,
                     )
-
-                    # LeRobot stores the observation from before each action.
-                    # The env returns the frame after each action, so prepend the
-                    # frame sent to the policy and drop the last post-action frame.
-                    if (
-                        self.enable_online_lerobot
-                        and chunk_step_data.get("valid_action_mask") is not None
-                    ):
-                        post_action_obs = chunk_step_data["obs_list"]
-                        if not isinstance(post_action_obs, (list, tuple)):
-                            post_action_obs = [post_action_obs]
-                        chunk_step_data["obs_list"] = [
-                            env_outputs[stage_id].obs,
-                            *post_action_obs[:-1],
-                        ]
-
+                    if self.enable_online_lerobot:
+                        chunk_step_data["initial_observation"] = initial_observation
                     # Delay the next observation without blocking other worker tasks.
                     await self._maybe_wait_env_delay(stage_id)
 
@@ -1306,6 +1292,7 @@ class EnvWorker(Worker):
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
+            eval_epoch_done = False
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
                     policy_output = self.recv_from(
@@ -1333,6 +1320,27 @@ class EnvWorker(Worker):
                     for key, value in env_info.items():
                         eval_metrics[key].append(value)
 
+                    if (
+                        self.eval_early_stop_on_done
+                        and env_output.dones is not None
+                        and env_output.dones.any()
+                        and eval_step < self.n_eval_chunk_steps - 1
+                    ):
+                        env_batch = self._build_rollout_input_data(env_output.to_dict())
+                        env_batch["eval_epoch_done"] = True
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=env_batch,
+                            split_fn=self._obs_split_fn,
+                            mode="eval",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                        eval_epoch_done = True
+                        break
+
                     if self.cfg.env.eval.auto_reset:
                         if (
                             eval_rollout_epoch == self.eval_rollout_epoch - 1
@@ -1353,6 +1361,9 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+
+                if eval_epoch_done:
+                    break
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):

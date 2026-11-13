@@ -45,6 +45,7 @@ infer_benchmark() {
         bench2dex_*|bench2dex-* ) echo "bench2dex" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
+        robodojo_*|robodojo-* ) echo "robodojo" ;;
         realworld_*|realworld-* ) echo "realworld" ;;
         maniskill_*|maniskill-* ) echo "maniskill" ;;
         metaworld_*|metaworld-* ) echo "metaworld" ;;
@@ -53,6 +54,8 @@ infer_benchmark() {
         robocasa_*|robocasa-* ) echo "robocasa" ;;
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
+        geniesim_*|geniesim-* ) echo "geniesim" ;;
+        simple_*|simple-* ) echo "simple" ;;
         * )
             echo "unknown"
             ;;

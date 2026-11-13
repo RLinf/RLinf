@@ -16,9 +16,15 @@ import os
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-from omegaconf import ListConfig
 
+from rlinf.algorithms.diffusion.nft import (
+    build_nft_schedule,
+    compute_nft_loss,
+    get_nft_tau,
+    nft_requires_ema,
+    resample_nft_inputs,
+    update_nft_ema,
+)
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -28,7 +34,8 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.utils import clear_memory, masked_mean
+from rlinf.utils.pinned_offload import pinned_offload_context
+from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -44,17 +51,54 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         super().init_worker()
         self.init_rollout_model()
 
+    def offload_param_and_grad(self, offload_grad: bool = False) -> None:
+        """Override to also offload ``rollout_model_state_dict`` to CPU.
+
+        The parent implementation only moves FSDP model parameters and
+        gradients to CPU.  However, ``rollout_model_state_dict`` is a full
+        (un-sharded) copy of the model weights that stays on GPU if not
+        explicitly moved — consuming sizeof(bf16) x number of params of GPU memory
+        even during ``recv_rollout_trajectories`` when the model itself is
+        offloaded.  By piggybacking on the parent's offload, the rollout
+        state dict follows the same lifecycle: on CPU when the model is
+        offloaded (recv phase), on GPU when the model is loaded (training
+        phase).  Pinned memory is used for the GPU→CPU copy to maximise PCIe
+        bandwidth.
+        """
+        super().offload_param_and_grad(offload_grad)
+        rollout_state = getattr(self, "rollout_model_state_dict", None)
+        if rollout_state:
+            with pinned_offload_context():
+                for key, value in rollout_state.items():
+                    if torch.is_tensor(value) and value.device.type != "cpu":
+                        rollout_state[key] = value.to("cpu")
+
+    def load_param_and_grad(self, device_id: int, load_grad: bool = False) -> None:
+        """Override to also load ``rollout_model_state_dict`` back to GPU.
+
+        Mirrors :meth:`offload_param_and_grad`: when the FSDP parameters are
+        loaded to GPU for training, also move ``rollout_model_state_dict``
+        so that ``soft_update_rollout_model`` (EMA update via ``lerp_``) and
+        ``_recompute_v_old`` (``load_state_dict`` into the ref model) can
+        operate on-GPU without cross-device copies.
+        """
+        super().load_param_and_grad(device_id, load_grad)
+        rollout_state = getattr(self, "rollout_model_state_dict", None)
+        if rollout_state:
+            device = (
+                torch.device(device_id)
+                if not isinstance(device_id, torch.device)
+                else device_id
+            )
+            for key, value in rollout_state.items():
+                if torch.is_tensor(value) and value.device.type == "cpu":
+                    rollout_state[key] = value.to(device)
+
     def init_rollout_model(self) -> None:
         """Initialize rollout model state for off-policy support."""
         self.rollout_model_state_dict = {}
-        tau = self.cfg.algorithm.get("nft_tau", 1.0)
-        if isinstance(tau, ListConfig):
-            tau = list(tau)
-            need_rollout_state = min(float(tau[0]), float(tau[1])) < 1.0
-        else:
-            need_rollout_state = float(tau) < 1.0
-        # init rollout model state dict
-        if need_rollout_state:
+        self._cached_ref_model = None  # lazy-init, reused across iterations
+        if nft_requires_ema(self.cfg.algorithm.get("nft_tau", 1.0)):
             src = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
             for key, value in src.items():
                 if torch.is_tensor(value):
@@ -62,26 +106,79 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 else:
                     self.rollout_model_state_dict[key] = value
 
-    def _get_current_nft_tau(self) -> float:
-        """Return scalar tau or linearly annealed tau from [start, end, s0, s1]."""
-        tau = self.cfg.algorithm.get("nft_tau", 1.0)
-        if isinstance(tau, ListConfig):
-            tau = list(tau)
-        if isinstance(tau, (list, tuple)):
-            start_tau, end_tau = float(tau[0]), float(tau[1])
-            start_step, end_step = int(tau[2]), int(tau[3])
-            step = int(getattr(self, "version", 0))
-            if step <= start_step:
-                return start_tau
-            if step >= end_step:
-                return end_tau
-            ratio = (
-                0.0
-                if start_step == end_step
-                else ((step - start_step) / float(end_step - start_step))
+    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
+        """Save actor training state and the replicated NFT EMA weights."""
+        super().save_checkpoint(save_path, step)
+        if not self.rollout_model_state_dict:
+            return
+
+        path = os.path.join(save_path, "nft_rollout_state.pt")
+        status = [None]
+        save_error = None
+        if self._rank == 0:
+            try:
+                state = {
+                    key: value.detach().cpu() if torch.is_tensor(value) else value
+                    for key, value in self.rollout_model_state_dict.items()
+                }
+                torch.save(state, path + ".tmp")
+                os.replace(path + ".tmp", path)
+            except Exception as error:
+                save_error = error
+                status[0] = f"Failed to save NFT EMA weights to '{path}': {error}"
+        torch.distributed.broadcast_object_list(status, src=0)
+        if status[0] is not None:
+            raise RuntimeError(status[0]) from save_error
+
+    def load_checkpoint(self, load_path: str) -> None:
+        """Restore actor training state and NFT EMA weights, if present."""
+        super().load_checkpoint(load_path)
+        if not self.rollout_model_state_dict:
+            return
+
+        path = os.path.join(load_path, "nft_rollout_state.pt")
+        if not os.path.isfile(path):
+            self.log_warning(
+                f"NFT checkpoint '{path}' has no EMA weights; initializing EMA "
+                "from the restored actor. This is not an exact training resume."
             )
-            return start_tau + ratio * (end_tau - start_tau)
-        return float(tau)
+            self.init_rollout_model()
+            return
+
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        expected_keys = set(self.rollout_model_state_dict)
+        if set(state) != expected_keys:
+            raise ValueError(
+                "NFT EMA checkpoint keys do not match the actor: "
+                f"missing={sorted(expected_keys - set(state))}, "
+                f"unexpected={sorted(set(state) - expected_keys)}."
+            )
+        for key, target in self.rollout_model_state_dict.items():
+            value = state[key]
+            if torch.is_tensor(target) and (
+                not torch.is_tensor(value)
+                or value.shape != target.shape
+                or value.dtype != target.dtype
+            ):
+                raise ValueError(
+                    f"NFT EMA checkpoint tensor '{key}' expected shape "
+                    f"{tuple(target.shape)} and dtype {target.dtype}, found "
+                    f"shape {getattr(value, 'shape', None)} and dtype "
+                    f"{getattr(value, 'dtype', None)}."
+                )
+        with torch.no_grad():
+            for key, target in self.rollout_model_state_dict.items():
+                if torch.is_tensor(target):
+                    target.copy_(state[key])
+                else:
+                    self.rollout_model_state_dict[key] = state[key]
+        self._cached_ref_model = None
+
+    def _get_current_nft_tau(self) -> float:
+        """Return the rollout EMA update rate for this actor version."""
+        return get_nft_tau(
+            self.cfg.algorithm.get("nft_tau", 1.0), int(getattr(self, "version", 0))
+        )
 
     def get_rollout_state_dict(self) -> dict:
         """Return EMA cache when tau<1, otherwise defer to the on-policy parent behavior."""
@@ -90,35 +187,28 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         return super().get_rollout_state_dict()
 
     def soft_update_rollout_model(self) -> None:
-        """Soft update rollout model: state = (1-tau)*state + tau*current. No-op when tau=1."""
+        """Update the replicated EMA cache from the current full actor state."""
         if not self.rollout_model_state_dict:
             return
         tau = self._get_current_nft_tau()
-        # soft update rollout model state dict
         current = self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
-        for key, rollout_tensor in self.rollout_model_state_dict.items():
-            src = current[key]
-            if torch.is_tensor(rollout_tensor) and rollout_tensor.is_floating_point():
-                if tau >= 1.0:
-                    rollout_tensor.copy_(src)
-                else:
-                    rollout_tensor.lerp_(src.to(rollout_tensor.dtype), tau)
-            elif torch.is_tensor(rollout_tensor) and torch.is_tensor(src):
-                rollout_tensor.copy_(src)
-            else:
-                self.rollout_model_state_dict[key] = src
+        update_nft_ema(self.rollout_model_state_dict, current, tau)
 
     # =======================================================================
     # Training Loop & Data Preprocessing
     # =======================================================================
 
     @Worker.timer("run_training")
-    def run_training(self) -> None:
+    def run_training(self) -> dict:
         """Run NFT training with off-policy decay support."""
-        if self.is_weight_offloaded:
-            self.load_param_and_grad(self.device)
-        if self.is_optimizer_offloaded:
-            self.load_optimizer(self.device)
+        tau = self._get_current_nft_tau()
+        if tau >= 1.0:
+            # On-policy: load model immediately since precompute doesn't
+            # need a ref model and the model is used throughout.
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device)
+            if self.is_optimizer_offloaded:
+                self.load_optimizer(self.device)
 
         self.model.train()
         rollout_size = (
@@ -134,6 +224,18 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 self.rollout_batch, shuffle_id
             )
             self._precompute_nft_training_inputs()
+
+        if tau < 1.0:
+            # Off-policy: defer loading the training model until *after*
+            # precompute.  During precompute (_recompute_v_old), the training
+            # model is offloaded to make room for the ref model, so loading
+            # it at the top would be immediately undone — a wasted GPU→CPU→GPU
+            # round trip.  By deferring, the model stays on CPU through the
+            # entire precompute phase and is only loaded when training begins.
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device)
+            if self.is_optimizer_offloaded:
+                self.load_optimizer(self.device)
 
         assert (
             self.cfg.actor.global_batch_size
@@ -232,11 +334,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         if xcur_source == "resample":
             # Resample step indices and interpolate xcur from x0
             x0 = forward_inputs["nft_x0"]
-            step_indices = torch.randint(0, num_steps, (x0.shape[0],), device=x0.device)
-            _, t = self._build_schedule_and_timesteps(
-                step_indices, x0.device, x0.dtype, ndim=x0.ndim
-            )
-            xcur = (1 - t) * x0 + t * torch.randn_like(x0)
+            xcur, step_indices = resample_nft_inputs(x0, num_steps)
             forward_inputs["nft_xcur"] = xcur
             forward_inputs["nft_step_index"] = step_indices
             recompute_v = True  # must recompute v_old for resampled xcur
@@ -245,8 +343,8 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             # recompute v_old: always for resample, opt-in for rollout
             xcur = forward_inputs["nft_xcur"]
             step_indices = forward_inputs["nft_step_index"]
-            _, t = self._build_schedule_and_timesteps(
-                step_indices, xcur.device, xcur.dtype
+            _, t = build_nft_schedule(
+                step_indices, xcur.device, xcur.dtype, num_steps=num_steps
             )
             forward_inputs["nft_v"] = self._recompute_v_old(forward_inputs, xcur, t)
 
@@ -267,20 +365,32 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             # On-policy: use training model directly
             ref_model = self.model
         else:
-            # Off-policy: build a temporary model with lagged rollout weights
+            # Off-policy: use a cached ref model with lagged rollout weights.
+            # The model is built once and reused across iterations; only
+            # load_state_dict + to(device) is needed each time.
             training_was_on_device = not self.is_weight_offloaded
             if training_was_on_device:
                 self.offload_param_and_grad()
                 clear_memory()
 
-            ref_model = self.model_provider_func()
-            ref_config = getattr(ref_model, "config", None)
-            # Compiling the reference model adds repeated compilation and cache overhead.
-            if hasattr(ref_config, "compile_transformer_forward"):
-                ref_config.compile_transformer_forward = False
+            if self._cached_ref_model is None:
+                ref_model = self.model_provider_func()
+                ref_config = getattr(ref_model, "config", None)
+                # Compiling the reference model adds repeated compilation and cache overhead.
+                if hasattr(ref_config, "compile_transformer_forward"):
+                    ref_config.compile_transformer_forward = False
+                ref_model.eval()
+                ref_model.requires_grad_(False)
+                prepare_reference = getattr(
+                    ref_model, "prepare_nft_reference_model", None
+                )
+                if callable(prepare_reference):
+                    prepare_reference()
+                self._cached_ref_model = ref_model
+            else:
+                ref_model = self._cached_ref_model
+
             ref_model.load_state_dict(self.get_rollout_state_dict(), strict=False)
-            ref_model.eval()
-            ref_model.requires_grad_(False)
             ref_model.to(self.device)
             cleanup_rollout_model = True
 
@@ -303,7 +413,8 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 v_old_buffer.append(out["v_theta"].detach().cpu())
 
         if cleanup_rollout_model:
-            del ref_model
+            with pinned_offload_context():
+                self._cached_ref_model.to("cpu")
             clear_memory()
             if training_was_on_device:
                 self.load_param_and_grad(self.device)
@@ -314,464 +425,35 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
     # NFT Forward & Loss
     # =======================================================================
 
-    def nft_forward_and_loss(self, batch):
-        """NFT-specific forward and loss computation."""
-        # prepare inputs
+    def nft_forward_and_loss(
+        self, batch: dict
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Run the actor forward pass and evaluate the NFT tensor objective."""
         forward_inputs = batch["forward_inputs"]
-        target_space = self.cfg.algorithm.get("nft_target_space", "xnext")
-        x_t_input = forward_inputs["nft_xcur"]
-        step_indices = forward_inputs["nft_step_index"]
-        gather_type = self.cfg.algorithm.get("nft_gather_type", "action_level")
-        schedule, t = self._build_schedule_and_timesteps(
-            step_indices, x_t_input.device, x_t_input.dtype
+        x_t = forward_inputs["nft_xcur"]
+        schedule, timesteps = build_nft_schedule(
+            forward_inputs["nft_step_index"],
+            x_t.device,
+            x_t.dtype,
+            num_steps=self.model.config.num_steps,
         )
-        # forward pass
         with self.amp_context:
-            output_dict = self.model(
+            output = self.model(
                 forward_type=ForwardType.NFT,
                 forward_inputs=forward_inputs,
-                nft_inputs={"x_t": x_t_input, "timesteps": t},
+                nft_inputs={"x_t": x_t, "timesteps": timesteps},
                 compute_values=False,
             )
-        # post-process outputs
-        chunk = output_dict["v_theta"].shape[1]
-        v_theta = output_dict["v_theta"][:, :chunk, ...]
-        x_t = forward_inputs["nft_xcur"][:, :chunk, ...]
-        v_old = forward_inputs["nft_v"][:, :chunk, ...].detach()
-        batch_size = x_t.shape[0]
-        # raw delta v and pos/neg candidates
-        delta_v, v_pos, v_neg = self._compute_delta_v_candidates(v_theta, v_old)
-        # build schedule params
-        t_bc, dt_bc, sigma_i, std_t_det = self._build_schedule_params(
-            schedule, step_indices, forward_inputs["nft_noise_level"], x_t
-        )
-        # compute target and predictions
-        target, pred_pos = self._compute_nft_target_and_pred(
-            forward_inputs, target_space, x_t, v_pos, t_bc, dt_bc, sigma_i
-        )
-        _, pred_neg = self._compute_nft_target_and_pred(
-            forward_inputs, target_space, x_t, v_neg, t_bc, dt_bc, sigma_i
-        )
-        # compute weighted energies
-        noise_level = forward_inputs["nft_noise_level"]
-        weight_mode = self.cfg.algorithm.get("nft_weight_mode", "auto")
-        weight_kwargs = {
-            "weight_mode": weight_mode,
-            "t_bc": t_bc,
-            "std_t_det": std_t_det,
-            "noise_level": noise_level,
-            "target": target,
-            "gather_type": gather_type,
-        }
-        w_pos = self._compute_nft_weight(
-            **weight_kwargs, pred=pred_pos, sample_type="pos"
-        )
-        w_neg = self._compute_nft_weight(
-            **weight_kwargs, pred=pred_neg, sample_type="neg"
-        )
-        energy_reduction = str(self.cfg.algorithm.get("nft_energy_reduction", "mean"))
-        e_pos = self._reduce_nft_tensor(
-            (pred_pos - target) ** 2 * w_pos,
-            gather_type,
-            energy_reduction,
-        )
-        e_neg = self._reduce_nft_tensor(
-            (pred_neg - target) ** 2 * w_neg,
-            gather_type,
-            energy_reduction,
-        )
-        loss_mask = self._align_nft_signal(batch["loss_mask"], e_pos, batch_size)
-        advantages = self._align_nft_signal(batch["advantages"], e_pos, batch_size)
-        advantages = self._postprocess_advantages(advantages)
-        # loss
-        delta_e = e_pos - e_neg
-        clip_frac = 0.0
-        e_pos_clip = None
-        e_neg_clip = None
-        clip_ratio = self.cfg.algorithm.get("nft_clip_ratio", None)
-        loss_form = self.cfg.algorithm.get("nft_loss_form", "dpo")
-        if loss_form == "mse" and clip_ratio is not None:
-            e_pos_clip, e_neg_clip, clip_frac = self._compute_nft_clipped_energies(
-                forward_inputs=forward_inputs,
-                target_space=target_space,
-                x_t=x_t,
-                delta_v=delta_v,
-                v_old=v_old,
-                t_bc=t_bc,
-                dt_bc=dt_bc,
-                sigma_i=sigma_i,
-                target=target,
-                w_pos=w_pos,
-                w_neg=w_neg,
-                gather_type=gather_type,
-                energy_reduction=energy_reduction,
-                clip_ratio=float(clip_ratio),
-            )
-        loss, clip_loss_frac = self._compute_nft_loss(
-            e_pos,
-            e_neg,
-            delta_e,
-            advantages,
-            loss_mask,
-            e_pos_clip=e_pos_clip,
-            e_neg_clip=e_neg_clip,
-        )
-        # metrics
-        with torch.no_grad():
-            delta_v_norm = self._reduce_nft_tensor(delta_v, gather_type, "norm")
-            delta_v_norm = delta_v_norm.mean().item()
-            metrics_data = {
-                "actor/nft_loss": loss.item(),
-                "actor/nft_tau": self._get_current_nft_tau(),
-                "actor/delta_v_norm": delta_v_norm,
-                "actor/clip_frac": clip_frac,
-                "actor/E_pos_mean": e_pos.mean().item(),
-                "actor/E_neg_mean": e_neg.mean().item(),
-                "actor/E_pos_mean_pos_only": masked_mean(
-                    e_pos, (advantages > 0.5) & loss_mask.bool()
-                ).item(),
-                "actor/E_neg_mean_neg_only": masked_mean(
-                    e_neg, (advantages < 0.5) & loss_mask.bool()
-                ).item(),
-                "actor/delta_E_mean": delta_e.mean().item(),
-            }
-            if clip_loss_frac is not None:
-                metrics_data["actor/clip_loss_frac"] = clip_loss_frac
-        return loss, metrics_data
-
-    def _compute_nft_clipped_energies(
-        self,
-        *,
-        forward_inputs: dict,
-        target_space: str,
-        x_t: torch.Tensor,
-        delta_v: torch.Tensor,
-        v_old: torch.Tensor,
-        t_bc: torch.Tensor,
-        dt_bc: torch.Tensor,
-        sigma_i: torch.Tensor,
-        target: torch.Tensor,
-        w_pos: torch.Tensor | float,
-        w_neg: torch.Tensor | float,
-        gather_type: str,
-        energy_reduction: str,
-        clip_ratio: float,
-    ) -> tuple[torch.Tensor, torch.Tensor, float]:
-        """Compute clipped candidate energies for the NFT MSE objective."""
-        delta_norm = self._reduce_nft_tensor(
-            delta_v, gather_type, "norm", keepdim=True
-        ).clamp_min(1e-8)
-        old_norm = self._reduce_nft_tensor(
-            v_old, gather_type, "norm", keepdim=True
-        ).clamp_min(1e-8)
-        clip_coef = (clip_ratio * old_norm / delta_norm).clamp(max=1.0)
-        clip_frac = (clip_coef < 1.0).float().mean().item()
-        delta_v_clip = torch.where(
-            clip_coef < 1.0,
-            (delta_v * clip_coef).detach(),
-            delta_v,
-        )
-        beta = float(self.cfg.algorithm.get("nft_beta", 1.0))
-        v_pos_clip = v_old + beta * delta_v_clip
-        v_neg_clip = v_old - beta * delta_v_clip
-        _, pred_pos_clip = self._compute_nft_target_and_pred(
+        loss, metrics = compute_nft_loss(
+            output["v_theta"],
             forward_inputs,
-            target_space,
-            x_t,
-            v_pos_clip,
-            t_bc,
-            dt_bc,
-            sigma_i,
+            batch["advantages"],
+            batch["loss_mask"],
+            schedule=schedule,
+            config=self.cfg.algorithm,
         )
-        _, pred_neg_clip = self._compute_nft_target_and_pred(
-            forward_inputs,
-            target_space,
-            x_t,
-            v_neg_clip,
-            t_bc,
-            dt_bc,
-            sigma_i,
-        )
-        e_pos_clip = self._reduce_nft_tensor(
-            (pred_pos_clip - target) ** 2 * w_pos,
-            gather_type,
-            energy_reduction,
-        )
-        e_neg_clip = self._reduce_nft_tensor(
-            (pred_neg_clip - target) ** 2 * w_neg,
-            gather_type,
-            energy_reduction,
-        )
-        return e_pos_clip, e_neg_clip, clip_frac
-
-    def _compute_nft_loss(
-        self,
-        e_pos: torch.Tensor,
-        e_neg: torch.Tensor,
-        delta_e: torch.Tensor,
-        advantages: torch.Tensor,
-        loss_mask: torch.Tensor,
-        *,
-        e_pos_clip: torch.Tensor | None = None,
-        e_neg_clip: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, float | None]:
-        """Aggregate NFT energies into the configured objective."""
-        loss_form = self.cfg.algorithm.get("nft_loss_form", "dpo")
-        if loss_form == "dpo":
-            dpo_beta = float(self.cfg.algorithm.get("dpo_beta", 1.0))
-            y = advantages * 2.0 - 1.0
-            logit = (dpo_beta / 2.0) * y * delta_e
-            return masked_mean(F.softplus(logit), loss_mask), None
-
-        if loss_form == "mse":
-            beta = float(self.cfg.algorithm.get("nft_beta", 1.0))
-            loss_scale = float(self.cfg.algorithm.get("adv_clip_max", 1.0)) / beta
-            loss_elem = (advantages * e_pos + (1.0 - advantages) * e_neg) * loss_scale
-            clip_loss_frac = None
-            if e_pos_clip is not None or e_neg_clip is not None:
-                if e_pos_clip is None or e_neg_clip is None:
-                    raise ValueError(
-                        "Both positive and negative clipped NFT energies are required."
-                    )
-                clip_loss_elem = (
-                    advantages * e_pos_clip + (1.0 - advantages) * e_neg_clip
-                ) * loss_scale
-                clip_loss_frac = masked_mean(
-                    (loss_elem < clip_loss_elem).float(),
-                    loss_mask,
-                ).item()
-                loss_elem = torch.maximum(loss_elem, clip_loss_elem)
-            return masked_mean(loss_elem, loss_mask), clip_loss_frac
-
-        raise ValueError(f"Unsupported nft_loss_form: {loss_form}")
-
-    def _postprocess_advantages(self, advantages: torch.Tensor) -> torch.Tensor:
-        """Map advantages into [0, 1] to match NFT loss semantics (r=0 -> neg, r=1 -> pos).
-
-        - adv_type == "raw": success rewards already in [0, 1], no-op.
-        - Otherwise (e.g. grpo): clip to [-adv_clip_max, +adv_clip_max] then
-          linearly rescale into [0, 1] via (adv + max) / (2 * max). After this
-          the subsequent clamp in _compute_nft_loss becomes a no-op.
-        """
-        adv_type = self.cfg.algorithm.get("adv_type", "raw")
-        if adv_type == "raw":
-            return advantages
-        adv_clip_max = float(self.cfg.algorithm.get("adv_clip_max", 1.0))
-        advantages = advantages.clamp(-adv_clip_max, adv_clip_max)
-        advantages = (advantages + adv_clip_max) / (2.0 * adv_clip_max)
-        return advantages
-
-    def _compute_delta_v_candidates(
-        self,
-        v_theta: torch.Tensor,
-        v_old: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute raw delta_v and pos/neg candidate velocities."""
-        delta_v = v_theta - v_old
-        beta = float(self.cfg.algorithm.get("nft_beta", 1.0))
-        v_pos = v_old + beta * delta_v
-        v_neg = v_old - beta * delta_v
-        return delta_v, v_pos, v_neg
-
-    @staticmethod
-    def _align_nft_signal(
-        signal: torch.Tensor,
-        target: torch.Tensor,
-        batch_size: int,
-    ) -> torch.Tensor:
-        signal = signal.reshape(batch_size, -1)
-        if target.ndim == 1:
-            return signal[:, 0]
-        target_shape = target.shape
-        target_size = int(np.prod(tuple(target_shape[1:])))
-        if signal.shape[1] == target_size:
-            return signal.reshape(target_shape)
-        if signal.shape[1] == 1:
-            return signal.expand(target_shape)
-        raise ValueError(
-            f"Cannot align NFT signal shape {tuple(signal.shape)} "
-            f"to target shape {tuple(target_shape)}."
-        )
-
-    @staticmethod
-    def _get_nft_reduce_dims(gather_type: str, ndim: int) -> tuple[int, ...]:
-        if gather_type == "action_level":
-            return tuple(range(2, ndim))
-        if gather_type == "chunk_level":
-            return tuple(range(1, ndim))
-        raise ValueError(f"Unsupported nft_gather_type: {gather_type}")
-
-    @classmethod
-    def _reduce_nft_tensor(
-        cls,
-        tensor: torch.Tensor,
-        gather_type: str,
-        reduction: str,
-        *,
-        keepdim: bool = False,
-    ) -> torch.Tensor:
-        reduce_dims = cls._get_nft_reduce_dims(gather_type, tensor.ndim)
-        if not reduce_dims:
-            return tensor.abs() if reduction == "norm" else tensor
-        if reduction == "sum":
-            return tensor.sum(dim=reduce_dims, keepdim=keepdim)
-        if reduction == "mean":
-            return tensor.mean(dim=reduce_dims, keepdim=keepdim)
-        if reduction == "norm":
-            return torch.linalg.vector_norm(tensor, dim=reduce_dims, keepdim=keepdim)
-        raise ValueError(f"Unsupported NFT reduction: {reduction}")
-
-    # =======================================================================
-    # NFT Math Utilities (schedule, target/pred, weight, slicing)
-    # =======================================================================
-
-    def _build_schedule_and_timesteps(
-        self,
-        step_indices: torch.Tensor,
-        device: torch.device,
-        dtype: torch.dtype,
-        ndim: int | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Build flow-matching schedule and lookup timesteps for given step indices.
-
-        Returns: (schedule, t) where schedule is [num_steps+1] linspace 1->0,
-                 t is the timestep values at step_indices.
-        """
-        num_steps = self.model.config.num_steps
-        schedule = torch.linspace(1, 0, num_steps + 1, device=device, dtype=dtype)
-        t = schedule[step_indices.long()]
-        if ndim is not None:
-            t = t.view(-1, *([1] * (ndim - 1)))
-        return schedule, t
-
-    def _build_schedule_params(
-        self,
-        schedule: torch.Tensor,  # [num_steps+1] linspace 1->0
-        step_indices: torch.Tensor,  # [B]
-        noise_level: torch.Tensor | float,
-        x_t: torch.Tensor,  # reference tensor for ndim/device/dtype
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute timestep & noise params, broadcast to [B, 1, ..., 1] for x_t.ndim.
-
-        Returns: (t_bc, dt_bc, sigma_i, std_t_det)
-        """
-        # TODO: move into the model file or utils file for better reuse
-        ndim = x_t.ndim
-        idx = step_indices.long()
-
-        def pad(x):
-            return x.view(-1, *([1] * (ndim - 1)))
-
-        # timestep: t_cur and dt = t_cur - t_next
-        t_bc = pad(schedule[idx])
-        dt_bc = pad(schedule[idx] - schedule[idx + 1])
-        # SDE noise scale: sigma_i = sqrt(t / (1-t)) * noise_level
-        safe_schedule = schedule.clone()
-        safe_schedule[0] = safe_schedule[1]  # avoid div-by-zero at t=1
-        sigma_i = pad(torch.sqrt(schedule[:-1] / (1 - safe_schedule[:-1]))[idx])
-        nl = torch.as_tensor(noise_level, device=x_t.device, dtype=x_t.dtype)
-        sigma_i = sigma_i * (pad(nl) if nl.ndim > 0 else nl)
-        # transition std
-        std_t_det = (torch.sqrt(dt_bc.clamp_min(0)) * sigma_i).detach()
-        return t_bc, dt_bc, sigma_i, std_t_det
-
-    def _compute_nft_target_and_pred(
-        self,
-        forward_inputs: dict,
-        target_space: str,
-        x_t: torch.Tensor,
-        vel: torch.Tensor,
-        t_bc: torch.Tensor,
-        dt_bc: torch.Tensor,
-        sigma_i: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Build target and predicted state for the given NFT target space."""
-        # TODO: move into the model file or utils file for better reuse
-        x0_pred = x_t - vel * t_bc
-        x1_pred = x_t + vel * (1 - t_bc)
-        if target_space == "x0":
-            target = self._slice_like(forward_inputs["nft_x0"], x_t)
-            pred = x0_pred - (sigma_i**2 / 2) * x1_pred
-        elif target_space == "xnext":
-            target = self._slice_like(forward_inputs["nft_xnext"], x_t)
-            w0 = 1.0 - (t_bc - dt_bc)
-            w1 = t_bc - dt_bc - sigma_i**2 * dt_bc / (2 * t_bc)
-            pred = x0_pred * w0 + x1_pred * w1
-        else:
-            raise ValueError(f"Unsupported nft_target_space: {target_space}")
-        return target, pred
-
-    @staticmethod
-    def _slice_like(target: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
-        slices = (slice(None),) + tuple(slice(0, size) for size in reference.shape[1:])
-        return target[slices]
-
-    def _compute_nft_weight(
-        self,
-        weight_mode: str,
-        t_bc: torch.Tensor,
-        std_t_det: torch.Tensor,
-        noise_level: torch.Tensor,
-        target: torch.Tensor,
-        gather_type: str,
-        *,
-        pred: torch.Tensor,
-        sample_type: str,
-    ) -> torch.Tensor | float:
-        """Compute per-element multiplicative weight for NFT energy.
-
-        Supported weight_mode values (set via ``nft_weight_mode`` in config):
-            "constant"  -- fixed scalar ``nft_weight_scale`` (default 1.0).
-            "t"        -- 1 / (t^2 or dt^2), scaled by ``nft_weight_scale``.
-            "inv_t2"   -- 1 / (t^2 + eps), compensates x0 target gradient ∝ t^2.
-            "inv_t3"   -- 1 / (t^3 + eps), overcompensates to bias toward low-t.
-            "sigma"    -- 1 / (std_t_det^2 + eps).
-            "adaptive" -- 1 / abs-error-mean (stop-grad), a la DiffusionNFT.
-            "auto"     -- "adaptive" when noise_level==0 (ODE), otherwise "sigma" (SDE).
-        """
-        # auto mode selection
-        if weight_mode == "auto":
-            if torch.all(noise_level == 0):
-                weight_mode = "adaptive"
-            else:
-                weight_mode = "sigma"
-        # weight computation
-        weight = self.cfg.algorithm.get("nft_weight_scale", 1.0)
-        if isinstance(weight, ListConfig):
-            weight = list(weight)
-        if isinstance(weight, (list, tuple)):
-            if len(weight) != 2:
-                raise ValueError(
-                    "nft_weight_scale list must be [pos_scale, neg_scale]."
-                )
-            weight = float(weight[0] if sample_type == "pos" else weight[1])
-        else:
-            weight = float(weight)
-        if weight_mode == "constant":
-            pass
-        elif weight_mode == "t":
-            weight *= t_bc**2
-        elif weight_mode == "1-t":
-            weight *= (1 - t_bc) ** 2
-        elif weight_mode == "inv_t2":
-            weight /= t_bc**2 + 1e-4
-        elif weight_mode == "inv_t3":
-            weight /= t_bc**3 + 1e-4
-        elif weight_mode == "sigma":
-            # loss in pi-step-nft paper
-            weight /= std_t_det**2 + 1e-4
-        elif weight_mode == "adaptive":
-            # loss in diffusion-nft paper # todo: bug here, need to check
-            with torch.no_grad():
-                w = self._reduce_nft_tensor(
-                    torch.abs(pred.double() - target.double()),
-                    gather_type,
-                    "mean",
-                    keepdim=True,
-                )
-                w = w.clamp(min=1e-5).to(pred.dtype)
-            weight /= w
-        return weight
+        metrics["actor/nft_tau"] = self._get_current_nft_tau()
+        return loss, metrics
 
     def _slice_forward_inputs(self, forward_inputs: dict, start: int, end: int) -> dict:
         """Slice nested forward inputs along the batch dimension."""

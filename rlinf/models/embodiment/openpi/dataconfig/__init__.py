@@ -46,6 +46,9 @@ from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig imp
 from rlinf.models.embodiment.openpi.dataconfig.franka_dataconfig import (
     CustomDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.geniesim_dual_arm_dataconfig import (
+    LeRobotGenieSimDualArmDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.gsenv_dataconfig import (
     LeRobotGSEnvDataConfig,
 )
@@ -75,6 +78,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 )
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    SO101JointDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.yam_dataconfig import (
     LeRobotYamDataConfig,
@@ -145,6 +151,29 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_libero_mem",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id="CollisionCode/libero_mem_lerobot_v2.1",
+            base_config=DataConfig(prompt_from_task=True),
+            image_key="observation.images.image",
+            wrist_image_key="observation.images.wrist_image",
+            state_key="observation.state",
+            action_key="action",
+        ),
+    ),
+    TrainConfig(
+        name="pi05_geniesim_g2_ah10",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotGenieSimDualArmDataConfig(
+            base_config=DataConfig(prompt_from_task=True),
+        ),
     ),
     TrainConfig(
         name="pi0_maniskill",
@@ -296,6 +325,31 @@ _CONFIGS = [
         num_train_steps=30_000,
         log_interval=100,
         save_interval=10_000,
+    ),
+    TrainConfig(
+        name="pi05_so101_joint",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=20, action_dim=32, discrete_state_input=True
+        ),
+        data=SO101JointDataConfig(
+            repo_id="so101_joint",
+            # LeRobot v3 samples expose task text as ``task``. The SO-101
+            # repack transform maps it to OpenPI's ``prompt`` field directly.
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=16,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
     ),
     TrainConfig(
         name="pi05_maniskill_sim_real_co_training",

@@ -114,6 +114,16 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     image_keys = OmegaConf.select(model_cfg, "image_keys", default=None)
     if image_keys is not None:
         pi0_kwargs["image_keys"] = tuple(image_keys)
+    pi0_kwargs["short_memory"] = bool(
+        OmegaConf.select(model_cfg, "short_memory", default=False)
+    )
+    if pi0_kwargs["short_memory"]:
+        temporal_layers = model_cfg.get("short_memory_temporal_layers")
+        if temporal_layers is not None:
+            pi0_kwargs["short_memory_temporal_layers"] = tuple(temporal_layers)
+        drop_history_layer = model_cfg.get("short_memory_drop_history_layer")
+        if drop_history_layer is not None:
+            pi0_kwargs["short_memory_drop_history_layer"] = int(drop_history_layer)
 
     pi0_config = Pi0Config(**pi0_kwargs)
     rlt_cfg = build_rlt_config(model_cfg)
@@ -125,6 +135,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     task = OmegaConf.select(model_cfg, "task", default="sft")
     task = str(task).lower() if task is not None else "sft"
+    if pi0_config.short_memory and task not in ("eval", "sft"):
+        raise ValueError(
+            f"openpi.short_memory supports task='eval' or 'sft'; got {task!r}. "
+            "RL replay does not carry camera history."
+        )
 
     if task == "sft":
         model = Pi0(
@@ -178,6 +193,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             value_vlm_mode=str(
                 OmegaConf.select(model_cfg, "value_vlm_mode", default="mean_token")
             ),
+            value_head_hidden_sizes=_value_head_hidden_sizes(model_cfg),
             detach_critic_input=bool(
                 OmegaConf.select(model_cfg, "detach_critic_input", default=False)
             ),
@@ -399,6 +415,13 @@ def _require_config_name(model_cfg, task: str) -> str:
             "(it selects the upstream openpi TrainConfig)."
         )
     return config_name
+
+
+def _value_head_hidden_sizes(model_cfg):
+    from omegaconf import OmegaConf
+
+    sizes = OmegaConf.select(model_cfg, "value_head_hidden_sizes", default=None)
+    return None if sizes is None else tuple(int(x) for x in sizes)
 
 
 def _resolve_data_kwargs(cfg):

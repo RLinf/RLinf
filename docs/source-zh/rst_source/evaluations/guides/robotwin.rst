@@ -37,6 +37,8 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 下载完成后，请将 ``env.eval.assets_path``
 设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
+RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。可通过 ``env.eval.camera_near`` 修改该值，设为 ``null`` 即沿用 RoboTwin 自身的取值。
+
 **环境变量**
 
 每次评测前须设置：
