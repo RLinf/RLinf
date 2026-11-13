@@ -34,6 +34,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
 - [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards. Doc: [DiffusionART](docs/source-en/rst_source/examples/diffusion_art.rst).
 - [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
