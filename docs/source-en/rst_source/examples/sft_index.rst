@@ -78,11 +78,21 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
 
    </div>
 
+.. grid:: 1
+   :gutter: 2
+
+   .. grid-item-card:: GR00T N1.7
+      :link: embodied/sft_gr00t_n1d7
+      :link-type: doc
+
+      Native H40 Flow Matching SFT on RoboCasa365 with independent random windows.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   GR00T N1.7 <embodied/sft_gr00t_n1d7>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
    Cosmos3 <embodied/sft_cosmos3>
