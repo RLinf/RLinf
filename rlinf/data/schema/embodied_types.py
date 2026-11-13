@@ -32,7 +32,7 @@ always use ``B`` as their leading batch dimension during transport.
 import copy
 import uuid
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 import torch
@@ -42,6 +42,58 @@ from rlinf.utils.nested_dict_process import (
     split_dict,
     stack_list_of_dict_tensor,
 )
+
+
+@dataclass(frozen=True)
+class JointPositionTargets:
+    """Absolute joint targets with per-environment names, shaped [B,J] or [B,C,J]."""
+
+    joint_positions: torch.Tensor | np.ndarray
+    joint_names: list[list[str]]
+    joint_layout: Literal["active", "full"]
+
+    def __post_init__(self) -> None:
+        if self.joint_layout not in ("active", "full"):
+            raise ValueError(
+                f"Expected active or full joint layout, got {self.joint_layout!r}"
+            )
+        shape = self.joint_positions.shape
+        if len(shape) not in (2, 3) or shape[0] != len(self.joint_names):
+            raise ValueError(
+                f"Expected batched joint targets and one name list per env, got {shape}"
+            )
+        if any(len(names) != shape[-1] for names in self.joint_names):
+            raise ValueError(f"Expected {shape[-1]} joint names per environment")
+
+    def to_cpu(self) -> "JointPositionTargets":
+        """Detach targets and move their storage to CPU for transport."""
+        positions = self.joint_positions
+        if isinstance(positions, torch.Tensor):
+            positions = positions.detach().cpu().contiguous()
+        return replace(self, joint_positions=positions)
+
+    def split(self, sizes: list[int]) -> list["JointPositionTargets"]:
+        """Split targets and joint-name metadata on their environment dimension."""
+        if sum(sizes) != self.joint_positions.shape[0]:
+            raise ValueError("Joint action batch size must match the requested splits")
+        positions = self.joint_positions
+        shards = (
+            torch.split(positions, sizes, dim=0)
+            if isinstance(positions, torch.Tensor)
+            else np.split(positions, np.cumsum(sizes)[:-1], axis=0)
+        )
+        output, offset = [], 0
+        for shard, size in zip(shards, sizes, strict=True):
+            output.append(
+                replace(
+                    self,
+                    joint_positions=shard,
+                    joint_names=self.joint_names[offset : offset + size],
+                )
+            )
+            offset += size
+        return output
+
 
 # Source identity carried through the trajectory pipeline.
 
@@ -261,11 +313,12 @@ class EnvTransition:
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
+        previous_dones: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         """Build the reward tensor consumed by trajectory training.
 
         Reward-model scores are weighted into environment rewards first.
-        Auto-reset truncations then receive the configured bootstrap value.
+        Truncations then receive the configured bootstrap value once.
 
         The result has independent storage for later in-place reward updates.
         """
@@ -279,10 +332,27 @@ class EnvTransition:
             )
         else:
             rewards = rewards.clone()
-        if bootstrap_values is None or not auto_reset or self.dones is None:
+        if bootstrap_values is None or self.dones is None:
             return rewards
 
         terminal = self.truncations if bootstrap_type == "standard" else self.dones
+        if not auto_reset:
+            if bootstrap_type != "standard" or terminal is None:
+                return rewards
+            # Non-reset environments retain done flags in later padding chunks.
+            indices = self.dones.long().argmax(dim=-1)
+            mask = self.dones.any(dim=-1) & terminal.gather(
+                1, indices[:, None]
+            ).squeeze(1)
+            if self.terminations is not None:
+                mask &= ~self.terminations.gather(1, indices[:, None]).squeeze(1)
+            if previous_dones is not None:
+                mask &= ~previous_dones[:, -1]
+            rewards[mask, indices[mask]] += gamma * bootstrap_values[mask].reshape(
+                -1
+            ).to(rewards.dtype)
+            return rewards
+
         if terminal is None or not terminal[:, -1].any():
             return rewards
 
@@ -593,6 +663,7 @@ class EnvPart:
         auto_reset: bool,
         bootstrap_type: str,
         gamma: float,
+        previous_dones: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         """Return the training rewards represented by this environment part."""
         return self.transition.compute_rewards(
@@ -602,6 +673,7 @@ class EnvPart:
             auto_reset=auto_reset,
             bootstrap_type=bootstrap_type,
             gamma=gamma,
+            previous_dones=previous_dones,
         )
 
 
@@ -1706,7 +1778,7 @@ class EnvOutput:
             key: obs.get(key)
             for key in ("main_images", "wrist_images", "extra_view_images", "states")
         }
-        for key in ("reset_mask", "history"):
+        for key in ("extra_obs", "reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]
         task_descriptions = obs.get("task_descriptions")

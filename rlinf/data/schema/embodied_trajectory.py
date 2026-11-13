@@ -434,13 +434,19 @@ class AccumulatorOutput(TrajectoryOutput):
     def _append_chunk(
         self, accumulator: TrajectoryAccumulator, chunk: JoinedChunk
     ) -> None:
-        """Resolve and retain one joined chunk without inspecting its fields."""
+        """Build training rewards and retain one joined action chunk."""
+        previous_dones = (
+            chunk.env.initial_transition.dones
+            if chunk.key.chunk_id == 0
+            else accumulator.steps[-1].dones
+        )
         rewards = chunk.env.compute_rewards(
             env_reward_weight=self._env_reward_weight,
             reward_weight=self._reward_weight,
             auto_reset=self._cfg.env.train.auto_reset,
             bootstrap_type=self._cfg.algorithm.get("bootstrap_type", "standard"),
             gamma=self._cfg.algorithm.get("gamma", 1.0),
+            previous_dones=previous_dones,
         )
         step = TrajectoryStep.from_parts(
             chunk.policy,

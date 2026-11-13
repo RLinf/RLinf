@@ -1,0 +1,28 @@
+defaults:
+  - bench2dex_task22_ppo_openpi_pi05
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+runner:
+  max_epochs: 2
+  max_steps: 2
+  val_check_interval: 10
+  save_interval: 2
+  logger:
+    log_path: ${oc.env:RUNNER_TEMP,/tmp}/bench2dex-sync
+    experiment_name: bench2dex_ppo_openpi_pi05
+
+algorithm:
+  update_epoch: 1
+
+env:
+  train:
+    total_num_envs: 4
+    rollout_epoch: 1
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 140

@@ -1,0 +1,59 @@
+defaults:
+  - env/bench2dex@env.eval
+  - model/pi05_bench2dex@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  max_epochs: 1
+  max_steps: -1
+  resume_dir: null
+  ckpt_path: null
+  logger:
+    log_path: ${oc.env:RUNNER_TEMP,/tmp}/bench2dex-eval
+    project_name: rlinf
+    experiment_name: bench2dex_openpi_pi05_eval
+    logger_backends: [tensorboard]
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  eval:
+    total_num_envs: 4
+    rollout_epoch: 1
+    is_eval: true
+    max_episode_steps: 681
+    max_steps_per_rollout_epoch: 700
+    init_params:
+      output_dir: ${runner.logger.log_path}/benchmark
+      policy_name: pi05
+      task: 22_tool_box_loading
+      embodiment: multi_panda_with_orca
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    action_dim: 40
+    openpi:
+      model_action_dim: 40
+      task: eval

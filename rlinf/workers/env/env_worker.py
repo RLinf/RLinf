@@ -25,6 +25,7 @@ from rlinf.data.schema.embodied_types import (
     EnvOutput,
     EnvPart,
     EnvTransition,
+    JointPositionTargets,
     PolicyInput,
     TrajectoryKey,
     TrajectorySource,
@@ -403,7 +404,7 @@ class EnvWorker(Worker):
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
-        self, chunk_actions: torch.Tensor, stage_id: int
+        self, chunk_actions: torch.Tensor | JointPositionTargets, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """Execute a chunk and build environment output and LeRobot payload.
 
@@ -651,6 +652,8 @@ class EnvWorker(Worker):
     def _infer_rollout_batch_size(data: Any) -> int:
         """Infer the leading batch dimension of rollout or reward payloads."""
 
+        if isinstance(data, JointPositionTargets):
+            return int(data.joint_positions.shape[0])
         if isinstance(data, torch.Tensor) or isinstance(data, np.ndarray):
             return int(data.shape[0])
         from rlinf.scheduler import infer_batch_size
@@ -1099,11 +1102,18 @@ class EnvWorker(Worker):
         ]
 
     @staticmethod
-    def _infer_action_batch_size(actions: torch.Tensor) -> int:
+    def _infer_action_batch_size(actions: torch.Tensor | JointPositionTargets) -> int:
         """Infer the batch dimension of a policy response."""
-        return int(actions.shape[0])
+        positions = (
+            actions.joint_positions
+            if isinstance(actions, JointPositionTargets)
+            else actions
+        )
+        return int(positions.shape[0])
 
-    def _recv_actions(self, input_channel: Channel, stage_id: int) -> torch.Tensor:
+    def _recv_actions(
+        self, input_channel: Channel, stage_id: int
+    ) -> torch.Tensor | JointPositionTargets:
         """Receive actions using the route paired with the policy request."""
         return self.recv_from(
             group_name=self.cfg.rollout.group_name,
@@ -1291,9 +1301,7 @@ class EnvWorker(Worker):
                         tag="eval_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
-                        infer_batch_size_fn=self._infer_rollout_batch_size
-                        if self.env_decoupled_mode
-                        else None,
+                        infer_batch_size_fn=self._infer_rollout_batch_size,
                         decoupled_mode=self.env_decoupled_mode,
                     )
                     raw_chunk_actions = (
@@ -1303,7 +1311,7 @@ class EnvWorker(Worker):
                     )
                     if isinstance(raw_chunk_actions, torch.Tensor):
                         raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
-                    else:
+                    elif not isinstance(raw_chunk_actions, JointPositionTargets):
                         raw_chunk_actions = np.asarray(raw_chunk_actions)
                     env_output, env_info = self.env_evaluate_step(
                         raw_chunk_actions, stage_id

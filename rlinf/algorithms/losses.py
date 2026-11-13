@@ -228,6 +228,7 @@ def compute_ppo_actor_loss(
             "actor/ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/clipped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/dual_cliped_ratio": torch.tensor(0.0, device=logprobs.device),
+            "actor/dual_clip_fraction": torch.tensor(0.0, device=logprobs.device),
             "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),
             "actor/clip_fraction": torch.tensor(0.0, device=logprobs.device),
         }
@@ -366,6 +367,9 @@ def compute_ppo_actor_loss(
         ),
         "actor/dual_cliped_ratio": masked_mean(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
+        ),
+        "actor/dual_clip_fraction": masked_mean(
+            dual_clip_mask.float(), loss_mask_for_metrics
         ),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),

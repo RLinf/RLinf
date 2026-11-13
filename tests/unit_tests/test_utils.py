@@ -128,6 +128,111 @@ def test_compute_rollout_metrics_omits_loss_mask_fraction_without_mask(
     assert metrics["rewards"] == pytest.approx(2.0)
 
 
+def test_rollout_moments_exclude_padding_and_keep_legacy_reward(single_rank_reduction):
+    metrics = compute_rollout_metrics(
+        {
+            "loss_mask": torch.tensor([[[True], [False]], [[True], [True]]]),
+            "rewards": torch.tensor(
+                [[[0.0, 2.0], [100.0, 100.0]], [[0.0, 4.0], [0.0, 6.0]]]
+            ),
+            "advantages": torch.tensor([[[1.0], [100.0]], [[3.0], [5.0]]]),
+            "returns": torch.tensor([[[2.0], [100.0]], [[4.0], [6.0]]]),
+            "rollout_values": torch.tensor([[[0.0], [100.0]], [[1.0], [2.0]]]),
+            "advantages_raw": torch.tensor([[[2.0], [100.0]], [[3.0], [4.0]]]),
+        },
+        reward_type="chunk_level",
+    )
+    assert metrics["rewards"] == pytest.approx(2.0)
+    assert metrics["rewards_mean"] == pytest.approx(4.0)
+    assert metrics["rewards_std"] == pytest.approx(math.sqrt(8 / 3))
+    assert metrics["returns_mean"] == pytest.approx(4.0)
+    assert metrics["returns_std"] == pytest.approx(math.sqrt(8 / 3))
+    assert metrics["advantages_mean"] == pytest.approx(3.0)
+    assert metrics["advantages_std"] == pytest.approx(math.sqrt(8 / 3))
+    assert metrics["values_mean"] == pytest.approx(1.0)
+    assert metrics["values_std"] == pytest.approx(math.sqrt(2 / 3))
+    assert metrics["advantages_raw_mean"] == pytest.approx(3.0)
+    assert metrics["advantages_raw_std"] == pytest.approx(math.sqrt(2 / 3))
+
+
+@pytest.mark.parametrize("mask", [True, False])
+def test_rollout_moments_singleton_and_empty_mask(single_rank_reduction, mask):
+    metrics = compute_rollout_metrics(
+        {"rewards": torch.tensor([[[7.0]]]), "loss_mask": torch.tensor([[[mask]]])}
+    )
+    if mask:
+        assert metrics["rewards_mean"] == 7.0
+        assert metrics["rewards_std"] == 0.0
+    else:
+        assert math.isnan(metrics["rewards_mean"])
+        assert math.isnan(metrics["rewards_std"])
+
+
+def test_gae_diagnostics_exclude_bootstrap_and_preserve_normalized_advantages():
+    import rlinf.algorithms  # noqa: F401
+
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="gae",
+        reward_type="chunk_level",
+        rewards=torch.tensor([[[0.0, 0.0]], [[0.0, 1.0]]]),
+        dones=torch.tensor([[[False]], [[False]], [[True]]]),
+        values=torch.tensor([[[0.2]], [[0.4]], [[999.0]]]),
+        gamma=1.0,
+        gae_lambda=1.0,
+        loss_mask=torch.ones(2, 1, 1, dtype=torch.bool),
+        loss_mask_sum=None,
+    )
+    torch.testing.assert_close(
+        result["rollout_values"], torch.tensor([[[0.2]], [[0.4]]])
+    )
+    torch.testing.assert_close(result["returns"], torch.ones(2, 1, 1))
+    torch.testing.assert_close(
+        result["advantages_raw"], torch.tensor([[[0.8]], [[0.6]]])
+    )
+    assert result["advantages"].mean().item() == pytest.approx(0.0, abs=1e-6)
+
+
+def test_episode_return_moments_are_distinct_from_gae_targets():
+    metrics = compute_evaluate_metrics(
+        [{"return": torch.tensor([0.0, 1.0])}, {"return": torch.tensor([1.0])}]
+    )
+    assert metrics["return"] == pytest.approx(2 / 3)
+    assert metrics["return_mean"] == pytest.approx(2 / 3)
+    assert metrics["return_std"] == pytest.approx(math.sqrt(2 / 9))
+
+
+def _distributed_rollout_moments_worker(rank, rendezvous_path):
+    from rlinf.scheduler.worker.worker import Worker
+
+    Worker.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
+    torch.distributed.init_process_group(
+        "gloo", init_method=f"file://{rendezvous_path}", rank=rank, world_size=3
+    )
+    try:
+        rewards = (
+            torch.tensor([0.0])
+            if rank == 0
+            else torch.tensor([2.0, 4.0])
+            if rank == 1
+            else torch.empty(0)
+        )
+        metrics = compute_rollout_metrics({"rewards": rewards})
+        assert metrics["rewards_mean"] == pytest.approx(2.0)
+        assert metrics["rewards_std"] == pytest.approx(math.sqrt(8 / 3))
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+def test_rollout_moments_reduce_unequal_ranks_and_empty_rank(tmp_path):
+    torch.multiprocessing.spawn(
+        _distributed_rollout_moments_worker,
+        args=(str(tmp_path / "rendezvous"),),
+        nprocs=3,
+        join=True,
+    )
+
+
 # The embodied actor's entropy bonus aggregation. The shapes below are the ones
 # the shipped models actually emit: openpi, lingbotvla,
 # dexbotic_pi, dexbotic_dm0 and flow_policy all reduce entropy to [bsz, 1],
@@ -309,6 +414,176 @@ def test_reinpp_baseline_leaves_the_caller_rewards_unchanged():
     _reinpp_advantages(rewards, use_reinpp_baseline=True)
 
     assert rewards.tolist() == [1.0, 0.0, 1.0, 1.0]
+
+
+# PPO clipping, including the actor-to-loss contract.
+
+
+@pytest.mark.parametrize("default_enabled", [False, True])
+def test_dual_clip_configuration_preserves_defaults(default_enabled):
+    from rlinf.algorithms.utils import resolve_ppo_clip_ratio_c
+
+    cfg = OmegaConf.create({"clip_ratio_c": 3.0})
+    expected = 3.0 if default_enabled else None
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) == expected
+    cfg.use_dual_clip = True
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) == 3.0
+    cfg.use_dual_clip = False
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) is None
+    cfg.use_dual_clip = True
+    cfg.clip_ratio_c = None
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) is None
+
+
+@pytest.mark.parametrize("coefficient", [1.0, 0.5, float("inf"), float("nan")])
+def test_dual_clip_configuration_rejects_invalid_coefficient(coefficient):
+    from rlinf.algorithms.utils import resolve_ppo_clip_ratio_c
+
+    with pytest.raises(ValueError, match="finite clip_ratio_c"):
+        resolve_ppo_clip_ratio_c(
+            {"use_dual_clip": True, "clip_ratio_c": coefficient}, default_enabled=False
+        )
+
+
+@pytest.mark.parametrize(
+    "advantage,ratio,flat,dual_clipped",
+    [
+        pytest.param(-2.0, 0.5, True, False, id="negative-ppo-lower"),
+        pytest.param(-2.0, 1.0, False, False, id="negative-unclipped"),
+        pytest.param(-2.0, 2.5, False, False, id="negative-below-dual"),
+        pytest.param(-2.0, 4.0, True, True, id="negative-dual"),
+        pytest.param(1.0, 0.5, False, False, id="positive-below-ppo"),
+        pytest.param(1.0, 1.0, False, False, id="positive-unclipped"),
+        pytest.param(1.0, 1.5, True, False, id="positive-ppo-upper"),
+    ],
+)
+def test_dual_clip_loss_and_logprob_gradient(advantage, ratio, flat, dual_clipped):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+
+    logprob = torch.tensor([math.log(ratio)], requires_grad=True)
+    args = {
+        "old_logprobs": torch.zeros(1),
+        "advantages": torch.tensor([advantage]),
+        "clip_ratio_low": 0.2,
+        "clip_ratio_high": 0.2,
+    }
+    loss, metrics = compute_ppo_actor_loss(logprob, clip_ratio_c=3.0, **args)
+    standard, _ = compute_ppo_actor_loss(logprob, clip_ratio_c=None, **args)
+    standard_value = max(-advantage * ratio, -advantage * min(max(ratio, 0.8), 1.2))
+    expected = min(standard_value, 3 * abs(advantage))
+    assert standard.item() == pytest.approx(standard_value, rel=1e-6)
+    assert loss.item() == pytest.approx(expected, rel=1e-6)
+    loss.backward()
+    assert logprob.grad.item() == pytest.approx(
+        0 if flat else -advantage * ratio, rel=1e-6
+    )
+    assert metrics["actor/dual_clip_fraction"].item() == int(dual_clipped)
+    assert metrics["actor/ratio"].item() == pytest.approx(ratio, rel=1e-6)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dual_clip_fraction_excludes_padding_and_broadcasts(enabled):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+
+    logprobs = torch.log(
+        torch.tensor([[[4.0, 2.0]], [[100.0, 100.0]]])
+    ).requires_grad_()
+    loss, metrics = compute_ppo_actor_loss(
+        logprobs,
+        torch.zeros_like(logprobs),
+        0.2,
+        0.2,
+        -torch.ones_like(logprobs),
+        loss_mask=torch.tensor([[[True]], [[False]]]),
+        clip_ratio_c=3.0 if enabled else None,
+    )
+    loss.backward()
+    assert metrics["actor/dual_clip_fraction"].item() == (0.5 if enabled else 0)
+    assert torch.equal(logprobs.grad[1], torch.zeros_like(logprobs.grad[1]))
+
+
+def test_dual_clip_empty_mask():
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+
+    for fast in [False, True]:
+        _, metrics = compute_ppo_actor_loss(
+            torch.zeros(1, 1),
+            torch.zeros(1, 1),
+            0.2,
+            0.2,
+            -torch.ones(1, 1),
+            loss_mask=torch.zeros(1, 1, dtype=torch.bool),
+            clip_ratio_c=3.0,
+            fast_path_zero_loss_mask=fast,
+        )
+        assert metrics["actor/dual_clip_fraction"].item() == 0
+
+
+@pytest.fixture
+def ppo_actor(monkeypatch):
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp import FSDPStrategy
+    from rlinf.scheduler import Worker
+
+    class TinyPolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.logprob = torch.nn.Parameter(torch.tensor([math.log(4.0)]))
+
+        def forward(self, **kwargs):
+            return {"logprobs": self.logprob.expand(1, 2, 2) / 4}
+
+    actor = object.__new__(EmbodiedFSDPActor)
+    actor.cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {"model_type": "openpi", "action_dim": 2},
+                "fsdp_config": {"enable_gradient_accumulation": False},
+            },
+            "algorithm": {
+                "adv_type": "grpo",
+                "loss_type": "actor",
+                "logprob_type": "chunk_level",
+                "reward_type": "chunk_level",
+                "clip_ratio_low": 0.2,
+                "clip_ratio_high": 0.2,
+                "clip_ratio_c": 3.0,
+                "entropy_bonus": 0,
+            },
+            "env": {"train": {"max_episode_steps": 2}},
+            "runner": {"task_type": "embodied"},
+        }
+    )
+    actor.model = TinyPolicy()
+    actor.device = torch.device("cpu")
+    actor.amp_context = nullcontext()
+    actor._strategy = FSDPStrategy(actor.cfg.actor, world_size=1)
+    actor.optimizer_steps = actor.critic_warmup_steps = 0
+    actor.loss_agg_func = masked_mean
+    actor.enable_sft_co_train = False
+    actor.gradient_accumulation = 1
+    actor.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+    monkeypatch.setattr(
+        Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+    )
+    return actor
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_openpi_worker_passes_dual_clip_to_real_loss(ppo_actor, enabled):
+    ppo_actor.cfg.algorithm.use_dual_clip = enabled
+    metrics = {}
+    ppo_actor.train_micro_batch(
+        {
+            "advantages": torch.tensor([[-2.0]]),
+            "prev_logprobs": torch.zeros(1, 2, 2),
+            "loss_mask": torch.ones(1, 1, dtype=torch.bool),
+        },
+        metrics,
+        is_last=True,
+    )
+    assert metrics["actor/policy_loss"][0] == pytest.approx(6.0 if enabled else 8.0)
+    assert metrics["actor/dual_clip_fraction"][0] == int(enabled)
+    assert ppo_actor.model.logprob.grad.item() == pytest.approx(0 if enabled else 8.0)
 
 
 # Importance-sampling correction: the actor rescores rollout actions, and
@@ -1348,3 +1623,105 @@ def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
         result = source.to("cpu")
     assert not result.is_pinned()
     torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "examples/embodiment/run_embodiment.sh",
+        "examples/embodiment/run_async.sh",
+        "evaluations/run_eval.sh",
+        "tests/e2e_tests/embodied/run.sh",
+        "tests/e2e_tests/embodied/run_async.sh",
+        "tests/e2e_tests/evaluations/run.sh",
+    ],
+)
+@pytest.mark.parametrize(
+    "runtime_env,expected",
+    [
+        ({}, {"ISAAC_PATH": None, "EXP_PATH": None, "CARB_APP_PATH": None}),
+        (
+            {"ISAAC_PATH": "/sdk"},
+            {
+                "ISAAC_PATH": "/sdk",
+                "EXP_PATH": "/sdk/apps",
+                "CARB_APP_PATH": "/sdk/kit",
+            },
+        ),
+        (
+            {
+                "ISAAC_PATH": "/sdk",
+                "EXP_PATH": "/custom/apps",
+                "CARB_APP_PATH": "/custom/kit",
+            },
+            {
+                "ISAAC_PATH": "/sdk",
+                "EXP_PATH": "/custom/apps",
+                "CARB_APP_PATH": "/custom/kit",
+            },
+        ),
+    ],
+)
+def test_launchers_resolve_explicit_isaac_runtime(
+    tmp_path, launcher, runtime_env, expected
+):
+    import json
+
+    repo = Path(__file__).resolve().parents[2]
+    staged = tmp_path / "repo"
+    for relative in (launcher, "ray_utils/isaac_runtime_paths.sh"):
+        destination = staged / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text((repo / relative).read_text())
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    capture = tmp_path / "environment.json"
+    interpreter = bin_dir / "python"
+    interpreter.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['CAPTURE_ENV']).write_text(json.dumps({'environment': {key: os.environ.get(key) for key in ['ISAAC_PATH', 'EXP_PATH', 'CARB_APP_PATH']}, 'argv': sys.argv[1:]}))\n"
+    )
+    interpreter.chmod(0o755)
+    env = os.environ.copy()
+    for key in expected:
+        env.pop(key, None)
+    env.update(
+        runtime_env,
+        REPO_PATH=str(staged),
+        CAPTURE_ENV=str(capture),
+        PATH=str(bin_dir) + os.pathsep + env["PATH"],
+    )
+    config = "bench2dex_task22_openpi_pi05_eval"
+    if launcher == "evaluations/run_eval.sh":
+        relative = Path("evaluations/bench2dex") / f"{config}.yaml"
+        destination = staged / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text((repo / relative).read_text())
+        args = ["bench2dex", config]
+    else:
+        args = [config]
+    result = subprocess.run(
+        ["bash", str(staged / launcher), *args],
+        cwd=staged,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    captured = json.loads(capture.read_text())
+    assert captured["environment"] == expected
+    command = captured["argv"]
+    assert command[command.index("--config-name") + 1] == config
+    config_path = command[command.index("--config-path") + 1].rstrip("/")
+    expected_path = (
+        "evaluations/bench2dex"
+        if launcher == "evaluations/run_eval.sh"
+        else "tests/e2e_tests/evaluations"
+        if launcher.startswith("tests/e2e_tests/evaluations/")
+        else "tests/e2e_tests/embodied"
+        if launcher.startswith("tests/")
+        else "examples/embodiment/config"
+    )
+    assert Path(config_path) == staged / expected_path

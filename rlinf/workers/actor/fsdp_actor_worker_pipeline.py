@@ -164,11 +164,20 @@ class PipelineEmbodiedFSDPActor(EmbodiedFSDPActor):
             key: torch.cat(
                 [batch[key] for batch in received_rollout_micro_batches], dim=0
             )
-            for key in ("rewards", "advantages", "returns")
+            for key in (
+                "rewards",
+                "advantages",
+                "returns",
+                "loss_mask",
+                "rollout_values",
+                "advantages_raw",
+            )
             if received_rollout_micro_batches
             and key in received_rollout_micro_batches[0]
         }
-        rollout_metrics = compute_rollout_metrics(rollout_metric_batch)
+        rollout_metrics = compute_rollout_metrics(
+            rollout_metric_batch, reward_type=self.cfg.algorithm.reward_type
+        )
 
         del (
             current_global_batch,
