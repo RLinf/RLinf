@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import importlib.util
 import inspect
+import io
 import logging
 import math
 import os
@@ -32,10 +34,14 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import torch
+from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
+from PIL import Image
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel, validate_embodied_cfg
+from rlinf.data.schema.embodied_types import EnvOutput
+from rlinf.envs.sim.robotwin.dream_env import DreamEnvWorker, DreamObservationBuffer
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
@@ -64,6 +70,7 @@ from rlinf.utils.env_helpers.delay_sampler import (
     GaussianDelaySampler,
     UniformDelaySampler,
 )
+from rlinf.workers.rollout.dream_worker import DreamPolicy, DreamRolloutWorker
 from rlinf.workers.rollout.phyai import phyai_rollout_worker
 from rlinf.workers.rollout.phyai.phyai_rollout_worker import PhyAIRolloutWorker
 
@@ -3114,6 +3121,159 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     )
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
+
+
+_DREAM_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _DreamSDK:
+    def __init__(self):
+        self.calls = self.closes = self.resets = 0
+        self.observations = []
+        self._policy = SimpleNamespace(_post=lambda observation: None)
+        self.right = np.full((48, 7), 0.75)
+
+    def policy(self, config):
+        self.config = config
+
+    def reset_episode(self):
+        self.resets += 1
+
+    def set_observation(self, frames, state, *, timestamp):
+        self.observations.append((frames, state, timestamp))
+
+    def get_action(self, *, commanded=None):
+        self.calls += 1
+        self.action_before_ik = self._policy._post(
+            {"state.left_eef_xyz": [0, 0, 0.1], "state.right_eef_xyz": [0, 0, 0.1]}
+        )
+        self.commanded = commanded
+        return {"q_l_chunk": np.full((48, 7), 0.25), "q_r_chunk": self.right}
+
+    def close(self):
+        self.closes += 1
+
+
+def _dream_config(monkeypatch):
+    monkeypatch.setenv("EMBODIED_PATH", str(_DREAM_ROOT / "examples/embodiment"))
+    monkeypatch.setenv("REPO_PATH", str(_DREAM_ROOT))
+    monkeypatch.setenv("DREAM_IK_ARM_FILE", "/path/to/arm.json")
+    with initialize_config_dir(
+        str(_DREAM_ROOT / "evaluations/robotwin"), version_base="1.1"
+    ):
+        return compose(config_name="robotwin_dream_aloha_click_bell_eval")
+
+
+def _dream_observation():
+    return {
+        "main_images": torch.full((1, 8, 12, 3), 255, dtype=torch.uint8),
+        "wrist_images": torch.full((1, 2, 8, 12, 3), 255, dtype=torch.uint8),
+        "states": torch.arange(14, dtype=torch.float32)[None] / 14,
+    }
+
+
+def test_dream_api_images_and_sdk_lifecycle(monkeypatch):
+    cfg = _dream_config(monkeypatch)
+    buffer = DreamObservationBuffer()
+    buffer.reset()
+    obs = _dream_observation()
+    buffer.append(obs, 0.0)
+    samples = buffer.pack(["press the bell"], torch.ones((1, 14)), finished=False)
+    sdk = _DreamSDK()
+    client = DreamPolicy(sdk, cfg.rollout)
+    worker = object.__new__(DreamEnvWorker)
+    worker.enable_rlt = False
+    env_batch = EnvOutput(obs=obs, env_infos={"dream_observations": samples}).to_dict()
+    data = worker._build_rollout_input_data(env_batch)
+    assert set(data) == {"obs", "final_obs"}
+    assert set(data["obs"]) == {"history"}
+    assert DreamRolloutWorker._infer_env_batch_size(data) == 1
+    rollout = object.__new__(DreamRolloutWorker)
+    data = rollout._merge_obs_batches([data])
+    actions, _ = client.predict_action_batch(data["obs"], mode="eval")
+    np.testing.assert_allclose(actions[0, 0], [0.25] * 7 + [0.75] * 7)
+    frames, state, timestamp = sdk.observations[0]
+    assert timestamp == 0 and sdk.resets == 1
+    assert set(frames) == {"video.overhead", "video.wrist_l", "video.wrist_r"}
+    assert set(state) == {
+        "prompt",
+        "state.left_arm",
+        "state.left_grip",
+        "state.right_arm",
+        "state.right_grip",
+    }
+    for encoded in frames.values():
+        image = Image.open(io.BytesIO(base64.b64decode(encoded)))
+        assert image.size == (320, 240)
+        assert image.getpixel((160, 0)) == (0, 0, 0)
+        assert image.getpixel((160, 120)) == (255, 255, 255)
+    np.testing.assert_allclose(state["state.right_arm"], np.arange(7, 13) / 14)
+    np.testing.assert_allclose(sdk.commanded["q_l_chunk"], 1)
+    data["obs"]["history"][0]["finished"] = [True]
+    hold, _ = client.predict_action_batch(data["obs"], mode="eval")
+    np.testing.assert_allclose(hold[:, 0], samples["states"][:, -1])
+    assert sdk.calls == 1
+    client.close()
+    client.close()
+    assert sdk.closes == 1
+
+
+def test_dream_api_click_bell_bias_before_ik(monkeypatch):
+    cfg = _dream_config(monkeypatch)
+    assert not cfg.rollout.dream.eef_target_bias
+    sdk = _DreamSDK()
+    post = sdk._policy._post
+    disabled = DreamPolicy(sdk, cfg.rollout)
+    assert sdk._policy._post is post
+    disabled.close()
+
+    sdk = _DreamSDK()
+    left, right = "action.left_eef_xyz", "action.right_eef_xyz"
+    targets = {left: [[0, 0, 0.05]], right: [[0, 0, 0]]}
+    sdk._policy._post = lambda observation: {"per_key": targets.copy()}
+    cfg.rollout.dream.eef_target_bias = True
+    client = DreamPolicy(sdk, cfg.rollout)
+    assert client.task_arm is None and client.eef_bias is None
+    buffer = DreamObservationBuffer()
+
+    for side, expected in (("left", [[-0.003, 0, 0.01]]), ("right", targets[left])):
+        buffer.reset()
+        buffer.append(_dream_observation(), 0.0)
+        sample = buffer.pack(["press"], None, finished=False, active_arms=(side,))
+        client.predict_action_batch({"history": [sample]})
+        action = sdk.action_before_ik["per_key"]
+        np.testing.assert_allclose(action[left], expected)
+        np.testing.assert_allclose(action[right], targets[right])
+        if side == "left":
+            targets[left] = [[0, 0, -0.1]]
+            client.predict_action_batch({"history": [sample]})
+            np.testing.assert_allclose(
+                sdk.action_before_ik["per_key"][left], [[-0.003, 0, -0.14]]
+            )
+            targets[left] = [[0, 0, 0.05]]
+
+
+def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
+    cfg = _dream_config(monkeypatch)
+    sdk = _DreamSDK()
+    sdk.right[:] = np.nan
+    client = DreamPolicy(sdk, cfg.rollout)
+    sample = {
+        "states": np.zeros((1, 1, 14)),
+        "frames": [[_dream_observation()]],
+        "timestamps": [[0.0]],
+        "finished": [False],
+        "episode_id": [1],
+        "task_descriptions": ["press"],
+        "active_arms": [["left"]],
+    }
+    np.testing.assert_allclose(
+        client.predict_action_batch({"history": [sample]}, mode="eval")[0][..., 7:], 0
+    )
+    sample["active_arms"] = [["left", "right"]]
+    with pytest.raises(ValueError, match="active right arm"):
+        client.predict_action_batch({"history": [sample]}, mode="eval")
+    client.close()
 
 
 @pytest.mark.parametrize(
