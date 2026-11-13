@@ -3683,7 +3683,15 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
         requires_inference=True,
     )
 
-    rollout._publish_env_part(completion, None, None, actor_channel)
+    rollout._publish_env_parts(
+        PolicyInput(
+            obs=completion.next_obs,
+            env_parts=[completion],
+            request_sizes=[1],
+        ),
+        None,
+        actor_channel,
+    )
 
     rollout._predict_rollout_actions.assert_called_once_with(completion.next_obs)
     part = actor_channel.put.call_args.args[0]
@@ -3704,15 +3712,18 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
         transition=EnvTransition(),
     )
 
-    rollout._publish_env_part(
-        completion,
-        policy_obs,
+    rollout._publish_env_parts(
+        PolicyInput(
+            obs=policy_obs,
+            env_parts=[completion],
+            request_sizes=[1],
+        ),
         {"unused": torch.ones(1, 1)},
         actor_channel,
     )
 
     part = actor_channel.put.call_args.args[0]
-    assert part.next_obs is policy_obs
+    assert torch.equal(part.next_obs["states"], policy_obs["states"])
     assert part.next_rlt_obs is None
 
 
@@ -3742,11 +3753,69 @@ def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
         requires_inference=True,
     )
 
-    rollout._publish_env_part(completion, None, None, actor_channel)
+    rollout._publish_env_parts(
+        PolicyInput(
+            obs=completion.next_obs,
+            env_parts=[completion],
+            request_sizes=[1],
+        ),
+        None,
+        actor_channel,
+    )
 
     rollout._predict_rollout_actions.assert_called_once()
     part = actor_channel.put.call_args.args[0]
     assert torch.equal(part.next_rlt_obs["z_rl"], torch.ones(1, 2))
+
+
+def test_psi0_terminal_value_inference_preserves_current_rlt_features():
+    values = torch.tensor([[4.0, 5.0], [6.0, 7.0]])
+    calls = []
+
+    class ValueModel:
+        def predict_value_batch(self, obs):
+            calls.append(obs)
+            return values
+
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.enable_rlt = True
+    rollout.collect_transitions = True
+    rollout.model_cfg = SimpleNamespace(model_type="psi0")
+    rollout.hf_model = ValueModel()
+    next_obs = {"states": torch.ones(2, 4)}
+    source = TrajectorySource(TrajectoryKey(0, 0, 0, 0, 0), 2)
+    completion = EnvPart(
+        sources=[source],
+        transition=EnvTransition(),
+        next_obs=next_obs,
+        requires_inference=True,
+    )
+    forward_inputs = {
+        "rlt_transition_z_rl": torch.arange(4).reshape(2, 2),
+        "rlt_transition_proprio": torch.arange(6).reshape(2, 3),
+        "rlt_transition_ref_chunk": torch.arange(8).reshape(2, 4),
+    }
+    published = []
+    actor_channel = SimpleNamespace(put=lambda part, async_op: published.append(part))
+
+    rollout._publish_env_parts(
+        PolicyInput(obs=next_obs, env_parts=[completion], request_sizes=[2]),
+        forward_inputs,
+        actor_channel,
+    )
+
+    assert len(calls) == 1
+    assert torch.equal(calls[0]["states"], next_obs["states"])
+    [part] = published
+    assert torch.equal(part.final_prev_values, values)
+    assert torch.equal(part.bootstrap_values, values[:, :1])
+    assert torch.equal(part.next_rlt_obs["z_rl"], forward_inputs["rlt_transition_z_rl"])
+    assert torch.equal(
+        part.next_rlt_obs["proprio"], forward_inputs["rlt_transition_proprio"]
+    )
+    assert torch.equal(
+        part.next_rlt_obs["ref_chunk"], forward_inputs["rlt_transition_ref_chunk"]
+    )
 
 
 def test_rollout_keeps_next_forward_inputs_only_for_rlt():
