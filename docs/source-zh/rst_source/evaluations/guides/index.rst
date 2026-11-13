@@ -31,6 +31,9 @@ Benchmark 指南
    * - SIMPLE
      - 使用 Psi0 的人形机器人全身评测
      - :doc:`simple`
+   * - LADDER
+     - 长程机器人操作基准（SimplerEnv-Long、RobotArena-∞-Long、RoboLab-Long）
+     - :doc:`ladder`
 
 .. note::
 
@@ -47,3 +50,4 @@ Benchmark 指南
    polaris
    robotwin
    simple
+   ladder
