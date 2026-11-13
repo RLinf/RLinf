@@ -24,6 +24,7 @@ from typing import Any, Optional
 from unittest.mock import Mock
 
 import pytest
+import ray
 import torch
 
 from rlinf.scheduler import (
@@ -58,6 +59,7 @@ from rlinf.scheduler.cluster import (
     resolve_group_sizes,
     resolve_worker_names,
 )
+from rlinf.scheduler.collective import AsyncChannelWork
 from rlinf.scheduler.worker import WorkerAddress, WorkerGroup
 
 # --- Constants ---
@@ -906,6 +908,33 @@ class TestChannel:
         future = asyncio.run(scenario())
         with pytest.raises(RuntimeError, match="future failed"):
             future.value()
+
+    def test_async_channel_work_remote_failure_raises(self, cluster):
+        """A failed remote call must raise at the waiter instead of leaving
+        the work forever pending, and work issued later on the same channel
+        key must still execute instead of queueing behind the failed work."""
+
+        @ray.remote
+        class FailingActor:
+            def ok(self, value):
+                return value
+
+            def boom(self):
+                raise ValueError("remote boom")
+
+        actor = FailingActor.remote()
+        channel_key = f"failure_key_{uuid.uuid4().hex[:8]}"
+
+        sync_work = AsyncChannelWork("failure_channel", channel_key, actor, "boom")
+        with pytest.raises(Exception, match="remote boom"):
+            sync_work.wait()
+
+        async_work = AsyncChannelWork("failure_channel", channel_key, actor, "boom")
+        with pytest.raises(Exception, match="remote boom"):
+            asyncio.run(async_work.async_wait())
+
+        follow_up = AsyncChannelWork("failure_channel", channel_key, actor, "ok", 42)
+        assert follow_up.wait() == 42
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_async_wait_yields_control(self, worker_groups, channel, channel_type):

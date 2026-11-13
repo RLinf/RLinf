@@ -325,7 +325,19 @@ class AsyncChannelWork(AsyncWork):
     def _execute(self):
         method = getattr(self._channel_actor, self._method)
         future: ConcurrentFuture = method.remote(*self._args, **self._kwargs).future()
-        future.add_done_callback(lambda f: self._future.set_result(f.result()))
+        future.add_done_callback(self._complete)
+
+    def _complete(self, future: ConcurrentFuture) -> None:
+        """Complete the work's future with the remote call's outcome."""
+        try:
+            result = future.result()
+        except BaseException as exc:
+            # An exception raised in a concurrent.futures callback is only
+            # logged, leaving this future forever pending; every waiter on it
+            # and every later operation chained on the same channel key hangs.
+            self._future.set_exception(exc)
+        else:
+            self._future.set_result(result)
 
     async def async_wait(self):
         """Async wait for the work to complete.
@@ -391,7 +403,13 @@ class AsyncChannelCommWork(AsyncWork):
 
     def _store_channel_data(self):
         """Store channel data in the channel data store."""
-        data, query_id = self._async_comm_work.wait()
+        try:
+            data, query_id = self._async_comm_work.wait()
+        except BaseException as exc:
+            # The getter waits on the data future, not on this callback, so a
+            # failure here must complete that future or the getter hangs.
+            self._data_future.set_exception(exc)
+            return
         with AsyncChannelCommWork.store_lock:
             if query_id not in AsyncChannelCommWork.channel_data_store:
                 AsyncChannelCommWork.channel_data_store[query_id] = Future()
