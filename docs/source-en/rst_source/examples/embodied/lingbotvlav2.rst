@@ -265,6 +265,8 @@ instead of the released weights, pass its full weights file:
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+For the RoboTwin SFT workflow, see :doc:`LingbotVLA 2.0 SFT <sft_lingbotvlav2>`.
+
 Visualization and Results
 -------------------------
 

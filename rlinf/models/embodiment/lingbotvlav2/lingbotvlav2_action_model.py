@@ -20,7 +20,6 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-import yaml
 from lingbotvla.checkpoint_metadata import (
     build_checkpoint_config,
     read_checkpoint_config,
@@ -42,11 +41,14 @@ from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
 )
 from omegaconf import DictConfig, OmegaConf
 from safetensors.torch import load_model
+from torch.utils._pytree import tree_map
 from transformers.modeling_utils import load_sharded_checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
     is_rl_trainable,
+    load_training_config,
+    mask_padded_actions,
     sample_with_one_sde_step,
     score_sde_step,
 )
@@ -141,9 +143,15 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         model_config = build_checkpoint_config(
             read_checkpoint_config(weights), config.tokenizer_path
         )
-        model_config.attention_implementation = (
-            config.lingbotvlav2.attention_implementation
+        training_config = load_training_config(config.lingbotvlav2.training_config_path)
+        configured_attention = OmegaConf.select(
+            config, "lingbotvlav2.attention_implementation"
         )
+        if not configured_attention:
+            raise KeyError(
+                "Missing `lingbotvlav2.attention_implementation` in RLinf config"
+            )
+        model_config.attention_implementation = configured_attention
         model_config.use_cache = True
         # Fixed-grid caches are batch-size dependent; actor micro-batches and
         # rollout batches need not have the same size.
@@ -193,10 +201,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 bias_last=True,
             ).to(dtype=torch_dtype)
 
-        with (
-            Path(config.lingbotvlav2.training_config_path).expanduser().open() as source
-        ):
-            data_config = dict(yaml.safe_load(source)["data"])
+        data_config = dict(training_config["data"])
         for key in ("joints", "norm_type"):
             data_config[key] = [
                 str(item) if isinstance(item, dict) else item
@@ -416,11 +421,64 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
         return latent[..., mask]
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs: Any):
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         if forward_type != ForwardType.DEFAULT:
-            raise NotImplementedError(
-                "The V2 adapter currently implements PPO/GRPO only"
-            )
+            raise NotImplementedError("The V2 adapter implements PPO/GRPO/SFT only")
         return self.default_forward(**kwargs)
+
+    def sft_forward(self, data, **kwargs):
+        self.vla_model.config.align_params = {}
+        device = next(iter(self.vla_model.model.parameters())).device
+        data = tree_map(
+            lambda x: (
+                torch.as_tensor(x, device=device).contiguous()
+                if isinstance(x, torch.Tensor)
+                else x
+            ),
+            data,
+        )
+        dtype = _COMPUTE_DTYPE
+        joint_mask = mask_padded_actions(
+            data.get("joint_mask"), data.get("action_is_pad")
+        )
+        if joint_mask is not None:
+            joint_mask = joint_mask.to(device=device)
+        outputs = self.vla_model(
+            images=data["images"].to(dtype),
+            img_masks=data["img_masks"],
+            state=data["state"].to(dtype),
+            lang_tokens=data["lang_tokens"],
+            lang_masks=data["lang_masks"],
+            actions=data["actions"].to(dtype),
+            joint_mask=joint_mask,
+            action_is_pad=data.get("action_is_pad"),
+            image_grid_thw=data.get("image_grid_thw"),
+            depth_targets=data.get("depth_targets"),
+            future_depth_targets=data.get("future_depth_targets"),
+            future_video_targets=data.get("future_video_targets"),
+            future_video_cls_targets=data.get("future_video_cls_targets"),
+            future_video_current_patch=data.get("future_video_current_patch"),
+        )
+        (
+            total_loss,
+            loss_vla,
+            loss_depth,
+            loss_future_depth,
+            loss_future_video,
+            seq_wise_loss,
+            loss_dict,
+            *_,
+        ) = outputs
+        return {
+            "loss": total_loss,
+            "l1_loss": loss_vla,
+            "depth_loss": loss_depth,
+            "future_depth_loss": loss_future_depth,
+            "future_video_loss": loss_future_video,
+            "seq_wise_loss": seq_wise_loss,
+            **loss_dict,
+        }
 
     def default_forward(
         self, forward_inputs: dict, compute_values: bool = True, **kwargs: Any

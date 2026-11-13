@@ -12,16 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LingBot-VLA 2.0 RL helpers that do not need the V2 package.
+"""LingBot-VLA 2.0 helpers that do not need the V2 package.
 
 A training rollout follows the flow ODE except at one random denoising step per
 sample, where it draws from the flow-SDE transition. PPO scores only that step,
 as RLinf's LingBot-VLA and OpenPI policies do.
 """
 
-from typing import Callable, Optional
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import torch
+import yaml
+
+
+def load_training_config(path: str | Path) -> dict[str, Any]:
+    """Load and validate one LingBot-VLA V2 training configuration."""
+    config_path = Path(path).expanduser().resolve()
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"LingBot-VLA V2 training config was not found at {config_path}"
+        )
+    with config_path.open(encoding="utf-8") as config_file:
+        training_config = yaml.safe_load(config_file)
+    if not isinstance(training_config, dict):
+        raise ValueError(
+            f"LingBot-VLA V2 training config must be a mapping at {config_path}"
+        )
+    for section in ("model", "train", "data"):
+        if section not in training_config:
+            raise KeyError(
+                f"Missing `{section}` in LingBot-VLA V2 training config: {config_path}"
+            )
+        if not isinstance(training_config[section], dict):
+            raise ValueError(
+                f"`{section}` must be a mapping in LingBot-VLA V2 training config: "
+                f"{config_path}"
+            )
+    return training_config
+
 
 _TRAINABLE_PARTS = (
     ".qwen_expert.",
@@ -41,6 +70,32 @@ def is_rl_trainable(name: str) -> bool:
     return any(part in name for part in _TRAINABLE_PARTS) and not any(
         part in name for part in _FROZEN_PARTS
     )
+
+
+def mask_padded_actions(
+    joint_mask: torch.Tensor | None, action_is_pad: torch.Tensor | None
+) -> torch.Tensor | None:
+    """Clear padded action steps from the V2 loss mask."""
+    if joint_mask is None or action_is_pad is None:
+        return joint_mask
+
+    joint_mask = joint_mask.bool()
+    pad_mask = action_is_pad.bool()
+    if pad_mask.ndim == joint_mask.ndim - 1:
+        pad_mask = pad_mask.unsqueeze(-1)
+    if pad_mask.ndim != joint_mask.ndim or pad_mask.shape[:-1] != joint_mask.shape[:-1]:
+        raise ValueError(
+            "LingBot-VLA V2 action padding mask shape mismatch: "
+            f"joint_mask={tuple(joint_mask.shape)}, "
+            f"action_is_pad={tuple(action_is_pad.shape)}."
+        )
+    if pad_mask.shape[-1] not in (1, joint_mask.shape[-1]):
+        raise ValueError(
+            "LingBot-VLA V2 action padding mask action dimension mismatch: "
+            f"joint_mask={tuple(joint_mask.shape)}, "
+            f"action_is_pad={tuple(action_is_pad.shape)}."
+        )
+    return joint_mask & ~pad_mask
 
 
 # Maps a latent [batch, horizon, dim] and per-sample times [batch] to a velocity.

@@ -33,6 +33,17 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_lingbotvlav2.html" style="display: block;"><img src="https://raw.githubusercontent.com/robbyant/lingbot-vla-v2/ecca77bb259b9592d5fc0eb2b4972d4a236ed2c8/assets/lingbot_vla2_framework.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_lingbotvlav2.html" style="text-decoration: underline; color: blue;">
+           <b>LingbotVLA 2.0 监督微调</b>
+         </a><br>
+         将 RoboTwin 示范转换为 LeRobot 数据并训练动作专家
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/sft_fastwam.html" style="display: block;"><img src="https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -84,6 +95,7 @@ VLA / WAM 模型监督微调
 
    OpenPI <embodied/sft_openpi>
    DreamZero <embodied/sft_dreamzero>
+   LingbotVLA 2.0 <embodied/sft_lingbotvlav2>
    FastWAM <embodied/sft_fastwam>
    Cosmos3 <embodied/sft_cosmos3>
    Qwen-VL <embodied/sft_vlm>

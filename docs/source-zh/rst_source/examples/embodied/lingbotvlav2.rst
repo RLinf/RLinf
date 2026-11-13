@@ -231,8 +231,9 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+RoboTwin SFT 流程见 :doc:`LingbotVLA 2.0 SFT <sft_lingbotvlav2>`。
+
 可视化与结果
-----------------------------------------
 
 在 RLinf 仓库根目录启动 TensorBoard：
 
