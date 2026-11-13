@@ -1,9 +1,15 @@
 Prefix Fine-Tune: Train Online from an Existing VLA
 ===================================================
 
-Train a small policy on ManiSkill peg insertion from a frozen OpenPI VLA, then change the feature, network, or algorithm without rewriting data collection or the update loop.
+A vision-language-action model (VLA) reads camera images, a language instruction, and the robot state, and outputs an action. Image understanding, language, and action generation live in one large model.
 
-A VLA reads camera images, a language instruction, and the robot state, and proposes an action. Prefix Fine-Tune keeps that VLA frozen and trains a smaller network beside it. The part of the VLA that encodes images and language is the vision-language model. Its hidden states, called the prefix, plus a reference action from the VLA, are what the small network learns from. Here a policy is the model that turns an observation into an action. This page uses published OpenPI checkpoints and a ready-made ManiSkill peg-insertion config so you can run that loop before changing it. OpenPI is the VLA connected today; another VLA needs an adapter, covered in :doc:`Prefix components <../../extending/prefix>`. If you already trained an RL Token (RLT) representation, the Stage 2 configs on :doc:`RL Token <rlt>` use the same update path.
+RL Token (RLT) uses that pretrained model in two stages. Stage 1 trains the VLA with a token transformer on demonstrations and compresses the vision-language features into a compact representation. Stage 2 freezes the feature model and trains two small networks from that representation, the robot state, and the VLA reference action: the actor outputs actions, and the critic estimates later return. Online updates run only through those two networks. The large model runs forward only.
+
+The Prefix framework builds on that Stage 2 loop. The feature source, the network, and the algorithm are configurable, and data collection and the parameter update stay on one path. Features can come from RLT tokens or from pooling the frozen VLA vision-language features. Those features are the prefix. A policy is the model that turns an observation into an action.
+
+During training the feature model stays frozen. The actor reads the prefix, the robot state, and the reference action, and outputs the action to execute. After the environment executes that action, the run writes the features, the action, the reward, and the termination into the replay buffer. Updates sample that buffer, and backpropagation goes through the actor and the critic. The VLA keeps supplying features and reference actions, and its weights stay unchanged.
+
+This page runs that loop on ManiSkill peg insertion from published OpenPI checkpoints. OpenPI is the VLA connected today. Another VLA needs an adapter, covered in :doc:`Prefix components <../../extending/prefix>`. If you already trained an RL Token representation, the Stage 2 configs on :doc:`RL Token <rlt>` use the same update path.
 
 Overview
 --------

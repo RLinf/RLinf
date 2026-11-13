@@ -1,9 +1,14 @@
 Prefix Fine-Tune：从已有 VLA 开始在线训练
 =========================================
+视觉语言动作模型（VLA）读取相机图像、语言指令和机器人状态，输出动作。图像理解、语言理解和动作生成都在同一份大模型里。
 
-用一份已有的 OpenPI VLA，在 ManiSkill 插接任务上训练轻量 policy，并在不重写数据采集和参数更新流程的情况下更换特征、网络或算法。
+RL Token（RLT）分两个阶段使用这份预训练能力。Stage 1 用示范数据联合训练 VLA 和 token transformer，把视觉语言特征压成紧凑表示。Stage 2 冻结特征模型，用这个表示、机器人状态和 VLA 参考动作训练两个轻量网络：actor 输出动作，critic 估计后续回报。在线更新只经过这两个网络，大模型只做前向计算。
 
-VLA 读取相机图像、语言指令和机器人状态，给出动作。Prefix Fine-Tune 冻结这份 VLA，在它旁边训练一个较小的网络。VLA 里理解图像和语言的部分是视觉语言模型，它编码出的特征称为 prefix。小网络同时读取 VLA 给出的参考动作，学习如何控制任务。这里的 policy 指根据观测生成动作的模型。本页使用已发布的 OpenPI checkpoint 和配好的 ManiSkill 插接配置，先把这条流程跑通，再改实验。当前接入的 VLA 是 OpenPI；其他 VLA 需要适配器，步骤见 :doc:`Prefix 组件扩展 <../../extending/prefix>`。如果已经训练过 RL Token（RLT）表示，:doc:`RL Token <rlt>` 上的 Stage 2 配置走同一套更新流程。
+Prefix 框架在此基础上用配置选择特征来源、网络和算法，采集和参数更新仍走同一套流程。特征可以来自 RLT token，也可以直接池化冻结 VLA 的视觉语言特征，这段特征称为 prefix。policy 指根据观测生成动作的模型。
+
+训练时特征模型保持冻结。actor 读取 prefix 特征、机器人状态和参考动作，给出要执行的动作。环境执行后，系统把特征、动作、奖励和终止写入 replay，更新时反复采样，反向传播只经过 actor 和 critic。VLA 继续提供特征和参考动作，权重保持不变。
+
+本页使用已发布的 OpenPI checkpoint 和配好的 ManiSkill 插接配置，先把这条流程跑通。当前接入的 VLA 是 OpenPI；其他 VLA 需要适配器，步骤见 :doc:`Prefix 组件扩展 <../../extending/prefix>`。如果已经训练过 RL Token 表示，:doc:`RL Token <rlt>` 上的 Stage 2 配置走同一套更新流程。
 
 概览
 ----
