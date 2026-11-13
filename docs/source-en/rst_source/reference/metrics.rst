@@ -1,21 +1,14 @@
 Training Metrics
 ================
 
-RLinf reports metrics through the :doc:`MetricLogger <../guides/logger>` under a few namespaces —
-``train/``, ``rollout/``, ``env/``, and ``time/``. This page defines them once; example
-pages link here instead of repeating the definitions.
+Metrics are grouped by training, rollout and completed episodes. Standard
+deviations use the population definition. Configure logging backends with
+:doc:`Logger <../guides/logger>`.
 
-.. tip::
+Training Metrics
+----------------
 
-   For embodied tasks, compare ``env/success_once`` with ``env/return_mean``.
-   If each episode returns 1 on success and 0 on failure, both metrics equal
-   the episode success rate.
-   ``rollout/returns_mean`` is a value-training target, not episode return.
-
-Training metrics — ``train/``
------------------------------
-
-Policy- and value-optimization statistics, logged every actor update.
+The ``train/`` namespace reports policy and value optimization statistics.
 
 .. list-table::
    :header-rows: 1
@@ -26,34 +19,33 @@ Policy- and value-optimization statistics, logged every actor update.
    * - ``train/actor/approx_kl``
      - Approximate KL divergence between the old and new policies.
    * - ``train/actor/clip_fraction``
-     - Fraction of updates where the probability ratio was clipped.
+     - Fraction of valid elements affected by PPO clipping.
    * - ``train/actor/dual_clip_fraction``
-     - Fraction of valid policy-loss elements bounded by Dual-Clip. Zero when Dual-Clip is disabled; padding is excluded.
+     - Fraction of valid elements affected by Dual-Clip; zero when disabled.
    * - ``train/actor/clipped_ratio``
-     - Mean of the clipped probability ratios.
+     - Mean clipped probability ratio.
    * - ``train/actor/grad_norm``
-     - Gradient norm of the actor.
+     - Actor gradient norm.
    * - ``train/actor/lr``
-     - Current learning rate.
+     - Learning rate.
    * - ``train/actor/policy_loss``
-     - PPO / GRPO policy loss.
+     - Policy loss.
    * - ``train/critic/value_loss``
      - Value-function loss.
    * - ``train/critic/value_clip_ratio``
-     - Fraction of value targets whose update was clipped.
+     - Fraction of value updates affected by clipping.
    * - ``train/critic/explained_variance``
-     - Explained variance of the value predictions (closer to 1 is better).
+     - Explained variance of value predictions.
    * - ``train/entropy_loss``
      - Policy entropy.
    * - ``train/loss``
-     - Total training loss (actor + critic + entropy regularization).
+     - Total training loss.
 
-Rollout metrics — ``rollout/``
-------------------------------
+Rollout Metrics
+---------------
 
-Statistics over valid rollout elements, excluding padding through the loss mask.
-Means and population standard deviations weight every valid element equally
-across ranks, including when ranks have different valid counts.
+The ``rollout/`` namespace summarizes valid training samples. GAE returns are
+value-function training targets; episode returns are listed under ``env/`` below.
 
 .. list-table::
    :header-rows: 1
@@ -62,32 +54,33 @@ across ranks, including when ranks have different valid counts.
    * - Metric
      - Meaning
    * - ``rollout/advantages_max``
-     - Maximum advantage in the batch.
+     - Maximum training advantage.
    * - ``rollout/advantages_mean``
-     - Mean advantage in the batch.
-   * - ``rollout/advantages_std``
-     - Population standard deviation of the training advantages, after normalization if enabled.
+     - Mean training advantage.
    * - ``rollout/advantages_min``
-     - Minimum advantage in the batch.
+     - Minimum training advantage.
+   * - ``rollout/advantages_std``
+     - Standard deviation of training advantages.
    * - ``rollout/rewards``
-     - Legacy mean of the stored reward elements, before chunk-level summation.
+     - Mean reward per action.
    * - ``rollout/rewards_mean``, ``rollout/rewards_std``
-     - Reward mean and population standard deviation. With chunk-level rewards, action rewards are summed within each chunk first.
+     - Reward mean and standard deviation at the configured reward granularity.
    * - ``rollout/returns_mean``, ``rollout/returns_std``
-     - Mean and population standard deviation of value-training targets. For GAE, these include discounted rewards and bootstrap values.
+     - Mean and standard deviation of value-function training targets.
    * - ``rollout/returns_min``, ``rollout/returns_max``
-     - Minimum and maximum value-training target.
+     - Minimum and maximum value-function training targets.
    * - ``rollout/values_mean``, ``rollout/values_std``
-     - Mean and population standard deviation of GAE value predictions at sampled transitions. The final bootstrap value is excluded.
+     - Mean and standard deviation of value predictions for sampled states.
    * - ``rollout/advantages_raw_mean``, ``rollout/advantages_raw_std``
-     - Mean and population standard deviation of GAE targets minus value predictions, before advantage normalization. Logged only when return normalization is disabled.
+     - Mean and standard deviation of unnormalized GAE advantages, available when return normalization is disabled.
    * - ``rollout/loss_mask_fraction``
-     - Fraction of rollout elements retained by the loss mask.
+     - Fraction of rollout elements included in training.
 
-Environment metrics — ``env/``
-------------------------------
+Episode Metrics
+---------------
 
-Task-level signals from the simulator.
+Environments report completed-episode statistics under ``env/``. Independent
+evaluation reports the same keys under ``eval/``.
 
 .. list-table::
    :header-rows: 1
@@ -96,24 +89,20 @@ Task-level signals from the simulator.
    * - Metric
      - Meaning
    * - ``env/success_once``
-     - **Recommended.** Unnormalized episodic success rate — the truest measure of task performance.
+     - Fraction of episodes in which success occurred.
    * - ``env/episode_len``
-     - Number of environment steps elapsed in the episode.
-   * - ``env/return``
-     - Mean completed-episode return, summed from actual environment rewards without value bootstrap.
-   * - ``env/return_mean``, ``env/return_std``
-     - Explicit episode-return mean and population standard deviation. The mean aliases ``env/return``; completed episodes are weighted equally across ranks.
+     - Mean episode length in environment steps.
+   * - ``env/return``, ``env/return_mean``
+     - Mean episode return.
+   * - ``env/return_std``
+     - Standard deviation of episode returns.
    * - ``env/reward``
-     - Step-level reward (``0`` on intermediate steps, ``1`` on success). The logged value is normalized by episode length, which makes it hard to read as real performance.
+     - Mean environment reward per step.
 
-Independent evaluation uses the same episode metrics under ``eval/`` instead
-of ``env/``. For binary episode returns with success rate :math:`p`, the mean
-is :math:`p` and the population standard deviation is :math:`\sqrt{p(1-p)}`.
-
-Dual-Clip configuration
+Dual-Clip Configuration
 -----------------------
 
-These options apply to embodied PPO actor losses.
+These options control Dual-Clip in embodied PPO.
 
 .. list-table::
    :header-rows: 1
@@ -121,13 +110,10 @@ These options apply to embodied PPO actor losses.
 
    * - Option
      - Type
-     - Default and meaning
+     - Default and Meaning
    * - ``algorithm.use_dual_clip``
      - Boolean
-     - If omitted, uses the actor's default. Set to ``false`` to disable Dual-Clip, as in the Task22 recipe.
+     - Uses the actor's default when omitted. ``false`` disables Dual-Clip.
    * - ``algorithm.clip_ratio_c``
      - Float or null
-     - Defaults to 3.0 when enabled. A finite value greater than 1 bounds the policy loss; null disables the bound.
-
-See also the :doc:`Logger <../guides/logger>` tutorial for choosing backends (TensorBoard,
-Weights & Biases, SwanLab) and configuring ``runner.logger``.
+     - Defaults to 3.0 when enabled. Accepts a finite value greater than 1; null disables the bound.
