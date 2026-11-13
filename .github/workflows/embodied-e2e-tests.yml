@@ -79,6 +79,44 @@ jobs:
         run: |
           rm -rf .venv
 
+  embodied-ogbench-qam-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create OGBench environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env ogbench
+
+      - name: QAM offline training, resume and evaluation
+        timeout-minutes: 25
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
+          # test_qam.py launches run_offline.sh ogbench_qam in isolated run directories.
+          python -m pytest tests/e2e_tests/embodied/test_qam.py -v --basetemp=logs/qam-ci
+
+      - name: Upload QAM test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qam-offline-e2e
+          path: |
+            logs/qam-ci/**/run.log
+            logs/qam-ci/**/tensorboard/*
+          if-no-files-found: ignore
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+
   embodied-d4rl-offline-iql-test:
     runs-on: embodied
     steps:

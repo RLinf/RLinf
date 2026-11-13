@@ -130,7 +130,7 @@ class MultiStepRolloutWorker(Worker):
 
         self.weight_syncer = None
         self._sync_weight_comm_options = None
-        if not self.only_eval:
+        if not self.only_eval and self.algorithm_cfg.get("loss_type") != "qam":
             weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
             assert weight_syncer_cfg is not None, (
                 "rollout.weight_syncer config must be provided"
@@ -206,6 +206,13 @@ class MultiStepRolloutWorker(Worker):
         self.setup_sample_params()
         if self.enable_offload:
             self.offload_model()
+
+    def load_policy_state_dict(self, state_dict: dict[str, torch.Tensor]):
+        """Load the single-worker offline policy for evaluation."""
+        if self.algorithm_cfg.get("loss_type") != "qam":
+            raise ValueError("Direct policy loading is supported only for offline QAM")
+        self.hf_model.load_state_dict(state_dict)
+        self.hf_model.eval()
 
     def setup_sample_params(self):
         # sampling parameters for rollout

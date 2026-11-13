@@ -90,6 +90,7 @@ jobs:
               - 'rlinf/robotics/**'
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
               - 'rlinf/workers/actor/fsdp_iql_policy_worker.py'
+              - 'rlinf/workers/actor/qam_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/runners/offline_runner.py'
               - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
@@ -112,6 +113,7 @@ jobs:
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
               - 'examples/embodiment/config/*/**'
+              - 'examples/embodiment/config/ogbench_qam_offline.yaml'
               - 'examples/diffusion/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
@@ -190,6 +192,7 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              - 'rlinf/models/embodiment/qam_policy.py'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the

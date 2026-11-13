@@ -75,6 +75,17 @@ RL
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/qam_ogbench.html" style="display: flex; align-items: center; justify-content: center; height: 200px; border-radius: 8px; background: var(--pst-color-surface); font-size: 32px; text-decoration: none;">QAM</a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/qam_ogbench.html" style="text-decoration: underline; color: blue;">
+           <b>OGBench 上的 QAM</b>
+         </a><br>
+         使用 OGBench 离线数据训练 flow policy
+       </p>
+     </div>
+
+
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"
@@ -110,5 +121,6 @@ RL
    STEAM <embodied/steam>
    Co-Training <embodied/co_training>
    IQL (D4RL) <embodied/iql_d4rl>
+   QAM (OGBench) <embodied/qam_ogbench>
    OPD <embodied/opd>
    RL Token <embodied/rlt>

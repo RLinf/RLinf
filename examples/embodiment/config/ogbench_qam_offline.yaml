@@ -1,0 +1,99 @@
+defaults:
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+    env: 0-0
+    rollout: 0-0
+
+runner:
+  task_type: offline
+  only_eval: false
+  max_epochs: 1000000
+  max_steps: 1000000
+  local_update_steps: 1000
+  val_check_interval: 50000
+  save_interval: 250000
+  log_interval: 1000
+  eval_episodes: 50
+  resume_dir: null
+  logger:
+    log_path: logs
+    project_name: rlinf-qam
+    experiment_name: qam-antmaze-offline
+    logger_backends: [tensorboard]
+
+algorithm:
+  loss_type: qam
+  adv_type: null
+  gamma: 0.99
+
+data:
+  dataset_type: ogbench
+  task_name: antmaze-large-navigate-singletask-task1-v0
+  dataset_dir: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    env_type: ogbench
+    task_name: ${data.task_name}
+    dataset_dir: ${data.dataset_dir}
+    seed: ${actor.seed}
+    evaluation_seed_offset: 1000000
+    rollout_epoch: ${runner.eval_episodes}
+    total_num_envs: 1
+    group_size: 1
+    max_steps_per_rollout_epoch: 1000
+    auto_reset: false
+    early_stop_on_done: true
+    is_eval: true
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  pipeline_stage_num: 1
+  model: ${actor.model}
+
+actor:
+  group_name: ActorGroup
+  training_backend: single
+  seed: 10001
+  global_batch_size: 256
+  micro_batch_size: 256
+  optim:
+    lr: 0.0003
+  model:
+    model_type: qam_policy
+    precision: fp32
+    is_lora: false
+    load_to_device: true
+    obs_dim: 29
+    action_dim: 8
+    num_action_chunks: 1
+    actor_hidden_dims: [512, 512, 512, 512]
+    value_hidden_dims: [512, 512, 512, 512]
+    actor_layer_norm: false
+    value_layer_norm: true
+    horizon_length: 1
+    action_chunking: true
+    num_qs: 10
+    rho: 0.5
+    discount: 0.99
+    tau: 0.005
+    flow_steps: 10
+    best_of_n: 1
+    inv_temp: 10.0
+    residual: false
+    fql_alpha: 0.0
+    edit_scale: 0.0

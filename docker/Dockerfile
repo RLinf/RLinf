@@ -87,6 +87,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-ogbench
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
 
@@ -561,6 +562,15 @@ RUN link_assets
 
 ENV OPENPI_DATA_HOME=/root/.cache/openpi
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: OGBench QAM
+##################################################################################################
+FROM embodied-common-image AS embodied-ogbench-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv ogbench --env ogbench
+
+RUN echo "source ${UV_PATH}/ogbench/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

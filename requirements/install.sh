@@ -125,7 +125,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "ogbench" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -3491,7 +3491,7 @@ install_franka_ros_realworld_env() {
 }
 
 install_env_only() {
-    if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
+    if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ] || [ "$ENV_NAME" = "ogbench" ]; then
         PYTHON_VERSION="3.10"
     fi
     create_and_sync_venv
@@ -3506,6 +3506,9 @@ install_env_only() {
     case "$ENV_NAME" in
         d4rl)
             install_d4rl_env
+            ;;
+        ogbench)
+            install_ogbench_env
             ;;
         mujoco_warp)
             install_common_embodied_deps
@@ -3582,6 +3585,11 @@ install_env_only() {
 
 install_dummy_env() {
     uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+}
+
+install_ogbench_env() {
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install "ogbench==1.2.1" "mujoco==3.3.4"
 }
 
 # LIBERO and its forks cache absolute paths in ~/.libero, ~/.liberopro and

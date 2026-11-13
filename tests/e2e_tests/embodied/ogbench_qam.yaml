@@ -1,0 +1,26 @@
+defaults:
+  - ogbench_qam_offline
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+runner:
+  max_steps: 8
+  max_epochs: 8
+  local_update_steps: 2
+  val_check_interval: 4
+  save_interval: 4
+  log_interval: 2
+  eval_episodes: 1
+
+actor:
+  seed: 10001
+  global_batch_size: 8
+  micro_batch_size: 8
+  model:
+    actor_hidden_dims: [16, 16]
+    value_hidden_dims: [16, 16]
+    num_qs: 2
+    flow_steps: 3

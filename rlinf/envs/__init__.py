@@ -43,6 +43,7 @@ class SupportedEnvType(Enum):
     ROBOVERSE = "roboverse"
     GENIESIM = "geniesim"
     D4RL = "d4rl"
+    OGBENCH = "ogbench"
     MUJOCO_WARP = "mujoco_warp"
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
@@ -90,6 +91,11 @@ def get_env_cls(env_type: str, env_cfg=None):
     """
 
     env_type = SupportedEnvType(env_type)
+
+    if env_type == SupportedEnvType.OGBENCH:
+        from rlinf.envs.sim.ogbench.ogbench_env import OGBenchEnv
+
+        return OGBenchEnv
 
     if env_type == SupportedEnvType.MANISKILL:
         if env_cfg.get("enable_offload", False):

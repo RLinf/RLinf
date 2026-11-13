@@ -114,3 +114,33 @@ Skipped (crashed):  2
 ```
 
 A detailed running summary is also generated, showing each task's status. Comparison analysis runs automatically, producing a `success_once` curve plot under `logs/` along with similarity metrics against the baseline.
+
+## QAM numerical reference check
+
+QAM training uses RLinf's PyTorch implementation. The optional numerical check imports the official JAX implementation only in its test process. It compares losses, gradients, adjoint targets, and an optimizer update for action horizons 1 and 2 with matched weights and noise.
+
+Use a clean checkout of [ColinQiyangLi/qam](https://github.com/ColinQiyangLi/qam) at commit `2726d767c9a0a7a46d49693f0391f73dc2cf58ac`. Install the reference's JAX, Flax, Optax, and other Python dependencies in the test environment as well as RLinf's dependencies. The test skips when `QAM_REFERENCE_ROOT`, JAX, or Flax is absent, and fails when a configured checkout has the wrong revision or tracked modifications. It is a manual optional check; the OGBench e2e CI job does not install JAX or download the reference repository.
+
+```bash
+git clone https://github.com/ColinQiyangLi/qam.git /path/to/qam-reference
+git -C /path/to/qam-reference checkout 2726d767c9a0a7a46d49693f0391f73dc2cf58ac
+CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu \
+  QAM_REFERENCE_ROOT=/path/to/qam-reference \
+  python -m pytest tests/parity_tests/test_qam_reference.py -v -rs
+```
+
+The CPU unit cases live with the components they exercise. Run them in separate processes, as unit-test CI does:
+
+```bash
+python -m pytest tests/unit_tests/test_data.py -k ogbench
+python -m pytest tests/unit_tests/test_models.py -k qam
+python -m pytest tests/unit_tests/test_qam.py
+```
+
+After installing OGBench, run the GPU integration test through the standard offline launcher. It uses a small model, trains to step 8, resumes from step 4, compares model/optimizer/RNG/sampler state and later training metrics exactly, and evaluates a checkpoint without further training. The test also exercises the OGBench environment's public reset, step, chunk, terminal, and close contracts. Set `OGBENCH_DATASET_DIR` to reuse an existing dataset cache; otherwise the first run downloads about 255 MiB.
+
+```bash
+python -m pytest tests/e2e_tests/embodied/test_qam.py -v --basetemp=/path/to/new-test-output
+```
+
+Choose a new output directory: pytest clears `--basetemp` before the run. The subdirectories retain console logs, TensorBoard events, resolved configs, and checkpoints. These short tests check integration and numerical continuity, not benchmark performance. GitHub runs the embodied e2e job only when a maintainer applies the `run-ci` label to a non-draft PR.
