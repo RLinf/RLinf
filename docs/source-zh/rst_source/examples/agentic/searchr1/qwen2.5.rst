@@ -191,3 +191,21 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Qwen2.5-3B Search-R1 reward：橙色为 GRPO，蓝色为 PPO" style="width: 100%; max-width: 410px;"/>
      <p><em>橙色为 GRPO，蓝色为 PPO。两组实验均使用 8×A800 80 GB，有效 batch size 均为 1024，TensorBoard 平滑系数为 0.6。</em></p>
    </div>
+
+.. _searchr1-qwen25-hardware:
+
+运行于不同硬件后端
+------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: ../_ascend_agentic.rst
+
+Ascend 配方使用 FP16 和动态梯度缩放，初始 scale 为 ``32768``，以减少训练初期的梯度溢出。训练过程中 scaler 会继续自动调整 scale。
+
+按前文步骤准备检索服务，并将 ``tools.search.server_addr`` 设置为可访问的 endpoint。检索服务可以运行在另一台机器上。修改 ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` 后启动训练：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train_ascend.sh train_qwen2.5_ascend

@@ -59,6 +59,7 @@ Installation
 
 Install RLinf first, then add the lightweight HTTP client dependencies used by this recipe:
 
+
 .. code-block:: bash
 
    # Install additional dependencies
@@ -265,3 +266,19 @@ Common issues and solutions:
    Ensure the API endpoint addresses in Continue configuration are correct and check network connectivity. You can also use ``simple_online_coding_client.py`` to test if feedback data can be received normally.
 
 Use this setup as the online loop: Continue sends requests, RLinf collects feedback, and the training service updates the policy.
+
+.. _coding-online-rl-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+This recipe runs offline training with an LLM judge. Prepare Code-FIM data and the Qwen2.5-Coder checkpoint, and configure ``LLMASJUDGE_API_URL``, ``LLMASJUDGE_API_KEY``, and ``LLMASJUDGE_MODEL`` for your judge service. Edit the paths in ``qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend.yaml`` and run:
+
+.. code-block:: bash
+
+   bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend

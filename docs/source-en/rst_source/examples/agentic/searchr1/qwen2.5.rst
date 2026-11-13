@@ -214,3 +214,21 @@ The following compares GRPO and PPO training rewards:
      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Qwen2.5-3B Search-R1 reward: GRPO in orange and PPO in blue" style="width: 100%; max-width: 410px;"/>
      <p><em>GRPO (orange) and PPO (blue) on 8×A800 80 GB, both with effective batch size 1024. TensorBoard smoothing: 0.6.</em></p>
    </div>
+
+.. _searchr1-qwen25-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: ../_ascend_agentic.rst
+
+The Ascend recipe uses FP16 with dynamic gradient scaling and an initial scale of ``32768`` to reduce overflow during the first updates. The scaler continues to adapt during training.
+
+Prepare the retriever using the setup above, and set ``tools.search.server_addr`` to its reachable endpoint. The retriever can run on a separate machine. Edit ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` and launch:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train_ascend.sh train_qwen2.5_ascend

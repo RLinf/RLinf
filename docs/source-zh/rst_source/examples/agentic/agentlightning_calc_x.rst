@@ -35,6 +35,7 @@ agent 会读取题目，生成推理过程与答案，并根据反馈做强化�
 安装
 ----------------------------------------
 
+
 AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 OpenTelemetry 1.45 修改了将 rollout span 路由到 Lightning Store 的 exporter 实现。创建基础环境后，请先安装兼容的 OpenTelemetry 依赖，再安装本示例的其他依赖：
 
 .. code-block:: bash
@@ -119,3 +120,29 @@ HF 评测时在对应的 ``*_eval.yaml`` 里设置 ``rollout.model.model_path``�
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+
+.. _agentlightning-calc-x-hardware:
+
+运行于不同硬件后端
+------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+安装计算器依赖时保留 Ascend 的配套版本。``--no-config`` 可以避免 uv 应用仓库默认的 CUDA 依赖覆盖配置：
+
+.. code-block:: bash
+
+   uv --no-config pip install --torch-backend cpu \
+     --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
+     -r requirements/agentic/agentlightning_npu.txt
+
+这些版本约束使 OpenAI SDK 和音频依赖与 SGLang 保持兼容，满足 AgentOps 的 ``packaging<25`` 要求，并保留 MCP 使用的 Pydantic 接口。protobuf override 保留 RLinf 的 6.x runtime，而 AutoGen 0.7.5 声明依赖 5.x；即使 Calc-X 流程通过，包元数据中的这一冲突仍然存在。
+
+准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend

@@ -36,6 +36,7 @@ RLinf's distributed trainer.
 Installation
 ------------
 
+
 AgentLightning 0.3.0 requires the OpenTelemetry versions constrained by RLinf
 because OpenTelemetry 1.45 changed the exporter implementation used to route
 rollout spans to the Lightning Store. After creating the base environment,
@@ -127,3 +128,29 @@ For HF evaluation, set ``rollout.model.model_path`` in the matching ``*_eval.yam
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+
+.. _agentlightning-calc-x-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+Install the calculator dependencies while preserving the Ascend package versions. ``--no-config`` prevents uv from applying the repository's default CUDA dependency overrides:
+
+.. code-block:: bash
+
+   uv --no-config pip install --torch-backend cpu \
+     --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
+     -r requirements/agentic/agentlightning_npu.txt
+
+The pins keep the OpenAI SDK and audio dependencies compatible with SGLang, preserve AgentOps' ``packaging<25`` requirement, and retain the Pydantic interface used by MCP. The protobuf override retains RLinf's 6.x runtime despite AutoGen 0.7.5 declaring a 5.x requirement; this remains a package metadata conflict even when the Calc-X workflow passes.
+
+Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
+
+.. code-block:: bash
+
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend

@@ -1,0 +1,26 @@
+defaults:
+  - qwen2.5-1.5b-enginehttp-multiturn-fsdp
+
+runner:
+  logger:
+    project_name: rlinf-calc-x-qwen2.5-1.5b-fsdp-ascend
+  experiment_name: calc-x-agl-qwen2.5-1.5b-fsdp-ascend
+
+algorithm:
+  # CUDA FlashAttention cross entropy is unavailable on Ascend.
+  entropy_op_type: torch
+
+rollout:
+  model:
+    model_path: /path/to/Qwen2.5-1.5B-Instruct
+  sglang:
+    attention_backend: ascend
+  validate_weight_first_sync: False
+
+actor:
+  model:
+    attn_implementation: ascend_fusion
+
+data:
+  train_data_paths: ["/path/to/calc_x/train.parquet"]
+  val_data_paths: ["/path/to/calc_x/test.parquet"]

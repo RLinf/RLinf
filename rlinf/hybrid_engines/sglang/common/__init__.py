@@ -11,3 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+try:
+    from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
+except ImportError:
+    from packaging.version import Version
+    from sglang import __version__
+
+    GPU_MEMORY_ALL_TYPES = ["weights", "kv_cache"]
+    if Version(__version__) >= Version("0.5.3"):
+        GPU_MEMORY_ALL_TYPES.append("cuda_graph")
+
+__all__ = ["GPU_MEMORY_ALL_TYPES"]

@@ -165,6 +165,15 @@ class FSDPModelManager:
             model: the initialized model.
         """
         cfg = self._cfg
+        if (
+            Worker.torch_device_type == "npu"
+            and cfg.fsdp_config.get("strategy", "fsdp") != "fsdp2"
+        ):
+            raise ValueError(
+                "Ascend FSDP requires fsdp_config.strategy=fsdp2. "
+                "FSDP1 uses ShardedTensor state that is not supported by the "
+                "Ascend synchronization path."
+            )
         use_gptq = cfg.model.get("gptq_model", False)
         load_in_8bit = cfg.model.get("load_in_8bit", False)
 
@@ -176,10 +185,22 @@ class FSDPModelManager:
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         device = torch.device(f"{Worker.torch_device_type}:{local_rank}")
 
+        attn_implementation = resolve_attn_implementation(
+            cfg.model.get("attn_implementation", "flash_attention_2")
+        )
+        if attn_implementation == "ascend_fusion":
+            if Worker.torch_device_type != "npu":
+                raise ValueError("attn_implementation=ascend_fusion requires an NPU.")
+            from rlinf.hybrid_engines.fsdp.ascend_attention import (
+                register_ascend_fusion_attention,
+            )
+
+            register_ascend_fusion_attention()
+
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
             trust_remote_code=True,
-            attn_implementation=resolve_attn_implementation(),
+            attn_implementation=attn_implementation,
         )
 
         if use_gptq:

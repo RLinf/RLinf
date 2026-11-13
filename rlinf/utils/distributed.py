@@ -24,6 +24,7 @@ from typing_extensions import Self
 
 from rlinf.scheduler import Tracer, Worker
 from rlinf.utils.timers import NamedTimer
+from rlinf.utils.utils import get_current_device
 
 
 class _LazyParallelState:
@@ -76,7 +77,7 @@ def compute_rollout_metrics_dynamic(
     Returns:
         Tuple of (rollout_metrics dict, total_prompt_lengths tensor, total_decode_lengths tensor)
     """
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = get_current_device()
 
     # Extract basic tensors
     advantages = rollout_batch["advantages"].to(device=device)
@@ -221,7 +222,7 @@ def compute_rollout_metrics(
     data_parallel_group: Optional[ProcessGroup] = None,
     use_critic: bool = False,
 ):
-    device = Worker.torch_platform.current_device()
+    device = get_current_device()
     advantages = rollout_batch["advantages"].to(device=device)
     mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
@@ -302,7 +303,7 @@ def compute_rollout_metrics(
         min_value = torch.min(values).detach().item()
         reduce_value_tensor = torch.as_tensor(
             [-min_value, max_value],
-            device=torch.cuda.current_device(),
+            device=device,
             dtype=torch.float32,
         )
         torch.distributed.all_reduce(
@@ -924,7 +925,8 @@ def masked_normalization(
             Normalized x, with the same shape as x.
     """
     dtype = torch.float64 if high_precision else torch.float32
-    x = x.to(dtype=dtype).cuda()
+    target_device = get_current_device()
+    x = x.to(dtype=dtype).to(target_device)
     if not inplace:
         x = x.clone()
     if dim is None:
@@ -934,7 +936,7 @@ def masked_normalization(
             np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
         )
     else:
-        mask = mask.to(dtype=dtype).cuda()
+        mask = mask.to(dtype=dtype).to(target_device)
         assert len(mask.shape) == len(x.shape), (mask.shape, x.shape, dim)
         for i in range(len(x.shape)):
             if i in dim:
