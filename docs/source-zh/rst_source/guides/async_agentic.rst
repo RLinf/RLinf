@@ -78,6 +78,10 @@
 
 重叠之所以可控，关键在 buffer worker。dataloader 由它而不是 runner 持有，所以 actor 训练期间它仍能继续投放；它同时统计在途的组和缓冲里的组，所以两边之间积压的数据有上限；它总是先交出最早的组，所以 actor 拿到的数据变旧的速度由上限决定。
 
+.. note::
+
+   使用 :doc:`session server <session_server>` 时，buffer worker 只收到每个组的元数据，轨迹留在 rollout 节点上。下文的上限和 staleness 规则不变。
+
 两个准入上限
 ------------
 

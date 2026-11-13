@@ -12,6 +12,10 @@ SGLang Server 与 Router
 配置
 ----
 
+.. note::
+
+   :doc:`session server <session_server>` 按 ``rollout.router`` 配置块启动自己的 router。这个 router 与本页 ``router_server_args`` 配置的 router 相互独立。
+
 配置分两部分：``cluster.component_placement`` 负责 **在哪里** 运行引擎；
 参数块负责 **每个引擎与 router 如何** 配置。
 

@@ -1,7 +1,7 @@
 Search-R1 异步训练
 ================================
 
-以 rollout 与训练重叠的方式跑 Search-R1：prompt 持续流入 rollout 引擎，actor 同时在更早的权重版本上训练。本页使用 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，在两台 8 卡机器上把 actor 和 rollout 分别放在不同节点。请先按 :doc:`index` 搭建 RLinf 环境和 Qdrant wiki 检索服务；模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的工作原理和两个调度上限怎么取，见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。
+本页在两台 8 卡机器上异步训练 GLM-4.7-Flash 的 Search-R1：rollout 持续生成，actor 同时用更早权重版本的数据训练。参考运行中，每步耗时从同步训练的 278.6 s 降到 139.0 s，reward 范围与同步训练相当。配置文件是 ``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``，模型相关的配置（数据格式、tokenizer、actor 并行方式）与 :doc:`glm4.7_flash` 相同。异步模式的原理和两个调度上限的取值见 :doc:`异步 agentic RL </rst_source/guides/async_agentic>`。用 session server 运行同一套配方，见 `Session Server 路径`_。
 
 概述
 --------------------------------
@@ -209,6 +209,51 @@ reward 在 agent loop 内计算（Search-R1 的规则奖励在轨迹和检索文
      </div>
    </div>
    <p style="text-align: center;"><em>在途与缓冲上限实验</em></p>
+
+.. _searchr1-async-session-server:
+
+Session Server 路径
+--------------------------------
+
+同一套异步配方也可以改用 session server 运行，下面以 Qwen2.5-3B 为例。session server 在 rollout 节点上收集轨迹，SGLang router 把每个组固定在同一个引擎上。原理见 :doc:`Session Server </rst_source/guides/session_server>`。
+
+配置文件是 ``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``。这个配置继承 ``train_qwen2.5_async.yaml``，只多两个配置项：
+
+.. code-block:: yaml
+
+   session_server:
+     enable: true
+   rollout:
+     router:
+       policy: manual
+
+父配置把 Megatron actor 放在 node 0，SGLang server rollout（8 个 TP1 实例）放在 node 1。每步 ``rollout_batch_size`` 512 × ``group_size`` 4。
+
+参照 `启动训练`_，在 ``train_qwen2.5_async.yaml`` 中填好数据路径、Qwen2.5-3B-Instruct 模型路径和检索服务地址。然后在 head 节点上启动训练：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
+
+与普通异步 run 相比，这条命令还在 node 1 上启动一个 session server、它的 payload channel 和一个 router。agent loop 把 generate 请求发给 session server。
+
+下面的结果来自 2×8 A100-80G 上三次 100 步的 run：两次用这份配置，一次用 ``train_qwen2.5_async.yaml`` 作为默认路径的基线。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - 指标
+     - Session server 路径
+     - 默认路径
+   * - 轨迹 reward，最后 20 步均值
+     - 0.376 / 0.375
+     - 0.372
+   * - 平均 data staleness
+     - 2.0
+     - 2.0
+
+两条路径的训练表现一致。session server 路径的两次 run 都没有 payload 写入失败，``rollout/session_server/payload_queued_groups`` 始终与 ``rollout/buffer/size`` 同步变化。另外开启 ``session_server.verify_assembly: true`` 跑了 5 步，全部 2,560 个组都通过了逐项比对。这些指标的含义见 :ref:`监控指标 <session-server-metrics>`。
 
 恢复训练
 --------------------------------

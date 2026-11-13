@@ -34,6 +34,8 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports a session server for asynchronous agentic RL. It collects agent trajectories on the rollout nodes, keeps the training data there until the actor fetches it, and routes requests through an SGLang router. Doc: [Session Server](https://rlinf.readthedocs.io/en/latest/rst_source/guides/session_server.html).
+- [2026/11] 🔥 RLinf supports asynchronous agentic RL: the rollout keeps generating while the actor trains on data from an earlier weight version, with bounded staleness. On Search-R1 with GLM-4.7-Flash, the step time drops from 278.6 s to 139.0 s with a comparable reward. Docs: [Asynchronous Agentic RL](https://rlinf.readthedocs.io/en/latest/rst_source/guides/async_agentic.html), [Asynchronous Search-R1 Training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1/async.html).
 - [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards. Doc: [DiffusionART](docs/source-en/rst_source/examples/diffusion_art.rst).
 - [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).

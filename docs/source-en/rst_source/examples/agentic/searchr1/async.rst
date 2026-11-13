@@ -1,16 +1,17 @@
 Asynchronous Search-R1 Training
 ================================
 
-Run Search-R1 with the rollout and the training overlapped, so that prompts
-keep flowing into the rollout engines while the actor trains on an earlier
-weight version. This page uses
-``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml`` on two
-8-GPU nodes with the actor and the rollout placed on separate nodes. Set up
-the environment and the Qdrant wiki retrieval server first, as described in
-:doc:`index`; the model-specific configuration (data format, tokenizer,
-parallelism of the actor) is the same as in :doc:`glm4.7_flash`. For how the
-asynchronous mode works and how to size its scheduling limits, read
-:doc:`Asynchronous Agentic RL </rst_source/guides/async_agentic>`.
+This page trains GLM-4.7-Flash on Search-R1 asynchronously on two 8-GPU
+nodes. The rollout keeps generating while the actor trains on data from an
+earlier weight version. On the reference run, the step time drops from
+278.6 s with synchronous training to 139.0 s, and the reward range stays
+comparable. The config is
+``examples/agent/searchr1/config/train_glm4.7_flash_2node_async.yaml``; its
+model-specific settings (data format, tokenizer, actor parallelism) match
+:doc:`glm4.7_flash`. For how the asynchronous mode works and how to size its
+two scheduling limits, see :doc:`Asynchronous Agentic RL
+</rst_source/guides/async_agentic>`. To run the same recipe with the session
+server, see `Session Server Path`_.
 
 Overview
 --------
@@ -297,6 +298,68 @@ buffer settles at 54 and 108 groups respectively, both within the limit.
      </div>
    </div>
    <p style="text-align: center;"><em>In-flight and buffer limit experiments</em></p>
+
+.. _searchr1-async-session-server:
+
+Session Server Path
+-------------------
+
+Run the asynchronous recipe on the session server path with Qwen2.5-3B. The
+session server collects trajectories on the rollout node, and an SGLang
+router pins each group to one engine. See
+:doc:`Session Server </rst_source/guides/session_server>` for how it works.
+
+The config is
+``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``.
+It inherits ``train_qwen2.5_async.yaml`` and adds two keys:
+
+.. code-block:: yaml
+
+   session_server:
+     enable: true
+   rollout:
+     router:
+       policy: manual
+
+The parent config places the Megatron actor on node 0 and the SGLang server
+rollout (8 instances at TP1) on node 1. Each step uses
+``rollout_batch_size`` 512 × ``group_size`` 4.
+
+Fill in the data path, the Qwen2.5-3B-Instruct model path, and the retrieval
+server address in ``train_qwen2.5_async.yaml``, as in `Run It`_. Then start
+training from the head node:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
+
+Besides the asynchronous run, the script starts a session server, its payload
+channel, and a router on node 1. The agent loop sends its generate requests to
+the session server.
+
+The results below come from three 100-step runs on 2×8 A100-80G: two on this
+config and one on ``train_qwen2.5_async.yaml`` as the default-path baseline.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - Metric
+     - Session server path
+     - Default path
+   * - Trajectory reward, mean of the last 20 steps
+     - 0.376 / 0.375
+     - 0.372
+   * - Mean data staleness
+     - 2.0
+     - 2.0
+
+Training behaves the same on both paths. In both session server runs, no
+payload write failed, and ``rollout/session_server/payload_queued_groups``
+tracked ``rollout/buffer/size``. In a separate 5-step run with
+``session_server.verify_assembly: true``, all 2,560 groups passed the
+field-by-field check. See :ref:`Metrics to Watch <session-server-metrics>` for
+how to read these series.
 
 Resuming
 --------
