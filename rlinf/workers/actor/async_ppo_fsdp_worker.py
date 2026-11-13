@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
-from rlinf.algorithms.utils import compute_entropy_loss
+from rlinf.algorithms.utils import compute_entropy_loss, resolve_ppo_clip_ratio_c
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import PriorityStore
@@ -426,7 +426,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         "behave_weight_threshold": self.cfg.algorithm.get(
                             "behave_weight_threshold", None
                         ),
-                        "clip_ratio_c": self.cfg.algorithm.get("clip_ratio_c", 3.0),
+                        "clip_ratio_c": resolve_ppo_clip_ratio_c(
+                            self.cfg.algorithm, default_enabled=True
+                        ),
                         "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
                         "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
                         "value_clip": self.cfg.algorithm.get("value_clip", None),

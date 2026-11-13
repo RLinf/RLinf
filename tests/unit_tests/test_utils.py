@@ -1348,3 +1348,170 @@ def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
         result = source.to("cpu")
     assert not result.is_pinned()
     torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+@pytest.mark.parametrize("default_enabled", [False, True])
+def test_dual_clip_configuration_preserves_defaults(default_enabled):
+    from rlinf.algorithms.utils import resolve_ppo_clip_ratio_c
+
+    cfg = OmegaConf.create({"clip_ratio_c": 3.0})
+    expected = 3.0 if default_enabled else None
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) == expected
+    cfg.use_dual_clip = True
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) == 3.0
+    cfg.use_dual_clip = False
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) is None
+    cfg.use_dual_clip = True
+    cfg.clip_ratio_c = None
+    assert resolve_ppo_clip_ratio_c(cfg, default_enabled=default_enabled) is None
+
+
+@pytest.mark.parametrize("coefficient", [1.0, 0.5, float("inf"), float("nan")])
+def test_dual_clip_configuration_rejects_invalid_coefficient(coefficient):
+    from rlinf.algorithms.utils import resolve_ppo_clip_ratio_c
+
+    with pytest.raises(ValueError, match="finite clip_ratio_c"):
+        resolve_ppo_clip_ratio_c(
+            {"use_dual_clip": True, "clip_ratio_c": coefficient}, default_enabled=False
+        )
+
+
+@pytest.mark.parametrize("advantage", [-1.9891468, 1.0])
+@pytest.mark.parametrize("ratio", [0.5, 1.0, 1.5, 2.5, 14.9719248])
+def test_dual_clip_loss_and_logprob_gradient(advantage, ratio):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+
+    logprob = torch.tensor([math.log(ratio)], requires_grad=True)
+    args = {
+        "old_logprobs": torch.zeros(1),
+        "advantages": torch.tensor([advantage]),
+        "clip_ratio_low": 0.2,
+        "clip_ratio_high": 0.2,
+    }
+    loss, metrics = compute_ppo_actor_loss(logprob, clip_ratio_c=3.0, **args)
+    standard, _ = compute_ppo_actor_loss(logprob, clip_ratio_c=None, **args)
+    standard_value = max(-advantage * ratio, -advantage * min(max(ratio, 0.8), 1.2))
+    expected = min(standard_value, 3 * abs(advantage))
+    assert standard.item() == pytest.approx(standard_value, rel=1e-6)
+    assert loss.item() == pytest.approx(expected, rel=1e-6)
+    loss.backward()
+    flat = (advantage < 0 and (ratio < 0.8 or ratio > 3)) or (
+        advantage > 0 and ratio > 1.2
+    )
+    assert logprob.grad.item() == pytest.approx(
+        0 if flat else -advantage * ratio, rel=1e-6
+    )
+    assert metrics["actor/dual_clip_fraction"].item() == int(
+        advantage < 0 and ratio > 3
+    )
+    assert metrics["actor/ratio"].item() == pytest.approx(ratio, rel=1e-6)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dual_clip_fraction_excludes_padding_and_broadcasts(enabled):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+
+    logprobs = torch.log(
+        torch.tensor([[[4.0, 2.0]], [[100.0, 100.0]]])
+    ).requires_grad_()
+    loss, metrics = compute_ppo_actor_loss(
+        logprobs,
+        torch.zeros_like(logprobs),
+        0.2,
+        0.2,
+        -torch.ones_like(logprobs),
+        loss_mask=torch.tensor([[[True]], [[False]]]),
+        clip_ratio_c=3.0 if enabled else None,
+    )
+    loss.backward()
+    assert metrics["actor/dual_clip_fraction"].item() == (0.5 if enabled else 0)
+    assert torch.equal(logprobs.grad[1], torch.zeros_like(logprobs.grad[1]))
+
+
+def test_dual_clip_empty_mask():
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+
+    for fast in [False, True]:
+        _, metrics = compute_ppo_actor_loss(
+            torch.zeros(1, 1),
+            torch.zeros(1, 1),
+            0.2,
+            0.2,
+            -torch.ones(1, 1),
+            loss_mask=torch.zeros(1, 1, dtype=torch.bool),
+            clip_ratio_c=3.0,
+            fast_path_zero_loss_mask=fast,
+        )
+        assert metrics["actor/dual_clip_fraction"].item() == 0
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_openpi_worker_passes_dual_clip_to_real_loss(enabled, monkeypatch):
+    from contextlib import nullcontext
+
+    from rlinf.scheduler import Worker
+    from rlinf.utils.utils import masked_mean
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+    class TinyPolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.logprob = torch.nn.Parameter(torch.tensor([math.log(14.9719248)]))
+
+        def forward(self, **kwargs):
+            return {"logprobs": self.logprob.expand(1, 20, 40) / 800}
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"model_type": "openpi", "action_dim": 40}},
+            "algorithm": {
+                "adv_type": "grpo",
+                "loss_type": "actor",
+                "logprob_type": "chunk_level",
+                "reward_type": "chunk_level",
+                "clip_ratio_low": 0.2,
+                "clip_ratio_high": 0.2,
+                "clip_ratio_c": 3.0,
+                "use_dual_clip": enabled,
+                "entropy_bonus": 0,
+            },
+            "env": {"train": {"max_episode_steps": 700}},
+            "runner": {"task_type": "embodied"},
+        }
+    )
+    model = TinyPolicy()
+    actor = SimpleNamespace(
+        cfg=cfg,
+        model=model,
+        device="cpu",
+        amp_context=nullcontext(),
+        before_micro_batch=lambda *a, **kw: nullcontext(),
+        optimizer_steps=0,
+        critic_warmup_steps=0,
+        loss_agg_func=masked_mean,
+        enable_sft_co_train=False,
+        gradient_accumulation=1,
+        grad_scaler=SimpleNamespace(scale=lambda loss: loss),
+        log_info=lambda message: None,
+    )
+    monkeypatch.setattr(
+        Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+    )
+    metrics = {}
+    EmbodiedFSDPActor.train_micro_batch(
+        actor,
+        {
+            "advantages": torch.tensor([[-1.9891468]]),
+            "prev_logprobs": torch.zeros(1, 20, 40),
+            "loss_mask": torch.ones(1, 1, dtype=torch.bool),
+        },
+        metrics,
+        is_last=True,
+    )
+    assert metrics["actor/policy_loss"][0] == pytest.approx(
+        5.9674404 if enabled else 29.78136, rel=1e-5
+    )
+    assert metrics["actor/dual_clip_fraction"][0] == int(enabled)
+    assert model.logprob.grad.item() == pytest.approx(
+        0 if enabled else 29.78136, rel=1e-5
+    )

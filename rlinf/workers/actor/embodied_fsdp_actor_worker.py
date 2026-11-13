@@ -20,7 +20,7 @@ from torch import nn
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
-from rlinf.algorithms.utils import compute_entropy_loss
+from rlinf.algorithms.utils import compute_entropy_loss, resolve_ppo_clip_ratio_c
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
@@ -841,6 +841,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     self.cfg.algorithm.clip_log_ratio_max
                 )
 
+        loss_kwargs["clip_ratio_c"] = resolve_ppo_clip_ratio_c(
+            self.cfg.algorithm, default_enabled="clip_ratio_c" in loss_kwargs
+        )
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if compute_entropy and not loss_kwargs["critic_warmup"]:
