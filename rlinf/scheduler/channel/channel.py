@@ -389,6 +389,25 @@ class Channel:
         target_actor = self._get_channel_actor(target_rank)
         return ray.get(target_actor.empty.remote(key))
 
+    def queued_summary(self) -> tuple[int, int]:
+        """Sum queued elements and weights over every key of this channel.
+
+        Read-only and blocking (one ``ray.get`` per channel worker), so
+        call it from the runner's main process or a plain (non-async)
+        worker method, never from inside an asyncio event loop that must
+        not block.
+
+        Returns:
+            tuple[int, int]: The number of queued elements and the sum of
+                their weights.
+
+        """
+        if self._local_channel is not None:
+            return self._local_channel.queued_summary()
+        target_rank = self._get_channel_rank_by_key(DEFAULT_KEY)
+        target_actor = self._get_channel_actor(target_rank)
+        return ray.get(target_actor.queued_summary.remote())
+
     def full(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is full.
 
@@ -569,6 +588,42 @@ class Channel:
                 return async_channel_work
             else:
                 return async_channel_work.wait()
+
+    def remove_key(
+        self, key: Any = DEFAULT_KEY, async_op: bool = False
+    ) -> AsyncWork | int:
+        """Drop every queued item for ``key`` and delete the key's queues.
+
+        The dropped items stay inside the channel worker instead of traveling
+        to the caller, unlike a get. See
+        :meth:`~rlinf.scheduler.channel.channel_worker.ChannelWorker.remove_key`
+        for the full contract.
+
+        Args:
+            key (Any): The key whose items and queues are dropped.
+            async_op (bool): Whether to perform the removal asynchronously.
+
+        Returns:
+            AsyncWork | int: The removal work when ``async_op`` is True,
+            otherwise the number of dropped items.
+
+        """
+        if self._local_channel is not None:
+            assert async_op is False, "Local channel does not support async remove_key."
+            return self._local_channel.remove_key(key)
+
+        target_rank = self._get_channel_rank_by_key(key)
+        target_actor = self._get_channel_actor(target_rank)
+        async_channel_work = AsyncChannelWork(
+            channel_name=self._channel_name,
+            channel_key=key,
+            channel_actor=target_actor,
+            method="remove_key",
+            key=key,
+        )
+        if async_op:
+            return async_channel_work
+        return async_channel_work.wait()
 
     def get_nowait(self, key: Any = DEFAULT_KEY) -> Any:
         """Get an item from the channel queue without waiting. Raises asyncio.QueueEmpty if the queue is empty.

@@ -124,6 +124,21 @@ class LocalChannel:
             return True
         return self._queue_map[key].empty()
 
+    def queued_summary(self) -> tuple[int, int]:
+        """Sum queued elements and weights over every key.
+
+        Reading weight off each :class:`WeightedItem` makes this the byte
+        estimate of the queued data when producers put a size as the
+        weight.
+        """
+        items = 0
+        weight = 0
+        for queue in self._queue_map.values():
+            for weighted in queue.peek_all():
+                items += 1
+                weight += weighted.weight
+        return items, weight
+
     def full(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is full.
 
@@ -231,6 +246,26 @@ class LocalChannel:
         """
         self.create_queue(key, maxsize=self.maxsize())
         return self._queue_map[key].peek_all()
+
+    def remove_key(self, key: Any = DEFAULT_KEY) -> int:
+        """Drop every queued item for ``key`` and remove the queue itself.
+
+        The default key cannot be removed: every other queue inherits its
+        maxsize. The next put on ``key`` re-creates the queue.
+
+        Args:
+            key (Any): The key whose items are dropped.
+
+        Returns:
+            int: The number of items that were dropped.
+
+        """
+        if key == DEFAULT_KEY:
+            raise ValueError(
+                f"Expected a key other than the default queue, got {key!r}"
+            )
+        queue = self._queue_map.pop(key, None)
+        return queue.qsize() if queue is not None else 0
 
 
 class ChannelWorker(Worker):
@@ -415,6 +450,27 @@ class ChannelWorker(Worker):
 
         """
         return self.qsize(key) == 0
+
+    def queued_summary(self) -> tuple[int, int]:
+        """Sum queued elements and weights over every key.
+
+        Covers both the shared queues and the per-consumer queues a dealing
+        dispatcher fills. Reading weight off each :class:`WeightedItem`
+        makes this the byte estimate of the queued data when producers put
+        a size as the weight.
+        """
+        items = 0
+        weight = 0
+        for queue in self._queue_map.values():
+            for weighted in queue.peek_all():
+                items += 1
+                weight += weighted.weight
+        for queues in self._consumer_queues.values():
+            for queue in queues.values():
+                for weighted in queue.peek_all():
+                    items += 1
+                    weight += weighted.weight
+        return items, weight
 
     def full(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is full.
@@ -601,6 +657,32 @@ class ChannelWorker(Worker):
         """
         self.create_queue(key, self.maxsize())
         return self._queue_map[key].peek_all()
+
+    def remove_key(self, key: Any = DEFAULT_KEY) -> int:
+        """Drop every queued item for ``key`` and delete the key's queues.
+
+        Unlike a get, the dropped items never leave the worker, so large
+        payloads are not pulled to the caller's node. A consumer blocked
+        getting from ``key`` is not woken, so only remove keys no consumer
+        will read. The default key cannot be removed: every other queue
+        inherits its maxsize. The next put on ``key`` re-creates the queue.
+
+        Args:
+            key (Any): The key whose items and queues are dropped.
+
+        Returns:
+            int: The number of items that were dropped, across the shared
+            queue and all per-consumer queues.
+
+        """
+        if key == DEFAULT_KEY:
+            raise ValueError(
+                f"Expected a key other than the default queue, got {key!r}"
+            )
+        dropped = self.qsize(key)
+        self._queue_map.pop(key, None)
+        self._consumer_queues.pop(key, None)
+        return dropped
 
     async def ensure_key_replica(self, key: Any, src_node_rank: int = -1) -> int:
         """Assign (or fetch) the replica rank that should host the given key.

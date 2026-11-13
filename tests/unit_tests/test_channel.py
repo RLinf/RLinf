@@ -179,6 +179,15 @@ class ProducerWorker(Worker):
 
         return data
 
+    async def ordered_puts_then_get_nowait(
+        self, channel: Channel, key: str, items: list
+    ):
+        """Issue same-key puts without waiting for them, await only the last
+        one, then get_nowait every item. Returns the items in issue order."""
+        works = [channel.put(item, key=key, async_op=True) for item in items]
+        await works[-1].async_wait()
+        return [channel.get_nowait(key=key) for _ in items]
+
     async def stress_multiple_queues(self, channel: Channel, num_items: int):
         works = []
         for i in range(num_items):
@@ -937,6 +946,60 @@ class TestChannel:
         assert follow_up.wait() == 42
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_remove_key_drops_items_and_keeps_the_channel_usable(
+        self, worker_groups, channel, channel_type
+    ):
+        """remove_key drops a key's queued items and queues in place, without
+        pulling them to the caller, and the channel keeps serving the key."""
+        producer, consumer = worker_groups
+        key = f"remove_key_{uuid.uuid4().hex[:8]}"
+
+        for i in range(3):
+            producer.put_item(channel, i, 1, 0, True, key=key).wait()
+        assert channel.qsize(key) == 3
+
+        assert channel.remove_key(key) == 3
+        assert channel.qsize(key) == 0
+        assert channel.remove_key(f"never_put_{uuid.uuid4().hex[:8]}") == 0
+
+        producer.put_item(channel, "after_remove", 1, 0, True, key=key).wait()
+        assert consumer.get_item(channel, False, key=key).wait()[0] == "after_remove"
+        assert channel.qsize(key) == 0
+
+        with pytest.raises(ValueError, match="default queue"):
+            channel.remove_key(DEFAULT_KEY)
+
+    def test_local_channel_remove_key(self):
+        """remove_key on a local channel drops the key's items and queue, and
+        later puts on the key still work."""
+        channel = Channel.create(
+            name=f"local_remove_{uuid.uuid4().hex[:8]}", local=True
+        )
+        key = "local_key"
+        channel.put(1, key=key)
+        channel.put(2, key=key)
+
+        assert channel.remove_key(key) == 2
+        assert channel.qsize(key) == 0
+
+        channel.put(3, key=key)
+        assert channel.get_nowait(key) == 3
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_same_key_puts_execute_in_issue_order(
+        self, worker_groups, channel, channel_type
+    ):
+        """Same-key put(async_op=True) calls from one process must run in the
+        order they were issued: once the last put's handle completes, every
+        item is already queued and get_nowait returns them in that order."""
+        producer = worker_groups[0]
+        key = f"ordered_key_{uuid.uuid4().hex[:8]}"
+        items = list(range(5))
+
+        received = producer.ordered_puts_then_get_nowait(channel, key, items).wait()[0]
+        assert received == items
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_async_wait_yields_control(self, worker_groups, channel, channel_type):
         """Ensures channel get(async_op=True).async_wait() yields control so other
         asyncio tasks can run while waiting."""
@@ -1521,6 +1584,20 @@ def test_qsize_reports_the_total_and_a_single_consumer_share():
     assert share == 2
     assert empty is False
     assert missing_empty is True
+
+
+def test_remove_key_clears_dealt_consumer_queues_too():
+    async def run():
+        worker = _stub_worker(dispatcher="least_loaded")
+        for index in range(3):
+            await worker._enqueue("k", index, 0)
+        dropped = ChannelWorker.remove_key(worker, "k")
+        return dropped, "k" in worker._queue_map, "k" in worker._consumer_queues
+
+    dropped, shared_left, dealt_left = asyncio.run(run())
+    assert dropped == 3
+    assert not shared_left
+    assert not dealt_left
 
 
 # --- resolution ---------------------------------------------------------------
