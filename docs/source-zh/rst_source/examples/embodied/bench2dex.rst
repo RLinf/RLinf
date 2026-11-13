@@ -119,6 +119,18 @@ policy 根据图像、关节位置和任务描述预测动作。
 
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
+Task22 PPO 在 10 个去噪步骤中，从前 5 步选取一步作为随机步骤。冻结的视觉编码器保持 eval 模式。在训练 YAML 中修改以下配置：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       openpi:
+         stochastic_step_range: [0, 5]
+         frozen_vision_mode: eval
+
+``stochastic_step_range`` 的索引从 0 开始，区间为左闭右开的 ``[start, end)``\ 。设为 ``null`` 可取消这一区间限制。使用 ``frozen_vision_mode: eval`` 时，必须设置 ``train_expert_only: true``\ 。将 ``frozen_vision_mode`` 设为 ``follow_model``，视觉编码器就会跟随 policy 的训练模式。
+
 其他训练配置见下表，将命令最后的配置名替换为对应项。异步 PPO 使用 ``examples/embodiment/run_async.sh`` 启动。
 
 .. list-table::

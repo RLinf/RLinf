@@ -1355,6 +1355,54 @@ def validate_bench2dex_cfg(
                 raise ValueError("Bench2Dex pi05 uses two stereo and two wrist images")
 
 
+def validate_openpi_rl_cfg(
+    model_cfg: DictConfig, rollout_override: Optional[DictConfig] = None
+) -> None:
+    """Validate OpenPI RL options and matching training-time rollout settings."""
+    from rlinf.models.embodiment.openpi import resolve_num_steps
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+
+    if model_cfg.openpi.get("task", "sft") != "rl":
+        return
+    actor = Pi0RLConfig.from_model_config(model_cfg)
+    num_steps = resolve_num_steps(model_cfg)
+    actor.validate(num_steps)
+    if rollout_override is None:
+        return
+    rollout_cfg = OmegaConf.merge(model_cfg, rollout_override)
+    rollout = Pi0RLConfig.from_model_config(rollout_cfg)
+    if (
+        actor.stochastic_step_range is None
+        and rollout.stochastic_step_range is None
+        and actor.frozen_vision_mode == rollout.frozen_vision_mode == "follow_model"
+    ):
+        return
+    rollout_steps = resolve_num_steps(rollout_cfg)
+    rollout.validate(rollout_steps)
+    if rollout_cfg.openpi.get("task", "sft") != "rl" or rollout_steps != num_steps:
+        raise ValueError(
+            "Expected matching actor/rollout OpenPI task='rl' and num_steps "
+            "when stochastic_step_range or frozen_vision_mode is configured"
+        )
+    for field in (
+        "stochastic_step_range",
+        "frozen_vision_mode",
+        "noise_method",
+        "noise_level",
+        "joint_logprob",
+        "ignore_last",
+        "is_nft",
+        "train_expert_only",
+    ):
+        actor_value = getattr(actor, field)
+        rollout_value = getattr(rollout, field)
+        if actor_value != rollout_value:
+            raise ValueError(
+                f"Expected matching actor/rollout openpi.{field}, "
+                f"got {actor_value!r} and {rollout_value!r}"
+            )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1371,6 +1419,7 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     if model_type == SupportedModel.OPENPI:
+        validate_openpi_rl_cfg(model_cfg, None if only_eval else cfg.rollout.model)
         if only_eval and model_cfg.openpi.get("short_memory", False):
             assert cfg.env.eval.get("short_memory") is not None, (
                 "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "

@@ -128,6 +128,23 @@ With the Task22 model and asset paths set, start PPO training:
 
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
+Task22 PPO selects one stochastic denoising step from the first five of ten
+steps. The frozen vision encoder stays in evaluation mode. Edit these
+settings in the training YAML:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       openpi:
+         stochastic_step_range: [0, 5]
+         frozen_vision_mode: eval
+
+``stochastic_step_range`` uses zero-based ``[start, end)`` bounds. Set it to
+``null`` to remove this range restriction. ``frozen_vision_mode: eval``
+requires ``train_expert_only: true``. Set ``frozen_vision_mode`` to
+``follow_model`` to follow the policy's training mode.
+
 For another training configuration, replace the final argument with a name
 from this table. Asynchronous PPO uses ``examples/embodiment/run_async.sh``.
 

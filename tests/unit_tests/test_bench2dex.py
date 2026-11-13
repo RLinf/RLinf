@@ -605,9 +605,9 @@ def compose_bench2dex_recipe(monkeypatch):
     }.items():
         monkeypatch.setenv(key, value)
 
-    def load(config_dir, config_name):
+    def load(config_dir, config_name, overrides=()):
         with initialize_config_dir(str(repo / config_dir), version_base="1.1"):
-            cfg = compose(config_name=config_name)
+            cfg = compose(config_name=config_name, overrides=list(overrides))
         OmegaConf.resolve(cfg)
         return cfg
 
@@ -682,6 +682,10 @@ def test_bench2dex_recipes(
     config_dir = "evaluations/bench2dex" if only_eval else "examples/embodiment/config"
     cfg = compose_bench2dex_recipe(config_dir, config_name)
     model = cfg.rollout.model if only_eval else cfg.actor.model
+    from rlinf.config import validate_openpi_rl_cfg
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+
+    validate_openpi_rl_cfg(model, None if only_eval else cfg.rollout.model)
     assert model.action_dim == model.openpi.model_action_dim == action_dim
     assert model.num_action_chunks == model.openpi.action_horizon == 20
     assert model.model_path == "/model"
@@ -718,7 +722,13 @@ def test_bench2dex_recipes(
         assert cfg.env.eval.total_num_envs * cfg.env.eval.rollout_epoch == 32
         assert cfg.env.train.init_params.generalization_profile == "none"
         assert cfg.actor.model.openpi.noise_level == 0.3
+        assert cfg.actor.model.openpi.stochastic_step_range == [0, 5]
+        assert cfg.actor.model.openpi.frozen_vision_mode == "eval"
         assert cfg.algorithm.use_dual_clip is False
+    else:
+        rl_cfg = Pi0RLConfig.from_model_config(model)
+        assert rl_cfg.stochastic_step_range is None
+        assert rl_cfg.frozen_vision_mode == "follow_model"
 
 
 @pytest.mark.parametrize(
@@ -751,3 +761,51 @@ def test_bench2dex_e2e_evaluation_recipe(compose_bench2dex_recipe):
     assert cfg.rollout.model.openpi.task == "eval"
     assert cfg.rollout.model.openpi.noise_rng == "jax"
     assert cfg.rollout.rollout_backend == "huggingface"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_bench2dex_openpi_sampling_cli_override(compose_bench2dex_recipe, asynchronous):
+    from omegaconf import OmegaConf
+
+    from rlinf.config import validate_openpi_rl_cfg
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+
+    name = "bench2dex_task22_" + ("async_" if asynchronous else "") + "ppo_openpi_pi05"
+    cfg = compose_bench2dex_recipe(
+        "examples/embodiment/config",
+        name,
+        [
+            "actor.model.openpi.stochastic_step_range=[1,4]",
+            "actor.model.openpi.frozen_vision_mode=follow_model",
+        ],
+    )
+    validate_openpi_rl_cfg(cfg.actor.model, cfg.rollout.model)
+    actor = Pi0RLConfig.from_model_config(cfg.actor.model)
+    rollout = Pi0RLConfig.from_model_config(
+        OmegaConf.merge(cfg.actor.model, cfg.rollout.model)
+    )
+    assert actor == rollout
+    assert actor.stochastic_step_bounds(10) == (1, 4)
+    assert actor.frozen_vision_mode == "follow_model"
+
+
+@pytest.mark.parametrize(
+    "override,error",
+    [
+        ("+rollout.model.openpi.stochastic_step_range=[0,4]", "stochastic_step_range"),
+        ("+rollout.model.openpi.frozen_vision_mode=follow_model", "frozen_vision_mode"),
+        ("+rollout.model.openpi.noise_level=0.7", "noise_level"),
+        ("+rollout.model.openpi.num_steps=8", "num_steps"),
+        ("+rollout.model.openpi.task=eval", "task='rl'"),
+    ],
+)
+def test_bench2dex_rejects_conflicting_openpi_rollout_options(
+    compose_bench2dex_recipe, override, error
+):
+    from rlinf.config import validate_embodied_cfg
+
+    cfg = compose_bench2dex_recipe(
+        "examples/embodiment/config", "bench2dex_task22_ppo_openpi_pi05", [override]
+    )
+    with pytest.raises(ValueError, match=error):
+        validate_embodied_cfg(cfg)

@@ -129,6 +129,8 @@ actor:
       task: rl
       noise_method: flow_sde
       noise_level: 0.3
+      stochastic_step_range: [0, 5]
+      frozen_vision_mode: eval
       train_expert_only: true
       value_after_vlm: true
   optim:

@@ -91,8 +91,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     action_env_dim = int(
         OmegaConf.select(model_cfg, "action_env_dim", default=cfg.action_dim)
     )
-    num_steps = OmegaConf.select(model_cfg, "num_steps", default=None)
-    num_steps = int(num_steps) if num_steps is not None else int(cfg.num_steps)
+    num_steps = int(resolve_num_steps(cfg))
 
     pi0_kwargs = {
         "pi05": pi05,
@@ -170,42 +169,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
         _install_transforms(model, cfg, config_name, pi0_config)
     elif task == "rl":
-        from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
+        from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+        from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL
 
         config_name = _require_config_name(model_cfg, task)
-        noise_logvar = OmegaConf.select(
-            model_cfg, "noise_logvar_range", default=[0.08, 0.16]
-        )
-        rl_cfg = Pi0RLConfig(
-            add_value_head=bool(OmegaConf.select(cfg, "add_value_head", default=False)),
-            noise_method=str(
-                OmegaConf.select(model_cfg, "noise_method", default="flow_ode")
-            ),
-            noise_level=float(OmegaConf.select(model_cfg, "noise_level", default=0.0)),
-            noise_logvar_range=tuple(float(x) for x in noise_logvar),
-            joint_logprob=bool(
-                OmegaConf.select(model_cfg, "joint_logprob", default=False)
-            ),
-            ignore_last=bool(OmegaConf.select(model_cfg, "ignore_last", default=False)),
-            value_after_vlm=bool(
-                OmegaConf.select(model_cfg, "value_after_vlm", default=False)
-            ),
-            value_vlm_mode=str(
-                OmegaConf.select(model_cfg, "value_vlm_mode", default="mean_token")
-            ),
-            value_head_hidden_sizes=_value_head_hidden_sizes(model_cfg),
-            detach_critic_input=bool(
-                OmegaConf.select(model_cfg, "detach_critic_input", default=False)
-            ),
-            chunk_critic_input=bool(
-                OmegaConf.select(model_cfg, "chunk_critic_input", default=False)
-            ),
-            train_expert_only=bool(
-                OmegaConf.select(model_cfg, "train_expert_only", default=False)
-            ),
-            is_nft=bool(OmegaConf.select(model_cfg, "is_nft", default=False)),
-            config_name=config_name,
-        )
+        rl_cfg = Pi0RLConfig.from_model_config(cfg)
         model = Pi0RL(
             pi0_config,
             **runtime,
@@ -405,6 +373,12 @@ def _resolve_action_horizon_and_chunk(cfg, model_cfg) -> tuple[int, int]:
     return int(cfg.num_action_chunks), action_chunk
 
 
+def resolve_num_steps(cfg: Any) -> int:
+    """Read denoising steps, preferring ``openpi.num_steps`` over ``num_steps``."""
+    num_steps = cfg.openpi.get("num_steps")
+    return cfg.num_steps if num_steps is None else num_steps
+
+
 def _require_config_name(model_cfg, task: str) -> str:
     from omegaconf import OmegaConf
 
@@ -415,13 +389,6 @@ def _require_config_name(model_cfg, task: str) -> str:
             "(it selects the upstream openpi TrainConfig)."
         )
     return config_name
-
-
-def _value_head_hidden_sizes(model_cfg):
-    from omegaconf import OmegaConf
-
-    sizes = OmegaConf.select(model_cfg, "value_head_hidden_sizes", default=None)
-    return None if sizes is None else tuple(int(x) for x in sizes)
 
 
 def _resolve_data_kwargs(cfg):

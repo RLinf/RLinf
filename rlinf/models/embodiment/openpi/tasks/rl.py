@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import random
 from typing import Any, Literal, Sequence
 
@@ -31,28 +30,12 @@ from rlinf.models.embodiment.openpi.modules.model import (
 )
 from rlinf.models.embodiment.openpi.pi0 import Pi0
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
 from rlinf.models.embodiment.openpi.sampling import rl_sampler
 from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
+from rlinf.utils.logging import get_logger
 
-
-@dataclasses.dataclass(frozen=True)
-class Pi0RLConfig:
-    """Static RL knobs read from ``actor.model.openpi`` in YAML."""
-
-    add_value_head: bool = False
-    noise_method: str = "flow_ode"
-    noise_level: float = 0.0
-    noise_logvar_range: tuple[float, float] = (0.08, 0.16)
-    joint_logprob: bool = False
-    ignore_last: bool = False
-    value_after_vlm: bool = False
-    value_vlm_mode: str = "mean_token"
-    value_head_hidden_sizes: tuple[int, ...] | None = None
-    detach_critic_input: bool = False
-    chunk_critic_input: bool = False
-    train_expert_only: bool = False
-    is_nft: bool = False
-    config_name: str = ""
+logger = get_logger()
 
 
 class Pi0RL(EnvIO, Pi0):
@@ -69,6 +52,7 @@ class Pi0RL(EnvIO, Pi0):
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
     ):
+        rl_cfg.validate(num_steps)
         super().__init__(
             config,
             num_steps=num_steps,
@@ -79,6 +63,7 @@ class Pi0RL(EnvIO, Pi0):
         )
         self.model_action_dim = self.action_dim
         self.rl_cfg = rl_cfg
+        self._stochastic_step_range = rl_cfg.stochastic_step_bounds(num_steps)
         self.global_step = 0
         paligemma_width = gemma.get_config(config.paligemma_variant).width
         action_expert_width = gemma.get_config(config.action_expert_variant).width
@@ -120,6 +105,20 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         self._mark_fsdp_wrap_names()
+        logger.info(
+            "openpi[rl]: stochastic_step_range=%s frozen_vision_mode=%s",
+            self._stochastic_step_range
+            if not (rl_cfg.joint_logprob or rl_cfg.is_nft)
+            else None,
+            rl_cfg.frozen_vision_mode,
+        )
+
+    def train(self, mode: bool = True) -> Pi0RL:
+        """Set policy mode while honoring the frozen vision configuration."""
+        super().train(mode)
+        if self.rl_cfg.frozen_vision_mode == "eval":
+            self.img.eval()
+        return self
 
     @property
     def _no_split_modules(self) -> list[str] | None:
@@ -215,8 +214,8 @@ class Pi0RL(EnvIO, Pi0):
             chosen_per_step = torch.arange(num_steps, device=device)
             denoise_inds = chosen_per_step[None].expand(B, -1).contiguous()
         else:
-            hi = num_steps - 2 if rl_cfg.ignore_last else num_steps - 1
-            chosen = random.randint(0, max(hi, 0))
+            start, end = self._stochastic_step_range
+            chosen = random.randint(start, end - 1)
             denoise_inds = torch.full(
                 (B, num_steps), chosen, device=device, dtype=torch.long
             )

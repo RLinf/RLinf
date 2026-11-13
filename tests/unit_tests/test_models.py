@@ -23,6 +23,7 @@ import inspect
 import logging
 import math
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -220,6 +221,310 @@ def test_openpi_eval_requires_history():
     )
     with pytest.raises(AssertionError, match="requires env.eval.short_memory"):
         validate_embodied_cfg(cfg)
+
+
+class _OpenPiTestTokenizer:
+    def tokenize(self, prompt, state=None):
+        return np.zeros(4, dtype=np.int64), np.ones(4, dtype=np.bool_)
+
+
+@pytest.fixture
+def tiny_openpi_rl():
+    pytest.importorskip("openpi")
+    from openpi import transforms
+
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi.policies.bench2dex_policy import (
+        IMAGE_KEYS as BENCH2DEX_IMAGE_KEYS,
+    )
+    from rlinf.models.embodiment.openpi.policies.bench2dex_policy import (
+        Bench2DexInputs,
+        Bench2DexOutputs,
+    )
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+    from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL
+
+    def build(**options):
+        torch.manual_seed(7)
+        cfg = OmegaConf.create(
+            {
+                "add_value_head": True,
+                "num_steps": 10,
+                "openpi": {
+                    "noise_method": "flow_sde",
+                    "noise_level": 0.3,
+                    "stochastic_step_range": [0, 5],
+                    "frozen_vision_mode": "eval",
+                    "train_expert_only": True,
+                    "value_after_vlm": True,
+                    "value_head_hidden_sizes": [8],
+                    **options,
+                },
+            }
+        )
+        config = Pi0Config(
+            pi05=True,
+            action_dim=2,
+            action_horizon=2,
+            max_token_len=4,
+            paligemma_variant="dummy",
+            action_expert_variant="dummy",
+            dtype="float32",
+            image_keys=BENCH2DEX_IMAGE_KEYS,
+        )
+        # Allocate only the dummy experts and the small real vision encoder.
+        with torch.device("meta"):
+            model = Pi0RL(
+                config,
+                num_steps=10,
+                action_chunk=2,
+                action_env_dim=2,
+                rl_cfg=Pi0RLConfig.from_model_config(cfg),
+            )
+        model.img = SigLIPViT(variant="mu/32", pool_type="none", num_classes=64)
+        model.to_empty(device="cpu")
+        for param in model.parameters():
+            torch.nn.init.normal_(param, std=0.02)
+        model.freeze_vlm()
+        model.setup_transforms(
+            [Bench2DexInputs(2, 2), transforms.TokenizePrompt(_OpenPiTestTokenizer())],
+            [Bench2DexOutputs(2)],
+        )
+        observation = {
+            "main_images": torch.zeros(2, 224, 224, 3, dtype=torch.uint8),
+            "extra_view_images": torch.zeros(2, 1, 224, 224, 3, dtype=torch.uint8),
+            "wrist_images": torch.zeros(2, 2, 224, 224, 3, dtype=torch.uint8),
+            "states": torch.rand(2, 2),
+            "task_descriptions": ["move", "move"],
+        }
+        return model, observation
+
+    return build
+
+
+@pytest.mark.parametrize("bounds", [(0, 5), (2, 4), (9, 10)])
+def test_openpi_rl_replays_the_selected_stochastic_transition(tiny_openpi_rl, bounds):
+    from rlinf.models.embodiment.openpi.sampling import rl_sampler
+
+    model, env_obs = tiny_openpi_rl(stochastic_step_range=bounds)
+    model.eval()
+    random.seed(3)
+    actions, sampled = model.predict_action_batch(
+        env_obs,
+        mode="train",
+        noise=torch.randn(2, 2, 2),
+        rng=torch.Generator().manual_seed(5),
+    )
+    inputs = sampled["forward_inputs"]
+    chains, indices = inputs["chains"], inputs["denoise_inds"]
+    assert actions.shape == (2, 2, 2)
+    assert chains.shape == (2, 11, 2, 2)
+    assert indices.unique().numel() == 1
+    chosen = indices[0, 0].item()
+    assert bounds[0] <= chosen < bounds[1]
+    observation = preprocess_observation(
+        model.env_obs_to_observation(env_obs), train=False, image_keys=model.image_keys
+    )
+    with torch.no_grad():
+        _, prefix_mask, cache = model.build_prefix_cache(observation)
+        times = rl_sampler.get_timesteps(10, "cpu")
+        for step in range(10):
+            suffix = model.run_suffix(
+                observation,
+                chains[:, step],
+                times[step].expand(2),
+                cache,
+                prefix_mask,
+            )
+            velocity = model.velocity_from_suffix(suffix)
+            ode_next = chains[:, step] - (times[step] - times[step + 1]) * velocity
+            if step == chosen:
+                assert not torch.allclose(chains[:, step + 1], ode_next)
+            else:
+                torch.testing.assert_close(chains[:, step + 1], ode_next)
+    wrapper = torch.nn.Sequential(model).train()
+    state = random.getstate()
+    replayed = model.default_forward(inputs)
+    assert random.getstate() == state
+    torch.testing.assert_close(replayed["logprobs"], sampled["prev_logprobs"])
+    torch.testing.assert_close(
+        (replayed["logprobs"] - sampled["prev_logprobs"]).exp(),
+        torch.ones_like(sampled["prev_logprobs"]),
+    )
+    loss = -replayed["logprobs"].mean() + replayed["values"].square().mean()
+    loss.backward()
+    assert wrapper.training and model.training and not model.img.training
+    assert all(p.grad is None for p in model.img.parameters())
+    for head in (model.action_out_proj, model.value_head):
+        assert any(
+            p.grad is not None and p.grad.abs().sum() > 0 for p in head.parameters()
+        )
+    assert all(
+        p.grad is None or torch.isfinite(p.grad).all() for p in model.parameters()
+    )
+
+
+def test_openpi_rl_joint_logprob_keeps_all_denoising_steps(tiny_openpi_rl):
+    model, env_obs = tiny_openpi_rl(stochastic_step_range=None, joint_logprob=True)
+    model.eval()
+    _, sampled = model.predict_action_batch(
+        env_obs, mode="train", rng=torch.Generator().manual_seed(2)
+    )
+    inputs = sampled["forward_inputs"]
+    torch.testing.assert_close(inputs["denoise_inds"], torch.arange(10).expand(2, -1))
+    model.train()
+    replayed = model.default_forward(inputs)
+    torch.testing.assert_close(replayed["logprobs"], sampled["prev_logprobs"])
+
+
+@pytest.mark.parametrize("mode", ["eval", "follow_model"])
+def test_openpi_rl_frozen_vision_mode_survives_training_switches(tiny_openpi_rl, mode):
+    model, env_obs = tiny_openpi_rl(frozen_vision_mode=mode)
+    wrapper = torch.nn.Sequential(model)
+    for training in (True, False, True):
+        assert wrapper.train(training) is wrapper
+        assert model.img.training is (training and mode == "follow_model")
+        assert model.action_out_proj.training is training
+        assert model.value_head.training is training
+        assert all(not p.requires_grad for p in model.img.parameters())
+    model.eval()
+    noise = torch.randn(2, 2, 2)
+    state = random.getstate()
+    first, _ = model.predict_action_batch(env_obs, mode="eval", noise=noise)
+    second, _ = model.predict_action_batch(env_obs, mode="eval", noise=noise)
+    assert random.getstate() == state
+    torch.testing.assert_close(first, second)
+
+
+@pytest.mark.parametrize(
+    "bounds,ignore_last,num_steps,expected",
+    [
+        (None, False, 10, (0, 10)),
+        (None, True, 10, (0, 9)),
+        (None, True, 1, (0, 1)),
+        ((0, 10), True, 10, (0, 9)),
+    ],
+)
+def test_openpi_rl_default_and_ignore_last_ranges(
+    bounds, ignore_last, num_steps, expected
+):
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+
+    cfg = Pi0RLConfig(
+        stochastic_step_range=bounds, ignore_last=ignore_last, noise_method="flow_sde"
+    )
+    cfg.validate(num_steps)
+    assert cfg.stochastic_step_bounds(num_steps) == expected
+    assert cfg.frozen_vision_mode == "follow_model"
+
+
+@pytest.mark.parametrize(
+    "options,error",
+    [
+        ({"stochastic_step_range": "first5"}, "stochastic_step_range"),
+        ({"stochastic_step_range": [True, 5]}, "integer bounds"),
+        ({"stochastic_step_range": [0, 5.0]}, "integer bounds"),
+        ({"stochastic_step_range": [0]}, "integer bounds"),
+        ({"stochastic_step_range": [-1, 5]}, "0 <= start < end"),
+        ({"stochastic_step_range": [5, 5]}, "0 <= start < end"),
+        ({"stochastic_step_range": [0, 11]}, "0 <= start < end"),
+        ({"num_steps": 4}, "0 <= start < end"),
+        ({"stochastic_step_range": [9, 10], "ignore_last": True}, "nonempty"),
+        ({"joint_logprob": True}, "single-transition"),
+        ({"is_nft": True}, "single-transition"),
+        ({"noise_method": "flow_ode"}, "stochastic noise_method"),
+        ({"frozen_vision_mode": "train"}, "frozen_vision_mode"),
+        ({"train_expert_only": False}, "requires train_expert_only"),
+    ],
+)
+def test_openpi_rl_factory_rejects_invalid_options_before_loading(
+    tmp_path, options, error
+):
+    from rlinf.models.embodiment.openpi import get_model as get_openpi_model
+
+    (tmp_path / "full_weights.pt").write_bytes(b"not a checkpoint")
+    cfg = OmegaConf.create(
+        {
+            "model_path": str(tmp_path),
+            "precision": "fp32",
+            "num_action_chunks": 2,
+            "action_dim": 2,
+            "num_steps": 10,
+            "openpi": {
+                "task": "rl",
+                "config_name": "pi05_bench2dex",
+                "model_action_dim": 2,
+                "action_horizon": 2,
+                "paligemma_variant": "dummy",
+                "action_expert_variant": "dummy",
+                "stochastic_step_range": [0, 5],
+                "frozen_vision_mode": "eval",
+                "train_expert_only": True,
+                "noise_method": "flow_sde",
+                **options,
+            },
+        }
+    )
+    with pytest.raises(ValueError, match=error):
+        get_openpi_model(cfg)
+
+
+@pytest.mark.parametrize(
+    "actor_override,rollout_override,error",
+    [
+        ({"num_steps": 4, "openpi": {"num_steps": 10}}, None, None),
+        ({"num_steps": 4, "openpi": {"num_steps": None}}, None, "0 <= start < end"),
+        ({"num_steps": 10.0}, None, "positive integer num_steps"),
+        (
+            {
+                "openpi": {
+                    "stochastic_step_range": None,
+                    "frozen_vision_mode": "follow_model",
+                }
+            },
+            {"openpi": {"task": "eval", "num_steps": 8, "noise_level": 0.7}},
+            None,
+        ),
+        (
+            {
+                "openpi": {
+                    "stochastic_step_range": None,
+                    "frozen_vision_mode": "follow_model",
+                }
+            },
+            {"openpi": {"stochastic_step_range": [0, 4]}},
+            "matching actor/rollout openpi.stochastic_step_range",
+        ),
+        ({"precision": "fp32"}, {"precision": "bf16"}, None),
+    ],
+)
+def test_openpi_rl_config_preserves_resolution_and_rollout_overrides(
+    actor_override, rollout_override, error
+):
+    from rlinf.config import validate_openpi_rl_cfg
+
+    model_cfg = OmegaConf.merge(
+        {
+            "num_steps": 10,
+            "openpi": {
+                "task": "rl",
+                "noise_method": "flow_sde",
+                "noise_level": 0.3,
+                "stochastic_step_range": [0, 5],
+                "frozen_vision_mode": "eval",
+                "train_expert_only": True,
+            },
+        },
+        actor_override,
+    )
+    rollout_cfg = (
+        None if rollout_override is None else OmegaConf.create(rollout_override)
+    )
+    if error is None:
+        validate_openpi_rl_cfg(model_cfg, rollout_cfg)
+    else:
+        with pytest.raises(ValueError, match=error):
+            validate_openpi_rl_cfg(model_cfg, rollout_cfg)
 
 
 @pytest.fixture
