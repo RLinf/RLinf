@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file tells coding agents how to build, test, and change RLinf so that the result passes CI and review. `CLAUDE.md` is a symlink to it. It holds only rules that apply across the repository: the contribution process is in [CONTRIBUTING.md](CONTRIBUTING.md), writing and documentation rules are in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md), and step-by-step workflows are skills under `.agents/skills/`. When this file disagrees with the code, the code is right; fix this file in the same change.
+This file tells coding agents how to build, test, and change RLinf so that the result passes CI and review. `CLAUDE.md` is a symlink to it. It holds only rules that apply across the repository: the contribution process is in [CONTRIBUTING.md](CONTRIBUTING.md), writing and documentation rules are in the docs skill's [rules](.agents/skills/docs/rules/base.md), and step-by-step workflows are skills under `.agents/skills/`. When this file disagrees with the code, the code is right; fix this file in the same change.
 
 RLinf is a distributed reinforcement learning framework for embodied and agentic AI. A run starts from one entry script that builds a Ray-backed `Cluster`, places the actor, rollout, env, reward, and agent components on hardware, launches each as a `Worker` group, and hands control to a runner that loops through rollout, reward, advantage, and update. Configuration is Hydra YAML. Training uses FSDP or Megatron; LLM rollout uses SGLang or vLLM. User-facing workflows such as installation, placement, multi-node setup, memory tuning, checkpoint resume, metrics, and evaluation are documented under `docs/source-en/rst_source/` (`start/`, `concepts/`, `guides/`, `extending/`, and `resources/faq.rst`).
 
@@ -43,11 +43,10 @@ Embodied end-to-end tests need GPUs and model assets. `<config>` is a file name 
 REPO_PATH=$(pwd) bash tests/e2e_tests/embodied/run.sh <config>
 ```
 
-Docs must build in both languages with no new warnings:
+Docs must build in both languages with no new warnings. The docs check builds both the way Read the Docs does and checks the changed pages:
 
 ```bash
-sphinx-build -b html docs/source-en docs/build/html-en
-sphinx-build -b html docs/source-zh docs/build/html-zh
+python3 .agents/skills/docs/check.py
 ```
 
 ## Repository map
@@ -115,23 +114,24 @@ Each extension point is a registry or an enum. Register the component, select it
 
 - Commit subjects follow Conventional Commits (`<type>(<scope>): <description>`, imperative, about 72 characters). Every commit carries a `Signed-off-by:` trailer (`git commit -s`), which certifies the [DCO](DCO) for the human author; use that person's Git identity, never an agent's.
 - PR titles are stricter than commit subjects: the description after `: ` is at most 50 characters, starts with a lowercase letter, has no trailing period, and is plain ASCII. The `create-pr` skill fills `.github/PULL_REQUEST_TEMPLATE.md` and checks both title and body with `python3 .agents/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>`. Include the commands you ran and their results; a change that can move training curves needs curves.
-- All project writing, including PR descriptions, review comments, and commit messages, follows the voice rules in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md); its page-structure and RST rules apply to documentation only. Change the English and Chinese docs together.
+- All project writing, including PR descriptions, review comments, and commit messages, follows the language rules in [english.md](.agents/skills/docs/rules/english.md) and [chinese.md](.agents/skills/docs/rules/chinese.md). Explain behavior in words the reader knows, and name a file, class, or function only where the reader acts on it or needs it to find the change. Change the English and Chinese docs together.
 
 ## Skills
 
-Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a symlink to each. Use the one that matches the task:
+Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a symlink to each ([.agents/skills/README.md](.agents/skills/README.md)). An area skill owns part of the repository: read it before you edit a file it owns, even when that edit is part of a larger change. The `paths:` list in each `SKILL.md` is exact; the table summarizes it.
+
+| Files | Skill |
+|---|---|
+| Code, tests, configs, and CI: `rlinf/`, `examples/`, `tests/`, `toolkits/`, `evaluations/`, `ray_utils/`, `.github/`, any `.py` file | `code` |
+| Docs: `docs/`, `README.md`, `README.zh-CN.md` | `docs` |
+| Install, Docker, and e2e: `requirements/`, `pyproject.toml`, `docker/`, `tests/e2e_tests/`, and their workflows | `install` |
 
 | Task | Skill |
 |---|---|
 | Open a PR, or fix a PR title or description | `create-pr` |
 | Review a PR, or post review comments on it | `review-pr` |
-| Write or restructure a docs page | `refine-docs` |
-| Check docs against the code and EN/ZH parity | `docs-check` |
-| Add the example page for a new model or env | `add-example-doc-model-env` |
-| Add a publication page | `add-publication-docs` |
-| Add install, Docker, CI, and e2e support for a new model or env | `add-install-docker-ci-e2e` |
-| Write or review `install.sh` and Dockerfile changes | `install-check` |
-| Build a model or env venv and run its e2e test | `test-install` |
+
+Before you report a change as done, run `python3 .agents/skills/route.py check`. It finds the areas the change touches and runs each one's check; fix every critical or major finding, or tell the user why it stays.
 
 ## Maintaining agent instructions
 
@@ -139,4 +139,4 @@ Skills live in `.agents/skills/<name>/SKILL.md`, and `.claude/skills/` holds a s
 - Put guidance for one area in that area's docs page, in a skill, or in an `AGENTS.md` inside the directory, with a `CLAUDE.md` symlink beside it.
 - Refer to code by symbol or search pattern instead of copying lists that drift, such as supported models, envs, or test files. Check every path, command, and API you add against the code.
 - When a new rule supersedes an old one, remove or merge the old one in the same change.
-- Add a skill only under `.agents/skills/`, with a folder name that matches the `name` in its `SKILL.md`, and add its symlink in `.claude/skills/`.
+- Add a skill only under `.agents/skills/`, with a folder name that matches the `name` in its `SKILL.md`, and add its symlink in `.claude/skills/`. An area skill also declares `paths:` and ships a `check.py` ([.agents/skills/README.md](.agents/skills/README.md)).

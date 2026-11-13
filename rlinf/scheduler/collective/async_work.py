@@ -25,6 +25,30 @@ from torch.futures import Future
 from ..worker import Worker
 
 
+async def _await_torch_future(future: Future) -> None:
+    """Wait for a torch Future without occupying an executor thread.
+
+    A run_in_executor(None, future.wait) submission parks one default-executor
+    thread per pending wait, so more concurrent waits than pool threads
+    serialize even when their futures are already done.
+    """
+    if future.done():
+        return
+    loop = asyncio.get_running_loop()
+    waiter = loop.create_future()
+
+    def _wake(_fut: Future) -> None:
+        # Runs in the thread completing the future. The loop may already be
+        # closed at shutdown; nobody is waiting then.
+        try:
+            loop.call_soon_threadsafe(lambda: waiter.done() or waiter.set_result(None))
+        except RuntimeError:
+            pass
+
+    future.add_done_callback(_wake)
+    await waiter
+
+
 class AsyncWork:
     """Base class for asynchronous work."""
 
@@ -157,8 +181,7 @@ class AsyncFuncWork(AsyncWork):
 
         """
         if not self._done.done():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._done.wait)
+            await _await_torch_future(self._done)
         if self._cuda_event is not None:
             self._cuda_event.wait()
         result = self._result
@@ -216,6 +239,9 @@ class AsyncCollWork(AsyncWork):
 
     async def async_wait(self):
         """Async wait for the work to complete."""
+        # Keep the executor wait: NCCL work.wait() only synchronizes the
+        # current stream with the work's completion, which is not equivalent
+        # to the completion of work.get_future().
         await asyncio.get_event_loop().run_in_executor(None, self.wait)
 
     def wait(self):
@@ -309,8 +335,7 @@ class AsyncChannelWork(AsyncWork):
 
         """
         if not self._future.done():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._future.wait)
+            await _await_torch_future(self._future)
         return self._future.value()
 
     def wait(self):
@@ -381,8 +406,7 @@ class AsyncChannelCommWork(AsyncWork):
 
         """
         if not self._data_future.done():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._data_future.wait)
+            await _await_torch_future(self._data_future)
         with AsyncChannelCommWork.store_lock:
             AsyncChannelCommWork.channel_data_store.pop(self._query_id, None)
         return self._data_future.value()
