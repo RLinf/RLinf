@@ -18,6 +18,9 @@ Installation
 
 .. include:: _setup_common.rst
 
+For Huawei Ascend, follow :ref:`sft-fastwam-hardware`. The commands below
+install the NVIDIA environment.
+
 Install FastWAM for SFT:
 
 .. code-block:: bash
@@ -111,6 +114,76 @@ Launch SFT:
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+.. _sft-fastwam-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+NVIDIA uses the installation and launch steps above. Huawei Ascend CANN supports
+FastWAM SFT and LIBERO evaluation with the same model weights, normalization
+statistics, datasets, and text embedding cache.
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+Start with the Ascend LIBERO container or a host with CANN and the NPU driver
+installed:
+
+.. include:: _ascend_libero.rst
+
+Create a FastWAM environment from the RLinf checkout inside the container, or
+run the same commands directly on the Ascend host:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model fastwam --env libero
+   source .venv/bin/activate
+
+For SFT only, omit ``--env libero``. Add ``--use-mirror`` for downloads from
+mainland China. The installer selects the Ascend PyTorch stack and skips CUDA
+flash-attention.
+
+Prepare the Wan components, ActionDiT backbone, datasets, and T5 embedding cache
+as described above. For ActionDiT preprocessing on an Ascend host, replace
+``--device cuda`` with ``--device cpu``. The text embedding script also uses the
+CPU when CUDA is unavailable. Keep ``DIFFSYNTH_MODEL_BASE_PATH`` pointing to the
+directory containing ``Wan-AI``. When loading the original Wan ``.pth`` files,
+set ``model.redirect_common_files=false`` in the upstream model overrides and
+the text embedding command.
+
+Set the data and model paths in ``examples/sft/config/libero_sft_fastwam.yaml``
+and ``examples/sft/config/model/fastwam.yaml`` as described above. For an
+eight-NPU run, start with ``actor.micro_batch_size: 1`` and
+``actor.global_batch_size: 8``, and enable
+``actor.fsdp_config.gradient_checkpointing`` to reduce memory use. Adjust
+``cluster.component_placement.actor`` for your available devices, and keep the
+global batch size divisible by the micro batch size times the number of NPUs.
+Then launch SFT with the same configuration from the repository root:
+
+.. code-block:: bash
+
+   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
+   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+For evaluation, configure the checkpoint and normalization statistics as
+described below. Set MuJoCo and PyOpenGL to use OSMesa for CPU rendering, then
+run the same LIBERO evaluation entrypoint:
+
+.. code-block:: bash
+
+   export MUJOCO_GL=osmesa
+   export PYOPENGL_PLATFORM=osmesa
+   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+Install the OSMesa runtime in the container or host used for evaluation. Replace
+``libero_spatial_fastwam_eval`` with any of the other suite configurations
+listed below. These configurations place rollout workers on four devices by
+default; adjust ``cluster.component_placement`` for your available NPUs.
+
+RLinf selects the worker's device when constructing FastWAM. On NPU workers,
+it automatically applies the Ascend adaptations and enables fused RoPE and
+RMSNorm for the video and action DiT experts.
 
 Evaluation
 ----------

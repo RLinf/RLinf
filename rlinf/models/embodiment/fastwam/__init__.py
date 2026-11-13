@@ -33,6 +33,7 @@ from rlinf.models.embodiment.fastwam.fastwam_policy import (
     FastWAMPolicy,
     FastWAMPolicyConfig,
 )
+from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -201,7 +202,15 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> nn.Module:
 
     if torch_dtype is None:
         torch_dtype = torch.bfloat16
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    device = Worker.torch_device_type or "cpu"
+    if device == "npu":
+        from rlinf.models.embodiment.fastwam.npu_patches import apply_npu_patches
+        from rlinf.utils.patcher import Patcher
+
+        Patcher.clear()
+        apply_npu_patches(Patcher)
+        Patcher.apply()
 
     try:
         model = _instantiate_fastwam_policy(fcfg.model, torch_dtype, device)
