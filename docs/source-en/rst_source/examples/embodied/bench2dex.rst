@@ -1,26 +1,16 @@
 Bench2Dex
 =========
 
-Train and evaluate π₀.₅ on Bench2Dex Task64 with two Panda arms and Allegro
-hands. Prepare the scene assets and converted checkpoint, choose synchronous
-PPO, asynchronous PPO or GRPO, then evaluate checkpoints on the four official
-generalization channels.
+Train and evaluate π₀.₅ on Bench2Dex Task22 and Task64. Run synchronous or
+asynchronous PPO, use grouped GRPO for Task64, and evaluate saved policies
+on the four official generalization channels.
 
 Overview
 --------
 
-Use the Task64 recipe with one or more independent scene processes per
-environment worker. ``Bench2DexVectorEnv`` extends RLinf's ``BaseVectorEnv``
-to schedule complete action chunks across those processes, and
-the rollout worker receives their observations as a batch. The simulator is
-registered as ``env_type: bench2dex``.
-
-Each ``Bench2DexSubprocEnvWorker`` starts one scene with a local ``spawn``
-context. Its ``Bench2DexRuntime`` owns and closes that scene's
-``SimulationApp``. The vector environment sends a complete chunk to every
-active scene before collecting results. Each scene executes its actions in
-order and captures an observation after each executed action. The outer
-environment batches the observations and pads scenes that finish early.
+Run independent scenes in parallel and batch their policy observations.
+Choose the scene count and GPU placement in the selected recipe. Training
+uses complete episodes, including zero-reward padding after a scene ends.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -33,17 +23,17 @@ environment batches the observations and pads scenes that finish early.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      Synchronous PPO · asynchronous PPO · GRPO · policy evaluation
+      Synchronous PPO · asynchronous PPO · GRPO · evaluation
 
    .. grid-item-card:: Tasks
       :text-align: center
 
-      Task64 · dual Panda + Allegro
+      Task22 · Task64
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      NVIDIA GPU
+      NVIDIA GPUs with RGB rendering
 
 Tasks
 ~~~~~
@@ -53,10 +43,16 @@ Tasks
 
    * - Scene
      - Robot
-     - Goal
+     - Active Joints
+     - Control Budget
+   * - ``22_tool_box_loading``
+     - ``multi_panda_with_orca``
+     - 40
+     - 681
    * - ``64_sports_ball_cup_sort``
      - ``multi_panda_with_allegro``
-     - Sort four balls into two cups.
+     - 32
+     - 665
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -67,19 +63,19 @@ Observation and Action
    * - Field
      - Contract
    * - Observation
-     - Stereo pair, two wrist RGB images, joint positions and task description.
+     - Stereo and wrist RGB images, joint positions and a task description.
    * - Action
-     - Absolute active-joint targets in the configured robot's joint order.
+     - Absolute joint targets in the selected robot's active-joint order.
    * - Reward
-     - 1 at the first stable success; 0 otherwise.
+     - 1 at the first stable success; 0 otherwise. Stage bonuses default to 0.
    * - Prompt
-     - Task description from the selected scene YAML.
+     - Task description from the selected scene.
 
 Installation
 ------------
 
 Install OpenPI and the scene runtime in a dedicated virtual environment.
-The recipe pins Bench2Dex ``fd90dcc625b66c2e535a8b25bcf75bc81c7b080d``,
+Use Bench2Dex commit ``fd90dcc625b66c2e535a8b25bcf75bc81c7b080d``,
 Isaac Sim 5.1.0, Isaac Lab v2.3.2, Python 3.11.14 and torch 2.7.0 with CUDA 12.8.
 
 .. code-block:: bash
@@ -88,104 +84,104 @@ Isaac Sim 5.1.0, Isaac Lab v2.3.2, Python 3.11.14 and torch 2.7.0 with CUDA 12.8
      --python 3.11.14 --platform nvidia --venv .venv-bench2dex-openpi
    source .venv-bench2dex-openpi/bin/activate
 
-Activation exports ``BENCH2DEX_PATH``. The pip-installed Isaac Sim package
-resolves its runtime paths. A standalone installation can instead supply
-``ISAAC_PATH``; the launchers derive its ``apps/`` and ``kit/`` paths.
+Activation sets ``BENCH2DEX_PATH``. Pip-installed Isaac Sim resolves its own
+runtime paths. For a standalone installation, set ``ISAAC_PATH``; the
+launchers derive ``EXP_PATH`` and ``CARB_APP_PATH`` while preserving explicit
+values for either variable.
 
 Download the Assets
 -------------------
 
-Prepare the robot and scene assets from
-`Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`_ and the
-Task64 replay-generalization anchors from
-`teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`_.
-Follow the `upstream extraction guide <https://bench2dex.github.io/doc/>`_,
-then point the recipe at the extracted directories:
+Download robot and scene assets from
+`Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`_ and the selected
+task's replay-generalization anchors from
+`teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`_. Follow
+the `upstream extraction guide <https://bench2dex.github.io/doc/>`_, then set
+the extracted asset parent and anchor directory:
 
 .. code-block:: bash
 
-   export BENCH2DEX_ASSETS_PATH=/path/to/bench2dex-data
-   export BENCH2DEX_ANCHOR_DIR=/path/to/task64/replay-generalization
+   export BENCH2DEX_ASSETS_PATH="<asset_parent>"
+   export BENCH2DEX_ANCHOR_DIR="<task_anchor_directory>"
 
-The asset parent contains ``dex2bench_dataset/`` and any referenced
-``Dex2Assets/`` folder. Anchored channels restore the HDF5 scene and read
-live sensor observations.
+Replace the placeholders with your directories. The asset parent contains
+``dex2bench_dataset/`` and any referenced ``Dex2Assets/`` folder. Use anchors
+for the same task as the checkpoint.
 
 Download the Model
 ------------------
 
-Download the official Task64 π₀.₅ checkpoint using the upstream guide.
-Convert its JAX step directory, including ``params/`` and the matching
-``assets/dex2bench/norm_stats.json``, to RLinf's PyTorch layout:
+Download the official checkpoint for the selected task using the upstream
+guide. Convert its JAX step directory and matching normalization file. This
+command converts Task22's 40-dimensional policy:
 
 .. code-block:: bash
 
-   export BENCH2DEX_PI05_PATH=/path/to/task64-pi05-rlinf
+   export BENCH2DEX_PI05_PATH="<converted_checkpoint_directory>"
    JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES="" \
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
-     --input-model /path/to/official-pi05-step \
-     --input-norm-stats /path/to/official-pi05-step/assets/dex2bench/norm_stats.json \
+     --input-model "<official_step_directory>" \
+     --input-norm-stats "<official_step_directory>/assets/dex2bench/norm_stats.json" \
      --output-model "$BENCH2DEX_PI05_PATH" \
      --output-norm-stats "$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json" \
-     --action-dim 32 --action-horizon 20 --max-token-len 280
+     --action-dim 40 --action-horizon 20 --max-token-len 280
 
-The recipe loads the converted ``model.safetensors`` and normalization
-file. Task64 uses four policy views, 32 active-joint coordinates, a 20-action
-chunk and 280 prompt tokens. The aligned evaluator creates the official
-five-camera rig, including the overhead view, and captures a preflight frame
-before the first policy observation.
+For Task64, use its checkpoint and anchors and set ``--action-dim 32``.
+Both tasks use 20-action chunks, four policy views and 280 prompt tokens.
+The simulator also initializes the overhead camera used by the official rig.
 
 Run It
 ------
 
-Train with PPO
-~~~~~~~~~~~~~~
+Train Task22 with PPO
+~~~~~~~~~~~~~~~~~~~~~
 
-Use the same Task64 checkpoint and normalization file for both training
-recipes. Training resamples all scene axes from the ``seen`` asset split,
-using its own seed sequence. The official evaluation anchors and ``unseen``
-split remain configured separately.
-
-Start synchronous PPO:
+Start synchronous PPO with the Task22 checkpoint and anchor directory:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh bench2dex_task64_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-This runs ``EmbodiedRunner``: collect a rollout, update the actor and value
-head, synchronize weights, then collect the next rollout. The model uses
-Flow-SDE exploration with GPU-generated PyTorch noise and trains the action
-expert and value head.
+The recipe collects 128 trajectories per round with 16 environments and
+8 rollout batches. Each trajectory has 700 scheduled action steps.
+Physics runs for at most 681 steps. Each round makes three passes over
+the rollout data. Actor and critic learning rates are ``2e-6`` and ``2e-5``.
 
-To overlap rollout collection with actor updates, use the asynchronous recipe:
+Task22 saves every 2 completed rounds and evaluates 32 episodes every
+10 completed rounds. The schedule uses the cumulative round count after
+resume. Training and periodic evaluation use the ``none`` scene channel.
+Watch TensorBoard's ``env/success_once`` and ``eval/success_once``; see
+:doc:`Training metrics <../../reference/metrics>` for their definitions.
+
+To overlap collection and updates, run the asynchronous recipe:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_async.sh bench2dex_task64_async_ppo_openpi_pi05
+   bash examples/embodiment/run_async.sh bench2dex_task22_async_ppo_openpi_pi05
 
-This uses ``AsyncPPOEmbodiedRunner`` and the existing
-``decoupled_actor_critic`` loss. The asynchronous YAML inherits the synchronous
-recipe, keeping the model, scene distribution, rollout budget and optimizer
-settings identical. It allows one version of policy staleness through
-``algorithm.staleness_threshold: 1`` and uses
-``algorithm.behave_weight_threshold: 2.0``.
+Training recipes enable actor and rollout offload. Synchronous training also
+releases simulator processes after complete rollouts and rebuilds them for
+the next round. The asynchronous recipe keeps training scenes alive.
 
-Both recipes start with 16 environments and one rollout per training epoch.
-Each episode has a 665-control-step budget, scheduled as 34 chunks of 20
-actions. Set ``env.train.total_num_envs`` and
-``cluster.component_placement`` in the YAML to choose the scene and worker
-counts. The initial actor microbatch is 1 and the global batch is 136.
-Each rollout schedules 544 chunk samples.
+.. warning::
 
-The training environment uses ``auto_reset=false``. An episode that ends
-inside a chunk contributes its executed rewards; subsequent chunks hold the
-terminal observation and zero rewards. RLinf's existing done-based loss mask
-excludes those subsequent chunks. Both PPO variants use chunk-level rewards
-and log-probabilities.
+   Environment offload requires complete episodes and ``auto_reset=false``.
+   Keep training environment offload disabled for asynchronous, pipelined or
+   decoupled execution.
 
-The runner saves checkpoints according to ``runner.save_interval``. To resume
-synchronous training from a saved step, pass ``runner.resume_dir`` through the
-Python entry point:
+Training captures one policy observation after each executed action chunk.
+For video, tactile data, per-action observation collection or external reward models, set
+``skip_intermediate_renders=false`` on the corresponding environment split.
+
+Select a Fixed Scene and Resume
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To reuse one scene, set both ``env.train.init_params.anchor_hdf5`` and
+``env.eval.init_params.anchor_hdf5`` to the same HDF5 anchor and keep the
+``none`` channel. Geometry and appearance come from that anchor; select an
+anchor that contains the scene you want.
+
+Resume a saved Task22 training checkpoint with the Python entry point:
 
 .. code-block:: bash
 
@@ -193,145 +189,89 @@ Python entry point:
    PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
    python "$EMBODIED_PATH/train_embodied_agent.py" \
      --config-path "$EMBODIED_PATH/config" \
-     --config-name bench2dex_task64_ppo_openpi_pi05 \
-     runner.resume_dir=/path/to/checkpoints/global_step_40
+     --config-name bench2dex_task22_ppo_openpi_pi05 \
+     runner.resume_dir="<checkpoint_directory>"
 
-For asynchronous resume, use ``train_async.py`` and
-``bench2dex_task64_async_ppo_openpi_pi05`` with the same ``runner.resume_dir``
-argument. Both recipes use independent checkpoint evaluation below. Watch
-``env/success_once`` during training; see
-:doc:`Training metrics <../../reference/metrics>` for the metric definitions.
+Use the complete ``global_step_N`` directory to restore model, optimizer and
+scheduler state. For asynchronous resume, select ``train_async.py`` and
+``bench2dex_task22_async_ppo_openpi_pi05``.
 
-Train with GRPO
-~~~~~~~~~~~~~~~
+Train Task64 with PPO or GRPO
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use GRPO to compare independent attempts from the same initial scene. The
-recipe keeps PPO's checkpoint, scene distribution and action budget, trains
-the action expert with Flow-SDE, and computes advantages from group returns
-instead of a value head:
+Switch to the Task64 checkpoint and anchors, then select its PPO recipe:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh bench2dex_task64_ppo_openpi_pi05
+
+The asynchronous alternative is
+``bench2dex_task64_async_ppo_openpi_pi05``. Task64 training samples all scene
+variation axes from the ``seen`` asset split. Its episodes have a 665-step
+budget, scheduled in 680 action slots. Configure periodic evaluation with
+``runner.val_check_interval`` and saving with ``runner.save_interval``.
+
+Run grouped GRPO to compare four independent attempts from each initial scene:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh bench2dex_task64_grpo_openpi_pi05
 
-The recipe uses ``EmbodiedRunner`` with ``algorithm.adv_type=grpo`` and
-``algorithm.loss_type=actor``. The default placement uses four GPUs (``0-3``); its
-16 environments form four groups of four attempts. Set ``algorithm.group_size`` to change the group size;
-``env.train.group_size`` follows it. Each environment and actor worker must
-receive complete groups.
-
-With ``env.train.use_fixed_reset_state_ids=true``,
-``Bench2DexEnv.update_reset_state_ids()`` selects one initial-state index per
-group for the next rollout. ``reset()`` sends the repeated indices through
-``Bench2DexVectorEnv`` to ``Bench2DexRuntime.reset(reset_state_id=...)``.
-Group members use the same anchor and scene seed while the policy samples
-independent PyTorch action noise. Scene process IDs remain independent of
-initial-state IDs. PPO and evaluation retain their default episode sequence.
-
-Rewards remain 1 at first stable success and 0 otherwise. A group with both
-successes and failures supplies relative advantages; uniform-return groups
-have zero group-relative advantages. The recipe keeps
-``algorithm.filter_rewards=false`` and enables
-``algorithm.log_group_success_metrics``. Use the checkpoint evaluation below
-for saved policies.
+The 16 environments form four groups. Members of a group share the anchor
+and scene seed and use independent action noise. Set ``algorithm.group_size``
+to change the group size; every environment and actor shard must receive
+complete groups. GRPO uses group-relative returns without a value head.
 
 Evaluate a Checkpoint
 ~~~~~~~~~~~~~~~~~~~~~
 
-Run 50 episodes per channel, with a process restart every 10 episodes:
+Run the official four channels for Task22, 50 episodes per channel:
 
 .. code-block:: bash
 
    JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
-     bench2dex_task64_openpi_pi05_eval --episodes-per-process 10
+     bench2dex_task22_openpi_pi05_eval --episodes-per-process 10
 
-To evaluate a training checkpoint, select its weights and keep the SFT
-normalization file:
+Select ``bench2dex_task64_openpi_pi05_eval`` with Task64 assets and weights
+for the other task. The launcher runs ``none``, ``cov``, ``inv`` and
+``inv_cov`` in sequence. Use ``--gpu-id`` for placement, ``--num-envs`` for
+parallel scenes and ``--output-root`` for the results directory.
 
-.. code-block:: bash
-
-   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
-     bench2dex_task64_openpi_pi05_eval --episodes-per-process 10 \
-     rollout.model.model_path=/path/to/checkpoints/global_step_40/actor/model_state_dict/full_weights.pt \
-     +rollout.model.openpi_data.norm_stats_path="$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
-
-The OpenPI model loader restores the action network for inference and uses the
-specified SFT normalization file. Keep ``BENCH2DEX_PI05_PATH`` pointing at the
-converted SFT directory.
-
-The launcher runs ``none``, ``cov``, ``inv`` and ``inv_cov`` in
-sequence, sharing GPU 0 between simulation and inference. Select another card
-with ``--gpu-id``, an output directory with ``--output-root``, or a subset
-with ``--channels``. ``--num-episodes`` controls the total episode count per
-channel. ``--episodes-per-process`` caps that count per launcher run; zero
-keeps the channel in a single run when the environment count divides it.
-
-To run two scenes concurrently in the same environment worker, use:
-
-.. code-block:: bash
-
-   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
-     bench2dex_task64_openpi_pi05_eval \
-     --num-envs 2 --num-episodes 50 --episodes-per-process 20
-
-This command runs 20, 20 and 10 episodes in three launcher runs. Each scene
-executes 10, 10 and 5 episodes respectively. The launcher maps ``--num-envs``
-to ``env.eval.total_num_envs`` and computes ``env.eval.rollout_epoch`` from
-the episode budget. It reduces the last batch's environment count as needed
-to execute exactly the requested episodes. Scene 0 takes episodes 1, 3, 5,
-and scene 1 takes 2, 4, 6; the official episode seeds and anchor order are
-preserved.
-
-The environment returns observations with a leading environment dimension
-and chunk outcomes shaped ``[N,C]``. With ``auto_reset=true``, only completed
-scenes reset after the chunk; ``final_observation`` and ``final_info`` retain
-their terminal data. The evaluation recipe uses ``auto_reset=false``.
-
-The recipe selects ``rollout.model.openpi.noise_rng: jax`` to generate
-CPU noise from each episode seed and policy query index. Model inference
-continues to use PyTorch on the GPU. Simulator initialization applies the task
-seed before creating the simulation context and uses the native physics time
-step ``0.0166666``.
+To evaluate trained weights, add
+``rollout.model.model_path=<checkpoint_directory>/actor/model_state_dict/full_weights.pt``
+and ``+rollout.model.openpi_data.norm_stats_path=<sft_normalization_file>``
+to the command. Keep the normalization file matched to the original task.
 
 .. list-table:: Official Channel Protocol
    :header-rows: 1
 
    * - Channel
-     - Scene preparation
-     - Seed namespace
+     - Scene Preparation
+     - Seed Namespace
    * - ``none``
      - Restore the anchor scene.
      - ``100000000``
    * - ``cov``
-     - Restore the anchor; resample object pose and table height.
+     - Restore the anchor; vary object pose and table height.
      - ``100000000``
    * - ``inv``
-     - Restore the anchor; resample background, table surface, lighting, clutter and camera.
+     - Restore the anchor; vary appearance, clutter and cameras.
      - ``100000000``
    * - ``inv_cov``
-     - Sample all seven axes from the unseen split.
+     - Sample all seven variation axes from the unseen split.
      - ``200000000``
 
-Episode seeds follow
-``namespace + task_id * 100000 + episode_index - 1``. Task64 starts at
-``106400000`` or ``206400000``. Anchors cycle by episode index using the
-official ordering. Task64 has a 665-control-step budget; the recipe schedules
-680 action slots and stops at the task budget.
-
-To select another task or robot, set the task, embodiment, checkpoint, anchor
-directory and step budgets together. The environment derives joint dimensions
-from the robot specification.
+Parallel evaluation preserves the official episode order and random seeds.
+Official evaluation uses CPU JAX noise indexed by
+episode and policy query, PyTorch inference on the GPU, and a camera capture
+after each executed action.
 
 Visualization and Results
 -------------------------
 
-Read ``success_rates.tsv`` in the output root for the four channel rates.
-Each channel writes native ``per_episode.jsonl``, ``per_task.json`` and
-``summary.json``, plus RLinf logs and TensorBoard events. Successful
-reach-and-stop episodes use the upstream stable-success criterion.
-Each environment worker writes its scene results through one writer. Runs
-with multiple environment workers keep separate ``shards/<id>/`` directories;
-the four-channel launcher merges them by episode index and checks for missing
-or duplicate episodes.
-For the shared evaluation commands and output layout, see
-:doc:`Evaluation <../../evaluations/index>`.
+Read ``success_rates.tsv`` in the four-channel output root. Each channel
+writes native ``per_episode.jsonl``, ``per_task.json`` and ``summary.json``
+alongside RLinf logs and TensorBoard events. Results from parallel scene
+shards are merged by episode index, with duplicate and missing episodes
+reported as errors. See :doc:`Evaluation <../../evaluations/index>` for
+the shared output layout.

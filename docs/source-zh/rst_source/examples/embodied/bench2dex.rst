@@ -1,14 +1,12 @@
 Bench2Dex
 =========
 
-使用 RLinf 同步 PPO、异步 PPO 或 GRPO 训练 Bench2Dex Task64 的 π₀.₅ policy，机器人为双 Panda＋Allegro。先准备场景资产和转换后的 checkpoint，再启动训练，并通过官方四个泛化通道评测 checkpoint。
+使用 RLinf 训练和评测 Bench2Dex Task22、Task64 的 π₀.₅ policy。两项任务支持同步和异步 PPO，Task64 还提供分组 GRPO 配方；训练后的权重可以按官方四通道协议评测。
 
 概览
 ----
 
-Task64 配置支持每个环境 worker 管理一个或多个独立场景进程。``Bench2DexVectorEnv`` 继承 RLinf 的 ``BaseVectorEnv``，调度完整 action chunk；rollout worker 接收批量观测。仿真环境注册为 ``env_type: bench2dex``。
-
-每个 ``Bench2DexSubprocEnvWorker`` 通过局部 ``spawn`` context 启动一个场景，子进程中的 ``Bench2DexRuntime`` 创建并关闭该场景的 ``SimulationApp``。vector env 先向所有活动场景发送完整 chunk，再收集结果。各场景按顺序执行动作，每个实际执行的动作后采集观测；外层环境合并批量观测，并补齐提前结束的场景。
+各场景在独立进程中运行，policy 接收批量观测。在配方中设置场景数和 GPU placement。训练采集完整回合，提前结束的场景用零奖励补齐剩余位置。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -21,17 +19,17 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
    .. grid-item-card:: 算法
       :text-align: center
 
-      同步 PPO · 异步 PPO · GRPO · policy 评测
+      同步 PPO · 异步 PPO · GRPO · 评测
 
    .. grid-item-card:: 任务
       :text-align: center
 
-      Task64 · 双 Panda＋Allegro
+      Task22 · Task64
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      NVIDIA GPU
+      支持 RGB 渲染的 NVIDIA GPU
 
 任务
 ~~~~
@@ -41,10 +39,16 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
 
    * - 场景
      - 机器人
-     - 目标
+     - 主动关节数
+     - 控制步数预算
+   * - ``22_tool_box_loading``
+     - ``multi_panda_with_orca``
+     - 40
+     - 681
    * - ``64_sports_ball_cup_sort``
      - ``multi_panda_with_allegro``
-     - 将四个球分类放入两个杯子。
+     - 32
+     - 665
 
 观测与动作
 ~~~~~~~~~~
@@ -55,18 +59,18 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
    * - 字段
      - 约定
    * - 观测
-     - 双目和两个腕部 RGB 图像、关节位置、任务描述。
+     - 双目和腕部 RGB 图像、关节位置、任务描述。
    * - 动作
-     - 按所选机器人关节顺序排列的主动关节绝对位置目标。
+     - 按所选机器人主动关节顺序排列的绝对位置目标。
    * - 奖励
-     - 首次达到稳定成功时为 1，其余为 0。
+     - 首次稳定成功获得 1，其余为 0；阶段奖励默认为 0。
    * - Prompt
-     - 所选场景 YAML 中的任务描述。
+     - 所选场景中的任务描述。
 
 安装
 ----
 
-在独立虚拟环境中安装 OpenPI 和场景运行时。配置固定使用 Bench2Dex ``fd90dcc625b66c2e535a8b25bcf75bc81c7b080d``、Isaac Sim 5.1.0、Isaac Lab v2.3.2、Python 3.11.14，以及 CUDA 12.8 对应的 torch 2.7.0。
+在独立虚拟环境中安装 OpenPI 和场景运行时。安装以下版本：Bench2Dex commit ``fd90dcc625b66c2e535a8b25bcf75bc81c7b080d``\ 、Isaac Sim 5.1.0、Isaac Lab v2.3.2、Python 3.11.14，以及 CUDA 12.8 对应的 torch 2.7.0。
 
 .. code-block:: bash
 
@@ -74,67 +78,74 @@ Task64 配置支持每个环境 worker 管理一个或多个独立场景进程�
      --python 3.11.14 --platform nvidia --venv .venv-bench2dex-openpi
    source .venv-bench2dex-openpi/bin/activate
 
-激活环境后，``BENCH2DEX_PATH`` 指向上游源码。pip 安装的 Isaac Sim 自行解析运行时路径；使用独立安装时，可明确设置 ``ISAAC_PATH``，启动脚本据此补齐 ``apps/`` 和 ``kit/`` 路径。
+激活环境后，``BENCH2DEX_PATH`` 指向上游源码。pip 安装的 Isaac Sim 自行解析运行时路径。独立安装需要设置 ``ISAAC_PATH`` 变量；启动器据此补齐 ``EXP_PATH`` 和 ``CARB_APP_PATH`` 变量，并保留这两个变量的显式设置。
 
-准备资产
+下载资产
 --------
 
-从 `Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`_ 准备机器人与场景资产，从 `teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`_ 准备 Task64 replay-generalization 锚点。按 `上游文档 <https://bench2dex.github.io/doc/>`_ 解压后设置目录：
+从 `Assets <https://huggingface.co/datasets/Bench2Dex/Assets>`_ 下载机器人与场景资产，从 `teleopdata <https://huggingface.co/datasets/Bench2Dex/teleopdata>`_ 下载所选任务的 replay-generalization 锚点。按 `上游文档 <https://bench2dex.github.io/doc/>`_ 解压后，设置资产父目录和锚点目录：
 
 .. code-block:: bash
 
-   export BENCH2DEX_ASSETS_PATH=/path/to/bench2dex-data
-   export BENCH2DEX_ANCHOR_DIR=/path/to/task64/replay-generalization
+   export BENCH2DEX_ASSETS_PATH="<asset_parent>"
+   export BENCH2DEX_ANCHOR_DIR="<task_anchor_directory>"
 
-资产父目录包含 ``dex2bench_dataset/`` 和场景引用的 ``Dex2Assets/``。锚点通道恢复 HDF5 中的场景，再读取实时传感器观测。
+将占位符替换为实际目录。资产父目录应包含 ``dex2bench_dataset/`` 和场景引用的 ``Dex2Assets/`` 目录。锚点和 checkpoint 必须来自同一任务。
 
 下载模型
 --------
 
-按上游文档下载官方 Task64 π₀.₅ checkpoint，再将包含 ``params/`` 及匹配的 ``assets/dex2bench/norm_stats.json`` 的 JAX step 目录转换为 RLinf PyTorch 格式：
+按上游文档下载所选任务的官方 checkpoint，再转换 JAX step 目录和匹配的归一化文件。下面的命令转换 Task22 的 40 维 policy：
 
 .. code-block:: bash
 
-   export BENCH2DEX_PI05_PATH=/path/to/task64-pi05-rlinf
+   export BENCH2DEX_PI05_PATH="<converted_checkpoint_directory>"
    JAX_PLATFORMS=cpu CUDA_VISIBLE_DEVICES="" \
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
-     --input-model /path/to/official-pi05-step \
-     --input-norm-stats /path/to/official-pi05-step/assets/dex2bench/norm_stats.json \
+     --input-model "<official_step_directory>" \
+     --input-norm-stats "<official_step_directory>/assets/dex2bench/norm_stats.json" \
      --output-model "$BENCH2DEX_PI05_PATH" \
      --output-norm-stats "$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json" \
-     --action-dim 32 --action-horizon 20 --max-token-len 280
+     --action-dim 40 --action-horizon 20 --max-token-len 280
 
-评测配置读取转换后的 ``model.safetensors`` 和归一化文件。Task64 使用四个 policy 视角、32 维主动关节动作、20 步 action chunk 和 280 个 prompt tokens。对齐版评测创建包含顶视角的官方五相机配置，并在首次 policy 观测前采集预热帧。
+Task64 使用对应任务的 checkpoint 和锚点，并将转换参数改为 ``--action-dim 32``\ 。两项任务都使用 20 步 action chunk、四个 policy 视角和 280 个 prompt token。仿真还会初始化官方相机配置中的顶视角。
 
-启动
+运行
 ----
 
-PPO 训练
-~~~~~~~~
+使用 PPO 训练 Task22
+~~~~~~~~~~~~~~~~~~~~
 
-两份训练配方使用相同的 Task64 checkpoint 和归一化文件。训练在 ``seen`` 资产池中重采样全部场景轴，使用独立的种子序列；官方评测锚点和 ``unseen`` split 单独配置。
-
-启动同步 PPO：
+准备好 Task22 checkpoint 和锚点目录后，启动同步 PPO：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh bench2dex_task64_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-该命令使用 ``EmbodiedRunner``，依次完成 rollout 收集、actor 与 value head 更新、权重同步，再进入下一轮采样。模型采用 Flow-SDE 探索，在 GPU 上通过 PyTorch 生成噪声，训练 action expert 和 value head。
+每轮用 16 个环境采集 8 批 rollout，共 128 条轨迹。每条轨迹安排 700 步动作，物理仿真最多执行 681 步。每轮对采集的数据训练 3 遍。actor 和 critic 的学习率分别为 ``2e-6`` 和 ``2e-5``\ 。
 
-需要让采样与参数更新重叠时，启动异步配方：
+Task22 每完成 2 轮保存一次，每完成 10 轮评测 32 回合；恢复训练后沿用累计轮数。训练和周期评测都采用 ``none`` 通道。在 TensorBoard 查看 ``env/success_once`` 和 ``eval/success_once`` 指标，具体定义见 :doc:`训练指标 <../../reference/metrics>`\ 。
+
+需要同时采样和更新模型时，启动异步配方：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_async.sh bench2dex_task64_async_ppo_openpi_pi05
+   bash examples/embodiment/run_async.sh bench2dex_task22_async_ppo_openpi_pi05
 
-该命令使用 ``AsyncPPOEmbodiedRunner`` 和已有的 ``decoupled_actor_critic`` loss。异步 YAML 继承同步配方，模型、场景分布、采样预算和优化器参数保持一致。``algorithm.staleness_threshold: 1`` 允许采样权重落后一个版本，``algorithm.behave_weight_threshold`` 设为 ``2.0``。
+训练配方默认启用 actor 和 rollout offload。同步训练在完整 rollout 后释放仿真进程，下一轮重新创建；异步训练保留训练场景。
 
-两份配方初始配置均为 16 个环境，每个训练 epoch 收集一次 rollout。每回合预算为 665 个控制步，调度为 34 个、每个 20 步的 action chunk。在 YAML 中通过 ``env.train.total_num_envs`` 和 ``cluster.component_placement`` 调整场景及 worker 数量。actor 初始 microbatch 为 1，global batch 为 136，每次 rollout 调度 544 个 chunk 样本。
+.. warning::
 
-训练环境使用 ``auto_reset=false``。回合在 chunk 内结束时，保留实际执行动作的奖励；后续 chunk 保持终态观测、奖励为零，由 RLinf 已有的 done-based loss mask 排除。同步和异步 PPO 均使用 chunk-level reward 与 log-probability。
+   环境 offload 要求完整回合和 ``auto_reset=false`` 配置。异步、流水线和 decoupled 执行必须关闭训练环境 offload。
 
-runner 按 ``runner.save_interval`` 保存 checkpoint。恢复同步训练时，通过 Python 入口设置 ``runner.resume_dir``：
+训练每执行完一个 action chunk 采集一次 policy 观测。需要录像、触觉数据、逐动作观测或外部 reward model 时，在对应环境中设置 ``skip_intermediate_renders=false``\ 。
+
+固定场景与恢复训练
+~~~~~~~~~~~~~~~~~~
+
+要复用同一场景，将 ``env.train.init_params.anchor_hdf5`` 和 ``env.eval.init_params.anchor_hdf5`` 都指向同一个 HDF5 锚点，并保留 ``none`` 通道。场景几何和外观取自这个锚点，应选择包含目标场景的文件。
+
+用 Python 入口恢复 Task22 训练：
 
 .. code-block:: bash
 
@@ -142,62 +153,43 @@ runner 按 ``runner.save_interval`` 保存 checkpoint。恢复同步训练时，
    PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" \
    python "$EMBODIED_PATH/train_embodied_agent.py" \
      --config-path "$EMBODIED_PATH/config" \
-     --config-name bench2dex_task64_ppo_openpi_pi05 \
-     runner.resume_dir=/path/to/checkpoints/global_step_40
+     --config-name bench2dex_task22_ppo_openpi_pi05 \
+     runner.resume_dir="<checkpoint_directory>"
 
-恢复异步训练时，使用 ``train_async.py`` 和 ``bench2dex_task64_async_ppo_openpi_pi05``，传入相同的 ``runner.resume_dir`` 参数。两份配方均通过下面的独立入口评测 checkpoint。训练时关注 ``env/success_once``，其余指标定义见 :doc:`训练指标 <../../reference/metrics>`。
+传入完整的 ``global_step_N`` 目录，恢复模型、optimizer 和 scheduler。异步恢复使用 ``train_async.py`` 入口及 ``bench2dex_task22_async_ppo_openpi_pi05`` 配方。
 
-GRPO 训练
-~~~~~~~~~
+使用 PPO 或 GRPO 训练 Task64
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-GRPO 比较同一初始场景下的多次独立尝试。配方沿用 PPO 的初始 checkpoint、场景分布与动作预算，通过 Flow-SDE 训练 action expert，用组内轨迹回报计算优势：
+切换为 Task64 checkpoint 和锚点，再启动对应的 PPO 配方：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh bench2dex_task64_ppo_openpi_pi05
+
+异步配方名为 ``bench2dex_task64_async_ppo_openpi_pi05``\ 。Task64 训练使用 ``seen`` 资产划分，并随机采样所有场景变化维度。每条轨迹安排 680 步动作，最多执行 665 个控制步。用 ``runner.val_check_interval`` 和 ``runner.save_interval`` 配置周期评测与保存。
+
+需要从同一初始场景比较四次独立尝试时，使用分组 GRPO：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh bench2dex_task64_grpo_openpi_pi05
 
-该命令使用 ``EmbodiedRunner``，配置为 ``algorithm.adv_type=grpo``、``algorithm.loss_type=actor``，不创建 value head。默认 placement 使用四张 GPU（``0-3``），16 个环境分为四组，每组四次尝试；在 ``algorithm.group_size`` 中设置组大小，``env.train.group_size`` 跟随该值。每个环境 worker 和 actor worker 接收的分片都必须包含完整的组。
+16 个环境组成 4 组。组内共享锚点和场景种子，动作噪声相互独立。用 ``algorithm.group_size`` 调整组大小，每个环境和 actor shard 都必须接收完整分组。GRPO 根据组内回报计算相对优势，不使用 value head。
 
-``env.train.use_fixed_reset_state_ids=true`` 时，``Bench2DexEnv.update_reset_state_ids()`` 为下一次 rollout 的每组选择一个初始场景索引。``reset()`` 将组内重复的索引经 ``Bench2DexVectorEnv`` 发给 ``Bench2DexRuntime.reset(reset_state_id=...)``。组内使用相同 anchor 和场景 seed，policy 独立采样 PyTorch 动作噪声；初始场景索引不改变各子进程的编号。PPO 和评测的默认 episode 顺序保持不变。
-
-奖励仍为首次稳定成功给 1，其余给 0。组内同时有成功和失败时产生相对优势，回报完全相同的组优势为零。配方保持 ``algorithm.filter_rewards=false``，开启 ``algorithm.log_group_success_metrics``；保存后的 policy 使用下方入口评测。
-
-Checkpoint 评测
+评测 checkpoint
 ~~~~~~~~~~~~~~~
 
-每通道运行 50 回合，每 10 回合重启一次进程：
+按官方四通道协议评测 Task22，每个通道运行 50 回合：
 
 .. code-block:: bash
 
    JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
-     bench2dex_task64_openpi_pi05_eval --episodes-per-process 10
+     bench2dex_task22_openpi_pi05_eval --episodes-per-process 10
 
-评测训练产物时，通过模型配置选择训练权重，并指定原来的 SFT 归一化文件：
+Task64 使用 ``bench2dex_task64_openpi_pi05_eval`` 配方及对应任务的资产和权重。启动器按表中的四个通道依次评测。用 ``--gpu-id`` 选择 GPU，``--num-envs`` 设置并行场景数，``--output-root`` 设置结果目录。
 
-.. code-block:: bash
-
-   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
-     bench2dex_task64_openpi_pi05_eval --episodes-per-process 10 \
-     rollout.model.model_path=/path/to/checkpoints/global_step_40/actor/model_state_dict/full_weights.pt \
-     +rollout.model.openpi_data.norm_stats_path="$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
-
-该命令通过 OpenPI 模型加载器恢复动作网络，用指定的 SFT 归一化文件处理观测和动作。``BENCH2DEX_PI05_PATH`` 保持指向转换后的 SFT 目录。
-
-启动器按顺序运行 ``none``、``cov``、``inv``、``inv_cov``，仿真和推理共用 GPU 0。用 ``--gpu-id`` 选择其他卡，``--output-root`` 设置输出目录，``--channels`` 选择通道。``--num-episodes`` 设置每通道总回合数，``--episodes-per-process`` 限制每次启动的总回合数；设为零且环境数能整除总回合数时，整个通道在一次启动中完成。
-
-在同一个环境 worker 内并发运行两个场景：
-
-.. code-block:: bash
-
-   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
-     bench2dex_task64_openpi_pi05_eval \
-     --num-envs 2 --num-episodes 50 --episodes-per-process 20
-
-该命令分三次启动，分别完成 20、20、10 回合，每个场景对应运行 10、10、5 回合。启动器将 ``--num-envs`` 写入 ``env.eval.total_num_envs``，再根据回合预算计算 ``env.eval.rollout_epoch``。末批按需减少环境数，保证恰好完成指定回合。场景 0 取第 1、3、5 回合，场景 1 取第 2、4、6 回合，保持官方 episode seed 和锚点顺序。
-
-观测以环境数为首维，chunk 结果形状为 ``[N,C]``。``auto_reset=true`` 时，只在 chunk 结束后重置已经结束的场景，终态保存在 ``final_observation`` 和 ``final_info`` 中。评测配置使用 ``auto_reset=false``。
-
-配置通过 ``rollout.model.openpi.noise_rng: jax``，按每个回合的 seed 和 policy 查询编号在 CPU 生成噪声；模型继续在 GPU 上用 PyTorch 推理。仿真初始化在创建 simulation context 前设置任务 seed，物理时间步采用原生的 ``0.0166666``。
+评测训练后的权重时，在命令后添加 ``rollout.model.model_path=<checkpoint_directory>/actor/model_state_dict/full_weights.pt`` 和 ``+rollout.model.openpi_data.norm_stats_path=<sft_normalization_file>`` 参数。归一化文件应与原任务匹配。
 
 .. list-table:: 官方通道协议
    :header-rows: 1
@@ -209,22 +201,18 @@ Checkpoint 评测
      - 恢复锚点场景。
      - ``100000000``
    * - ``cov``
-     - 恢复锚点，只重采样物体位姿和桌高。
+     - 恢复锚点，改变物体位姿和桌高。
      - ``100000000``
    * - ``inv``
-     - 恢复锚点，只重采样背景、桌面材质、灯光、杂物和相机。
+     - 恢复锚点，改变外观、杂物和相机。
      - ``100000000``
    * - ``inv_cov``
-     - 在 unseen split 上重采样全部七个轴。
+     - 使用 unseen 资产划分，随机采样全部七个场景变化维度。
      - ``200000000``
 
-回合种子按 ``namespace + task_id * 100000 + episode_index - 1`` 计算，Task64 首回合为 ``106400000`` 或 ``206400000``。锚点按官方顺序随回合编号循环。Task64 的控制预算为 665 步，配置调度 680 个动作位置，到任务预算时停止执行。
+并行评测保留官方的回合顺序和随机种子。官方评测在 CPU 上按回合编号和 policy 查询编号生成 JAX 噪声，在 GPU 上用 PyTorch 推理，每个实际动作后采集相机观测。
 
-切换任务或机器人时，一起调整 task、embodiment、checkpoint、锚点目录和步数预算。环境根据机器人规格读取关节维度。
+可视化与结果
+------------
 
-日志与结果
-----------
-
-输出根目录的 ``success_rates.tsv`` 汇总四通道成功率。每个通道写入原生 ``per_episode.jsonl``、``per_task.json``、``summary.json``，以及 RLinf 日志和 TensorBoard events。reach-and-stop 回合按上游 stable-success 判据计成功；公共评测命令和输出目录说明见 :doc:`评测 <../../evaluations/index>`。
-
-每个环境 worker 通过一个 writer 写入所管理场景的结果。多个环境 worker 使用独立的 ``shards/<id>/`` 目录，四通道启动器按 episode 编号合并，并检查缺失和重复回合。
+四通道输出根目录中的 ``success_rates.tsv`` 汇总成功率。逐回合记录写入 ``per_episode.jsonl`` 文件，任务结果写入 ``per_task.json`` 文件，汇总写入 ``summary.json`` 文件；另保存 RLinf 日志和 TensorBoard events。并行场景的结果按回合编号合并，缺失或重复回合会报错。公共输出目录说明见 :doc:`评测 <../../evaluations/index>`\ 。
