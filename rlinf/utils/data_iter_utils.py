@@ -445,8 +445,6 @@ def get_seqlen_balanced_partitions(
 
 
 def get_seqlen_BFD_partitions(seq_len_list, max_tokens_per_mbs):
-    import numpy as np
-
     seq_lengths = np.array(seq_len_list)
 
     n = len(seq_lengths)
@@ -460,27 +458,28 @@ def get_seqlen_BFD_partitions(seq_len_list, max_tokens_per_mbs):
     indexed_lengths.sort(key=lambda x: x[0], reverse=True)
 
     partitions = []
-    group_remaining_capacity = []
+    eligible_groups = []
+    ineligible_groups = []
 
     # Best Fit Decreasing
     for seq_len, original_idx in indexed_lengths:
-        best_group_idx = -1
-        min_remaining_after_fit = float("inf")
+        while ineligible_groups and -ineligible_groups[0][0] >= seq_len:
+            neg_capacity, group_idx = heapq.heappop(ineligible_groups)
+            heapq.heappush(eligible_groups, (-neg_capacity, group_idx))
 
-        for group_idx in range(len(partitions)):
-            remaining = group_remaining_capacity[group_idx]
-            if remaining >= seq_len:
-                remaining_after_fit = remaining - seq_len
-                if remaining_after_fit < min_remaining_after_fit:
-                    min_remaining_after_fit = remaining_after_fit
-                    best_group_idx = group_idx
-
-        if best_group_idx != -1:
-            partitions[best_group_idx].append(original_idx)
-            group_remaining_capacity[best_group_idx] -= seq_len
+        if eligible_groups:
+            remaining, group_idx = heapq.heappop(eligible_groups)
+            partitions[group_idx].append(original_idx)
         else:
+            remaining = max_tokens_per_mbs
+            group_idx = len(partitions)
             partitions.append([original_idx])
-            group_remaining_capacity.append(max_tokens_per_mbs - seq_len)
+
+        remaining -= seq_len
+        if remaining >= seq_len:
+            heapq.heappush(eligible_groups, (remaining, group_idx))
+        else:
+            heapq.heappush(ineligible_groups, (-remaining, group_idx))
 
     for i, group in enumerate(partitions):
         group_total = sum(seq_lengths[idx] for idx in group)
