@@ -58,4 +58,3 @@ rollout:
     openpi:
       model_action_dim: 40
       task: eval
-      noise_rng: jax

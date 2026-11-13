@@ -79,7 +79,6 @@ class Bench2DexEnv(gym.Env):
         self.is_start = True
         self.device = torch.device("cpu")
         self.policy_queries = np.zeros(num_envs, dtype=np.int64)
-        self.episode_seed = np.zeros(num_envs, dtype=np.int64)
         self.query_at_success = [None] * num_envs
         self._episode_recorded = np.zeros(num_envs, dtype=bool)
         self._initialized = np.zeros(num_envs, dtype=bool)
@@ -176,8 +175,8 @@ class Bench2DexEnv(gym.Env):
     def elapsed_steps(self) -> torch.Tensor:
         return self._elapsed_steps
 
-    def _wrap_obs(self, raw: dict, env_id: int) -> dict:
-        """Wrap one scene's observation with its own policy sampling context."""
+    def _wrap_obs(self, raw: dict) -> dict:
+        """Convert one scene observation to the policy input format."""
         images = raw["images"]
         tactile = raw["tactile"]
         obs = {
@@ -187,10 +186,6 @@ class Bench2DexEnv(gym.Env):
             "states": torch.as_tensor(raw["state"]).unsqueeze(0),
             "task_descriptions": [raw["instruction"]],
             "extra_obs": {
-                "policy_sampling": {
-                    "episode_seed": torch.tensor([self.episode_seed[env_id]]),
-                    "query_index": torch.tensor([self.policy_queries[env_id]]),
-                },
                 "bench2dex": {
                     "full_joint_positions": torch.as_tensor(
                         raw["full_joint_positions"]
@@ -221,7 +216,7 @@ class Bench2DexEnv(gym.Env):
 
     def _batch_obs(self, env_ids) -> dict:
         return cat_list_of_dict_tensor(
-            [self._wrap_obs(self._observations[i], i) for i in env_ids]
+            [self._wrap_obs(self._observations[i]) for i in env_ids]
         )
 
     def _wrap_info(self, env_ids) -> dict:
@@ -275,7 +270,6 @@ class Bench2DexEnv(gym.Env):
         )
         for i, obs, info in zip(ids, observations, infos, strict=True):
             self._observations[i], self._infos[i] = obs, info
-            self.episode_seed[i] = int(info["seed"])
             self.policy_queries[i] = 0
             self.query_at_success[i] = None
             self._episode_recorded[i] = False

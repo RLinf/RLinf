@@ -248,7 +248,7 @@ def test_offload_rebuild_preserves_episode_sequence(cpu_env_factory, fixed_ids, 
         env.offload()
         _, info = env.reset()
         assert info["episode_index"] == ([2, 2] if fixed_ids else [3, 4])
-        assert env.episode_seed.tolist() == ([124, 124] if fixed_ids else [125, 126])
+        assert info["seed"] == ([124, 124] if fixed_ids else [125, 126])
         assert old_pids.isdisjoint(worker.process.pid for worker in env.env.workers)
     finally:
         env.close()
@@ -700,6 +700,7 @@ def test_bench2dex_recipes(
         assert env.init_params.stage_reward_coef == 0
         assert env.init_params.success_reward_coef == 1
     if only_eval:
+        assert "noise_rng" not in model.openpi
         assert cfg.env.eval.skip_intermediate_renders is False
         return
     is_async = "_async_" in config_name
@@ -759,7 +760,7 @@ def test_bench2dex_e2e_evaluation_recipe(compose_bench2dex_recipe):
     assert cfg.env.eval.video_cfg.save_video is False
     assert cfg.env.eval.init_params.task == "22_tool_box_loading"
     assert cfg.rollout.model.openpi.task == "eval"
-    assert cfg.rollout.model.openpi.noise_rng == "jax"
+    assert "noise_rng" not in cfg.rollout.model.openpi
     assert cfg.rollout.rollout_backend == "huggingface"
 
 

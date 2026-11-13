@@ -56,4 +56,3 @@ rollout:
   model:
     openpi:
       task: eval
-      noise_rng: jax

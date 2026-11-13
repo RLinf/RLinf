@@ -1297,7 +1297,7 @@ def test_env_output_preserves_nested_observations():
             "states": torch.full((2, 3), value),
             "depth_images": torch.full((2, 2, 2), value),
             "reset_mask": torch.tensor([False, True]),
-            "extra_obs": {"policy_sampling": {"episode_seed": torch.full((2,), value)}},
+            "extra_obs": {"sensor_metadata": {"frame_index": torch.full((2,), value)}},
             "history": {
                 "main_images": torch.full((2, 3, 2, 2, 3), value),
                 "wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
@@ -1331,7 +1331,7 @@ def test_env_worker_restores_terminal_observations(array_type, later_reset):
         return {
             "states": array_type([[value], [value + 1]]),
             "extra_obs": {
-                "policy_sampling": {"episode_seed": array_type([value, value + 1])}
+                "sensor_metadata": {"frame_index": array_type([value, value + 1])}
             },
             "task_descriptions": [f"task {value}", f"task {value + 1}"],
             "history": {
@@ -1365,9 +1365,9 @@ def test_env_worker_restores_terminal_observations(array_type, later_reset):
     expected["task_descriptions"][1] = second["task_descriptions"][1]
     for key in expected["history"]:
         expected["history"][key][1] = second["history"][key][1]
-    expected["extra_obs"]["policy_sampling"]["episode_seed"][1] = second["extra_obs"][
-        "policy_sampling"
-    ]["episode_seed"][1]
+    expected["extra_obs"]["sensor_metadata"]["frame_index"][1] = second["extra_obs"][
+        "sensor_metadata"
+    ]["frame_index"][1]
     for key in ("states", "extra_obs", "history"):
         torch.testing.assert_close(merged[key], expected[key])
         torch.testing.assert_close(current[key], original[key])
