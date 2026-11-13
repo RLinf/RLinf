@@ -92,9 +92,9 @@ def get_env_cls(env_type: str, env_cfg=None):
     env_type = SupportedEnvType(env_type)
 
     if env_type == SupportedEnvType.OGBENCH:
-        from rlinf.envs.sim.ogbench.ogbench_env import OGBenchEnv, OGBenchEvalEnv
+        from rlinf.envs.sim.ogbench.ogbench_env import OGBenchEnv
 
-        return OGBenchEvalEnv if env_cfg and env_cfg.get("is_eval", False) else OGBenchEnv
+        return OGBenchEnv
 
     if env_type == SupportedEnvType.MANISKILL:
         if env_cfg.get("enable_offload", False):

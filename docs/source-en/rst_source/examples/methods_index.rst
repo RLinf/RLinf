@@ -75,6 +75,17 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/qam_ogbench.html" style="display: flex; align-items: center; justify-content: center; height: 200px; border-radius: 8px; background: var(--pst-color-surface); font-size: 32px; text-decoration: none;">QAM</a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/qam_ogbench.html" style="text-decoration: underline; color: blue;">
+           <b>QAM on OGBench</b>
+         </a><br>
+         Train a flow policy from offline OGBench data
+       </p>
+     </div>
+
+
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/opd.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/opd.png"

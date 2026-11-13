@@ -36,6 +36,7 @@ from omegaconf import DictConfig, OmegaConf
 import rlinf.data.datasets.d4rl as d4rl_dataset_module
 import rlinf.utils.obs_compression as obs_compression
 from rlinf.data.datasets.d4rl import D4RLDataset
+from rlinf.data.datasets.ogbench import OGBenchDataset
 from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 from rlinf.data.datasets.reward_model import RewardDatasetPayload
 from rlinf.data.schema.embodied_trajectory import (
@@ -4133,3 +4134,28 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
+
+
+def test_ogbench_dataset_boundaries_and_rng_restore():
+    data = {
+        "observations": np.arange(18).reshape(6, 3),
+        "next_observations": np.arange(18).reshape(6, 3) + 1,
+        "actions": np.zeros((6, 2)),
+        "rewards": np.ones(6),
+        "masks": np.array([1, 0, 1, 1, 1, 1]),
+        "terminals": np.array([0, 1, 0, 0, 0, 1]),
+    }
+    ds = OGBenchDataset(data, seed=42)
+    batch = ds.sample(1, 3, 0.5, indices=[0])
+    np.testing.assert_array_equal(batch["valid"], [[1, 1, 0]])
+    np.testing.assert_allclose(batch["rewards"], [[1, 1.5, 1.5]])
+    np.testing.assert_array_equal(batch["masks"], [[1, 0, 0]])
+    np.testing.assert_array_equal(
+        batch["next_observations"][0, 2], data["next_observations"][1]
+    )
+    state = ds.state_dict()
+    expected = ds.sample(16, 1, 0.99)
+    ds.load_state_dict(state)
+    actual = ds.sample(16, 1, 0.99)
+    for k in expected:
+        np.testing.assert_array_equal(expected[k], actual[k])

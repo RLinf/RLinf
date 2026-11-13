@@ -14,10 +14,7 @@
 
 
 import copy
-import csv
-import json
 import os
-import time
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +28,7 @@ from rlinf.scheduler import Worker
 
 
 class QAMPolicyWorker(Worker):
-    """Own model, optimizer and replay; runner owns scheduling and evaluation.
+    """Own model, optimizer and offline data; runner owns scheduling and evaluation.
 
     Each run trains one seed; the common OfflineRunner owns evaluation.
     """
@@ -46,7 +43,6 @@ class QAMPolicyWorker(Worker):
         if self._world_size != 1:
             raise ValueError("Offline QAM requires one actor worker per seed")
         self.seed = int(self.cfg.actor.seed)
-        torch.set_num_threads(4)
         torch.manual_seed(self.seed)
         self.device = torch.device(
             self.torch_device_type
@@ -73,17 +69,6 @@ class QAMPolicyWorker(Worker):
             lr=self.cfg.actor.optim.lr,
             eps=1e-8,
         )
-        self.run_dir = (
-            Path(self.cfg.runner.logger.log_path)
-            / self.cfg.runner.logger.experiment_name
-            / f"seed_{self.seed}"
-        )
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-        (self.run_dir / "config.json").write_text(
-            json.dumps(OmegaConf.to_container(self.cfg, resolve=True), indent=2)
-        )
-        self.start_time = time.time()
-        self._status("initialized")
         self.log_info(
             f"QAM seed={self.seed}, device={self.device}, dataset={self.dataset.size}"
         )
@@ -93,28 +78,6 @@ class QAMPolicyWorker(Worker):
             "device": str(self.device),
             "pid": os.getpid(),
         }
-
-    def _status(self, phase):
-        payload = {
-            "seed": self.seed,
-            "pid": os.getpid(),
-            "phase": phase,
-            "step": self.global_step,
-            "updates": self.updates,
-            "updated_unix": time.time(),
-        }
-        temp = self.run_dir / "status.tmp"
-        temp.write_text(json.dumps(payload, indent=2))
-        temp.replace(self.run_dir / "status.json")
-
-    def _append(self, filename, row):
-        path = self.run_dir / filename
-        exists = path.exists()
-        with path.open("a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(row))
-            if not exists:
-                writer.writeheader()
-            writer.writerow(row)
 
     def _update(self):
         batch = self.dataset.sample(
@@ -151,28 +114,6 @@ class QAMPolicyWorker(Worker):
         metrics = {k: float(v / count) for k, v in sums.items()} if count else {}
         if not all(np.isfinite(v) for v in metrics.values()):
             raise FloatingPointError(f"Non-finite QAM metrics: {metrics}")
-        self._append(
-            "train.csv",
-            dict(
-                step=self.global_step,
-                phase="offline",
-                updates=self.updates,
-                elapsed_seconds=time.time() - self.start_time,
-                **{
-                    k: metrics.get(k, 0.0)
-                    for k in (
-                        "critic_loss",
-                        "flow_loss",
-                        "adj_loss",
-                        "q_mean",
-                        "adj_max",
-                        "total_loss",
-                        "grad_norm",
-                    )
-                },
-            ),
-        )
-        self._status("offline")
         return {**metrics, "__global_step": self.global_step}
 
     def set_global_step(self, step):
@@ -214,8 +155,4 @@ class QAMPolicyWorker(Worker):
         self.generator.set_state(state["generator"].cpu())
         self.dataset.load_state_dict(state["replay"])
         self.global_step, self.updates = state["step"], state["updates"]
-        self._status("restored")
         return self.global_step
-
-    def close(self):
-        self._status("completed")

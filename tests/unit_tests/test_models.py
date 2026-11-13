@@ -3331,3 +3331,36 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def _qam_config():
+    return OmegaConf.create(
+        {
+            "model_type": "qam_policy",
+            "precision": "fp32",
+            "is_lora": False,
+            "load_to_device": False,
+            "obs_dim": 3,
+            "action_dim": 2,
+            "horizon_length": 1,
+            "flow_steps": 3,
+            "actor_hidden_dims": [8, 8],
+            "value_hidden_dims": [8, 8],
+            "actor_layer_norm": False,
+            "value_layer_norm": True,
+            "num_qs": 2,
+            "inv_temp": 10.0,
+            "best_of_n": 1,
+            "rho": 0.5,
+            "discount": 0.99,
+            "tau": 0.005,
+            "action_chunking": True,
+        }
+    )
+
+
+def test_qam_model_registry_action_contract():
+    model = get_model(_qam_config())
+    actions, _ = model.predict_action_batch(observations=np.zeros((4, 3), np.float32))
+    assert actions.shape == (4, 1, 2)
+    assert np.isfinite(actions).all() and np.max(np.abs(actions)) <= 1

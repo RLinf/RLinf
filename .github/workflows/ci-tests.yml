@@ -191,11 +191,6 @@ jobs:
             unit_test_filter: &unit
               - *shared
               - 'rlinf/models/embodiment/qam_policy.py'
-              - 'rlinf/workers/actor/qam_policy_worker.py'
-              - 'rlinf/runners/offline_runner.py'
-              - 'examples/embodiment/train_offline_rl.py'
-              - 'examples/embodiment/config/ogbench_qam_offline.yaml'
-              - 'tests/parity_tests/test_qam_reference.py'
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
               # Unit tests import env modules directly (robot task envs, the

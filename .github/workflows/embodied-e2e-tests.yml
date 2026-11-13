@@ -94,46 +94,28 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --env ogbench
 
-      - name: QAM offline smoke test
+      - name: QAM offline training, resume and evaluation
         timeout-minutes: 25
         run: |
           source .venv/bin/activate
-          export MUJOCO_GL=egl
-          export PYOPENGL_PLATFORM=egl
           export PYTHONPATH="$(pwd):${PYTHONPATH:-}"
-          python examples/embodiment/train_offline_rl.py \
-            --config-name ogbench_qam_offline \
-            runner.max_steps=2 runner.max_epochs=2 \
-            runner.local_update_steps=1 runner.val_check_interval=2 \
-            runner.save_interval=2 runner.eval_episodes=1 \
-            actor.global_batch_size=8 actor.micro_batch_size=8 \
-            'actor.model.actor_hidden_dims=[16,16]' \
-            'actor.model.value_hidden_dims=[16,16]' \
-            actor.model.num_qs=2 actor.model.flow_steps=3 \
-            runner.logger.experiment_name=qam-ci-smoke
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+          # test_qam.py launches run_offline.sh ogbench_qam in isolated run directories.
+          python -m pytest tests/e2e_tests/embodied/test_qam.py -v --basetemp=logs/qam-ci
 
-          root = Path("logs/qam-ci-smoke/seed_10001")
-          status = json.loads((root / "status.json").read_text())
-          assert status["step"] == 2
-          checkpoint = Path("logs/qam-ci-smoke/checkpoints/global_step_2/actor/seed_10001.pt")
-          assert checkpoint.is_file(), checkpoint
-          events = list(Path("logs/tensorboard").glob("events*"))
-          assert events, "No TensorBoard events"
-          assert any(
-              EventAccumulator(str(path)).Reload().Scalars("eval/num_trajectories")[-1].value == 1
-              for path in events
-              if "eval/num_trajectories" in EventAccumulator(str(path)).Reload().Tags()["scalars"]
-          ), "Evaluation did not finish one episode"
-          PY
+      - name: Upload QAM test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qam-offline-e2e
+          path: |
+            logs/qam-ci/**/run.log
+            logs/qam-ci/**/tensorboard/*
+          if-no-files-found: ignore
 
       - name: Clean up
+        if: always()
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-d4rl-offline-iql-test:
     runs-on: embodied

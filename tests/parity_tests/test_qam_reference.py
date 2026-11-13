@@ -20,6 +20,7 @@ CUDA_VISIBLE_DEVICES='' and run this file in an isolated pytest process.
 """
 
 import os
+import subprocess
 import sys
 
 import numpy as np
@@ -36,6 +37,18 @@ def test_reference_losses_gradients_update(horizon):
     root = os.environ.get("QAM_REFERENCE_ROOT")
     if not root:
         pytest.skip("Optional pinned QAM reference checkout is not configured")
+    pytest.importorskip("jax")
+    pytest.importorskip("flax")
+    expected_commit = "2726d767c9a0a7a46d49693f0391f73dc2cf58ac"
+    actual_commit = subprocess.check_output(
+        ["git", "-C", root, "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert actual_commit == expected_commit, (
+        f"Expected official QAM {expected_commit}, got {actual_commit}"
+    )
+    assert not subprocess.check_output(
+        ["git", "-C", root, "status", "--porcelain", "--untracked-files=no"], text=True
+    ).strip(), "QAM reference must have no tracked modifications"
     sys.path.insert(0, root)
     try:
         import jax
