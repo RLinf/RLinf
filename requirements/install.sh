@@ -181,7 +181,7 @@ Common options:
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
-                           or 3.12.12 for agentic on the torch 2.11 stack.
+                           3.12 for arx5, or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
     --use-mirror           Use mirrors for faster downloads. GitHub downloads go through
                            the proxy in the GITHUB_PREFIX environment variable
@@ -3493,6 +3493,10 @@ install_franka_ros_realworld_env() {
 install_env_only() {
     if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
+    fi
+    if [ "$ENV_NAME" = "arx5" ] && [ "$USER_SET_PYTHON" -eq 0 ]; then
+        # The distributed ARX5 SDK contains CPython 3.12 extensions.
+        PYTHON_VERSION="3.12"
     fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
