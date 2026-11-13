@@ -103,32 +103,14 @@ class EnvIO:
     def _observation_dict_to_device(self, processed: dict) -> Observation:
         """Convert a per-key dict into a device-resident Observation."""
         device = self.device
-        # Copy uint8 images before from_dict so they are normalised on the device.
+        # Move tensors before from_dict so uint8 images are normalised on the device.
         processed = tree_map(
             lambda x: x.to(device) if isinstance(x, torch.Tensor) else x, processed
         )
         obs = Observation.from_dict(processed)
-
-        def _move(x):
-            return x.to(device) if isinstance(x, torch.Tensor) else x
-
-        def _move_state(x):
-            return (
-                x.to(device=device, dtype=torch.float32)
-                if isinstance(x, torch.Tensor)
-                else x
-            )
-
-        return Observation(
-            images={k: _move(v) for k, v in obs.images.items()},
-            image_masks={k: _move(v) for k, v in obs.image_masks.items()},
-            state=_move_state(obs.state),
-            tokenized_prompt=_move(obs.tokenized_prompt),
-            tokenized_prompt_mask=_move(obs.tokenized_prompt_mask),
-            token_ar_mask=_move(obs.token_ar_mask),
-            token_loss_mask=_move(obs.token_loss_mask),
-            pcd_xyz=_move(obs.pcd_xyz),
-        )
+        if isinstance(obs.state, torch.Tensor):
+            obs.state = obs.state.to(dtype=torch.float32)
+        return obs
 
     def env_obs_to_observation(self, env_obs: dict[str, Any]) -> Observation:
         """Repack env obs through the transform pipeline onto this device."""
