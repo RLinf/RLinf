@@ -144,8 +144,10 @@ jobs:
               - 'rlinf/workers/rollout/server/**'
               - 'rlinf/workers/rollout/sglang/**'
               - 'rlinf/workers/rollout/vllm/**'
+              - 'rlinf/workers/rollout_buffer/**'
               - 'rlinf/runners/agent_runner.py'
               - 'rlinf/runners/agent_ppo_runner.py'
+              - 'rlinf/runners/async_agent_runner.py'
               - 'rlinf/runners/agentlightning_runner.py'
               - 'rlinf/runners/reasoning_runner.py'
               - 'rlinf/runners/coding_online_rl_runner.py'
@@ -196,6 +198,14 @@ jobs:
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
+              # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor
+              # and async agent runner have unit tests that import them.
+              - 'rlinf/agents/**'
+              - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
+              - 'rlinf/workers/megatron_worker.py'
+              - 'rlinf/workers/agent/**'
+              - 'rlinf/workers/rollout_buffer/**'
+              - 'rlinf/runners/async_agent_runner.py'
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
