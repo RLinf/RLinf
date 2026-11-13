@@ -329,6 +329,11 @@ class TestDistillation(unittest.TestCase):
                             torch.autograd.grad(blocks, current, retain_graph=True)[0],
                         )
 
+    def test_synchronous_distillation_rejects_async_agent_runner(self):
+        cfg = {"runner": {"async_mode": True}, "distillation": {"enabled": True}}
+        with self.assertRaisesRegex(ValueError, "runner.async_mode=False"):
+            build_distillation_plan(cfg)
+
     def test_policy_gradient_rejects_greedy_sampling(self):
         cfg = {
             "distillation": {

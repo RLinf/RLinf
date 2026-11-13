@@ -159,9 +159,13 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
     section = cfg.get("distillation")
     if not section or not section.get("enabled", False):
         return DistillationPlan()
-    if cfg.get("runner", {}).get("execution_mode", "sync") != "sync":
+    runner = cfg.get("runner", {})
+    if (
+        runner.get("async_mode", False)
+        or runner.get("execution_mode", "sync") != "sync"
+    ):
         raise ValueError(
-            "Synchronous distillation requires runner.execution_mode='sync'"
+            "Synchronous distillation requires runner.execution_mode='sync' and runner.async_mode=False"
         )
     teachers = section.get("teacher_models", {})
     if not teachers or any(

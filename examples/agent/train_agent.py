@@ -120,9 +120,28 @@ def run_agent_training(
 
     runner = None
     try:
-        runner = AgentRunner(
+        if cfg.runner.get("async_mode", False):
+            from rlinf.runners.async_agent_runner import AsyncAgentRunner
+            from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
+                RolloutBufferWorker,
+            )
+
+            runner_cls = AsyncAgentRunner
+            runner_kwargs = {
+                "rollout_buffer": RolloutBufferWorker.create_group(
+                    cfg, train_ds
+                ).launch(
+                    cluster,
+                    name="RolloutBuffer",
+                    placement_strategy=NodePlacementStrategy([0]),
+                )
+            }
+        else:
+            runner_cls = AgentRunner
+            runner_kwargs = {"teacher_runtime": teacher_runtime}
+
+        runner = runner_cls(
             cfg=cfg,
-            teacher_runtime=teacher_runtime,
             placement=component_placement,
             train_dataset=train_ds,
             val_dataset=val_ds,
@@ -132,6 +151,7 @@ def run_agent_training(
             reward=None,
             agent_loop=agentloop_group,
             tool_workers=tool_workers,
+            **runner_kwargs,
         )
         runner.init_workers()
         runner.run()
