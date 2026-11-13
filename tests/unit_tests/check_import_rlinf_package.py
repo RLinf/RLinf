@@ -14,12 +14,18 @@
 
 """Import-check all modules under the rlinf package.
 
+Two passes run. The first imports every module the skip list allows. The second
+resolves each ``rlinf.*`` import statement against the source tree without
+importing anything, so a module naming a package that does not exist is caught
+even where the first pass cannot reach it.
+
 Usage:
     python tests/unit_tests/check_import_rlinf_package.py --workers 16
     python tests/unit_tests/check_import_rlinf_package.py --no-test-modules rlinf/envs rlinf/models
 """
 
 import argparse
+import ast
 import importlib
 import os
 import traceback
@@ -85,6 +91,59 @@ def _discover_modules(rlinf_root: Path, no_test_modules: list[str]) -> list[str]
     return sorted(modules)
 
 
+def _module_exists(rlinf_root: Path, dotted: str) -> bool:
+    """Whether ``dotted`` names a module or package inside the rlinf source tree."""
+    parts = dotted.split(".")[1:]
+    if not parts:
+        return True
+    target = rlinf_root.joinpath(*parts)
+    return target.is_dir() or target.with_suffix(".py").exists()
+
+
+def _find_dangling_imports(
+    rlinf_root: Path,
+) -> tuple[list[tuple[str, int, str]], list[tuple[str, str]]]:
+    """Find absolute ``rlinf.*`` imports that no file in the source tree provides.
+
+    Only the module part of each statement is resolved; ``from rlinf.a.b import c``
+    checks ``rlinf.a.b`` and says nothing about ``c``. Relative imports are left to
+    the import pass, which resolves them the way Python does.
+
+    Returns:
+        tuple: ``(dangling, unreadable)``. ``dangling`` holds one
+        ``(file, line, module)`` per unresolved import, ordered by file then line.
+        ``unreadable`` holds one ``(file, reason)`` per file this pass could not
+        parse; those are reported rather than skipped, because the files most
+        likely to reach here are the ones the import pass never touches.
+    """
+    dangling: list[tuple[str, int, str]] = []
+    unreadable: list[tuple[str, str]] = []
+    for py_file in sorted(rlinf_root.rglob("*.py")):
+        if "__pycache__" in py_file.parts:
+            continue
+        relative = py_file.relative_to(rlinf_root.parent).as_posix()
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError) as error:
+            unreadable.append((relative, f"{type(error).__name__}: {error}"))
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.level or not node.module:
+                    continue
+                targets = [node.module]
+            elif isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            else:
+                continue
+            for target in targets:
+                if target != "rlinf" and not target.startswith("rlinf."):
+                    continue
+                if not _module_exists(rlinf_root, target):
+                    dangling.append((relative, node.lineno, target))
+    return sorted(dangling), sorted(unreadable)
+
+
 def _import_module(module_name: str) -> tuple[str, str | None]:
     try:
         importlib.import_module(module_name)
@@ -126,13 +185,28 @@ def main() -> int:
             if err is not None:
                 failures.append((module, err))
 
+    dangling, unreadable = _find_dangling_imports(rlinf_root)
+
     if failures:
         print(f"Import failures: {len(failures)}")
         for module, err in sorted(failures):
             print(f"\n[FAILED] {module}\n{err}")
+
+    if dangling:
+        print(f"Unresolved rlinf imports: {len(dangling)}")
+        for file_path, lineno, module in dangling:
+            print(f"[DANGLING] {file_path}:{lineno} imports {module}")
+
+    if unreadable:
+        print(f"Unparsable files: {len(unreadable)}")
+        for file_path, reason in unreadable:
+            print(f"[UNPARSABLE] {file_path}: {reason}")
+
+    if failures or dangling or unreadable:
         return 1
 
     print("OK: all discovered rlinf modules imported successfully")
+    print("OK: every rlinf import resolves inside the source tree")
     return 0
 
 
