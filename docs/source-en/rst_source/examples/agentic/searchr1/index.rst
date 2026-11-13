@@ -11,7 +11,7 @@ all models. Choose a model below for its training recipe and results.
 
 .. raw:: html
 
-   <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 640px; margin: 0 auto;">
+   <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 960px; margin: 0 auto;">
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="qwen2.5.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png"
             style="width: 100%; height: 200px; object-fit: cover; object-position: left center; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
@@ -31,6 +31,17 @@ all models. Choose a model below for its training recipe and results.
           <b>GLM-4.7-Flash Search-R1</b>
          </a><br>
          Search-R1 for an MoE model (~3B active) on 8×A100
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="async.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/glm_searchr1_async_step_time.png"
+            style="width: 100%; height: 200px; object-fit: cover; object-position: left center; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="async.html" style="text-decoration: underline; color: blue;">
+          <b>Asynchronous Search-R1</b>
+         </a><br>
+         Overlap rollout with training: step time 278.6 s to 139.0 s on 2×8 A100
        </p>
      </div>
    </div>
@@ -170,3 +181,4 @@ Asearcher: https://github.com/inclusionAI/ASearcher
 
    Qwen2.5-3B Search-R1 <qwen2.5>
    GLM-4.7-Flash Search-R1 <glm4.7_flash>
+   Asynchronous Search-R1 <async>

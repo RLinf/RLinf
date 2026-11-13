@@ -116,7 +116,7 @@ rollout:
   print_outputs: False
 
   max_running_requests: 64
-  cuda_graph_max_bs: 128
+  cuda_graph_max_bs: 16
 
 data:
   type: math

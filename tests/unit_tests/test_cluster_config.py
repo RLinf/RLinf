@@ -15,6 +15,7 @@
 import logging
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -974,15 +975,25 @@ class EnvConfigCheckWorker(Worker):
         return os.environ.get(key)
 
 
+_cluster_reset_count = 0
+
+
 def _reset_cluster_singleton():
+    global _cluster_reset_count
     if ray.is_initialized():
         ray.shutdown()
+        _cluster_reset_count += 1
     if hasattr(Cluster, "_instance"):
         instance = getattr(Cluster, "_instance")
         if instance is not None:
             instance._has_initialized = False
         delattr(Cluster, "_instance")
-    Cluster.NAMESPACE = Cluster.SYS_NAME
+    # Use a fresh namespace per reset so dying named actors on a pre-started Ray head cannot collide.
+    Cluster.NAMESPACE = (
+        f"{Cluster.SYS_NAME}_reset_{_cluster_reset_count}"
+        if _cluster_reset_count > 0
+        else Cluster.SYS_NAME
+    )
 
 
 def test_cluster_env_configs_applied_in_worker_launch():
@@ -1263,3 +1274,43 @@ def test_process_that_built_a_cluster_keeps_its_exit_code():
     )
 
     assert result.returncode == 3, result.stderr
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGSEGV"), reason="POSIX SIGSEGV required")
+@pytest.mark.parametrize(
+    ("assertion_expr", "expected_rc", "expected_marker"),
+    [
+        ("True", 0, "1 passed"),
+        ("False", 1, "1 failed"),
+    ],
+)
+def test_npu_ray_pytest_teardown_preserves_status_and_summary(
+    tmp_path: Path, assertion_expr: str, expected_rc: int, expected_marker: str
+):
+    (tmp_path / "conftest.py").symlink_to(
+        Path(__file__).resolve().with_name("conftest.py")
+    )
+    test_file = tmp_path / "test_npu_teardown.py"
+    test_file.write_text(
+        "import atexit, os, signal, sys, types\n"
+        "sys.modules['torch_npu'] = types.ModuleType('torch_npu')\n"
+        "sys.modules['ray._raylet'] = types.ModuleType('ray._raylet')\n"
+        "atexit.register(lambda: os.kill(os.getpid(), signal.SIGSEGV))\n"
+        f"def test_case():\n    assert {assertion_expr}\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", str(test_file)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == expected_rc, (
+        f"Expected pytest returncode {expected_rc}, got {result.returncode}; "
+        f"stdout={result.stdout!r}, stderr={result.stderr!r}"
+    )
+    assert expected_marker in result.stdout, (
+        f"Expected {expected_marker!r} in pytest stdout, got {result.stdout!r}"
+    )

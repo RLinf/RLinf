@@ -14,11 +14,32 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
+
+
+def split_short_memory_transforms(
+    input_transforms: Sequence,
+) -> tuple[Callable, Callable]:
+    """Keep frame transforms in order and tokenize only the current sample.
+
+    The first stage retains the prompt for the second stage. Normalization and
+    camera transforms run before this boundary without changing their order.
+    """
+    import openpi.transforms as transforms
+
+    for index, transform in enumerate(input_transforms):
+        if isinstance(
+            transform, (transforms.TokenizePrompt, transforms.TokenizeFASTInputs)
+        ):
+            return (
+                transforms.compose(input_transforms[:index]),
+                transforms.compose(input_transforms[index:]),
+            )
+    raise ValueError("Short-memory input transforms require a prompt tokenizer.")
 
 
 def norm_stats_path_from_data_kwargs(

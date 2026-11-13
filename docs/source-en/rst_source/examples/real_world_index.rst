@@ -1,7 +1,7 @@
 RL with Real-World Robots
 =========================
 
-Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, AgileX Piper, and SO101.
+Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for ARX X5, YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, AgileX Piper, SO101, and LeKiwi.
 
 Choose a guide for hardware checks, teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
 
@@ -59,6 +59,16 @@ Choose a guide for hardware checks, teleoperation, data collection, sim-to-real 
          Train a flow-matching + SAC pick task on the Dexmal DOS-W1 dual-arm robot
        </p>
      </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/arx5.html" style="display: block;"><img src="https://arx-global.us/assets/img/x5.webp"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/arx5.html" style="text-decoration: underline; color: blue;">
+           <b>ARX X5</b>
+         </a><br>
+         Collect dual-arm demonstrations with PICO controllers and three RGB cameras
+       </p>
+     </div>
 
    </div>
 
@@ -67,10 +77,10 @@ YAM
 
 Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data collection guides.
 
-Piper and SO101 Setup
----------------------
+Piper, SO101, and LeKiwi Setup
+------------------------------
 
-Use these guides to connect an arm and run its hardware test script. Piper and SO101 do not yet have supported real-world tasks or training workflows.
+Use these guides to connect a robot and run its hardware test script. Piper, SO101, and LeKiwi do not yet have supported real-world training workflows.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -87,15 +97,23 @@ Use these guides to connect an arm and run its hardware test script. Piper and S
 
       Set up motors, calibrate an SO-101, and run the joint and gripper test script.
 
+   .. grid-item-card:: LeKiwi
+      :link: embodied/lekiwi
+      :link-type: doc
+
+      Set up the wheel motors, check the front webcam, and drive the mobile base.
+
 .. toctree::
    :hidden:
    :maxdepth: 3
 
    Single-Arm Franka <embodied/franka_index>
    Dual-Arm Franka <embodied/dual_franka_index>
+   ARX X5 <embodied/arx5>
    YAM <embodied/yam_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
    Piper <embodied/piper>
    SO101 <embodied/so101>
+   LeKiwi <embodied/lekiwi>
