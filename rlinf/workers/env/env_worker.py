@@ -52,6 +52,7 @@ class EnvWorker(Worker):
     _obs_split_fn = None
     _policy_input_split_fn = None
     collect_final_values = True
+    _is_ogpo = False
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
@@ -74,6 +75,10 @@ class EnvWorker(Worker):
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
+        self._is_ogpo = (
+            OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+            == "embodied_ogpo"
+        )
         self.enable_rlt = OmegaConf.select(
             self.cfg, "algorithm.loss_type", default=""
         ) in {"rlt_ac", "rlt_td3"}
@@ -428,8 +433,14 @@ class EnvWorker(Worker):
             chunk_actions = exec_actions
         env_info = {}
 
+        if self._is_ogpo:
+            chunk_step_result = self.env_list[stage_id].chunk_step(
+                chunk_actions, stop_on_done=True
+            )
+        else:
+            chunk_step_result = self.env_list[stage_id].chunk_step(chunk_actions)
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
-            self.env_list[stage_id].chunk_step(chunk_actions)
+            chunk_step_result
         )
         extracted_obs = obs_list
         infos = infos_list
@@ -470,6 +481,20 @@ class EnvWorker(Worker):
                 for key in final_info["episode"]:
                     env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
 
+        if self._is_ogpo:
+            raw_chunk_terminations = infos.pop("_raw_chunk_terminations")
+            raw_chunk_truncations = infos.pop("_raw_chunk_truncations")
+            terminal_obs = infos.pop("_terminal_observation")
+            episode_info = infos.get("final_info", infos).get("episode", {})
+            success = (
+                torch.as_tensor(
+                    episode_info.get("success_once", torch.zeros(chunk_dones.shape[0]))
+                )
+                .bool()
+                .reshape(-1)
+                .cpu()
+            )
+
         intervene_actions = (
             infos["intervene_action"] if "intervene_action" in infos else None
         )
@@ -500,14 +525,28 @@ class EnvWorker(Worker):
                 else None,
             ),
         )
-        chunk_step_payload = {
-            "chunk_actions": exec_actions,
-            "obs_list": obs_list,
-            "terminations": chunk_terminations,
-            "truncations": chunk_truncations,
-            "infos_list": infos_list,
-            "valid_action_mask": valid_action_mask,
-        }
+        if self._is_ogpo:
+            episode_infos = [{} for _ in obs_list]
+            episode_infos[-1]["terminal_obs"] = terminal_obs
+            episode_infos[-1]["success"] = success
+            chunk_step_payload = clone_nested_to_cpu(
+                {
+                    "chunk_actions": exec_actions,
+                    "obs_list": obs_list,
+                    "terminations": raw_chunk_terminations,
+                    "truncations": raw_chunk_truncations,
+                    "infos_list": episode_infos,
+                }
+            )
+        else:
+            chunk_step_payload = {
+                "chunk_actions": exec_actions,
+                "obs_list": obs_list,
+                "terminations": chunk_terminations,
+                "truncations": chunk_truncations,
+                "infos_list": infos_list,
+                "valid_action_mask": valid_action_mask,
+            }
         return env_output, env_info, chunk_step_payload
 
     def env_evaluate_step(
@@ -861,7 +900,9 @@ class EnvWorker(Worker):
         return env_output.transition.with_trajectory_data(
             reward_model_output=reward_model_output,
             reward_assign_lengths=reward_assign_lengths,
-            episode_data=chunk_step_data if self.enable_online_lerobot else None,
+            episode_data=(
+                chunk_step_data if self.enable_online_lerobot or self._is_ogpo else None
+            ),
         )
 
     def _build_policy_input(
