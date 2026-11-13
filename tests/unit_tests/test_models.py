@@ -388,12 +388,19 @@ def test_siglip_time_encoding_preserves_timestamp_precision():
     )
 
 
-def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
+@pytest.mark.parametrize(
+    "camera_names",
+    [
+        ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
+        ("side_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
+    ],
+)
+def test_openpi_prefix_preserves_camera_inputs(siglip_with_history, camera_names):
     from rlinf.models.embodiment.openpi.pi0 import Pi0
 
     vision = siglip_with_history.eval()
     masks = {
-        "base_0_rgb": torch.tensor([[False, True, True], [False, False, True]]),
+        camera_names[0]: torch.tensor([[False, True, True], [False, False, True]]),
         "left_wrist_0_rgb": torch.tensor([[False, False, True]] * 2),
         "right_wrist_0_rgb": torch.zeros(2, 3, dtype=torch.bool),
     }
@@ -404,7 +411,10 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
         history_time_offsets=torch.tensor([[-0.2, -0.1, 0.0]] * 2),
     )
     policy = SimpleNamespace(
-        img=vision, _config=SimpleNamespace(short_memory=True), pcd=False
+        img=vision,
+        _config=SimpleNamespace(short_memory=True),
+        pcd=False,
+        image_keys=camera_names,
     )
     with torch.no_grad():
         expected = torch.cat(
