@@ -143,6 +143,8 @@ def compute_art_loss(
     guidance_magnitude: torch.Tensor,
     *,
     config: DictConfig,
+    coordinate_mask: torch.Tensor | None = None,
+    output_gradient_stats: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Reduce the frozen-target ART objective and report local actor metrics.
 
@@ -154,6 +156,8 @@ def compute_art_loss(
         guidance_direction: Frozen, normalized prompt-group directions per item.
         guidance_magnitude: Nonnegative guidance strength per item.
         config: Algorithm settings for loss weighting and the corrective mask.
+        coordinate_mask: Optional executed-action coordinates for robot chunks.
+        output_gradient_stats: Report guidance/restoration output gradients.
 
     Returns:
         The differentiable scalar loss and detached actor metrics. Weight
@@ -171,26 +175,42 @@ def compute_art_loss(
         mask_threshold=float(config.get("art_mask_threshold", 1e-5)),
         reference_noise_level=float(config.get("art_reference_noise_level", 0.8)),
         corrective_mask_enabled=bool(config.get("art_corrective_mask_enabled", True)),
+        coordinate_mask=coordinate_mask,
+        output_gradient_stats=output_gradient_stats,
     )
     loss = terms["per_item_loss"].mean()
     active = terms["active"]
-    active_count = active.sum()
-    active_denominator = active_count.clamp_min(1)
+    active_count = active.sum().clamp_min(1)
     metrics = {
-        "actor/active_count": active_count.item(),
+        "actor/active_count": active.sum().item(),
+        "actor/masked_count": terms["masked"].sum().item(),
+        "actor/outward_count": ((terms["outward_alignment"] > 0) & active).sum().item(),
+        "actor/movement_score_sum_count": (terms["movement_score"] * active)
+        .sum()
+        .item(),
         "actor/art_loss": loss.detach().item(),
         "actor/total_loss": loss.detach().item(),
         "actor/unmasked_loss": (
-            (terms["per_item_unmasked_loss"] * active).sum() / active_denominator
+            (terms["per_item_unmasked_loss"] * active).sum() / active_count
         ).item(),
-        "actor/mask_frac": (terms["masked"].float().sum() / active_denominator).item(),
+        "actor/mask_frac": (terms["masked"].float().sum() / active_count).item(),
         "actor/outward_frac": (
-            ((terms["outward_alignment"] > 0) & active).float().sum()
-            / active_denominator
+            ((terms["outward_alignment"] > 0) & active).float().sum() / active_count
         ).item(),
         "actor/old_deviate": terms["movement_energy"].mean().item(),
         "actor/movement_score": terms["movement_score"].mean().item(),
     }
+    if output_gradient_stats:
+        metrics.update(
+            {
+                f"actor/art_{key}": terms[key].item()
+                for key in (
+                    "output_guidance_grad_sq",
+                    "output_restoration_grad_sq",
+                    "output_grad_inner",
+                )
+            }
+        )
     return loss, metrics
 
 
@@ -257,8 +277,14 @@ def art_loss(
     mask_threshold: float = 1e-5,
     reference_noise_level: float = 0.8,
     corrective_mask_enabled: bool = True,
+    coordinate_mask: torch.Tensor | None = None,
+    output_gradient_stats: bool = False,
 ) -> dict[str, torch.Tensor]:
-    """Return the paper's masked, frozen-target velocity loss per item."""
+    """Return the paper's masked, frozen-target velocity loss per item.
+
+    ``output_gradient_stats`` requires ``coordinate_mask`` and adds the
+    guidance/restoration split of the mean loss's output gradient.
+    """
     _validate_art_batch(current_velocity, "current_velocity")
     _validate_art_same_shape(
         current_velocity,
@@ -279,6 +305,13 @@ def art_loss(
     velocity = current_velocity.float()
     old = old_velocity.detach().to(velocity)
     direction = guidance_direction.detach().to(velocity)
+    if coordinate_mask is not None:
+        coordinate_mask = torch.broadcast_to(
+            coordinate_mask.to(device=velocity.device, dtype=torch.bool), velocity.shape
+        )
+        velocity = torch.where(coordinate_mask, velocity, 0.0)
+        old = torch.where(coordinate_mask, old, 0.0)
+        direction = torch.where(coordinate_mask, direction, 0.0)
     magnitude = _art_vector(
         guidance_magnitude,
         velocity,
@@ -291,11 +324,13 @@ def art_loss(
     target = (old - displacement).detach()
     residual = target - velocity
     weight = sigma if loss_space == "velocity_linear_sigma" else torch.ones_like(sigma)
-    unmasked = weight * residual.square().flatten(1).mean(1)
+    unmasked = weight * _art_coordinate_mean(residual.square(), coordinate_mask)
 
     movement = velocity - old
-    movement_energy = movement.square().flatten(1).mean(1)
-    outward_alignment = (movement * residual.detach()).flatten(1).mean(1)
+    movement_energy = _art_coordinate_mean(movement.square(), coordinate_mask)
+    outward_alignment = _art_coordinate_mean(
+        movement * residual.detach(), coordinate_mask
+    )
     if mask_metric == "sde_kl":
         eps = 1e-5
         step = sigma - sigma_next
@@ -316,7 +351,7 @@ def art_loss(
     else:
         movement_score = movement_energy
 
-    direction_rms = direction.square().flatten(1).mean(1).sqrt()
+    direction_rms = _art_coordinate_mean(direction.square(), coordinate_mask).sqrt()
     active = (magnitude > 0) & (direction_rms > 0) & (sigma > 0)
     masked = (
         active
@@ -326,7 +361,7 @@ def art_loss(
     ).detach()
     keep = (active & ~masked).detach()
     loss = torch.where(keep, unmasked, torch.zeros_like(unmasked))
-    return {
+    terms = {
         "per_item_loss": loss,
         "per_item_unmasked_loss": unmasked,
         "target": target,
@@ -337,6 +372,21 @@ def art_loss(
         "movement_score": movement_score.detach(),
         "outward_alignment": outward_alignment.detach(),
     }
+    if output_gradient_stats:
+        # These are gradients of the mean loss with respect to velocity outputs.
+        with torch.no_grad():
+            coordinate_count = coordinate_mask.flatten(1).sum(1).clamp_min(1)
+            scale = _expand_art_vector(
+                2 * weight * keep / (velocity.shape[0] * coordinate_count), velocity
+            )
+            guidance_gradient = scale * displacement
+            restoration_gradient = scale * movement
+            terms.update(
+                output_guidance_grad_sq=guidance_gradient.square().sum(),
+                output_restoration_grad_sq=restoration_gradient.square().sum(),
+                output_grad_inner=(guidance_gradient * restoration_gradient).sum(),
+            )
+    return terms
 
 
 def prompt_disjoint_windows(
@@ -393,6 +443,7 @@ def art_scalar_covariance(
     zero_signal_mode: str = "historical",
     zero_signal_atol: float = 0.0,
     eps: float = 1e-5,
+    coordinate_mask: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Complete-group covariance, never a microbatch estimator.
 
@@ -436,6 +487,15 @@ def art_scalar_covariance(
         raise ValueError("row_group_indices must be integer indices")
     x = endpoints.detach().float().flatten(1)
     r = rewards.detach().to(device=x.device, dtype=torch.float32).reshape(-1)
+    mask = None
+    valid_rows = torch.ones(len(x), device=x.device, dtype=torch.bool)
+    if coordinate_mask is not None:
+        mask = torch.broadcast_to(
+            coordinate_mask.to(device=x.device, dtype=torch.bool), endpoints.shape
+        ).flatten(1)
+        valid_rows = mask.any(1)
+        x = torch.where(mask, x, 0.0)
+        r = torch.where(valid_rows, r, 0.0)
     groups = row_group_indices.to(device=x.device, dtype=torch.long).reshape(-1)
     if r.numel() != len(x) or groups.numel() != len(x):
         raise ValueError("rewards and groups must match the endpoint count")
@@ -443,18 +503,18 @@ def art_scalar_covariance(
         raise ValueError("group index out of range")
     if not torch.isfinite(x).all() or not torch.isfinite(r).all():
         raise ValueError("endpoints and rewards must be finite")
-    counts = torch.bincount(groups, minlength=group_count).float()
+    counts = x.new_zeros(group_count).index_add_(0, groups, valid_rows.float())
     sums = x.new_zeros(group_count).index_add_(0, groups, r)
     square_sums = x.new_zeros(group_count).index_add_(0, groups, r.square())
     means = sums / counts.clamp_min(1)
     stds = (square_sums / counts.clamp_min(1) - means.square()).clamp_min(0).sqrt()
-    centered = r - means[groups]
+    centered = torch.where(valid_rows, r - means[groups], 0.0)
     if zero_signal_mode == "exact":
         maxima = r.new_full((group_count,), -torch.inf).scatter_reduce_(
-            0, groups, r, reduce="amax"
+            0, groups, torch.where(valid_rows, r, -torch.inf), reduce="amax"
         )
         minima = r.new_full((group_count,), torch.inf).scatter_reduce_(
-            0, groups, r, reduce="amin"
+            0, groups, torch.where(valid_rows, r, torch.inf), reduce="amin"
         )
         constant = maxima == minima
         # Summing identical FP32 rewards can round their mean away from the reward.
@@ -464,13 +524,49 @@ def art_scalar_covariance(
     mad = x.new_zeros(group_count).index_add_(
         0, groups, centered.abs()
     ) / counts.clamp_min(1)
-    numerator = x.new_zeros(group_count, x.shape[1]).index_add_(
-        0, groups, centered[:, None] * x
-    )
-    denominator = (counts - int(reduction == "unbiased")).clamp_min(1)
-    covariance = numerator / denominator[:, None]
-    covariance = torch.where((counts > 1)[:, None], covariance, 0.0)
-    rms = covariance.square().mean(1).sqrt()
+    if mask is None:
+        numerator = x.new_zeros(group_count, x.shape[1]).index_add_(
+            0, groups, centered[:, None] * x
+        )
+        denominator = (counts - int(reduction == "unbiased")).clamp_min(1)
+        covariance = numerator / denominator[:, None]
+        covariance = torch.where((counts > 1)[:, None], covariance, 0.0)
+        coordinate_counts = counts[:, None].expand_as(covariance)
+        supported_coordinates = None
+    else:
+        coordinate_counts = x.new_zeros(group_count, x.shape[1]).index_add_(
+            0, groups, mask.float()
+        )
+        coordinate_reward_sums = torch.zeros_like(coordinate_counts).index_add_(
+            0, groups, r[:, None] * mask
+        )
+        coordinate_means = coordinate_reward_sums / coordinate_counts.clamp_min(1)
+        coordinate_centered = torch.where(
+            mask, r[:, None] - coordinate_means[groups], 0.0
+        )
+        coordinate_groups = groups[:, None].expand_as(x)
+        maxima = torch.full_like(coordinate_counts, -torch.inf).scatter_reduce_(
+            0,
+            coordinate_groups,
+            torch.where(mask, r[:, None], -torch.inf),
+            reduce="amax",
+        )
+        minima = torch.full_like(coordinate_counts, torch.inf).scatter_reduce_(
+            0,
+            coordinate_groups,
+            torch.where(mask, r[:, None], torch.inf),
+            reduce="amin",
+        )
+        coordinate_centered = torch.where(
+            (maxima == minima)[groups], 0.0, coordinate_centered
+        )
+        numerator = torch.zeros_like(coordinate_counts).index_add_(
+            0, groups, coordinate_centered * x
+        )
+        denominator = (coordinate_counts - int(reduction == "unbiased")).clamp_min(1)
+        supported_coordinates = coordinate_counts > 1
+        covariance = torch.where(supported_coordinates, numerator / denominator, 0.0)
+    rms = _art_coordinate_mean(covariance.square(), supported_coordinates).sqrt()
     magnitudes = {
         "reward_mad": mad,
         "raw_covariance": rms,
@@ -478,7 +574,7 @@ def art_scalar_covariance(
         "unit_normalized_covariance": torch.ones_like(rms),
     }[scale_mode] * gain
     signal = covariance / torch.where(mad > 0, mad, 1.0)[:, None]
-    signal_rms = signal.square().mean(1).sqrt()
+    signal_rms = _art_coordinate_mean(signal.square(), supported_coordinates).sqrt()
     active = (counts > 1) & (mad > 0) & (signal_rms > 0) & (magnitudes > 0)
     if zero_signal_mode == "exact":
         magnitudes = torch.where(active, magnitudes, 0.0)
@@ -495,7 +591,9 @@ def art_scalar_covariance(
         directions = signal / signal_rms.clamp_min(eps)[:, None]
     else:
         # Float64 norm avoids underflow for tiny but nonzero aggregates.
-        norm = covariance.double().square().mean(1).sqrt()
+        norm = _art_coordinate_mean(
+            covariance.double().square(), supported_coordinates
+        ).sqrt()
         directions = (
             covariance.double() / torch.where(norm > 0, norm, 1.0)[:, None]
         ).float()
@@ -511,6 +609,7 @@ def art_scalar_covariance(
         "group_reward_stds": stds,
         "group_reward_abs_means": mad,
         "group_covariance_rms": rms,
+        "group_coordinate_counts": coordinate_counts.reshape(shape),
     }
 
 
@@ -549,3 +648,89 @@ def _art_vector(
 
 def _expand_art_vector(value: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
     return value.reshape((-1,) + (1,) * (reference.ndim - 1))
+
+
+def _art_coordinate_mean(
+    value: torch.Tensor, coordinate_mask: torch.Tensor | None
+) -> torch.Tensor:
+    if coordinate_mask is None:
+        return value.flatten(1).mean(1)
+    mask = torch.broadcast_to(coordinate_mask, value.shape)
+    return torch.where(mask, value, 0.0).flatten(1).sum(1) / mask.flatten(1).sum(
+        1
+    ).clamp_min(1)
+
+
+@torch.no_grad()
+def art_trajectory_guidance(
+    endpoints: torch.Tensor,
+    episode_returns: torch.Tensor,
+    action_mask: torch.Tensor,
+    group_size: int,
+    *,
+    condition_ids: torch.Tensor | None = None,
+    **covariance_options,
+) -> dict:
+    """Aggregate same-reset trajectories at each decision, before flattening."""
+    if endpoints.ndim != 4 or action_mask.shape != endpoints.shape[:3]:
+        raise ValueError(
+            "ART actions must be [decisions, episodes, actions, dims] with a matching action mask"
+        )
+    decisions, episodes = endpoints.shape[:2]
+    if group_size < 2 or episodes % group_size:
+        raise ValueError(
+            f"ART needs complete groups of at least two trajectories, got {episodes=} and {group_size=}"
+        )
+    if episode_returns.shape != (episodes,):
+        raise ValueError(
+            f"ART episode returns must have shape {(episodes,)}, got {tuple(episode_returns.shape)}"
+        )
+    device = endpoints.device
+    if condition_ids is None:
+        condition_groups = torch.arange(episodes, device=device) // group_size
+    else:
+        _, condition_groups = torch.unique(
+            condition_ids.to(device), sorted=True, return_inverse=True
+        )
+    decision_ids = torch.arange(decisions, device=device)[:, None]
+    groups = decision_ids * (episodes // group_size) + condition_groups[None]
+    stats = art_scalar_covariance(
+        endpoints.flatten(0, 1),
+        episode_returns[None].expand(decisions, -1).reshape(-1),
+        groups.reshape(-1),
+        decisions * (episodes // group_size),
+        coordinate_mask=action_mask.flatten(0, 1)[..., None],
+        **covariance_options,
+    )
+    coordinate_mask = action_mask[..., None] & (
+        stats["group_coordinate_counts"][groups] > 1
+    )
+    directions = torch.where(coordinate_mask, stats["group_directions"][groups], 0.0)
+    return {
+        "directions": directions,
+        "magnitudes": stats["group_guidance_magnitudes"][groups],
+        "coordinate_mask": coordinate_mask,
+        "stats": stats,
+    }
+
+
+def art_guidance_metrics(
+    stats: dict[str, torch.Tensor],
+    directions: torch.Tensor,
+    magnitudes: torch.Tensor,
+    rewards: torch.Tensor,
+    coordinate_mask: torch.Tensor | None = None,
+) -> dict[str, float]:
+    """Summarize per-row guidance and the group statistics it came from."""
+    active = stats["group_active"]
+    covariance = stats["group_covariance_rms"][active]
+    direction_rms = _art_coordinate_mean(
+        directions.float().square(), coordinate_mask
+    ).sqrt()
+    return {
+        "actor/active_group_frac": active.float().mean().item(),
+        "actor/covariance_rms": covariance.mean().item() if covariance.numel() else 0.0,
+        "actor/guidance_rms": (direction_rms * magnitudes.float()).mean().item(),
+        "actor/art_reward_mean": rewards.mean().item(),
+        "actor/art_reward_std": rewards.std(correction=0).item(),
+    }

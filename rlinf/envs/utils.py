@@ -22,6 +22,24 @@ from PIL import Image, ImageDraw, ImageFont
 _tf = None
 
 
+def grouped_state_max_error(states: list[np.ndarray], group_size: int) -> np.ndarray:
+    """Compare exposed simulator states with the first member of each group."""
+    if group_size < 2 or not states or len(states) % group_size:
+        raise ValueError("Simulator states must contain complete groups of size >= 2.")
+    errors = np.zeros(len(states), dtype=np.float64)
+    for start in range(0, len(states), group_size):
+        group = [np.asarray(state) for state in states[start : start + group_size]]
+        if any(state.shape != group[0].shape for state in group):
+            errors[start : start + group_size] = np.inf
+            continue
+        values = np.asarray(group, dtype=np.float64)
+        error = (
+            np.max(np.abs(values - values[:1])) if np.isfinite(values).all() else np.inf
+        )
+        errors[start : start + group_size] = error
+    return errors
+
+
 def _get_tensorflow():
     global _tf
     if _tf is None:

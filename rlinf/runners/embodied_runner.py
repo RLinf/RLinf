@@ -495,6 +495,14 @@ class EmbodiedRunner:
 
         start_step = self.global_step
         start_time = time.time()
+        initial_eval = (
+            bool(self.cfg.runner.get("eval_at_start", False)) and start_step == 0
+        )
+        if initial_eval:
+            self.update_rollout_weights()
+            metrics = {f"eval/{key}": value for key, value in self.evaluate().items()}
+            self.metric_logger.log(data=metrics, step=0)
+            self.logger.info("Step 0 evaluation: %s", metrics)
         for _step in range(start_step, self.max_steps):
             # set global step
             self.actor.set_global_step(self.global_step).wait()
@@ -511,7 +519,9 @@ class EmbodiedRunner:
 
             with self.timer("step", trace_args={"step_idx": _step}):
                 with self.timer("sync_weights"):
-                    if _step % self.weight_sync_interval == 0:
+                    if not (_step == start_step and initial_eval) and (
+                        _step % self.weight_sync_interval == 0
+                    ):
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
                     env_handle: Handle = self.env.interact(

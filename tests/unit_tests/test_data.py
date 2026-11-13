@@ -1381,6 +1381,38 @@ def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
         set_rng_state(original_rng)
 
 
+@pytest.mark.parametrize("with_diagnostics", [False, True])
+@pytest.mark.parametrize("with_reset_mask", [False, True])
+def test_env_output_preserves_optional_fields_through_policy_transport(
+    with_diagnostics,
+    with_reset_mask,
+):
+    obs = {"states": torch.zeros(4, 3)}
+    if with_diagnostics:
+        obs["art_sim_state_error"] = torch.tensor([0.0, 0.0, 0.01, 0.01])
+        obs["art_state_id"] = torch.tensor([13, 13, 21, 21])
+    if with_reset_mask:
+        obs["reset_mask"] = torch.tensor([True, False, False, True])
+    output = EnvOutput(obs=obs, final_obs=obs)
+    env_worker = object.__new__(EnvWorker)
+    policy_input = env_worker._build_policy_input(output)
+    restored = []
+    for shard in policy_input.split([2, 2]):
+        skeleton, tensors = pack_dataclass_tensors(shard)
+        restored.append(unpack_dataclass_tensors(skeleton, tensors))
+    merged = MultiStepRolloutWorker._merge_policy_inputs(restored)
+
+    for prepared in (
+        output.to_dict()["obs"],
+        output.to_dict()["final_obs"],
+        merged.obs,
+    ):
+        for key in ("art_sim_state_error", "art_state_id", "reset_mask"):
+            assert (key in prepared) == (key in obs)
+            if key in obs:
+                torch.testing.assert_close(prepared[key], obs[key])
+
+
 def test_removed_duplicate_types_are_not_schema_api():
     import rlinf.data.schema as schema
 
@@ -3346,6 +3378,8 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.art_state_sampling = False
+    rollout.art_branch_chunk_index = None
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3452,6 +3486,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.art_state_sampling = False
+    rollout.art_branch_chunk_index = None
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3582,6 +3618,7 @@ def test_decoupled_final_completion_uses_next_bootstrap():
 
 def test_env_closes_reward_stream_with_final_chunk():
     env = object.__new__(EnvWorker)
+    env.art_state_sampling = False
     env.rollout_epoch = 2
     env.stage_num = 1
     env.n_train_chunk_steps = 2

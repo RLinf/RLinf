@@ -1,5 +1,7 @@
 #! /bin/bash
 
+set -o pipefail
+
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
@@ -48,17 +50,22 @@ fi
 echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"
 
 echo "Using Python at $(which python)"
-LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}" #/$(date +'%Y%m%d-%H:%M:%S')"
-MEGA_LOG_FILE="${LOG_DIR}/run_embodiment.log"
+LOG_DIR=${LOG_DIR:-"${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}"}
+MEGA_LOG_FILE=${MEGA_LOG_FILE:-"${LOG_DIR}/run_embodiment.log"}
 mkdir -p "${LOG_DIR}"
 # Forward optional overrides exported by callers (e.g. tests/parity_tests/run_all.sh).
 # Sentinel: "-2" means "do not override, use YAML default". -1 is a legitimate value
 # (e.g. runner.max_steps=-1 means unlimited) and is forwarded as-is.
-EXTRA_OVERRIDES=""
-[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=" runner.max_steps=${STEPS}"
-[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=" runner.save_interval=${SAVE_INTER}"
-[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=" cluster.num_nodes=${NODES}"
+EXTRA_OVERRIDES=()
+[ -n "${STEPS:-}" ]      && [ "$STEPS"      != "-2" ] && EXTRA_OVERRIDES+=("runner.max_steps=${STEPS}")
+[ -n "${SAVE_INTER:-}" ] && [ "$SAVE_INTER" != "-2" ] && EXTRA_OVERRIDES+=("runner.save_interval=${SAVE_INTER}")
+[ -n "${NODES:-}" ]      && [ "$NODES"      != "-2" ] && EXTRA_OVERRIDES+=("cluster.num_nodes=${NODES}")
 
-CMD="python ${SRC_FILE} --config-path ${EMBODIED_PATH}/config/ --config-name ${CONFIG_NAME} runner.logger.log_path=${LOG_DIR}${EXTRA_OVERRIDES}"
-echo ${CMD} > ${MEGA_LOG_FILE}
-${CMD} 2>&1 | tee -a ${MEGA_LOG_FILE}
+# Usage: bash run_embodiment.sh CONFIG ROBOT_PLATFORM [Hydra overrides...]
+# Preserve the first two positional arguments and forward each override intact.
+CMD=(python -u "${SRC_FILE}" --config-path "${EMBODIED_PATH}/config/"
+    --config-name "${CONFIG_NAME}" "runner.logger.log_path=${LOG_DIR}"
+    "${EXTRA_OVERRIDES[@]}" "${@:3}")
+printf '%q ' "${CMD[@]}" > "${MEGA_LOG_FILE}"
+printf '\n' >> "${MEGA_LOG_FILE}"
+"${CMD[@]}" 2>&1 | tee -a "${MEGA_LOG_FILE}"

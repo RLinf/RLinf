@@ -42,6 +42,7 @@ from rlinf.envs.sim.libero.utils import (
 )
 from rlinf.envs.sim.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import (
+    grouped_state_max_error,
     list_of_dict_to_dict_of_list,
     to_tensor,
     valid_action_mask_from_counts,
@@ -161,7 +162,16 @@ class LiberoEnv(gym.Env):
         self._is_start = True
         self.num_envs = num_envs
         self.group_size = self.cfg.group_size
+        self.art_branch_chunk_index = cfg.get("art_branch_chunk_index", None)
+        self.art_state_sampling = cfg.get("art_state_sampling", False)
         self.num_group = self.num_envs // self.group_size
+        if self.art_state_sampling:
+            self._art_state_ids = (
+                torch.arange(self.num_group).repeat_interleave(self.group_size)
+                + self.seed_offset * self.num_envs
+            )
+            self._art_state_steps = torch.zeros(self.num_envs, dtype=torch.int64)
+            self._art_states = []
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self.specific_reset_id = cfg.get("specific_reset_id", None)
         self.task_id_filter = cfg.get("task_id_filter", None)
@@ -858,6 +868,9 @@ class LiberoEnv(gym.Env):
             "states": states,
             "task_descriptions": self.task_descriptions,
         }
+        if self.art_state_sampling:
+            obs["art_state_id"] = self._art_state_ids
+            obs["art_state_steps"] = self._art_state_steps
         return obs
 
     def _append_history(self, obs: dict[str, Any], env_idx: Iterable[int]) -> None:
@@ -983,8 +996,69 @@ class LiberoEnv(gym.Env):
                 self._observation_history[index].clear()
             self._append_history(obs, env_idx)
             obs["history"] = self._get_history_obs()
+        if self.art_branch_chunk_index is not None:
+            self._add_art_sim_state_error(obs)
         infos = {}
         return obs, infos
+
+    def _add_art_sim_state_error(self, obs: dict) -> None:
+        obs["art_sim_state_error"] = torch.from_numpy(
+            grouped_state_max_error(self.env.get_sim_state(), self.group_size)
+        )
+
+    def capture_art_states(self) -> None:
+        """Save live group leaders at policy decision boundaries.
+
+        ``restore_art_states`` consumes and clears the bank, so each rollout's
+        frozen policy owns the states it collects.
+        """
+        leaders = np.arange(0, self.num_envs, self.group_size)
+        leaders = leaders[
+            ~self.success_once[leaders]
+            & (self.elapsed_steps[leaders] < self.cfg.max_episode_steps)
+        ]
+        for env_id, snapshot in zip(leaders, self.env.capture_snapshots(leaders)):
+            self._art_states.append(
+                {
+                    "snapshot": snapshot,
+                    "task_id": self.task_ids[env_id],
+                    "reset_state_id": self.reset_state_ids[env_id],
+                    "elapsed_steps": self.elapsed_steps[env_id],
+                    "prev_step_reward": self.prev_step_reward[env_id],
+                }
+            )
+
+    def restore_art_states(self) -> dict:
+        """Sample task-matched temporal strata and clone each state across a group."""
+        leaders = np.arange(0, self.num_envs, self.group_size)
+        selected = [None] * self.num_group
+        for task_id in np.unique(self.task_ids[leaders]):
+            groups = np.flatnonzero(self.task_ids[leaders] == task_id)
+            states = sorted(
+                [state for state in self._art_states if state["task_id"] == task_id],
+                key=lambda state: state["elapsed_steps"],
+            )
+            for group, stratum in zip(
+                groups, np.array_split(np.arange(len(states)), len(groups))
+            ):
+                index = self._generator.choice(stratum)
+                selected[group] = states[index]
+        snapshots = [
+            state["snapshot"] for state in selected for _ in range(self.group_size)
+        ]
+        self.current_raw_obs = self.env.restore_snapshots(snapshots)
+        self._reset_metrics()
+        for group, state in enumerate(selected):
+            rows = slice(group * self.group_size, (group + 1) * self.group_size)
+            self._elapsed_steps[rows] = state["elapsed_steps"]
+            self.prev_step_reward[rows] = state["prev_step_reward"]
+            self.reset_state_ids[rows] = state["reset_state_id"]
+        self._init_task_and_trial_ids()
+        self._art_states.clear()
+        self._art_state_steps = torch.from_numpy(self._elapsed_steps.copy())
+        obs = self._wrap_obs(self.current_raw_obs)
+        self._add_art_sim_state_error(obs)
+        return obs
 
     def get_camera_meta(
         self, camera_name: str = "agentview", height: int = 256, width: int = 256
@@ -1033,7 +1107,13 @@ class LiberoEnv(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
-        self._elapsed_steps += 1
+        if self.art_state_sampling:
+            active = ~self.success_once & (
+                self.elapsed_steps < self.cfg.max_episode_steps
+            )
+            self._elapsed_steps += active
+        else:
+            self._elapsed_steps += 1
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         self.current_raw_obs = raw_obs
         infos = list_of_dict_to_dict_of_list(info_lists)
@@ -1044,7 +1124,11 @@ class LiberoEnv(gym.Env):
             if _include_history:
                 obs["history"] = self._get_history_obs()
 
+        if self.art_state_sampling:
+            terminations &= active
         step_reward = self._calc_step_reward(terminations)
+        if self.art_state_sampling:
+            step_reward[~active] = 0
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.is_libero_mem:
@@ -1180,6 +1264,11 @@ class LiberoEnv(gym.Env):
             chunk_truncations = raw_chunk_truncations.clone()
         if not self.is_eval:
             infos_list[-1]["valid_action_mask"] = valid_action_mask
+        if (
+            self.art_branch_chunk_index is not None
+            and self.elapsed_steps[0] <= self.art_branch_chunk_index * chunk_size
+        ):
+            self._add_art_sim_state_error(obs_list[-1])
         return (
             obs_list,
             chunk_rewards,
