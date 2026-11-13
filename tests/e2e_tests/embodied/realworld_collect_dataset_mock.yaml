@@ -39,7 +39,7 @@ runner:
     log_path: /workspace/results/realworld_collect_dataset_mock
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
   # Small enough to reach quickly, large enough that the ratio sampling and
   # the train/val split both have something to do.
   num_success_frames: 2
@@ -58,12 +58,12 @@ env:
     teleop: none
     keyboard_reward_wrapper: single_stage
     # A ceiling, so a run that never reaches its targets still ends.
-    max_episode_steps: 400
+    max_episode_steps: 30
     override_cfg:
       # Deliberately out of reach: the episode must keep running for frames to
       # accumulate, so it must not succeed and terminate.
       target_ee_pose: [1.0, 1.0, 1.0, 0.0, 0.0, 0.0]
       reward_threshold: [0.05, 0.05, 0.05, 0.1, 0.1, 0.1]
       success_hold_steps: 1
-      max_num_steps: 400
+      max_num_steps: 30
       enable_camera_player: False

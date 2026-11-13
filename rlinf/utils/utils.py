@@ -774,7 +774,7 @@ def set_rng_state(rng_state: dict) -> None:
 
 @contextmanager
 def isolated_rng(seed: Optional[int] = None) -> Iterator[None]:
-    """Restore the caller's RNG streams after a synchronous evaluation block."""
+    """Restore the caller's RNG streams after a block, with optional reseeding."""
     from rlinf.scheduler.worker.worker import Worker
 
     state = get_rng_state()

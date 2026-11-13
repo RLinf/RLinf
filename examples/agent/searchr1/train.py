@@ -23,15 +23,19 @@ from rlinf.agents.searchr1.searchr1_agent_loop import Searchr1AgentLoopWorker
 from rlinf.config import validate_cfg
 from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
+from rlinf.runners.agent_ppo_runner import AgentPPORunner
 from rlinf.runners.agent_runner import AgentRunner
+from rlinf.runners.async_agent_runner import AsyncAgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
-from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
+from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
+from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
+from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
@@ -87,10 +91,7 @@ def main(cfg) -> None:
 
     # Inference group
     inference_group = None
-    if (
-        component_placement.placement_mode == PlacementMode.DISAGGREGATED
-        and cfg.algorithm.recompute_logprobs
-    ):
+    if component_placement.has_dedicated_actor_inference:
         inference_placement_strategy = component_placement.get_strategy("inference")
         inference_worker_cls = get_inference_backend_worker(cfg, "actor")
         inference_group = inference_worker_cls.create_group(
@@ -101,12 +102,20 @@ def main(cfg) -> None:
             placement_strategy=inference_placement_strategy,
         )
 
-    # GRPO Actor group
+    # Actor and optional critic groups
     actor_placement_strategy = component_placement.get_strategy("actor")
     actor_worker_cls = get_ma_actor_worker(cfg)
     actor_group = actor_worker_cls.create_group(cfg, component_placement).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement_strategy
     )
+
+    critic_group = None
+    if cfg.critic.get("use_critic_model", False):
+        critic_group = MAMegatronCritic.create_group(cfg, component_placement).launch(
+            cluster,
+            name=cfg.critic.group_name,
+            placement_strategy=component_placement.get_strategy("critic"),
+        )
 
     # Dataset
     tokenizer = hf_tokenizer(cfg.actor.tokenizer.tokenizer_model)
@@ -120,18 +129,42 @@ def main(cfg) -> None:
         ): ToolWorkerInfo(tool_names=["search"], has_session=False),
     }
 
-    runner = AgentRunner(
-        cfg=cfg,
-        placement=component_placement,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        rollout=rollout_group,
-        inference=inference_group,
-        actor=actor_group,
-        reward=None,
-        agent_loop=agentloop_group,
-        tool_workers=tool_workers,
-    )
+    if cfg.runner.get("async_mode", False):
+        runner_cls = AsyncAgentRunner
+    elif critic_group is not None:
+        runner_cls = AgentPPORunner
+    else:
+        runner_cls = AgentRunner
+    rollout_buffer = None
+    if cfg.runner.get("async_mode", False):
+        # The buffer worker owns the dataloader and the admission budget;
+        # one instance on the head node, like the search tool worker.
+        rollout_buffer = RolloutBufferWorker.create_group(cfg, train_ds).launch(
+            cluster,
+            name="RolloutBuffer",
+            placement_strategy=singleton_tool_placement,
+        )
+    runner_kwargs = {
+        "cfg": cfg,
+        "placement": component_placement,
+        "train_dataset": train_ds,
+        "val_dataset": val_ds,
+        "rollout": rollout_group,
+        "inference": inference_group,
+        "actor": actor_group,
+        "reward": None,
+        "agent_loop": agentloop_group,
+        "tool_workers": tool_workers,
+    }
+    if rollout_buffer is not None:
+        # Only AsyncAgentRunner takes the buffer worker that owns the
+        # dataloader and the admission budget.
+        runner_kwargs["rollout_buffer"] = rollout_buffer
+    if critic_group is not None:
+        # AsyncAgentRunner does not take a critic; async and PPO are kept
+        # mutually exclusive by config validation.
+        runner_kwargs["critic"] = critic_group
+    runner = runner_cls(**runner_kwargs)
 
     runner.init_workers()
     runner.run()

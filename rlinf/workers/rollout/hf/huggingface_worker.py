@@ -42,6 +42,7 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.utils import (
     get_rng_state,
@@ -212,8 +213,10 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.offload_model()
 
-        if self.cfg.rollout.get("seed") is not None:
-            seed_everything(int(self.cfg.rollout.seed) + self._rank)
+        # Model initialization and graph capture can advance the RNG.
+        rollout_seed = self.cfg.rollout.get("seed")
+        if rollout_seed is not None:
+            seed_everything(int(rollout_seed) + self._rank)
 
     def setup_sample_params(self):
         # sampling parameters for rollout
@@ -516,8 +519,7 @@ class MultiStepRolloutWorker(Worker):
         if mode == "train":
             return self._predict(env_obs, mode)
         with isolated_rng():
-            if getattr(self, "_eval_rng_state", None) is not None:
-                set_rng_state(self._eval_rng_state)
+            set_rng_state(self._eval_rng_state)
             try:
                 return self._predict(env_obs, mode)
             finally:
@@ -1062,11 +1064,12 @@ class MultiStepRolloutWorker(Worker):
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
-        self.hf_model.to("cpu")
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to("cpu")
-        if self.expert_model is not None:
-            self.expert_model.to("cpu")
+        with pinned_offload_context():
+            self.hf_model.to("cpu")
+            if self.rlt_feature_model is not None:
+                self.rlt_feature_model.to("cpu")
+            if self.expert_model is not None:
+                self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
@@ -1136,6 +1139,8 @@ class MultiStepRolloutWorker(Worker):
                     merged[key] = torch.cat(values, dim=0)
                 elif isinstance(first_non_none, list):
                     merged[key] = [item for sublist in values for item in sublist]
+                elif isinstance(first_non_none, dict):
+                    merged[key] = _merge_obs_dicts(values)
                 else:
                     merged[key] = values
             return merged

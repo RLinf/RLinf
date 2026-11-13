@@ -37,14 +37,28 @@ def build_official_openpi_sft_dataloader(
 ) -> tuple[Any, Any]:
     """Build the SFT loader provided by OpenPI for a LeRobot dataset."""
     del rank
+    import openpi.training.data_loader as openpi_data_loader
+
+    config = build_official_openpi_sft_config(cfg, world_size, data_paths, eval_dataset)
+    data_loader = openpi_data_loader.create_data_loader(
+        config, framework="pytorch", shuffle=not eval_dataset
+    )
+    return data_loader, data_loader.data_config()
+
+
+def build_official_openpi_sft_config(
+    cfg: Any,
+    world_size: int,
+    data_paths: Any,
+    eval_dataset: bool = False,
+) -> Any:
+    """Resolve the shared model, normalization and dataset configuration."""
     repo_id = resolve_lerobot_repo_id(data_paths)
     if repo_id is None:
         raise ValueError(
             "OpenPI SFT requires data.train_data_paths to be set to a local "
             "dataset path or LeRobot repo id."
         )
-
-    import openpi.training.data_loader as openpi_data_loader
 
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
@@ -75,10 +89,7 @@ def build_official_openpi_sft_dataloader(
     )
     _validate_openpi_model_shape(model_cfg, config)
 
-    data_loader = openpi_data_loader.create_data_loader(
-        config, framework="pytorch", shuffle=not eval_dataset
-    )
-    return data_loader, data_loader.data_config()
+    return config
 
 
 def get_official_openpi_sft_num_batches(data_loader: Any) -> int:

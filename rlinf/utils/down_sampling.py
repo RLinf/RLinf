@@ -20,6 +20,29 @@ import torch
 from rlinf.data.schema.reasoning_results import RolloutResult
 
 
+def rewards_all_equal(rewards) -> bool:
+    """Whether every reward in one query group is the same value.
+
+    The `reject_equal_reward` filter drops such groups: with no reward
+    spread the group carries no gradient signal for a within-group
+    baseline. Per-trajectory reward views may hold None for trajectories
+    with no retained sequence; a group with any None is kept, since the
+    filter cannot judge a reward it does not have.
+    """
+    if rewards is None:
+        return False
+    if any(reward is None for reward in rewards):
+        return False
+    rewards_t = (
+        rewards
+        if isinstance(rewards, torch.Tensor)
+        else torch.tensor(rewards, dtype=torch.float32)
+    )
+    if rewards_t.numel() == 0:
+        return False
+    return bool(torch.allclose(rewards_t[0], rewards_t))
+
+
 def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict):
     def _build_group_uids_by_chunks(total_num: int, group_size: int):
         return [i // max(1, group_size) for i in range(total_num)]
@@ -38,7 +61,7 @@ def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict)
             if len(idxs) == 0:
                 continue
             grp_rewards = rewards_t[idxs]
-            if torch.allclose(grp_rewards[0], grp_rewards):
+            if rewards_all_equal(grp_rewards):
                 valid_mask[idxs] = False
         return valid_mask
 
