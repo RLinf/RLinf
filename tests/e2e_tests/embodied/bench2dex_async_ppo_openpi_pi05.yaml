@@ -12,6 +12,7 @@ runner:
   val_check_interval: 10
   save_interval: 2
   logger:
+    log_path: ${oc.env:RUNNER_TEMP,/tmp}/bench2dex-async
     experiment_name: bench2dex_async_ppo_openpi_pi05
 
 algorithm:

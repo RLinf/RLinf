@@ -216,6 +216,8 @@ jobs:
               - 'tests/e2e_tests/evaluations/run.sh'
               - 'examples/embodiment/config/bench2dex*.yaml'
               - 'evaluations/bench2dex/*.yaml'
+              - 'tests/e2e_tests/embodied/bench2dex*.yaml'
+              - 'tests/e2e_tests/evaluations/bench2dex*.yaml'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
               - '.github/scripts/ascend_ci_workspace.sh'

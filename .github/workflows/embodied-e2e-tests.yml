@@ -1732,6 +1732,7 @@ jobs:
     if: ${{ vars.BENCH2DEX_CI_ASSETS_PATH != '' && vars.BENCH2DEX_CI_PI05_PATH != '' && vars.BENCH2DEX_CI_ANCHOR_DIR != '' }}
     runs-on: embodied
     env:
+      JAX_PLATFORMS: cpu
       BENCH2DEX_ASSETS_PATH: ${{ vars.BENCH2DEX_CI_ASSETS_PATH }}
       BENCH2DEX_PI05_PATH: ${{ vars.BENCH2DEX_CI_PI05_PATH }}
       BENCH2DEX_ANCHOR_DIR: ${{ vars.BENCH2DEX_CI_ANCHOR_DIR }}
@@ -1756,6 +1757,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh bench2dex_ppo_openpi_pi05
+          test -s "$RUNNER_TEMP/bench2dex-sync/bench2dex_ppo_openpi_pi05/checkpoints/global_step_2/actor/dcp_checkpoint/.metadata"
 
       - name: Bench2Dex asynchronous PPO test
         timeout-minutes: 60
@@ -1764,6 +1766,27 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run_async.sh bench2dex_async_ppo_openpi_pi05
+          test -s "$RUNNER_TEMP/bench2dex-async/bench2dex_async_ppo_openpi_pi05/checkpoints/global_step_2/actor/dcp_checkpoint/.metadata"
+
+      - name: Bench2Dex evaluation test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh bench2dex_openpi_pi05_eval
+          python - <<'PY_EVAL'
+          import json
+          import os
+          from pathlib import Path
+
+          output = Path(os.environ["RUNNER_TEMP"]) / "bench2dex-eval/benchmark"
+          rows = [json.loads(line) for line in (output / "per_episode.jsonl").read_text().splitlines() if line.strip()]
+          assert len(rows) == 4
+          assert {row["episode_index"] for row in rows} == {1, 2, 3, 4}
+          assert all(row.get("error") is None for row in rows)
+          assert (output / "summary.json").stat().st_size > 0
+          PY_EVAL
 
       - name: Clean up
         if: always()
