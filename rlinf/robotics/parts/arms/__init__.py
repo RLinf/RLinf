@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # Static declarations for the names __getattr__ resolves lazily.
     # A test keeps this block synchronized with _MODULE_BY_NAME.
+    from .arx5 import ARX5Arm, ARX5State
     from .base import (
         ARM_STATE_FIELDS,
         Arm,
@@ -61,7 +62,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
 
 _MODULE_BY_NAME: dict[str, str] = {
+    "ARX5Arm": ".arx5",
     "ARM_STATE_FIELDS": ".base",
+    "ARX5State": ".arx5",
     "Arm": ".base",
     "ArmState": ".base",
     "BaseArm": ".base",
@@ -86,6 +89,8 @@ _MODULE_BY_NAME: dict[str, str] = {
 
 __all__ = [
     "ARM_STATE_FIELDS",
+    "ARX5Arm",
+    "ARX5State",
     "Arm",
     "ArmState",
     "BaseArm",

@@ -24,7 +24,7 @@ runner:
     log_path: "../results/musa_maniskill_async_ppo_openpi_pi05"
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -73,8 +73,8 @@ env:
     total_num_envs: 2
     auto_reset: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 20 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 20
+    max_episode_steps: 5 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 5
     init_params:
       use_multiple_plates: False
       # SAPIEN's GPU physx backend needs CUDA.

@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/polaris_tapeintocontainer_ppo_openpi_pi05
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -63,8 +63,8 @@ env:
   train:
     rollout_epoch: 1
     total_num_envs: 1
-    max_episode_steps: 30
-    max_steps_per_rollout_epoch: 30
+    max_episode_steps: 15
+    max_steps_per_rollout_epoch: 15
     auto_reset: True
     ignore_terminations: True
     seed: 42

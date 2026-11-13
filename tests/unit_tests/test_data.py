@@ -64,7 +64,9 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
     split_episode_data,
 )
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
+from rlinf.data.storage.lerobot.compat import index_episode_subset_by_id
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
@@ -782,6 +784,21 @@ def test_episode_boundaries_agree_across_formats(dataset_cls):
     assert all(isinstance(x, int) for x in starts + ends)
 
 
+@pytest.mark.parametrize("episodes", [[3], [4, 1]])
+def test_lerobot_subset_preserves_episode_boundaries(episodes):
+    starts = [position * 3 for position in range(len(episodes))]
+    ends = [start + 3 for start in starts]
+    dataset = _V21Dataset(starts, ends)
+    dataset.episodes = episodes
+
+    index_episode_subset_by_id(dataset)
+    index_episode_subset_by_id(dataset)
+
+    assert episode_boundaries(dataset) == (starts, ends)
+    assert dataset.episode_data_index["from"][episodes].tolist() == starts
+    assert dataset.episode_data_index["to"][episodes].tolist() == ends
+
+
 def test_episode_boundaries_reports_an_unknown_layout():
     class _Alien:
         episode_data_index = None
@@ -800,6 +817,205 @@ def test_episode_boundaries_rejects_v30_meta_without_the_columns():
 
     with pytest.raises(RuntimeError, match="Cannot determine episode boundaries"):
         episode_boundaries(_Partial())
+
+
+@pytest.mark.parametrize(
+    "config_name,image_key,wrist_key,state_key,action_key",
+    [
+        ("pi05_libero", "image", "wrist_image", "state", "actions"),
+        (
+            "pi05_libero_mem",
+            "observation.images.image",
+            "observation.images.wrist_image",
+            "observation.state",
+            "action",
+        ),
+    ],
+)
+def test_openpi_libero_config_maps_dataset_fields(
+    config_name, image_key, wrist_key, state_key, action_key
+):
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config(config_name)
+    data_config = config.data.create(config.assets_dirs, config.model)
+    sample = {
+        image_key: np.full((8, 8, 3), 10, dtype=np.uint8),
+        wrist_key: np.full((8, 8, 3), 20, dtype=np.uint8),
+        state_key: np.arange(8, dtype=np.float32),
+        action_key: np.arange(70, dtype=np.float32).reshape(10, 7),
+        "prompt": "pick up the cup",
+    }
+    transformed = sample
+    for transform in (
+        *data_config.repack_transforms.inputs,
+        *data_config.data_transforms.inputs,
+    ):
+        transformed = transform(transformed)
+
+    assert data_config.action_sequence_keys == (action_key,)
+    assert data_config.prompt_from_task
+    np.testing.assert_array_equal(transformed["image"]["base_0_rgb"], sample[image_key])
+    np.testing.assert_array_equal(
+        transformed["image"]["left_wrist_0_rgb"], sample[wrist_key]
+    )
+    np.testing.assert_array_equal(transformed["state"], sample[state_key])
+    np.testing.assert_array_equal(transformed["actions"], sample[action_key])
+    assert transformed["prompt"] == sample["prompt"]
+
+
+@pytest.mark.parametrize("num_frames", [1, 3])
+@pytest.mark.parametrize("image_dtype", [np.uint8, np.float32])
+def test_short_memory_dataset_preserves_targets_and_padding(
+    num_frames, image_dtype, monkeypatch
+):
+    from datasets import Dataset
+
+    torchvision = pytest.importorskip("torchvision")
+    monkeypatch.delattr(torchvision.io, "VideoReader", raising=False)
+
+    from rlinf.data.datasets.openpi.short_memory import (
+        ShortMemoryDataset,
+        collate_fn,
+    )
+
+    # A LeRobot episode subset retains global indices, with clamped pad frames.
+    indices = torch.tensor([104] if num_frames == 1 else [101, 102, 104])
+    padding = torch.tensor([False] if num_frames == 1 else [True, False, False])
+    cameras = indices[:, None, None, None].expand(-1, 2, 2, 3).float()
+    raw = {
+        "index": indices,
+        "index_is_pad": padding,
+        "camera": cameras[0] if num_frames == 1 else cameras,
+        "state": np.array([4.0, 5.0], dtype=np.float32),
+        "prompt": "current task",
+        "actions": np.array([[1.0], [2.0]], dtype=np.float32),
+    }
+    lerobot = mock.MagicMock()
+    lerobot.meta.camera_keys = ["camera"]
+    lerobot.hf_dataset = Dataset.from_dict(
+        {"timestamp": [10.0, 10.051, 10.102, 10.155, 10.207]}
+    ).with_format("torch")
+    lerobot.__getitem__.return_value = raw
+    transformed_indices, tokenized_prompts = [], []
+
+    def frame_transform(frame):
+        transformed_indices.append(int(frame["index"]))
+        return {
+            "image": {"base_0_rgb": np.asarray(frame["camera"], dtype=image_dtype)},
+            "image_mask": {"base_0_rgb": True},
+            "state": frame["state"],
+            "prompt": frame["prompt"],
+            "actions": frame["actions"],
+        }
+
+    def sample_transform(frame):
+        tokenized_prompts.append(frame.pop("prompt"))
+        frame["tokenized_prompt"] = np.array([7, 8])
+        frame["tokenized_prompt_mask"] = np.array([True, True])
+        return frame
+
+    dataset = ShortMemoryDataset(
+        lerobot,
+        frame_transform,
+        sample_transform,
+        num_frames=num_frames,
+        action_keys=("actions",),
+    )
+    sample = dataset[3]
+
+    assert transformed_indices == ([104] if num_frames == 1 else [102, 104])
+    assert tokenized_prompts == ["current task"]
+    np.testing.assert_array_equal(sample["state"], raw["state"])
+    np.testing.assert_array_equal(sample["actions"], raw["actions"])
+    np.testing.assert_array_equal(sample["image_mask"]["base_0_rgb"], ~padding)
+    assert sample["image"]["base_0_rgb"].dtype == image_dtype
+    assert sample["history_time_offsets"].dtype == np.float32
+    np.testing.assert_array_equal(
+        sample["image"]["base_0_rgb"][:, 0, 0, 0],
+        [104] if num_frames == 1 else [0, 102, 104],
+    )
+    np.testing.assert_allclose(
+        sample["history_time_offsets"],
+        [0.0] if num_frames == 1 else [0.0, -0.104, 0.0],
+        atol=1e-6,
+    )
+    observation, actions = collate_fn([sample])
+    torch.testing.assert_close(observation.state, torch.from_numpy(raw["state"])[None])
+    torch.testing.assert_close(actions, torch.from_numpy(raw["actions"])[None])
+    torch.testing.assert_close(
+        observation.history_time_offsets,
+        torch.from_numpy(sample["history_time_offsets"])[None],
+    )
+    baseline, baseline_actions = collate_fn([sample], include_history=False)
+    assert baseline.images["base_0_rgb"].shape == (1, 2, 2, 3)
+    assert baseline.image_masks["base_0_rgb"].shape == (1,)
+    assert baseline.history_time_offsets is None
+    torch.testing.assert_close(
+        baseline.images["base_0_rgb"], observation.images["base_0_rgb"][:, -1]
+    )
+    torch.testing.assert_close(
+        baseline.image_masks["base_0_rgb"],
+        observation.image_masks["base_0_rgb"][:, -1],
+    )
+    for field in ("state", "tokenized_prompt", "tokenized_prompt_mask"):
+        torch.testing.assert_close(
+            getattr(baseline, field), getattr(observation, field)
+        )
+    torch.testing.assert_close(baseline_actions, actions)
+
+
+@pytest.mark.parametrize("action_key", ["actions", "action"])
+@pytest.mark.parametrize("tensor_actions", [False, True])
+def test_short_memory_dataset_isolates_action_updates(action_key, tensor_actions):
+    from datasets import Dataset
+
+    from rlinf.data.datasets.openpi.short_memory import ShortMemoryDataset
+
+    original_actions = np.array([[5.0], [7.0]], dtype=np.float32)
+    raw = {
+        "index": torch.tensor([0, 1, 2]),
+        "index_is_pad": torch.tensor([False, False, False]),
+        "camera": np.zeros((3, 2, 2, 3), dtype=np.uint8),
+        "state": np.array([2.0], dtype=np.float32),
+        action_key: (
+            torch.from_numpy(original_actions.copy())
+            if tensor_actions
+            else original_actions.copy()
+        ),
+    }
+    lerobot = mock.MagicMock()
+    lerobot.meta.camera_keys = ["camera"]
+    lerobot.hf_dataset = Dataset.from_dict({"timestamp": [0.0, 0.1, 0.2]})
+    lerobot.__getitem__.return_value = raw
+    transformed_actions = []
+
+    def frame_transform(frame):
+        actions = np.asarray(frame[action_key])
+        actions -= frame["state"]
+        transformed_actions.append(actions.copy())
+        return {
+            "image": {"base_0_rgb": frame["camera"]},
+            "image_mask": {"base_0_rgb": True},
+            "actions": actions,
+        }
+
+    dataset = ShortMemoryDataset(
+        lerobot,
+        frame_transform,
+        lambda frame: frame,
+        num_frames=3,
+        action_keys=(action_key,),
+    )
+    for _ in range(2):
+        sample = dataset[2]
+        np.testing.assert_array_equal(
+            sample["actions"], original_actions - raw["state"]
+        )
+        np.testing.assert_array_equal(raw[action_key], original_actions)
+    for actions in transformed_actions:
+        np.testing.assert_array_equal(actions, original_actions - raw["state"])
 
 
 # Skip codec round-trip tests when the optional backends are not installed.
@@ -1010,6 +1226,161 @@ def test_env_output_composes_one_transition_object():
     }
 
 
+def test_env_output_preserves_nested_observations():
+    def observation(value):
+        return {
+            "states": torch.full((2, 3), value),
+            "depth_images": torch.full((2, 2, 2), value),
+            "reset_mask": torch.tensor([False, True]),
+            "history": {
+                "main_images": torch.full((2, 3, 2, 2, 3), value),
+                "wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
+                "frame_mask": torch.tensor([[False, True, True]] * 2),
+                "time_offsets": torch.tensor([[0.0, -3.5, 0.0]] * 2),
+            },
+        }
+
+    output = EnvOutput(obs=observation(1), final_obs=observation(7))
+    payload = output.to_dict()
+
+    for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
+        assert "depth_images" not in payload[name]
+        for key in ("states", "reset_mask", "history"):
+            torch.testing.assert_close(payload[name][key], original[key])
+    assert (
+        "history" not in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
+    )
+    shards = PolicyInput(obs=payload["obs"]).split([1, 1])
+    for index, shard in enumerate(shards):
+        torch.testing.assert_close(
+            shard.obs["history"]["main_images"],
+            output.obs["history"]["main_images"][index : index + 1],
+        )
+
+
+@pytest.mark.parametrize("array_type", [torch.tensor, np.array])
+@pytest.mark.parametrize("later_reset", [False, True])
+def test_env_worker_restores_terminal_observations(array_type, later_reset):
+    def observation(value):
+        return {
+            "states": array_type([[value], [value + 1]]),
+            "task_descriptions": [f"task {value}", f"task {value + 1}"],
+            "history": {
+                "main_images": array_type([[[value]], [[value + 1]]]),
+                "frame_mask": array_type([[False, True], [True, True]]),
+                "time_offsets": array_type([[0.0, -value / 10], [-value / 10, 0.0]]),
+            },
+        }
+
+    current, terminal = observation(1), observation(7)
+    original = copy.deepcopy(current)
+    infos = [
+        {
+            "final_observation": terminal,
+            "_final_observation": array_type([[True], [False]]),
+        }
+    ]
+    if later_reset:
+        infos.append(
+            {
+                "final_observation": observation(11),
+                "_final_observation": array_type([[False], [True]]),
+            }
+        )
+    worker = object.__new__(EnvWorker)
+    merged = worker._build_chunk_final_obs([current], infos)
+
+    expected = observation(7)
+    second = observation(11 if later_reset else 1)
+    expected["states"][1] = second["states"][1]
+    expected["task_descriptions"][1] = second["task_descriptions"][1]
+    for key in expected["history"]:
+        expected["history"][key][1] = second["history"][key][1]
+    for key in ("states", "history"):
+        torch.testing.assert_close(merged[key], expected[key])
+        torch.testing.assert_close(current[key], original[key])
+    assert merged["task_descriptions"] == expected["task_descriptions"]
+    assert current["task_descriptions"] == original["task_descriptions"]
+    merged["history"]["main_images"][0] = 100
+    merged["task_descriptions"][0] = "changed"
+    np.testing.assert_array_equal(terminal["history"]["main_images"], [[[7]], [[8]]])
+    assert terminal["task_descriptions"] == ["task 7", "task 8"]
+
+
+def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
+    from torch.utils.data.distributed import DistributedSampler
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.datasets.common.epoch import forward_set_epoch
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    def gather_object(gathered, state):
+        gathered[0] = state
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_object)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    def make_worker():
+        dataset = torch.arange(40)
+        sampler = DistributedSampler(
+            dataset, num_replicas=1, rank=0, shuffle=True, seed=19
+        )
+        worker = object.__new__(FSDPVlaSftWorker)
+        worker._rank = 0
+        worker._world_size = 1
+        worker._data_epoch = 0
+        worker.data_loader = StatefulDataLoader(
+            dataset,
+            batch_size=4,
+            sampler=sampler,
+        )
+        worker.data_iter = iter(worker.data_loader)
+        return worker
+
+    original_rng = get_rng_state()
+    try:
+        uninterrupted = make_worker()
+        uninterrupted._data_epoch = 2
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        uninterrupted.data_iter = iter(uninterrupted.data_loader)
+        for _ in range(3):
+            next(uninterrupted.data_iter)
+        uninterrupted._save_data_checkpoint(str(tmp_path))
+
+        expected_torch = torch.rand(3)
+        expected_numpy = np.random.random(3)
+        expected_python = random.random()
+        expected_remaining = torch.cat(list(uninterrupted.data_iter))
+        uninterrupted._data_epoch += 1
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        expected_next_epoch = torch.cat(list(uninterrupted.data_loader))
+
+        resumed = make_worker()
+        torch.manual_seed(101)
+        np.random.seed(101)
+        random.seed(101)
+        resumed._load_data_checkpoint(str(tmp_path))
+
+        assert resumed._data_epoch == 2
+        torch.testing.assert_close(torch.rand(3), expected_torch, rtol=0, atol=0)
+        np.testing.assert_array_equal(np.random.random(3), expected_numpy)
+        assert random.random() == expected_python
+        first_batch = next(resumed.data_iter)
+        torch.testing.assert_close(first_batch, expected_remaining[:4], rtol=0, atol=0)
+        actual_remaining = torch.cat([first_batch, *list(resumed.data_iter)])
+        torch.testing.assert_close(actual_remaining, expected_remaining, rtol=0, atol=0)
+
+        resumed._data_epoch += 1
+        forward_set_epoch(resumed.data_loader, resumed._data_epoch)
+        actual_next_epoch = torch.cat(list(resumed.data_loader))
+        torch.testing.assert_close(
+            actual_next_epoch, expected_next_epoch, rtol=0, atol=0
+        )
+    finally:
+        set_rng_state(original_rng)
+
+
 def test_removed_duplicate_types_are_not_schema_api():
     import rlinf.data.schema as schema
 
@@ -1158,6 +1529,7 @@ def test_external_policy_input_split_merge_preserves_actions():
 def test_online_lerobot_payload_survives_source_routing():
     episode_data = {
         "chunk_actions": torch.arange(12).reshape(3, 2, 2),
+        "initial_observation": {"images": torch.arange(6).reshape(3, 2)},
         "obs_list": [
             {"images": torch.arange(6).reshape(3, 2)},
             {"images": torch.arange(6, 12).reshape(3, 2)},
@@ -1174,6 +1546,10 @@ def test_online_lerobot_payload_survives_source_routing():
 
     assert merged_data is not None
     assert torch.equal(merged_data["chunk_actions"], episode_data["chunk_actions"])
+    assert torch.equal(
+        merged_data["initial_observation"]["images"],
+        episode_data["initial_observation"]["images"],
+    )
     assert torch.equal(
         merged_data["obs_list"][1]["images"],
         episode_data["obs_list"][1]["images"],
@@ -1248,6 +1624,7 @@ def test_merging_conflicting_scalar_batch_values_is_rejected():
 def test_episode_data_round_trip_keeps_scalar_info_flags_intact():
     episode_data = {
         "chunk_actions": torch.arange(8, dtype=torch.float32).reshape(4, 2),
+        "initial_observation": {"states": torch.arange(4).reshape(4, 1)},
         "obs_list": [{"states": torch.arange(4).reshape(4, 1)}],
         "terminations": torch.zeros(4, 1, dtype=torch.bool),
         "truncations": torch.zeros(4, 1, dtype=torch.bool),
@@ -1481,6 +1858,7 @@ def _env_part(
 def _episode_data():
     return {
         "chunk_actions": torch.zeros(1, 1, 1),
+        "initial_observation": {"states": torch.zeros(1, 1)},
         "obs_list": [{"states": torch.zeros(1, 1)}],
         "terminations": torch.zeros(1, 1, dtype=torch.bool),
         "truncations": torch.zeros(1, 1, dtype=torch.bool),
@@ -2014,6 +2392,10 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0, 2.0]]]),
+        initial_observation={
+            "states": torch.tensor([[-1.0, -1.0]]),
+            "task_descriptions": ["pick"],
+        },
         obs_list=[
             {
                 "states": torch.tensor([[0.0, 0.0]]),
@@ -2034,6 +2416,9 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     assert torch.equal(
         torch.from_numpy(episode[0]["actions"]), torch.tensor([9.0, 8.0])
     )
+    assert torch.equal(
+        torch.from_numpy(episode[0]["state"]), torch.tensor([-1.0, -1.0])
+    )
 
 
 def test_online_lerobot_accumulator_preserves_auto_reset_observation():
@@ -2046,6 +2431,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0]]]),
+        initial_observation={"states": torch.tensor([[5.0]])},
         obs_list=[{"states": torch.tensor([[100.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2059,6 +2445,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[2.0]]]),
+        initial_observation={"states": torch.tensor([[100.0]])},
         obs_list=[{"states": torch.tensor([[20.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2066,7 +2453,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     )
 
     first, second = accumulator.drain_episodes()
-    assert first[0]["state"].item() == 10.0
+    assert first[0]["state"].item() == 5.0
     assert first[0]["is_success"].item()
     assert second[0]["state"].item() == 100.0
 
@@ -2087,6 +2474,7 @@ def test_online_lerobot_accumulator_filters_unsuccessful_episodes():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[1.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
             obs_list=[{"states": torch.tensor([[1.0]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[truncated]]),
@@ -2108,6 +2496,7 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0], [2.0]], [[3.0], [4.0]]]),
+        initial_observation={"states": torch.tensor([[0.0], [20.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0], [30.0]])},
             {"states": torch.tensor([[20.0], [40.0]])},
@@ -2121,6 +2510,8 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     assert len(episodes) == 2
     assert [frame["actions"].item() for frame in episodes[0]] == [1.0, 2.0]
     assert [frame["actions"].item() for frame in episodes[1]] == [3.0, 4.0]
+    assert [frame["state"].item() for frame in episodes[0]] == [0.0, 10.0]
+    assert [frame["state"].item() for frame in episodes[1]] == [20.0, 30.0]
 
 
 def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
@@ -2138,6 +2529,7 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     accumulator.append_chunk_episode_data(
         policy_output=policy_output,
         chunk_actions=chunk_actions,
+        initial_observation={"states": torch.tensor([[0.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0]])},
             {"states": torch.tensor([[20.0]])},
@@ -2150,6 +2542,37 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     [episode] = accumulator.drain_episodes()
     assert [frame["actions"].item() for frame in episode] == [1.0, 8.0]
     assert [frame["intervene_flag"].item() for frame in episode] == [False, True]
+    assert [frame["state"].item() for frame in episode] == [0.0, 10.0]
+
+
+def test_online_lerobot_accumulator_filters_by_intervention_step_count():
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1,
+        intervene_step_filter=2,
+        num_action_chunks=2,
+        action_dim=1,
+    )
+
+    for flags in ([True, False], [True, True]):
+        policy_output = PolicyOutput(
+            forward_inputs={"action": torch.tensor([[[1.0], [2.0]]])},
+            intervene_flags=torch.tensor([flags]),
+        )
+        accumulator.append_chunk_episode_data(
+            policy_output=policy_output,
+            chunk_actions=torch.tensor([[[1.0], [2.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
+            obs_list=[
+                {"states": torch.tensor([[10.0]])},
+                {"states": torch.tensor([[20.0]])},
+            ],
+            terminations=torch.tensor([[False, True]]),
+            truncations=torch.zeros(1, 2, dtype=torch.bool),
+            infos_list=[{}, {}],
+        )
+
+    [episode] = accumulator.drain_episodes()
+    assert [frame["intervene_flag"].item() for frame in episode] == [True, True]
 
 
 def test_online_lerobot_accumulator_applies_recording_controls():
@@ -2167,6 +2590,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[action]]]),
+            initial_observation={"states": torch.tensor([[state - 10.0]])},
             obs_list=[{"states": torch.tensor([[state]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[False]]),
@@ -2175,7 +2599,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
 
     [episode] = accumulator.drain_episodes()
     assert len(episode) == 1
-    assert episode[0]["state"].item() == 10.0
+    assert episode[0]["state"].item() == 20.0
     assert episode[0]["actions"].item() == 3.0
     assert episode[0]["segment_id"].item() == 1
 
@@ -3674,3 +4098,197 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+class TestVersionFieldPreservation:
+    """merge_result_list and split_results keep version fields aligned."""
+
+    @staticmethod
+    def _dynamic_result(
+        num_sequence: int = 2,
+        group_size: int = 1,
+        version_start: list[int] | None = None,
+        version_end: list[int] | None = None,
+        rewards: list[float] | None = None,
+    ):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=group_size,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence if rewards is None else rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_merge_concatenates_versions(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(version_start=[1, 2], version_end=[1, 3]),
+                self._dynamic_result(version_start=[4], version_end=[5]),
+            ]
+        )
+        assert merged.version_start == [1, 2, 4]
+        assert merged.version_end == [1, 3, 5]
+
+    def test_merge_without_versions_stays_none(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [self._dynamic_result(), self._dynamic_result()]
+        )
+        assert merged.version_start is None
+        assert merged.version_end is None
+
+    def test_merge_mixed_versions_asserts(self):
+        with pytest.raises(AssertionError, match="mix"):
+            DynamicRolloutResult.merge_result_list(
+                [
+                    self._dynamic_result(version_start=[1], version_end=[1]),
+                    self._dynamic_result(),
+                ]
+            )
+
+    def test_split_slices_versions(self):
+        result = self._dynamic_result(
+            num_sequence=3, version_start=[1, 2, 3], version_end=[1, 2, 3]
+        )
+        splits = DynamicRolloutResult.split_results(result, [1, 2])
+        assert [s.version_start for s in splits] == [[1], [2, 3]]
+        assert [s.version_end for s in splits] == [[1], [2, 3]]
+
+    def test_split_without_versions_stays_none(self):
+        result = self._dynamic_result(num_sequence=2)
+        splits = DynamicRolloutResult.split_results(result, [1, 1])
+        assert all(s.version_start is None for s in splits)
+        assert all(s.version_end is None for s in splits)
+
+
+class TestGroupMetadataView:
+    """DynamicRolloutResult.group_metadata over real results."""
+
+    @staticmethod
+    def _dynamic_result(
+        rewards=None,
+        version_start=None,
+        version_end=None,
+        idx_to_traj=None,
+        response_lengths=None,
+        is_end=None,
+    ):
+        from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+        num_sequence = len(idx_to_traj) if idx_to_traj else 2
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=2,
+            idx_to_traj=idx_to_traj or [0, 1],
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=response_lengths or [1] * num_sequence,
+            is_end=is_end or [True] * num_sequence,
+            rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_metadata_summarizes_rewards_versions_tokens_calls(self):
+        result = self._dynamic_result(
+            rewards=[1.0, 0.0, 1.0, 0.0],
+            version_start=[1, 1, 2, 3],
+            version_end=[1, 2, 3, 3],
+            idx_to_traj=[0, 0, 1, 1],
+            response_lengths=[2, 3, 4, 5],
+        )
+        metadata = result.group_metadata()
+        assert metadata.group_id is None
+        assert metadata.rewards == [1.0, 1.0]
+        assert metadata.earliest_version == 1
+        assert metadata.completion_version == 3
+        assert metadata.num_gen_tokens == 14
+        # One generate call per sequence, is_end is irrelevant.
+        assert metadata.num_generate_calls == 4
+
+    def test_metadata_without_versions_or_rewards(self):
+        result = self._dynamic_result(rewards=None, is_end=[False, False])
+        metadata = result.group_metadata()
+        assert metadata.rewards == [None, None]
+        assert metadata.earliest_version is None
+        assert metadata.completion_version is None
+        assert metadata.num_generate_calls == 2
+
+
+class TestTaskNameField:
+    """task_name rides on results like group_id: single-group only."""
+
+    @staticmethod
+    def _dynamic_result(num_sequence: int = 2, task_name: str | None = None):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=num_sequence,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence,
+            task_name=task_name,
+        )
+
+    def test_merge_drops_task_name(self):
+        """A merged result spans several groups, so it carries None."""
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(task_name="searchr1"),
+                self._dynamic_result(task_name="searchr1"),
+            ]
+        )
+        assert merged.task_name is None
+
+    def test_split_drops_task_name(self):
+        """Split results are rebuilt without the field, so it is None."""
+        split = DynamicRolloutResult.split_results(
+            self._dynamic_result(task_name="searchr1"), [1, 1]
+        )
+        assert all(result.task_name is None for result in split)
+
+    def test_group_metadata_carries_task_name(self):
+        result = self._dynamic_result(task_name="searchr1")
+        assert result.group_metadata().task_name == "searchr1"
+
+
+def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3], [1, 2, 3, 4]],
+        prompt_lengths=[1, 2],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        rollout_logprobs=[[-0.1, -0.2], [-0.3, -0.4]],
+        values=torch.arange(8, dtype=torch.float32).reshape(2, 4),
+        advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
+        returns=torch.ones(2, 4),
+    )
+    batch = result.to_actor_batch(4, 0)
+    batch["loss_scales"] = batch["response_mask"].float()
+    assert (batch["response_mask"][0] & batch["response_mask"][1]).sum() == 1
+    packed = DynamicRolloutResult.pack_traj_batch({}, batch)
+    assert packed["idx_to_traj"] == [0, 0]
+    for key in (
+        "input_ids",
+        "response_mask",
+        "values",
+        "advantages",
+        "returns",
+        "rollout_logprobs",
+        "loss_scales",
+    ):
+        torch.testing.assert_close(packed[key], batch[key])
