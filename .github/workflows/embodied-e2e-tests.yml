@@ -1727,3 +1727,45 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
+
+  embodied-openpi-bench2dex-test:
+    if: ${{ vars.BENCH2DEX_CI_ASSETS_PATH != '' && vars.BENCH2DEX_CI_PI05_PATH != '' && vars.BENCH2DEX_CI_ANCHOR_DIR != '' }}
+    runs-on: embodied
+    env:
+      BENCH2DEX_ASSETS_PATH: ${{ vars.BENCH2DEX_CI_ASSETS_PATH }}
+      BENCH2DEX_PI05_PATH: ${{ vars.BENCH2DEX_CI_PI05_PATH }}
+      BENCH2DEX_ANCHOR_DIR: ${{ vars.BENCH2DEX_CI_ANCHOR_DIR }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Bench2Dex OpenPI environment
+        timeout-minutes: 90
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=hardlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openpi --env bench2dex --python 3.11.14
+
+      - name: Bench2Dex synchronous PPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh bench2dex_ppo_openpi_pi05
+
+      - name: Bench2Dex asynchronous PPO test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh bench2dex_async_ppo_openpi_pi05
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv

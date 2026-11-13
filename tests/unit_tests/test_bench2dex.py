@@ -462,7 +462,6 @@ def test_runtime_stage_rewards_preserve_chunk_and_camera_semantics(
 
 @pytest.mark.parametrize("initial_count", range(5))
 def test_runtime_success_settles_four_stage_reward_budget(initial_count):
-
     from rlinf.envs.sim.bench2dex.runtime import Bench2DexRuntime
 
     runtime = Bench2DexRuntime.__new__(Bench2DexRuntime)
@@ -543,3 +542,157 @@ def test_success_completes_stage_budget_once(initial_count):
     assert reward.total_reward == pytest.approx(0.8)
     assert reward.complete() == 0.0
     assert reward.update(dict.fromkeys(stages, True)) == 0.0
+
+
+@pytest.mark.parametrize(
+    "config_name,task,embodiment,action_dim,budget,slots",
+    [
+        (
+            "bench2dex_task22_ppo_openpi_pi05",
+            "22_tool_box_loading",
+            "multi_panda_with_orca",
+            40,
+            681,
+            700,
+        ),
+        (
+            "bench2dex_task22_async_ppo_openpi_pi05",
+            "22_tool_box_loading",
+            "multi_panda_with_orca",
+            40,
+            681,
+            700,
+        ),
+        (
+            "bench2dex_task22_openpi_pi05_eval",
+            "22_tool_box_loading",
+            "multi_panda_with_orca",
+            40,
+            681,
+            700,
+        ),
+        (
+            "bench2dex_task64_ppo_openpi_pi05",
+            "64_sports_ball_cup_sort",
+            "multi_panda_with_allegro",
+            32,
+            665,
+            680,
+        ),
+        (
+            "bench2dex_task64_async_ppo_openpi_pi05",
+            "64_sports_ball_cup_sort",
+            "multi_panda_with_allegro",
+            32,
+            665,
+            680,
+        ),
+        (
+            "bench2dex_task64_grpo_openpi_pi05",
+            "64_sports_ball_cup_sort",
+            "multi_panda_with_allegro",
+            32,
+            665,
+            680,
+        ),
+        (
+            "bench2dex_task64_openpi_pi05_eval",
+            "64_sports_ball_cup_sort",
+            "multi_panda_with_allegro",
+            32,
+            665,
+            680,
+        ),
+    ],
+)
+def test_bench2dex_recipes(
+    monkeypatch, config_name, task, embodiment, action_dim, budget, slots
+):
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(repo / "examples/embodiment"))
+    for key, value in {
+        "BENCH2DEX_PATH": "/bench",
+        "BENCH2DEX_ASSETS_PATH": "/assets",
+        "BENCH2DEX_PI05_PATH": "/model",
+        "BENCH2DEX_ANCHOR_DIR": "/anchors",
+    }.items():
+        monkeypatch.setenv(key, value)
+    only_eval = config_name.endswith("_eval")
+    config_dir = repo / (
+        "evaluations/bench2dex" if only_eval else "examples/embodiment/config"
+    )
+    with initialize_config_dir(str(config_dir), version_base="1.1"):
+        cfg = compose(config_name=config_name)
+    OmegaConf.resolve(cfg)
+    model = cfg.rollout.model if only_eval else cfg.actor.model
+    assert model.action_dim == model.openpi.model_action_dim == action_dim
+    assert model.num_action_chunks == model.openpi.action_horizon == 20
+    assert model.model_path == "/model"
+    assert cfg.rollout.rollout_backend == "huggingface"
+    for split in ("eval",) if only_eval else ("train", "eval"):
+        env = cfg.env[split]
+        assert env.init_params.task == task
+        assert env.init_params.embodiment == embodiment
+        assert env.auto_reset is False
+        assert env.max_episode_steps == budget
+        assert env.max_steps_per_rollout_epoch == slots
+        assert env.init_params.stage_reward_coef == 0
+        assert env.init_params.success_reward_coef == 1
+    if only_eval:
+        assert cfg.env.eval.skip_intermediate_renders is False
+        return
+    is_async = "_async_" in config_name
+    is_grpo = "_grpo_" in config_name
+    assert cfg.actor.enable_offload and cfg.rollout.enable_offload
+    assert cfg.env.train.enable_offload is (not is_async)
+    assert cfg.env.eval.enable_offload is True
+    assert cfg.env.train.skip_intermediate_renders is True
+    assert cfg.actor.model.add_value_head is (not is_grpo)
+    assert cfg.algorithm.loss_type == (
+        "decoupled_actor_critic" if is_async else "actor" if is_grpo else "actor_critic"
+    )
+    samples = cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch * (slots // 20)
+    assert samples % cfg.actor.global_batch_size == 0
+    assert cfg.actor.global_batch_size % (4 * cfg.actor.micro_batch_size) == 0
+    if action_dim == 40:
+        assert samples == 4480
+        assert cfg.runner.val_check_interval == 10
+        assert cfg.runner.save_interval == 2
+        assert cfg.env.eval.total_num_envs * cfg.env.eval.rollout_epoch == 32
+        assert cfg.env.train.init_params.generalization_profile == "none"
+        assert cfg.actor.model.openpi.noise_level == 0.3
+        assert cfg.algorithm.use_dual_clip is False
+
+
+@pytest.mark.parametrize(
+    "config_name", ["bench2dex_ppo_openpi_pi05", "bench2dex_async_ppo_openpi_pi05"]
+)
+def test_bench2dex_e2e_recipes(monkeypatch, config_name):
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    repo = Path(__file__).resolve().parents[2]
+    for key, value in {
+        "REPO_PATH": str(repo),
+        "EMBODIED_PATH": str(repo / "examples/embodiment"),
+        "BENCH2DEX_PATH": "/bench",
+        "BENCH2DEX_ASSETS_PATH": "/assets",
+        "BENCH2DEX_PI05_PATH": "/model",
+        "BENCH2DEX_ANCHOR_DIR": "/anchors",
+    }.items():
+        monkeypatch.setenv(key, value)
+    with initialize_config_dir(
+        str(repo / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(config_name=config_name)
+    OmegaConf.resolve(cfg)
+    assert cfg.runner.max_steps == cfg.runner.save_interval == 2
+    assert cfg.runner.val_check_interval == 10
+    assert (
+        cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch * 35
+        == cfg.actor.global_batch_size
+    )
+    assert cfg.env.train.enable_offload is ("_async_" not in config_name)

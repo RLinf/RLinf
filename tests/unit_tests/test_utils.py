@@ -1620,3 +1620,82 @@ def test_rollout_moments_reduce_unequal_ranks_and_empty_rank(tmp_path):
         nprocs=3,
         join=True,
     )
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "examples/embodiment/run_embodiment.sh",
+        "examples/embodiment/run_async.sh",
+        "evaluations/run_eval.sh",
+        "tests/e2e_tests/embodied/run.sh",
+        "tests/e2e_tests/embodied/run_async.sh",
+        "tests/e2e_tests/evaluations/run.sh",
+    ],
+)
+@pytest.mark.parametrize(
+    "runtime_env,expected",
+    [
+        ({}, {"ISAAC_PATH": None, "EXP_PATH": None, "CARB_APP_PATH": None}),
+        (
+            {"ISAAC_PATH": "/sdk"},
+            {
+                "ISAAC_PATH": "/sdk",
+                "EXP_PATH": "/sdk/apps",
+                "CARB_APP_PATH": "/sdk/kit",
+            },
+        ),
+        (
+            {
+                "ISAAC_PATH": "/sdk",
+                "EXP_PATH": "/custom/apps",
+                "CARB_APP_PATH": "/custom/kit",
+            },
+            {
+                "ISAAC_PATH": "/sdk",
+                "EXP_PATH": "/custom/apps",
+                "CARB_APP_PATH": "/custom/kit",
+            },
+        ),
+    ],
+)
+def test_launchers_resolve_explicit_isaac_runtime(
+    tmp_path, launcher, runtime_env, expected
+):
+    import json
+
+    repo = Path(__file__).resolve().parents[2]
+    staged = tmp_path / "repo"
+    for relative in (launcher, "ray_utils/isaac_runtime_paths.sh"):
+        destination = staged / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text((repo / relative).read_text())
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    capture = tmp_path / "environment.json"
+    interpreter = bin_dir / "python"
+    interpreter.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib\n"
+        "pathlib.Path(os.environ['CAPTURE_ENV']).write_text(json.dumps({key: os.environ.get(key) for key in ['ISAAC_PATH', 'EXP_PATH', 'CARB_APP_PATH']}))\n"
+    )
+    interpreter.chmod(0o755)
+    env = os.environ.copy()
+    for key in expected:
+        env.pop(key, None)
+    env.update(
+        runtime_env,
+        REPO_PATH=str(staged),
+        CAPTURE_ENV=str(capture),
+        PATH=str(bin_dir) + os.pathsep + env["PATH"],
+    )
+    result = subprocess.run(
+        ["bash", str(staged / launcher), "bench2dex_task22_openpi_pi05_eval"],
+        cwd=staged,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(capture.read_text()) == expected

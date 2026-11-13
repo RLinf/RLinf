@@ -49,7 +49,7 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  backend: huggingface
+  rollout_backend: huggingface
   recompute_logprobs: false
   enable_offload: false
   pipeline_stage_num: 1

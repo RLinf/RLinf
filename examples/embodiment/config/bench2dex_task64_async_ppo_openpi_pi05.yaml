@@ -10,3 +10,7 @@ algorithm:
   loss_type: decoupled_actor_critic
   staleness_threshold: 1
   behave_weight_threshold: 2.0
+
+env:
+  train:
+    enable_offload: false

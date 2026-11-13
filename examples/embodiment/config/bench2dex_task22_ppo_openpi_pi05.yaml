@@ -1,0 +1,162 @@
+defaults:
+  - env/bench2dex@env.train
+  - env/bench2dex@env.eval
+  - model/pi05_bench2dex@actor.model
+  - hybrid_engines/openpi_fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-3
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: bench2dex_task22_ppo_openpi_pi05
+    logger_backends: [tensorboard]
+  max_epochs: 190
+  max_steps: -1
+  only_eval: false
+  val_check_interval: 10
+  save_interval: 2
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 1
+  reward_coef: 1.0
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+  update_epoch: 3
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  use_dual_clip: false
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  bootstrap_type: standard
+  filter_rewards: false
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  train:
+    enable_offload: true
+    rollout_epoch: 8
+    total_num_envs: 16
+    auto_reset: false
+    ignore_terminations: false
+    skip_intermediate_renders: true
+    seed: 0
+    is_eval: false
+    max_episode_steps: 681
+    max_steps_per_rollout_epoch: 700
+    init_params:
+      task: 22_tool_box_loading
+      embodiment: multi_panda_with_orca
+      anchor_dir: ${oc.env:BENCH2DEX_ANCHOR_DIR}
+      anchor_hdf5: null
+      episode_manifest: null
+      generalization_profile: none
+      generalization_split: seen
+      inv_cov_seed: 0
+      output_dir: ${runner.logger.log_path}/simulator/train
+      policy_name: pi05
+  eval:
+    enable_offload: true
+    rollout_epoch: 2
+    total_num_envs: 16
+    auto_reset: false
+    ignore_terminations: false
+    skip_intermediate_renders: true
+    is_eval: true
+    max_episode_steps: 681
+    max_steps_per_rollout_epoch: 700
+    init_params:
+      task: 22_tool_box_loading
+      embodiment: multi_panda_with_orca
+      anchor_hdf5: null
+      output_dir: ${runner.logger.log_path}/benchmark/eval
+      policy_name: pi05
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  recompute_logprobs: false
+  enable_offload: true
+  pipeline_stage_num: 1
+  model:
+    model_path: ${actor.model.model_path}
+    precision: null
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 4
+  # 16 scenes x 8 rollouts x 35 chunks = 4480 samples.
+  global_batch_size: 2240
+  seed: 42
+  enable_offload: true
+  model:
+    precision: fp32
+    action_dim: 40
+    add_value_head: true
+    openpi:
+      embed_dtype: bf16
+      model_action_dim: 40
+      task: rl
+      noise_method: flow_sde
+      noise_level: 0.3
+      train_expert_only: true
+      value_after_vlm: true
+  optim:
+    lr: 2.0e-6
+    value_lr: 2.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    critic_warmup_steps: 0
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    use_orig_params: true
+    gradient_checkpointing: false
+    wrappers:
+      value_head:
+        module_names: [value_head]
+    mixed_precision_rules:
+      value_head: fp32
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

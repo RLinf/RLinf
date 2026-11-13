@@ -62,6 +62,8 @@ env:
   group_name: EnvGroup
   enable_offload: false
   train:
+    enable_offload: true
+    skip_intermediate_renders: true
     rollout_epoch: 1
     total_num_envs: 16
     auto_reset: false
@@ -82,6 +84,8 @@ env:
       output_dir: ${runner.logger.log_path}/simulator/train
       policy_name: pi05
   eval:
+    enable_offload: true
+    skip_intermediate_renders: true
     rollout_epoch: 1
     total_num_envs: 16
     auto_reset: false
@@ -98,9 +102,9 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  generation_backend: huggingface
+  rollout_backend: huggingface
   recompute_logprobs: false
-  enable_offload: false
+  enable_offload: true
   pipeline_stage_num: 1
   model:
     model_path: ${actor.model.model_path}
@@ -113,7 +117,7 @@ actor:
   # 16 scenes x 34 chunks = 544 samples, split into four global minibatches.
   global_batch_size: 136
   seed: 42
-  enable_offload: false
+  enable_offload: true
   model:
     add_value_head: true
     openpi:
