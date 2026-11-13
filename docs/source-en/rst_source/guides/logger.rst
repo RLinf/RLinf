@@ -96,3 +96,9 @@ metrics. You can check the metrics through your dashboard.
 
    All three loggers run **in parallel**; feel free to mix and match.
 
+.. note::
+
+   ``runner.per_worker_log`` can create separate TensorBoard logs and W&B runs
+   for individual workers. W&B requires version 0.19.10 or newer for concurrent
+   runs in one process. SwanLab supports only one active run per process, so it
+   cannot be combined with ``runner.per_worker_log``.
