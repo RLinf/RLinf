@@ -63,8 +63,10 @@ class MlpBlock(nn.Module):
         dim: int,
         mlp_dim: int | None = None,
         dropout: float = 0.0,
+        pytorch_numerics: bool = False,
     ):
         super().__init__()
+        self.pytorch_numerics = pytorch_numerics
         mlp_dim = mlp_dim or 4 * dim
         self.fc1 = nn.Linear(dim, mlp_dim)
         self.fc2 = nn.Linear(mlp_dim, dim)
@@ -77,7 +79,7 @@ class MlpBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc1(x)
-        x = F.gelu(x)
+        x = F.gelu(x, approximate="tanh" if self.pytorch_numerics else "none")
         x = self.dropout(x)
         x = self.fc2(x)
         return x
@@ -92,14 +94,16 @@ class Encoder1DBlock(nn.Module):
         num_heads: int,
         mlp_dim: int | None = None,
         dropout: float = 0.0,
+        pytorch_numerics: bool = False,
     ):
         super().__init__()
+        self.pytorch_numerics = pytorch_numerics
         self.norm1 = nn.LayerNorm(dim, eps=1e-6)
         self.norm2 = nn.LayerNorm(dim, eps=1e-6)
         self.attn = nn.MultiheadAttention(
             dim, num_heads, dropout=dropout, batch_first=True
         )
-        self.mlp = MlpBlock(dim, mlp_dim, dropout)
+        self.mlp = MlpBlock(dim, mlp_dim, dropout, pytorch_numerics=pytorch_numerics)
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
@@ -122,12 +126,29 @@ class Encoder1DBlock(nn.Module):
         # Cast only the LayerNorm input. Keep residual dtype (OpenPI mixed precision).
         norm_dtype = self.norm1.weight.dtype
         y = self.norm1(x.to(norm_dtype))
-        if time_offsets is None:
-            y, _ = self.attn(y, y, y, need_weights=False)
-        else:
+        if time_offsets is not None:
             y = factorized_space_time_attention(
                 self.attn, y.reshape(shape), frame_mask
             ).reshape_as(x)
+        elif self.pytorch_numerics:
+            batch, length, width = y.shape
+            heads = self.attn.num_heads
+            qkv = [
+                F.linear(y, weight, bias)
+                .view(batch, length, heads, width // heads)
+                .transpose(1, 2)
+                for weight, bias in zip(
+                    self.attn.in_proj_weight.chunk(3), self.attn.in_proj_bias.chunk(3)
+                )
+            ]
+            y = (
+                F.scaled_dot_product_attention(*qkv)
+                .transpose(1, 2)
+                .reshape(batch, length, width)
+            )
+            y = self.attn.out_proj(y)
+        else:
+            y, _ = self.attn(y, y, y, need_weights=False)
         y = self.dropout1(y)
         x = x + y
 
@@ -148,6 +169,7 @@ class Encoder(nn.Module):
         num_heads: int,
         mlp_dim: int | None = None,
         dropout: float = 0.0,
+        pytorch_numerics: bool = False,
         use_gradient_checkpointing: bool = False,
         temporal_layers: Sequence[int] = (),
         drop_history_layer: int | None = None,
@@ -176,6 +198,7 @@ class Encoder(nn.Module):
                     num_heads,
                     mlp_dim,
                     dropout,
+                    pytorch_numerics=pytorch_numerics,
                 )
                 for _ in range(depth)
             ]
@@ -232,6 +255,7 @@ class SigLIPViT(nn.Module):
         num_classes: int = 0,
         use_gradient_checkpointing: bool = False,
         dtype_mm: str = "float32",
+        pytorch_numerics: bool = False,
         temporal_layers: Sequence[int] = (),
         drop_history_layer: int | None = None,
     ):
@@ -271,6 +295,7 @@ class SigLIPViT(nn.Module):
             num_heads=self.num_heads,
             mlp_dim=self.mlp_dim,
             dropout=0.0,
+            pytorch_numerics=pytorch_numerics,
             use_gradient_checkpointing=use_gradient_checkpointing,
             temporal_layers=temporal_layers,
             drop_history_layer=drop_history_layer,

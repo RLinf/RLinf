@@ -1,0 +1,22 @@
+defaults:
+  - robolab_openpi_eval
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:EVALUATIONS_PATH}/robolab
+    - file://${oc.env:EMBODIED_PATH}/config
+
+runner:
+  logger:
+    log_path: ./logs/robolab_openpi_truncation_eval
+    experiment_name: robolab_openpi_truncation_eval
+
+env:
+  eval:
+    rollout_epoch: 2
+    # End inside the second 15-step action chunk and reset for another batch.
+    max_episode_steps: 17
+    max_steps_per_rollout_epoch: 30
+    init_params:
+      output_dir: ./logs/robolab_openpi_truncation_eval/native

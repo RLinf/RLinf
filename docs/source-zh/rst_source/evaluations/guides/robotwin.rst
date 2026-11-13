@@ -293,7 +293,7 @@ LingbotVLA 2.0
 常见问题
 --------
 
-- **ROBOTWIN_PATH 未设置：** ``run_eval.sh`` 会将其加入 ``PYTHONPATH``，但必须指向有效的 RoboTwin 仓库根目录（``RLinf_support`` 分支）。
+- **ROBOTWIN_PATH 未设置：** 请将 ``ROBOTWIN_PATH`` 导出为 RoboTwin 仓库根目录（``RLinf_support`` 分支）。``run_eval.sh`` 仅在该变量已设置时将其加入 ``PYTHONPATH``。
 - **assets_path 错误：** 环境通过 ``ASSETS_PATH`` 加载仿真资产；路径无效会导致启动失败或场景缺失。
 - **机器人平台：** 通过 ``ROBOT_PLATFORM=ALOHA`` 选择平台变体。
 - **GPU 显存不足：** 在 YAML 中设置 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``；或减小 ``env.eval.total_num_envs``。

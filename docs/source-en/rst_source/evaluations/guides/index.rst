@@ -25,6 +25,9 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    * - PolaRiS
      - Tabletop manipulation simulation platform
      - :doc:`polaris`
+   * - RoboLab
+     - DROID joint-position benchmark with 120 manipulation tasks
+     - :doc:`robolab`
    * - RoboTwin
      - Bimanual manipulation simulation with multiple tasks
      - :doc:`robotwin`
@@ -45,5 +48,6 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    libero
    maniskill_ood
    polaris
+   robolab
    robotwin
    simple
