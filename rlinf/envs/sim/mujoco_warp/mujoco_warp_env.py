@@ -382,6 +382,12 @@ class MujocoWarpEnv(gym.Env):
             self._reward_sum += step_rewards
             self._episode_length += 1
 
+        # Clear ignored terminations before episode completion so an unhealthy
+        # step does not reset the horizon counters.
+        terminated_at_end = terminations.clone()
+        if self.ignore_terminations:
+            terminations = torch.zeros_like(terminations)
+
         dones = torch.logical_or(terminations, truncations)
         ep_returns = torch.zeros(self.num_envs, device=self.device)
         ep_lengths = torch.zeros(self.num_envs, device=self.device)
@@ -401,13 +407,11 @@ class MujocoWarpEnv(gym.Env):
             }
         }
         if self.ignore_terminations:
-            infos["episode"]["terminated_at_end"] = terminations.clone()
-            terminations = torch.zeros_like(terminations)
+            infos["episode"]["terminated_at_end"] = terminated_at_end
 
         obs_dict = self._wrap_obs(obs.clone())
-        all_dones = torch.logical_or(terminations, truncations)
-        if all_dones.any() and auto_reset and self.auto_reset:
-            obs_dict, infos = self._handle_auto_reset(all_dones, obs_dict, infos)
+        if dones.any() and auto_reset and self.auto_reset:
+            obs_dict, infos = self._handle_auto_reset(dones, obs_dict, infos)
 
         self._last_obs = obs_dict["states"].clone()
         self._is_start = False

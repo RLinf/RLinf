@@ -438,7 +438,6 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-openvla-maniskill-libero-test:
     runs-on: embodied
