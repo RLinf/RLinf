@@ -21,7 +21,6 @@ import importlib.util
 import inspect
 import math
 import os
-import random
 import subprocess
 import sys
 import textwrap
@@ -29,7 +28,6 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -50,77 +48,6 @@ from rlinf.utils.metric_utils import (
 )
 from rlinf.utils.utils import masked_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
-
-
-def test_isolated_rng_restores_cpu_streams_after_exception(monkeypatch):
-    from rlinf.scheduler import Worker
-    from rlinf.utils.utils import get_rng_state, isolated_rng, set_rng_state
-
-    monkeypatch.setattr(Worker, "torch_platform", None)
-    monkeypatch.setattr(torch, "manual_seed", torch.default_generator.manual_seed)
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-
-    def sample():
-        return (random.random(), np.random.random(), torch.rand(()).item())
-
-    state = get_rng_state()
-    try:
-        expected = sample()
-        set_rng_state(state)
-        with isolated_rng(seed=42):
-            seeded = sample()
-        with (
-            pytest.raises(RuntimeError, match="evaluation failed"),
-            isolated_rng(seed=42),
-        ):
-            assert sample() == seeded
-            raise RuntimeError("evaluation failed")
-        assert sample() == expected
-    finally:
-        set_rng_state(state)
-
-
-@pytest.mark.parametrize("bulk_api", [False, True])
-def test_isolated_rng_restores_every_accelerator_stream(monkeypatch, bulk_api):
-    from rlinf.scheduler import Worker
-    from rlinf.utils.utils import isolated_rng
-
-    generators = [torch.Generator().manual_seed(seed) for seed in (41, 42)]
-
-    def get_state(device=1):
-        return generators[device].get_state()
-
-    def set_state(state, device=1):
-        generators[device].set_state(state)
-
-    platform = SimpleNamespace(
-        is_available=lambda: True,
-        get_rng_state=get_state,
-        set_rng_state=set_state,
-    )
-    if bulk_api:
-
-        def get_all():
-            return [get_state(index) for index in range(len(generators))]
-
-        def set_all(states):
-            for index, state in enumerate(states):
-                set_state(state, index)
-
-        platform.get_rng_state_all = get_all
-        platform.set_rng_state_all = set_all
-    else:
-        platform.device_count = lambda: len(generators)
-    monkeypatch.setattr(Worker, "torch_platform", platform)
-    monkeypatch.setattr(Worker, "torch_device_type", "test_accelerator")
-    before = [generator.get_state() for generator in generators]
-
-    with isolated_rng():
-        for generator in generators:
-            torch.rand(3, generator=generator)
-
-    for generator, state in zip(generators, before):
-        assert torch.equal(generator.get_state(), state)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():

@@ -493,9 +493,8 @@ Both local VLM Trend paths use history-window reward inputs. The standard path u
 
 Set ``gt_success_bonus`` to add a bonus for each successful step. Set
 ``env.eval.use_fixed_reset_state_ids: true`` to reuse initial states across
-evaluation rounds and ``rollout.seed`` to seed Hugging Face action sampling per
-worker rank. Compare ``eval/success_at_end`` (success at the end of an episode)
-with ``eval/success_once`` (success at any point in the episode).
+evaluation rounds. Compare ``eval/success_at_end`` (success at the end of an
+episode) with ``eval/success_once`` (success at any point in the episode).
 
 Match the checkpoint's SFT and inference settings for frame order, frame
 sampling, ``video_fps``, system prompt, and chat template. Match

@@ -41,7 +41,6 @@ from rlinf.utils.nested_dict_process import (
 )
 from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import isolated_rng
 
 
 class EnvWorker(Worker):
@@ -1257,15 +1256,6 @@ class EnvWorker(Worker):
 
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
-        seed = (
-            int(self.cfg.env.eval.seed)
-            if self.cfg.env.eval.use_fixed_reset_state_ids
-            else None
-        )
-        with isolated_rng(seed):
-            return self._evaluate(input_channel, rollout_channel)
-
-    def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:

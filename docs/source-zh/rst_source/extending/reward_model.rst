@@ -474,7 +474,7 @@ API 推理仍只支持 ``buffered_vlm``。
    ``history_input``；窗口未满足 ``min_history_size`` 时，reward worker 会返回
    ``interval_reward``，而不是跳过 RPC。
 
-设置 ``gt_success_bonus``，为每个成功步增加奖励。设置 ``env.eval.use_fixed_reset_state_ids: true``，在各轮评估中复用初始状态。设置 ``rollout.seed``，按 worker rank 固定 Hugging Face 的动作采样种子。用 ``eval/success_at_end`` 衡量回合结束时的成功率，用 ``eval/success_once`` 衡量回合内曾经成功的比例。
+设置 ``gt_success_bonus``，为每个成功步增加奖励。设置 ``env.eval.use_fixed_reset_state_ids: true``，在各轮评估中复用初始状态。用 ``eval/success_at_end`` 衡量回合结束时的成功率，用 ``eval/success_once`` 衡量回合内曾经成功的比例。
 
 将推理的帧顺序、帧采样、``video_fps``、system prompt 和 chat template 与 checkpoint 的 SFT 设置对齐。确保 ``data.video_do_sample_frames`` 与 ``reward.model.subprocessor_kwargs.video_processor.do_sample_frames`` 一致。帧率与提示词选项在 SFT 中配置于 ``data``，在推理中配置于 ``reward.model.input_builder_params``。独立 success head 使用 ``reward.model.success_input_builder_params``。
 
