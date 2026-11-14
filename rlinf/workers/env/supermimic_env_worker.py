@@ -83,7 +83,7 @@ class SuperMimicEnvWorker(EnvWorker):
             self.send(transition, actor, rank)
 
     def consume_metrics(self) -> dict[str, float]:
-        """Simulator and reset statistics since the last call, over every rank."""
+        """Simulator and reset statistics of this rank since the last call."""
         return self.train_env.consume_metrics()
 
     def save_checkpoint(self, save_path: str) -> None:

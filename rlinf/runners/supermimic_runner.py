@@ -54,6 +54,8 @@ if TYPE_CHECKING:
     )
 
 _RUNNER_STATE = "runner_state.json"
+# Counts add up over the env ranks; every other env statistic is a rank mean.
+_SUMMED_ENV_METRICS = ("sim/episodes_finished",)
 
 
 def due_updates(step: int, anchor: float | None, ratio: float) -> tuple[int, float]:
@@ -165,6 +167,18 @@ class SuperMimicRunner(EmbodiedRunner):
                 f"runner.log_interval must be >= 1, got {self.log_interval}."
             )
         self._logged_step = 0
+
+    def _merge_env_metrics(self, per_rank: list[dict[str, float]]) -> dict[str, float]:
+        """Env statistics over every rank.
+
+        Every rank steps the same number of envs for the same number of
+        steps, so the mean of the rank means is the mean over every env.
+        """
+        merged = self._aggregate_numeric_metrics(per_rank)
+        for key in _SUMMED_ENV_METRICS:
+            if key in merged:
+                merged[key] = sum(rank[key] for rank in per_rank)
+        return merged
 
     # ----------------------------------------------------------- checkpoints
 
@@ -489,9 +503,16 @@ class SuperMimicRunner(EmbodiedRunner):
                 prefix=f"time/{name}",
                 worker_group_name=group.worker_group_name,
             )
+        per_rank_env = self.env.consume_metrics().wait()
+        self._log_ranked_metrics(
+            metrics_list=per_rank_env,
+            step=step,
+            prefix="env",
+            worker_group_name=self.env.worker_group_name,
+        )
         env_metrics = {
             f"env/{key}": value
-            for key, value in self.env.consume_metrics().wait()[0].items()
+            for key, value in self._merge_env_metrics(per_rank_env).items()
         }
         env_metrics["env/env_steps"] = float(self.env_steps)
         self._log_ranked_metrics(

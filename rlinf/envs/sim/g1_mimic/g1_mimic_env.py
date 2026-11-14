@@ -260,19 +260,15 @@ class G1MimicEnv:
         self._steps = 0
 
     def consume_metrics(self) -> dict[str, float]:
-        """Means over every env rank since the last call, then a reset."""
+        """This rank's statistics since the last call, then a reset."""
         totals = torch.stack(
             (self._reward_total, self._failures.float(), self._episodes.float())
         )
-        world = 1
-        if self.group is not None and dist.get_world_size(self.group) > 1:
-            dist.all_reduce(totals, group=self.group)
-            world = dist.get_world_size(self.group)
         value = self.reset_sampler.value
         reward, failures, episodes, value_mean, value_min = torch.cat(
             (totals, value.mean().reshape(1), value.min().reshape(1))
         ).tolist()
-        transitions = max(self._steps * self.num_envs * world, 1)
+        transitions = max(self._steps * self.num_envs, 1)
         self._clear_metrics()
         return {
             "sim/reward_mean": reward / transitions,

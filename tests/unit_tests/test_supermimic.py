@@ -452,6 +452,17 @@ def _runner_with_replay_answers(answers: list[list[bool]], replay_length: int = 
     return runner
 
 
+def test_env_statistics_average_rank_means_and_add_episode_counts():
+    runner = object.__new__(SuperMimicRunner)
+    per_rank = [
+        {"sim/reward_mean": 0.02, "sim/episodes_finished": 30.0},
+        {"sim/reward_mean": 0.04, "sim/episodes_finished": 10.0},
+    ]
+    merged = runner._merge_env_metrics(per_rank)
+    assert merged["sim/reward_mean"] == pytest.approx(0.03)
+    assert merged["sim/episodes_finished"] == 40.0
+
+
 def test_due_updates_wait_until_every_rank_can_draw_a_window():
     runner = _runner_with_replay_answers([[True, False], [True, False], [True, True]])
     _, _, due = runner._collect_until_update()
