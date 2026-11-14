@@ -1433,7 +1433,7 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
 
 def validate_embodied_cfg(cfg):
     with open_dict(cfg.rollout):
-        cfg.rollout.rollout_backend = cfg.rollout.get("rollout_backend", None)
+        cfg.rollout.rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     if cfg.rollout.rollout_backend == "sglang":
         with open_dict(cfg.rollout.sglang):
             cfg.rollout.sglang.backend_type = cfg.rollout.sglang.get(
