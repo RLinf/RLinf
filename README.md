@@ -34,6 +34,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports SFT and PPO for CNN and π₀.₅ policies on the [DexJoCo](https://github.com/brave-eai/dexjoco) dexterous manipulation benchmark. Doc: [RL with DexJoCo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html).
 - [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards. Doc: [DiffusionART](docs/source-en/rst_source/examples/diffusion_art.rst).
 - [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
@@ -207,6 +208,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/polaris.html">Polaris</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>

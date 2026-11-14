@@ -33,6 +33,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上对 CNN 和 π₀.₅ 策略进行 SFT 和 PPO 训练。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
 - [2026/11] 🔥 RLinf 支持 DiffusionART，使用 OCR 奖励微调 SD3 图像生成模型和 Wan2.2 视频生成模型。文档：[DiffusionART](docs/source-zh/rst_source/examples/diffusion_art.rst)。
 - [2026/11] 🔥 RLinf 支持 LIBERO-Mem，并为 OpenPI 提供受 MEM 启发的视觉短期记忆，用于监督微调和评测。文档：[LIBERO-Mem](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark)、[OpenPI Short Memory](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0/short_memory.html)。
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
@@ -208,6 +209,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/polaris.html">Polaris</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html">DexJoCo</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
