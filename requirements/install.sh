@@ -60,6 +60,8 @@ DISABLE_FLASH_ATTN=0
 DISABLE_APEX=0
 # User-level opt-out for natten, set by --no-natten.
 DISABLE_NATTEN=0
+# Install the larger CUDA-enabled PaddlePaddle wheel for diffusion OCR rewards.
+INSTALL_PADDLE_GPU=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
 PLATFORM_TORCHCODEC_SPEC=""
@@ -123,7 +125,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -139,6 +141,7 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+    --paddle-gpu           Install CUDA-enabled PaddlePaddle for diffusion OCR rewards.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -301,6 +304,10 @@ parse_args() {
                 USE_MIRRORS=1
                 shift
                 ;;
+            --paddle-gpu)
+                INSTALL_PADDLE_GPU=1
+                shift
+                ;;
             --no-root)
                 NO_ROOT=1
                 shift
@@ -403,6 +410,17 @@ use_opencv_gui_wheel() {
     [ -n "$ver" ] || return 0
     uv pip uninstall opencv-python opencv-python-headless
     uv pip install --no-deps "opencv-python==${ver}"
+}
+
+# The GUI wheel above links libGL, which a robot computer that only captures
+# frames does not need and may not have. Restore the headless build lerobot
+# resolved, at the same version.
+use_opencv_headless_wheel() {
+    local ver
+    ver=$(uv pip show opencv-python 2>/dev/null | sed -n 's/^Version: //p') || true
+    [ -n "$ver" ] || return 0
+    uv pip uninstall opencv-python opencv-python-headless
+    uv pip install --no-deps "opencv-python-headless==${ver}"
 }
 
 #=======================PLATFORM CONFIG=======================
@@ -1982,7 +2000,12 @@ EOF
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
-    uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    # Diffusion installs Paddle outside the project dependency set.
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -2349,7 +2372,11 @@ EOF
 }
 
 install_common_embodied_deps() {
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    local sync_args=()
+    if [ "$MODEL" = "diffusion" ]; then
+        sync_args+=(--inexact)
+    fi
+    uv sync --extra embodied --active "${sync_args[@]}" "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
         { grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" || [ $? -eq 1 ]; } \
             | uv pip install -r -
@@ -3217,6 +3244,63 @@ install_dreamzero_model() {
     esac
 }
 
+install_paddle_gpu() {
+    local paddle_gpu_ver=""
+    local paddle_gpu_index=""
+    local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/packages/stable/cu120/paddlepaddle-gpu/"
+    local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/packages/stable/cu118/paddlepaddle-gpu/"
+
+    local cuda_mm cuda_major
+    if cuda_mm=$(detect_cuda_major_minor) 2>/dev/null; then
+        cuda_major="${cuda_mm%% *}"
+    else
+        cuda_major=""
+    fi
+
+    if [ "$cuda_major" = "12" ]; then
+        paddle_gpu_ver="2.6.2.post120"
+        paddle_gpu_index="$paddle_gpu_index_cuda12"
+    elif [ "$cuda_major" = "11" ]; then
+        paddle_gpu_ver="2.6.2"
+        paddle_gpu_index="$paddle_gpu_index_cuda11"
+    else
+        echo "[install.sh] --paddle-gpu supports only CUDA 11.x and 12.x; detected CUDA ${cuda_major:-<none>}." >&2
+        return 1
+    fi
+
+    if PADDLE_GPU_VERSION="$paddle_gpu_ver" python - <<'EOF'
+import os
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    gpu_version = version("paddlepaddle-gpu")
+    version("paddlepaddle")
+except PackageNotFoundError as error:
+    if error.name == "paddlepaddle":
+        import paddle
+
+        if gpu_version == os.environ["PADDLE_GPU_VERSION"] and paddle.device.is_compiled_with_cuda():
+            raise SystemExit(0)
+raise SystemExit(1)
+EOF
+    then
+        echo "[install.sh] paddlepaddle-gpu==${paddle_gpu_ver} is already installed; skipping."
+        return 0
+    fi
+
+    uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
+    echo "[install.sh] Installing paddlepaddle-gpu==${paddle_gpu_ver} for CUDA ${cuda_major}.x"
+    # The exact CUDA 12 build only exists on PaddlePaddle's index. Dependencies
+    # continue to use UV_DEFAULT_INDEX, including the --use-mirror setting.
+    uv pip install --find-links "$paddle_gpu_index" \
+        "paddlepaddle-gpu==${paddle_gpu_ver}"
+    if ! python -c 'import paddle; raise SystemExit(not paddle.device.is_compiled_with_cuda())'; then
+        uv pip uninstall paddlepaddle-gpu 2>/dev/null || true
+        echo "[install.sh] Installed PaddlePaddle package is not CUDA-enabled." >&2
+        return 1
+    fi
+}
+
 install_fastwam_deps() {
     local fastwam_path
     local fastwam_ref="${FASTWAM_GIT_REF:-45d8e1458921d83f8ad6cf9ce993d371208dabd0}"
@@ -3332,11 +3416,20 @@ install_cosmos3_model() {
 
 install_diffusion_model() {
     # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
-    # Python 3.10 in the generation examples.
+    # Python 3.10 in the diffusion (generation) examples.
     PYTHON_VERSION="3.10"
     create_and_sync_venv
     install_common_embodied_deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    if [ "$INSTALL_PADDLE_GPU" -eq 1 ]; then
+        sed '/^paddlepaddle==/d' "$SCRIPT_DIR/embodied/models/diffusion.txt" \
+            | uv pip install -r -
+        install_paddle_gpu
+    else
+        if python -c 'from importlib.metadata import version; version("paddlepaddle-gpu")' 2>/dev/null; then
+            uv pip uninstall paddlepaddle-gpu
+        fi
+        uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    fi
     uv pip uninstall pynvml || true
 }
 
@@ -3406,13 +3499,17 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
+        franka|franka-ros|so101|lekiwi|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
     case "$ENV_NAME" in
         d4rl)
             install_d4rl_env
+            ;;
+        mujoco_warp)
+            install_common_embodied_deps
+            install_mujoco_warp_env
             ;;
         dummy)
             install_dummy_env
@@ -3444,8 +3541,14 @@ install_env_only() {
         so101)
             install_so101_env
             ;;
+        lekiwi)
+            install_lekiwi_env
+            ;;
         piper)
             install_piper_env
+            ;;
+        arx5)
+            install_arx5_env
             ;;
         dosw1)
             install_dosw1_env
@@ -3620,6 +3723,12 @@ EOF
 install_maniskill_libero_env() {
     install_libero_env
     install_maniskill_libero_extras
+}
+
+install_mujoco_warp_env() {
+    # Pin the verified CUDA 12-compatible stack so driverless Docker builds do
+    # not resolve warp-lang>=1.17, whose wheels require a CUDA 13 driver.
+    uv pip install "mujoco-warp==3.17.0" "warp-lang==1.16.0"
 }
 
 install_d4rl_env() {
@@ -3978,6 +4087,17 @@ install_franka_franky_env() {
     use_opencv_gui_wheel
 }
 
+install_arx5_env() {
+    local requirements="$SCRIPT_DIR/embodied/envs/arx5.txt"
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$requirements"
+    install_lerobot -r "$requirements"
+    # Resolve Diffusers/Hub against the Transformers pin from the embodied extra.
+    uv pip install "diffusers>=0.27.2,<0.40" "huggingface-hub>=0.34.0,<1.0"
+    uv pip check
+    use_opencv_gui_wheel
+}
+
 install_piper_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/piper.txt"
     local index_args=()
@@ -3996,6 +4116,14 @@ install_so101_env() {
     # dependency resolution so installing the robot stack cannot upgrade it.
     uv pip install "numpy<2"
     use_opencv_gui_wheel
+}
+
+install_lekiwi_env() {
+    # Feetech wheel motors over lerobot and OpenCV cameras: the same
+    # dependency set the SO-101 uses, keeping the headless OpenCV build
+    # because the base captures frames and never opens a window.
+    install_so101_env
+    use_opencv_headless_wheel
 }
 
 install_xsquare_turtle2_env() {
@@ -4574,6 +4702,11 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    if [ "$INSTALL_PADDLE_GPU" -eq 1 ] \
+        && { [ "$TARGET" != "embodied" ] || [ "$MODEL" != "diffusion" ]; }; then
+        echo "--paddle-gpu is only supported with 'embodied --model diffusion'." >&2
+        exit 1
+    fi
     validate_python_version
     validate_engine
     apply_model_default_torch
@@ -4702,4 +4835,6 @@ main() {
     uv pip install "${RAY_COMPAT_DEPS[@]}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

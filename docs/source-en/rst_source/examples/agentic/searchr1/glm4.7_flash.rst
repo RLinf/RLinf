@@ -158,6 +158,10 @@ If NCCL stalls on cross-node transfers over RoCE/IB, make sure the GPUs on both
 nodes use NICs in the same subnet, for example by restricting `NCCL_IB_HCA`.
 Two full 8-GPU nodes with matching local GPU indices need no such setting.
 
+To run the same recipe with rollout and training overlapped instead —
+the actor on one node and the rollout on the other — see
+:doc:`Asynchronous Search-R1 Training <async>`.
+
 Visualization and Results
 -------------------------
 

@@ -49,7 +49,7 @@ class StableDiffusion3Config:
     eval_sampler: Literal["sde", "ode", "dpm1", "dpm2"] = "ode"
     max_sequence_length: int = 128
     output_type: str = "pt"
-    rl_mode: Literal["flow-grpo", "nft"] = "flow-grpo"
+    rl_mode: Literal["flow-grpo", "nft", "art"] = "flow-grpo"
     use_lora: bool = True
     lora_rank: int = 32
     lora_alpha: int = 64
@@ -100,9 +100,15 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
     def to(self, device):
         module = super().to(device)
         device = torch.device(device)
-        if device.type == "cpu":
+        if device.type == "cpu" and not getattr(self, "_nft_reference_only", False):
             move_auxiliary_modules(self.pipeline, device=device)
         return module
+
+    def prepare_nft_reference_model(self) -> None:
+        """Release pipeline modules that NFT reference forward does not use."""
+        self._nft_reference_only = True
+        for name in ("vae", "text_encoder", "text_encoder_2", "text_encoder_3"):
+            setattr(self.pipeline, name, None)
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
@@ -330,6 +336,27 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
                 device=full_latents.device,
                 dtype=full_latents.dtype,
             )
+        elif self.config.rl_mode == "art":
+            scheduler_sigmas = self.pipeline.scheduler.sigmas[: len(log_probs) + 1].to(
+                device=full_latents.device,
+                dtype=torch.float32,
+            )
+            sigmas = (
+                scheduler_sigmas[:-1].unsqueeze(0).expand(full_latents.shape[0], -1)
+            )
+            sigmas_next = (
+                scheduler_sigmas[1:].unsqueeze(0).expand(full_latents.shape[0], -1)
+            )
+            forward_inputs.update(
+                {
+                    "art_states": full_latents[:, :-1, None].detach(),
+                    "art_sigmas": sigmas.detach(),
+                    "art_sigmas_next": sigmas_next.detach(),
+                    "art_endpoint": full_latents[:, -1, None].detach(),
+                }
+            )
+            for key in ("latents", "next_latents", "timesteps"):
+                del forward_inputs[key]
 
         return images, {
             "prev_logprobs": old_logprobs[:, :num_train_timesteps].detach(),

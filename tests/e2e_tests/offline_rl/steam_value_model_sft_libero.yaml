@@ -23,7 +23,7 @@ runner:
     log_path: "/workspace/results/steam_value_model_sft_libero"
     project_name: rlinf
     experiment_name: "steam_value_model_sft_libero"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: -1
   max_steps: 1
