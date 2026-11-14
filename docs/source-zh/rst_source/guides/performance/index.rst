@@ -25,6 +25,8 @@
      - 对 Ray worker 进程进行系统级 profiling。
    * - :doc:`5D 并行 <../5D>`
      - 为大模型配置 5D 并行。
+   * - :doc:`异步 agentic RL <../async_agentic>`
+     - 让多轮 agent rollout 与训练重叠，用两个准入上限约束训练数据的新旧程度。
 
 .. toctree::
    :hidden:
@@ -37,3 +39,4 @@
    动态调度 <../dynamic_scheduling>
    Profiling <../profile>
    5D 并行 <../5D>
+   异步 agentic RL <../async_agentic>
