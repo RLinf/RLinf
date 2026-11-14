@@ -16,7 +16,6 @@ import numpy as np
 import torch
 
 from rlinf.config import (
-    OPENWAM_LIBERO_ACTION_REPRESENTATIONS,
     OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
     SupportedModel,
 )
@@ -134,28 +133,9 @@ def prepare_actions_for_robotwin(
 def prepare_actions_for_libero(
     raw_chunk_actions,
     model_type,
-    env_cfg=None,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
     if SupportedModel(model_type) == SupportedModel.OPENWAM:
-        representation = (
-            None
-            if env_cfg is None
-            else env_cfg.get("openwam_action_representation", None)
-        )
-        if representation not in OPENWAM_LIBERO_ACTION_REPRESENTATIONS:
-            raise ValueError(
-                "OpenWAM LIBERO requires env.eval.openwam_action_representation "
-                f"to be one of {OPENWAM_LIBERO_ACTION_REPRESENTATIONS}, "
-                f"got {representation!r}."
-            )
-        if representation == "absolute_eef10":
-            raw = np.asarray(chunk_actions, dtype=np.float32)
-            if raw.shape[-1] != 10:
-                raise ValueError(
-                    f"OpenWAM absolute EEF rollout expects 10-D actions, got {raw.shape}"
-                )
-            return raw
         return _openwam_eef10_to_libero7(chunk_actions)
     if SupportedModel(model_type) in [
         SupportedModel.OPENVLA,
@@ -167,55 +147,6 @@ def prepare_actions_for_libero(
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
     return chunk_actions
-
-
-def _openwam_absolute_eef10_to_libero7(
-    raw_chunk_actions: np.ndarray,
-    reference_eef10: np.ndarray,
-    *,
-    pos_scale: float = 0.05,
-    rot_scale: float = 0.5,
-) -> np.ndarray:
-    """Convert absolute EEF10 goals to LIBERO's per-step OSC action."""
-    from scipy.spatial.transform import Rotation
-
-    from rlinf.utils.rot6d import rot6d_to_matrix
-
-    raw = np.asarray(raw_chunk_actions, dtype=np.float32)
-    ref = np.asarray(reference_eef10, dtype=np.float32)
-    if raw.shape[-1] != 10 or ref.shape[-1] != 10:
-        raise ValueError(
-            f"OpenWAM absolute EEF conversion expects (..., 10), got {raw.shape} and {ref.shape}"
-        )
-    if raw.shape[:-1] != ref.shape[:-1]:
-        raise ValueError(
-            f"OpenWAM action/reference batch mismatch: {raw.shape} vs {ref.shape}"
-        )
-    if not np.all(np.isfinite(raw)) or not np.all(np.isfinite(ref)):
-        raise ValueError(
-            "OpenWAM absolute EEF action/reference contains non-finite values; "
-            "refusing to send NaN or Inf into the LIBERO controller."
-        )
-    if not (pos_scale > 0 and rot_scale > 0):
-        raise ValueError(f"OSC scales must be positive, got {pos_scale=} {rot_scale=}")
-
-    relative = rot6d_to_matrix(raw[..., 3:9]) @ np.swapaxes(
-        rot6d_to_matrix(ref[..., 3:9]), -1, -2
-    )
-    rotvec = (
-        Rotation.from_matrix(relative.reshape(-1, 3, 3))
-        .as_rotvec()
-        .reshape(raw.shape[:-1] + (3,))
-    )
-    output = np.concatenate(
-        [
-            (raw[..., :3] - ref[..., :3]) / pos_scale,
-            rotvec / rot_scale,
-            -raw[..., 9:10],
-        ],
-        axis=-1,
-    )
-    return np.clip(output, -1.0, 1.0).astype(np.float32)
 
 
 def _openwam_eef10_to_libero7(raw_chunk_actions: np.ndarray) -> np.ndarray:
@@ -518,7 +449,6 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_libero(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
-            env_cfg=env_cfg,
         )
     elif env_type == SupportedEnvType.WORLD_MODEL:
         # TODO: Implement prepare_actions_for_opensora_wm
@@ -526,7 +456,6 @@ def prepare_actions(
             chunk_actions = prepare_actions_for_libero(
                 raw_chunk_actions=raw_chunk_actions,
                 model_type=model_type,
-                env_cfg=env_cfg,
             )
         elif wm_env_type == "robotwin":
             # Joint angles, as the simulator takes them; a backend trained on another

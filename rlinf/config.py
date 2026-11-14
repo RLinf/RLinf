@@ -189,7 +189,7 @@ SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 # Action spaces the OpenWAM policy can be evaluated in, per environment. The
 # env worker converts each chunk with rlinf.envs.action_utils; the recipes name
 # the representation the checkpoint was trained with.
-OPENWAM_LIBERO_ACTION_REPRESENTATIONS = ("native_delta_eef10", "absolute_eef10")
+OPENWAM_LIBERO_ACTION_REPRESENTATIONS = ("native_delta_eef10",)
 OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS = ("absolute_eef20",)
 
 __all__ = ["build_config"]
@@ -1197,15 +1197,6 @@ def validate_openwam_eval_cfg(cfg: DictConfig) -> None:
                 f"OpenWAM on {env_type} requires env.eval.openwam_action_representation "
                 f"to be one of {allowed[env_type]}; got {representation!r}."
             )
-    render_gpu_ids = OmegaConf.select(env_cfg, "render_gpu_ids", default=None)
-    if render_gpu_ids is not None and (
-        isinstance(render_gpu_ids, (str, int))
-        or not all(isinstance(int(gpu), int) for gpu in render_gpu_ids)
-    ):
-        raise ValueError(
-            "env.eval.render_gpu_ids must be a list of GPU indices, one EGL "
-            f"renderer per entry; got {render_gpu_ids!r}."
-        )
 
 
 def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:

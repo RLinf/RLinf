@@ -14,7 +14,7 @@ cluster:
   num_nodes: 1
   # Keep MuJoCo/EGL environments off the OpenWAM rollout GPU.
   component_placement:
-    env: 2
+    env: 0-2
     rollout: 3
 
 runner:
@@ -36,9 +36,8 @@ env:
   group_name: "EnvGroup"
   eval:
     rollout_epoch: 1
-    # Three subprocess environments share the dedicated env worker (GPU 2).
+    # One environment worker and simulator per GPU.
     total_num_envs: 3
-    render_gpu_ids: [0, 1, 2] # one EGL renderer per GPU, none on the rollout GPU (3)
     auto_reset: true
     ignore_terminations: true
     # OpenWAM's LIBERO protocol settles each reset for 30 zero-action steps.
@@ -50,8 +49,7 @@ env:
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
     is_eval: true
-    # Render every step; one EGL renderer per GPU (render_gpu_ids) keeps
-    # multi-process LIBERO stable. Set true to render only at chunk ends.
+    # Render every step; set true to render only at chunk ends.
     skip_intermediate_renders: false
     openwam_action_representation: native_delta_eef10
     video_cfg:

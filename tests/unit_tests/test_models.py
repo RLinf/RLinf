@@ -25,6 +25,7 @@ import math
 import os
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
@@ -37,10 +38,7 @@ from safetensors.torch import load_file, save_file
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel, validate_embodied_cfg
-from rlinf.envs.action_utils import (
-    _openwam_absolute_eef10_to_libero7,
-    _openwam_eef10_to_libero7,
-)
+from rlinf.envs.action_utils import prepare_actions
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -61,10 +59,12 @@ from rlinf.models.embodiment.openpi.modules.siglip import (
     Encoder1DBlock,
     SigLIPViT,
 )
-from rlinf.models.embodiment.openwam.openwam_policy import (
-    OpenWAMPolicy,
-    _batch_value,
+from rlinf.models.embodiment.openwam.checkpoint import (
     _checkpoint_with_encoder_override,
+)
+from rlinf.models.embodiment.openwam.openwam_policy import OpenWAMPolicy
+from rlinf.models.embodiment.openwam.processing import (
+    _batch_value,
     _infer_batch_size,
     _libero_state_to_eef10,
     _to_pil,
@@ -110,22 +110,44 @@ class _DummyFSDPModel(torch.nn.Module):
 
 
 @pytest.fixture
-def openwam_eval_recipe(monkeypatch):
+def openwam_eval_cluster(monkeypatch):
+    import rlinf.config as config_module
+    from rlinf.scheduler.cluster.node import NodeGroupInfo, NodeInfo
+    from rlinf.scheduler.hardware import Accelerator, HardwareInfo, HardwareResource
+
+    node = NodeInfo(
+        node_labels=[],
+        node_rank=0,
+        ray_id="test-node",
+        node_ip="127.0.0.1",
+        num_cpus=32,
+        python_interpreter_path=sys.executable,
+        default_env_vars={},
+        env_vars={},
+        hardware_resources=[
+            HardwareResource(
+                type=Accelerator.HW_TYPE,
+                infos=[
+                    HardwareInfo(type=Accelerator.HW_TYPE, model="NV_GPU:Mock")
+                    for _ in range(4)
+                ],
+            )
+        ],
+    )
+    group = NodeGroupInfo(label=NodeGroupInfo.DEFAULT_GROUP_LABEL, nodes=[node])
+    cluster = SimpleNamespace(
+        get_node_group=lambda label=None: group,
+        get_node_info=lambda rank: node,
+    )
+    monkeypatch.setattr(config_module, "Cluster", lambda *args, **kwargs: cluster)
+    return cluster
+
+
+@pytest.fixture
+def openwam_eval_recipe(monkeypatch, openwam_eval_cluster):
     import hydra
 
-    import rlinf.config as config_module
-
     repo = Path(__file__).resolve().parents[2]
-    placement = SimpleNamespace(
-        get_world_size=lambda component: {"env": 1, "rollout": 1}.get(component, 1)
-    )
-    # validate_cfg instantiates the Ray cluster with keyword arguments.
-    monkeypatch.setattr(config_module, "Cluster", lambda *args, **kwargs: object())
-    monkeypatch.setattr(
-        config_module,
-        "HybridComponentPlacement",
-        lambda *args, **kwargs: placement,
-    )
     # The eval recipes resolve ``env/libero_*`` through ${oc.env:EMBODIED_PATH}.
     monkeypatch.setenv("EMBODIED_PATH", str(repo / "examples/embodiment"))
     monkeypatch.setenv("REPO_PATH", str(repo))
@@ -150,10 +172,11 @@ def openwam_eval_recipe(monkeypatch):
     ],
 )
 def test_openwam_libero_eval_recipes_validate(
-    openwam_eval_recipe, name, suite, max_steps
+    openwam_eval_recipe, openwam_eval_cluster, name, suite, max_steps
 ):
     """Every LIBERO suite recipe follows OpenWAM's LIBERO protocol."""
     from rlinf.config import validate_cfg
+    from rlinf.utils.placement import HybridComponentPlacement
 
     cfg = openwam_eval_recipe(name)
     cfg.runner.task_type = "embodied_eval"
@@ -168,9 +191,18 @@ def test_openwam_libero_eval_recipes_validate(
     assert cfg.rollout.model.openwam.inference_horizon == 10
     assert cfg.rollout.model.num_action_chunks == 10
     assert cfg.rollout.model.load_to_device is True
-    # EGL renderers never share a GPU with OpenWAM inference.
-    assert cfg.cluster.component_placement.rollout not in cfg.env.eval.render_gpu_ids
-    assert len(cfg.env.eval.render_gpu_ids) == cfg.env.eval.total_num_envs
+    placement = HybridComponentPlacement(cfg, openwam_eval_cluster)
+    env_workers = placement.get_strategy("env").get_placement(openwam_eval_cluster)
+    rollout_workers = placement.get_strategy("rollout").get_placement(
+        openwam_eval_cluster
+    )
+    assert [worker.visible_accelerators for worker in env_workers] == [
+        ["0"],
+        ["1"],
+        ["2"],
+    ]
+    assert [worker.visible_accelerators for worker in rollout_workers] == [["3"]]
+    assert cfg.env.eval.total_num_envs == placement.get_world_size("env") == 3
     assert cfg.runner.logger.experiment_name == f"{suite}_openwam_eval"
 
 
@@ -214,35 +246,43 @@ def test_openwam_libero_state_adapter_smoke():
     assert eef10[9] == -1.0
 
 
-def test_openwam_libero_absolute_action_adapter_smoke():
-    pose = np.array([[0.1, 0.2, 0.3, 1, 0, 0, 0, 1, 0, 1]], dtype=np.float32)
-    target = pose.copy()
-    target[0, 0] += 0.025
-    converted = _openwam_absolute_eef10_to_libero7(target, pose)
-    np.testing.assert_allclose(converted[0, :3], [0.5, 0.0, 0.0])
-    np.testing.assert_allclose(converted[0, 3:6], 0.0)
-    assert converted[0, 6] == -1.0
+@pytest.mark.parametrize("shape", [(1, 10), (2, 3, 10)])
+def test_openwam_libero_action_adapter(shape):
+    angle = 0.4
+    action = np.broadcast_to(
+        [
+            0.25,
+            -0.1,
+            2,
+            np.cos(angle),
+            np.sin(angle),
+            0,
+            -np.sin(angle),
+            np.cos(angle),
+            0,
+            0.75,
+        ],
+        shape,
+    ).copy()
+    converted = prepare_actions(
+        action, "libero", "openwam", num_action_chunks=3, action_dim=10
+    )
+    expected = np.broadcast_to([0.25, -0.1, 1, 0, 0, angle, -0.75], shape[:-1] + (7,))
+    np.testing.assert_allclose(converted, expected, atol=1e-7)
+    assert converted.dtype == np.float32
 
 
-def test_openwam_libero_action_adapter_smoke():
-    action = np.array([[0, 0, 0, 1, 0, 0, 0, 1, 0, 1]], dtype=np.float32)
-    converted = _openwam_eef10_to_libero7(action)
-    assert converted.shape == (1, 7)
-    np.testing.assert_allclose(converted[0, :6], 0.0)
-    assert converted[0, 6] == -1.0
-
-
-def test_openwam_libero_action_adapter_rejects_nonfinite_values():
-    pose = np.array([[0.1, 0.2, 0.3, 1, 0, 0, 0, 1, 0, 1]], dtype=np.float32)
-    invalid = pose.copy()
-    invalid[0, 0] = np.nan
+@pytest.mark.parametrize("value", [np.nan, np.inf])
+def test_openwam_libero_action_adapter_rejects_nonfinite_values(value):
+    invalid = np.array([[value, 0, 0, 1, 0, 0, 0, 1, 0, 1]], dtype=np.float32)
     with pytest.raises(ValueError, match="non-finite"):
-        _openwam_absolute_eef10_to_libero7(invalid, pose)
-    with pytest.raises(ValueError, match="non-finite"):
-        _openwam_eef10_to_libero7(invalid)
+        prepare_actions(
+            invalid, "libero", "openwam", num_action_chunks=1, action_dim=10
+        )
 
 
-def test_openwam_encoder_path_override_stages_checkpoint(tmp_path):
+@pytest.mark.parametrize("load_fails", [False, True])
+def test_openwam_encoder_path_override_stages_checkpoint(tmp_path, load_fails):
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()
     (checkpoint / "checkpoint_step_1.safetensors").write_bytes(b"weights")
@@ -253,17 +293,27 @@ def test_openwam_encoder_path_override_stages_checkpoint(tmp_path):
     )
     encoder = tmp_path / "encoder"
     encoder.mkdir()
+    original_config = (checkpoint / "config.yaml").read_bytes()
 
-    with _checkpoint_with_encoder_override(
-        str(checkpoint), str(encoder)
-    ) as staged_path:
-        staged = Path(staged_path)
-        cfg = OmegaConf.load(staged / "config.yaml")
-        assert cfg.model.video_backbone.encoder.model_path == str(encoder.resolve())
-        assert (staged / "checkpoint_step_1.safetensors").is_symlink()
-        assert (staged / "normalization_stats.npy").is_symlink()
+    expected = (
+        pytest.raises(RuntimeError, match="checkpoint loader failed")
+        if load_fails
+        else nullcontext()
+    )
+    with expected:
+        with _checkpoint_with_encoder_override(
+            str(checkpoint), str(encoder)
+        ) as staged_path:
+            staged = Path(staged_path)
+            cfg = OmegaConf.load(staged / "config.yaml")
+            assert cfg.model.video_backbone.encoder.model_path == str(encoder.resolve())
+            assert (staged / "checkpoint_step_1.safetensors").is_symlink()
+            assert (staged / "normalization_stats.npy").is_symlink()
+            if load_fails:
+                raise RuntimeError("checkpoint loader failed")
 
     assert not Path(staged_path).exists()
+    assert (checkpoint / "config.yaml").read_bytes() == original_config
 
 
 def test_openwam_eval_inference_horizon_truncates_chunks():
@@ -353,6 +403,7 @@ def test_openwam_sft_forward_delegates_native_loss():
     assert output["loss"].requires_grad
     assert architecture.seen == [sample]
     assert output["loss_action"].item() == 3
+    assert set(policy.state_dict()) == {"architecture.weight"}
 
 
 def test_custom_model_registration_smoke():
@@ -3680,7 +3731,7 @@ def test_step_robotwin_venv_uses_caller_timeout():
 
 
 def test_openwam_prompt_template_follows_dataset_type():
-    from rlinf.models.embodiment.openwam.openwam_policy import (
+    from rlinf.models.embodiment.openwam.processing import (
         ROBOTWIN_PROMPT_PREFIX,
         _prompt_template_for_dataset,
     )
@@ -3697,7 +3748,7 @@ def test_openwam_compose_fills_every_camera_slot():
     pytest.importorskip("openwam.dataloader.transforms.multiview")
     from PIL import Image
 
-    from rlinf.models.embodiment.openwam.openwam_policy import (
+    from rlinf.models.embodiment.openwam.processing import (
         _compose_observation_image,
     )
 
@@ -4072,8 +4123,8 @@ def test_openwam_eval_validation_rejects_inconsistent_recipes(openwam_eval_recip
         validate("env.eval.max_steps_per_rollout_epoch=605")
     with pytest.raises(ValueError, match="openwam_action_representation"):
         validate("env.eval.openwam_action_representation=joint")
-    with pytest.raises(ValueError, match="render_gpu_ids"):
-        validate("env.eval.render_gpu_ids=0")
+    with pytest.raises(ValueError, match="openwam_action_representation"):
+        validate("env.eval.openwam_action_representation=absolute_eef10")
 
 
 def test_psi0_rtc_prefix_survives_the_last_denoise_step():

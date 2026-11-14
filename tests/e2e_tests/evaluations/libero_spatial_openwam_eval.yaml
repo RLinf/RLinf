@@ -42,7 +42,6 @@ env:
     rollout_epoch: 1
     # One subprocess environment; its EGL renderer must not share the rollout GPU.
     total_num_envs: 1
-    render_gpu_ids: [0]
     auto_reset: true
     ignore_terminations: true
     # OpenWAM's LIBERO protocol settles each reset for 30 zero-action steps.

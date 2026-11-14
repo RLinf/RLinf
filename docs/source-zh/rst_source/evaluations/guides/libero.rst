@@ -218,6 +218,25 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
 
 ``env.eval`` 各字段的详细说明见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
+配置 OpenWAM 评测
+~~~~~~~~~~~~~~~~~~
+
+四套 OpenWAM 配方为环境分配三张 GPU，rollout 独占另一张 GPU。每个 env worker 运行一个环境，并使用分配到的 GPU 渲染：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       env: 0-2
+       rollout: 3
+   env:
+     eval:
+       total_num_envs: 3
+       num_steps_wait: 30
+       openwam_action_representation: native_delta_eef10
+
+保留 ``native_delta_eef10``，以匹配 checkpoint 的增量动作。保持 ``num_steps_wait: 30``，每次重置后等待 30 步，让环境稳定。配方每次预测后执行 10 步动作，Spatial、Object、Goal 的单条轨迹上限为 600 步，Long 为 700 步。调整 env GPU 数量需同时修改 ``cluster.component_placement.env`` 和 ``env.eval.total_num_envs``。增加 rollout 步数预算或 ``env.eval.rollout_epoch`` 可覆盖更多初始状态。
+
 覆盖完整测试集
 ~~~~~~~~~~~~~~
 

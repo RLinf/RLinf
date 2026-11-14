@@ -219,6 +219,25 @@ The longest training demo per suite sets a lower bound for the step limit. RLinf
 
 See :ref:`env-eval-fields` in :doc:`../reference/configuration` for detailed ``env.eval`` field descriptions.
 
+Configure OpenWAM Evaluation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The four OpenWAM recipes use three GPUs for environments and a separate GPU for rollout. Each env worker runs one environment and renders on its assigned GPU:
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       env: 0-2
+       rollout: 3
+   env:
+     eval:
+       total_num_envs: 3
+       num_steps_wait: 30
+       openwam_action_representation: native_delta_eef10
+
+Keep ``native_delta_eef10`` for the checkpoint's delta actions and ``num_steps_wait: 30`` for settling after each reset. The recipes execute 10 actions per prediction and use a 600-step episode budget for Spatial, Object, and Goal, or 700 steps for Long. To change the number of env GPUs, update ``cluster.component_placement.env`` and ``env.eval.total_num_envs`` together. Increase the rollout step budget or ``env.eval.rollout_epoch`` to cover more initial states.
+
 Covering the Full Test Set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

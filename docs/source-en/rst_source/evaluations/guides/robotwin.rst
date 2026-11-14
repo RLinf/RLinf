@@ -223,17 +223,27 @@ LingbotVLA 2.0
 - ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
 - ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
 
-OpenWAM (RoboTwin study checkpoints, demo_randomized protocol)
+OpenWAM
 
-- ``task_config.embodiment: [aloha-agilex]``, ``center_crop: False``, ``task_config.camera.collect_wrist_camera: true``: the three cameras are composed onto the checkpoint's 384x320 ``camera_layout`` canvas (head on top, left/right wrist below)
-- ``env.eval.openwam_action_representation: absolute_eef20``: the checkpoint predicts 20-D absolute dual-arm end-effector poses ``[l_xyz, l_rot6d, l_grip, r_xyz, r_rot6d, r_grip]``; RLinf converts them to 16-D ``xyz+quat_xyzw+gripper`` and switches every sub-environment to RoboTwin's ``ee`` controller, and feeds the model a 20-D ``native_proprio`` in the same representation
-- ``task_config.data_type.endpose: true`` so RoboTwin publishes the end-effector poses
-- OpenWAM returns the observation and ``native_proprio`` after each action chunk. ``env.eval.skip_intermediate_renders`` controls per-step observations for joint-space policies; OpenWAM's end-effector controller always returns the final observation.
-- ``rollout.model.num_action_chunks: 32`` with ``openwam.inference_horizon: null``: whole 32-step chunks, like OpenWAM's own RoboTwin client; ``max_episode_steps`` and ``step_lim`` are RoboTwin's ``_eval_step_limit.yml`` budget rounded up to a multiple of 32 (e.g. click_bell 400 -> 416, place_empty_cup 500 -> 512); all tasks share ``env/robotwin_openwam_aloha.yaml``, and tasks without RLinf eval seeds fall back to random seeds. The repository ships the ``adjust_bottle`` and ``click_bell`` recipes; ``python toolkits/openwam/gen_robotwin_eval_recipes.py --all`` writes ``robotwin_<task>_openwam_eval.yaml`` for the 46 RoboTwin 2.0 tasks RLinf supports (or pass task names); ``place_fan``, ``open_laptop``, ``place_object_scale`` and ``put_object_cabinet`` are not supported (see the notes below)
-- The training-time prompt prefix is applied automatically; nothing to configure
-- Every end-effector target is planned individually through RoboTwin's ``take_action(..., action_type="ee")`` (mplib), about 25 to 30 s per 32-step chunk; a target that mplib cannot plan or time leaves that arm in place for the step, as RoboTwin does for any failed plan; the sub-environments of one env worker share a lock, so more environments per env GPU only serialize and the recipes keep 2, scaling with ``rollout_epoch`` or more env GPUs instead; ``env.eval.robotwin_step_timeout_s`` (1800 s in the preset) bounds each chunk wait; SAPIEN needs a ``DISPLAY`` (start ``Xvfb :99`` on headless nodes) and the sapien/mplib patches from ``install_robotwin_env`` in ``requirements/install.sh``
-- ``env.eval.instruction_type: unseen`` samples each episode's instruction from RoboTwin's unseen pool, as OpenWAM's own RoboTwin protocol does; RoboTwin's default (and every other RLinf RoboTwin recipe) is ``seen``
-- Domain randomization keeps the preset default (the paper's randomized setting); disable every ``task_config.domain_randomization`` field for the clean protocol
+The OpenWAM recipes target RoboTwin study checkpoints. Set ``rollout.model.model_path`` to the matching checkpoint directory and retain these settings:
+
+- Use the shared ``env/robotwin_openwam_aloha.yaml`` preset for the ``aloha-agilex`` robot, head and wrist cameras, and end-effector observations.
+- Keep ``env.eval.openwam_action_representation: absolute_eef20`` for the checkpoint's absolute end-effector actions.
+- Set ``rollout.model.num_action_chunks: 32`` and ``rollout.model.openwam.inference_horizon: null``. Keep the recipe values for ``env.eval.max_episode_steps`` and ``env.eval.task_config.step_lim``. These round the task's step limit up to a multiple of 32, such as 416 for ``click_bell``.
+- Keep ``env.eval.instruction_type: unseen`` and the preset's domain randomization for the randomized protocol. For the clean protocol, disable the randomization options under ``env.eval.task_config.domain_randomization``.
+- Keep env and rollout on separate GPUs with ``cluster.component_placement``. The recipes use two environments per env GPU; increase ``env.eval.rollout_epoch`` or allocate more env GPUs to evaluate more trajectories.
+
+The repository includes ``adjust_bottle`` and ``click_bell`` recipes. Generate the other supported task recipes with:
+
+.. code-block:: bash
+
+   python toolkits/openwam/gen_robotwin_eval_recipes.py --all
+
+This writes ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml`` for the 46 supported RoboTwin 2.0 tasks. Tasks without fixed RLinf evaluation seeds use random seeds. The generator excludes ``place_fan``, ``open_laptop``, ``place_object_scale``, and ``put_object_cabinet``, which are unsupported in RLinf.
+
+.. note::
+
+   Use the RoboTwin environment installed by ``requirements/install.sh`` and provide a working ``DISPLAY`` for SAPIEN. On a headless node, start ``Xvfb :99`` and set ``DISPLAY=:99`` before evaluation. ``env.eval.robotwin_step_timeout_s`` limits the wait for each action chunk and defaults to 1800 seconds.
 
 Covering the full test set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

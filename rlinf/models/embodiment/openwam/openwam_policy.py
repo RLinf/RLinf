@@ -16,18 +16,24 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.openwam.checkpoint import (
+    _checkpoint_with_encoder_override,
+)
+from rlinf.models.embodiment.openwam.processing import (
+    _batch_value,
+    _compose_observation_image,
+    _infer_batch_size,
+    _observation_proprio,
+    _prompt_template_for_dataset,
+    _to_pil,
+)
 
 
 class OpenWAMPolicy(nn.Module, BasePolicy):
@@ -370,250 +376,3 @@ class OpenWAMPolicy(nn.Module, BasePolicy):
         if self.inference_horizon is not None:
             stacked = stacked[:, : self.inference_horizon]
         return stacked, {"results": results}
-
-
-@contextmanager
-def _checkpoint_with_encoder_override(
-    model_path: str, encoder_model_path: str | None
-) -> Iterator[str]:
-    """Yield a checkpoint directory with deploy-time encoder fixes applied.
-
-    OpenWAM checkpoints can retain training-host paths and legacy encoder names
-    (``vjepa2_1``, ``flux_vae``, ``wan_vae``). A temporary staging directory
-    rewrites only those config fields without editing the checkpoint or source
-    checkout. All other files are symlinked, so this adds no model-storage cost.
-    """
-    checkpoint_dir = Path(model_path).expanduser().resolve()
-    if not checkpoint_dir.is_dir():
-        raise FileNotFoundError(
-            f"OpenWAM checkpoint directory not found: {checkpoint_dir}"
-        )
-
-    from omegaconf import OmegaConf
-
-    cfg = OmegaConf.load(checkpoint_dir / "config.yaml")
-    encoder_cfg = OmegaConf.select(cfg, "model.video_backbone.encoder", default=None)
-    encoder_name = (
-        str(getattr(encoder_cfg, "name", "")) if encoder_cfg is not None else ""
-    )
-    name_aliases = {
-        "vjepa2_1": "vjepa21",
-        "flux_vae": "flux2_vae",
-        "wan_vae": "wan22_vae",
-    }
-    canonical_name = name_aliases.get(encoder_name, encoder_name)
-    needs_staging = encoder_model_path is not None or canonical_name != encoder_name
-    if not needs_staging:
-        yield model_path
-        return
-    if encoder_cfg is None:
-        raise ValueError(
-            "OpenWAM encoder override/alias normalization requires "
-            "model.video_backbone.encoder in the checkpoint config"
-        )
-    if encoder_model_path is not None:
-        encoder_dir = Path(encoder_model_path).expanduser().resolve()
-        if not encoder_dir.is_dir():
-            raise FileNotFoundError(
-                f"OpenWAM encoder_model_path is not a directory: {encoder_dir}"
-            )
-        encoder_cfg.model_path = str(encoder_dir)
-    if canonical_name != encoder_name:
-        encoder_cfg.name = canonical_name
-
-    with tempfile.TemporaryDirectory(prefix="rlinf-openwam-") as tmp:
-        staged = Path(tmp) / checkpoint_dir.name
-        staged.mkdir()
-        for entry in checkpoint_dir.iterdir():
-            if entry.name != "config.yaml":
-                os.symlink(
-                    entry, staged / entry.name, target_is_directory=entry.is_dir()
-                )
-        OmegaConf.save(cfg, staged / "config.yaml")
-        yield str(staged)
-
-
-def _infer_batch_size(obs: dict[str, Any]) -> int:
-    for key in ("states", "state", "proprio", "main_images", "image", "images"):
-        if key in obs:
-            value = obs[key]
-            if isinstance(value, (torch.Tensor, np.ndarray)):
-                return int(value.shape[0]) if value.ndim > 1 else 1
-            if isinstance(value, (list, tuple)):
-                return len(value)
-    return 1
-
-
-def _batch_value(
-    obs: dict[str, Any], keys: tuple[str, ...], index: int, default: Any = None
-) -> Any:
-    value = next((obs[key] for key in keys if key in obs), default)
-    if isinstance(value, (torch.Tensor, np.ndarray)) and value.ndim > 1:
-        return value[index]
-    if isinstance(value, (list, tuple)) and value and len(value) > index:
-        return value[index]
-    return value
-
-
-def _to_pil(value: Any) -> Image.Image:
-    if isinstance(value, Image.Image):
-        return value
-    if isinstance(value, (list, tuple)):
-        value = value[0]
-    if isinstance(value, torch.Tensor):
-        value = value.detach().cpu().numpy()
-    array = np.asarray(value)
-    if array.ndim == 4:
-        array = array[0]
-    if array.dtype != np.uint8:
-        array = np.clip(array * 255 if array.max() <= 1.0 else array, 0, 255).astype(
-            np.uint8
-        )
-    return Image.fromarray(array)
-
-
-def _axis_angle_to_rotation_6d(value: Any) -> np.ndarray:
-    """Convert a LIBERO axis-angle state to OpenWAM's 6-D representation."""
-    from scipy.spatial.transform import Rotation
-
-    from rlinf.utils.rot6d import matrix_to_rot6d
-
-    matrix = Rotation.from_rotvec(
-        np.asarray(value, dtype=np.float64).reshape(3)
-    ).as_matrix()
-    return matrix_to_rot6d(matrix)
-
-
-def _libero_state_to_eef10(value: Any) -> np.ndarray | None:
-    """Convert RLinf's 8-D LIBERO state to OpenWAM's achieved EEF10 state."""
-    if value is None:
-        return None
-    state = np.asarray(value, dtype=np.float32).reshape(-1)
-    if state.shape[0] == 10:
-        return state
-    if state.shape[0] != 8:
-        raise ValueError(
-            "OpenWAM LIBERO rollout expects an 8-D state "
-            f"(xyz, axis-angle, gripper qpos), got {state.shape[0]}"
-        )
-    gripper_width = float(state[6] - state[7])
-    gripper_open_scale = np.clip(2.0 * gripper_width / 0.08 - 1.0, -1.0, 1.0)
-    return np.concatenate(
-        [state[:3], _axis_angle_to_rotation_6d(state[3:6]), [gripper_open_scale]]
-    ).astype(np.float32)
-
-
-ROBOTWIN_PROMPT_PREFIX = (
-    "A video recorded from a robot's point of view executing the following "
-    "instruction: "
-)
-_TEMPLATED_DATASET_TYPES = ("robotwin", "robodojo", "ebench")
-
-
-def _prompt_template_for_dataset(dataset_type: Any) -> str | None:
-    """Return the training-time instruction prefix of an OpenWAM dataset reader."""
-    if dataset_type is None or str(dataset_type) not in _TEMPLATED_DATASET_TYPES:
-        return None
-    try:
-        from openwam.dataloader.transforms.multiview import (
-            format_prompt_for_inference,
-        )
-
-        return format_prompt_for_inference("")
-    except ImportError:
-        return ROBOTWIN_PROMPT_PREFIX
-
-
-def _wrist_frames(value: Any) -> list[Image.Image]:
-    """Split a wrist observation into per-camera PIL frames, in layout order.
-
-    RLinf environments hand back either one wrist image (``[H, W, 3]``) or a
-    stack of them (``[n, H, W, 3]``; RoboTwin stacks left then right).
-    """
-    if value is None:
-        return []
-    if isinstance(value, Image.Image):
-        return [value]
-    if isinstance(value, (list, tuple)):
-        return [_to_pil(item) for item in value if item is not None]
-    if isinstance(value, torch.Tensor):
-        value = value.detach().cpu().numpy()
-    array = np.asarray(value)
-    if array.ndim == 4:
-        return [_to_pil(frame) for frame in array]
-    return [_to_pil(array)]
-
-
-# ``assemble_multiview_layout`` default: the head camera takes the top two
-# thirds of the canvas, the wrist cameras split the bottom third.
-_MULTIVIEW_TOP_HEIGHT_RATIO = 2.0 / 3.0
-
-
-def _compose_observation_image(
-    main_image: Image.Image,
-    wrist_image: Any,
-    *,
-    multiview: bool,
-    camera_layout: list[str],
-    height: int,
-    width: int,
-) -> Image.Image:
-    """Match OpenWAM's single-view or three-camera training layout.
-
-    Single-view checkpoints see the head camera center-cropped and resized to
-    the training canvas, as ``openwam.deploy.obs_preprocess`` does. Multiview
-    checkpoints get the head camera in slot 0 and the wrist cameras in the
-    following slots of ``camera_layout``; missing cameras stay black, exactly
-    like the dataset reader pads them.
-    """
-    from openwam.dataloader.transforms.multiview import assemble_multiview_layout
-
-    if not multiview:
-        if main_image.size == (width, height):
-            return main_image
-        # Native single-view readers decode directly to (width, height); do not
-        # center-crop a square environment frame and discard its vertical view.
-        return main_image.resize((width, height), Image.Resampling.LANCZOS)
-
-    # The training readers decode the head camera at the top-slot size and the
-    # wrist cameras at the bottom-slot size with LANCZOS before composition, so
-    # the BILINEAR stretch inside ``assemble_multiview_layout`` is a no-op there.
-    # Pre-resizing the environment frames the same way keeps eval pixels on the
-    # training distribution instead of bilinear-stretching raw frames.
-    top_h = int(round(height * _MULTIVIEW_TOP_HEIGHT_RATIO))
-    head_size = (width, top_h)
-    wrist_size = (width // 2, height - top_h)
-    frames = {camera_layout[0]: _resize_for_slot(main_image, head_size)}
-    for slot, frame in zip(camera_layout[1:], _wrist_frames(wrist_image)):
-        frames[slot] = _resize_for_slot(frame, wrist_size)
-    return assemble_multiview_layout(
-        frames,
-        camera_layout=camera_layout,
-        out_h=height,
-        out_w=width,
-        top_height_ratio=_MULTIVIEW_TOP_HEIGHT_RATIO,
-    )
-
-
-def _resize_for_slot(image: Image.Image, size: tuple[int, int]) -> Image.Image:
-    """LANCZOS-resize ``image`` to ``size`` ``(width, height)`` like the readers."""
-    if image.size == size:
-        return image
-    return image.resize(size, Image.Resampling.LANCZOS)
-
-
-def _observation_proprio(env_obs: dict[str, Any], index: int) -> np.ndarray | None:
-    """Use explicit native physical units, or convert LIBERO's achieved pose."""
-    value = _batch_value(env_obs, ("native_proprio",), index, None)
-    if value is not None:
-        if isinstance(value, torch.Tensor):
-            value = value.detach().cpu().numpy()
-        value = np.asarray(value, dtype=np.float32)
-        if value.ndim != 1 or not np.isfinite(value).all():
-            raise ValueError(
-                "native_proprio must be a finite vector in checkpoint physical units"
-            )
-        return value
-    return _libero_state_to_eef10(
-        _batch_value(env_obs, ("states", "state", "proprio"), index, None)
-    )
