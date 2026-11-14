@@ -129,6 +129,7 @@ actor:
     action_dim: 22
     num_action_chunks: 2
     hidden_dim: 256
+    action_norm_stats: "${oc.env:REPO_PATH}/tests/e2e_tests/embodied/dexjoco_action_norm_stats.json"
     precision: "32"
     add_value_head: True
     add_q_head: False
