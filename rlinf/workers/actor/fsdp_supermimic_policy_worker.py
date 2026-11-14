@@ -229,6 +229,10 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             model.fold_world_model_stats(step["enc_stats"], step["target_stats"])
             self.replay.add({name: step[name] for name in fields})
 
+    def replay_ready(self) -> bool:
+        """Whether this rank's replay holds a legal world-model window."""
+        return self.replay.has_window(self.k)
+
     # --------------------------------------------------------------- training
 
     @Worker.timer("run_updates")

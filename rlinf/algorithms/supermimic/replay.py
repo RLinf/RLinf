@@ -72,12 +72,9 @@ class TransitionRing:
         self.column = (self.column + 1) % self.capacity
         self.size = min(self.capacity, self.size + 1)
 
-    def sample(self, length: int, batch: int) -> dict[str, torch.Tensor]:
-        """``batch`` windows of ``length`` consecutive steps, ``[batch, length, ...]``.
-
-        Envs with at least one legal window are drawn uniformly, then a
-        uniform legal start within the env.
-        """
+    def _legal_starts(self, length: int) -> tuple[torch.Tensor, int]:
+        """Legal window starts ``[num_envs, capacity]`` by age, and the column
+        of age 0."""
         if length > self.capacity:
             raise ValueError(
                 f"window {length} exceeds the ring capacity {self.capacity}"
@@ -101,13 +98,28 @@ class TransitionRing:
         legal = (running[:, length - 1 : length - 1 + cap] == running[:, :cap]) & (
             ages + length - 1 < size
         )
+        return legal, oldest
+
+    def has_window(self, length: int) -> bool:
+        """Whether some env holds a legal ``length``-step window."""
+        return bool(self._legal_starts(length)[0].any())
+
+    def sample(self, length: int, batch: int) -> dict[str, torch.Tensor]:
+        """``batch`` windows of ``length`` consecutive steps, ``[batch, length, ...]``.
+
+        Envs with at least one legal window are drawn uniformly, then a
+        uniform legal start within the env.
+        """
+        legal, oldest = self._legal_starts(length)
         cumulative = legal.cumsum(1)
         per_env = cumulative[:, -1]
         if not bool((per_env > 0).any()):
-            raise RuntimeError(f"no legal {length}-step window among {size} steps")
+            raise RuntimeError(f"no legal {length}-step window among {self.size} steps")
         env = torch.multinomial((per_env > 0).float(), batch, replacement=True)
         pick = (torch.rand(batch, device=self.device) * per_env[env].float()).long()
         start = torch.searchsorted(cumulative[env], pick.unsqueeze(-1), right=True)
-        cols = (oldest + start + torch.arange(length, device=self.device)) % cap
+        cols = (oldest + start + torch.arange(length, device=self.device)) % (
+            self.capacity
+        )
         rows = env.unsqueeze(-1)
         return {name: value[rows, cols] for name, value in self.storage.items()}

@@ -134,10 +134,11 @@ class SuperMimicRunner(EmbodiedRunner):
 
     Collection stops at the first vector step that makes updates due while
     the replay holds at least ``k`` steps; updates that fall due before that
-    are dropped. The due updates then run, but a batch stops on the next
-    save or evaluation step so that step is checkpointed before the
-    remaining updates. The new policy goes to the rollout workers before
-    collection resumes.
+    are dropped. Every rank must also hold a world-model window before the
+    due updates run. They then run, but a batch stops on the next save or
+    evaluation step so that step is checkpointed before the remaining
+    updates. The new policy goes to the rollout workers before collection
+    resumes.
     """
 
     def __init__(
@@ -153,6 +154,7 @@ class SuperMimicRunner(EmbodiedRunner):
         super().__init__(cfg, actor=actor, rollout=rollout, env=env)
         self.ratio = update_ratio(cfg)
         self.k = int(cfg.algorithm.k)
+        self.replay_length = int(cfg.algorithm.replay_length)
         self.anchor: float | None = None
         self.env_steps = 0
         # Vector steps in the replay; it is not checkpointed.
@@ -253,6 +255,33 @@ class SuperMimicRunner(EmbodiedRunner):
             if due and self.replay_steps + steps >= self.k:
                 return steps, due, anchor
 
+    def _collect_until_update(self) -> tuple[Handle, Handle, int]:
+        """Collect until updates fall due and every rank can draw a
+        world-model window; returns the last env and rollout handles and the
+        due updates.
+
+        Each rank samples only its own replay. While some rank has no legal
+        ``k``-step window, every rank collects one more step and the due
+        updates wait; updates that fall due meanwhile run with the next
+        batch.
+        """
+        steps, due, self.anchor = self._steps_until_update()
+        env_handle, rollout_handle = self._collect(steps)
+        waited = 0
+        while True:
+            ready = self.actor.replay_ready().wait()
+            if all(ready):
+                return env_handle, rollout_handle, due
+            if waited >= self.replay_length:
+                missing = [rank for rank, ok in enumerate(ready) if not ok]
+                raise RuntimeError(
+                    f"actor ranks {missing} still hold no legal {self.k}-step "
+                    f"replay window after {waited} more steps: every env on "
+                    f"those ranks ends within {self.k} steps."
+                )
+            env_handle, rollout_handle = self._collect(1)
+            waited += 1
+
     def evaluate(self) -> dict[str, float]:
         meta = self.env.eval_metadata().wait()[0]
         env_handle = self.env.evaluate(
@@ -295,8 +324,7 @@ class SuperMimicRunner(EmbodiedRunner):
                 self._open_profiling_window(profiled_step)
             with self.timer("step"):
                 with self.timer("generate_rollouts"):
-                    steps, due, self.anchor = self._steps_until_update()
-                    env_handle, rollout_handle = self._collect(steps)
+                    env_handle, rollout_handle, due = self._collect_until_update()
                 # check_progress matches exact multiples, so a batch that would
                 # pass a save or evaluation step stops on that step first.
                 spans = boundary_update_spans(

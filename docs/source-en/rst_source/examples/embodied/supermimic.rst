@@ -677,11 +677,13 @@ evaluation takes about 6.5 minutes.
      - 0.925
 
 On 40 clips, 15% is 6 falls, 2.5% is 1, 12.5% is 5, and 7.5% is 3. The
-paper reports a normalized return of 0.82 on these 40 clips. MaxCoord
-reaches 0.820 at update 4000. That is not a reproduction of the paper run:
-training has not reached 16000 updates, reset bins are 0.2 s rather than
-the paper's 1 s, and the paper's main result uses filtered BONES-SEED
-rather than these 40 clips.
+paper reports a normalized return of 0.82 on these 40 clips after about
+1.2 hours. The checkpoint that matches that point is MaxCoord at update
+2000: about 1.2 hours of training and a normalized return of 0.815.
+Update 4000 reaches 0.820 and is a later checkpoint. That is not a
+reproduction of the paper run: the training target is still 16000
+updates, reset bins are 0.2 s rather than the paper's 1 s, and the
+paper's main result uses filtered BONES-SEED rather than these 40 clips.
 
 The other tracking errors at update 4000 (means over 40 clips;
 ``fail_step`` and ``fail_time_s`` are means over the clips that fell):

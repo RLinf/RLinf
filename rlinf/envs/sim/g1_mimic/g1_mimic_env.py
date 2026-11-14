@@ -242,7 +242,8 @@ class G1MimicEnv:
                 sim.pd_offset + sim.action_scale * executed, self.group
             ),
         }
-        self.prev_action = executed
+        # The transition keeps ``executed``; resetting envs zeroes prev_action.
+        self.prev_action.copy_(executed)
         done = (failed | truncated).nonzero(as_tuple=True)[0]
         if done.numel():
             self._reset(done)

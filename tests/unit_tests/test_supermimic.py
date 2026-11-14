@@ -23,6 +23,7 @@ import importlib.util
 import math
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -35,6 +36,7 @@ from rlinf.algorithms.supermimic.objectives import (
     lambda_returns,
     world_model_loss,
 )
+from rlinf.algorithms.supermimic.replay import TRANSITION_FIELDS, TransitionRing
 from rlinf.algorithms.supermimic.reset_sampler import (
     RECORD_STEPS,
     RETURN_GAMMA,
@@ -57,6 +59,7 @@ from rlinf.envs.sim.g1_mimic.constants import (
 )
 from rlinf.envs.sim.g1_mimic.eval_metrics import check_job_coverage
 from rlinf.envs.sim.g1_mimic.features import quat_to_rotmat
+from rlinf.envs.sim.g1_mimic.g1_mimic_env import G1MimicEnv
 from rlinf.envs.sim.g1_mimic.g1_mimic_eval_env import (
     check_eval_states,
     checked_policy_action,
@@ -70,7 +73,11 @@ from rlinf.models.embodiment.supermimic.normalization import (
     merged_moments,
     pack_moments,
 )
-from rlinf.runners.supermimic_runner import boundary_update_spans, due_updates
+from rlinf.runners.supermimic_runner import (
+    SuperMimicRunner,
+    boundary_update_spans,
+    due_updates,
+)
 from rlinf.workers.actor.fsdp_supermimic_policy_worker import clip_step
 
 CPU = torch.device("cpu")
@@ -376,6 +383,122 @@ def test_batched_updates_stop_on_save_and_eval_boundaries():
     assert boundary_update_spans(1990, 1020, 16000, 2000, 1000) == [10, 1000, 10]
 
 
+def _ring_ending_every_third_step(ends: list[bool], steps: int = 12):
+    """A ring of ``len(ends)`` envs; env ``i`` ends every third step if ``ends[i]``."""
+    rows = len(ends)
+    ring = TransitionRing(rows, 20, 1, CPU)
+    for t in range(steps):
+        step = {
+            name: torch.zeros((rows, width) if width else rows, dtype=dtype)
+            for name, (width, dtype) in TRANSITION_FIELDS.items()
+        }
+        step["state"] = torch.full((rows, 1), float(t))
+        step["terminated"] = torch.tensor(ends) & (t % 3 == 2)
+        ring.add(step)
+    return ring
+
+
+def test_replay_windows_come_only_from_envs_with_long_episodes():
+    ring = _ring_ending_every_third_step([True, False])
+    assert ring.has_window(8)
+    windows = ring.sample(8, 64)
+    assert not windows["terminated"][:, :-1].any()
+    time = windows["state"][..., 0]
+    assert torch.equal(time - time[:, :1], torch.arange(8.0).expand(64, -1))
+
+    short = _ring_ending_every_third_step([True, True])
+    assert not short.has_window(8)
+    assert short.has_window(3)
+    with pytest.raises(RuntimeError, match="no legal 8-step window"):
+        short.sample(8, 4)
+
+
+class _Done:
+    def __init__(self, value=None):
+        self.value = value
+
+    def wait(self):
+        return self.value
+
+
+def _runner_with_replay_answers(answers: list[list[bool]], replay_length: int = 1000):
+    runner = object.__new__(SuperMimicRunner)
+    runner.ratio, runner.k, runner.replay_length = 0.4, 8, replay_length
+    runner.anchor, runner.env_steps, runner.replay_steps = None, 0, 0
+    replies = iter(answers)
+    runner.actor = SimpleNamespace(replay_ready=lambda: _Done(next(replies)))
+    runner.collected = []
+
+    def collect(steps):
+        runner.collected.append(steps)
+        runner.env_steps += steps
+        runner.replay_steps += steps
+        return _Done(), _Done()
+
+    runner._collect = collect
+    return runner
+
+
+def test_due_updates_wait_until_every_rank_can_draw_a_window():
+    runner = _runner_with_replay_answers([[True, False], [True, False], [True, True]])
+    _, _, due = runner._collect_until_update()
+    assert runner.collected == [9, 1, 1]
+    assert due == 1
+    assert runner.anchor == 7.5
+
+    stuck = _runner_with_replay_answers([[True, False]] * 3, replay_length=2)
+    with pytest.raises(RuntimeError, match=r"actor ranks \[1\]"):
+        stuck._collect_until_update()
+    assert stuck.collected == [9, 1, 1]
+
+
+def test_reset_keeps_the_last_executed_action_in_the_transition(monkeypatch):
+    import rlinf.envs.sim.g1_mimic.g1_mimic_env as g1_mimic_env
+
+    rows = 2
+    never = torch.zeros(rows, dtype=torch.bool)
+    env = object.__new__(G1MimicEnv)
+    env.num_envs, env.device, env.group, env.action_noise_std = rows, CPU, None, 0.0
+    env._compile_cache = None
+    env.prev_action = torch.zeros(rows, ACTION_DIM)
+    env._observed = {
+        "state": torch.zeros(rows, STATE_DIM),
+        "frame": torch.zeros(rows, dtype=torch.long),
+    }
+    env.sim = SimpleNamespace(
+        state=torch.zeros(rows, STATE_DIM),
+        sim_context=torch.zeros(rows, SIM_CONTEXT_DIM),
+        pd_offset=torch.zeros(ACTION_DIM),
+        action_scale=torch.ones(ACTION_DIM),
+        motion_time=torch.zeros(rows, dtype=torch.long),
+        body_state=lambda: (),
+        reset=lambda env_ids, motion_id, time: None,
+        step=lambda action: {
+            "frame": torch.zeros(rows, dtype=torch.long),
+            "failure": never,
+            "timeout": torch.tensor([True, False]),
+            "clip_end": never,
+        },
+    )
+    env.motion = SimpleNamespace(
+        body_state=lambda frame: (),
+        locate=lambda frames: (torch.zeros_like(frames), torch.zeros_like(frames)),
+    )
+    env.reset_sampler = SimpleNamespace(
+        record=lambda *args: None,
+        sample=lambda n: torch.zeros(n, dtype=torch.long),
+    )
+    env._clear_metrics()
+    monkeypatch.setattr(
+        g1_mimic_env, "run_compiled", lambda name, fn, *args, cache: torch.zeros(rows)
+    )
+
+    transition = env.step(torch.full((rows, ACTION_DIM), 0.25))
+    assert torch.equal(transition["action"], torch.full((rows, ACTION_DIM), 0.25))
+    assert torch.equal(env.prev_action[0], torch.zeros(ACTION_DIM))
+    assert torch.equal(env.prev_action[1], torch.full((ACTION_DIM,), 0.25))
+
+
 def test_scoped_timer_sums_a_second_record_of_the_same_name():
     from rlinf.utils.distributed import ScopedTimer
 
@@ -650,3 +773,25 @@ def test_push_writes_only_the_horizontal_root_velocity(mode):
     env.step(torch.zeros(2, ACTION_DIM, device=device))
     moved = env.state[1, :2] - after[1, :2]
     torch.testing.assert_close(moved, expected[1, xy] * DT, atol=5e-3, rtol=0)
+
+
+@needs_warp
+def test_reset_drops_the_previous_episode_from_the_solver():
+    from rlinf.envs.sim.g1_mimic.mjlab_env import MjlabG1Env
+    from rlinf.envs.sim.g1_mimic.push_recovery import default_standing_state
+
+    device = torch.device("cuda:0")
+    pose = default_standing_state()
+    motion = MotionLibrary([pose.repeat(30, 1)], q0=pose[JOINT_POS])
+    env = MjlabG1Env(2, motion, device, randomize=False)
+    for _ in range(5):
+        env.step(torch.full((2, ACTION_DIM), 0.5, device=device))
+    warm = env.sim.data.qacc_warmstart.clone()
+    assert bool((warm.abs().amax(1) > 0).all())
+    ids = torch.zeros(1, dtype=torch.long, device=device)
+    env.reset(ids, torch.zeros_like(ids), torch.zeros_like(ids))
+    # Contact solves start from qacc_warmstart, so a stale one carries the
+    # previous episode into the first step of the next.
+    assert bool((env.sim.data.qacc_warmstart[0] == 0).all())
+    assert float(env.sim.data.time[0]) == 0.0
+    torch.testing.assert_close(env.sim.data.qacc_warmstart[1], warm[1], atol=0, rtol=0)

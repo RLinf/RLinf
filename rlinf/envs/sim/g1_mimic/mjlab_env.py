@@ -424,9 +424,11 @@ class MjlabG1Env:
     ) -> None:
         """Write the reference frame ``motion_time`` of ``motion_id`` into ``env_ids``.
 
-        With ``randomize`` the root pose, root velocity and joint angles get
-        mjlab's tracking reset noise; joint angles are then clipped to the
-        soft limits.
+        The worlds are first cleared like an mjlab episode reset: the solver
+        warm start, simulation time and actuator state of the previous
+        episode are dropped. With ``randomize`` the root pose, root velocity
+        and joint angles get mjlab's tracking reset noise; joint angles are
+        then clipped to the soft limits.
         """
         n = int(env_ids.numel())
         if n == 0:
@@ -452,6 +454,10 @@ class MjlabG1Env:
             start[:, JOINT_POS] = torch.clamp(
                 joints, self.soft_limits[:, 0], self.soft_limits[:, 1]
             )
+        # Writing qpos and qvel alone keeps qacc_warmstart, which seeds the
+        # next solve.
+        self.sim.reset(env_ids)
+        self.robot.reset(env_ids)
         self._write_state(env_ids, start, ang_w)
         self.state = self._read_state()
 
