@@ -353,6 +353,7 @@ class SuperMimicRunner(EmbodiedRunner):
                     training_metrics,
                     eval_metrics,
                     last_step,
+                    span_durations,
                 ) = self._execute_update_spans(spans)
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
@@ -363,80 +364,61 @@ class SuperMimicRunner(EmbodiedRunner):
                 (env_handle, rollout_handle, actor_handle),
                 training_metrics,
                 eval_metrics,
+                span_durations,
             )
         self._finish_run()
 
     def _execute_update_spans(
         self, spans: list[int]
-    ) -> tuple[Handle, list[dict], dict[str, float], int]:
-        """Run each span, then sync and checkpoint before the next one.
+    ) -> tuple[Handle, list[dict], dict[str, float], int, dict[str, float]]:
+        """Run each span, then sync, evaluate and checkpoint before the next.
 
-        One collection still pays for every span. The runner timer keeps a
-        single measurement per name, so a batch that crosses more than one
-        boundary records the summed training and sync time after the loop.
+        One collection pays for every span. ``ScopedTimer`` stores one
+        measurement per name, and a batch that crosses more than one boundary
+        trains, syncs and may evaluate more than once, so those times are
+        summed here and returned for :meth:`_log_iteration`.
         """
-        single = len(spans) == 1
         actor_handle: Handle | None = None
         training_metrics: list[dict] = []
         eval_metrics: dict[str, float] = {}
-        measured = {"actor_training": 0.0, "sync_weights": 0.0}
+        durations = dict.fromkeys(("actor_training", "sync_weights"), 0.0)
         last_step = self.global_step
         for count in spans:
-            actor_handle, training_metrics = self._run_update_count(
-                count, single, measured
+            actor_handle, training_metrics = self._measure(
+                "actor_training", durations, self._run_updates, count
             )
             self.global_step += count
-            self._sync_updated_weights(single, measured)
+            self._measure("sync_weights", durations, self._sync_policy)
             last_step = self.global_step - 1
-            segment_eval = self._maybe_eval_and_checkpoint(last_step)
+            segment_eval = self._eval_and_checkpoint(last_step, durations)
             if segment_eval:
                 eval_metrics = segment_eval
-        if not single:
-            for name, duration in measured.items():
-                self.timer.add_duration(name, duration)
         if actor_handle is None:
             raise RuntimeError("An update batch produced no actor call.")
-        return actor_handle, training_metrics, eval_metrics, last_step
+        return actor_handle, training_metrics, eval_metrics, last_step, durations
 
-    def _run_update_count(
-        self, count: int, single: bool, measured: dict[str, float]
-    ) -> tuple[Handle, list[dict]]:
-        def run() -> tuple[Handle, list[dict]]:
-            handle = self.actor.run_updates(count)
-            return handle, handle.wait()
+    def _run_updates(self, count: int) -> tuple[Handle, list[dict]]:
+        handle = self.actor.run_updates(count)
+        return handle, handle.wait()
 
-        if single:
-            with self.timer("actor_training"):
-                return run()
-        return self._measure("actor_training", measured, run)
+    def _sync_policy(self) -> None:
+        self._set_global_step()
+        self.update_rollout_weights()
 
-    def _sync_updated_weights(self, single: bool, measured: dict[str, float]) -> None:
-        def sync() -> None:
-            self._set_global_step()
-            self.update_rollout_weights()
-
-        if single:
-            with self.timer("sync_weights"):
-                sync()
-            return
-        self._measure("sync_weights", measured, sync)
-
-    def _measure(self, name: str, measured: dict[str, float], fn):
+    def _measure(self, name: str, durations: dict[str, float], fn, *args):
+        """``fn(*args)``, adding its wall time to ``durations[name]``."""
         Tracer.trace_begin(name, cat="runner")
         started = time.perf_counter()
         try:
-            return fn()
+            return fn(*args)
         finally:
-            measured[name] += time.perf_counter() - started
+            elapsed = time.perf_counter() - started
+            durations[name] = durations.get(name, 0.0) + elapsed
             Tracer.trace_end(name, cat="runner")
 
-    def _maybe_eval_and_checkpoint(self, step: int) -> dict:
-        # One iteration can evaluate at more than one boundary. The first
-        # uses the parent path. ScopedTimer records each name once, so a
-        # later evaluation adds to that record instead of entering the
-        # parent's ``with self.timer("eval")`` again.
-        if not self.timer.has_duration("eval"):
-            return super()._maybe_eval_and_checkpoint(step)
+    def _eval_and_checkpoint(self, step: int, durations: dict[str, float]) -> dict:
+        """:meth:`_maybe_eval_and_checkpoint` with its evaluation time summed
+        into ``durations``, so one batch can evaluate at more than one step."""
         run_val, save_model, _ = check_progress(
             self.global_step,
             self.max_steps,
@@ -447,15 +429,16 @@ class SuperMimicRunner(EmbodiedRunner):
         )
         eval_metrics: dict[str, float] = {}
         if run_val:
-            started = time.perf_counter()
-            self.update_rollout_weights()
-            evaluated = self.evaluate()
+            evaluated = self._measure("eval", durations, self._evaluate_policy)
             eval_metrics = {f"eval/{key}": value for key, value in evaluated.items()}
             self.metric_logger.log(data=eval_metrics, step=step)
-            self.timer.add_duration("eval", time.perf_counter() - started)
         if save_model:
             self._save_checkpoint()
         return eval_metrics
+
+    def _evaluate_policy(self) -> dict[str, float]:
+        self.update_rollout_weights()
+        return self.evaluate()
 
     def _log_iteration(
         self,
@@ -465,15 +448,18 @@ class SuperMimicRunner(EmbodiedRunner):
         handles: tuple[Handle, Handle, Handle],
         training_metrics: list[dict],
         eval_metrics: dict[str, float],
+        span_durations: dict[str, float],
     ) -> None:
         """Record the iteration that finished update ``step`` when a record is due.
 
-        TensorBoard blocks the caller once ten events wait in its queue, so
-        recording every scalar costs tens of milliseconds on network storage.
-        Records therefore follow ``runner.log_interval``, and the env
-        statistics of a record cover every step since the previous one.
+        ``span_durations`` holds the summed times of
+        :meth:`_execute_update_spans`. TensorBoard blocks the caller once ten
+        events wait in its queue, so recording every scalar costs tens of
+        milliseconds on network storage. Records therefore follow
+        ``runner.log_interval``, and the env statistics of a record cover
+        every step since the previous one.
         """
-        driver_durations = self.timer.consume_durations()
+        driver_durations = {**self.timer.consume_durations(), **span_durations}
         worker_durations = [
             handle.consume_durations(return_per_rank=True) for handle in handles
         ]

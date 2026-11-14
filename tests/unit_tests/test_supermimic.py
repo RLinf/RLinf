@@ -523,20 +523,30 @@ def test_reset_keeps_the_last_executed_action_in_the_transition(monkeypatch):
     assert torch.equal(env.prev_action[1], torch.full((ACTION_DIM,), 0.25))
 
 
-def test_scoped_timer_sums_a_second_record_of_the_same_name():
-    from rlinf.utils.distributed import ScopedTimer
+def test_update_spans_evaluate_at_each_boundary_and_sum_their_times(monkeypatch):
+    from rlinf.scheduler import Tracer
 
-    timer = ScopedTimer(trace=False)
-    timer.add_duration("eval", 1.25)
-    timer.add_duration("eval", 0.75)
-    assert timer.has_duration("eval")
-    assert timer.consume_durations() == {"eval": 2.0}
-    assert not timer.has_duration("eval")
-    with timer("actor_training"):
-        pass
-    with pytest.raises(ValueError, match="actor_training"):
-        with timer("actor_training"):
-            pass
+    monkeypatch.setattr(Tracer, "_unavailable", True)
+    runner = object.__new__(SuperMimicRunner)
+    runner.global_step, runner.max_steps = 8, 100
+    runner.cfg = SimpleNamespace(
+        runner=SimpleNamespace(val_check_interval=10, save_interval=-1)
+    )
+    calls = []
+    runner.actor = SimpleNamespace(
+        run_updates=lambda count: calls.append(("update", count)) or _Done([{}])
+    )
+    runner._set_global_step = lambda: None
+    runner.update_rollout_weights = lambda: calls.append(("sync", None))
+    runner.evaluate = lambda: calls.append(("eval", runner.global_step)) or {"r": 1.0}
+    runner.metric_logger = SimpleNamespace(log=lambda data, step: None)
+
+    spans = boundary_update_spans(8, 13, 100, -1, 10)
+    *_, eval_metrics, last_step, durations = runner._execute_update_spans(spans)
+    assert spans == [2, 10, 1]
+    assert [call for call in calls if call[0] == "eval"] == [("eval", 10), ("eval", 20)]
+    assert (eval_metrics, last_step, runner.global_step) == ({"eval/r": 1.0}, 20, 21)
+    assert set(durations) == {"actor_training", "sync_weights", "eval"}
 
 
 def test_clip_step_clips_the_norm_then_each_element():
@@ -794,7 +804,7 @@ def _small_actor(cfg, mesh, motion):
     return actor
 
 
-def _update_with_and_without_graph(rank: int, port: int, out: str) -> None:
+def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) -> None:
     from torch.distributed.device_mesh import init_device_mesh
 
     from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
@@ -830,6 +840,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str) -> None:
                     "algorithm.replay_length=64",
                     "actor.model.torch_compile=False",
                     f"actor.cuda_graph={graph}",
+                    f"actor.fsdp_config.amp_autocast.enabled={amp}",
                 ],
             )
             torch.manual_seed(0)
@@ -851,12 +862,13 @@ def _update_with_and_without_graph(rank: int, port: int, out: str) -> None:
     not torch.cuda.is_available() or not dist.is_nccl_available(),
     reason="the update graph needs a CUDA device and NCCL",
 )
-def test_recorded_update_replays_the_eager_update(tmp_path):
+@pytest.mark.parametrize("amp", [False, True])
+def test_recorded_update_replays_the_eager_update(tmp_path, amp):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     torch.multiprocessing.spawn(
-        _update_with_and_without_graph, args=(port, str(tmp_path)), nprocs=1
+        _update_with_and_without_graph, args=(port, str(tmp_path), amp), nprocs=1
     )
     results = torch.load(tmp_path / "updates.pt")
     eager, replayed = results[False], results[True]

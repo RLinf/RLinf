@@ -69,7 +69,10 @@ def _run(owner: nn.Module, net: nn.Module, features: torch.Tensor) -> torch.Tens
     dtype = getattr(owner, "autocast_dtype", None)
     if dtype is None:
         return net(features)
-    with torch.autocast(device_type=features.device.type, dtype=dtype):
+    # A recorded update must not keep cast weights from the graph memory pool.
+    with torch.autocast(
+        device_type=features.device.type, dtype=dtype, cache_enabled=False
+    ):
         out = net(features)
     return out.to(dtype=features.dtype)
 
