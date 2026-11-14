@@ -136,6 +136,37 @@ def _check_actor_backend(actor: DictConfig) -> None:
         )
 
 
+def _check_cuda_graph(actor: DictConfig) -> None:
+    """A recorded update replays the learning rates it was recorded with."""
+    enabled = actor.get("cuda_graph", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"actor.cuda_graph must be a bool, got {enabled!r}")
+    if not enabled:
+        return
+    for name in ("optim", "world_model_optim", "critic_optim", "muon_optim"):
+        optim = actor[name]
+        warmup = int(optim.get("lr_warmup_steps", -1))
+        if warmup < 0:
+            warmup = int(
+                float(optim.get("lr_warmup_steps_ratio", 0.0))
+                * optim.get("total_training_steps", 0)
+            )
+        schedule = optim.get("lr_scheduler", "constant")
+        if schedule != "constant" or warmup > 0:
+            raise ValueError(
+                f"actor.cuda_graph replays fixed learning rates, so actor.{name} "
+                f"needs lr_scheduler=constant without warmup, got {schedule!r} "
+                f"with {warmup} warmup steps"
+            )
+        if optim.get("optimizer", "adam") != "muon" and not optim.get(
+            "capturable", False
+        ):
+            raise ValueError(
+                f"actor.cuda_graph records the Adam steps, so actor.{name} needs "
+                "capturable=True"
+            )
+
+
 def _sync_env(env: DictConfig, model: DictConfig, prefix: str):
     """Copy the policy settings into one env section."""
     with open_dict(env):
@@ -247,6 +278,7 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
                     f"SuperMimic training needs {group}.enable_offload=False, got True"
                 )
         _check_actor_backend(cfg.actor)
+        _check_cuda_graph(cfg.actor)
         _sync_env(cfg.env.train, model, "env.train")
         _check_env(cfg.env.train, "env.train", needs_motion=True)
         _check_training(cfg)

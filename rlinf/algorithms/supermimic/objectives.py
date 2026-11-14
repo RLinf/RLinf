@@ -49,11 +49,12 @@ def world_model_loss(
     come out in ``pred``'s key order.
     """
     mse = torch.stack([(pred[name] - true[name]).square().mean() for name in pred])
-    widths = torch.tensor(
-        [float(pred[name].shape[-1]) for name in pred], device=mse.device
+    # Filled on the device: a CUDA graph cannot record a host-to-device copy.
+    widths = torch.stack(
+        [mse.new_full((), float(pred[name].shape[-1])) for name in pred]
     )
-    weights = torch.tensor(
-        [NOMINAL_ERRORS[name] ** -2 for name in pred], device=mse.device
+    weights = torch.stack(
+        [mse.new_full((), NOMINAL_ERRORS[name] ** -2) for name in pred]
     )
     return (mse * weights * widths).sum() / widths.sum(), mse
 
@@ -72,8 +73,13 @@ def imagined_return(
     the gradient reaches the termination test.
     """
     horizon = rewards.shape[1]
-    alive = torch.cumprod(1.0 - term_prob, dim=1)
-    before = torch.cat((torch.ones_like(alive[:, :1]), alive[:, :-1]), dim=1)
+    # A running product, not cumprod: cumprod's backward reads on the host
+    # whether an input is zero, which a CUDA graph cannot record.
+    survival = [torch.ones_like(term_prob[:, 0])]
+    for t in range(horizon):
+        survival.append(survival[-1] * (1.0 - term_prob[:, t]))
+    alive = torch.stack(survival[1:], dim=1)
+    before = torch.stack(survival[:-1], dim=1)
     discount = gamma ** torch.arange(
         horizon, device=rewards.device, dtype=rewards.dtype
     )

@@ -332,11 +332,25 @@ BONES-SEED 训练在启动命令后追加：
    * - ``actor.fsdp_config.amp_autocast.enabled``
      - False
      - 打开后，网络矩阵乘使用 ``precision``\ （bf16）。权重仍是 float32。
+   * - ``actor.cuda_graph``
+     - False
+     - 打开后，前三次之后的每次更新作为一张 CUDA 图回放。见 `CUDA 图更新`_。
    * - ``env.train.action_noise_std``
      - 0.1
      - 训练动作噪声。已报告的评测把它在 ``env.eval`` 上设为 0。
 
 **更新次数与仿真步数。** 默认规模下每个控制步欠 0.4 次更新，所以 ``runner.max_epochs=16000`` 对应 40000 个控制步。全局步是更新次数，``env/env_steps`` 是控制步数。``env.train.total_num_envs``、``algorithm.wm_window_batch`` 和 ``algorithm.imagine_batch`` 是所有 GPU 的总和，必须能被 GPU 数整除。加 GPU 而不改这些值，训练的数学含义不变。
+
+CUDA 图更新
+~~~~~~~~~~~
+
+``actor.cuda_graph=True`` 时，前三次更新按普通方式执行，第四次录成一张 CUDA 图，之后每次更新都回放这张图。回放省掉了世界模型、actor 和 critic 三个阶段里大部分的 kernel 启动和主机开销。回放数据仍在图外采样，每次更新用的都是新样本。
+
+- 图里固定了录制时的学习率。配置校验要求每个优化器都是 ``lr_scheduler: constant`` 且没有 warmup。
+- Adam 以 ``capturable=True`` 构建，配置里由 ``actor.cuda_graph`` 决定。
+- 各阶段计时器只记录录制那一次，回放的整次更新由 ``run_updates`` 计时。
+- 加载检查点会丢弃这张图，之后的更新先按普通方式执行，再重新录制。
+- 单卡单元测试检查图更新和普通更新结果完全一致；多卡尚未验证。
 
 单卡训练
 --------

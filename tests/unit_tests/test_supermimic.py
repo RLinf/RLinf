@@ -280,6 +280,19 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
             "grad_scaler.enabled must be False",
         ),
         (["env.train.max_episode_seconds=0.16", "algorithm.replay_length=8"], None),
+        (
+            ["actor.cuda_graph=True", "actor.optim.lr_scheduler=cosine"],
+            "actor.optim needs lr_scheduler=constant",
+        ),
+        (
+            ["actor.cuda_graph=True", "+actor.muon_optim.lr_warmup_steps=10"],
+            "with 10 warmup steps",
+        ),
+        (
+            ["actor.cuda_graph=True", "actor.world_model_optim.capturable=False"],
+            "actor.world_model_optim needs capturable=True",
+        ),
+        (["actor.cuda_graph=True"], None),
     ],
 )
 def test_training_config_rejects_unsupported_values(overrides, error):
@@ -719,6 +732,128 @@ def test_each_training_phase_reaches_only_its_network(name):
     )
     action, _ = policy.predict_action_batch({"states": obs})
     assert action.shape == (rows, 1, ACTION_DIM)
+
+
+def _small_actor(cfg, mesh, motion):
+    """The SuperMimic actor of ``cfg`` on one rank, without Ray, over a replay
+    of four envs that follow ``motion``'s two clips."""
+    from torch.distributed.fsdp import fully_shard
+
+    from rlinf.models.embodiment.supermimic.supermimic_policy import (
+        SuperMimicPolicy,
+    )
+    from rlinf.workers.actor import fsdp_supermimic_policy_worker as module
+
+    def base_init(self, cfg):
+        self.cfg = cfg
+        self._rank, self._world_size = 0, 1
+
+    module.EmbodiedFSDPActor.__init__ = base_init
+    actor = module.EmbodiedSuperMimicFSDPPolicy(cfg)
+    actor._timer_metrics, actor._accelerator_type = {}, None
+    actor.log_info = lambda msg: None
+    actor.device = "cuda:0"
+    actor._device_mesh, actor._dp_group = mesh, mesh["fsdp"].get_group()
+    actor._strategy = SimpleNamespace(
+        wrap_model=lambda model, device_mesh: fully_shard(model, mesh=device_mesh)
+    )
+    actor.model_provider_func = lambda: SuperMimicPolicy.from_config(cfg.actor.model)
+    actor.setup_model_and_optimizer()
+    actor.motion = motion
+    representation = actor.model.representation
+    actor.replay = TransitionRing(4, 64, representation.state_dim, motion.frames.device)
+    starts = torch.tensor([0, 3, 40, 45], device=motion.frames.device)
+    gen = torch.Generator(device=motion.frames.device).manual_seed(1)
+    context = 0.3 * torch.randn(4, SIM_CONTEXT_DIM, device=gen.device, generator=gen)
+    prev = torch.zeros(4, ACTION_DIM, device=gen.device)
+    for t in range(24):
+        action = 0.1 * torch.randn(4, ACTION_DIM, device=gen.device, generator=gen)
+        actor.replay.add(
+            {
+                "state": _stored(representation, motion.rows(starts + t)),
+                "action": action,
+                "prev_action": prev,
+                "motion_time": starts + t,
+                "terminated": torch.zeros(4, dtype=torch.bool),
+                "truncated": torch.zeros(4, dtype=torch.bool),
+                "sim_context": context,
+            }
+        )
+        prev = action
+    return actor
+
+
+def _update_with_and_without_graph(rank: int, port: int, out: str) -> None:
+    from torch.distributed.device_mesh import init_device_mesh
+
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+
+    dist.init_process_group(
+        "nccl", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=1
+    )
+    torch.cuda.set_device(0)
+    try:
+        mesh = init_device_mesh("cuda", (1,), mesh_dim_names=("fsdp",))
+        pose = asset_default_state()
+        clips = []
+        for length in (40, 30):
+            clip = pose.repeat(length, 1)
+            clip[:, 0] = torch.linspace(0.0, 1.0, length)
+            wave = torch.sin(torch.linspace(0, 3, length))[:, None]
+            clip[:, JOINT_POS] += 0.05 * wave
+            clips.append(clip.cuda())
+        motion = MotionLibrary(clips, q0=pose[JOINT_POS])
+        results = {}
+        for graph in (False, True):
+            cfg = _compose(
+                "supermimic_lafan1_gencoord",
+                [
+                    "env.train.motion_path=/data/clips",
+                    "env.train.total_num_envs=4",
+                    "algorithm.H=4",
+                    "algorithm.wm_batches=2",
+                    "algorithm.wm_window_batch=16",
+                    "algorithm.imagine_batch=16",
+                    "algorithm.critic_epochs=2",
+                    "algorithm.critic_minibatches=2",
+                    "algorithm.replay_length=64",
+                    "actor.model.torch_compile=False",
+                    f"actor.cuda_graph={graph}",
+                ],
+            )
+            torch.manual_seed(0)
+            actor = _small_actor(validate_supermimic_cfg(cfg), mesh, motion)
+            metrics = [actor.run_updates(1) for _ in range(6)]
+            params = {
+                name: param.full_tensor().cpu()
+                for name, param in actor.model.named_parameters()
+            }
+            recorded = actor.update_graphs is not None
+            results[graph] = (metrics, params, dict(actor.optimizer_steps), recorded)
+        torch.save(results, f"{out}/updates.pt")
+    finally:
+        dist.destroy_process_group()
+
+
+@needs_mjlab
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or not dist.is_nccl_available(),
+    reason="the update graph needs a CUDA device and NCCL",
+)
+def test_recorded_update_replays_the_eager_update(tmp_path):
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    torch.multiprocessing.spawn(
+        _update_with_and_without_graph, args=(port, str(tmp_path)), nprocs=1
+    )
+    results = torch.load(tmp_path / "updates.pt")
+    eager, replayed = results[False], results[True]
+    assert not eager[3] and replayed[3]
+    assert eager[2] == replayed[2] == {"world_model": 12, "actor": 6, "critic": 24}
+    assert eager[0] == replayed[0]
+    for name, param in eager[1].items():
+        torch.testing.assert_close(replayed[1][name], param, atol=0, rtol=0)
 
 
 @needs_mjlab

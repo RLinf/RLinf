@@ -652,6 +652,8 @@ class FSDPModelManager:
         for its parameters, which must all be matrices; any other filtered
         config builds Adam. An Adam config may set ``fused`` to choose
         PyTorch's fused Adam kernel; unset, PyTorch picks the implementation.
+        ``capturable: True`` keeps Adam's step count on the device, so a CUDA
+        graph can record the step.
         """
         validate_adam_mixed_precision(model, optimizer_name="Adam")
         main_betas = (
@@ -709,6 +711,7 @@ class FSDPModelManager:
                 },
             ],
             fused=main_optim_config.get("fused", None),
+            capturable=bool(main_optim_config.get("capturable", False)),
         )
         optimizers = [main_optimizer]
 
@@ -741,6 +744,7 @@ class FSDPModelManager:
                         },
                     ],
                     fused=config.get("fused", None),
+                    capturable=bool(config.get("capturable", False)),
                 )
             )
         return optimizers

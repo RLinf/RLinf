@@ -23,6 +23,10 @@ Every phase runs through the FSDP root forward with only that phase's
 parameters trainable, so gradients still flow through the frozen world
 model and critic into the actions and states. Every rank trains on the same
 number of rows, so FSDP's gradient mean is the global mean.
+
+With ``actor.cuda_graph`` the update after a few eager ones is recorded as
+one CUDA graph; every later update copies its replay draws into the graph's
+inputs and replays it.
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.supermimic.networks import hidden_matrix_names
 from rlinf.scheduler import Worker
+from rlinf.utils.cuda_graph import CUDAGraphManager, GraphCaptureSpec
 from rlinf.utils.precision import torch_dtype_from_precision
 from rlinf.utils.profiler import PyTorchProfiler
 from rlinf.utils.utils import (
@@ -76,6 +81,9 @@ _PHASES = {
     "critic": ("critic.", "critic_optim"),
 }
 _PHASE_TYPES = {"world_model": WORLD_MODEL, "actor": ACTOR, "critic": CRITIC}
+# Eager updates before the update graph is recorded. They compile the scans
+# and build the caches the graph reads; a recording reads nothing lazily.
+_EAGER_UPDATES_BEFORE_GRAPH = 3
 
 
 def clip_step(
@@ -116,6 +124,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.num_envs = int(cfg.env.train.total_num_envs) // world
 
         self.optimizer_steps = dict.fromkeys(_PHASES, 0)
+        self.steps_per_update = {
+            "world_model": self.wm_batches,
+            "actor": 1,
+            "critic": self.critic_epochs * self.critic_minibatches,
+        }
+        self.use_cuda_graph = bool(cfg.actor.get("cuda_graph", False))
+        self.update_graphs: CUDAGraphManager | None = None
+        self.eager_updates = 0
         self.profiler = None
         if cfg.actor.get("use_profiler", False):
             # One profiler step per global update, counted from this launch.
@@ -238,13 +254,17 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     @Worker.timer("run_updates")
     def run_updates(self, num_updates: int) -> dict[str, float]:
         """Run ``num_updates`` global updates; returns the last update's metrics."""
-        metrics: dict[str, float | torch.Tensor] = {}
+        metrics: dict[str, torch.Tensor] = {}
         for _ in range(num_updates):
             if self.profiler is not None:
                 self.profiler.start()
-            self._run_update(metrics)
+            metrics = self._run_update()
             if self.profiler is not None:
                 self.profiler.stop()
+            for phase, steps in self.steps_per_update.items():
+                self.optimizer_steps[phase] += steps
+            for scheduler in self.all_schedulers:
+                scheduler.step()
         self.model.reshard()
         # Checkpoint loading drops the optimizer state of frozen parameters.
         self.model.requires_grad_(True)
@@ -278,16 +298,90 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         )
         return out
 
-    def _run_update(self, metrics: dict) -> None:
+    def _run_update(self) -> dict[str, torch.Tensor]:
+        """One global update, eager or replayed; returns its metrics.
+
+        A replay overwrites the metric tensors of the previous one.
+        """
+        inputs = self._draw_update_inputs()
+        if not self.use_cuda_graph:
+            return self._update_from(inputs)
+        if self.update_graphs is None:
+            if self.eager_updates < _EAGER_UPDATES_BEFORE_GRAPH:
+                self.eager_updates += 1
+                return self._on_side_stream(self._update_from, inputs)
+            self.update_graphs = self._record_update(inputs)
+        return self.update_graphs.replay("update", inputs)
+
+    def _draw_update_inputs(self) -> dict:
+        """Replay draws of one update: every world-model batch and the
+        imagination inputs.
+
+        The replay is fixed during an update, so drawing all batches first
+        draws them from the same distribution as drawing each before its step.
+        """
+        windows = [
+            self.replay.sample(self.k, self.wm_window_batch)
+            for _ in range(self.wm_batches)
+        ]
+        starts = self.replay.sample(1, self.imagine_batch)
+        return {
+            "wm_states": torch.stack([window["state"] for window in windows]),
+            "wm_actions": torch.stack([window["action"] for window in windows]),
+            "wm_contexts": torch.stack(
+                [window["sim_context"][:, 0] for window in windows]
+            ),
+            "imagination": self._imagination_inputs(starts),
+        }
+
+    def _update_from(self, inputs: dict) -> dict[str, torch.Tensor]:
+        """Train every phase on drawn replay data, without host syncs."""
+        metrics = {}
         with self._phase("world_model"):
-            metrics.update(self._fit_world_model())
+            metrics.update(self._fit_world_model(inputs))
         with self._phase("actor"):
-            actor_metrics, rollout = self._train_actor()
+            actor_metrics, rollout = self._train_actor(inputs["imagination"])
         with self._phase("critic"):
             metrics.update(self._fit_critic(*rollout))
         metrics.update(actor_metrics)
-        for scheduler in self.all_schedulers:
-            scheduler.step()
+        return metrics
+
+    def _on_side_stream(self, fn, *args):
+        """Run ``fn`` on a side stream, as CUDA graphs need their warm-up."""
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            out = fn(*args)
+        torch.cuda.current_stream().wait_stream(stream)
+        return out
+
+    def _record_update(self, inputs: dict) -> CUDAGraphManager:
+        """Record one update as a CUDA graph over ``inputs``.
+
+        Recording runs nothing, so the caller replays it for this update.
+        The phase timers then only time the recording. Learning rates and
+        Muon's float step size are fixed at recording.
+        """
+        graphs = CUDAGraphManager(device=torch.device(self.device))
+        graphs.capture(
+            GraphCaptureSpec(
+                name="update",
+                func=self._update_from,
+                inputs=inputs,
+                external_inputs=set(inputs),
+                warmup_iters=0,
+                register_default_cuda_generator=True,
+            )
+        )
+        self.log_info("Recorded the SuperMimic update as a CUDA graph.")
+        return graphs
+
+    def _drop_update_graph(self) -> None:
+        """Forget the recorded update; the next updates warm up again."""
+        if self.update_graphs is not None:
+            self.update_graphs.destroy()
+        self.update_graphs = None
+        self.eager_updates = 0
 
     @contextlib.contextmanager
     def _phase(self, name: str):
@@ -322,20 +416,18 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             float(optim_cfg.clip_grad),
             None if value_clip is None else float(value_clip),
         )
-        self.optimizer_steps[phase] += 1
         return norm
 
-    def _fit_world_model(self) -> dict[str, float | torch.Tensor]:
+    def _fit_world_model(self, inputs: dict) -> dict[str, torch.Tensor]:
         """One optimizer step on each of ``wm_batches`` replay window batches."""
         self._enter_phase(WORLD_MODEL)
         losses, norms = [], []
-        for _ in range(self.wm_batches):
-            batch = self.replay.sample(self.k, self.wm_window_batch)
+        for i in range(self.wm_batches):
             out = self.model(
                 forward_type=WORLD_MODEL,
-                states=batch["state"],
-                actions=batch["action"],
-                context=batch["sim_context"][:, 0],
+                states=inputs["wm_states"][i],
+                actions=inputs["wm_actions"][i],
+                context=inputs["wm_contexts"][i],
             )
             out["loss"].backward()
             norms.append(self._optimizer_step("world_model"))
@@ -370,15 +462,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             "refs": self.motion.body_state(times[:, : self.horizon]),
         }
 
-    def _train_actor(self) -> tuple[dict[str, float | torch.Tensor], tuple]:
+    def _train_actor(self, imagination: dict) -> tuple[dict[str, torch.Tensor], tuple]:
         """Backpropagate the H-step imagined return into the motion policy.
 
         Returns the metrics and the detached critic features, rewards and
         termination probabilities of the same trajectory.
         """
         self._enter_phase(ACTOR)
-        starts = self.replay.sample(1, self.imagine_batch)
-        out = self.model(forward_type=ACTOR, **self._imagination_inputs(starts))
+        out = self.model(forward_type=ACTOR, **imagination)
         out["loss"].backward()
         grad_norm = self._optimizer_step("actor")
         term_prob = out["term_prob"]
@@ -468,6 +559,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         dist.barrier()
 
     def load_checkpoint(self, load_base_path: str) -> None:
+        # Loading replaces optimizer state tensors a recorded update reads.
+        self._drop_update_graph()
         self._strategy.load_checkpoint(
             model=self.model,
             optimizers=self.all_optimizers,

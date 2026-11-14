@@ -461,6 +461,10 @@ as a Hydra override.
      - False
      - When true, network matmuls use ``precision`` (bf16). Weights stay
        float32.
+   * - ``actor.cuda_graph``
+     - False
+     - When true, each update after the first three is replayed as one
+       CUDA graph. See `CUDA Graph Updates`_.
    * - ``env.train.action_noise_std``
      - 0.1
      - Training action noise. The reported evaluations set it to 0 on
@@ -473,6 +477,26 @@ The global step counts updates and ``env/env_steps`` counts control steps.
 ``algorithm.imagine_batch`` are totals over all GPUs and must divide evenly
 by the GPU count. Adding GPUs without changing them keeps the same training
 mathematics.
+
+CUDA Graph Updates
+~~~~~~~~~~~~~~~~~~
+
+``actor.cuda_graph=True`` runs the first three updates eagerly, records the
+fourth as one CUDA graph, and replays it for every later update. Replay
+removes most kernel-launch and host overhead from the world-model, actor, and
+critic phases. Replay data is still drawn outside the graph, so every update
+trains on fresh samples.
+
+- The graph fixes the learning rates it was recorded with. Validation
+  requires ``lr_scheduler: constant`` with no warmup for every optimizer.
+- The Adam optimizers are built with ``capturable=True``, which the config
+  sets from ``actor.cuda_graph``.
+- The per-phase timers only time the recording. ``run_updates`` times the
+  whole replayed update.
+- Loading a checkpoint drops the graph. The next updates run eagerly and
+  record it again.
+- The single-GPU unit test checks that graph and eager updates match
+  exactly. More than one GPU has not been verified yet.
 
 Train on One GPU
 ----------------

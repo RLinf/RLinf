@@ -92,6 +92,9 @@ actor:
   global_batch_size: ${algorithm.wm_window_batch}
   seed: 0
   enable_offload: False
+  # Record each global update as one CUDA graph after a few eager updates.
+  # Not yet verified on more than one GPU.
+  cuda_graph: False
   use_profiler: False # trace the first global updates of a launch with torch.profiler
   profiler:
     output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/profiler
@@ -118,6 +121,7 @@ actor:
     adam_beta2: 0.95
     adam_eps: 1.0e-8
     fused: True
+    capturable: ${actor.cuda_graph}
     clip_grad: 1.0
     clip_grad_value: 0.1
     lr_scheduler: constant
@@ -127,6 +131,7 @@ actor:
     adam_beta2: 0.999
     adam_eps: 1.0e-8
     fused: True
+    capturable: ${actor.cuda_graph}
     clip_grad: 1.0
     lr_scheduler: constant
   critic_optim: ${actor.world_model_optim}
