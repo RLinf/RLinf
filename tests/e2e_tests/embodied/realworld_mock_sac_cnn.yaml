@@ -50,9 +50,9 @@ runner:
     log_path: /workspace/results/realworld_mock_sac_cnn
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
-  max_epochs: 2
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -60,7 +60,7 @@ runner:
   save_interval: -1
 
 algorithm:
-  update_epoch: 32
+  update_epoch: 1
   group_size: 1
   agg_q: min
 
@@ -95,6 +95,8 @@ env:
 
   train:
     rollout_epoch: 1
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
     total_num_envs: 1
     override_cfg:
       # Not dummy: every hardware path runs. run.sh installs the fake vendor
@@ -134,8 +136,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 256
-  global_batch_size: 256
+  micro_batch_size: 8
+  global_batch_size: 8
   seed: 1234
   enable_offload: False
 

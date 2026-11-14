@@ -21,10 +21,10 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: -1
-  max_steps: 2
+  max_steps: 1
   val_check_interval: -1
   save_interval: 10
 
