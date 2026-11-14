@@ -5722,7 +5722,7 @@ def test_robotwin_env_passes_its_camera_near_to_robotwin(
     handed_over = {}
 
     class FakeVectorEnv:
-        def __init__(self, task_config, n_envs, env_seeds):
+        def __init__(self, task_config, n_envs, env_seeds, instruction_type):
             handed_over.update(task_config=task_config, n_envs=n_envs)
 
     for name in ("envs", "robotwin", "robotwin.envs"):
@@ -5747,6 +5747,8 @@ def test_robotwin_env_passes_its_camera_near_to_robotwin(
         }
     )
     env.num_envs = 2
+    env.instruction_type = "seen"
+    env.robotwin_action_type = "qpos"
     env.reset_state_ids = torch.tensor([7, 8])
     env._init_env()
 

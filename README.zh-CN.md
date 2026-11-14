@@ -33,6 +33,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持在 LIBERO 上使用 Ray 管理的 FSDP 对 OpenWAM 进行全参数 SFT。文档：[OpenWAM SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openwam.html)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。

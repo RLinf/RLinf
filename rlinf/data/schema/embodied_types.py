@@ -1704,7 +1704,13 @@ class EnvOutput:
         """Select policy inputs and normalize task descriptions."""
         prepared = {
             key: obs.get(key)
-            for key in ("main_images", "wrist_images", "extra_view_images", "states")
+            for key in (
+                "main_images",
+                "wrist_images",
+                "extra_view_images",
+                "states",
+                "native_proprio",
+            )
         }
         for key in ("reset_mask", "history"):
             if key in obs:

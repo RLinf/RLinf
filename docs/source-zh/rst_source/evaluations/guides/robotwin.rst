@@ -15,7 +15,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    bash requirements/install.sh embodied --model openvla-oft --env robotwin
    source .venv/bin/activate
 
-支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``、``lingbotvlav2``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``、``lingbotvlav2``、``openwam``，安装时替换 ``--model`` 参数即可。
 
 在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，
 详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
@@ -90,6 +90,12 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
    * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
      - click_bell
      - LingbotVLA 2.0
+   * - ``robotwin_adjust_bottle_openwam_eval.yaml``
+     - adjust_bottle
+     - OpenWAM
+   * - ``robotwin_click_bell_openwam_eval.yaml``
+     - click_bell
+     - OpenWAM
 
 若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
@@ -217,6 +223,28 @@ LingbotVLA 2.0
 - ``rollout.model.precision: bf16``；fp32 权重仅用于 PPO actor
 - ``task_config.embodiment: [aloha-agilex]`` 且 ``task_config.camera.collect_wrist_camera: true``；模型需要左右两个腕部相机
 - ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400``
+
+OpenWAM
+
+OpenWAM 配方适用于 RoboTwin study checkpoint。将 ``rollout.model.model_path`` 指向匹配的 checkpoint 目录，并保留以下设置：
+
+- 使用共享 preset ``env/robotwin_openwam_aloha.yaml``，其中已配置 ``aloha-agilex`` 机器人、头部与腕部相机及末端位姿观测。
+- 保留 ``env.eval.openwam_action_representation: absolute_eef20``，与 checkpoint 的绝对末端动作表示一致。
+- 设置 ``rollout.model.num_action_chunks: 32`` 和 ``rollout.model.openwam.inference_horizon: null``。沿用配方中的 ``env.eval.max_episode_steps`` 和 ``env.eval.task_config.step_lim``。配方已将任务步数上限向上取整到 32 的倍数，例如 ``click_bell`` 使用 416 步。
+- randomized 协议使用 ``env.eval.instruction_type: unseen``，并保留 preset 的域随机化设置。clean 协议需关闭 ``env.eval.task_config.domain_randomization`` 下的随机化选项。
+- 用 ``cluster.component_placement`` 为环境和 rollout 分配不同的 GPU。配方在每张 env GPU 上运行两个环境；增加 ``env.eval.rollout_epoch`` 或 env GPU 数量可评测更多轨迹。
+
+仓库提供 ``adjust_bottle`` 和 ``click_bell`` 配方。运行以下命令，为支持的任务生成配方：
+
+.. code-block:: bash
+
+   python toolkits/openwam/gen_robotwin_eval_recipes.py --all
+
+命令为 46 个受支持的 RoboTwin 2.0 任务生成 ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml``。没有固定 RLinf 评测 seed 的任务使用随机 seed。生成器排除 RLinf 不支持的 ``place_fan``、``open_laptop``、``place_object_scale`` 和 ``put_object_cabinet``。
+
+.. note::
+
+   使用 ``requirements/install.sh`` 安装的 RoboTwin 环境，并为 SAPIEN 配置可用的 ``DISPLAY``。无头节点需先启动 ``Xvfb :99``，设置 ``DISPLAY=:99`` 后再评测。``env.eval.robotwin_step_timeout_s`` 控制每个动作 chunk 的最长等待时间，默认 1800 秒。
 
 覆盖完整测试集
 ~~~~~~~~~~~~~~

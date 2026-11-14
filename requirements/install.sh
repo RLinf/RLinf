@@ -124,7 +124,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "openwam" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
@@ -3414,6 +3414,39 @@ install_cosmos3_model() {
     esac
 }
 
+install_openwam_deps() {
+    local openwam_path
+    openwam_path=$(clone_or_reuse_repo OPENWAM_PATH "$VENV_DIR/openwam" "${GITHUB_PREFIX}https://github.com/OpenWAM-Official/OpenWAM.git")
+    if [ -z "${OPENWAM_PATH:-}" ]; then
+        git -C "$openwam_path" checkout "${OPENWAM_GIT_REF:-a8992b613fdb5b1c4649f53b3a914379c49e3892}" >&2
+    fi
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/openwam.txt"
+    # --no-deps: OpenWAM pins transformers>=5.5 and deepspeed<0.19, neither of which
+    # it actually needs. See embodied/models/openwam.txt for the analysis.
+    uv pip install -e "$openwam_path" --no-deps
+}
+
+install_openwam_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    case "$ENV_NAME" in
+        maniskill_libero|libero|robotwin)
+            install_${ENV_NAME}_env
+            ;;
+        "")
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for OpenWAM model." >&2
+            exit 1
+            ;;
+    esac
+
+    install_openwam_deps
+    install_flash_attn
+}
+
 install_diffusion_model() {
     # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
     # Python 3.10 in the diffusion (generation) examples.
@@ -4787,6 +4820,9 @@ main() {
                     ;;
                 cosmos3)
                     install_cosmos3_model
+                    ;;
+                openwam)
+                    install_openwam_model
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model

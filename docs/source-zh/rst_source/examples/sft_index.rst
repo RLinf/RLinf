@@ -22,6 +22,17 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_openwam.html" style="display: block;"><img src="https://raw.githubusercontent.com/OpenWAM-Official/OpenWAM/main/assets/repo_images/teaser.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_openwam.html" style="text-decoration: underline; color: blue;">
+           <b>OpenWAM 监督微调</b>
+         </a><br>
+         基于 OpenWAM 原生数据读取器和视频/动作联合损失的全参数 FSDP2 监督微调
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/sft_dreamzero.html" style="display: block;"><img src="https://dreamzero0.github.io/images/project_overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -83,6 +94,7 @@ VLA / WAM 模型监督微调
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   OpenWAM <embodied/sft_openwam>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
    Cosmos3 <embodied/sft_cosmos3>

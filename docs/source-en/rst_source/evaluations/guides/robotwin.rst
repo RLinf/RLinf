@@ -15,7 +15,7 @@ Environment Setup
    bash requirements/install.sh embodied --model openvla-oft --env robotwin
    source .venv/bin/activate
 
-Supported models include ``openvla-oft``, ``openpi``, ``lingbotvla``, and ``lingbotvlav2`` — replace ``--model`` accordingly during installation.
+Supported models include ``openvla-oft``, ``openpi``, ``lingbotvla``, ``lingbotvlav2``, and ``openwam`` — replace ``--model`` accordingly during installation.
 
 On AMD ROCm, install with ``--platform`` and set ``planner_backend: mplib`` in the task config;
 see :ref:`Run on Different Hardware Backends <robotwin-hardware>`.
@@ -89,6 +89,12 @@ Available under ``evaluations/robotwin/``:
    * - ``robotwin_click_bell_lingbotvlav2_eval.yaml``
      - click_bell
      - LingbotVLA 2.0
+   * - ``robotwin_adjust_bottle_openwam_eval.yaml``
+     - adjust_bottle
+     - OpenWAM
+   * - ``robotwin_click_bell_openwam_eval.yaml``
+     - click_bell
+     - OpenWAM
 
 If ``evaluations/robotwin/<config>.yaml`` does not exist, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.only_eval: True`` and ``runner.task_type: embodied_eval``). ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` contains eval seeds for **22 tasks**; other tasks can be derived from training configs (see :doc:`../reference/configuration`).
 
@@ -216,6 +222,28 @@ LingbotVLA 2.0
 - ``rollout.model.precision: bf16``; fp32 weights belong only to the PPO actor
 - ``task_config.embodiment: [aloha-agilex]`` and ``task_config.camera.collect_wrist_camera: true``; the model reads both wrist cameras
 - ``rollout.model.num_action_chunks: 50``; ``max_episode_steps: 400``
+
+OpenWAM
+
+The OpenWAM recipes target RoboTwin study checkpoints. Set ``rollout.model.model_path`` to the matching checkpoint directory and retain these settings:
+
+- Use the shared ``env/robotwin_openwam_aloha.yaml`` preset for the ``aloha-agilex`` robot, head and wrist cameras, and end-effector observations.
+- Keep ``env.eval.openwam_action_representation: absolute_eef20`` for the checkpoint's absolute end-effector actions.
+- Set ``rollout.model.num_action_chunks: 32`` and ``rollout.model.openwam.inference_horizon: null``. Keep the recipe values for ``env.eval.max_episode_steps`` and ``env.eval.task_config.step_lim``. These round the task's step limit up to a multiple of 32, such as 416 for ``click_bell``.
+- Keep ``env.eval.instruction_type: unseen`` and the preset's domain randomization for the randomized protocol. For the clean protocol, disable the randomization options under ``env.eval.task_config.domain_randomization``.
+- Keep env and rollout on separate GPUs with ``cluster.component_placement``. The recipes use two environments per env GPU; increase ``env.eval.rollout_epoch`` or allocate more env GPUs to evaluate more trajectories.
+
+The repository includes ``adjust_bottle`` and ``click_bell`` recipes. Generate the other supported task recipes with:
+
+.. code-block:: bash
+
+   python toolkits/openwam/gen_robotwin_eval_recipes.py --all
+
+This writes ``evaluations/robotwin/robotwin_<task>_openwam_eval.yaml`` for the 46 supported RoboTwin 2.0 tasks. Tasks without fixed RLinf evaluation seeds use random seeds. The generator excludes ``place_fan``, ``open_laptop``, ``place_object_scale``, and ``put_object_cabinet``, which are unsupported in RLinf.
+
+.. note::
+
+   Use the RoboTwin environment installed by ``requirements/install.sh`` and provide a working ``DISPLAY`` for SAPIEN. On a headless node, start ``Xvfb :99`` and set ``DISPLAY=:99`` before evaluation. ``env.eval.robotwin_step_timeout_s`` limits the wait for each action chunk and defaults to 1800 seconds.
 
 Covering the full test set
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

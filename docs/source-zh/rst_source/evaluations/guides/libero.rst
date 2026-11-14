@@ -15,7 +15,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 和 ``pi0_fast``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``、``molmoact2``、``pi0_fast`` 和 ``openwam``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -47,6 +47,18 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2
+   * - ``libero_spatial_openwam_eval.yaml``
+     - Spatial
+     - OpenWAM
+   * - ``libero_object_openwam_eval.yaml``
+     - Object
+     - OpenWAM
+   * - ``libero_goal_openwam_eval.yaml``
+     - Goal
+     - OpenWAM
+   * - ``libero_10_openwam_eval.yaml``
+     - Long (libero_10)
+     - OpenWAM
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
      - π₀.₅
@@ -205,6 +217,25 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
      - ``libero_10_openpi_pi05_eval`` / ``libero_10_openvlaoft_eval``
 
 ``env.eval`` 各字段的详细说明见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
+
+配置 OpenWAM 评测
+~~~~~~~~~~~~~~~~~~
+
+四套 OpenWAM 配方为环境分配三张 GPU，rollout 独占另一张 GPU。每个 env worker 运行一个环境，并使用分配到的 GPU 渲染：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       env: 0-2
+       rollout: 3
+   env:
+     eval:
+       total_num_envs: 3
+       num_steps_wait: 30
+       openwam_action_representation: native_delta_eef10
+
+保留 ``native_delta_eef10``，以匹配 checkpoint 的增量动作。保持 ``num_steps_wait: 30``，每次重置后等待 30 步，让环境稳定。配方每次预测后执行 10 步动作，Spatial、Object、Goal 的单条轨迹上限为 600 步，Long 为 700 步。调整 env GPU 数量需同时修改 ``cluster.component_placement.env`` 和 ``env.eval.total_num_envs``。增加 rollout 步数预算或 ``env.eval.rollout_epoch`` 可覆盖更多初始状态。
 
 覆盖完整测试集
 ~~~~~~~~~~~~~~
