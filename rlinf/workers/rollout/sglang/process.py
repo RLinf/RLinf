@@ -148,8 +148,15 @@ def _run_sglang_server(
                     sgl_scheduler,
                 )
 
+            from sglang.srt.entrypoints import http_server
             from sglang.srt.entrypoints.http_server import launch_server
             from sglang.srt.server_args import ServerArgs
+
+            from rlinf.workers.rollout.sglang.video_processor import (
+                install_reward_video_support,
+            )
+
+            install_reward_video_support(http_server)
 
             # Multi-node: the rendezvous address negotiated by the entry
             # node is authoritative (identical on every node of the model

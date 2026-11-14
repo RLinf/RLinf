@@ -107,7 +107,7 @@ class EnvWorker(Worker):
         self.use_external_reward_model = (
             self.use_reward_model and not self.use_realworld_reward
         )
-        self.env_infos_reward_keys = ("success", "episode", "final_info")
+        self.env_infos_reward_keys = ("success", "episode", "final_info", "_final_info")
         if self.use_external_reward_model:
             self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
@@ -672,7 +672,10 @@ class EnvWorker(Worker):
                     flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
                     if callable(flush_video):
                         flush_video()
-                if not self.cfg.env.eval.auto_reset:
+                if (
+                    not self.cfg.env.eval.auto_reset
+                    and not self.cfg.env.eval.use_fixed_reset_state_ids
+                ):
                     self.eval_env_list[i].update_reset_state_ids()
 
     @Worker.timer("get_reward_model_output")
@@ -701,9 +704,10 @@ class EnvWorker(Worker):
             )
 
         dones = env_output.dones
-        if dones is not None and getattr(dones, "ndim", 0) > 1:
-            dones = dones[:, -1]
-            reward_input.update({"dones": dones})
+        if dones is not None:
+            if getattr(dones, "ndim", 0) > 1:
+                dones = dones.any(dim=-1)
+            reward_input["dones"] = dones
 
         if self.reward_mode == "history_buffer":
             if stage_id is None:

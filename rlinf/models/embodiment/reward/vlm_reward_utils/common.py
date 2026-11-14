@@ -32,12 +32,34 @@ def load_vlm_processor(model_path: str, subprocessor_kwargs: Any = None):
     return processor
 
 
+def _success_flags(infos: Any, rewards: torch.Tensor) -> torch.Tensor | None:
+    if not isinstance(infos, dict):
+        return None
+    for candidate in (infos, infos.get("episode")):
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("success", "success_at_end", "success_once"):
+            if candidate.get(key) is not None:
+                flags = (
+                    torch.as_tensor(candidate[key], device=rewards.device)
+                    .flatten()
+                    .bool()
+                )
+                return flags if flags.numel() == rewards.shape[0] else None
+    return None
+
+
 def apply_gt_success_bonus(
     rewards: torch.Tensor,
     reward_input: dict[str, Any],
     gt_success_bonus: float,
 ) -> torch.Tensor:
-    """Add a success bonus from env infos when configured."""
+    """Add per-step success bonuses, using final infos for ended episodes.
+
+    With auto-reset, ``env_infos`` can describe the next episode. For entries
+    marked by ``dones`` (or ``_final_info``), use ``final_info`` instead. Without
+    a boundary mask, retain current-info precedence and the final-info fallback.
+    """
     if rewards is None or gt_success_bonus == 0.0:
         return rewards
     env_infos = (
@@ -46,25 +68,28 @@ def apply_gt_success_bonus(
     if not isinstance(env_infos, dict):
         return rewards
 
-    success = None
-    final_info = env_infos.get("final_info", {})
-    for info_dict in (
-        env_infos,
-        env_infos.get("episode"),
-        final_info,
-        final_info.get("episode") if isinstance(final_info, dict) else None,
-    ):
-        if not isinstance(info_dict, dict):
-            continue
-        for key in ("success", "success_at_end", "success_once"):
-            value = info_dict.get(key)
-            if value is not None:
-                success = torch.as_tensor(value).reshape(-1).bool()
-                break
-        if success is not None:
-            break
+    success = _success_flags(env_infos, rewards)
+    final_success = _success_flags(env_infos.get("final_info"), rewards)
+    if final_success is not None:
+        masks = (reward_input.get("dones"), env_infos.get("_final_info"))
+        if all(mask is None for mask in masks):
+            if success is None:
+                success = final_success
+        else:
+            terminal = torch.ones_like(final_success)
+            for mask in masks:
+                if mask is None:
+                    continue
+                mask = torch.as_tensor(mask, device=rewards.device, dtype=torch.bool)
+                if mask.ndim > 1:
+                    mask = mask.flatten(1).any(dim=-1)
+                mask = mask.flatten()
+                terminal &= mask if mask.numel() == terminal.numel() else False
+            if success is None:
+                success = torch.zeros_like(final_success)
+            success = torch.where(terminal, final_success, success)
 
-    if success is None or success.shape[0] != rewards.shape[0]:
+    if success is None:
         return rewards
-    bonus = success.to(device=rewards.device, dtype=rewards.dtype)
+    bonus = success.to(dtype=rewards.dtype)
     return rewards + (bonus * gt_success_bonus).view(-1, *([1] * (rewards.dim() - 1)))
