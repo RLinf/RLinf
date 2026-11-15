@@ -280,7 +280,7 @@ Step 1：计算回报（Compute Returns）
      - 失败轨迹终止步的惩罚值。值越大（绝对值），成功/失败的回报区分度越高
    * - ``data.eval_data_paths``
      - ``[]``
-     - Step 2 中用于评估的数据集。Step 2 同样会读取 eval 数据集的 returns sidecar，因此 Step 2 ``data.eval_data_paths`` 中的每个数据集都必须在此列出（且 ``data.tag`` 一致），否则 Step 2 会报 ``Returns sidecar not found``
+     - eval 数据集，需包含 Step 2 ``data.eval_data_paths`` 中的所有数据集
    * - ``data.tag``
      - ``null``
      - 输出文件标签，生成 ``meta/returns_{tag}.parquet``

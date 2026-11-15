@@ -288,7 +288,7 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
      - Penalty for failed trajectory terminal steps. Larger magnitude increases separation between success and failure returns
    * - ``data.eval_data_paths``
      - ``[]``
-     - Datasets used for evaluation in Step 2. Step 2 loads the returns sidecar for eval datasets too, so every dataset in Step 2's ``data.eval_data_paths`` must be listed here (with the same ``data.tag``); otherwise Step 2 fails with ``Returns sidecar not found``
+     - Eval datasets; must include every dataset in Step 2's ``data.eval_data_paths``
    * - ``data.tag``
      - ``null``
      - Output file tag, generates ``meta/returns_{tag}.parquet``
