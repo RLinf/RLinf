@@ -60,7 +60,6 @@
 
 先安装 RLinf，再补充本配方使用的轻量 HTTP 客户端依赖：
 
-
 .. code-block:: bash
 
    # 安装额外依赖

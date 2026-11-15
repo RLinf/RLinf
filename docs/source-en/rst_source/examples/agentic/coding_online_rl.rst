@@ -59,7 +59,6 @@ Installation
 
 Install RLinf first, then add the lightweight HTTP client dependencies used by this recipe:
 
-
 .. code-block:: bash
 
    # Install additional dependencies
