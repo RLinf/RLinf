@@ -1633,7 +1633,6 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
-          uv cache prune
 
   embodied-molmoact2-libero-eval-test:
     runs-on: embodied
