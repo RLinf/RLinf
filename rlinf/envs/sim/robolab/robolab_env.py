@@ -89,9 +89,10 @@ class RoboLabEnv:
         settings["output_dir"] = str(
             output_dir if output_dir.is_absolute() else Path.cwd() / output_dir
         )
+        self.seed = int(cfg.seed) + seed_offset
         settings.update(
             num_envs=num_envs,
-            seed=int(cfg.seed) + seed_offset,
+            seed=self.seed,
             max_episode_steps=int(cfg.max_episode_steps),
         )
         env = os.environ.copy()
