@@ -3564,6 +3564,7 @@ install_env_only() {
             install_polaris_env
             ;;
         robolab)
+            install_common_embodied_deps
             install_robolab_env
             ;;
         simple)
