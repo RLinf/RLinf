@@ -687,46 +687,48 @@ RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
    * - Official
      - 1
      - TF32
-     - 0.52
+     - 0.515
      - 0.830
      - 0.025
      - 0.027
    * - RLinf
      - 1
      - TF32
-     - 0.60
+     - 0.603
      - 0.846
      - 0
      - 0.024
    * - RLinf
      - 1
      - bf16
-     - 0.52
+     - 0.515
      - 0.857
      - 0
      - 0.023
    * - RLinf
      - 2
      - TF32
-     - 0.49
+     - 0.486
      - 0.843
      - 0.025
      - 0.023
    * - RLinf
      - 2
      - bf16
-     - 0.47
+     - 0.449
      - 0.833
      - 0.05
      - 0.023
 
-* ``s/update`` is the steady-state wall clock of one update, environment
-  stepping included and start-up compilation excluded. The RLinf runs shared
-  the machine with other jobs, so their times are approximate. The official
-  time is a timing reference from a MaxCoord run; the other official
-  columns are GenCoord.
-* With TF32 matmuls, two GPUs take 0.49 s per update against 0.60 s on one,
-  about 18% less.
+* For RLinf, ``s/update`` is the mean of the per-update ``time/step`` timer
+  over 1000 updates after 200 warm-up updates, from a separate run with the
+  GPUs to itself. It covers collection, the update, and the weight sync, but
+  not logging. It includes a pause of about 2 s that recurs once a minute on
+  the rollout side, about 4% of the time. The official time is the wall
+  clock between two checkpoints of a MaxCoord run, a timing reference; the
+  other official columns are GenCoord.
+* With TF32 matmuls, two GPUs take 0.486 s per update against 0.603 s on
+  one, about 19% less. Four GPUs take 0.421 s, or 0.407 s with bf16.
 * A ``fail_rate`` of 0.025 is one fall in 40 clips, and 0.05 is two. Both
   one-GPU RLinf checkpoints reach the end of all 40 clips.
 * Each row is one seed. Earlier checkpoints vary more between runs: across
