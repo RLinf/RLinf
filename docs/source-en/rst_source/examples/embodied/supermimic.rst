@@ -708,28 +708,27 @@ RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
      - 2
      - TF32
      - 0.49
-     - --
-     - --
-     - --
+     - 0.843
+     - 0.025
+     - 0.023
    * - RLinf
      - 2
      - bf16
      - 0.47
-     - --
-     - --
-     - --
+     - 0.833
+     - 0.05
+     - 0.023
 
 * ``s/update`` is the steady-state wall clock of one update, environment
   stepping included and start-up compilation excluded. The RLinf runs shared
   the machine with other jobs, so their times are approximate. The official
   time comes from a MaxCoord run; both representations train at the same
   speed.
-* A ``fail_rate`` of 0.025 is one fall in 40 clips. Both one-GPU RLinf
-  checkpoints reach the end of all 40 clips.
-* The two-GPU checkpoints were not evaluated. Their training metrics over
-  the last 1000 updates match the one-GPU runs.
-* At updates 2000 and 4000, TF32 and bf16 differ by at most 0.021 in
-  ``normalized_return``. Each row is one seed.
+* A ``fail_rate`` of 0.025 is one fall in 40 clips, and 0.05 is two. Both
+  one-GPU RLinf checkpoints reach the end of all 40 clips.
+* Each row is one seed. Earlier checkpoints vary more between runs: across
+  the four RLinf runs, ``normalized_return`` ranges from 0.672 to 0.732 at
+  update 2000 and from 0.765 to 0.794 at update 4000.
 * The paper reports a normalized return of 0.82 on these 40 clips. One
   evaluation takes about 7 minutes.
 
