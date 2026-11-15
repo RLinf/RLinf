@@ -61,7 +61,7 @@ SuperMimic 反复做三件事：在 MuJoCo Warp 里让所有环境走一个控�
 在 RLinf 里，这三件事分给三组 worker，每张 GPU 上各有一个：
 
 * ``SuperMimicEnvWorker`` 持有这张卡分到的环境、重置采样器和奖励计算。
-* ``SuperMimicRolloutWorker`` 持有 policy 和 critic 的副本，返回动作，以及超时结束的回合在重置采样回报里用来自举的 critic 值。
+* ``SuperMimicRolloutWorker`` 持有 policy 的副本，返回动作。
 * ``EmbodiedSuperMimicFSDPPolicy`` 是 FSDP2 actor，持有 replay、世界模型、actor、critic 和它们的优化器。
 
 ``SuperMimicRunner`` 是控制面：它算出下一次更新到期前要采多少个控制步，让三组 worker 采这些步，在 actor 上执行到期的更新，把新权重同步给 rollout worker，然后继续采集；日志、评测和检查点也由它负责。
@@ -79,7 +79,7 @@ SuperMimic 反复做三件事：在 MuJoCo Warp 里让所有环境走一个控�
 
 之后每打开一个新终端，都要先回到仓库根目录并执行 ``source .venv-supermimic/bin/activate``。
 
-NVIDIA 环境使用 torch 2.14.0 和 ``warp-lang`` 1.18.0（``requirements/embodied/envs/supermimic.txt``）。这些依赖会升级 torch，请与其他 RLinf 环境隔离安装。``docker/Dockerfile`` 也提供 ``embodied-supermimic-image`` 目标。G1 的模型、关节顺序、执行器增益和站立关键帧都来自 mjlab。
+NVIDIA 环境使用 torch 2.14.0。torch 是 CUDA 12 构建时，脚本固定安装 ``warp-lang`` 1.18.0+cu12；否则 ``warp-lang`` 按 ``requirements/embodied/envs/supermimic.txt`` 里的版本范围解析。这些依赖会升级 torch，请与其他 RLinf 环境隔离安装。``docker/Dockerfile`` 也提供 ``embodied-supermimic-image`` 目标。G1 的模型、关节顺序、执行器增益和站立关键帧都来自 mjlab。
 
 AMD MI300X（实验性）
 ~~~~~~~~~~~~~~~~~~~~
@@ -267,7 +267,7 @@ MaxCoord 把 ``--config-name`` 换成 ``supermimic_lafan1_maxcoord``。评测 Ma
 
 种子为 0。网络权重保持 float32，矩阵乘用 TF32。``actor.fsdp_config.amp_autocast.enabled`` 默认为 ``False``；设为 ``True`` 时，只有网络里的矩阵乘走 ``precision``\ （默认 bf16），运动学、奖励、损失和优化器状态仍是 float32。这和论文的 TF32 不同。隐藏层矩阵用 Muon（``adjust_lr_fn: match_rms_adamw``），其余参数用 fused Adam。梯度范数留在设备上裁剪，优化器步不等待主机。
 
-``env.train.motion_on_cpu=true``\ （评测用 ``env.eval.motion_on_cpu``）把较大的动作库和 FK 缓存放在主机内存，只把查询到的行传到 GPU。actor worker 为想象 rollout 另持有一份动作库。
+LAFAN1 可以用 ``env.train.motion_on_cpu=true``\ （评测用 ``env.eval.motion_on_cpu``）把较大的动作库和 FK 缓存放在主机内存，只把查询到的行传到 GPU。BONES-SEED 的加载器始终把动作库放在主机内存。actor worker 为想象 rollout 另持有一份动作库。
 
 BONES-SEED 训练在启动命令后追加：
 
@@ -454,7 +454,7 @@ MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检�
 已报告的跟踪结果
 ----------------
 
-GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，训练 6000 次更新（15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，``env.eval.action_noise_std=0``。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
+GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，训练 6000 次更新（约 15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，``env.eval.action_noise_std=0``。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
 
 .. list-table::
    :header-rows: 1
@@ -503,7 +503,8 @@ GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，�
      - 0.05
      - 0.023
 
-* 秒/次更新是稳态下一次更新的墙钟时间，包含环境步进，不含开头的编译。RLinf 的运行和其他任务共用机器，时间是近似值。官方时间来自 MaxCoord 运行，两种表示的训练速度相同。
+* 秒/次更新是稳态下一次更新的墙钟时间，包含环境步进，不含开头的编译。RLinf 的运行和其他任务共用机器，时间是近似值。官方的时间是 MaxCoord 运行的计时参考，官方其余几列是 GenCoord。
+* 矩阵乘用 TF32 时，双卡每次更新 0.49 秒，单卡 0.60 秒，约少 18%。
 * ``fail_rate`` 0.025 是 40 条里摔倒 1 条，0.05 是 2 条。单卡 RLinf 的两个检查点 40 条全部播放到最后一帧。
 * 每行是一个种子。较早的检查点在不同运行之间差得更多：四次 RLinf 运行的 ``normalized_return`` 在第 2000 次更新时为 0.672–0.732，第 4000 次时为 0.765–0.794。
 * 论文在这 40 条上报告的归一化回报是 0.82。一次评测约 7 分钟。

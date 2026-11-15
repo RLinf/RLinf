@@ -94,9 +94,8 @@ group on every GPU:
 
 * ``SuperMimicEnvWorker`` owns that GPU's environments, the reset sampler,
   and the reward.
-* ``SuperMimicRolloutWorker`` holds a copy of the policy and the critic. It
-  returns actions, and the critic value used to bootstrap a timed-out
-  episode in the reset return.
+* ``SuperMimicRolloutWorker`` holds a copy of the policy and returns
+  actions.
 * ``EmbodiedSuperMimicFSDPPolicy`` is the FSDP2 actor. It owns the replay,
   the world model, the actor, the critic, and their optimizers.
 
@@ -120,8 +119,9 @@ repository root, create a dedicated virtual environment:
 In every new shell, return to the repository root and run
 ``source .venv-supermimic/bin/activate`` first.
 
-The NVIDIA environment uses torch 2.14.0 and ``warp-lang`` 1.18.0
-(``requirements/embodied/envs/supermimic.txt``). Keep it separate from other
+The NVIDIA environment uses torch 2.14.0. With a CUDA 12 torch, the script
+pins ``warp-lang`` 1.18.0+cu12; otherwise ``warp-lang`` resolves within the
+range in ``requirements/embodied/envs/supermimic.txt``. Keep it separate from other
 RLinf environments because these requirements upgrade torch.
 ``docker/Dockerfile`` also provides an ``embodied-supermimic-image`` target.
 The G1 model, joint order, actuator gains, and standing keyframe come from
@@ -386,9 +386,10 @@ That is not the paper's TF32 setting. Hidden matrices use Muon
 Adam. The gradient norm stays on device for the clip, so an optimizer step
 does not wait on the host.
 
-``env.train.motion_on_cpu=true`` (``env.eval.motion_on_cpu`` for evaluation)
-keeps a large library and its FK cache in host memory and moves only the
-queried rows to the GPU. The actor worker holds a second copy for
+For LAFAN1, ``env.train.motion_on_cpu=true`` (``env.eval.motion_on_cpu``
+for evaluation) keeps a large library and its FK cache in host memory and
+moves only the queried rows to the GPU. The BONES-SEED loader always keeps
+the library in host memory. The actor worker holds a second copy for
 imagination.
 
 Append this to a BONES-SEED launch, and point ``SUPERMIMIC_MOTION_PATH`` at
@@ -665,7 +666,7 @@ Reported Tracking Results
 -------------------------
 
 GenCoord on the 40 LAFAN1 clips with 4096 environments and otherwise the
-config defaults, trained for 6000 updates (15000 control steps). Each
+config defaults, trained for 6000 updates (about 15000 control steps). Each
 checkpoint is evaluated as in `Evaluate`_: every clip starts at frame 0 and
 ``env.eval.action_noise_std=0``. All runs use NVIDIA A800 GPUs, and the
 official row is the official SuperMimic code on the same machines. The
@@ -722,8 +723,10 @@ RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
 * ``s/update`` is the steady-state wall clock of one update, environment
   stepping included and start-up compilation excluded. The RLinf runs shared
   the machine with other jobs, so their times are approximate. The official
-  time comes from a MaxCoord run; both representations train at the same
-  speed.
+  time is a timing reference from a MaxCoord run; the other official
+  columns are GenCoord.
+* With TF32 matmuls, two GPUs take 0.49 s per update against 0.60 s on one,
+  about 18% less.
 * A ``fail_rate`` of 0.025 is one fall in 40 clips, and 0.05 is two. Both
   one-GPU RLinf checkpoints reach the end of all 40 clips.
 * Each row is one seed. Earlier checkpoints vary more between runs: across

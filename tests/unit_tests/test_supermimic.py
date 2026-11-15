@@ -43,7 +43,10 @@ from rlinf.algorithms.supermimic.reset_sampler import (
     RETURN_GAMMA,
     ReturnResetSampler,
 )
-from rlinf.algorithms.supermimic.validate import validate_supermimic_cfg
+from rlinf.algorithms.supermimic.validate import (
+    check_supermimic_placement,
+    validate_supermimic_cfg,
+)
 from rlinf.envs.sim.g1_mimic.constants import (
     ACTION_DIM,
     ACTOR_GOAL_DIM,
@@ -312,6 +315,25 @@ def test_training_config_rejects_unsupported_values(overrides, error):
         validate_supermimic_cfg(cfg)
 
 
+@pytest.mark.parametrize("world, error", [(2, None), (4, "would be empty")])
+def test_placement_leaves_every_critic_minibatch_rows(world, error):
+    cfg = _compose(
+        "supermimic_lafan1_gencoord",
+        [
+            "env.train.motion_path=/data/clips",
+            "algorithm.imagine_batch=8",
+            "algorithm.H=2",
+            "algorithm.critic_minibatches=8",
+        ],
+    )
+    placement = SimpleNamespace(get_world_size=lambda name: world)
+    if error is None:
+        check_supermimic_placement(cfg, placement)
+        return
+    with pytest.raises(ValueError, match=error):
+        check_supermimic_placement(cfg, placement)
+
+
 @pytest.mark.parametrize("ckpt_path", ["null", "/data/full_weights.pt"])
 def test_evaluation_config_needs_the_policy_weights(monkeypatch, ckpt_path):
     monkeypatch.setenv("EMBODIED_PATH", str(CONFIG_DIR.parent))
@@ -525,10 +547,11 @@ def test_due_updates_wait_until_every_rank_can_draw_a_window():
     assert stuck.collected == [9, 1, 1]
 
 
-def test_reset_keeps_the_last_executed_action_in_the_transition(monkeypatch):
+def test_reset_draws_before_the_step_is_recorded_and_keeps_the_action(monkeypatch):
     import rlinf.envs.sim.g1_mimic.g1_mimic_env as g1_mimic_env
 
     rows = 2
+    order = []
     never = torch.zeros(rows, dtype=torch.bool)
     env = object.__new__(G1MimicEnv)
     env.num_envs, env.device, env.group, env.action_noise_std = rows, CPU, None, 0.0
@@ -558,8 +581,8 @@ def test_reset_keeps_the_last_executed_action_in_the_transition(monkeypatch):
         locate=lambda frames: (torch.zeros_like(frames), torch.zeros_like(frames)),
     )
     env.reset_sampler = SimpleNamespace(
-        record=lambda *args: None,
-        sample=lambda n: torch.zeros(n, dtype=torch.long),
+        record=lambda *args: order.append("record"),
+        sample=lambda n: order.append("sample") or torch.zeros(n, dtype=torch.long),
     )
     env._clear_metrics()
     monkeypatch.setattr(
@@ -567,6 +590,8 @@ def test_reset_keeps_the_last_executed_action_in_the_transition(monkeypatch):
     )
 
     transition = env.step(torch.full((rows, ACTION_DIM), 0.25))
+    # The recorded step may refresh the distribution; the reset must not see it.
+    assert order == ["sample", "record"]
     assert torch.equal(transition["action"], torch.full((rows, ACTION_DIM), 0.25))
     assert torch.equal(env.prev_action[0], torch.zeros(ACTION_DIM))
     assert torch.equal(env.prev_action[1], torch.full((ACTION_DIM,), 0.25))
@@ -594,6 +619,7 @@ def test_update_spans_evaluate_at_each_boundary_and_sum_their_times(monkeypatch)
     *_, eval_metrics, last_step, durations = runner._execute_update_spans(spans)
     assert spans == [2, 10, 1]
     assert [call for call in calls if call[0] == "eval"] == [("eval", 10), ("eval", 20)]
+    assert [call[0] for call in calls].count("sync") == len(spans)
     assert (eval_metrics, last_step, runner.global_step) == ({"eval/r": 1.0}, 20, 21)
     assert set(durations) == {"actor_training", "sync_weights", "eval"}
 

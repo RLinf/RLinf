@@ -223,13 +223,6 @@ class G1MimicEnv:
         # limit counts as the time-out.
         truncated = result["timeout"] | result["clip_end"]
         failed = result["failure"] & ~truncated
-        self.reset_sampler.record(
-            result["frame"],
-            reward,
-            failed,
-            result["clip_end"],
-            result["timeout"] & ~result["clip_end"],
-        )
         transition = {
             "state": self._observed["state"],
             "action": executed,
@@ -247,6 +240,15 @@ class G1MimicEnv:
         done = (failed | truncated).nonzero(as_tuple=True)[0]
         if done.numel():
             self._reset(done)
+        # Episodes that ended on this step draw their start before this step
+        # can refresh the reset distribution.
+        self.reset_sampler.record(
+            result["frame"],
+            reward,
+            failed,
+            result["clip_end"],
+            result["timeout"] & ~result["clip_end"],
+        )
         self._reward_total += reward.sum()
         self._failures += failed.sum()
         self._episodes += failed.sum() + truncated.sum()

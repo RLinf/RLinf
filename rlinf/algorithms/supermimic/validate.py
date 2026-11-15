@@ -248,6 +248,13 @@ def check_supermimic_placement(
                 f"algorithm.{name}={alg[name]} is global and must be divisible by "
                 f"the {world} actor ranks"
             )
+    rows = int(alg.imagine_batch) // world * int(alg.H)
+    if rows < int(alg.critic_minibatches):
+        raise ValueError(
+            f"each actor rank fits the critic on imagine_batch / {world} * H = "
+            f"{rows} rows, fewer than algorithm.critic_minibatches="
+            f"{alg.critic_minibatches}; a minibatch would be empty"
+        )
 
 
 def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictConfig:

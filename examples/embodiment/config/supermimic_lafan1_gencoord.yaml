@@ -93,7 +93,6 @@ actor:
   seed: 0
   enable_offload: False
   # Record each global update as one CUDA graph after a few eager updates.
-  # Not yet verified on more than one GPU.
   cuda_graph: False
   use_profiler: False # trace the first global updates of a launch with torch.profiler
   profiler:

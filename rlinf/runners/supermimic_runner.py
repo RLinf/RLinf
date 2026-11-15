@@ -429,16 +429,12 @@ class SuperMimicRunner(EmbodiedRunner):
         )
         eval_metrics: dict[str, float] = {}
         if run_val:
-            evaluated = self._measure("eval", durations, self._evaluate_policy)
+            evaluated = self._measure("eval", durations, self.evaluate)
             eval_metrics = {f"eval/{key}": value for key, value in evaluated.items()}
             self.metric_logger.log(data=eval_metrics, step=step)
         if save_model:
             self._save_checkpoint()
         return eval_metrics
-
-    def _evaluate_policy(self) -> dict[str, float]:
-        self.update_rollout_weights()
-        return self.evaluate()
 
     def _log_iteration(
         self,

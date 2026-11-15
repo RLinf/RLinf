@@ -111,10 +111,10 @@ Gradients are clipped to a global norm of 1.0. The actor then clamps each
 element to 0.1. The norm stays on the GPU, so this step does not read it on
 the host. A non-finite gradient is not skipped. When a batch of updates
 finishes and the metrics are copied to the host, a non-finite value stops
-training. The official implementation captures the whole update in a CUDA
-graph. This FSDP2 training path does not yet support that capture, so it
-keeps the ordinary step. The difference is speed. The update written above
-is unchanged.
+training. ``actor.cuda_graph`` is off by default. When it is on, the first
+three updates run eagerly, the fourth is recorded as one CUDA graph, and
+every later update replays it, as the official code captures its update.
+Replay changes speed, not the update written above.
 
 Return-Based Reset
 ------------------
@@ -124,7 +124,9 @@ keeps an estimate of the discounted return earned from that bin. A reset
 mixes three terms: 50% uniform over bins, 40%
 :math:`\mathrm{softmax}(-25\, G_b / G_{max})`, and 10% on the distribution
 accumulated from the square of that softmax. :math:`G_{max} = 0.1 / (1 -
-\gamma) = 10`. The paper uses 1 s bins.
+\gamma) = 10`. The paper uses 1 s bins. The distribution is refreshed every
+20 control steps; an episode that ends on a refresh step draws its start
+from the distribution before that refresh, as in the official code.
 
 Differences from the Paper and the Official Code
 -------------------------------------------------
@@ -155,8 +157,13 @@ Differences from the Paper and the Official Code
    * - Optimizer
      - The official code uses Muon plus fused Adam, and captures the whole
        update in a CUDA graph
-     - Muon plus fused Adam, with the norm left on the GPU. This FSDP2
-       path does not capture the whole update
+     - Muon plus fused Adam, with the norm left on the GPU. With
+       ``actor.cuda_graph=True`` each update replays one CUDA graph
+   * - Simulator scoring
+     - The official environment scores reward and failure on body poses
+       from before the last physics substep
+     - Body poses are refreshed after the last substep, before reward and
+       failure are scored
    * - Parallelism
      - The official training entry is one process
      - One env, rollout, and FSDP2 actor worker per GPU
@@ -189,5 +196,4 @@ Velocity tracking is not implemented. Standing push recovery holds mjlab's
 knees-bent keyframe, not the T-pose in Section 4.3 of the paper. The
 BONES-SEED converter has not been checked against an official CSV.
 Multi-node training and resuming on a different GPU count are unvalidated.
-The tracking tables in the user guide are the checkpoints at updates 2000
-and 4000; the training target of that run is 16000 updates.
+The tracking table in the user guide evaluates GenCoord at update 6000.

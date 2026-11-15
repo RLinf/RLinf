@@ -5,4 +5,6 @@
 mjlab @ git+https://github.com/mujocolab/mjlab.git@8bb2bc9e187797689ec82c78c35019afd2fd0376
 mujoco~=3.16
 mujoco-warp~=3.16
+# mjviser 0.0.17 pulls mujoco-core 4, whose files overwrite mujoco 3.16.
+mjviser==0.0.16
 warp-lang>=1.15
