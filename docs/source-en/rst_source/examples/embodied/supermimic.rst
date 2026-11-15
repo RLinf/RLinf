@@ -153,7 +153,7 @@ preparation, training, and evaluation then work as below.
 
 The AMD installer has not been validated through a full training run. The
 numbers under `Reported Tracking Results`_ are LAFAN1 checkpoint evaluations
-on NVIDIA GPUs, not an AMD run.
+on NVIDIA A800 GPUs, not an AMD run.
 
 Prepare Reference Motion
 ------------------------
@@ -367,7 +367,7 @@ Environment counts and batch sizes are global.
    * - ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``
      - GenCoord training. Defaults are 4096 environments, 40 clips,
        ``runner.max_epochs=400000``, and a checkpoint every 2000 updates.
-       `Reported Tracking Results`_ overrides the length to 16000 updates.
+       `Reported Tracking Results`_ trains 6000 updates.
    * - ``examples/embodiment/config/supermimic_lafan1_maxcoord.yaml``
      - Inherits the previous file and sets
        ``actor.model.representation`` to ``maxcoord``.
@@ -415,7 +415,7 @@ as a Hydra override.
      - Meaning
    * - ``runner.max_epochs``
      - 400000
-     - Global updates. The reported run overrides this to 16000.
+     - Global updates. The reported runs set 6000.
    * - ``runner.save_interval``
      - 2000
      - Write a checkpoint every this many updates, and after the last one.
@@ -496,7 +496,9 @@ trains on fresh samples.
 - Loading a checkpoint drops the graph. The next updates run eagerly and
   record it again.
 - The single-GPU unit test checks that graph and eager updates match
-  exactly. More than one GPU has not been verified yet.
+  exactly, in float32 and in bf16. On two GPUs the graph is checked by the
+  full training runs in `Reported Tracking Results`_, not by an exact
+  comparison.
 
 Train on One GPU
 ----------------
@@ -603,9 +605,9 @@ with ``supermimic_``. ``runner.ckpt_path`` is the checkpoint's
 Add ``actor.model.representation=maxcoord`` for a MaxCoord checkpoint and
 point ``runner.ckpt_path`` at that run. Replacing ``global_step_2000`` and
 the output directory with ``global_step_4000`` evaluates update 4000.
-`Reported Tracking Results`_ is these four evaluations: GenCoord and
-MaxCoord, each at updates 2000 and 4000. Training uses the two
-``runner.max_epochs=16000`` commands in `Train on One GPU`_.
+`Reported Tracking Results`_ evaluates GenCoord at update 6000, trained with
+the GenCoord command in `Train on One GPU`_ plus ``runner.max_epochs=6000``
+and ``actor.cuda_graph=True``.
 ``env.eval.eval_tasks`` is ``[tracking]`` or ``[push_recovery]``. The 40
 LAFAN1 clips fit in ``env.eval.total_num_envs=40``.
 ``max_steps_per_rollout_epoch=13656`` covers the longest clip (8194 frames
@@ -662,96 +664,74 @@ step.
 Reported Tracking Results
 -------------------------
 
-Both runs use the commands in `Train on One GPU`_, with
-``runner.max_epochs=16000``, the 40 LAFAN1 clips, 4096 environments, and
-otherwise the config defaults. The numbers below are checkpoint
-evaluations, not the return printed during training: each clip starts at
-frame 0 and ``env.eval.action_noise_std=0``. The training target is 16000
-updates; these rows are the checkpoints at updates 2000 and 4000. One such
-evaluation takes about 6.5 minutes.
+GenCoord on the 40 LAFAN1 clips with 4096 environments and otherwise the
+config defaults, trained for 6000 updates (15000 control steps). Each
+checkpoint is evaluated as in `Evaluate`_: every clip starts at frame 0 and
+``env.eval.action_noise_std=0``. All runs use NVIDIA A800 GPUs, and the
+official row is the official SuperMimic code on the same machines. The
+RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
+``actor.fsdp_config.amp_autocast.enabled=True``.
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 18 22 18 20
+   :widths: 14 8 12 12 20 14 20
 
-   * - Representation
-     - Update
+   * - Run
+     - GPUs
+     - Matmuls
+     - s/update
      - ``normalized_return``
      - ``fail_rate``
-     - ``clip_end_rate``
-   * - GenCoord
-     - 2000
-     - 0.704
-     - 0.15
-     - 0.85
-   * - MaxCoord
-     - 2000
-     - 0.815
+     - ``body_pos_err``
+   * - Official
+     - 1
+     - TF32
+     - 0.52
+     - 0.830
      - 0.025
-     - 0.975
-   * - GenCoord
-     - 4000
-     - 0.790
-     - 0.125
-     - 0.875
-   * - MaxCoord
-     - 4000
-     - 0.820
-     - 0.075
-     - 0.925
-
-On 40 clips, 15% is 6 falls, 2.5% is 1, 12.5% is 5, and 7.5% is 3. The
-paper reports a normalized return of 0.82 on these 40 clips after about
-1.2 hours. The checkpoint that matches that point is MaxCoord at update
-2000: about 1.2 hours of training and a normalized return of 0.815.
-Update 4000 reaches 0.820 and is a later checkpoint. That is not a
-reproduction of the paper run: the training target is still 16000
-updates, reset bins are 0.2 s rather than the paper's 1 s, and the
-paper's main result uses filtered BONES-SEED rather than these 40 clips.
-
-The other tracking errors at update 4000 (means over 40 clips;
-``fail_step`` and ``fail_time_s`` are means over the clips that fell):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 33 33
-
-   * - Metric
-     - GenCoord
-     - MaxCoord
-   * - ``body_pos_err``
-     - 0.029
+     - 0.027
+   * - RLinf
+     - 1
+     - TF32
+     - 0.60
+     - 0.846
+     - 0
      - 0.024
-   * - ``torso_pos_err``
-     - 1.740
-     - 1.245
-   * - ``torso_ori_err``
-     - 0.112
-     - 0.092
-   * - ``free_root_pos_err``
-     - 1.740
-     - 1.245
-   * - ``free_root_ori_err``
-     - 0.066
-     - 0.054
-   * - ``free_root_xy_drift``
-     - 3.639
-     - 2.551
-   * - ``free_root_yaw_drift``
-     - 1.045
-     - 1.070
-   * - ``episode_length_s``
-     - 211.9
-     - 215.2
-   * - ``fail_step``
-     - 6096.2
-     - 6060.0
-   * - ``fail_time_s``
-     - 121.9
-     - 121.2
-   * - ``steps``
-     - 1.06e4
-     - 1.08e4
+   * - RLinf
+     - 1
+     - bf16
+     - 0.52
+     - 0.857
+     - 0
+     - 0.023
+   * - RLinf
+     - 2
+     - TF32
+     - 0.49
+     - --
+     - --
+     - --
+   * - RLinf
+     - 2
+     - bf16
+     - 0.47
+     - --
+     - --
+     - --
+
+* ``s/update`` is the steady-state wall clock of one update, environment
+  stepping included and start-up compilation excluded. The RLinf runs shared
+  the machine with other jobs, so their times are approximate. The official
+  time comes from a MaxCoord run; both representations train at the same
+  speed.
+* A ``fail_rate`` of 0.025 is one fall in 40 clips. Both one-GPU RLinf
+  checkpoints reach the end of all 40 clips.
+* The two-GPU checkpoints were not evaluated. Their training metrics over
+  the last 1000 updates match the one-GPU runs.
+* At updates 2000 and 4000, TF32 and bf16 differ by at most 0.021 in
+  ``normalized_return``. Each row is one seed.
+* The paper reports a normalized return of 0.82 on these 40 clips. One
+  evaluation takes about 7 minutes.
 
 Scope
 -----
@@ -760,8 +740,8 @@ Numerical checks live in ``tests/unit_tests/test_supermimic.py``. The CI
 configs ``tests/e2e_tests/embodied/g1_mimic_supermimic.yaml``,
 ``g1_mimic_supermimic_maxcoord.yaml``, and
 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` cover a
-small training run, resume, and tracking evaluation. The tables above are
-checkpoint evaluations of the 40 LAFAN1 clips at updates 2000 and 4000.
-The end of a 16000-update run, multi-node, Slurm, training on real
-BONES-SEED, and the paper's Section 4.3 T-pose recovery do not have numbers
-here.
+small training run, resume, and tracking evaluation. The table above
+evaluates GenCoord at update 6000 on the 40 LAFAN1 clips. MaxCoord
+accuracy, runs longer than 6000 updates, multi-node, Slurm, training on
+real BONES-SEED, and the paper's Section 4.3 T-pose recovery do not have
+numbers here.

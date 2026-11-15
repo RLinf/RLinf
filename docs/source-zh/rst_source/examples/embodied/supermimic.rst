@@ -95,7 +95,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
 
 脚本从 AMD Radeon 的 wheel 索引安装 torch 2.9.1 和 torchvision 0.24.0（需要支持 flat 索引的新版 uv），在上面链接的提交上构建 ROCm Warp ``1.13.0+rocm.0``，再按 ``requirements/embodied/envs/supermimic_amd.txt`` 安装 mjlab 1.2.0、MuJoCo 3.8.1 和 mujoco-warp 3.8.1。``SUPERMIMIC_WARP_PATH`` 指定 Warp 源码目录（默认仓库旁的 ``../warp-rocm``），``SUPERMIMIC_HIP_ARCH`` 指定编译目标（默认 ``gfx942``）。之后的数据准备、训练和评测与下文相同。
 
-当前 AMD 安装路径尚未经过完整训练验证。`已报告的跟踪结果`_ 来自 NVIDIA 上的 LAFAN1 检查点评测，不是 AMD 运行。
+当前 AMD 安装路径尚未经过完整训练验证。`已报告的跟踪结果`_ 来自 NVIDIA A800 上的 LAFAN1 检查点评测，不是 AMD 运行。
 
 准备参考动作
 ------------
@@ -257,7 +257,7 @@ MaxCoord 把 ``--config-name`` 换成 ``supermimic_lafan1_maxcoord``。评测 Ma
    * - 文件
      - 用途
    * - ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``
-     - GenCoord 训练。默认 4096 个环境、40 条片段、``runner.max_epochs=400000``、每 2000 次更新保存。`已报告的跟踪结果`_ 把更新次数覆盖成 16000。
+     - GenCoord 训练。默认 4096 个环境、40 条片段、``runner.max_epochs=400000``、每 2000 次更新保存。`已报告的跟踪结果`_ 训练 6000 次更新。
    * - ``examples/embodiment/config/supermimic_lafan1_maxcoord.yaml``
      - 继承上一份，只把 ``actor.model.representation`` 设为 ``maxcoord``。
    * - ``evaluations/supermimic/supermimic_lafan1_eval.yaml``
@@ -292,7 +292,7 @@ BONES-SEED 训练在启动命令后追加：
      - 含义
    * - ``runner.max_epochs``
      - 400000
-     - 全局更新次数。已报告的运行覆盖为 16000。
+     - 全局更新次数。已报告的运行设为 6000。
    * - ``runner.save_interval``
      - 2000
      - 每隔这么多次更新，以及最后一次，写一个检查点。
@@ -350,7 +350,7 @@ CUDA 图更新
 - Adam 以 ``capturable=True`` 构建，配置里由 ``actor.cuda_graph`` 决定。
 - 各阶段计时器只记录录制那一次，回放的整次更新由 ``run_updates`` 计时。
 - 加载检查点会丢弃这张图，之后的更新先按普通方式执行，再重新录制。
-- 单卡单元测试检查图更新和普通更新结果完全一致；多卡尚未验证。
+- 单卡单元测试检查图更新和普通更新结果完全一致，float32 和 bf16 都测。双卡上的图由 `已报告的跟踪结果`_ 里的完整训练检验，没有做逐位比对。
 
 单卡训练
 --------
@@ -428,7 +428,7 @@ placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker
        env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
-MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检查点路径。把上面命令里的 ``global_step_2000`` 和输出目录换成 ``global_step_4000``，就是第 4000 次更新的评测。`已报告的跟踪结果`_ 就是这四次：GenCoord 和 MaxCoord，各评第 2000 次和第 4000 次更新。训练用的是 `单卡训练`_ 里 ``runner.max_epochs=16000`` 的两条命令。``env.eval.eval_tasks`` 只能是 ``[tracking]`` 或 ``[push_recovery]``。40 条 LAFAN1 片段由 ``env.eval.total_num_envs=40`` 一次放完；``max_steps_per_rollout_epoch=13656`` 覆盖最长片段（30 fps 下 8194 帧，重采样到 50 Hz）。
+MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检查点路径。把上面命令里的 ``global_step_2000`` 和输出目录换成 ``global_step_4000``，就是第 4000 次更新的评测。`已报告的跟踪结果`_ 评的是 GenCoord 第 6000 次更新，训练用 `单卡训练`_ 里的 GenCoord 命令，加上 ``runner.max_epochs=6000`` 和 ``actor.cuda_graph=True``。``env.eval.eval_tasks`` 只能是 ``[tracking]`` 或 ``[push_recovery]``。40 条 LAFAN1 片段由 ``env.eval.total_num_envs=40`` 一次放完；``max_steps_per_rollout_epoch=13656`` 覆盖最长片段（30 fps 下 8194 帧，重采样到 50 Hz）。
 
 **输出。** ``runner.eval_export.enabled`` 在评测配置里默认打开。结果写到 ``runner.eval_export.output_dir``，不设置时写到 ``<log_path>/<experiment_name>/eval_results/``。目录里有 ``summary.json``、``per_clip.csv`` 和这次评测的 ``config.yaml``。同样的指标以 ``eval/`` 为前缀写进日志。
 
@@ -454,84 +454,62 @@ MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检�
 已报告的跟踪结果
 ----------------
 
-下面两次运行都用 `单卡训练`_ 的命令，``runner.max_epochs=16000``，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值。表中的数字是检查点评测，不是训练日志里的回报：每条片段从第 0 帧播放，``env.eval.action_noise_std=0``。训练目标是 16000 次更新，这里只评了第 2000 次和第 4000 次的检查点。一次这样的评测大约 6.5 分钟。
+GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，训练 6000 次更新（15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，``env.eval.action_noise_std=0``。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 20 18 20 20
+   :widths: 14 8 12 12 20 14 20
 
-   * - 表示
-     - 更新
+   * - 运行
+     - GPU 数
+     - 矩阵乘
+     - 秒/次更新
      - ``normalized_return``
      - ``fail_rate``
-     - ``clip_end_rate``
-   * - GenCoord
-     - 2000
-     - 0.704
-     - 0.15
-     - 0.85
-   * - MaxCoord
-     - 2000
-     - 0.815
+     - ``body_pos_err``
+   * - 官方
+     - 1
+     - TF32
+     - 0.52
+     - 0.830
      - 0.025
-     - 0.975
-   * - GenCoord
-     - 4000
-     - 0.790
-     - 0.125
-     - 0.875
-   * - MaxCoord
-     - 4000
-     - 0.820
-     - 0.075
-     - 0.925
-
-40 条片段上，15% 是 6 条摔倒，2.5% 是 1 条，12.5% 是 5 条，7.5% 是 3 条。论文在这 40 条上、约 1.2 小时处报告的归一化回报是 0.82。这里对上的是 MaxCoord 第 2000 次更新：训练约 1.2 小时，归一化回报 0.815。第 4000 次更新是 0.820，那是更后面的检查点。这不是那次论文运行的复现：训练目标仍是 16000 次更新，重置箱是 0.2 秒而不是论文的 1 秒，论文的主结果用的也是过滤后的 BONES-SEED，不是这 40 条。
-
-第 4000 次更新的其余跟踪误差（40 条的平均；``fail_step`` 和 ``fail_time_s`` 只平均摔倒的片段）：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 33 33
-
-   * - 指标
-     - GenCoord
-     - MaxCoord
-   * - ``body_pos_err``
-     - 0.029
+     - 0.027
+   * - RLinf
+     - 1
+     - TF32
+     - 0.60
+     - 0.846
+     - 0
      - 0.024
-   * - ``torso_pos_err``
-     - 1.740
-     - 1.245
-   * - ``torso_ori_err``
-     - 0.112
-     - 0.092
-   * - ``free_root_pos_err``
-     - 1.740
-     - 1.245
-   * - ``free_root_ori_err``
-     - 0.066
-     - 0.054
-   * - ``free_root_xy_drift``
-     - 3.639
-     - 2.551
-   * - ``free_root_yaw_drift``
-     - 1.045
-     - 1.070
-   * - ``episode_length_s``
-     - 211.9
-     - 215.2
-   * - ``fail_step``
-     - 6096.2
-     - 6060.0
-   * - ``fail_time_s``
-     - 121.9
-     - 121.2
-   * - ``steps``
-     - 1.06e4
-     - 1.08e4
+   * - RLinf
+     - 1
+     - bf16
+     - 0.52
+     - 0.857
+     - 0
+     - 0.023
+   * - RLinf
+     - 2
+     - TF32
+     - 0.49
+     - --
+     - --
+     - --
+   * - RLinf
+     - 2
+     - bf16
+     - 0.47
+     - --
+     - --
+     - --
+
+* 秒/次更新是稳态下一次更新的墙钟时间，包含环境步进，不含开头的编译。RLinf 的运行和其他任务共用机器，时间是近似值。官方时间来自 MaxCoord 运行，两种表示的训练速度相同。
+* ``fail_rate`` 0.025 是 40 条里摔倒 1 条。单卡 RLinf 的两个检查点 40 条全部播放到最后一帧。
+* 双卡检查点没有评测；它们最后 1000 次更新的训练指标和单卡一致。
+* 第 2000 次和第 4000 次更新时，TF32 与 bf16 的 ``normalized_return`` 最多相差 0.021。每行是一个种子。
+* 论文在这 40 条上报告的归一化回报是 0.82。一次评测约 7 分钟。
 
 范围
 ----
 
-数值检查在 ``tests/unit_tests/test_supermimic.py``。CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic.yaml``、``g1_mimic_supermimic_maxcoord.yaml`` 和 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 覆盖缩小后的训练、恢复和跟踪评测。上面的表是 40 条 LAFAN1 上第 2000 次和第 4000 次更新的检查点评测。16000 次更新的终点、多节点、Slurm、真实 BONES-SEED 训练，以及论文 §4.3 的 T-pose 恢复，都还没有这些数字。
+数值检查在 ``tests/unit_tests/test_supermimic.py``。CI 配置 ``tests/e2e_tests/embodied/g1_mimic_supermimic.yaml``、``g1_mimic_supermimic_maxcoord.yaml`` 和 ``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` 覆盖缩小后的训练、恢复和跟踪评测。上面的表是 GenCoord 第 6000 次更新在 40 条 LAFAN1 上的评测。MaxCoord 的精度、超过 6000 次更新的运行、多节点、Slurm、真实 BONES-SEED 训练，以及论文 §4.3 的 T-pose 恢复，都还没有这些数字。
