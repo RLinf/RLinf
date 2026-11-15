@@ -287,10 +287,10 @@ jobs:
           bash tests/e2e_tests/agent/searchr1/run-train.sh qwen2.5-1.5b-fsdp-ascend
 
       - name: Clean up
+        if: always()
         run: |
           ray stop --force 2>/dev/null || true
           rm -rf .venv
-          uv cache prune
 
   searchr1-qwen-grpo-test:
     runs-on: reason

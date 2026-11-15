@@ -183,6 +183,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         if len(epoch_iter) <= 0:
             return
 
+        is_fsdp = self.cfg.actor.training_backend == "fsdp"
         stop_training = False
         for _ in epoch_iter:
             for batch in self.train_dataloader:
@@ -203,10 +204,13 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     if not self.is_pipeline:
                         agent_metrics = rollout_handle.wait()[0]
                         offload_handles = []
-                        # HTTP rollouts do not run the worker's offload loop.
-                        if (
-                            self.component_placement.is_collocated
-                            or self.component_placement.is_auto
+                        # Colocated FSDP HTTP rollouts need explicit offload.
+                        if self.use_pre_process_policy or (
+                            is_fsdp
+                            and (
+                                self.component_placement.is_collocated
+                                or self.component_placement.is_auto
+                            )
                         ):
                             offload_handles.append(self.rollout.offload_engine())
                         for handle in offload_handles:
@@ -248,6 +252,19 @@ class AgentLightningRLinfRunner(ReasoningRunner):
 
                     if save_model:
                         self._save_checkpoint()
+
+                    if not is_fsdp:
+                        if is_train_end:
+                            logging.info(
+                                f"Step limit given by max_steps={self.max_steps} reached. Stopping run"
+                            )
+                            return
+
+                        if run_time_exceeded:
+                            logging.info(
+                                f"Time limit given by run_timer={self.run_timer} reached. Stopping run"
+                            )
+                            return
 
                 time_metrics = self.timer.consume_durations()
                 time_metrics["training"] = actor_handle.consume_duration()
@@ -293,7 +310,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                 global_pbar.set_postfix(logging_metrics, refresh=False)
                 global_pbar.update(1)
 
-                if is_train_end or run_time_exceeded:
+                if is_fsdp and (is_train_end or run_time_exceeded):
                     logging.info(
                         "Stopping training after step %s: %s reached",
                         self.global_steps,
