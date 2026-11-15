@@ -95,6 +95,7 @@ SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
+SupportedModel.WBWAM = SupportedModel.register("wbwam", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
@@ -144,6 +145,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
         SupportedModel.PSI0,
+        SupportedModel.WBWAM,
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,

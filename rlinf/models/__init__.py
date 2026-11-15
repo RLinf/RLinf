@@ -54,6 +54,11 @@ def register_model(
 
 
 def _register_builtin_models():
+    def _build_wbwam(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.wbwam import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openvla import get_model
 
@@ -226,6 +231,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.PSI0.value,
         _build_psi0,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.WBWAM.value,
+        _build_wbwam,
         category="embodied",
         force=True,
     )
