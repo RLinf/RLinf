@@ -254,6 +254,9 @@ Step 1：计算回报（Compute Returns）
          type: sft
        - dataset_path: /path/to/rollout_dataset
          type: rollout
+     eval_data_paths:          # 需覆盖 Step 2 的 eval_data_paths
+       - dataset_path: /path/to/eval_dataset
+         type: rollout
 
      gamma: 1.0              # 折扣因子
      failure_reward: -300.0   # 失败轨迹终止奖励
@@ -275,6 +278,9 @@ Step 1：计算回报（Compute Returns）
    * - ``data.failure_reward``
      - ``-300.0``
      - 失败轨迹终止步的惩罚值。值越大（绝对值），成功/失败的回报区分度越高
+   * - ``data.eval_data_paths``
+     - ``[]``
+     - Step 2 中用于评估的数据集。Step 2 同样会读取 eval 数据集的 returns sidecar，因此 Step 2 ``data.eval_data_paths`` 中的每个数据集都必须在此列出（且 ``data.tag`` 一致），否则 Step 2 会报 ``Returns sidecar not found``
    * - ``data.tag``
      - ``null``
      - 输出文件标签，生成 ``meta/returns_{tag}.parquet``
