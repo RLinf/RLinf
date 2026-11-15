@@ -72,7 +72,7 @@ HINTS = (
     "Duplication or a helper to reuse. Otherwise the implementation compared.",
     "Whether tests cover the changed behavior. Docs, EN/ZH, README highlight, "
     "install/CI. Tests run and skipped, with hardware.",
-    "Each changed page and its type, against docs/STYLE_GUIDE.md. Failing rules "
+    "Each changed page and its type, against the docs rules in .agents/skills/docs/rules/. Failing rules "
     "with inline pointers. Build result in EN and ZH. Or: the PR changes no docs.",
     "Ready for senior review, Changes requested, or Blocked. Remaining actions "
     "and expert review needed.",
