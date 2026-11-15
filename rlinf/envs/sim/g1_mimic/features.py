@@ -101,14 +101,6 @@ def rotmat_to_6d(rot: torch.Tensor) -> torch.Tensor:
     return rot[..., :, :2].reshape(*rot.shape[:-2], 6)
 
 
-def rotvec_to_quat(rotvec: torch.Tensor) -> torch.Tensor:
-    """wxyz quaternion of a rotation vector."""
-    angle = rotvec.norm(dim=-1, keepdim=True).clamp_min(1e-8)
-    axis = rotvec / angle
-    half = 0.5 * angle
-    return torch.cat((torch.cos(half), axis * torch.sin(half)), dim=-1)
-
-
 def rotvec_from_quat(q: torch.Tensor) -> torch.Tensor:
     """Rotation vector of the shortest rotation a wxyz quaternion represents."""
     q = quat_normalize(q)
@@ -120,13 +112,6 @@ def rotvec_from_quat(q: torch.Tensor) -> torch.Tensor:
     angle = 2.0 * torch.atan2(half_sin, w)
     axis = xyz / half_sin.clamp_min(1e-8)
     return axis * angle
-
-
-def quat_inv(q: torch.Tensor) -> torch.Tensor:
-    """Inverse of a wxyz quaternion (conjugate of its normalized form)."""
-    out = quat_normalize(q).clone()
-    out[..., 1:] = -out[..., 1:]
-    return out
 
 
 def quat_from_euler_xyz(

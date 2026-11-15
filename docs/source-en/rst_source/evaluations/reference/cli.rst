@@ -64,7 +64,6 @@ main training recipe, run:
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
-       env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
 A MaxCoord checkpoint also needs ``actor.model.representation=maxcoord``.

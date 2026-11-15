@@ -268,14 +268,6 @@ class G1BodyKinematics:
         if hinge_i != ACTION_DIM:
             raise RuntimeError(f"expected {ACTION_DIM} hinge joints, found {hinge_i}")
         self.joints = joints
-        # Tracked index of the free-joint body. Its position is state[:, 0:3].
-        free_bodies = [i for i, owned in enumerate(joints) if ("free",) in owned]
-        tracked = self.tracked.tolist()
-        self.free_tracked = (
-            tracked.index(free_bodies[0])
-            if len(free_bodies) == 1 and free_bodies[0] in tracked
-            else None
-        )
         self.joint_low = torch.tensor(lows, dtype=torch.float32)
         self.joint_high = torch.tensor(highs, dtype=torch.float32)
         if self.joint_low.shape != (ACTION_DIM,) or not torch.all(

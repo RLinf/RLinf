@@ -992,7 +992,7 @@ def test_reference_fk_matches_online_fk(storage, query):
         torch.tensor([1, 0, 1], device=query),
         torch.tensor([100, -1, 2], device=query),
     )
-    result = motion.kinematics_at(ids, times)
+    result = motion.body_state(motion.global_frame(ids, times))
     expected = differentiable_fk(motion.state_at(ids, times))
     assert all(part.device == motion.frames.device for part in motion._kin_cache)
     for actual, wanted in zip(result, expected, strict=True):

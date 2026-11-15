@@ -12,18 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fixed G1 tensor sizes, state slices and episode-end codes.
-
-One episode-end kind per env step. A clip end outranks a timeout and both
-outrank a failure, so a fall on the last step of a clip or of the episode
-counts as that truncation:
-
-* ``EPISODE_CONT``: the episode continues.
-* ``EPISODE_FAILURE``: the pelvis left the reference by more than
-  ``FAILURE_HEIGHT_M`` in height or ``FAILURE_TILT`` in gravity z.
-* ``EPISODE_TIMEOUT``: the training episode cap.
-* ``EPISODE_CLIP_END``: the step taken from the clip's last frame.
-"""
+"""Fixed G1 tensor sizes, state slices and failure thresholds."""
 
 # The simulator state: root position, root quaternion (wxyz), joint angles,
 # world root linear velocity, body-frame root angular velocity, joint rates.
@@ -83,12 +72,9 @@ GOAL_CONTENT_DIM = GOAL_FRAMES * 2 * ACTION_DIM
 ACTOR_GOAL_DIM = GOAL_CONTENT_DIM + GOAL_FRAMES * 6
 WORLD_MODEL_GOAL_DIM = ACTOR_GOAL_DIM + GOAL_FRAMES * 3
 
-EPISODE_CONT = 0
-EPISODE_FAILURE = 1
-EPISODE_TIMEOUT = 2
-EPISODE_CLIP_END = 3
-
 DT = 0.02
+# A fall: the pelvis leaves the reference by more than this height or tilt
+# (difference in gravity z).
 FAILURE_HEIGHT_M = 0.25
 FAILURE_TILT = 0.8
 # Positive tracking weights sum to 5; times DT this is the per-step ceiling.

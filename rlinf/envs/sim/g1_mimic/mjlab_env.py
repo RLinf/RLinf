@@ -36,10 +36,6 @@ import torch
 
 from rlinf.envs.sim.g1_mimic.constants import (
     DT,
-    EPISODE_CLIP_END,
-    EPISODE_CONT,
-    EPISODE_FAILURE,
-    EPISODE_TIMEOUT,
     G1_JOINT_NAMES,
     JOINT_POS,
     JOINT_VEL,
@@ -77,18 +73,6 @@ RESET_EULER_RANGE = ((-0.1, 0.1), (-0.1, 0.1), (-0.2, 0.2))
 RESET_LIN_VEL_RANGE = ((-0.5, 0.5), (-0.5, 0.5), (-0.2, 0.2))
 RESET_ANG_VEL_RANGE = ((-0.52, 0.52), (-0.52, 0.52), (-0.78, 0.78))
 RESET_JOINT_POS_RANGE = (-0.1, 0.1)
-
-
-def episode_end(
-    failure: torch.Tensor, timeout: torch.Tensor, clip_end: torch.Tensor
-) -> torch.Tensor:
-    """One end kind per env: clip end, then timeout, then failure."""
-    end = torch.full(
-        failure.shape, EPISODE_CONT, dtype=torch.long, device=failure.device
-    )
-    end = torch.where(failure, torch.full_like(end, EPISODE_FAILURE), end)
-    end = torch.where(timeout, torch.full_like(end, EPISODE_TIMEOUT), end)
-    return torch.where(clip_end, torch.full_like(end, EPISODE_CLIP_END), end)
 
 
 def context_normalization() -> tuple[torch.Tensor, torch.Tensor]:
@@ -464,9 +448,9 @@ class MjlabG1Env:
     def step(self, action: torch.Tensor) -> dict[str, torch.Tensor]:
         """Apply one 20 ms control step, scored against the frame it started from.
 
-        The reference clock then advances by one frame. Returns ``end_kind``,
-        ``failure``, ``timeout``, ``clip_end``, the scoring ``frame`` (library
-        row) and its ``ref_state``.
+        The reference clock then advances by one frame. Returns ``failure``,
+        ``timeout``, ``clip_end``, the scoring ``frame`` (library row) and its
+        ``ref_state``.
         """
         target = (
             self.pd_offset + self.action_scale * action - self.robot.data.encoder_bias
@@ -491,7 +475,6 @@ class MjlabG1Env:
         self.motion_time = self.motion_time + 1
         self.time_in_episode = self.time_in_episode + 1
         return {
-            "end_kind": episode_end(failed, timeout, clip_end),
             "failure": failed,
             "timeout": timeout,
             "clip_end": clip_end,

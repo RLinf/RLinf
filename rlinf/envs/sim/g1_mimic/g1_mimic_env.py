@@ -65,9 +65,7 @@ def build_motion_library(env_cfg: DictConfig, device: torch.device) -> MotionLib
     if motion_format == "bones_seed":
         from rlinf.envs.sim.g1_mimic.bones import load_bones_library
 
-        return load_bones_library(
-            str(env_cfg.get("motion_path", "")), num_clips, device
-        )
+        return load_bones_library(str(env_cfg.get("motion_path", "")), num_clips)
     if motion_format == "lafan1":
         # motion_on_cpu keeps the frames in host memory; queries gather rows
         # there and copy only those rows to the simulator device.
@@ -95,8 +93,6 @@ class G1MimicEnv:
         self.cfg = cfg
         self.num_envs = int(num_envs)
         self.seed = int(cfg.seed) + int(seed_offset)
-        self.total_num_processes = int(total_num_processes)
-        self.worker_info = worker_info
         self.device = env_device()
         seed_everything(self.seed)
         set_kinematics_compile(bool(cfg.torch_compile))

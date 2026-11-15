@@ -174,9 +174,7 @@ def feasibility_reason(payload: dict, state: torch.Tensor, source: str) -> str |
     return feasibility_reject(zmin, feet, pelvis, upright, speed, fps=50.0)
 
 
-def load_bones_library(
-    path: str, num_clips: int | None, device: torch.device | str
-) -> MotionLibrary:
+def load_bones_library(path: str, num_clips: int | None) -> MotionLibrary:
     """Load ``clip_*.pt`` files that also carry a ``name``.
 
     ``None`` keeps every clip that passes the filters. A count stops after
@@ -187,9 +185,8 @@ def load_bones_library(
     turn on the feasibility filter. Missing arrays skip that filter and the
     caller must not treat the load as a full Appendix E pass.
 
-    The library stays on CPU. ``device`` is accepted so callers can pass the
-    simulator device, but the packed clips are not moved there. ``state_at``
-    copies only the gathered rows.
+    The library stays on CPU; ``state_at`` copies only the gathered rows to
+    the querying device.
     """
     directory = Path(path)
     files = sorted(directory.glob("clip_*.pt")) if directory.is_dir() else []
@@ -234,7 +231,6 @@ def load_bones_library(
         raise FileNotFoundError(
             f"{directory} kept {len(kept_state)} clips after filtering, need {num_clips}."
         )
-    del device
     library = MotionLibrary(kept_state, q0=q0)
     library.clip_names = kept_names
     library.filter_counts = {

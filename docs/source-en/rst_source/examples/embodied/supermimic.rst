@@ -332,10 +332,9 @@ share ``RUN_DIR``. This checks the workflow, not tracking quality.
        --config-name supermimic_lafan1_gencoord "${SMOKE_ARGS[@]}" runner.max_epochs=5 \
        runner.resume_dir=auto
 
-   # Evaluate the last checkpoint. Action noise is off, as in the reported results.
+   # Evaluate the last checkpoint.
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/smoke/checkpoints/global_step_5/actor/model_state_dict/full_weights.pt \
-       env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=$RUN_DIR/eval
    tensorboard --logdir $RUN_DIR/tensorboard
 
@@ -468,8 +467,7 @@ as a Hydra override.
        CUDA graph. See `CUDA Graph Updates`_.
    * - ``env.train.action_noise_std``
      - 0.1
-     - Training action noise. The reported evaluations set it to 0 on
-       ``env.eval``.
+     - Training action noise. Evaluation applies the policy action as is.
 
 **Updates versus simulator steps.** At the default scale each control step
 owes 0.4 updates, so ``runner.max_epochs=16000`` is 40,000 control steps.
@@ -600,7 +598,6 @@ with ``supermimic_``. ``runner.ckpt_path`` is the checkpoint's
    export MUJOCO_GL=disabled
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
-       env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
 Add ``actor.model.representation=maxcoord`` for a MaxCoord checkpoint and
@@ -668,7 +665,7 @@ Reported Tracking Results
 GenCoord on the 40 LAFAN1 clips with 4096 environments and otherwise the
 config defaults, trained for 6000 updates (about 15000 control steps). Each
 checkpoint is evaluated as in `Evaluate`_: every clip starts at frame 0 and
-``env.eval.action_noise_std=0``. All runs use NVIDIA A800 GPUs, and the
+the policy action is applied as is. All runs use NVIDIA A800 GPUs, and the
 official row is the official SuperMimic code on the same machines. The
 RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
 ``actor.fsdp_config.amp_autocast.enabled=True``.

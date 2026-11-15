@@ -234,10 +234,9 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
        --config-name supermimic_lafan1_gencoord "${SMOKE_ARGS[@]}" runner.max_epochs=5 \
        runner.resume_dir=auto
 
-   # 在训练片段上评测最后一个检查点。动作噪声关掉，和下面的已报告结果相同。
+   # 在训练片段上评测最后一个检查点。
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/smoke/checkpoints/global_step_5/actor/model_state_dict/full_weights.pt \
-       env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=$RUN_DIR/eval
    tensorboard --logdir $RUN_DIR/tensorboard
 
@@ -337,7 +336,7 @@ BONES-SEED 训练在启动命令后追加：
      - 打开后，前三次之后的每次更新作为一张 CUDA 图回放。见 `CUDA 图更新`_。
    * - ``env.train.action_noise_std``
      - 0.1
-     - 训练动作噪声。已报告的评测把它在 ``env.eval`` 上设为 0。
+     - 训练动作噪声。评测直接执行策略动作。
 
 **更新次数与仿真步数。** 默认规模下每个控制步欠 0.4 次更新，所以 ``runner.max_epochs=16000`` 对应 40000 个控制步。全局步是更新次数，``env/env_steps`` 是控制步数。``env.train.total_num_envs``、``algorithm.wm_window_batch`` 和 ``algorithm.imagine_batch`` 是所有 GPU 的总和，必须能被 GPU 数整除。加 GPU 而不改这些值，训练的数学含义不变。
 
@@ -425,7 +424,6 @@ placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker
    export MUJOCO_GL=disabled
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
-       env.eval.action_noise_std=0 \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
 MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检查点路径。把上面命令里的 ``global_step_2000`` 和输出目录换成 ``global_step_4000``，就是第 4000 次更新的评测。`已报告的跟踪结果`_ 评的是 GenCoord 第 6000 次更新，训练用 `单卡训练`_ 里的 GenCoord 命令，加上 ``runner.max_epochs=6000`` 和 ``actor.cuda_graph=True``。``env.eval.eval_tasks`` 只能是 ``[tracking]`` 或 ``[push_recovery]``。40 条 LAFAN1 片段由 ``env.eval.total_num_envs=40`` 一次放完；``max_steps_per_rollout_epoch=13656`` 覆盖最长片段（30 fps 下 8194 帧，重采样到 50 Hz）。
@@ -454,7 +452,7 @@ MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检�
 已报告的跟踪结果
 ----------------
 
-GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，训练 6000 次更新（约 15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，``env.eval.action_noise_std=0``。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
+GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，训练 6000 次更新（约 15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，直接执行策略动作。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
 
 .. list-table::
    :header-rows: 1

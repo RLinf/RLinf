@@ -62,23 +62,6 @@ def differentiable_fk(
     return g1_kinematics().forward(state)
 
 
-def forward_kinematics_pair(
-    state: torch.Tensor, ref_state: torch.Tensor
-) -> tuple[
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-]:
-    """Body poses of ``state`` and ``ref_state`` from one tree walk."""
-    if state.shape[0] != ref_state.shape[0]:
-        return differentiable_fk(state), differentiable_fk(ref_state)
-    pos, rot, lin, ang = differentiable_fk(torch.cat((state, ref_state), dim=0))
-    n = state.shape[0]
-    return (
-        (pos[:n], rot[:n], lin[:n], ang[:n]),
-        (pos[n:], rot[n:], lin[n:], ang[n:]),
-    )
-
-
 def rotation_angle(rot: torch.Tensor, ref_rot: torch.Tensor) -> torch.Tensor:
     """Geodesic angle between ``[..., 3, 3]`` rotations."""
     cos = ((rot * ref_rot).sum(dim=(-2, -1)) - 1.0) * 0.5

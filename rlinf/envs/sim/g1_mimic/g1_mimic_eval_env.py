@@ -121,7 +121,6 @@ class G1MimicEvalEnv:
         self.seed = int(cfg.seed)
         self.seed_offset = int(seed_offset)
         self.total_num_processes = int(total_num_processes)
-        self.worker_info = worker_info
         self.device = env_device()
         set_kinematics_compile(bool(cfg.torch_compile))
         self.tasks = [str(task) for task in cfg.eval_tasks]

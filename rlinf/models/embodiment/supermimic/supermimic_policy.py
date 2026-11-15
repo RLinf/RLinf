@@ -61,7 +61,6 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         self.actor = MotionPolicy(enc_dim)
         self.critic = Critic(enc_dim)
         self.register_buffer("soft_limits", soft_joint_limits(), persistent=False)
-        self.autocast_dtype: torch.dtype | None = None
         self._compile_cache = CompileCache(enabled=torch_compile)
         set_kinematics_compile(torch_compile)
         self._world_model_rollout = None
@@ -74,7 +73,6 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         matmuls use TF32 tensor cores either way; that switch is process-wide.
         """
         torch.backends.cuda.matmul.allow_tf32 = True
-        self.autocast_dtype = dtype
         for module in (self.dynamics, self.actor, self.critic):
             module.autocast_dtype = dtype
 

@@ -192,12 +192,6 @@ class MotionLibrary:
         """71-d reference states by clip id and time."""
         return self.rows(self.global_frame(motion_id, time))
 
-    def kinematics_at(
-        self, motion_id: torch.Tensor, time: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """:meth:`body_state` by clip id and time."""
-        return self.body_state(self.global_frame(motion_id, time))
-
     def goal_window(
         self, frame: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
