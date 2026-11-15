@@ -2161,6 +2161,11 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
 
         MAFSDPActor.validate_placement(cfg, component_placement)
     if cfg.runner.get("async_mode", False):
+        if cfg.actor.training_backend != "megatron":
+            raise ValueError(
+                "SearchR1 async training currently requires "
+                "actor.training_backend=megatron; FSDP supports synchronous training."
+            )
         if not component_placement.is_disaggregated:
             raise ValueError(
                 "SearchR1 async training requires the actor and the rollout "

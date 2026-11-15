@@ -24,7 +24,6 @@ from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.agent_ppo_runner import AgentPPORunner
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.runners.async_agent_runner import AsyncAgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
@@ -134,6 +133,8 @@ def main(cfg) -> None:
     }
 
     if cfg.runner.get("async_mode", False):
+        from rlinf.runners.async_agent_runner import AsyncAgentRunner
+
         runner_cls = AsyncAgentRunner
     elif critic_group is not None:
         runner_cls = AgentPPORunner

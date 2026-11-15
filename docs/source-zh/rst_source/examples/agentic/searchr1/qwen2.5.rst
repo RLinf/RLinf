@@ -99,11 +99,11 @@ RLinf 同时提供基于 FSDP2 的 Search-R1 GRPO 多智能体 Actor 实现。�
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_disaggregated
 
-该配置使用同步 ``AgentRunner``：每步先向 rollout 同步 actor 权重，再收集多轮轨迹组，在 actor 上重算 policy 和 reference logprob，最后更新 actor。保持 ``algorithm.recompute_logprobs: True`` 和 ``actor.enable_dp_load_balance: True``。在 ``cluster.component_placement`` 中配置 ``actor``、``rollout`` 和 ``reward``，logprob 推理复用训练 GPU。``reward`` 与 rollout 共用 GPU 分配，Search-R1 agent loop 负责计算规则奖励。
+训练按同步方式执行：每步先向 rollout 同步 actor 权重，再收集多轮轨迹组，在 actor 上重算 policy 和 reference logprob，最后更新 actor。保持 ``runner.async_mode: False``、``algorithm.recompute_logprobs: True`` 和 ``actor.enable_dp_load_balance: True``。在 ``cluster.component_placement`` 中配置 ``actor``、``rollout`` 和 ``reward``，logprob 推理复用训练 GPU。奖励组件与 rollout 共用 GPU。Search-R1 在生成轨迹时计算规则奖励。
 
-将 ``data.rollout_batch_size`` 设置为 actor DP 数量的正整数倍。每条 channel 消息包含一个完整的问题组，先计算 GRPO advantage 和 loss scale，再做 packing 和跨 rank 数据分发。分卡训练期间，actor 权重和 optimizer state 常驻训练设备。
+将 ``data.rollout_batch_size`` 设置为 actor 数据并行度的正整数倍。训练先按完整问题组计算 GRPO advantage 和 loss scale，再打包并跨 rank 分发数据。分卡训练期间，actor 权重和 optimizer state 常驻训练设备。
 
-分卡布局已在三张 A800 80GB PCIe 上使用 Qwen2.5-1.5B-Instruct、序列长度 1024、FP16、FlashAttention 2 和 Liger 完成验证，覆盖训练、checkpoint 恢复、更新后的 rollout 权重以及小语料 HTTP 检索服务。请根据设备显存选择模型规模、序列长度和 batch size。下文的 reward 和性能曲线来自已有参考运行。
+分卡布局已在三张 A800 80 GB PCIe GPU 上验证。测试使用 Qwen2.5-1.5B-Instruct，序列长度为 1024，并启用 FP16、FlashAttention 2 和 Liger。验证覆盖训练、checkpoint 恢复、向 rollout 同步更新后的权重，以及小语料 HTTP 检索服务。请根据设备显存选择模型规模、序列长度和 batch size。下文的 reward 和性能曲线来自参考训练记录。
 
 Checkpoint 导出与评测
 ----------------------------------------

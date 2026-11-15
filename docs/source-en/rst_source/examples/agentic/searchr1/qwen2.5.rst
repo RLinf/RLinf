@@ -113,26 +113,26 @@ server paths as above, then launch:
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp_disaggregated
 
-This runs the synchronous ``AgentRunner``: each step synchronizes the actor
-weights to rollout, collects multi-turn groups, recomputes policy and reference
-logprobs on the actor, and then updates the actor. Keep
+Training is synchronous: each step synchronizes the actor weights to rollout,
+collects multi-turn groups, recomputes policy and reference logprobs on the
+actor, and then updates the actor. Keep ``runner.async_mode: False``,
 ``algorithm.recompute_logprobs: True`` and
 ``actor.enable_dp_load_balance: True``. Configure only ``actor``, ``rollout``,
 and ``reward`` in ``cluster.component_placement``; actor-side inference uses
-the training GPUs. ``reward`` shares the rollout GPU allocation, while the
-Search-R1 agent loop computes its rule-based rewards.
+the training GPUs. The reward component shares the rollout GPU. Search-R1
+computes rule-based rewards during rollouts.
 
-Set ``data.rollout_batch_size`` to a positive multiple of the actor DP size.
-Each channel item holds a complete prompt group, so GRPO advantages and loss
-scales are computed before packing and redistribution across ranks. Actor
+Set ``data.rollout_batch_size`` to a positive multiple of the actor
+data-parallel size. Training computes GRPO advantages and loss scales for
+complete prompt groups before packing and redistribution across ranks. Actor
 weights and optimizer states stay resident during disaggregated training.
 
 The split layout was validated on three A800 80GB PCIe GPUs with
 Qwen2.5-1.5B-Instruct, sequence length 1024, FP16, FlashAttention 2, and Liger.
-Validation covered training, checkpoint resume, updated rollout weights, and a
-small-corpus HTTP search service. Choose model size, sequence length, and batch
+Validation covered training, checkpoint resume, weight synchronization to the
+rollout engine, and HTTP search with a small corpus. Choose model size, sequence length, and batch
 size to fit your devices. The reward and performance curves below describe the
-existing reference run.
+reference training run.
 
 Checkpoint Export and Evaluation
 --------------------------------

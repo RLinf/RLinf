@@ -874,8 +874,7 @@ class TestDisaggregatedMultiAgentPlacement:
 
 
 class TestSearchr1DisaggregatedValidation:
-    """validate_searchr1_cfg: the Megatron MA actor may run disaggregated,
-    the FSDP one may not."""
+    """Validate synchronous disaggregation and the supported async backend."""
 
     @staticmethod
     def _make_cfg(training_backend):
@@ -919,16 +918,28 @@ class TestSearchr1DisaggregatedValidation:
         ):
             cfg_mod.validate_searchr1_cfg(self._make_cfg("megatron"))
 
-    def test_fsdp_backend_rejects_disaggregated(self):
+    @pytest.mark.parametrize("async_mode", [False, True])
+    def test_fsdp_disaggregated_backend(self, monkeypatch, async_mode):
         import rlinf.config as cfg_mod
 
-        placement = MagicMock()
-        placement.is_collocated = False
-        with mock.patch.object(
-            cfg_mod, "ModelParallelComponentPlacement", return_value=placement
-        ):
-            with pytest.raises(ValueError, match="collocated"):
-                cfg_mod.validate_searchr1_cfg(self._make_cfg("fsdp"))
+        config_dir = (
+            Path(__file__).resolve().parents[2] / "examples/agent/searchr1/config"
+        )
+        with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+            cfg = compose(config_name="train_qwen2.5_fsdp_disaggregated")
+        with open_dict(cfg):
+            cfg.runner.async_mode = async_mode
+            if async_mode:
+                cfg.rollout.sglang.backend_type = "server"
+                cfg.agentloop.task_name = "searchr1"
+        monkeypatch.setattr(cfg_mod, "Cluster", lambda: create_fake_cluster(1, 3))
+        if async_mode:
+            with pytest.raises(
+                ValueError, match="requires actor.training_backend=megatron"
+            ):
+                cfg_mod.validate_searchr1_cfg(cfg)
+        else:
+            cfg_mod.validate_searchr1_cfg(cfg)
 
 
 class TestSearchr1AsyncPauseModeDefaults:
