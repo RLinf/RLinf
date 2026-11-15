@@ -25,14 +25,12 @@ from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.agent_ppo_runner import AgentPPORunner
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.runners.async_agent_runner import AsyncAgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
-from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
@@ -133,6 +131,8 @@ def main(cfg) -> None:
     }
 
     if cfg.runner.get("async_mode", False):
+        from rlinf.runners.async_agent_runner import AsyncAgentRunner
+
         runner_cls = AsyncAgentRunner
     elif critic_group is not None:
         runner_cls = AgentPPORunner
@@ -140,6 +140,10 @@ def main(cfg) -> None:
         runner_cls = AgentRunner
     rollout_buffer = None
     if cfg.runner.get("async_mode", False):
+        from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
+            RolloutBufferWorker,
+        )
+
         # The buffer worker owns the dataloader and the admission budget;
         # one instance on the head node, like the search tool worker.
         rollout_buffer = RolloutBufferWorker.create_group(cfg, train_ds).launch(
