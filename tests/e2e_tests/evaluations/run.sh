@@ -33,4 +33,4 @@ fi
 
 python ${EVALUATIONS_PATH}/eval_embodied_agent.py \
     --config-path ${REPO_PATH}/tests/e2e_tests/evaluations \
-    --config-name ${CONFIG}
+    --config-name ${CONFIG} "${@:3}"

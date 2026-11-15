@@ -1755,3 +1755,37 @@ jobs:
         if: always()
         run: |
           rm -rf .venv
+
+  embodied-wbwam-humanoidarena-test:
+    # Enable after the runner has the separately provisioned upstream runtimes.
+    if: ${{ vars.HUMANOIDARENA_RUNTIME_ROOT != '' }}
+    runs-on: embodied
+    timeout-minutes: 30
+    env:
+      HA_ROOT: ${{ vars.HUMANOIDARENA_RUNTIME_ROOT }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install RLinf evaluation controller
+        run: |
+          bash requirements/install.sh --no-flash-attn embodied --model wbwam --env humanoidarena
+      - name: Run original-runtime integration smoke
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh humanoidarena_wbwam_eval egl \
+            "env.eval.wbwam_repo=$HA_ROOT/WB-WAM-Official" \
+            "env.eval.arena_root=$HA_ROOT/WB-WAM-Official/third_party/HumanoidArena" \
+            "env.eval.simulation_python=$HA_ROOT/runtime/envs/isaac/bin/python" \
+            "env.eval.dependencies_root=$HA_ROOT/runtime/dependencies" \
+            "env.eval.sonic_root=$HA_ROOT/runtime/models/sonic" \
+            "env.eval.output_dir=$RUNNER_TEMP/humanoidarena/env" \
+            "rollout.model.model_path=$HA_ROOT/runtime/models/checkpoints/humanoid_arena_native50/open_door" \
+            "rollout.model.wbwam.repo_root=$HA_ROOT/WB-WAM-Official" \
+            "rollout.model.wbwam.python=$HA_ROOT/runtime/envs/wbwam/bin/python" \
+            "rollout.model.wbwam.base_models_root=$HA_ROOT/runtime/models/base-models" \
+            "rollout.model.wbwam.output_dir=$RUNNER_TEMP/humanoidarena/model" \
+            "runner.logger.log_path=$RUNNER_TEMP/humanoidarena/metrics"
+      - name: Clean controller environment
+        if: always()
+        run: rm -rf .venv

@@ -86,6 +86,8 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-mujoco_warp
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-geniesim
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-humanoidarena
+
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-simple
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-franka
 
@@ -511,6 +513,16 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: WB-WAM + HumanoidArena
+##################################################################################################
+# Controller image: mount the separately provisioned upstream runtimes and assets.
+FROM embodied-common-image AS embodied-humanoidarena-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} \
+    embodied --venv wbwam --model wbwam --env humanoidarena
+RUN echo "source ${UV_PATH}/wbwam/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Embodied: Psi0 + SIMPLE
