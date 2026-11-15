@@ -936,27 +936,24 @@ class PhyAIRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
-                if not policy_input.requires_inference:
-                    actions = policy_input.external_actions
-                    policy_output = None
-                else:
-                    actions, result = self.predict(policy_input.obs, mode="train")
-                    policy_output = self._build_policy_output(result)
-                self._send_actions(output_channel, actions.contiguous(), stage_id)
                 transition_obs = (
                     policy_input.obs if self.collect_raw_transition_obs else {}
                 )
                 if policy_input.requires_inference:
+                    actions, result = self.predict(policy_input.obs, mode="train")
+                    policy_output = self._build_policy_output(result)
+                    self._send_actions(output_channel, actions.contiguous(), stage_id)
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
                         output=policy_output,
                     )
                 else:
+                    # The env runs the actions it supplied, so nothing goes back.
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
-                        external_actions=actions,
+                        external_actions=policy_input.external_actions,
                     )
                 actor_channel.put(trajectory_part, async_op=True)
                 self._publish_env_parts(policy_input, actor_channel)

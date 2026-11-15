@@ -334,6 +334,85 @@ class ConsumerWorker(Worker):
         """Get the cluster node rank of this worker."""
         return self._cluster_node_rank
 
+    async def test_async_wait_beyond_executor_pool(
+        self,
+        channel: Channel,
+        blocked_keys: list,
+        free_key: str,
+        timeout: float,
+    ):
+        """Hold len(blocked_keys) pending async_wait() calls, then fetch an item
+        put on a different key. Returns (free_timed_out, free_item,
+        free_elapsed, blocked_items).
+
+        free_elapsed is measured from just before the free_key put, so it
+        covers the full wait latency while the blocked waits are pending. On
+        timeout the blocked keys are still put so parked waits are released
+        and the worker method returns instead of raising; the caller asserts
+        on the returned values.
+        """
+
+        async def get_task(key: str):
+            work = channel.get(async_op=True, key=key)
+            return await work.async_wait()
+
+        blocked_tasks = [asyncio.ensure_future(get_task(key)) for key in blocked_keys]
+        free_task = asyncio.ensure_future(get_task(free_key))
+        # Let every get enter async_wait before any data is put.
+        await asyncio.sleep(1.0)
+
+        start = time.time()
+        channel.put("free_item", key=free_key)
+        free_timed_out = False
+        try:
+            await asyncio.wait_for(asyncio.shield(free_task), timeout)
+        except asyncio.TimeoutError:
+            free_timed_out = True
+        free_elapsed = time.time() - start
+
+        # Unblock the parked waits even when the free get timed out. The free
+        # get finishes last on a timeout: it only proceeds once the blocked
+        # waits have drained the resource they are serialized behind.
+        for i, key in enumerate(blocked_keys):
+            channel.put(i, key=key)
+        results = await asyncio.gather(*blocked_tasks, free_task)
+        blocked_items = results[:-1]
+        free_item = results[-1]
+        return free_timed_out, free_item, free_elapsed, blocked_items
+
+    async def test_async_wait_cancelled(
+        self, channel: Channel, key: str, followup_key: str
+    ):
+        """Cancel an async_wait() mid-wait, put the data afterwards, and verify
+        no error surfaces and the channel still serves a fresh put/get.
+
+        Returns the event-loop exceptions the default handler would have
+        logged (e.g. InvalidStateError from a done future), for the caller
+        to assert on."""
+        loop = asyncio.get_running_loop()
+        loop_errors = []
+        original_handler = loop.get_exception_handler()
+
+        def record_error(loop, context):
+            loop_errors.append(context.get("exception") or context.get("message"))
+
+        loop.set_exception_handler(record_error)
+        try:
+            work = channel.get(async_op=True, key=key)
+            task = asyncio.ensure_future(work.async_wait())
+            # Let the get enter async_wait before cancelling it.
+            await asyncio.sleep(1.0)
+            task.cancel()
+
+            channel.put("late_item", key=key)
+            await asyncio.sleep(1.0)
+
+            channel.put("after_cancel", key=followup_key)
+            item = channel.get(key=followup_key)
+        finally:
+            loop.set_exception_handler(original_handler)
+        return item, loop_errors
+
     async def test_async_wait_yields_control(
         self, channel: Channel, key: str = "async_wait_yields_test"
     ):
@@ -749,6 +828,84 @@ class TestChannel:
             (channel,),
         )
         self._assert_equal(received_item, item_to_send)
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_async_wait_concurrency_not_limited_by_executor(
+        self, worker_groups, channel, channel_type
+    ):
+        """Ensures concurrent async_wait() calls are not serialized by the event
+        loop's default executor thread pool.
+
+        64 gets on keys with no data pending occupy 64 concurrent async_wait()
+        calls. A 65th get on a freshly put key must still complete promptly:
+        if each waiting async_wait() parked an executor thread, the 64 waits
+        would exhaust the default pool (32 threads) and the 65th wait would
+        queue behind them until timeout.
+        """
+        consumer = worker_groups[1]
+        blocked_keys = [f"blocked_key_{i}" for i in range(64)]
+        free_key = "free_key"
+
+        results = consumer.test_async_wait_beyond_executor_pool(
+            channel, blocked_keys, free_key, timeout=10.0
+        ).wait()[0]
+        free_timed_out, free_item, free_elapsed, blocked_items = results
+        assert not free_timed_out, (
+            f"Get on the newly put key timed out after {free_elapsed:.1f}s; "
+            "concurrent async_wait() calls appear serialized behind the "
+            "default executor"
+        )
+        assert free_item == "free_item", (
+            f"Get on the newly put key returned {free_item!r}, expected 'free_item'"
+        )
+        assert len(blocked_items) == len(blocked_keys), (
+            f"Expected {len(blocked_keys)} blocked gets to finish, got "
+            f"{len(blocked_items)}"
+        )
+        assert set(blocked_items) == set(range(len(blocked_keys))), (
+            "Blocked gets did not each receive their own item"
+        )
+
+    @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
+    def test_async_wait_cancelled_before_data_arrives(
+        self, worker_groups, channel, channel_type
+    ):
+        """A cancelled async_wait() must not error when the data arrives later,
+        and the channel must keep working for subsequent put/get."""
+        consumer = worker_groups[1]
+        key = "cancel_key"
+        followup_key = "cancel_followup_key"
+
+        item, loop_errors = consumer.test_async_wait_cancelled(
+            channel, key, followup_key
+        ).wait()[0]
+        assert item == "after_cancel", (
+            f"Get after cancellation returned {item!r}, expected 'after_cancel'"
+        )
+        assert not loop_errors, (
+            f"Cancelling async_wait() surfaced event-loop errors: {loop_errors}"
+        )
+
+    def test_await_torch_future_surfaces_exception(self):
+        """A torch Future ending in an exception must surface that exception
+        when the caller reads the value after awaiting, matching the
+        executor-wait behavior where future.wait() raises."""
+        from torch.futures import Future
+
+        from rlinf.scheduler.collective.async_work import _await_torch_future
+
+        async def scenario():
+            future = Future()
+            error = RuntimeError("future failed")
+            waiter = asyncio.ensure_future(_await_torch_future(future))
+            await asyncio.sleep(0.1)
+            future.set_exception(error)
+            await waiter
+            return future
+
+        future = asyncio.run(scenario())
+        with pytest.raises(RuntimeError, match="future failed"):
+            future.value()
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_async_wait_yields_control(self, worker_groups, channel, channel_type):
