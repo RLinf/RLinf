@@ -115,6 +115,7 @@ class Pi0(model.BaseModel):
             embed_dtype=config.dtype,
             adarms=adarms,
             use_gradient_checkpointing=False,
+            attention_backend=config.attention_backend,
         )
 
         # SigLIP vision encoder

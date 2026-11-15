@@ -121,6 +121,30 @@ and vision embeddings in FP32. The profile preserves FP32 action/time inputs
 and adaptive-norm conditioning while the backbone computes in BF16.
 RLT Stage 1 configurations also keep ``rlt_module`` in FP32.
 
+For π₀.₅ on a compatible CUDA GPU, set
+``actor.model.openpi.attention_backend: flash_attention_2`` to use
+FlashAttention-2 for Gemma's joint SFT attention, prefix-cache prefill, and
+cached action-expert attention used by RL and inference. Install a matching
+``flash-attn`` 2.x build in the training and rollout environments and use
+FP16 or BF16 backbone activations. This option preserves prefix/suffix
+visibility and does not change SigLIP's attention implementation. The default
+``eager`` backend retains the FP32 attention reference; fused execution can
+produce small numerical differences. Unsupported masks, dtypes, and π₀
+configurations are rejected rather than silently falling back.
+
+Set ``attention_backend: flash_attention_3`` to use the official
+``flash_attn_3`` package with the same masks and KV-cache paths. This integration
+targets the 3.0.1 interface from the official ``hopper`` sources:
+
+.. code-block:: bash
+
+   pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+
+The compiled package determines which CUDA architectures can execute this
+backend. Hopper kernels and builds that include SM80 compatibility kernels are
+different execution paths; an Ampere run does not validate Hopper performance.
+Selecting FA3 never silently switches to RLinf's FA2 backend.
+
 OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
 ``use_orig_params: true``. ``no_shard`` replicates all training state;
 ``shard_grad_op`` shards gradients and optimizer state; ``full_shard`` also

@@ -366,6 +366,258 @@ def test_siglip_attention_matches_space_time_reference():
     torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.parametrize("mode", ["joint", "prefix", "cached_suffix"])
+def test_openpi_flash_attention_preserves_visibility(mode):
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        prepare_flash_attention,
+    )
+    from rlinf.models.embodiment.openpi.pi0 import make_attn_mask
+
+    valid = torch.tensor(
+        [[True, False, True, False, True, True], [False] * 4 + [True, True]]
+    )
+    mask = make_attn_mask(valid, torch.tensor([False] * 4 + [True, False]))
+    prefix, suffix = 4, 2
+    if mode == "prefix":
+        mask, suffix = mask[:, :4, :4], 0
+    elif mode == "cached_suffix":
+        mask, prefix = mask[:, 4:], 0
+    metadata = prepare_flash_attention(mask, prefix, suffix)
+
+    recovered = torch.zeros_like(mask)
+    query_length, key_length = mask.shape[-2:]
+    for block in metadata.blocks:
+        for sample in range(mask.shape[0]):
+            queries = block.query_indices[
+                block.query_cu_seqlens[sample] : block.query_cu_seqlens[sample + 1]
+            ]
+            keys = block.key_indices[
+                block.key_cu_seqlens[sample] : block.key_cu_seqlens[sample + 1]
+            ]
+            assert (queries // query_length == sample).all()
+            assert (keys // key_length == sample).all()
+            recovered[sample, queries[:, None] % query_length, keys % key_length] = True
+    torch.testing.assert_close(recovered, mask)
+    torch.testing.assert_close(metadata.valid_queries, mask.any(dim=-1))
+
+
+def test_openpi_flash_attention_rejects_other_visibility():
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        prepare_flash_attention,
+    )
+
+    with pytest.raises(ValueError, match="different visibility"):
+        prepare_flash_attention(torch.ones(1, 4, 4, dtype=torch.bool).tril(), 4, 0)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"attention_backend": "flash_attention_4", "pi05": True},
+        {"attention_backend": "flash_attention_2", "pi05": False},
+        {"attention_backend": "flash_attention_2", "pi05": True, "dtype": "float32"},
+        {"attention_backend": "flash_attention_3", "pi05": False},
+        {"attention_backend": "flash_attention_3", "pi05": True, "dtype": "float32"},
+    ],
+)
+def test_openpi_attention_backend_validates_configuration(kwargs):
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    with pytest.raises(ValueError):
+        Pi0Config(**kwargs)
+
+
+def test_openpi_flash_attention_3_configuration():
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        prepare_flash_attention,
+    )
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    config = Pi0Config(pi05=True, attention_backend="flash_attention_3")
+    metadata = prepare_flash_attention(
+        torch.ones(1, 4, 4, dtype=torch.bool), 4, 0, backend=config.attention_backend
+    )
+    assert metadata.backend == "flash_attention_3"
+
+
+def test_openpi_flash_attention_3_dispatch(monkeypatch):
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        _flash_attention_kernel,
+    )
+
+    package = ModuleType("flash_attn_3")
+    interface = ModuleType("flash_attn_3.flash_attn_interface")
+
+    def varlen(
+        q,
+        k,
+        v,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        *,
+        softmax_scale,
+        causal,
+        return_attn_probs,
+    ):
+        assert softmax_scale == 1.0
+        assert causal is False
+        assert return_attn_probs is False
+        return q
+
+    interface.flash_attn_varlen_func = varlen
+    package.flash_attn_interface = interface
+    monkeypatch.setitem(sys.modules, "flash_attn_3", package)
+    monkeypatch.setitem(sys.modules, "flash_attn_3.flash_attn_interface", interface)
+    query = torch.ones(2, 1, 4)
+    cu_seqlens = torch.tensor([0, 2], dtype=torch.int32)
+    actual = _flash_attention_kernel("flash_attention_3")(
+        query, query, query, cu_seqlens, cu_seqlens, 2, 2
+    )
+    assert actual is query
+
+
+@pytest.mark.parametrize("mode", ["joint", "prefix", "cached_suffix"])
+@pytest.mark.parametrize("backend", ["flash_attention_2", "flash_attention_3"])
+def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
+    if not torch.cuda.is_available() or torch.version.hip is not None:
+        pytest.skip("FlashAttention numerical coverage requires a CUDA GPU")
+    flash_attn = pytest.importorskip(
+        "flash_attn"
+        if backend == "flash_attention_2"
+        else "flash_attn_3.flash_attn_interface"
+    )
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        prepare_flash_attention,
+    )
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+    from rlinf.models.embodiment.openpi.pi0 import make_attn_mask
+
+    torch.manual_seed(0)
+    device, dtype = torch.device("cuda"), torch.bfloat16
+    if mode == "joint":
+        logging.getLogger(__name__).info(
+            "Pi0.5 %s numerical device=%s torch=%s cuda=%s module=%s",
+            backend,
+            torch.cuda.get_device_name(),
+            torch.__version__,
+            torch.version.cuda,
+            flash_attn.__name__,
+        )
+    configs = [gemma.get_config("gemma_2b"), gemma.get_config("gemma_300m")]
+    reference = gemma.Attention(configs).to(device=device, dtype=dtype)
+    actual = copy.deepcopy(reference)
+    batch, prefix, suffix = 10, 968, 16
+    valid = torch.ones(batch, prefix + suffix, dtype=torch.bool, device=device)
+    valid[:, 848:prefix] = False
+    valid[0, :256] = False
+    valid[1, :prefix] = False
+    if mode == "prefix":
+        valid[:, :prefix] = False
+    ar_mask = torch.zeros(prefix + suffix, dtype=torch.bool, device=device)
+    ar_mask[prefix] = True
+    mask = make_attn_mask(valid, ar_mask)
+    positions = valid.int().cumsum(-1) - 1
+    prefix_input = torch.randn(
+        batch, prefix, configs[0].width, device=device, dtype=dtype
+    )
+    suffix_input = torch.randn(
+        batch, suffix, configs[1].width, device=device, dtype=dtype
+    )
+    expected_inputs = [prefix_input.requires_grad_(), suffix_input.requires_grad_()]
+    actual_inputs = [x.detach().clone().requires_grad_() for x in expected_inputs]
+
+    def forward(attention, inputs, use_flash):
+        metadata = None
+        if mode != "joint":
+            if use_flash:
+                metadata = prepare_flash_attention(
+                    mask[:, :prefix, :prefix], prefix, 0, backend=backend
+                )
+            outputs, cache = attention(
+                [inputs[0], None],
+                positions[:, :prefix],
+                mask[:, None, :prefix, :prefix],
+                flash_metadata=metadata,
+            )
+            if mode == "prefix":
+                return outputs
+            metadata = None
+            if use_flash:
+                metadata = prepare_flash_attention(
+                    mask[:, prefix:], 0, suffix, backend=backend
+                )
+            suffix_outputs, _ = attention(
+                [None, inputs[1]],
+                positions[:, prefix:],
+                mask[:, None, prefix:],
+                kv_cache=cache,
+                flash_metadata=metadata,
+            )
+            return [outputs[0], suffix_outputs[1]]
+        if use_flash:
+            metadata = prepare_flash_attention(mask, prefix, suffix, backend=backend)
+        return attention(inputs, positions, mask[:, None], flash_metadata=metadata)[0]
+
+    was_compiled = torch_compile_enabled()
+    set_torch_compile(False)
+    try:
+        expected = forward(reference, expected_inputs, False)
+        result = forward(actual, actual_inputs, True)
+        weights = [torch.randn_like(x) if x is not None else None for x in expected]
+        for outputs in (expected, result):
+            sum(
+                (output.float() * weight.float()).mean()
+                for output, weight in zip(outputs, weights)
+                if output is not None
+            ).backward()
+    finally:
+        set_torch_compile(was_compiled)
+
+    def relative_error(left, right):
+        return (left.float() - right.float()).norm() / left.float().norm().clamp(
+            min=1e-12
+        )
+
+    output_errors = [
+        float(relative_error(left, right))
+        for left, right in zip(expected, result)
+        if left is not None
+    ]
+    input_errors = []
+    for expected_input, actual_input in zip(expected_inputs, actual_inputs):
+        assert (expected_input.grad is None) == (actual_input.grad is None)
+        if expected_input.grad is not None:
+            input_errors.append(
+                float(relative_error(expected_input.grad, actual_input.grad))
+            )
+    parameter_errors = []
+    for expected_param, actual_param in zip(
+        reference.parameters(), actual.parameters()
+    ):
+        assert (expected_param.grad is None) == (actual_param.grad is None)
+        if expected_param.grad is not None:
+            parameter_errors.append(
+                float(relative_error(expected_param.grad, actual_param.grad))
+            )
+    logging.getLogger(__name__).info(
+        "Pi0.5 %s %s relative L2: outputs=%s inputs=%s max_parameter_gradient=%s",
+        backend,
+        mode,
+        output_errors,
+        input_errors,
+        max(parameter_errors),
+    )
+    assert max(output_errors) < 0.02
+    assert max(input_errors) < 0.03
+    assert max(parameter_errors) < 0.03
+
+
 def test_siglip_time_encoding_preserves_timestamp_precision():
     from rlinf.models.embodiment.openpi.modules.short_memory import (
         fixed_relative_time_encoding,

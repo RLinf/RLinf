@@ -99,6 +99,18 @@ BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配置设置 ``precision: 
 使用 FP32。该配置保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。
 RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
+在兼容的 CUDA GPU 上训练 π₀.₅ 时，可设置 ``actor.model.openpi.attention_backend: flash_attention_2``，让 Gemma 的联合 SFT attention、prefix cache 构建，以及 RL 和推理使用的带缓存 action-expert attention 使用 FlashAttention-2。
+训练和 rollout 环境需要安装匹配的 ``flash-attn`` 2.x，主干激活使用 FP16 或 BF16。该选项保留 prefix/suffix 的可见性，不改变 SigLIP 的 attention 实现。
+默认 ``eager`` 保留 FP32 attention 参考路径；融合计算会产生小幅数值差异。不支持的 mask、dtype 和 π₀ 配置会明确报错，不会静默回退。
+
+设置 ``attention_backend: flash_attention_3`` 可使用官方 ``flash_attn_3`` 包，保留相同的 mask 和 KV cache 路径。该接入采用官方 ``hopper`` 源码的 3.0.1 接口：
+
+.. code-block:: bash
+
+   pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+
+可运行的 CUDA 架构取决于该包的编译配置。Hopper 内核和包含 SM80 兼容内核的构建使用不同执行路径；Ampere 上的运行结果不能验证 Hopper 性能。选择 FA3 不会静默切换到 RLinf 的 FA2 后端。
+
 OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
 均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
 ``shard_grad_op`` 对梯度和优化器状态分片；``full_shard`` 还在模块执行之间对参数分片。

@@ -35,6 +35,11 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 
 from . import lora
+from .flash_attention import (
+    FlashAttentionMetadata,
+    flash_attention,
+    prepare_flash_attention,
+)
 from .lora import FeedForward as LoRAFeedForward
 from .utils import _str_to_dtype, gelu_glu, torch_compile_enabled
 
@@ -203,7 +208,6 @@ class Embedder(nn.Module):
         return F.linear(x, self.embedding.weight)
 
 
-# TODO: try use sdpa_attn
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
 
@@ -285,6 +289,7 @@ class Attention(nn.Module):
         positions: torch.Tensor,
         attn_mask: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        flash_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Multi-expert attention forward.
 
@@ -296,6 +301,7 @@ class Attention(nn.Module):
             positions: (B, T) positional indices covering full concatenated sequence
             attn_mask: (B, 1, T, S) attention mask
             kv_cache: optional (k, v) cache tuple
+            flash_metadata: Pi0.5 packing prepared once for all layers.
 
         Returns:
             (outputs, new_kv_cache)
@@ -348,34 +354,36 @@ class Attention(nn.Module):
         # GQA einsum pattern matching JAX:
         q = q * (self.head_dim**-0.5)
 
-        # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
-        # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
-        K = self.num_kv_heads
-        G = self.num_heads // K
+        if flash_metadata is not None:
+            encoded = flash_attention(q, k, v, flash_metadata)
+        else:
+            # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
+            # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
+            K = self.num_kv_heads
+            G = self.num_heads // K
 
-        q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
-        k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
-        v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
+            q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
+            k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
+            v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
 
-        # einsum "BTKGH,BSKH->BKGTS"
-        logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
+            # einsum "BTKGH,BSKH->BKGTS"
+            logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
 
-        # Align mask to logits shape: logits is (B, K, G, T, S), mask is (B, 1, T, S)
-        # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
-        big_neg = -2.3819763e38
-        mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
-        masked_logits = torch.where(
-            mask_for_logits,
-            logits,
-            torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
-        )
+            # Broadcast the mask over KV heads and query groups.
+            big_neg = -2.3819763e38
+            mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
+            masked_logits = torch.where(
+                mask_for_logits,
+                logits,
+                torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
+            )
 
-        probs = F.softmax(masked_logits, dim=-1).to(dtype)
+            probs = F.softmax(masked_logits, dim=-1).to(dtype)
 
-        # einsum "BKGTS,BSKH->BTKGH"
-        encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
+            # einsum "BKGTS,BSKH->BTKGH"
+            encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
         encoded = encoded.reshape(
-            encoded.shape[0], encoded.shape[1], K * G, self.head_dim
+            encoded.shape[0], encoded.shape[1], self.num_heads, self.head_dim
         )
         # encoded: (B, T_total, num_heads, head_dim)
 
@@ -465,6 +473,7 @@ class Block(nn.Module):
         adarms_cond: list[torch.Tensor | None],
         skip_prefix_ffn: bool = False,
         prefix_requires_grad: bool = True,
+        flash_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass.
 
@@ -476,6 +485,7 @@ class Block(nn.Module):
             adarms_cond: per-expert adaptive RMS norm conditioning (None = regular)
             skip_prefix_ffn: Skip expert-0 outputs after attention.
             prefix_requires_grad: Track gradients through the expert-0 FFN.
+            flash_metadata: Pi0.5 packing shared across transformer layers.
 
         Returns:
             (outputs, new_kv_cache)
@@ -493,7 +503,9 @@ class Block(nn.Module):
                 gates.append(None)
 
         # Attention
-        post_attn, kv_cache = self.attn(pre_attn, positions, attn_mask, kv_cache)
+        post_attn, kv_cache = self.attn(
+            pre_attn, positions, attn_mask, kv_cache, flash_metadata
+        )
         post_attn = [self.dropout(p) if p is not None else None for p in post_attn]
 
         # Gated residual for attention
@@ -543,10 +555,12 @@ class Module(nn.Module):
         adarms: Sequence[bool] | bool = False,
         dropout: float = 0.0,
         use_gradient_checkpointing: bool = True,
+        attention_backend: str = "eager",
     ):
         super().__init__()
         self.configs = configs
         self.embed_dtype = _str_to_dtype(embed_dtype)
+        self.attention_backend = attention_backend
         if isinstance(adarms, bool):
             adarms = [adarms] * len(configs)
         self.adarms = list(adarms)
@@ -608,6 +622,15 @@ class Module(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None] * len(self.configs)
 
+        flash_metadata = None
+        if self.attention_backend != "eager":
+            flash_metadata = prepare_flash_attention(
+                mask,
+                embedded[0].shape[1] if embedded[0] is not None else 0,
+                embedded[1].shape[1] if embedded[1] is not None else 0,
+                backend=self.attention_backend,
+            )
+
         # Expand mask: (B, T, S) -> (B, 1, T, S)
         mask = mask.unsqueeze(1)
 
@@ -644,6 +667,7 @@ class Module(nn.Module):
                     adarms_cond,
                     skip_prefix_ffn,
                     layer_prefix_grad,
+                    flash_metadata,
                     use_reentrant=self.gradient_checkpointing_use_reentrant,
                 )
             else:
@@ -655,6 +679,7 @@ class Module(nn.Module):
                     adarms_cond,
                     skip_prefix_ffn,
                     layer_prefix_grad,
+                    flash_metadata,
                 )
             new_layer_kv_caches.append(new_kv)
 
