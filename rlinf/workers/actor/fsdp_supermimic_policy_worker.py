@@ -104,6 +104,24 @@ def clip_step(
         optimizer.zero_grad(set_to_none=True)
 
 
+def keep_step_placement(optimizer: torch.optim.Optimizer, state_dict: dict) -> dict:
+    """Load a checkpoint with this run's ``capturable`` and ``fused`` flags.
+
+    Loading otherwise restores the saved flags, and they decide whether the
+    step counts land on the device, so a run recording its update could
+    not resume from a checkpoint saved without the recording.
+    """
+    flags = {
+        key: optimizer.defaults[key]
+        for key in ("capturable", "fused")
+        if key in optimizer.defaults
+    }
+    state_dict["param_groups"] = [
+        {**group, **flags} for group in state_dict["param_groups"]
+    ]
+    return state_dict
+
+
 class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     """FSDP actor that owns one env rank's replay and runs every training phase."""
 
@@ -219,6 +237,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         self.all_optimizers = list(by_name.values())
         self.all_schedulers = []
         for name, optimizer in by_name.items():
+            optimizer.register_load_state_dict_pre_hook(keep_step_placement)
             warmup_optimizer_state(optimizer)
             self.all_schedulers.append(
                 self.build_lr_scheduler(optimizer, optim_cfgs[name])
@@ -348,11 +367,12 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
 
     def _on_side_stream(self, fn, *args):
         """Run ``fn`` on a side stream, as CUDA graphs need their warm-up."""
-        stream = torch.cuda.Stream()
-        stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(stream):
+        platform = self.torch_platform
+        stream = platform.Stream()
+        stream.wait_stream(platform.current_stream())
+        with platform.stream(stream):
             out = fn(*args)
-        torch.cuda.current_stream().wait_stream(stream)
+        platform.current_stream().wait_stream(stream)
         return out
 
     def _record_update(self, inputs: dict) -> CUDAGraphManager:

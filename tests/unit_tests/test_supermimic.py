@@ -29,6 +29,7 @@ import pytest
 import torch
 import torch.distributed as dist
 from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
 
 from rlinf.algorithms.supermimic.objectives import (
     NOMINAL_ERRORS,
@@ -78,10 +79,14 @@ from rlinf.runners.supermimic_runner import (
     boundary_update_spans,
     due_updates,
 )
-from rlinf.workers.actor.fsdp_supermimic_policy_worker import clip_step
+from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
+    clip_step,
+    keep_step_placement,
+)
 
 CPU = torch.device("cpu")
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "examples" / "embodiment" / "config"
+EVAL_CONFIG_DIR = Path(__file__).resolve().parents[2] / "evaluations" / "supermimic"
 needs_mjlab = pytest.mark.skipif(
     importlib.util.find_spec("mjlab") is None, reason="mjlab is not installed"
 )
@@ -293,6 +298,7 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
             "actor.world_model_optim needs capturable=True",
         ),
         (["actor.cuda_graph=True"], None),
+        (["+runner.enable_decoupled_mode=True"], "enable_decoupled_mode=False"),
     ],
 )
 def test_training_config_rejects_unsupported_values(overrides, error):
@@ -304,6 +310,49 @@ def test_training_config_rejects_unsupported_values(overrides, error):
         return
     with pytest.raises(ValueError, match=error):
         validate_supermimic_cfg(cfg)
+
+
+@pytest.mark.parametrize("ckpt_path", ["null", "/data/full_weights.pt"])
+def test_evaluation_config_needs_the_policy_weights(monkeypatch, ckpt_path):
+    monkeypatch.setenv("EMBODIED_PATH", str(CONFIG_DIR.parent))
+    with initialize_config_dir(config_dir=str(EVAL_CONFIG_DIR), version_base="1.1"):
+        cfg = compose(
+            config_name="supermimic_lafan1_eval",
+            overrides=[
+                "env.eval.motion_path=/data/clips",
+                f"runner.ckpt_path={ckpt_path}",
+            ],
+        )
+    if ckpt_path != "null":
+        validate_supermimic_cfg(cfg, only_eval=True)
+        return
+    with pytest.raises(ValueError, match="needs runner.ckpt_path"):
+        validate_supermimic_cfg(cfg, only_eval=True)
+
+
+def test_evaluation_entry_picks_workers_without_an_algorithm_section():
+    from rlinf.runners import get_embodied_eval_runner
+    from rlinf.workers.env import get_env_worker
+    from rlinf.workers.rollout.hf import get_hf_rollout_worker
+
+    def picked(sections: dict) -> tuple[str, ...]:
+        cfg = OmegaConf.create({"rollout": {}, "runner": {}, **sections})
+        OmegaConf.set_struct(cfg, True)
+        return tuple(
+            pick(cfg).__name__
+            for pick in (
+                get_embodied_eval_runner,
+                get_env_worker,
+                get_hf_rollout_worker,
+            )
+        )
+
+    assert picked({}) == ("EmbodiedEvalRunner", "EnvWorker", "MultiStepRolloutWorker")
+    assert picked({"algorithm": {"loss_type": "supermimic"}}) == (
+        "SuperMimicEvalRunner",
+        "SuperMimicEnvWorker",
+        "SuperMimicRolloutWorker",
+    )
 
 
 def test_maxcoord_config_shares_its_representation_with_the_envs():
@@ -563,6 +612,24 @@ def test_clip_step_clips_the_norm_then_each_element():
     clip_step(optimizers, [first, second], 0.37, max_norm=1.0, value_clip=None)
     torch.testing.assert_close(first.detach(), torch.tensor([-0.7, -0.2]))
     torch.testing.assert_close(second.detach(), torch.tensor([-1.0]))
+
+
+@pytest.mark.parametrize("saved,resumed", [(False, True), (True, False)])
+def test_resumed_adam_keeps_the_step_flags_of_the_run(saved, resumed):
+    param = torch.nn.Parameter(torch.ones(2))
+    param.grad = torch.ones(2)
+    before = torch.optim.Adam([param], lr=0.1)
+    before.step()
+    checkpoint = before.state_dict()
+    checkpoint["param_groups"][0]["capturable"] = saved
+    after = torch.optim.Adam([param], lr=0.1, capturable=resumed)
+    after.register_load_state_dict_pre_hook(keep_step_placement)
+    after.load_state_dict(checkpoint)
+    assert after.param_groups[0]["capturable"] is resumed
+    assert float(after.state[param]["step"]) == 1.0
+    torch.testing.assert_close(
+        after.state[param]["exp_avg"], before.state[param]["exp_avg"]
+    )
 
 
 @pytest.mark.parametrize("grads", [([3.0, 0.0], [4.0]), ([0.1, 0.2], [0.3])])

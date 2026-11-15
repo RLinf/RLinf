@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.scheduler.worker.worker import Worker
 
 
 def get_hf_rollout_worker(cfg: DictConfig) -> type[Worker]:
-    """Rollout worker of an embodied evaluation config on the huggingface backend."""
-    if cfg.algorithm.get("loss_type", None) == "supermimic":
+    """Rollout worker of an embodied evaluation config on the huggingface backend.
+
+    Most evaluation configs have no ``algorithm`` section.
+    """
+    if OmegaConf.select(cfg, "algorithm.loss_type") == "supermimic":
         from .supermimic_rollout_worker import SuperMimicRolloutWorker
 
         return SuperMimicRolloutWorker

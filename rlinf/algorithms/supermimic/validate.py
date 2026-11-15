@@ -268,8 +268,18 @@ def validate_supermimic_cfg(cfg: DictConfig, only_eval: bool = False) -> DictCon
     prefix = "rollout.model" if only_eval else "actor.model"
     _check_model(model, prefix)
     _check_weight_precision(cfg, only_eval)
+    if only_eval and not cfg.runner.get("ckpt_path", None):
+        raise ValueError(
+            "SuperMimic evaluation needs runner.ckpt_path, the policy's "
+            "full_weights.pt; without it the policy keeps its random weights"
+        )
     if cfg.rollout.pipeline_stage_num != 1:
         raise ValueError("SuperMimic needs rollout.pipeline_stage_num=1")
+    if cfg.runner.get("enable_decoupled_mode", False):
+        raise ValueError(
+            "SuperMimic needs runner.enable_decoupled_mode=False; its runners "
+            "drive every env step and never stop a free-running rollout loop"
+        )
     if not only_eval:
         # serve, ingest and run_updates assume the networks stay on the device.
         for group in ("actor", "rollout"):
