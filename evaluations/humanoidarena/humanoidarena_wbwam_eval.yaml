@@ -1,0 +1,70 @@
+defaults:
+  - task: open_door
+  - override /hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  ckpt_path: null
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: humanoidarena_wbwam_eval
+    logger_backends: null
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  eval:
+    env_type: humanoidarena
+    total_num_envs: 1
+    auto_reset: false
+    ignore_terminations: false
+    early_stop_on_done: true
+    seed: 0
+    group_size: 1
+    rollout_epoch: 1
+    native_record_video: true
+    native_post_termination_steps: 50
+    wbwam_repo: /path/to/WB-WAM-Official
+    arena_root: /path/to/WB-WAM-Official/third_party/HumanoidArena
+    simulation_python: /path/to/isaac/bin/python
+    dependencies_root: /path/to/dependencies
+    sonic_root: /path/to/sonic
+    simulation_gpu: 0
+    output_dir: /path/to/results/humanoidarena
+    timeout: 1200
+    video_cfg:
+      save_video: false
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  recompute_logprobs: false
+  collect_prev_infos: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_type: wbwam
+    precision: bf16
+    is_lora: false
+    load_to_device: false
+    action_dim: 40
+    wbwam:
+      repo_root: /path/to/WB-WAM-Official
+      python: /path/to/wbwam/bin/python
+      base_models_root: /path/to/base-models
+      output_dir: /path/to/results/wbwam
+      seed: 0
+      timeout: 1200

@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 1450
+    max_steps_per_rollout_epoch: 1500
+    chunk_size: 20
+    task_id: Isaac-Move-PickPlace-Box-G129-Dex3-Wholedoby
+    env_config: tasks/common_test_config/base_test/pp_box_sonic_test.yaml
+    prompt: Move the box from the table onto the shelf.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/box_shelf
+    num_action_chunks: 20
+    wbwam:
+      weight_file: step_013000.pt
+      instruction_key: '3'
+      prompt: Move the box from the table onto the shelf.
+      denoise_steps: 40

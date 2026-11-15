@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 2000
+    max_steps_per_rollout_epoch: 2060
+    chunk_size: 20
+    task_id: Isaac-Move-Football-Single-G129-Dex3-Wholebody
+    env_config: tasks/common_test_config/base_test/football_single_sonic_test.yaml
+    prompt: Kick the football into the goal.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/kick_football
+    num_action_chunks: 20
+    wbwam:
+      weight_file: step_010600.pt
+      instruction_key: '1'
+      prompt: Kick the football into the goal.
+      denoise_steps: 20
