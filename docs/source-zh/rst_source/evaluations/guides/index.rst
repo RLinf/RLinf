@@ -32,6 +32,10 @@ Benchmark 指南
      - 使用 Psi0 的人形机器人全身评测
      - :doc:`simple`
 
+   * - HumanoidArena
+     - WB-WAM 的七任务全身控制评测
+     - :doc:`humanoidarena`
+
 .. note::
 
    IsaacLab、MetaWorld 等 benchmark 尚无 ``evaluations/`` 示例配置，评测可参考 :doc:`../../examples/simulators_index` 中对应训练文档，通过配置回退机制使用 ``examples/embodiment/config/`` 下的训练 YAML 进行评测。
@@ -47,3 +51,4 @@ Benchmark 指南
    polaris
    robotwin
    simple
+   HumanoidArena <humanoidarena>
