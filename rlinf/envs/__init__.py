@@ -47,6 +47,7 @@ class SupportedEnvType(Enum):
     DIFFUSION = "diffusion"
     POLARIS = "polaris"
     SIMPLE = "simple"
+    HUMANOIDARENA = "humanoidarena"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -91,7 +92,11 @@ def get_env_cls(env_type: str, env_cfg=None):
 
     env_type = SupportedEnvType(env_type)
 
-    if env_type == SupportedEnvType.MANISKILL:
+    if env_type == SupportedEnvType.HUMANOIDARENA:
+        from rlinf.envs.sim.humanoidarena.humanoidarena_env import HumanoidArenaEnv
+
+        return HumanoidArenaEnv
+    elif env_type == SupportedEnvType.MANISKILL:
         if env_cfg.get("enable_offload", False):
             from rlinf.envs.sim.maniskill.maniskill_offload_env import (
                 ManiskillOffloadEnv,
