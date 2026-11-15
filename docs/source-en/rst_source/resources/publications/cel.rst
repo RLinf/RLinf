@@ -182,24 +182,6 @@ measurements cover channel operations, including waits for data or computation.
 Robots complete an episode about every four minutes. More than 99% of
 experience transfers finish within two minutes.
 
-.. list-table:: Measured channel-operation durations in the 96-robot run
-   :header-rows: 1
-   :widths: 40 30 30
-   :align: left
-
-   * - Channel
-     - Duration
-     - Share of Operations
-   * - Observations to Inference
-     - Within 20 ms
-     - 95.18%
-   * - Actions to Robots
-     - Within 250 ms
-     - Approximately 97.6%
-   * - Experience to Training
-     - Within 2 min
-     - More than 99%
-
 .. figure:: https://arxiv.org/html/2610.25736v3/channel_time_20260813_bars.svg
    :alt: Duration distributions for observation, action, and experience-transfer channel operations
    :width: 800px
