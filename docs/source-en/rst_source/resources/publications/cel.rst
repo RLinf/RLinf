@@ -30,9 +30,6 @@ recovery lets available robots keep collecting experience during interruptions.
 Results
 -------
 
-The figures and measurements below follow `Section 4 of the paper (v3)
-<https://arxiv.org/html/2610.25736v3#S4>`__.
-
 Real-World Task Performance
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -46,7 +43,7 @@ collection. RLT, RECAP, and FERT start from the same selected task-specific
    :width: 800px
    :align: center
 
-   Figure 5: The five real-world manipulation tasks.
+   The five real-world manipulation tasks.
 
 FERT raises mean success from 81.0% after initialization to 97.3%, an 86.0%
 reduction in mean failure rate. In the evaluated configurations, its mean success
@@ -58,7 +55,7 @@ comparison also includes SFT and human teleoperation as references.
    :width: 800px
    :align: center
 
-   Figure 6: Task success across methods, with 95% Wilson confidence intervals.
+   Task success across methods, with 95% Wilson confidence intervals.
    FERT uses the largest evaluated fleet for each task, listed below.
 
 .. list-table:: Task success rates before and after learning from fleet experience
@@ -108,7 +105,7 @@ On Phone Packaging, FERT success increases from 86.7% with 16 training robots to
    :width: 800px
    :align: center
 
-   Figure 7: Success versus training fleet size. HG-DAgger starts from SFT;
+   Success versus training fleet size. HG-DAgger starts from SFT;
    FERT starts from the selected (M)HG-DAgger checkpoint. Dashed lines mark
    these different initial policies; error bars show 95% Wilson intervals.
 
@@ -117,7 +114,7 @@ Ablation Studies
 
 On Phone Packaging with 16 robots, full FERT reaches 86.7% success. Removing
 failure-guided retrieval lowers success to 64.2%; removing the context extensions
-around retrieved segments lowers it to 57.5%. Figure 8 also compares policy
+around retrieved segments lowers it to 57.5%. The ablation plots also compare policy
 synchronization intervals and priority retention settings.
 All panels report 95% Wilson confidence intervals.
 
@@ -130,7 +127,7 @@ All panels report 95% Wilson confidence intervals.
          :alt: FERT success with and without failure-guided retrieval
          :width: 100%
 
-         Figure 8(a): Failure-Guided Retrieval
+         Failure-Guided Retrieval
 
    .. grid-item::
 
@@ -138,7 +135,7 @@ All panels report 95% Wilson confidence intervals.
          :alt: FERT success at different policy synchronization intervals
          :width: 100%
 
-         Figure 8(b): Policy Synchronization Interval
+         Policy Synchronization Interval
 
    .. grid-item::
 
@@ -146,7 +143,7 @@ All panels report 95% Wilson confidence intervals.
          :alt: FERT success with different context extensions around retrieved segments
          :width: 100%
 
-         Figure 8(c): Retrieved-Segment Context
+         Retrieved-Segment Context
 
    .. grid-item::
 
@@ -154,7 +151,7 @@ All panels report 95% Wilson confidence intervals.
          :alt: FERT success at different priority retention settings
          :width: 100%
 
-         Figure 8(d): Priority Retention
+         Priority Retention
 
 System Reliability and Collection Efficiency
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -174,7 +171,7 @@ results are trace-replay estimates; the FATS run supplies the measured baseline.
    :width: 800px
    :align: center
 
-   Figure 9: Measured collection and faults in the 96-robot run, together with
+   Measured collection and faults in the 96-robot run, together with
    trace-replay estimates for synchronous collection and whole-system restarts.
 
 Edge-Cloud Communication
@@ -208,16 +205,8 @@ experience transfers finish within two minutes.
    :width: 800px
    :align: center
 
-   Figure 10: Measured duration distributions and operation counts for the
+   Measured duration distributions and operation counts for the
    observation, action, and experience channels.
-
-Quickstart
-----------
-
-CEL code is pending release. The project page provides method details and
-robot demonstrations.
-
-- `CEL Project Page <https://cel-robot-learning.github.io/>`__
 
 Citation
 --------
