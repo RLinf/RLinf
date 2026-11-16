@@ -255,13 +255,9 @@ class Cosmos3SGLangAdapter:
         main = env_obs.get("main_images")
         if main is None:
             main = env_obs.get("images")
-        if main is None:
-            raise ValueError("Native Cosmos3 evaluation requires main_images.")
         cameras = [Cosmos3Policy._rollout_images(main)]
         if env_obs.get("wrist_images") is not None:
             cameras.append(Cosmos3Policy._rollout_images(env_obs["wrist_images"]))
-        if any(len(camera) != len(tasks) for camera in cameras):
-            raise ValueError("Camera batches must match the task descriptions.")
         image_size = int(self.model_cfg.get("image_size", 256))
         images = torch.cat(
             [Cosmos3Policy._resize_camera_frames(c, image_size) for c in cameras],
@@ -287,12 +283,6 @@ class Cosmos3SGLangAdapter:
                 device="cpu",
             )
             video = batch["video"][0][0]
-            if video.shape[-2:] != (self._target_h, self._target_w):
-                raise ValueError(
-                    "Configured size must match the native observation bucket: "
-                    f"expected {tuple(video.shape[-2:])}, "
-                    f"got {(self._target_h, self._target_w)}"
-                )
             caption_data = {
                 "ai_caption": task,
                 "viewpoint": viewpoint,

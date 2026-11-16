@@ -27,7 +27,6 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
-import math
 import os
 import re
 from pathlib import Path
@@ -87,8 +86,6 @@ def _apply_checkpoint_model_config(cosmos_cfg, model_cfg: DictConfig) -> None:
         )
         num_domains = model_cfg.get("num_embodiment_domains")
         if num_domains is not None:
-            if int(num_domains) < 1:
-                raise ValueError("Cosmos3 num_embodiment_domains must be positive.")
             checkpoint_model.config.num_embodiment_domains = int(num_domains)
         cosmos_cfg.model = checkpoint_model
         logger.info(
@@ -107,10 +104,6 @@ def _apply_checkpoint_model_config(cosmos_cfg, model_cfg: DictConfig) -> None:
         from cosmos_framework.utils.lazy_config import LazyCall
 
         tokenizer_path = Path(str(tokenizer_path)).expanduser().resolve()
-        if not tokenizer_path.is_dir():
-            raise FileNotFoundError(
-                f"Cosmos3 local processor directory does not exist: {tokenizer_path}"
-            )
         cosmos_cfg.model.config.vlm_config.tokenizer = LazyCall(build_processor)(
             tokenizer_type=str(tokenizer_path)
         )
@@ -245,8 +238,6 @@ def load_inference_checkpoint(model: Cosmos3Policy, checkpoint_path: str) -> Non
 def _configure_sft_objective(model_config, cfg: DictConfig) -> None:
     """Select native loss weights without changing the Cosmos loss implementation."""
     objective = cfg.get("sft_objective", "joint")
-    if objective not in ("joint", "action_only"):
-        raise ValueError(f"Unsupported Cosmos sft_objective={objective!r}.")
     rf_config = model_config.rectified_flow_training_config
     if objective == "joint":
         rf_config.normalize_loss_by_active = False
@@ -255,14 +246,7 @@ def _configure_sft_objective(model_config, cfg: DictConfig) -> None:
         if hasattr(rf_config, "loss_reduction_mode"):
             rf_config.loss_reduction_mode = "local_item_mean"
         return
-    if cfg.get("action_model_mode", "wam") != "policy":
-        raise ValueError("action_only supervision requires action_model_mode='policy'.")
     rf_config.normalize_loss_by_active = True
-    action_weight = float(rf_config.action_loss_weight)
-    if not math.isfinite(action_weight) or action_weight <= 0:
-        raise ValueError(
-            "action_only supervision requires a finite positive action_loss_weight."
-        )
     # The current image remains a clean condition. Preserve native dummy graph
     # connections and MoE regularization, while disabling both vision FM weights.
     rf_config.loss_scale = 0.0

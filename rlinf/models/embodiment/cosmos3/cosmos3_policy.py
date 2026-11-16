@@ -61,11 +61,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         )
         self._global_step: int = 0
         self._rollout_config = dict(rollout_config or {})
-        self._sft_objective = self._rollout_config.get("sft_objective", "joint")
-        if self._sft_objective not in ("joint", "action_only"):
-            raise ValueError(
-                f"Unsupported Cosmos sft_objective={self._sft_objective!r}."
-            )
         self._action_normalizer = None
 
     @property
@@ -110,7 +105,7 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         )
 
     def sft_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
-        """Compute native SFT loss, enforcing the configured supervision contract."""
+        """Compute the native SFT loss for one batch."""
         torch.compiler.cudagraph_mark_step_begin()
 
         if data is None:
@@ -119,8 +114,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             raise ValueError(
                 "Cosmos3 sft_forward requires `data` from the SFT dataloader."
             )
-        if self._sft_objective == "action_only":
-            self._validate_action_only_batch(data)
 
         from cosmos_framework.utils.misc import to as _cosmos_to
 
@@ -155,81 +148,11 @@ class Cosmos3Policy(nn.Module, BasePolicy):
                     result[key] = value.detach()
         return result
 
-    def _validate_action_only_batch(self, data: Mapping[str, Any]) -> None:
-        """Reject future video targets and empty action supervision before forward."""
-        rf_config = self.omni.config.rectified_flow_training_config
-        if (
-            rf_config.loss_scale != 0
-            or rf_config.image_loss_scale != 0
-            or not rf_config.normalize_loss_by_active
-        ):
-            raise ValueError(
-                "action_only requires zero vision loss weights and active normalization."
-            )
-        required = {"mode", "sequence_plan", "action", self.omni.input_video_key}
-        if not isinstance(data, Mapping) or required - data.keys():
-            raise ValueError(
-                "action_only requires grouped policy, video and action inputs."
-            )
-        batch_size = len(data["sequence_plan"])
-        if (
-            batch_size == 0
-            or data["mode"] != ["policy"] * batch_size
-            or len(data["action"]) != batch_size
-            or len(data[self.omni.input_video_key]) != batch_size
-        ):
-            raise ValueError(
-                "action_only requires a non-empty policy batch of matching size."
-            )
-        horizon = int(self._rollout_config.get("num_frames", 17)) - 1
-        for videos, actions, plan in zip(
-            data[self.omni.input_video_key],
-            data["action"],
-            data["sequence_plan"],
-            strict=True,
-        ):
-            if (
-                not plan.has_vision
-                or len(videos) != 1
-                or not torch.is_tensor(videos[0])
-                or videos[0].ndim != 4
-                or videos[0].shape[:2] != (3, 1)
-                or list(plan.condition_frame_indexes_vision) != [0]
-            ):
-                raise ValueError(
-                    "action_only accepts one clean current image, "
-                    "without future video targets."
-                )
-            if (
-                not plan.has_action
-                or len(actions) != 1
-                or not torch.is_tensor(actions[0])
-                or actions[0].shape != (horizon, self.omni.config.max_action_dim)
-            ):
-                raise ValueError(
-                    f"action_only requires a full {horizon}-step expert action window."
-                )
-            conditioned = list(plan.condition_frame_indexes_action)
-            if conditioned and conditioned != list(range(conditioned[0], horizon)):
-                raise ValueError(
-                    "action_only action padding must be a contiguous suffix."
-                )
-            if conditioned and not 0 < conditioned[0] < horizon:
-                raise ValueError(
-                    "action_only requires at least one supervised expert action."
-                )
-            if getattr(plan, "has_sound", False) or getattr(plan, "has_lidar", False):
-                raise ValueError(
-                    "action_only does not accept sound or LiDAR generation targets."
-                )
-
     def _get_action_normalizer(self):
         """Resolve the shared, unclamped LIBERO rot6d training/inference stats."""
         from cosmos_framework.data.generator.action.utils import action_processing
 
         cfg = self._rollout_config
-        if cfg.get("action_normalization", "quantile_rot") != "quantile_rot":
-            raise ValueError("Cosmos3 LIBERO requires quantile_rot normalization.")
         if self._action_normalizer is None:
             default_stats = (
                 Path(action_processing.__file__).parents[1]
@@ -277,21 +200,10 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         images = torch.as_tensor(images).detach().to(device)
         if images.ndim == 5 and images.shape[1] == 1:
             images = images[:, 0]
-        if images.ndim != 4 or images.shape[0] == 0:
-            raise ValueError(
-                "Expected non-empty RGB images [B,H,W,3] or [B,3,H,W], "
-                f"got {tuple(images.shape)}."
-            )
         if images.shape[-1] != 3 and images.shape[1] == 3:
             images = images.permute(0, 2, 3, 1)
-        if images.shape[-1] != 3:
-            raise ValueError(f"Expected three RGB channels, got {tuple(images.shape)}.")
-        if images.dtype not in (torch.uint8, torch.bool):
-            minimum, maximum = torch.stack(torch.aminmax(images)).tolist()
-            if not 0 <= minimum <= maximum <= 255:
-                raise ValueError("Expected finite RGB pixels in [0,255].")
-            if images.is_floating_point() and maximum <= 1:
-                images = images * 255
+        if images.is_floating_point() and images.amax() <= 1:
+            images = images * 255
         return images.to(torch.uint8).contiguous()
 
     def _prepare_sft_observation_batch(
@@ -325,8 +237,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         horizon = int(cfg.get("num_frames", 17)) - 1
         image_size = int(cfg.get("image_size", 256))
         fps = int(cfg.get("fps", 20))
-        if horizon <= 0 or horizon % 4 or image_size <= 0 or fps <= 0:
-            raise ValueError("Invalid Cosmos SFT action horizon, image size, or fps.")
 
         cameras = [(observations["main_images"], vision_images)]
         wrist_images = observations.get("wrist_images")
@@ -336,14 +246,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         tasks = observations["task_descriptions"]
         if isinstance(tasks, str):
             tasks = [tasks] * batch_size
-        if (
-            tasks is None
-            or len(tasks) != batch_size
-            or not all(isinstance(task, str) and task.strip() for task in tasks)
-        ):
-            raise ValueError(f"Expected {batch_size} non-empty task descriptions.")
-        if any(len(current) != batch_size for current, _ in cameras):
-            raise ValueError("Main and wrist cameras must have the same batch size.")
 
         valid = (
             vision_valid.tolist() if vision_valid is not None else [False] * batch_size
@@ -368,8 +270,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             )
 
             raw_actions = torch.as_tensor(raw_actions).detach().cpu()
-            if raw_actions.shape != (batch_size, horizon, 10):
-                raise ValueError("Expected raw LIBERO actions [B,H,10] for captions.")
             spec = build_action_spec(Pos(), Rot("rot6d"), Gripper())
             # Match LIBEROLeRobotDataset._compute_idle_frames on physical actions.
             for index, action in enumerate(raw_actions):
@@ -385,8 +285,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
                     min_streak=3,
                 )
         dropout_rate = float(cfg.get("sft_cfg_dropout_rate", 0.1))
-        if not 0 <= dropout_rate <= 1:
-            raise ValueError("sft_cfg_dropout_rate must be between 0 and 1.")
         prepared = {}
         for mode in ("wam", "policy"):
             indices = [
@@ -398,17 +296,7 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             views = []
             for current, clip in cameras:
                 if mode == "wam":
-                    if clip is None:
-                        raise ValueError(
-                            "Complete vision windows require all camera clips."
-                        )
                     pixels = torch.as_tensor(clip)
-                    if pixels.ndim != 5 or pixels.shape[:3] != (
-                        batch_size,
-                        frame_count,
-                        3,
-                    ):
-                        raise ValueError("Expected complete camera clips [B,T,3,H,W].")
                     pixels = pixels.to(self.device, non_blocking=True)
                     if len(indices) != batch_size:
                         pixels = pixels[indices]
@@ -504,46 +392,22 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         main = env_obs.get("main_images")
         if main is None:
             main = env_obs.get("images")
-        if main is None:
-            raise ValueError("Cosmos3 rollout requires env_obs['main_images'].")
         cameras = [self._rollout_images(main)]
         if env_obs.get("wrist_images") is not None:
             cameras.append(self._rollout_images(env_obs["wrist_images"]))
         batch_size = cameras[0].shape[0]
-        if any(camera.shape[0] != batch_size for camera in cameras):
-            raise ValueError("Main and wrist cameras must have the same batch size.")
         tasks = env_obs.get("task_descriptions")
         if tasks is None:
             tasks = env_obs.get("task")
         if isinstance(tasks, str):
             tasks = [tasks] * batch_size
-        if (
-            tasks is None
-            or len(tasks) != batch_size
-            or not all(isinstance(task, str) and task.strip() for task in tasks)
-        ):
-            raise ValueError(f"Expected {batch_size} non-empty task descriptions.")
 
         cfg = self._rollout_config
         action_model_mode = cfg.get("action_model_mode", "wam")
-        if action_model_mode not in ("wam", "policy"):
-            raise ValueError(
-                "Expected action_model_mode 'wam' or 'policy', "
-                f"got {action_model_mode!r}."
-            )
         horizon = int(cfg.get("num_frames", 17)) - 1
         image_size = int(cfg.get("image_size", 256))
         fps = int(cfg.get("fps", 20))
-        if horizon <= 0 or horizon % 4 or image_size <= 0 or fps <= 0:
-            raise ValueError(
-                "Expected a positive action horizon divisible by 4, image_size "
-                f"and fps; got horizon={horizon}, image_size={image_size}, fps={fps}."
-            )
         action_dim = int(self.omni.config.max_action_dim)
-        if action_dim < 10:
-            raise ValueError(
-                f"LIBERO rot6d requires max_action_dim >= 10, got {action_dim}."
-            )
         images = torch.cat(
             [self._resize_camera_frames(camera, image_size) for camera in cameras],
             dim=-1,
@@ -611,10 +475,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             batch[self.omni.input_caption_key], pad_token_id=-1, device=self.device
         )
         max_length = int(cfg.get("max_prompt_length", 1024))
-        if tokens.shape[1] > max_length:
-            raise ValueError(
-                f"Prompt has {tokens.shape[1]} tokens, exceeding max_prompt_length={max_length}."
-            )
         token_mask = tokens != -1
         forward_inputs = {
             "observation/image": cameras[0].clone(),
@@ -629,10 +489,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             forward_inputs["observation/wrist_image"] = cameras[1].clone()
         if env_obs.get("states") is not None:
             states = torch.as_tensor(env_obs["states"])
-            if states.ndim != 2 or states.shape[0] != batch_size:
-                raise ValueError(
-                    f"Expected states [B,D] with B={batch_size}, got {tuple(states.shape)}."
-                )
             forward_inputs["observation/state"] = states.detach().clone()
         return batch, forward_inputs
 
@@ -671,14 +527,8 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         Returns:
             Environment actions [B,num_action_chunks,7] and OpenPI-compatible
             metadata. model_action contains normalized, padded rot6d actions.
-
-        Raises:
-            ValueError: If observations or inference settings are invalid.
-            RuntimeError: If the sampler returns invalid action predictions.
         """
         del kwargs
-        if mode not in ("train", "eval"):
-            raise ValueError(f"Expected train or eval mode, got {mode!r}.")
         from cosmos_framework.data.generator.action.utils import action_processing
         from cosmos_framework.data.generator.action.utils.pose_utils import (
             convert_rotation,
@@ -693,10 +543,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         steps = int(
             num_steps if num_steps is not None else cfg.get("num_inference_steps", 30)
         )
-        if not 0 < chunk <= horizon or steps <= 0:
-            raise ValueError(
-                f"Expected 0 < chunk <= {horizon} and steps > 0, got chunk={chunk}, steps={steps}."
-            )
         if seed is None:
             seed = cfg.get("inference_seed")
         if seed is None:
@@ -705,10 +551,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             seeds = [seed] * batch_size
         else:
             seeds = list(seed)
-        if len(seeds) != batch_size or not all(
-            isinstance(value, int) for value in seeds
-        ):
-            raise ValueError(f"Expected {batch_size} integer seeds, got {seeds!r}.")
 
         training_states = [(module, module.training) for module in self.omni.modules()]
         self.omni.eval()
@@ -725,21 +567,13 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         finally:
             for module, training in training_states:
                 module.training = training
-        predictions = samples.get("action")
-        if predictions is None or len(predictions) != batch_size:
-            raise RuntimeError(f"Expected {batch_size} Cosmos action predictions.")
+        predictions = samples["action"]
         normalized = []
         for prediction in predictions:
             if prediction.ndim == 3 and prediction.shape[0] == 1:
                 prediction = prediction[0]
-            if tuple(prediction.shape) != (horizon, 10):
-                raise RuntimeError(
-                    f"Expected normalized action [{horizon},10], got {tuple(prediction.shape)}."
-                )
             normalized.append(prediction.to(device=self.device, dtype=torch.float32))
         normalized = torch.stack(normalized)
-        if not torch.isfinite(normalized).all():
-            raise RuntimeError("Cosmos returned non-finite action values.")
         model_actions = action_processing.pad_action_to_max_dim(
             normalized, int(self.omni.config.max_action_dim)
         )
@@ -750,8 +584,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         actions = torch.cat(
             [raw_actions[..., :3], rotation, raw_actions[..., 9:10]], dim=-1
         )[:, :chunk].contiguous()
-        if not torch.isfinite(actions).all():
-            raise RuntimeError("Cosmos action decoding produced non-finite values.")
         forward_inputs["action"] = actions.reshape(batch_size, -1).clone()
         forward_inputs["model_action"] = model_actions.reshape(batch_size, -1).clone()
         return actions, {
