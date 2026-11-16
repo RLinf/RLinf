@@ -283,6 +283,54 @@ class TestDistillation(unittest.TestCase):
         cfg["rollout"]["sampling_params"] = sampling
         self.assertTrue(build_distillation_plan(cfg).use_policy_gradient)
 
+    def test_megatron_distribution_uses_model_vocabulary(self):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from omegaconf import OmegaConf
+
+        topology = SimpleNamespace(
+            get_data_parallel_world_size=lambda: 1,
+            get_tensor_model_parallel_rank=lambda: 0,
+            get_tensor_model_parallel_group=lambda: dist.group.WORLD,
+        )
+        with patch.dict(
+            sys.modules, {"megatron.core": SimpleNamespace(parallel_state=topology)}
+        ):
+            from rlinf.workers.actor.megatron_distillation import distribution_processor
+
+        config = DistillationLossConfig(
+            loss_mode="forward_kl_topk_tail", topk=2, use_policy_gradient=False
+        )
+        actor = SimpleNamespace(
+            tokenizer=range(5),
+            cfg=OmegaConf.create({"actor": {"model": {"padded_vocab_size": 8}}}),
+            distillation_loss_config=config,
+        )
+        logits = torch.arange(16.0).reshape(1, 2, 8).requires_grad_()
+        ids = torch.tensor([[[7, 6], [5, 0]]])
+        teacher = torch.zeros_like(logits).log_softmax(-1).gather(-1, ids)
+        mask = torch.ones(1, 2, dtype=torch.bool)
+        expected = compute_distribution_loss(logits, ids, teacher, config)
+        with tempfile.TemporaryDirectory() as directory:
+            dist.init_process_group(
+                "gloo", init_method=f"file://{directory}/init", rank=0, world_size=1
+            )
+            try:
+                actual = distribution_processor(actor, logits, teacher, mask, ids)
+                torch.testing.assert_close(
+                    actual["distribution_losses"], expected.distribution_losses
+                )
+                torch.testing.assert_close(
+                    torch.autograd.grad(
+                        actual["distribution_losses"].sum(), logits, retain_graph=True
+                    )[0],
+                    torch.autograd.grad(expected.distribution_losses.sum(), logits)[0],
+                )
+            finally:
+                dist.destroy_process_group()
+
     def test_megatron_joint_loss_preserves_token_weighting(self):
         import sys
         from types import SimpleNamespace
@@ -424,7 +472,7 @@ class TestDistillation(unittest.TestCase):
                         torch.autograd.grad(expected.sum(), z)[0],
                     )
 
-    def test_fsdp_distribution_and_selection_exclude_padded_vocabulary(self):
+    def test_fsdp_distribution_uses_complete_model_vocabulary(self):
         from rlinf.workers.actor.distillation import fsdp_distillation_forward
         from rlinf.workers.actor.fsdp_actor_worker import FSDPActor
 
@@ -444,12 +492,15 @@ class TestDistillation(unittest.TestCase):
             "input_ids": torch.tensor([[1, 2]]),
             "response_mask": torch.tensor([[False, True]]),
             "teacher_valid_mask": torch.tensor([[True]]),
-            "teacher_token_ids": torch.tensor([[[0, 1]]]),
-            "teacher_logprobs": torch.full((1, 1, 2), -torch.tensor(5.0).log()),
+            "teacher_token_ids": torch.tensor([[[7, 6]]]),
+            "teacher_logprobs": z[:, :1].log_softmax(-1)[..., [7, 6]],
         }
         kwargs = {"packed": False, "starts": [0], "ends": [2], "response_only": True}
         out = fsdp_distillation_forward(actor, z, batch, **kwargs)
         torch.testing.assert_close(out.distribution_losses, torch.zeros(1, 1))
+        expected_mass = z[:, :1].softmax(-1)[..., [7, 6]].sum(-1)
+        torch.testing.assert_close(out.student_mass, expected_mass)
+        torch.testing.assert_close(out.teacher_mass, expected_mass)
         torch.testing.assert_close(
             out.logprobs, actor.compute_logprobs(z[:, :1], batch["input_ids"][:, 1:])
         )

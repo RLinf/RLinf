@@ -49,7 +49,7 @@ def fsdp_distillation_forward(
     width = actor.response_len if response_only else full_length
     offset = full_length - width
     shape = (len(starts), width)
-    vocab = len(actor.tokenizer)
+    vocab = logits.shape[-1]
     if plan.canonical_loss_mode in DISTRIBUTION_MODES and config.topk > vocab:
         raise ValueError(f"Expected topk <= vocabulary size {vocab}, got {config.topk}")
     fields = {
@@ -90,7 +90,7 @@ def fsdp_distillation_forward(
                 ids = batch.get("teacher_token_ids")
                 ids = None if ids is None else ids[row, destination].to(z.device)
                 output = compute_distribution_loss(
-                    z[..., :vocab],
+                    z,
                     ids,
                     batch["teacher_logprobs"][row, destination].to(z.device),
                     config,

@@ -54,7 +54,7 @@ class VLLMWorker(Worker):
         self._tokenizer = self._load_tokenizer()
         from rlinf.workers.teacher.scoring import rollout_topk_count
 
-        self._student_topk_count = rollout_topk_count(self._cfg, self._tokenizer)
+        self._student_topk_count = rollout_topk_count(self._cfg)
         if self._student_topk_count:
             self._sampling_params.logprobs = self._student_topk_count
         self._vllm_engine = None
@@ -504,7 +504,6 @@ class VLLMWorker(Worker):
                             output.outputs[0].logprobs,
                             len(ids),
                             scorer.plan.topk,
-                            len(self._tokenizer),
                         )
                         if scorer.plan.need_rollout_topk
                         else None

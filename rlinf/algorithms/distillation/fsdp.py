@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Differentiable distribution losses on the real vocabulary."""
+"""Differentiable distribution losses on the model output vocabulary."""
 
 from dataclasses import dataclass
 
@@ -40,7 +40,7 @@ def compute_distribution_loss(
     *,
     valid_mask: Tensor | None = None,
 ) -> DistillationDistributionOutput:
-    """Compute sparse or full KL; logits must exclude vocabulary padding.
+    """Compute sparse or full KL over the complete model output vocabulary.
 
     Args:
         logits: Student logits with vocabulary in the last dimension.
@@ -92,7 +92,7 @@ def compute_distribution_loss(
         ids = torch.where(mask.unsqueeze(-1), teacher_ids, 0)
         selected = ids[mask]
         if ((selected < 0) | (selected >= z.shape[-1])).any():
-            raise ValueError("Teacher IDs must belong to the real Student vocabulary")
+            raise ValueError("Teacher IDs must belong to the Student output vocabulary")
         ordered = selected.sort(dim=-1).values
         if (ordered[..., 1:] == ordered[..., :-1]).any():
             raise ValueError(

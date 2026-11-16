@@ -62,6 +62,12 @@ The Actor reuses its normal training forward to compute current probabilities
 on that fixed support. Both paths preserve the original context at each response
 position.
 
+Teacher and Student probabilities are normalized over each model's complete
+output vocabulary, using its configured vocabulary size even when the tokenizer
+has fewer IDs. Top-k selects entries from that distribution and preserves their
+probability mass. Tensor-parallel alignment padding beyond the model vocabulary
+is excluded.
+
 Installation
 ------------
 
@@ -88,10 +94,11 @@ for that version. To update an existing environment, activate it and run:
 
 The patch lets the Teacher score the complete sequence in a prefill-only
 request and gather different candidate IDs at each position, including across
-prefill and logits chunks. It normalizes distribution scores over the effective
-tokenizer vocabulary. Other SGLang versions require a matching patch before
-Student top-k scoring. The vLLM Teacher retains its per-prefix compatibility
-path; both rollout backends record Student top-k IDs during generation.
+prefill and logits chunks. It preserves full model-vocabulary probabilities.
+Other SGLang versions require a matching patch before Student top-k scoring.
+Teacher top-k uses the engine's native prompt scoring in one request. The vLLM
+Teacher retains its per-prefix compatibility path for Student-selected support;
+both rollout backends record Student top-k IDs during generation.
 
 Download the Model
 ------------------

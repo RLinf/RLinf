@@ -88,20 +88,22 @@ class TestTeacher(unittest.TestCase):
             raw.add_tokens(["new-token"])
             self.assertNotEqual(tokenizer_fingerprint(raw), info.tokenizer_fingerprint)
 
-    def test_rollout_topk_filters_model_padding_and_keeps_positions(self):
+    def test_rollout_topk_preserves_model_output_ids_and_positions(self):
         from rlinf.workers.teacher.scoring import select_rollout_topk
 
         rows = [
             [(-0.1, 7, None), (-0.3, 2, None), (-0.2, 1, None)],
             [(-0.1, 7, None), (-0.4, 0, None), (-0.2, 2, None)],
         ]
-        self.assertEqual(select_rollout_topk(rows, 2, 2, 5), ((1, 2), (2, 0)))
+        self.assertEqual(select_rollout_topk(rows, 2, 2), ((7, 1), (7, 2)))
         vllm_rows = [
             {i: SimpleNamespace(logprob=lp) for lp, i, _ in row} for row in rows
         ]
-        self.assertEqual(select_rollout_topk(vllm_rows, 2, 2, 5), ((1, 2), (2, 0)))
+        self.assertEqual(select_rollout_topk(vllm_rows, 2, 2), ((7, 1), (7, 2)))
         with self.assertRaisesRegex(ValueError, "response length"):
-            select_rollout_topk(rows, 3, 2, 5)
+            select_rollout_topk(rows, 3, 2)
+        with self.assertRaisesRegex(ValueError, "unique model-output"):
+            select_rollout_topk([[(-0.1, 7), (-0.2, 7)]], 1, 2)
 
     def test_text_metadata_for_flat_and_composite_models(self):
         from omegaconf import OmegaConf
@@ -150,13 +152,12 @@ class TestTeacher(unittest.TestCase):
                     for backend_cls in (SGLangTeacherBackend, VLLMTeacherBackend):
                         backend = backend_cls(TeacherModelConfig(path), "default")
                         info = backend.load_model_info()
-                        self.assertEqual(info.vocab_size, 5)
+                        self.assertEqual(info.vocab_size, 8)
                         self.assertEqual(backend.model_vocab_size, 8)
                         self.assertEqual(info.max_context_length, 64)
-                        self.assertTrue(backend.has_extra_model_tokens)
-                    self.assertEqual(rollout_topk_count(cfg, tokenizer), 5)
+                    self.assertEqual(rollout_topk_count(cfg), 2)
 
-    def test_sglang_chunked_position_scores_preserve_ids_and_real_vocabulary(self):
+    def test_sglang_chunked_position_scores_preserve_model_probabilities(self):
         try:
             from sglang.srt.layers.utils.logprob import get_token_ids_logprobs_chunk
             from sglang.srt.server_args import ServerArgs
@@ -173,21 +174,19 @@ class TestTeacher(unittest.TestCase):
                 [0.0, -150.0, -2.0, -5.0, 20.0],
             ]
         )
-        ids = [[[1, 2], [3, 1], [2, 0]], [[3, 2], [1, 0]]]
+        ids = [[[1, 4], [3, 1], [2, 0]], [[4, 2], [1, 0]]]
         model_logp = logits.log_softmax(-1)
         values, returned_ids = [], []
         split = get_token_ids_logprobs_chunk(
-            model_logp[:2], ids[:1], [3], values, returned_ids, vocab_size=4
+            model_logp[:2], ids[:1], [3], values, returned_ids, vocab_size=5
         )
         self.assertEqual(split, 2)
         split = get_token_ids_logprobs_chunk(
-            model_logp[2:], ids, [3, 2], values, returned_ids, split, vocab_size=4
+            model_logp[2:], ids, [3, 2], values, returned_ids, split, vocab_size=5
         )
         self.assertEqual(split, 0)
         self.assertEqual(returned_ids, ids)
-        expected = (
-            logits[:, :4].log_softmax(-1).gather(-1, torch.tensor(ids[0] + ids[1]))
-        )
+        expected = model_logp.gather(-1, torch.tensor(ids[0] + ids[1]))
         torch.testing.assert_close(
             torch.cat([torch.tensor(v) for v in values]), expected
         )
@@ -205,6 +204,13 @@ class TestTeacher(unittest.TestCase):
             backend.validate_request(selected)
         with self.assertRaisesRegex(ValueError, "scoring payload"):
             backend.validate_request(request(-1))
+
+    def test_topk_scoring_budget_covers_long_native_prefill(self):
+        backend = SGLangTeacherBackend(TeacherModelConfig("unused"), "default")
+        backend.info = TeacherModelInfo("model", "tokenizer", 248320, 10241)
+        backend.validate_request(
+            replace(request(64), input_ids=(1,) * 10240, response_mask=(True,) * 10240)
+        )
 
     def test_selected_scores_use_original_prefixes_and_bounded_output(self):
         calls = []
@@ -401,7 +407,7 @@ class TestTeacher(unittest.TestCase):
             torch.autograd.grad(reference, student)[0],
         )
 
-    def test_distribution_scores_normalize_before_selecting_support(self):
+    def test_distribution_scores_preserve_model_vocabulary_probabilities(self):
         from rlinf.algorithms.distillation.config import DistillationLossConfig
         from rlinf.algorithms.distillation.fsdp import compute_distribution_loss
 
@@ -412,27 +418,50 @@ class TestTeacher(unittest.TestCase):
             ]
         )
         model_logprobs = logits.log_softmax(-1)
-        expected = logits[:, :5].log_softmax(-1)
+        calls = []
+        self_test = self
+
+        def row_scores(row, count):
+            ids = row.argsort(descending=True)[:count]
+            return {int(i): float(row[i]) for i in ids}
 
         class VLLMEngine:
             async def generate(self, prompt, params, request_id):
-                self_test.assertEqual(params.logprobs, 8)
-                row = model_logprobs[len(prompt["prompt_token_ids"]) - 1]
-                yield SimpleNamespace(
-                    outputs=[
-                        SimpleNamespace(
-                            logprobs=[
-                                {
-                                    i: SimpleNamespace(logprob=float(value))
-                                    for i, value in enumerate(row)
-                                }
-                            ]
-                        )
-                    ]
-                )
+                prefix = prompt["prompt_token_ids"]
+                calls.append(prefix)
+                if hasattr(params, "prompt_logprobs"):
+                    self_test.assertEqual(prefix, [1, 3, 2])
+                    count = params.prompt_logprobs
+                    yield SimpleNamespace(
+                        prompt_logprobs=[None]
+                        + [
+                            {
+                                i: SimpleNamespace(logprob=value)
+                                for i, value in row_scores(row, count).items()
+                            }
+                            for row in model_logprobs
+                        ]
+                    )
+                else:
+                    self_test.assertEqual(params.logprobs, 8)
+                    row = model_logprobs[len(prefix) - 1]
+                    yield SimpleNamespace(
+                        outputs=[
+                            SimpleNamespace(
+                                logprobs=[
+                                    {
+                                        i: SimpleNamespace(logprob=float(value))
+                                        for i, value in enumerate(row)
+                                    }
+                                ]
+                            )
+                        ]
+                    )
 
         class SGLangEngine:
             async def async_generate(self, **kwargs):
+                calls.append(kwargs["input_ids"])
+                self_test.assertEqual(kwargs["input_ids"], [1, 3, 2])
                 if kwargs["sampling_params"].get("custom_params"):
                     width = kwargs["sampling_params"]["custom_params"][
                         "rlinf_token_ids_logprob_k"
@@ -448,24 +477,27 @@ class TestTeacher(unittest.TestCase):
                                         position * width : (position + 1) * width
                                     ]
                                 ]
-                                for position, row in enumerate(expected)
+                                for position, row in enumerate(model_logprobs)
                             ]
                         }
                     }
-                self_test.assertEqual(kwargs["token_ids_logprob"], list(range(5)))
-                row = model_logprobs[len(kwargs["input_ids"]) - 1]
+                self_test.assertEqual(kwargs["logprob_start_len"], 0)
+                self_test.assertEqual(kwargs["sampling_params"]["max_new_tokens"], 1)
                 return {
                     "meta_info": {
-                        "output_token_ids_logprobs": [
+                        "input_top_logprobs": [None]
+                        + [
                             [
-                                (float(row[i]), i, None)
-                                for i in kwargs["token_ids_logprob"]
+                                (value, i, None)
+                                for i, value in row_scores(
+                                    row, kwargs["top_logprobs_num"]
+                                ).items()
                             ]
+                            for row in model_logprobs
                         ]
                     }
                 }
 
-        self_test = self
         modules = {
             "vllm": SimpleNamespace(SamplingParams=SimpleNamespace),
             "vllm.inputs": SimpleNamespace(TokensPrompt=dict),
@@ -475,22 +507,36 @@ class TestTeacher(unittest.TestCase):
             (SGLangTeacherBackend, SGLangEngine()),
         ):
             backend = backend_cls(TeacherModelConfig("unused"), "default")
-            backend.info = self.backend.info
+            backend.info = replace(self.backend.info, vocab_size=8)
             backend.model_vocab_size = 8
             backend.engine = engine
             backend.supports_position_scores = True
-            for req in (request(-1), request(2), request(2, ((0, 0), (0, 2), (3, 4)))):
+            for req in (request(-1), request(2), request(2, ((0, 0), (7, 5), (6, 0)))):
                 with (
                     self.subTest(backend=backend_cls.__name__, request=req),
                     patch.dict(sys.modules, modules),
                 ):
+                    calls.clear()
                     target = asyncio.run(backend.score(req))
                     ids = target.token_ids[1:] if target.token_ids is not None else None
-                    reference = expected if ids is None else expected.gather(-1, ids)
-                    torch.testing.assert_close(target.logprobs[1:], reference)
+                    expected = (
+                        model_logprobs
+                        if ids is None
+                        else model_logprobs.gather(-1, ids)
+                    )
+                    torch.testing.assert_close(target.logprobs[1:], expected)
+                    self.assertEqual(
+                        calls,
+                        [[1], [1, 3]]
+                        if backend_cls is VLLMTeacherBackend
+                        and req.selected_token_ids is not None
+                        else [[1, 3, 2]],
+                    )
+                    if req.topk != -1:
+                        self.assertTrue((target.logprobs[1:].exp().sum(-1) < 1).all())
                     for mode in ("forward_kl_topk_tail", "reverse_kl_topk_tail"):
                         loss = compute_distribution_loss(
-                            logits[:, :5],
+                            logits,
                             ids,
                             target.logprobs[1:],
                             DistillationLossConfig(
@@ -819,6 +865,8 @@ class TestTeacherEngine(unittest.TestCase):
                 "max_running_requests": 1,
                 "attention_backend": "triton",
                 "sampling_backend": "pytorch",
+                "skip_tokenizer_init": True,
+                "chunked_prefill_size": 4,
             }
         else:
             backend_cls = VLLMTeacherBackend

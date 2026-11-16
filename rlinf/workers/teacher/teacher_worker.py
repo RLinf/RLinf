@@ -67,7 +67,7 @@ class TeacherWorker(Worker):
             topk = self.loss_config.topk if "topk" in mode else None
             if topk is not None and topk > info.vocab_size:
                 raise ValueError(
-                    f"Teacher topk must not exceed real vocabulary size {info.vocab_size}, got {topk}"
+                    f"Teacher topk must not exceed model output vocabulary size {info.vocab_size}, got {topk}"
                 )
             selected = None
             version = None

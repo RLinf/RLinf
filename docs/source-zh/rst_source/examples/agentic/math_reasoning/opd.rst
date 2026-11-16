@@ -49,6 +49,8 @@ Student 生成回答，Teacher 对相同上下文打分，Actor 根据评分更�
 
 分布目标的评分范围由 ``topk_source`` 决定。设为 ``teacher`` 时，使用 Teacher 概率最高的 token；设为 ``student`` 时，rollout 直接记录各生成位置的 Student top-k ID，再交给 Teacher 评分。Actor 在正常训练前向中重新计算这些固定候选的当前概率。两条路径都使用回答中各位置的原始上下文。
 
+Teacher 和 Student 的概率均按各自完整的模型输出词表归一化，词表大小以模型配置为准，即使 tokenizer 的 ID 数量更少也保持这一范围。Top-k 从该分布中选取条目并保留其原始概率质量。超出模型词表、仅用于 tensor parallel 对齐的补齐行不参与归一化。
+
 安装
 ----
 
@@ -67,7 +69,7 @@ Student 生成回答，Teacher 对相同上下文打分，Actor 根据评分更�
 
    bash requirements/patches/apply_sglang.sh
 
-补丁支持 Teacher 用一个 prefill-only 请求对整段序列评分，在各位置提取不同的候选 ID，并处理 prefill 与 logits 分块。分布分数按 tokenizer 的有效词表归一化。其他 SGLang 版本需有对应补丁才能使用 Student top-k 评分。vLLM Teacher 保留逐前缀的兼容评分路径；两种 rollout 后端均在生成时记录 Student top-k ID。
+补丁支持 Teacher 用一个 prefill-only 请求对整段序列评分，在各位置提取不同的候选 ID，并处理 prefill 与 logits 分块，返回的概率保留完整模型词表的归一化结果。其他 SGLang 版本需有对应补丁才能使用 Student top-k 评分。Teacher top-k 通过引擎原生的 prompt 评分接口，在一个请求中获取结果；vLLM Teacher 对 Student 指定的候选保留逐前缀的兼容评分路径。两种 rollout 后端均在生成时记录 Student top-k ID。
 
 下载模型
 --------

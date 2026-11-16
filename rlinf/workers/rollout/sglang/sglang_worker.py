@@ -87,9 +87,7 @@ class SGLangWorker(Worker):
         from rlinf.workers.teacher.scoring import rollout_topk_count
 
         self._student_topk_count = (
-            rollout_topk_count(self._cfg, self._tokenizer)
-            if collect_student_topk
-            else 0
+            rollout_topk_count(self._cfg) if collect_student_topk else 0
         )
         sampling_params = None
         if config_rollout is not None:
@@ -618,7 +616,6 @@ class SGLangWorker(Worker):
                             output["meta_info"].get("output_top_logprobs"),
                             len(ids),
                             scorer.plan.topk,
-                            len(self._tokenizer),
                         )
                         if scorer.plan.need_rollout_topk
                         else None
@@ -786,7 +783,6 @@ class SGLangWorker(Worker):
                     result["meta_info"].get("output_top_logprobs"),
                     len(result["output_ids"]),
                     build_distillation_plan(self._cfg).topk,
-                    len(self._tokenizer),
                 )
             if self._return_logprobs:
                 result_dict["logprobs"] = [

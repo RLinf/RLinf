@@ -26,7 +26,7 @@ from rlinf.data.schema.distillation import TeacherScoreRequest, TeacherTargets
 
 @dataclass(frozen=True)
 class TeacherModelInfo:
-    """Immutable model identity shared by service replicas."""
+    """Immutable model identity and complete output-vocabulary size."""
 
     model_fingerprint: str
     tokenizer_fingerprint: str
@@ -93,17 +93,12 @@ class TeacherScoringBackend(ABC):
         self.info = TeacherModelInfo(
             fingerprint,
             tokenizer_fingerprint(tokenizer),
-            vocab,
+            self.model_vocab_size,
             self.config.inference.get(
                 "max_model_len", getattr(text_config, "max_position_embeddings", 32768)
             ),
         )
         return self.info
-
-    @property
-    def has_extra_model_tokens(self) -> bool:
-        """Whether distribution scores need tokenizer-vocabulary normalization."""
-        return (self.model_vocab_size or self.info.vocab_size) > self.info.vocab_size
 
     def validate_request(self, request: TeacherScoreRequest) -> None:
         """Check identity and context capacity without exposing prompt contents."""
@@ -114,13 +109,12 @@ class TeacherScoringBackend(ABC):
         estimated_bytes = (
             len(request.input_ids) * width * (4 if request.topk == -1 else 12)
         )
-        # Include engine objects and normalized dictionaries, not just tensors.
+        # Account for engine rows and normalized dictionaries, not just tensors.
         retained_scores = len(request.input_ids) * (width + 1)
         transient_scores = (
             (self.model_vocab_size or self.info.vocab_size) + 1
             if request.selected_token_ids is not None
-            or (request.topk is not None and self.has_extra_model_tokens)
-            else retained_scores
+            else 0
         )
         estimated_bytes += 256 * (retained_scores + transient_scores)
         budget = self.config.inference.get("max_payload_bytes", 256 * 1024 * 1024)
@@ -157,16 +151,9 @@ class TeacherScoringBackend(ABC):
             )
             row = await self.score_next(
                 request.input_ids[:position],
-                vocabulary if self.has_extra_model_tokens else selected,
+                selected,
                 f"{request.request_id}-{position}",
             )
-            if self.has_extra_model_tokens:
-                # Normalize over every tokenizer ID before selecting sparse support.
-                logprobs = torch.tensor(
-                    [row[i] for i in vocabulary], dtype=torch.float64
-                )
-                normalizer = logprobs.logsumexp(0).item()
-                row = {i: row[i] - normalizer for i in vocabulary}
             if request.selected_token_ids is None and request.topk != -1:
                 selected = sorted(row, key=lambda i: (-row[i], i))[: request.topk]
             rows[position] = {i: row[i] for i in selected}
@@ -181,7 +168,7 @@ class TeacherScoringBackend(ABC):
     def normalize(
         self, request: TeacherScoreRequest, rows: list[dict[int, float] | None]
     ) -> TeacherTargets:
-        """Map engine prompt scores to target positions and the requested support."""
+        """Align model-normalized scores with the requested target positions."""
         self.validate_request(request)
         size = len(request.input_ids)
         if len(rows) != size:

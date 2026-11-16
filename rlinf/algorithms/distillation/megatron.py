@@ -90,7 +90,7 @@ def compute_vocab_parallel_distribution_loss(
         teacher_logprobs: Sparse replicated scores or this rank's full shard.
         vocab_start: First global ID on this rank.
         vocab_end: Exclusive end of this rank's shard.
-        vocab_size: Number of real tokenizer IDs.
+        vocab_size: Model output vocabulary size, excluding TP alignment padding.
         tp_group: Tensor-parallel process group.
         config: Distillation objective settings.
         valid_mask: Target-position mask shared across TP ranks.

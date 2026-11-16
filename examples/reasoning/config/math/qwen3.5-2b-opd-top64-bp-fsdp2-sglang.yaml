@@ -5,8 +5,8 @@ defaults:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout,reward: 5
-    teacher_default: 0-1
+    actor,rollout,reward: 4
+    teacher_default: 2-3
 
 runner:
   execution_mode: sync

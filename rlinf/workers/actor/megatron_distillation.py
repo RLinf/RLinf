@@ -79,7 +79,7 @@ def distribution_processor(
         teacher_logprobs,
         vocab_start=rank * width,
         vocab_end=(rank + 1) * width,
-        vocab_size=len(actor.tokenizer),
+        vocab_size=actor.cfg.actor.model.padded_vocab_size,
         tp_group=parallel_state.get_tensor_model_parallel_group(),
         config=actor.distillation_loss_config,
         valid_mask=teacher_valid_mask,

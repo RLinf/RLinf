@@ -122,7 +122,7 @@ class TeacherScoreRequest:
                     or any(type(i) is not int or not 0 <= i < vocab_size for i in row)
                 ):
                     raise ValueError(
-                        f"{prefix}: selected IDs must be unique real vocabulary IDs"
+                        f"{prefix}: selected IDs must be unique model output vocabulary IDs"
                     )
 
 
@@ -208,7 +208,7 @@ class TeacherTargets:
                 raise ValueError(f"{prefix}: expected matching CPU int64 token IDs")
             if ((ids < 0) | (ids >= vocab_size)).any():
                 raise ValueError(
-                    f"{prefix}: target IDs must belong to the real vocabulary"
+                    f"{prefix}: target IDs must belong to the model output vocabulary"
                 )
             rows = ids[self.valid_mask]
             ordered = rows.sort(-1).values

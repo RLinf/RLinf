@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from omegaconf import DictConfig
@@ -29,28 +28,19 @@ from rlinf.data.schema.distillation import TeacherScoreRequest, TeacherTargets
 from .backend import tokenizer_fingerprint
 from .client import TeacherClient
 
-if TYPE_CHECKING:
-    from transformers import PreTrainedTokenizerBase
 
-
-def rollout_topk_count(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase) -> int:
-    """Overfetch model-only IDs so rollout can retain K real tokenizer IDs."""
+def rollout_topk_count(cfg: DictConfig) -> int:
+    """Return the number of model-output candidates collected during rollout."""
     plan = build_distillation_plan(cfg)
     if not plan.need_rollout_topk:
         return 0
-    from transformers import AutoConfig
-
-    model = cfg.rollout.model
-    config = AutoConfig.from_pretrained(
-        model.model_path, trust_remote_code=model.get("trust_remote_code", False)
-    )
-    return plan.topk + max(0, config.get_text_config().vocab_size - len(tokenizer))
+    return plan.topk
 
 
 def select_rollout_topk(
-    rows: list | None, response_length: int, topk: int, vocab_size: int
+    rows: list | None, response_length: int, topk: int
 ) -> tuple[tuple[int, ...], ...]:
-    """Keep K unique real IDs per response position from engine logprob rows."""
+    """Keep K unique model-output IDs per position from engine logprob rows."""
     if rows is None or len(rows) != response_length:
         raise ValueError("Student rollout top-k rows must match the response length")
     selected = []
@@ -60,14 +50,11 @@ def select_rollout_topk(
             if isinstance(row, dict)
             else [(int(item[1]), float(item[0])) for item in row]
         )
-        values = sorted(
-            ((i, lp) for i, lp in values if 0 <= i < vocab_size),
-            key=lambda item: (-item[1], item[0]),
-        )
+        values = sorted(values, key=lambda item: (-item[1], item[0]))
         ids = tuple(i for i, _ in values[:topk])
-        if len(ids) != topk or len(set(ids)) != topk:
+        if len(ids) != topk or len(set(ids)) != topk or any(i < 0 for i in ids):
             raise ValueError(
-                f"Student rollout must return {topk} unique real token IDs per position"
+                f"Student rollout must return {topk} unique model-output token IDs per position"
             )
         selected.append(ids)
     return tuple(selected)
