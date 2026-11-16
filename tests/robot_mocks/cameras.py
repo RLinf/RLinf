@@ -478,7 +478,8 @@ _YU12 = 0x32315559
 
 
 def opencv() -> types.ModuleType:
-    """Return a ``cv2`` module with a synthetic XVisio V4L2 capture."""
+    """Return synthetic BGR captures with optional I420 devices."""
+    device_formats: dict[Any, str] = {}
     opens: list[Any] = []
     # Captured before the fake is installed, so delegation reaches the real
     # module rather than importing this one back and recursing.
@@ -491,8 +492,10 @@ def opencv() -> types.ModuleType:
         def __init__(self, path: Any, api: Any = None):
             opens.append(path)
             self.path = path
+            self.api = api
             self.released = False
             self._properties: dict[int, float] = {}
+            self._count = 0
 
         def isOpened(self):
             return not self.released
@@ -502,20 +505,29 @@ def opencv() -> types.ModuleType:
             return True
 
         def get(self, prop):
-            # Report back what the device really supports, not what was asked
-            # for: the driver checks these and refuses a mismatch.
-            fixed = {
-                _Props.FOURCC: float(_YU12),
-                _Props.FRAME_WIDTH: float(_LUMOS_W),
-                _Props.FRAME_HEIGHT: float(_LUMOS_H),
-            }
-            return fixed.get(prop, self._properties.get(prop, 0.0))
+            if device_formats.get(self.path) == "I420":
+                fixed = {
+                    _Props.FOURCC: float(_YU12),
+                    _Props.FRAME_WIDTH: float(_LUMOS_W),
+                    _Props.FRAME_HEIGHT: float(_LUMOS_H),
+                }
+                return fixed.get(prop, self._properties.get(prop, 0.0))
+            return self._properties.get(prop, 0.0)
 
         def read(self):
             if self.released:
                 return False, None
-            # One I420 plane set, flat, exactly as V4L2 delivers it.
-            return True, np.zeros(_LUMOS_W * _LUMOS_H * 3 // 2, dtype=np.uint8)
+            if device_formats.get(self.path) == "I420":
+                # One I420 plane set, flat, exactly as V4L2 delivers it.
+                return True, np.zeros(_LUMOS_W * _LUMOS_H * 3 // 2, dtype=np.uint8)
+            # A generic webcam returns BGR at the requested size; the first
+            # pixel advances so tests can detect a fresh frame.
+            self._count += 1
+            width = int(self._properties.get(_Props.FRAME_WIDTH, 64))
+            height = int(self._properties.get(_Props.FRAME_HEIGHT, 48))
+            frame = np.zeros((height, width, 3), dtype=np.uint8)
+            frame[0, 0, 0] = self._count % 256
+            return True, frame
 
         def release(self):
             self.released = True
@@ -570,6 +582,7 @@ def opencv() -> types.ModuleType:
         "COLOR_YUV2BGR_I420": 101,
         "INTER_AREA": 3,
         "VideoCapture": VideoCapture,
+        "device_formats": device_formats,
         "VideoWriter_fourcc": lambda *_chars: _YU12,
         "cvtColor": cvtColor,
         "resize": resize,

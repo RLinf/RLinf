@@ -24,9 +24,9 @@ runner:
     log_path: /workspace/results/dosw1_dummy_sac_mlp_pick
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
-  max_epochs: 2
+  max_epochs: 1
   max_steps: -1
 
   only_eval: False
@@ -34,7 +34,7 @@ runner:
   save_interval: -1
 
 algorithm:
-  update_epoch: 32
+  update_epoch: 1
   group_size: 1
   agg_q: min
 
@@ -77,8 +77,8 @@ env:
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 10
-    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
 
   eval:
     rollout_epoch: 1
@@ -106,8 +106,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 256
-  global_batch_size: 256
+  micro_batch_size: 8
+  global_batch_size: 8
   seed: 1234
   enable_offload: False
 

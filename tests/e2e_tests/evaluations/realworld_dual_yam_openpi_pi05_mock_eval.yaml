@@ -35,7 +35,7 @@ runner:
     log_path: /workspace/results/realworld_dual_yam_openpi_pi05_mock_eval
     project_name: rlinf
     experiment_name: ci-test
-    logger_backends: [tensorboard]
+    logger_backends: null
   max_epochs: 1
   max_steps: 1
   only_eval: true

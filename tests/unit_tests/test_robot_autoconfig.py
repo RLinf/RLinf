@@ -21,12 +21,37 @@ Ray must inherit the environment before startup.
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 _SCENARIO = os.path.join(os.path.dirname(__file__), "_robot_autoconfig_cluster.py")
 _REPO_ROOT = str(Path(__file__).resolve().parents[2])
+_MODES = (
+    # Two robots from comma-separated environment values.
+    "create_multi",
+    # A single robot keeps the whole comma-separated camera list.
+    "create_single",
+    # Explicit YAML values take precedence; omitted values are resolved.
+    "explicit_fill",
+    # GimArm resolves through its own identifier variable.
+    "gim_create",
+    # Serial ports and calibration IDs remain paired on assigned workers.
+    "so101_create",
+    # Shared fields alone do not create a robot.
+    "gating",
+    # The identifier env var has too few values for the configs.
+    "mismatch_low",
+    # The identifier env var has too many values for the configs.
+    "mismatch_high",
+    # The identifier count is fine but a secondary field disagrees.
+    "mismatch_secondary",
+    # Fully specified YAML remains supported for one or more robots.
+    "yaml_single",
+    "yaml_multi",
+    "yaml_dosw1",
+)
 
 
 def _run_scenario(mode: str) -> subprocess.CompletedProcess:
@@ -38,6 +63,7 @@ def _run_scenario(mode: str) -> subprocess.CompletedProcess:
     # Start a private Ray instead of attaching to a running one, which would not
     # see the scenario's environment.
     env["RAY_ADDRESS"] = "local"
+    env["RAY_USAGE_STATS_ENABLED"] = "0"
     return subprocess.run(
         [sys.executable, _SCENARIO, mode],
         capture_output=True,
@@ -47,35 +73,19 @@ def _run_scenario(mode: str) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.parametrize(
-    "mode",
-    [
-        # Two robots from comma-separated environment values.
-        "create_multi",
-        # A single robot keeps the whole comma-separated camera list.
-        "create_single",
-        # Explicit YAML values take precedence; omitted values are resolved.
-        "explicit_fill",
-        # GimArm resolves through its own identifier variable.
-        "gim_create",
-        # Serial ports and calibration IDs remain paired on assigned workers.
-        "so101_create",
-        # Shared fields alone do not create a robot.
-        "gating",
-        # The identifier env var has too few values for the configs.
-        "mismatch_low",
-        # The identifier env var has too many values for the configs.
-        "mismatch_high",
-        # The identifier count is fine but a secondary field disagrees.
-        "mismatch_secondary",
-        # Fully specified YAML remains supported for one or more robots.
-        "yaml_single",
-        "yaml_multi",
-        "yaml_dosw1",
-    ],
-)
-def test_real_cluster_robot_autoconfig(mode):
-    result = _run_scenario(mode)
+@pytest.fixture(scope="module")
+def scenario_results() -> dict[str, subprocess.CompletedProcess]:
+    """Run isolated scenario subprocesses with bounded concurrency."""
+    workers = min(3, os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(zip(_MODES, pool.map(_run_scenario, _MODES), strict=True))
+
+
+@pytest.mark.parametrize("mode", _MODES)
+def test_real_cluster_robot_autoconfig(
+    mode: str, scenario_results: dict[str, subprocess.CompletedProcess]
+):
+    result = scenario_results[mode]
     assert f"{mode}:OK" in result.stdout, (
         f"scenario {mode} failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )

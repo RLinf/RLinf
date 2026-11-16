@@ -2091,6 +2091,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker._accelerator_type = AcceleratorType.NO_ACCEL
         self.worker._prefetched_train_bootstrap = None
         self.worker._trajectory_step = 0
+        self.worker._supplied_actions = {}
         # The controller now also carries the action geometry it needs to build
         # hold actions; disabled here, so zeros match what from_cfg defaults to.
         self.worker.smooth_intervene = SmoothInterveneController(

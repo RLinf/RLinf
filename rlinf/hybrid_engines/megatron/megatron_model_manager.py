@@ -143,11 +143,24 @@ class LinearForLastLayer(torch.nn.Linear):
         *,
         sequence_parallel,
         bias=False,  # TODO changed bias to False for temporary convenience
+        weight_init: str = "normal",
+        init_std: float = 0.02,
     ):
+        """Initialize a critic projection with normal or zero weights."""
+        if weight_init not in ("normal", "zero"):
+            raise ValueError(
+                f"Expected value head initialization to be 'normal' or 'zero', got {weight_init!r}."
+            )
         super().__init__(in_features=input_size, out_features=output_size, bias=bias)
         self.sequence_parallel = sequence_parallel
         if self.sequence_parallel:
             self.weight.sequence_parallel = True
+        if weight_init == "normal":
+            torch.nn.init.normal_(self.weight, mean=0.0, std=init_std)
+        else:
+            torch.nn.init.zeros_(self.weight)
+        if self.bias is not None:
+            torch.nn.init.zeros_(self.bias)
 
     def forward(
         self,
@@ -449,6 +462,8 @@ class MegatronModelManager:
                 input_size=self._cfg.model.hidden_size,
                 output_size=1,
                 sequence_parallel=self._cfg.model.sequence_parallel,
+                weight_init=self._cfg.get("value_head_init", "normal"),
+                init_std=self._cfg.model.get("init_method_std", 0.02),
             )
 
         return model

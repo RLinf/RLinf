@@ -12,6 +12,9 @@
    * - 论文
      - 主题
      - 论文链接
+   * - :doc:`CEL <cel>`
+     - 汇集部署中的机器人集群经验，改进共享 policy。
+     - `arXiv:2610.25736 <https://arxiv.org/abs/2610.25736>`__
    * - :doc:`STEAM <steam>`
      - 面向真实机器人学习的自监督时序集成优势建模。
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
@@ -44,6 +47,7 @@
    :hidden:
    :maxdepth: 2
 
+   CEL: Collective Experience Learning Across 96 Robots <cel>
    steam
    rlinf_user
    rlinf_vla
