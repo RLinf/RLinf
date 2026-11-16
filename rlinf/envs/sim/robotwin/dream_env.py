@@ -14,11 +14,14 @@
 
 """Dream observation capture for RoboTwin."""
 
+import base64
+import io
 from typing import Any
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from PIL import Image, ImageOps
 
 from rlinf.envs.sim.robotwin.robotwin_env import RoboTwinEnv
 from rlinf.scheduler import Channel, WorkerInfo
@@ -44,12 +47,26 @@ class DreamObservationBuffer:
         observation: dict[str, Any],
         timestamp: float,
     ) -> None:
-        """Store native RGB observations with measured state and time."""
+        """Encode camera frames before transport and keep their state and time."""
+        main, wrists = observation["main_images"], observation["wrist_images"]
+        frames = {}
+        for role, image in zip(
+            ("overhead", "wrist_l", "wrist_r"),
+            (main[0], wrists[0, 0], wrists[0, 1]),
+            strict=True,
+        ):
+            buffer = io.BytesIO()
+            ImageOps.pad(
+                Image.fromarray(image.cpu().numpy()),
+                (320, 240),
+                method=Image.Resampling.BILINEAR,
+                color=(0, 0, 0),
+            ).save(buffer, format="JPEG", quality=85)
+            frames[f"video.{role}"] = base64.b64encode(buffer.getvalue()).decode(
+                "ascii"
+            )
         sample = {
-            "frames": {
-                "main_images": observation["main_images"].cpu(),
-                "wrist_images": observation["wrist_images"].cpu(),
-            },
+            "frames": frames,
             "state": observation["states"].detach().cpu().clone(),
             "timestamp": timestamp,
         }
@@ -92,7 +109,6 @@ class DreamRobotwinEnv(RoboTwinEnv):
         worker_info: WorkerInfo,
         record_metrics: bool = True,
     ) -> None:
-        self._capture_metadata = {}
         self._observed_task = None
         super().__init__(
             cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics
@@ -105,7 +121,6 @@ class DreamRobotwinEnv(RoboTwinEnv):
             self._observed_task.get_obs = self._original_get_obs
             self._observed_task.scene.step = self._original_step
         self._observed_task = None
-        self._capture_metadata = {}
 
     def _attach_capture(self) -> None:
         task = self.venv.envs[0].task
@@ -119,12 +134,11 @@ class DreamRobotwinEnv(RoboTwinEnv):
             self._original_step()
             self.physics_time += scene.get_timestep()
 
-        # Native joint_action contains drive targets; sample measured qpos at render time.
+        # RoboTwin forwards this vector as state when it flattens each observation.
         def capture(*args: Any, **kwargs: Any) -> dict[str, Any]:
             raw = self._original_get_obs(*args, **kwargs)
-            self._capture_metadata[id(raw["joint_action"]["vector"])] = (
-                self.physics_time,
-                self._measured_state(),
+            raw["joint_action"]["vector"] = np.append(
+                self._measured_state().numpy().reshape(-1), self.physics_time
             )
             return raw
 
@@ -133,11 +147,9 @@ class DreamRobotwinEnv(RoboTwinEnv):
     def _extract_obs_image(self, raw_obs: list[dict[str, Any]]) -> dict[str, Any]:
         observation = super()._extract_obs_image(raw_obs)
         if self._observed_task is not None:
-            timestamp, measured = self._capture_metadata[id(raw_obs[0]["state"])]
-            observation["states"] = measured.to(observation["states"].device)
-            observation["dream_sim_time"] = torch.tensor(
-                [timestamp], dtype=torch.float64
-            )
+            state = observation["states"]
+            observation["states"] = state[:, :-1].float()
+            observation["dream_sim_time"] = state[:, -1]
         return observation
 
     def _measured_state(self) -> torch.Tensor:
@@ -184,8 +196,10 @@ class DreamRobotwinEnv(RoboTwinEnv):
         """Execute native RoboTwin actions and attach measured observations."""
         remaining = self.cfg.max_episode_steps - int(self.elapsed_steps[0])
         if remaining <= 0:
-            raise RuntimeError("RoboTwin episode already reached its configured limit.")
-        self._capture_metadata = {}
+            raise RuntimeError(
+                f"Dream received an action chunk after env.eval.max_episode_steps="
+                f"{self.cfg.max_episode_steps}. Check env.eval.max_steps_per_rollout_epoch."
+            )
         result = super().chunk_step(actions[:, :remaining])
         observations, infos = result[0], result[-1]
         self.observations.samples.clear()

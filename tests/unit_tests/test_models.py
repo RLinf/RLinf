@@ -3258,15 +3258,12 @@ def test_dream_api_nonfinite_active_arm_fails(monkeypatch):
     sdk = _DreamSDK()
     sdk.right[:] = np.nan
     client = DreamPolicy(sdk, cfg.rollout)
-    sample = {
-        "states": np.zeros((1, 1, 14)),
-        "frames": [[_dream_observation()]],
-        "timestamps": [[0.0]],
-        "finished": [False],
-        "episode_id": [1],
-        "task_descriptions": ["press"],
-        "active_arms": [["left"]],
-    }
+    buffer = DreamObservationBuffer()
+    buffer.reset()
+    obs = _dream_observation()
+    obs["states"].zero_()
+    buffer.append(obs, 0.0)
+    sample = buffer.pack(["press"], None, finished=False, active_arms=("left",))
     np.testing.assert_allclose(
         client.predict_action_batch({"history": [sample]}, mode="eval")[0][..., 7:], 0
     )

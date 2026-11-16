@@ -14,14 +14,11 @@
 
 """Dream API inference over the embodied evaluation channels."""
 
-import base64
-import io
 from typing import Any
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from PIL import Image, ImageOps
 
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel
@@ -112,27 +109,6 @@ class DreamPolicy(BasePolicy):
         """Reject training forwards for the evaluation-only API policy."""
         raise NotImplementedError("Dream API supports evaluation only.")
 
-    @staticmethod
-    def _encode_images(observation: dict[str, torch.Tensor]) -> dict[str, str]:
-        main, wrists = observation["main_images"], observation["wrist_images"]
-        frames = {}
-        for role, image in zip(
-            ("overhead", "wrist_l", "wrist_r"),
-            (main[0], wrists[0, 0], wrists[0, 1]),
-            strict=True,
-        ):
-            buffer = io.BytesIO()
-            ImageOps.pad(
-                Image.fromarray(image.cpu().numpy()),
-                (320, 240),
-                method=Image.Resampling.BILINEAR,
-                color=(0, 0, 0),
-            ).save(buffer, format="JPEG", quality=85)
-            frames[f"video.{role}"] = base64.b64encode(buffer.getvalue()).decode(
-                "ascii"
-            )
-        return frames
-
     def predict_action_batch(
         self, env_obs: dict[str, Any], **kwargs: Any
     ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -154,7 +130,7 @@ class DreamPolicy(BasePolicy):
         for i, frame in enumerate(frames):
             q = states[0, i]
             self.sdk.set_observation(
-                self._encode_images(frame),
+                frame,
                 {
                     "prompt": prompt,
                     "state.left_arm": q[:6].tolist(),
@@ -229,6 +205,15 @@ class DreamRolloutWorker(MultiStepRolloutWorker):
         if mismatches:
             raise ValueError(
                 "Unsupported Dream evaluation configuration: " + ", ".join(mismatches)
+            )
+        budget = cfg.env.eval.max_steps_per_rollout_epoch
+        limit = cfg.env.eval.max_episode_steps
+        chunk = cfg.rollout.model.num_action_chunks
+        if budget > ((limit + chunk - 1) // chunk) * chunk:
+            raise ValueError(
+                f"env.eval.max_steps_per_rollout_epoch={budget} requests an action "
+                f"chunk after env.eval.max_episode_steps={limit} "
+                f"(chunk size {chunk})."
             )
         self.client = None
 

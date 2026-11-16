@@ -96,58 +96,6 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 
 若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
-.. _robotwin-dream-eval:
-
-Dream API 评测
---------------
-
-使用 ALOHA 或 Piper 在 RoboTwin 上评测 Dream API。RLinf 将三路 RGB 图像、实测关节状态和任务指令传给 Dream SDK，再通过 RoboTwin 执行返回的绝对关节目标。
-
-**安装依赖**
-
-Dream SDK 使用 Python 3.11–3.13。按上方「环境准备」克隆 RoboTwin 并下载资产，然后在 RLinf 仓库根目录安装环境和 SDK：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --env robotwin
-   source .venv/bin/activate
-   uv pip install "numpy>=1.26.4,<2" pandas opencv-python
-   uv venv --python "$(command -v python)" .venv-dream
-   export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
-   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
-     dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
-     "ray==$(python -c 'import ray; print(ray.__version__)')"
-
-MPLib 使用 NumPy 1，因此需要与 pandas 和 OpenCV 一起解析兼容版本。Dream SDK 需要 NumPy 2，因此 RLinf 使用 ``DREAM_ROLLOUT_PYTHON`` 启动 rollout worker，RoboTwin 仍在 ``.venv`` 中运行。
-
-在 rollout worker 的环境中设置 ``DREAM_API_KEY``。``ROBOTWIN_PATH`` 应指向包含 ``assets/`` 目录的 RoboTwin 仓库根目录。通过 ``DREAM_IK_ARM_FILE`` 指定所选机器人的 Dream SDK 机械臂描述文件，确认其 URDF、关节顺序、base 坐标系和 TCP 与仿真机器人一致。
-
-每个 JSON 机械臂描述文件都需要 ``urdf``、``base``、``flange``、``tcp``、``approach``、``jaw`` 和 ``rest``。已报告的评测中，ALOHA 使用 ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``；Piper 使用 ``assets/embodiments/piper/piper.urdf`` 的副本，并将六个机械臂关节限位放宽到 ±6.283185307 弧度，供 SDK 的 IK 使用。
-
-**启动评测**
-
-配置默认使用 ALOHA。评测 Piper 时，请切换机械臂描述文件，并覆盖机器人配置和动作频率：
-
-.. code-block:: bash
-
-   export ROBOTWIN_PATH=/path/to/RoboTwin
-   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
-   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH}
-
-   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
-   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
-     env.eval.assets_path=${ROBOTWIN_PATH} \
-     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
-
-click_bell 修正默认关闭；如需启用，运行时传入 ``rollout.dream.eef_target_bias=true``。在任务臂的 base 坐标系下，如果第一个动作块的末个目标 z 减去观测 z 大于 -0.08 米，RLinf 会在 IK 前将该臂的目标沿 x 轴平移 -0.003 米、沿 z 轴平移 -0.04 米。这个条件在每个 episode 中只判断一次，仅在任务有一条活动臂时生效。
-
-**查看结果**
-
-配置使用单环境运行十个 episode，每回合上限为 400 步。ALOHA 频率为 20 Hz，Piper 为 30 Hz，均使用 48 步、14 维动作块。
-
-配置通过 ``env.eval.seeds_path`` 读取 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中预筛选的 success seeds，遵循 :ref:`robotwin-eval-config`。RLinf 根据配置种子打乱该任务的种子列表，十个回合分别使用不同的 seed。通过 ``eval/success_once`` 查看成功率，日志和视频位置见 :doc:`../reference/results`。
-
 完整评测流程
 ------------
 
@@ -167,7 +115,7 @@ click_bell 修正默认关闭；如需启用，运行时传入 ``rollout.dream.e
 - π\ :sub:`0`：`RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
 - π\ :sub:`0.5`：`RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
 
-下载命令见训练文档「模型下载」一节。
+下载命令见训练文档“模型下载”一节。
 
 **Step 3：编辑配置**
 
@@ -184,6 +132,67 @@ click_bell 修正默认关闭；如需启用，运行时传入 ``rollout.dream.e
 **Step 5：查看结果**
 
 终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
+
+.. _robotwin-dream-eval:
+
+Dream API 评测
+--------------
+
+使用 Dream API 评测 ALOHA 或 Piper 的 ``click_bell`` 任务。默认使用 ``dreamlabs/dream-1-beta``，可通过 ``rollout.model.checkpoint`` 切换 checkpoint。
+
+**安装依赖**
+
+按“环境准备”一节的步骤克隆 RoboTwin 并下载仿真资产。使用 Python 3.11–3.13，在同一个 shell 中从 RLinf 仓库根目录执行安装和启动命令。
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --env robotwin
+   source .venv/bin/activate
+   uv pip install "numpy>=1.26.4,<2" pandas opencv-python
+   uv venv --python "$(command -v python)" .venv-dream
+   export DREAM_ROLLOUT_PYTHON="$PWD/.venv-dream/bin/python"
+   uv pip install --python "$DREAM_ROLLOUT_PYTHON" -e . \
+     dreamlabs==1.0.17 dreamlabs-client==1.0.9 \
+     "ray==$(python -c 'import ray; print(ray.__version__)')"
+
+MPLib 使用 NumPy 1。在 ``.venv`` 中一起安装 NumPy 1、pandas 和 OpenCV。Dream SDK 使用 NumPy 2，RLinf 用 ``DREAM_ROLLOUT_PYTHON`` 指定的解释器启动 rollout worker。
+
+**启动评测**
+
+将 ``ROBOTWIN_PATH`` 设为包含 ``assets/`` 的 RoboTwin 仓库根目录，用 ``DREAM_IK_ARM_FILE`` 指定机器人对应的 JSON 机械臂文件。评测配置通过 ``rollout.dream.arm`` 读取这个路径。文件中的 URDF、关节顺序、基座坐标系和 TCP 必须与仿真机器人一致。
+
+JSON 机械臂文件需要 ``urdf``、``base``、``flange``、``tcp``、``approach``、``jaw`` 和 ``rest``。已报告的 ALOHA 评测使用 ``assets/embodiments/aloha-agilex/urdf/arx5_description_isaac.urdf``。Piper 评测使用 ``assets/embodiments/piper/piper.urdf`` 的副本。将副本中的 6 个机械臂关节限位放宽到 ±6.283185307 弧度，供逆运动学（IK）求解使用。
+
+将 ``<your-api-key>`` 替换为你的 Dream API 密钥，然后启动 ALOHA 评测。
+
+.. code-block:: bash
+
+   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export DREAM_IK_ARM_FILE=/path/to/aloha-arm.json
+   export DREAM_API_KEY='<your-api-key>'
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH}
+
+评测 Piper 时，改用 Piper 的 JSON 机械臂文件，并用命令行参数设置机器人配置和动作频率。
+
+.. code-block:: bash
+
+   export ROBOTWIN_PATH=/path/to/RoboTwin
+   export DREAM_IK_ARM_FILE=/path/to/piper-arm.json
+   export DREAM_API_KEY='<your-api-key>'
+   bash evaluations/run_eval.sh robotwin robotwin_dream_aloha_click_bell_eval \
+     env.eval.assets_path=${ROBOTWIN_PATH} \
+     'env.eval.task_config.embodiment=[piper,piper,0.6]' rollout.dream.action_hz=30
+
+``click_bell`` 的末端修正默认关闭。任务只指定一条臂按铃时，可设置 ``rollout.dream.eef_target_bias=true`` 启用修正。RLinf 在每条轨迹中检查一次，将首个动作块的最后一个目标高度与实测末端高度比较。如果目标高度高于实测高度减去 8 厘米，RLinf 会在求解 IK 前，在机械臂基座坐标系中把这条臂的末端目标沿 x 轴平移 -0.003 米、沿 z 轴平移 -0.04 米。
+
+**查看结果**
+
+RLinf 从预筛选的种子中选出 10 个，每个种子运行一条轨迹。种子来源和分配方式见 :ref:`robotwin-eval-config`\ 。ALOHA 的动作频率为 20 Hz，Piper 为 30 Hz，两者均使用 48 步、14 维的动作块。
+
+Dream 在单环境运行，并设置 ``env.eval.auto_reset=false``。将 ``env.eval.max_steps_per_rollout_epoch`` 设为 48 的倍数，最多到最后一个动作块结束时的累计步数。轨迹上限为 400 步时，默认预算 432 步对应九个动作块，第九块只执行 16 步。本页的完整测试集示例适用于其他后端。
+
+通过 ``eval/success_once`` 查看成功率，日志和视频见 :doc:`../reference/results`。
 
 .. _robotwin-eval-config:
 
@@ -272,6 +281,10 @@ LingbotVLA 2.0
 - ``rollout.model.precision: bf16``；fp32 权重仅用于 PPO actor
 - ``task_config.embodiment: [aloha-agilex]`` 且 ``task_config.camera.collect_wrist_camera: true``；模型需要左右两个腕部相机
 - ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400``
+
+Dream API
+
+- 安装步骤、启动命令和步数限制见 :ref:`robotwin-dream-eval`。
 
 覆盖完整测试集
 ~~~~~~~~~~~~~~
