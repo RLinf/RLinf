@@ -35,6 +35,14 @@ def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
     return build_dual_franka_sft_dataloader
 
 
+def _load_dual_arx5_sft_dataloader() -> SftDataLoaderBuilder:
+    from rlinf.data.datasets.openpi.dual_arx5_tcp_rot6d import (
+        build_dual_arx5_tcp_rot6d_sft_dataloader,
+    )
+
+    return build_dual_arx5_tcp_rot6d_sft_dataloader
+
+
 def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
     from rlinf.data.datasets.openpi.official_sft_data_loader import (
         build_official_openpi_sft_dataloader,
@@ -48,10 +56,11 @@ def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
 _SFT_DATALOADER_BUILDERS = {
     "behavior": _load_behavior_sft_dataloader,
     "dualfranka": _load_dual_franka_sft_dataloader,
+    "dualarx5": _load_dual_arx5_sft_dataloader,
     "official": _load_official_openpi_sft_dataloader,
 }
 
-_DEDICATED_ENVS = ("behavior", "dualfranka")
+_DEDICATED_ENVS = ("behavior", "dualfranka", "dualarx5")
 
 
 def _resolve_env(config_name: str) -> str:

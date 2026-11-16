@@ -60,6 +60,7 @@ class EnvWorker(Worker):
         self.train_video_cnt = 0
         self.eval_video_cnt = 0
         self.should_stop = False
+        self._eval_future = None
 
         self.env_list = []
         self.eval_env_list = []
@@ -1251,7 +1252,27 @@ class EnvWorker(Worker):
         return env_metrics
 
     @Worker.timer("evaluate")
-    def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+    async def evaluate(self, input_channel: Channel, rollout_channel: Channel):
+        # Keep thread-affine simulators on their original execution thread.
+        # Cooperative environments can service a stop request while evaluating.
+        if not any(
+            get_env_attr(env, "request_stop") is not None for env in self.eval_env_list
+        ):
+            return self._evaluate(input_channel, rollout_channel)
+        self._eval_future = asyncio.get_running_loop().run_in_executor(
+            None, self._evaluate_stoppable, input_channel, rollout_channel
+        )
+        return await asyncio.shield(self._eval_future)
+
+    def _evaluate_stoppable(self, input_channel: Channel, rollout_channel: Channel):
+        try:
+            return self._evaluate(input_channel, rollout_channel)
+        except KeyboardInterrupt:
+            if not self.should_stop:
+                raise
+            return {}
+
+    def _evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
@@ -1366,3 +1387,20 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return eval_metrics
+
+    async def close_eval_envs(self) -> None:
+        self.should_stop = True
+        self.log_info("Stopping evaluation and parking robots.")
+        for env in self.eval_env_list:
+            request_stop = get_env_attr(env, "request_stop")
+            if request_stop is not None:
+                request_stop()
+        try:
+            if self._eval_future is not None:
+                await asyncio.shield(self._eval_future)
+        finally:
+            for env in self.eval_env_list:
+                close = getattr(env, "close", None)
+                if close is not None:
+                    close()
+        self.log_info("Evaluation environments closed.")

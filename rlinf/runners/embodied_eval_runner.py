@@ -92,7 +92,10 @@ class EmbodiedEvalRunner:
 
     def run(self):
         start_time = time.time()
-        eval_metrics = self.evaluate()
+        try:
+            eval_metrics = self.evaluate()
+        finally:
+            self.env.close_eval_envs().wait()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
         self.logger.info(eval_metrics)
         self.metric_logger.log(step=0, data=eval_metrics)
