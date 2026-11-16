@@ -49,64 +49,73 @@ def _cu_seqlens(valid: torch.Tensor) -> torch.Tensor:
 
 
 def prepare_flash_attention(
-    mask: torch.Tensor,
-    prefix_length: int,
+    prefix_mask: torch.Tensor,
     suffix_length: int,
+    *,
+    cached: bool = False,
     backend: str = "flash_attention_2",
 ) -> FlashAttentionMetadata:
-    """Pack a Pi0.5 joint, prefix-only, or cached-suffix visibility mask.
+    """Pack Pi0.5 attention directly from token validity and suffix length.
 
     Args:
-        mask: Boolean visibility mask with shape ``[batch, queries, keys]``.
-        prefix_length: Current prefix query count, zero for a cached suffix.
-        suffix_length: Current suffix query count, zero for prefix prefill.
+        prefix_mask: Boolean prefix token validity with shape ``[batch, prefix]``.
+        suffix_length: Number of suffix tokens, all of which are valid.
+        cached: Query only the suffix against a previously computed prefix cache.
         backend: Explicit FlashAttention-2 or FlashAttention-3 implementation.
 
     Returns:
         Packing indices and cumulative lengths reused across layers.
     """
-    query_length, key_length = mask.shape[-2:]
-    if mask.dtype != torch.bool or query_length != prefix_length + suffix_length:
-        raise ValueError("FlashAttention expects a boolean Pi0.5 prefix/suffix mask")
-    if prefix_length and key_length != query_length:
-        raise ValueError("Pi0.5 prefix queries cannot append to an existing KV cache")
+    if prefix_mask.dtype != torch.bool or prefix_mask.ndim != 2:
+        raise ValueError("FlashAttention expects a boolean [batch, prefix] mask")
+    batch, prefix_length = prefix_mask.shape
+    key_length = prefix_length + suffix_length
+    if suffix_length < 0 or key_length == 0 or (cached and suffix_length == 0):
+        raise ValueError("FlashAttention requires nonempty query and key sequences")
 
-    valid_queries = mask.any(dim=-1)
-    valid_keys = mask.any(dim=-2)
-    visibility = torch.ones(
-        query_length, key_length, dtype=torch.bool, device=mask.device
-    )
-    if prefix_length and suffix_length:
-        visibility[:prefix_length, prefix_length:] = False
-    expected = valid_queries[:, :, None] & valid_keys[:, None, :] & visibility[None]
-    if not torch.equal(mask, expected):
-        raise ValueError(
-            "FlashAttention supports Pi0.5 bidirectional prefix/suffix blocks; "
-            "the supplied attention mask has different visibility"
-        )
-
-    spans = (
-        [(0, prefix_length, prefix_length), (prefix_length, query_length, key_length)]
-        if prefix_length and suffix_length
-        else [(0, query_length, key_length)]
+    suffix_mask = prefix_mask.new_ones((batch, suffix_length))
+    valid_keys = torch.cat([prefix_mask, suffix_mask], dim=1)
+    prefix_cu_seqlens = _cu_seqlens(prefix_mask)
+    suffix_cu_seqlens = (
+        torch.arange(batch + 1, dtype=torch.int32, device=prefix_mask.device)
+        * suffix_length
     )
     blocks = []
-    for start, end, key_end in spans:
-        queries = valid_queries.clone()
-        queries[:, :start] = False
-        queries[:, end:] = False
-        keys = valid_keys.clone()
-        keys[:, key_end:] = False
+    if not cached and prefix_length:
+        rows, columns = prefix_mask.nonzero(as_tuple=True)
+        prefix_indices = rows * key_length + columns
         blocks.append(
             _Block(
-                query_indices=queries.flatten().nonzero(as_tuple=True)[0],
-                key_indices=keys.flatten().nonzero(as_tuple=True)[0],
-                query_cu_seqlens=_cu_seqlens(queries),
-                key_cu_seqlens=_cu_seqlens(keys),
-                max_query_length=end - start,
-                max_key_length=key_end,
+                query_indices=prefix_indices,
+                key_indices=prefix_indices,
+                query_cu_seqlens=prefix_cu_seqlens,
+                key_cu_seqlens=prefix_cu_seqlens,
+                max_query_length=prefix_length,
+                max_key_length=prefix_length,
             )
         )
+    if suffix_length:
+        if cached:
+            suffix_indices = torch.arange(
+                batch * suffix_length, device=prefix_mask.device
+            )
+        else:
+            suffix_indices = (
+                torch.arange(batch, device=prefix_mask.device)[:, None] * key_length
+                + prefix_length
+                + torch.arange(suffix_length, device=prefix_mask.device)
+            ).flatten()
+        blocks.append(
+            _Block(
+                query_indices=suffix_indices,
+                key_indices=valid_keys.flatten().nonzero(as_tuple=True)[0],
+                query_cu_seqlens=suffix_cu_seqlens,
+                key_cu_seqlens=prefix_cu_seqlens + suffix_cu_seqlens,
+                max_query_length=suffix_length,
+                max_key_length=key_length,
+            )
+        )
+    valid_queries = suffix_mask if cached else valid_keys
     query_count = sum(block.query_indices.numel() for block in blocks)
     return FlashAttentionMetadata(
         tuple(blocks),

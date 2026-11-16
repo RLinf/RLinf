@@ -377,12 +377,14 @@ def test_openpi_flash_attention_preserves_visibility(mode):
         [[True, False, True, False, True, True], [False] * 4 + [True, True]]
     )
     mask = make_attn_mask(valid, torch.tensor([False] * 4 + [True, False]))
-    prefix, suffix = 4, 2
+    suffix = 2
     if mode == "prefix":
         mask, suffix = mask[:, :4, :4], 0
     elif mode == "cached_suffix":
-        mask, prefix = mask[:, 4:], 0
-    metadata = prepare_flash_attention(mask, prefix, suffix)
+        mask = mask[:, 4:]
+    metadata = prepare_flash_attention(
+        valid[:, :4], suffix, cached=mode == "cached_suffix"
+    )
 
     recovered = torch.zeros_like(mask)
     query_length, key_length = mask.shape[-2:]
@@ -411,34 +413,39 @@ def test_openpi_reuses_prepared_attention():
     config = gemma.Config(
         width=4, depth=0, mlp_dim=8, num_heads=1, num_kv_heads=1, head_dim=4
     )
-    module = gemma.Module(
-        [config, config], embed_dtype="float32", attention_backend="flash_attention_2"
-    )
-    mask = torch.ones(1, 2, 2, dtype=torch.bool)
-    metadata = prepare_flash_attention(mask, 0, 2)
+    module = gemma.Module([config, config], embed_dtype="float32")
+    prefix_mask = torch.ones(1, 0, dtype=torch.bool)
+    metadata = prepare_flash_attention(prefix_mask, 2, cached=True)
     embedded = [None, torch.randn(1, 2, 4)]
     positions = torch.arange(2)[None]
     # Zero layers isolate Module's packing lifecycle from the CUDA-only kernel.
     with torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU]
     ) as profile:
-        first, _ = module(embedded, positions, mask, flash_metadata=metadata)
-        second, _ = module(embedded, positions, mask, flash_metadata=metadata)
+        first, _ = module(embedded, positions, metadata)
+        second, _ = module(embedded, positions, metadata)
     operators = {event.key for event in profile.key_averages()}
     assert "aten::equal" not in operators
     assert "aten::nonzero" not in operators
     torch.testing.assert_close(first[1], second[1])
 
 
-@pytest.mark.parametrize("pi05", [False, True])
-def test_openpi_suffix_attention_matches_embedded_tokens(pi05):
+@pytest.mark.parametrize("mode", ["joint", "prefix", "cached_suffix"])
+@pytest.mark.parametrize(
+    "pi05,backend",
+    [(False, "eager"), (True, "eager"), (True, "flash_attention_2")],
+)
+def test_openpi_prepares_attention_layout(pi05, backend, mode):
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        FlashAttentionMetadata,
+    )
     from rlinf.models.embodiment.openpi.pi0 import Pi0, make_attn_mask
 
     policy = Pi0.__new__(Pi0)
     torch.nn.Module.__init__(policy)
     policy.pi05 = pi05
     policy.action_horizon = 3
-    policy.llm = SimpleNamespace(attention_backend="eager")
+    policy._config = SimpleNamespace(attention_backend=backend)
     policy.action_in_proj = torch.nn.Linear(4, 8)
     if pi05:
         policy.time_mlp_in = torch.nn.Linear(8, 8)
@@ -448,30 +455,52 @@ def test_openpi_suffix_attention_matches_embedded_tokens(pi05):
         policy.action_time_mlp_in = torch.nn.Linear(16, 8)
         policy.action_time_mlp_out = torch.nn.Linear(8, 8)
     observation = Observation(images={}, image_masks={}, state=torch.randn(2, 4))
-    _, suffix_mask, suffix_ar, _ = policy.embed_suffix(
+    suffix_tokens, _ = policy.embed_suffix(
         observation, torch.randn(2, 3, 4), torch.tensor([0.2, 0.7])
     )
+    suffix_length = 3 if pi05 else 4
+    assert suffix_tokens.shape == (2, suffix_length, 8)
     prefix_mask = torch.tensor([[True, False, True], [False, False, False]])
-    attention = policy.prepare_suffix_attention(prefix_mask)
     prefix_length = prefix_mask.shape[1]
-    valid = torch.cat([prefix_mask, suffix_mask], dim=1)
-    ar = torch.cat([torch.zeros(prefix_length, dtype=torch.bool), suffix_ar])
-    torch.testing.assert_close(
-        attention.mask, make_attn_mask(valid, ar)[:, prefix_length:]
-    )
-    torch.testing.assert_close(
-        attention.positions, (valid.int().cumsum(-1) - 1)[:, prefix_length:]
-    )
-    assert attention.flash_metadata is None
+    if mode == "prefix":
+        valid = prefix_mask
+        ar = torch.zeros(prefix_length, dtype=torch.bool)
+    else:
+        valid = torch.cat(
+            [prefix_mask, torch.ones(2, suffix_length, dtype=torch.bool)], dim=1
+        )
+        ar = torch.zeros(valid.shape[1], dtype=torch.bool)
+        ar[prefix_length : prefix_length + (1 if pi05 else 2)] = True
+    expected_mask = make_attn_mask(valid, ar)
+    expected_positions = valid.int().cumsum(-1) - 1
+    if mode == "cached_suffix":
+        expected_mask = expected_mask[:, prefix_length:]
+        expected_positions = expected_positions[:, prefix_length:]
 
-
-def test_openpi_flash_attention_rejects_other_visibility():
-    from rlinf.models.embodiment.openpi.modules.flash_attention import (
-        prepare_flash_attention,
-    )
-
-    with pytest.raises(ValueError, match="different visibility"):
-        prepare_flash_attention(torch.ones(1, 4, 4, dtype=torch.bool).tril(), 4, 0)
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU], record_shapes=True
+    ) as profile:
+        if mode == "cached_suffix":
+            attention = policy.prepare_suffix_attention(prefix_mask)
+        else:
+            attention = policy.prepare_attention(
+                prefix_mask, include_suffix=mode == "joint"
+            )
+    torch.testing.assert_close(attention.positions, expected_positions)
+    if backend == "eager":
+        torch.testing.assert_close(attention.mask, expected_mask)
+        if mode == "cached_suffix":
+            assert attention.mask.untyped_storage().nbytes() == (
+                attention.mask.numel() * attention.mask.element_size()
+            )
+    else:
+        assert isinstance(attention.mask, FlashAttentionMetadata)
+        torch.testing.assert_close(
+            attention.mask.valid_queries, expected_mask.any(dim=-1)
+        )
+        dense_shape = list(expected_mask.shape)
+        assert all(dense_shape not in event.input_shapes for event in profile.events())
+        assert "aten::equal" not in {event.key for event in profile.key_averages()}
 
 
 @pytest.mark.parametrize(
@@ -499,7 +528,7 @@ def test_openpi_flash_attention_3_configuration():
 
     config = Pi0Config(pi05=True, attention_backend="flash_attention_3")
     metadata = prepare_flash_attention(
-        torch.ones(1, 4, 4, dtype=torch.bool), 4, 0, backend=config.attention_backend
+        torch.ones(1, 4, dtype=torch.bool), 0, backend=config.attention_backend
     )
     assert metadata.backend == "flash_attention_3"
 
@@ -573,32 +602,32 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
         if mode != "joint":
             if use_flash:
                 metadata = prepare_flash_attention(
-                    mask[:, :prefix, :prefix], prefix, 0, backend=backend
+                    valid[:, :prefix], 0, backend=backend
                 )
             outputs, cache = attention(
                 [inputs[0], None],
                 positions[:, :prefix],
-                mask[:, None, :prefix, :prefix],
-                flash_metadata=metadata,
+                metadata if use_flash else mask[:, None, :prefix, :prefix],
             )
             if mode in ("prefix", "masked_prefix"):
                 return outputs
             metadata = None
             if use_flash:
                 metadata = prepare_flash_attention(
-                    mask[:, prefix:], 0, suffix, backend=backend
+                    valid[:, :prefix], suffix, cached=True, backend=backend
                 )
             suffix_outputs, _ = attention(
                 [None, inputs[1]],
                 positions[:, prefix:],
-                mask[:, None, prefix:],
+                metadata if use_flash else mask[:, None, prefix:],
                 kv_cache=cache,
-                flash_metadata=metadata,
             )
             return [outputs[0], suffix_outputs[1]]
         if use_flash:
-            metadata = prepare_flash_attention(mask, prefix, suffix, backend=backend)
-        return attention(inputs, positions, mask[:, None], flash_metadata=metadata)[0]
+            metadata = prepare_flash_attention(
+                valid[:, :prefix], suffix, backend=backend
+            )
+        return attention(inputs, positions, metadata if use_flash else mask[:, None])[0]
 
     was_compiled = torch_compile_enabled()
     set_torch_compile(False)
@@ -652,6 +681,91 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
     assert max(output_errors) < 0.02
     assert max(input_errors) < 0.03
     assert max(parameter_errors) < 0.03
+
+
+@pytest.mark.parametrize("checkpointing", [False, True])
+@pytest.mark.parametrize("backend", ["flash_attention_2", "flash_attention_3"])
+def test_openpi_flash_attention_outputs_and_gradients_module(backend, checkpointing):
+    required = os.environ.get("RLINF_REQUIRED_FLASH_ATTENTION") == backend
+    if not torch.cuda.is_available() or torch.version.hip is not None:
+        if required:
+            pytest.fail(f"{backend} coverage requires a CUDA GPU")
+        pytest.skip("FlashAttention numerical coverage requires a CUDA GPU")
+    package = (
+        "flash_attn"
+        if backend == "flash_attention_2"
+        else "flash_attn_3.flash_attn_interface"
+    )
+    if required:
+        importlib.import_module(package)
+    else:
+        pytest.importorskip(package)
+    if required and backend == "flash_attention_3":
+        assert torch.cuda.get_device_capability()[0] == 9
+
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        prepare_flash_attention,
+    )
+    from rlinf.models.embodiment.openpi.modules.utils import (
+        set_torch_compile,
+        torch_compile_enabled,
+    )
+    from rlinf.models.embodiment.openpi.pi0 import make_attn_mask
+
+    torch.manual_seed(0)
+    config = gemma.Config(
+        width=64, depth=1, mlp_dim=128, num_heads=2, num_kv_heads=1, head_dim=32
+    )
+    reference = gemma.Module(
+        [config, config], use_gradient_checkpointing=checkpointing
+    ).to(device="cuda", dtype=torch.bfloat16)
+    actual = copy.deepcopy(reference)
+    prefix_mask = torch.tensor(
+        [[True, False, True, True, False], [False] * 5], device="cuda"
+    )
+    valid = torch.cat([prefix_mask, prefix_mask.new_ones((2, 3))], dim=-1)
+    ar = torch.tensor([False] * 5 + [True, False, False], device="cuda")
+    positions = valid.int().cumsum(-1) - 1
+    dense_mask = make_attn_mask(valid, ar)
+    metadata = prepare_flash_attention(prefix_mask, 3, backend=backend)
+    expected_inputs = [
+        torch.randn(2, length, 64, device="cuda", dtype=torch.bfloat16).requires_grad_()
+        for length in (5, 3)
+    ]
+    actual_inputs = [
+        value.detach().clone().requires_grad_() for value in expected_inputs
+    ]
+    weights = [torch.randn_like(value) for value in expected_inputs]
+
+    was_compiled = torch_compile_enabled()
+    set_torch_compile(False)
+    try:
+        expected, _ = reference(expected_inputs, positions, dense_mask)
+        result, _ = actual(actual_inputs, positions, metadata)
+        for outputs in (expected, result):
+            sum(
+                (output.float() * weight.float()).mean()
+                for output, weight in zip(outputs, weights)
+            ).backward()
+    finally:
+        set_torch_compile(was_compiled)
+
+    pairs = list(zip(expected, result))
+    pairs.extend(
+        (left.grad, right.grad)
+        for left, right in zip(
+            expected_inputs + list(reference.parameters()),
+            actual_inputs + list(actual.parameters()),
+        )
+    )
+    for left, right in pairs:
+        assert (left is None) == (right is None)
+        if left is not None:
+            relative_error = (
+                left.float() - right.float()
+            ).norm() / left.float().norm().clamp_min(1e-12)
+            assert relative_error < 0.03
 
 
 def test_siglip_time_encoding_preserves_timestamp_precision():
@@ -712,7 +826,7 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
             decisions.append(kwargs["current_only"])
 
         handle = vision.register_forward_pre_hook(record_decision, with_kwargs=True)
-        actual, input_mask, _ = Pi0.embed_prefix(policy, observation)
+        actual, input_mask = Pi0.embed_prefix(policy, observation)
         handle.remove()
 
     assert decisions == [False, True, True]

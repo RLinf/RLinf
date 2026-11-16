@@ -38,7 +38,6 @@ from . import lora
 from .flash_attention import (
     FlashAttentionMetadata,
     flash_attention,
-    prepare_flash_attention,
 )
 from .lora import FeedForward as LoRAFeedForward
 from .utils import _str_to_dtype, gelu_glu, torch_compile_enabled
@@ -287,9 +286,8 @@ class Attention(nn.Module):
         self,
         xs: list[torch.Tensor | None],
         positions: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | FlashAttentionMetadata,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
-        flash_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Multi-expert attention forward.
 
@@ -299,9 +297,8 @@ class Attention(nn.Module):
         Args:
             xs: list of inputs, one per expert (or None)
             positions: (B, T) positional indices covering full concatenated sequence
-            attn_mask: (B, 1, T, S) attention mask
+            attn_mask: Dense ``(B, 1, T, S)`` mask or prepared FlashAttention packing.
             kv_cache: optional (k, v) cache tuple
-            flash_metadata: Pi0.5 packing prepared once for all layers.
 
         Returns:
             (outputs, new_kv_cache)
@@ -347,16 +344,14 @@ class Attention(nn.Module):
 
         new_kv_cache = (k, v)
 
-        # Apply mask: shape (B, 1, T, S) -> broadcast to (B, K, G, T, S)
-        if attn_mask.dim() == 4:
-            attn_mask = attn_mask[:, 0:1, :, :]  # (B, 1, T, S)
-
         # GQA einsum pattern matching JAX:
         q = q * (self.head_dim**-0.5)
 
-        if flash_metadata is not None:
-            encoded = flash_attention(q, k, v, flash_metadata)
+        if isinstance(attn_mask, FlashAttentionMetadata):
+            encoded = flash_attention(q, k, v, attn_mask)
         else:
+            if attn_mask.dim() == 4:
+                attn_mask = attn_mask[:, 0:1, :, :]
             # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
             # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
             K = self.num_kv_heads
@@ -469,11 +464,10 @@ class Block(nn.Module):
         xs: list[torch.Tensor | None],
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None,
         positions: torch.Tensor,
-        attn_mask: torch.Tensor,
+        attn_mask: torch.Tensor | FlashAttentionMetadata,
         adarms_cond: list[torch.Tensor | None],
         skip_prefix_ffn: bool = False,
         prefix_requires_grad: bool = True,
-        flash_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass.
 
@@ -485,7 +479,6 @@ class Block(nn.Module):
             adarms_cond: per-expert adaptive RMS norm conditioning (None = regular)
             skip_prefix_ffn: Skip expert-0 outputs after attention.
             prefix_requires_grad: Track gradients through the expert-0 FFN.
-            flash_metadata: Pi0.5 packing shared across transformer layers.
 
         Returns:
             (outputs, new_kv_cache)
@@ -503,9 +496,7 @@ class Block(nn.Module):
                 gates.append(None)
 
         # Attention
-        post_attn, kv_cache = self.attn(
-            pre_attn, positions, attn_mask, kv_cache, flash_metadata
-        )
+        post_attn, kv_cache = self.attn(pre_attn, positions, attn_mask, kv_cache)
         post_attn = [self.dropout(p) if p is not None else None for p in post_attn]
 
         # Gated residual for attention
@@ -555,12 +546,10 @@ class Module(nn.Module):
         adarms: Sequence[bool] | bool = False,
         dropout: float = 0.0,
         use_gradient_checkpointing: bool = True,
-        attention_backend: str = "eager",
     ):
         super().__init__()
         self.configs = configs
         self.embed_dtype = _str_to_dtype(embed_dtype)
-        self.attention_backend = attention_backend
         if isinstance(adarms, bool):
             adarms = [adarms] * len(configs)
         self.adarms = list(adarms)
@@ -598,25 +587,23 @@ class Module(nn.Module):
         self,
         embedded: Sequence[torch.Tensor | None],
         positions: torch.Tensor,
-        mask: torch.Tensor,
+        mask: torch.Tensor | FlashAttentionMetadata,
         adarms_cond: Sequence[torch.Tensor | None] | None = None,
         *,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         return_prefix: bool = True,
         prefix_requires_grad: bool = True,
-        flash_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Full transformer forward pass.
 
         Args:
             embedded: list of embedded tokens, one per expert (or None)
             positions: (B, T) position indices
-            mask: (B, T, S) attention mask (bool)
+            mask: Dense ``(B, T, S)`` visibility mask or prepared FlashAttention packing.
             adarms_cond: per-expert adaptive conditioning (or None)
             kv_cache: optional KV cache for inference
             return_prefix: Compute expert-0 outputs through the final FFN and norm.
             prefix_requires_grad: Track gradients through the final prefix outputs.
-            flash_metadata: Packing reused across denoising steps for one prefix cache.
 
         Returns:
             (outputs, new_kv_cache)
@@ -624,16 +611,8 @@ class Module(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None] * len(self.configs)
 
-        if self.attention_backend != "eager" and flash_metadata is None:
-            flash_metadata = prepare_flash_attention(
-                mask,
-                embedded[0].shape[1] if embedded[0] is not None else 0,
-                embedded[1].shape[1] if embedded[1] is not None else 0,
-                backend=self.attention_backend,
-            )
-
-        # Expand mask: (B, T, S) -> (B, 1, T, S)
-        mask = mask.unsqueeze(1)
+        if isinstance(mask, torch.Tensor):
+            mask = mask.unsqueeze(1)
 
         xs = list(embedded)
 
@@ -668,7 +647,6 @@ class Module(nn.Module):
                     adarms_cond,
                     skip_prefix_ffn,
                     layer_prefix_grad,
-                    flash_metadata,
                     use_reentrant=self.gradient_checkpointing_use_reentrant,
                 )
             else:
@@ -680,7 +658,6 @@ class Module(nn.Module):
                     adarms_cond,
                     skip_prefix_ffn,
                     layer_prefix_grad,
-                    flash_metadata,
                 )
             new_layer_kv_caches.append(new_kv)
 
