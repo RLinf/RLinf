@@ -402,7 +402,11 @@ def compute_returns(cfg: DictConfig) -> None:
     num_workers = cfg.data.get("num_workers", 8)
     tag = cfg.data.get("tag", None)
 
-    datasets_list = cfg.data.get("train_data_paths", None)
+    # Step 2 (value SFT) loads the returns sidecar for both train and eval
+    # datasets, so both lists must be processed here with the same tag.
+    datasets_list = list(cfg.data.get("train_data_paths", None) or []) + list(
+        cfg.data.get("eval_data_paths", None) or []
+    )
 
     datasets_to_process = []
 
