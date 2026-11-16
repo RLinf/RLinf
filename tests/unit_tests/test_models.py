@@ -3179,7 +3179,7 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == "actor_critic"
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
-    
+
 def test_lingbotvlav2_grpo_smoke_config_composes(monkeypatch):
     from hydra import compose, initialize_config_dir
 

@@ -17,23 +17,33 @@
 from typing import Any
 
 from omegaconf import DictConfig
-from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from torchdata.stateful_dataloader import StatefulDataLoader
+
+from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
 
 
 def _resolve_data_path(data_paths: Any) -> str:
-    if isinstance(data_paths, str):
-        return data_paths
-    if len(data_paths) != 1:
-        raise ValueError(
-            f"LingBot-VLA V2 SFT expects one LeRobot dataset path, got {data_paths}"
+    """Return the absolute root of the one local LeRobot dataset in ``data_paths``."""
+    if not isinstance(data_paths, str):
+        if len(data_paths) != 1:
+            raise ValueError(
+                f"Expected one LeRobot dataset path in data.train_data_paths, "
+                f"got {list(data_paths)}"
+            )
+        data_paths = str(data_paths[0])
+    root = resolve_lerobot_dataset_root(data_paths)
+    if not (root / "meta" / "info.json").is_file():
+        raise FileNotFoundError(
+            f"Expected a LeRobot dataset with meta/info.json in "
+            f"data.train_data_paths, got {data_paths} (resolved to {root})"
         )
-    return str(data_paths[0])
+    return str(root)
 
 
 def build_lingbotvlav2_sft_dataloader(
     cfg: DictConfig, world_size: int, global_rank: int, data_paths: Any
-) -> tuple[DataLoader, dict[str, int]]:
+) -> tuple[StatefulDataLoader, dict[str, int]]:
     """Read a LeRobot dataset through the rollout's FeatureTransform.
 
     Robot config, norm stats and image size come from ``actor.model``, so SFT
@@ -66,7 +76,8 @@ def build_lingbotvlav2_sft_dataloader(
         dataset, num_replicas=world_size, rank=global_rank, shuffle=True
     )
     num_workers = int(cfg.data.get("num_workers", 4))
-    data_loader = DataLoader(
+    # Stateful so SFT checkpoints can save and resume the data position.
+    data_loader = StatefulDataLoader(
         dataset,
         batch_size=cfg.actor.micro_batch_size,
         sampler=sampler,
