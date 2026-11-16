@@ -163,12 +163,6 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         )
 
         while self.global_step < self.max_steps:
-            for name, handle in background_handles.items():
-                if handle.done():
-                    handle.wait()
-                    raise RuntimeError(
-                        f"{name} exited before asynchronous training completed."
-                    )
             # Use the step we're ABOUT to run as the profiling key, mirroring
             # ``EmbodiedRunner.run`` which gates before ``self.global_step += 1``.
             profiled_step = (
