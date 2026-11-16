@@ -85,7 +85,7 @@
       :link: embodied/lingbotvla_index
       :link-type: doc
 
-      在 RoboTwin 操作任务上训练 LingbotVLA 1.0（GRPO）与 2.0（PPO）。
+      在 RoboTwin 操作任务上训练 LingbotVLA 1.0（GRPO）与 2.0（SFT、PPO、GRPO）。
 
    .. grid-item-card:: MLP Policy
       :img-top: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg

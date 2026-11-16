@@ -1,0 +1,70 @@
+defaults:
+  - model/lingbotvlav2@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-3
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "robotwin_sft_lingbotvlav2"
+    logger_backends: ["tensorboard"]  # wandb, swanlab
+
+  max_epochs: -1
+  max_steps: 2000
+  val_check_interval: -1
+  save_interval: 500
+
+data:
+  # One LeRobot dataset whose features match actor.model.lingbotvlav2.robot_config_path.
+  train_data_paths: "/path/to/robotwin-lerobot-data"
+  num_workers: 4
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  global_batch_size: 64
+  seed: 1234
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-4
+    clip_grad: 1.0
+    total_training_steps: 2000
+    lr_warmup_steps: 100
+    lr_scheduler: "cosine"
+    num_cycles: 0.5
+    # Use a ratio of each parameter group's LR for the cosine floor.
+    min_lr_rate: 0.1
+
+  # Override the default values in hybrid_engines/fsdp
+  fsdp_config:
+    strategy: "fsdp2"
+    gradient_checkpointing: True
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      cast_forward_inputs: false
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
