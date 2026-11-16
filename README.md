@@ -34,6 +34,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
 - [2026/11] 🎉 The [RLinf website](https://rlinf.org/) is live. Read our [blog posts](https://rlinf.org/en/blog/) and browse [community events](https://rlinf.org/en/events/).
 - [2026/11] 🔥 RLinf supports MuJoCo Warp for batched GPU simulation on five classic locomotion tasks with an MLP + PPO recipe. Doc: [MuJoCo Warp](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/mujoco_warp.html).
 - [2026/11] 🔥 RLinf supports LeKiwi, a three-wheel omnidirectional mobile base, with per-part bring-up tools and a registered real-world drive environment. Doc: [LeKiwi](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lekiwi.html).
@@ -444,6 +445,7 @@ We are excited to see a growing ecosystem of projects building on top of or inte
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): A digital twin + robotics platform leveraging RLinf for large-scale embodied RL training.
 - [Genie Sim](https://github.com/AgibotTech/genie_sim): AgiBot's open-source simulation platform for scene generation, data collection, and benchmark evaluation, integrated with RLinf for VLA post-training with PPO and GRPO.
 - [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): Official integration of RLinf within IsaacLab, enabling seamless reinforcement learning workflows on top of NVIDIA Isaac Sim based robotics environments.
+- [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt): NVIDIA's simulation RL post-training library for robot policies, integrating RLinf as a distributed rollout and training runtime alongside demonstration co-training.
 - [RISE](https://github.com/OpenDriveLab/RISE): A robot reinforcement learning framework based on a compositional world model, using RLinf for online reinforcement learning.
 
 💡 Want to feature your project here? Open a PR and we’ll be happy to include it!
