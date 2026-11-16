@@ -3460,6 +3460,68 @@ def test_gr00t_sft_loss(monkeypatch, parameter_dtype):
             torch.testing.assert_close(parameter.grad, gradients[name], rtol=0, atol=0)
 
 
+def test_gr00t_sft_logits():
+    """Trimming unused language logits preserves backbone features and gradients."""
+    transformers = pytest.importorskip("transformers")
+    if not hasattr(transformers, "Qwen3VLForConditionalGeneration"):
+        pytest.skip("Qwen3-VL requires transformers>=4.57")
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7 import _limit_sft_logits
+
+    config = transformers.Qwen3VLConfig(
+        text_config={
+            "vocab_size": 32,
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 2,
+            "head_dim": 8,
+            "rope_scaling": {"rope_type": "default", "mrope_section": [1, 1, 2]},
+        },
+        vision_config={
+            "depth": 1,
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_heads": 2,
+            "out_hidden_size": 16,
+            "num_position_embeddings": 16,
+            "deepstack_visual_indexes": [],
+        },
+    )
+    model = transformers.Qwen3VLForConditionalGeneration(config).eval()
+    inputs = {
+        "input_ids": torch.tensor([[1, 2, 3, 4]]),
+        "position_ids": torch.arange(4).view(1, 1, 4).expand(3, 1, 4),
+        "output_hidden_states": True,
+        "use_cache": False,
+    }
+    reference = model(**inputs)
+    assert reference.logits.shape == (1, 4, 32)
+    weights = torch.arange(1, 17, dtype=torch.float32)
+    (reference.hidden_states[-1] * weights).square().mean().backward()
+    gradients = {
+        name: parameter.grad.clone()
+        for name, parameter in model.named_parameters()
+        if parameter.grad is not None
+    }
+    assert gradients
+    assert "lm_head.weight" not in gradients
+
+    model.zero_grad(set_to_none=True)
+    hook = model.register_forward_pre_hook(_limit_sft_logits, with_kwargs=True)
+    limited = model(**inputs)
+    assert limited.logits.shape == (1, 1, 32)
+    torch.testing.assert_close(
+        limited.hidden_states[-1], reference.hidden_states[-1], rtol=0, atol=0
+    )
+    (limited.hidden_states[-1] * weights).square().mean().backward()
+    for name, parameter in model.named_parameters():
+        if name in gradients:
+            torch.testing.assert_close(parameter.grad, gradients[name], rtol=0, atol=0)
+    hook.remove()
+    assert model(**inputs).logits.shape == reference.logits.shape
+
+
 @pytest.fixture
 def gr00t_libero_parquet(tmp_path, monkeypatch):
     import json

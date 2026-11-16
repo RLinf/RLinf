@@ -20,6 +20,11 @@ from omegaconf import DictConfig, OmegaConf
 from rlinf.utils.logging import get_logger
 
 
+def _limit_sft_logits(_module, args, kwargs):
+    # The action head consumes hidden states, not the language-model logits.
+    return args, {**kwargs, "logits_to_keep": 1}
+
+
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
     from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7
@@ -134,6 +139,10 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         model = loaded
 
     model.to(torch_dtype)
+    if training_mode == "sft":
+        model.backbone.model.register_forward_pre_hook(
+            _limit_sft_logits, with_kwargs=True
+        )
     if cfg.rl_head_config.add_value_head and hasattr(model.action_head, "value_head"):
         model.action_head.value_head._init_weights()
 

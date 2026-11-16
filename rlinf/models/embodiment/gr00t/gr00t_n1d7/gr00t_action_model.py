@@ -965,7 +965,7 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         """Train on the official collator output with the upstream masked FM loss."""
         # FSDP parameter views do not define the precision of SFT inputs or targets.
         inputs = BatchFeature(data=data["inputs"]).to(
-            device=self.device, dtype=torch.float32
+            device=self.device, dtype=torch.float32, non_blocking=True
         )
         backbone_inputs = self.backbone.prepare_input(inputs)
         action_inputs = self.action_head.prepare_input(inputs)
