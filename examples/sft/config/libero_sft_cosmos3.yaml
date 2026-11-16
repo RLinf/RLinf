@@ -22,15 +22,15 @@ runner:
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
-  max_steps: 20000
+  max_steps: 5000
   val_check_interval: -1
-  save_interval: 2000
+  save_interval: 500
   log_interval: 50
-  resume_dir: /mnt/public2/rhy/cosmos_rlinf/RLinf/logs/20261020-02:30:31-libero_sft_cosmos3/libero_sft_cosmos3/checkpoints/global_step_4000
+  resume_dir: null
 
 data:
-  train_data_paths: /mnt/public2/rhy/docker_dev/update/data/LIBERO_LeRobot_v3/libero_10
-  data_type: "libero_10"
+  train_data_paths: path/to/LIBERO_LeRobot_v3
+  data_type: "libero_all"
   num_workers: 4
   prefetch_factor: 4
   val_ratio: 0.01
@@ -40,7 +40,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  global_batch_size: 256
+  global_batch_size: 2048
   seed: 42
 
   model:
@@ -52,8 +52,8 @@ actor:
     load_to_device: false
     # Cosmos3 power-EMA (rate=0.1); RLinf updates net_ema each optimizer step.
     ema_enabled: true
-    model_path: /mnt/public2/rhy/docker_dev/update/model/Cosmos3-Nano-DCP
-    wan_vae_path: /mnt/public2/rhy/docker_dev/update/model/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    model_path: path/to/Cosmos3-Nano-DCP
+    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
     max_samples_per_batch: 32
 
   optim:
