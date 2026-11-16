@@ -399,6 +399,70 @@ def test_openpi_flash_attention_preserves_visibility(mode):
             recovered[sample, queries[:, None] % query_length, keys % key_length] = True
     torch.testing.assert_close(recovered, mask)
     torch.testing.assert_close(metadata.valid_queries, mask.any(dim=-1))
+    assert metadata.has_invalid_queries == (mode != "cached_suffix")
+
+
+def test_openpi_reuses_prepared_attention():
+    from rlinf.models.embodiment.openpi.modules import gemma
+    from rlinf.models.embodiment.openpi.modules.flash_attention import (
+        prepare_flash_attention,
+    )
+
+    config = gemma.Config(
+        width=4, depth=0, mlp_dim=8, num_heads=1, num_kv_heads=1, head_dim=4
+    )
+    module = gemma.Module(
+        [config, config], embed_dtype="float32", attention_backend="flash_attention_2"
+    )
+    mask = torch.ones(1, 2, 2, dtype=torch.bool)
+    metadata = prepare_flash_attention(mask, 0, 2)
+    embedded = [None, torch.randn(1, 2, 4)]
+    positions = torch.arange(2)[None]
+    # Zero layers isolate Module's packing lifecycle from the CUDA-only kernel.
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU]
+    ) as profile:
+        first, _ = module(embedded, positions, mask, flash_metadata=metadata)
+        second, _ = module(embedded, positions, mask, flash_metadata=metadata)
+    operators = {event.key for event in profile.key_averages()}
+    assert "aten::equal" not in operators
+    assert "aten::nonzero" not in operators
+    torch.testing.assert_close(first[1], second[1])
+
+
+@pytest.mark.parametrize("pi05", [False, True])
+def test_openpi_suffix_attention_matches_embedded_tokens(pi05):
+    from rlinf.models.embodiment.openpi.pi0 import Pi0, make_attn_mask
+
+    policy = Pi0.__new__(Pi0)
+    torch.nn.Module.__init__(policy)
+    policy.pi05 = pi05
+    policy.action_horizon = 3
+    policy.llm = SimpleNamespace(attention_backend="eager")
+    policy.action_in_proj = torch.nn.Linear(4, 8)
+    if pi05:
+        policy.time_mlp_in = torch.nn.Linear(8, 8)
+        policy.time_mlp_out = torch.nn.Linear(8, 8)
+    else:
+        policy.state_proj = torch.nn.Linear(4, 8)
+        policy.action_time_mlp_in = torch.nn.Linear(16, 8)
+        policy.action_time_mlp_out = torch.nn.Linear(8, 8)
+    observation = Observation(images={}, image_masks={}, state=torch.randn(2, 4))
+    _, suffix_mask, suffix_ar, _ = policy.embed_suffix(
+        observation, torch.randn(2, 3, 4), torch.tensor([0.2, 0.7])
+    )
+    prefix_mask = torch.tensor([[True, False, True], [False, False, False]])
+    attention = policy.prepare_suffix_attention(prefix_mask)
+    prefix_length = prefix_mask.shape[1]
+    valid = torch.cat([prefix_mask, suffix_mask], dim=1)
+    ar = torch.cat([torch.zeros(prefix_length, dtype=torch.bool), suffix_ar])
+    torch.testing.assert_close(
+        attention.mask, make_attn_mask(valid, ar)[:, prefix_length:]
+    )
+    torch.testing.assert_close(
+        attention.positions, (valid.int().cumsum(-1) - 1)[:, prefix_length:]
+    )
+    assert attention.flash_metadata is None
 
 
 def test_openpi_flash_attention_rejects_other_visibility():
@@ -478,16 +542,26 @@ def test_openpi_flash_attention_3_dispatch(monkeypatch):
     assert actual is query
 
 
-@pytest.mark.parametrize("mode", ["joint", "prefix", "cached_suffix"])
+@pytest.mark.parametrize("mode", ["joint", "prefix", "masked_prefix", "cached_suffix"])
 @pytest.mark.parametrize("backend", ["flash_attention_2", "flash_attention_3"])
 def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
+    required = os.environ.get("RLINF_REQUIRED_FLASH_ATTENTION") == backend
     if not torch.cuda.is_available() or torch.version.hip is not None:
+        if required:
+            pytest.fail(f"{backend} coverage requires a CUDA GPU")
         pytest.skip("FlashAttention numerical coverage requires a CUDA GPU")
-    flash_attn = pytest.importorskip(
+    module = (
         "flash_attn"
         if backend == "flash_attention_2"
         else "flash_attn_3.flash_attn_interface"
     )
+    flash_attn = (
+        importlib.import_module(module) if required else pytest.importorskip(module)
+    )
+    if required and backend == "flash_attention_3":
+        assert torch.cuda.get_device_capability()[0] == 9, (
+            "FA3 coverage requires Hopper"
+        )
     from rlinf.models.embodiment.openpi.modules import gemma
     from rlinf.models.embodiment.openpi.modules.flash_attention import (
         prepare_flash_attention,
@@ -517,7 +591,7 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
     valid[:, 848:prefix] = False
     valid[0, :256] = False
     valid[1, :prefix] = False
-    if mode == "prefix":
+    if mode == "masked_prefix":
         valid[:, :prefix] = False
     ar_mask = torch.zeros(prefix + suffix, dtype=torch.bool, device=device)
     ar_mask[prefix] = True
@@ -545,7 +619,7 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
                 mask[:, None, :prefix, :prefix],
                 flash_metadata=metadata,
             )
-            if mode == "prefix":
+            if mode in ("prefix", "masked_prefix"):
                 return outputs
             metadata = None
             if use_flash:

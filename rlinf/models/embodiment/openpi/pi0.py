@@ -21,6 +21,7 @@ subclasses (eval / RL / DAgger / DSRL) inherit this module.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Sequence
 
@@ -31,9 +32,22 @@ import torch.nn.functional as F
 
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet, siglip
+from rlinf.models.embodiment.openpi.modules.flash_attention import (
+    FlashAttentionMetadata,
+    prepare_flash_attention,
+)
 from rlinf.models.embodiment.openpi.modules.utils import _str_to_dtype
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
+
+
+@dataclass(frozen=True)
+class SuffixAttention:
+    """Attention inputs shared by all denoising steps for one prefix cache."""
+
+    mask: torch.Tensor
+    positions: torch.Tensor
+    flash_metadata: FlashAttentionMetadata | None
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -464,6 +478,25 @@ class Pi0(model.BaseModel):
         )
         return outputs[0], prefix_mask, kv_cache
 
+    def prepare_suffix_attention(self, prefix_mask: torch.Tensor) -> SuffixAttention:
+        """Prepare the fixed suffix visibility and positions once per prefix cache."""
+        suffix_len = self.action_horizon + int(not self.pi05)
+        suffix_mask = prefix_mask.new_ones((prefix_mask.shape[0], suffix_len))
+        suffix_ar_mask = prefix_mask.new_zeros(suffix_len)
+        suffix_ar_mask[: 1 if self.pi05 else 2] = True
+        suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
+        prefix_to_suffix_mask = prefix_mask[:, None, :].expand(-1, suffix_len, -1)
+        mask = torch.cat([prefix_to_suffix_mask, suffix_attn_mask], dim=-1)
+        positions = (
+            prefix_mask.sum(dim=-1)[:, None] + suffix_mask.int().cumsum(dim=-1) - 1
+        )
+        metadata = None
+        if self.llm.attention_backend != "eager":
+            metadata = prepare_flash_attention(
+                mask, 0, suffix_len, backend=self.llm.attention_backend
+            )
+        return SuffixAttention(mask, positions, metadata)
+
     def run_suffix(
         self,
         observation: model.Observation,
@@ -471,30 +504,24 @@ class Pi0(model.BaseModel):
         t_tensor: torch.Tensor,
         kv_cache: tuple,
         prefix_mask: torch.Tensor,
+        *,
+        attention: SuffixAttention | None = None,
     ) -> torch.Tensor:
         """One suffix forward pass (action expert) given the prefix KV cache.
 
         Returns the action-expert hidden states sliced to the last
         ``action_horizon`` positions: (B, action_horizon, action_expert_width).
         """
-        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
-            observation, x_t, t_tensor
-        )
-        suffix_len = suffix_tokens.shape[1]
-        suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
-        prefix_to_suffix_mask = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_len)
-        full_attn_mask = torch.cat([prefix_to_suffix_mask, suffix_attn_mask], dim=-1)
-        suffix_positions = (
-            torch.sum(prefix_mask, dim=-1)[:, None]
-            + torch.cumsum(suffix_mask.int(), dim=-1)
-            - 1
-        )
+        suffix_tokens, _, _, adarms_cond = self.embed_suffix(observation, x_t, t_tensor)
+        if attention is None:
+            attention = self.prepare_suffix_attention(prefix_mask)
         outputs, _ = self.llm(
             [None, suffix_tokens],
-            positions=suffix_positions,
-            mask=full_attn_mask,
+            positions=attention.positions,
+            mask=attention.mask,
             kv_cache=kv_cache,
             adarms_cond=[None, adarms_cond],
+            flash_metadata=attention.flash_metadata,
         )
         # Official PI0Pytorch casts suffix hidden states to fp32 before
         # ``action_out_proj`` / the value head.
@@ -581,6 +608,7 @@ class Pi0(model.BaseModel):
             )
 
         _, prefix_mask, kv_cache = self.build_prefix_cache(observation)
+        attention = self.prepare_suffix_attention(prefix_mask)
 
         x_t = noise
         t = 1.0
@@ -589,7 +617,7 @@ class Pi0(model.BaseModel):
         while t >= -dt / 2:
             t_tensor = torch.full((B,), t, device=device, dtype=torch.float32)
             suffix_out_act = self.run_suffix(
-                observation, x_t, t_tensor, kv_cache, prefix_mask
+                observation, x_t, t_tensor, kv_cache, prefix_mask, attention=attention
             )
             v_t = self.velocity_from_suffix(suffix_out_act)
             x_t = x_t + dt * v_t

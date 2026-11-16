@@ -39,6 +39,7 @@ class FlashAttentionMetadata:
 
     blocks: tuple[_Block, ...]
     valid_queries: torch.Tensor
+    has_invalid_queries: bool
     backend: str = "flash_attention_2"
 
 
@@ -125,7 +126,13 @@ def prepare_flash_attention(
                 max_key_length=key_end,
             )
         )
-    return FlashAttentionMetadata(tuple(blocks), valid_queries, backend)
+    query_count = sum(block.query_indices.numel() for block in blocks)
+    return FlashAttentionMetadata(
+        tuple(blocks),
+        valid_queries,
+        query_count != valid_queries.numel(),
+        backend,
+    )
 
 
 def flash_attention(
@@ -170,8 +177,10 @@ def flash_attention(
             block.max_query_length,
             block.max_key_length,
         )
-        output = output.index_copy(0, block.query_indices, packed)
+        output.index_copy_(0, block.query_indices, packed)
     output = output.reshape(batch, query_length, heads, head_dim)
+    if not metadata.has_invalid_queries:
+        return output
 
     # Finite masked logits in eager attention produce uniform values, not zeros.
     weights = value.new_full((batch, key_length), 1.0 / key_length)

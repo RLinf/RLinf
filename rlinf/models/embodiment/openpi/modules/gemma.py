@@ -604,6 +604,7 @@ class Module(nn.Module):
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         return_prefix: bool = True,
         prefix_requires_grad: bool = True,
+        flash_metadata: FlashAttentionMetadata | None = None,
     ) -> tuple[list[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]]:
         """Full transformer forward pass.
 
@@ -615,6 +616,7 @@ class Module(nn.Module):
             kv_cache: optional KV cache for inference
             return_prefix: Compute expert-0 outputs through the final FFN and norm.
             prefix_requires_grad: Track gradients through the final prefix outputs.
+            flash_metadata: Packing reused across denoising steps for one prefix cache.
 
         Returns:
             (outputs, new_kv_cache)
@@ -622,8 +624,7 @@ class Module(nn.Module):
         if adarms_cond is None:
             adarms_cond = [None] * len(self.configs)
 
-        flash_metadata = None
-        if self.attention_backend != "eager":
+        if self.attention_backend != "eager" and flash_metadata is None:
             flash_metadata = prepare_flash_attention(
                 mask,
                 embedded[0].shape[1] if embedded[0] is not None else 0,

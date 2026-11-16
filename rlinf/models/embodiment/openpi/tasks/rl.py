@@ -203,6 +203,7 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         prefix_out, prefix_mask, kv_cache = self.build_prefix_cache(observation)
+        attention = self.prepare_suffix_attention(prefix_mask)
         vlm_value = None
         if rl_cfg.add_value_head and rl_cfg.value_after_vlm:
             vlm_value = rl_sampler.value_from_prefix(
@@ -244,7 +245,7 @@ class Pi0RL(EnvIO, Pi0):
             t_val = float(timesteps[idx].item())
             t_tensor = torch.full((B,), t_val, device=device, dtype=torch.float32)
             suffix_act = self.run_suffix(
-                observation, x_t, t_tensor, kv_cache, prefix_mask
+                observation, x_t, t_tensor, kv_cache, prefix_mask, attention=attention
             )
             v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
             noise_std = None
@@ -435,6 +436,7 @@ class Pi0RL(EnvIO, Pi0):
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
             observation
         )
+        attention = self.prepare_suffix_attention(prefix_mask)
 
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
         if rl_cfg.joint_logprob:
@@ -463,7 +465,12 @@ class Pi0RL(EnvIO, Pi0):
             chains_next = chains[arange_B, denoise_ind + 1]
             t_input = timesteps[denoise_ind].to(torch.float32)
             suffix_act = self.run_suffix(
-                observation, chains_pre, t_input, kv_cache, prefix_mask
+                observation,
+                chains_pre,
+                t_input,
+                kv_cache,
+                prefix_mask,
+                attention=attention,
             )
             v_t = self.velocity_from_suffix(suffix_act).to(torch.float32)
             noise_std = None
