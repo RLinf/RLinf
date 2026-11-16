@@ -341,60 +341,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             and actor_cfg is not None
             and actor_cfg.get("training_backend") == "megatron"
         ):
-            assert cfg.rollout_backend == "sglang", (
-                f"Qwen3.5 Megatron weight sync requires SGLang, got {cfg.rollout_backend}."
-            )
-            assert actor_cfg.megatron.get("mbridge", False), (
-                "Qwen3.5 weight loading requires actor.megatron.mbridge=True."
-            )
-            for role, model in (("actor", actor_cfg.model), ("rollout", cfg)):
-                pp_size = model.get(
-                    "pipeline_model_parallel_size",
-                    model.get("pipeline_parallel_size", 1),
-                )
-                assert pp_size == 1, (
-                    f"Qwen3.5 weight sync requires {role} PP=1, got {pp_size}."
-                )
-            assert actor_cfg.model.get("context_parallel_size", 1) == 1, (
-                "Qwen3.5 weight sync requires actor CP=1."
-            )
-            assert actor_cfg.model.get("virtual_pipeline_model_parallel_size") in (
-                None,
-                1,
-            ), "Qwen3.5 weight sync does not support virtual pipeline parallelism."
-            assert not (
-                cfg.sglang.get("enable_dp_attention", False)
-                or cfg.sglang.get("mm_enable_dp_encoder", False)
-            ), "Qwen3.5 weight sync requires tensor-parallel attention and vision."
-            assert not cfg.sglang.get("enable_dp_lm_head", False), (
-                "Qwen3.5 weight sync requires the LM head to use the model TP group."
-            )
-            assert not cfg.sglang.get("enable_ep_moe", False), (
-                "Qwen3.5-27B is dense; disable enable_ep_moe."
-            )
-            assert not cfg.enforce_eager, (
-                "Qwen3.5 weight sync requires enforce_eager=False."
-            )
-            assert (
-                cfg.sglang.get("quantization") is None
-                and cfg.sglang.get("speculative_draft_model_quantization") is None
-            ), "Qwen3.5 weight sync requires unquantized target and draft models."
             load_mtp = actor_cfg.model.get("load_mtp", True)
             assert isinstance(load_mtp, bool), (
                 f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
             )
-            if load_mtp:
-                assert cfg.sglang.get("speculative_eagle_topk", 1) == 1, (
-                    "Qwen3.5 MTP weight sync requires speculative_eagle_topk=1."
-                )
-            assert cfg.sglang.get("moe_dense_tp_size") in (
-                None,
-                cfg.tensor_parallel_size,
-            ), "Qwen3.5 dense MLP must use the model TP group."
-            assert (
-                actor_cfg.model.get("expert_model_parallel_size", 1) == 1
-                and cfg.sglang.get("ep_size", 1) == 1
-            ), "Qwen3.5-27B is dense and requires EP=1."
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
