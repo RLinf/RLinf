@@ -463,10 +463,11 @@ class Cluster:
 
             with without_http_proxies():
                 alive_actors = list_actors(
+                    address=ray.get_runtime_context().gcs_address,
                     filters=[
                         ("STATE", "=", "ALIVE"),
                         ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                    ]
+                    ],
                 )
             for actor_state in alive_actors:
                 actor = ray.get_actor(actor_state.name)

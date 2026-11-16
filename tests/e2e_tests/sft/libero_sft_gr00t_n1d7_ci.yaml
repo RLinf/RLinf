@@ -19,10 +19,11 @@ runner:
     logger_backends: null
 
 data:
-  format: lerobot
-  video_backend: torchcodec
   train_data_paths:
-    - /workspace/dataset/data/sft-ci-data/gr00t-libero-spatial-episode0
+    - /workspace/dataset/data/sft-ci-data/physical-intelligence/libero
+  statistics_path: /workspace/results/libero_sft_gr00t_n1d7/statistics.json
+  task_names:
+    - pick up the black bowl next to the cookie box and place it on the plate
   num_workers: 0
   shard_size: 128
   num_shards_per_epoch: 2

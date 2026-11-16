@@ -308,13 +308,6 @@ class FlowMatchingActionHeadForRLActionPrediction(Gr00tN1d7ActionHead):
         super().__init__(config)
         self.config = config
         self.rl_config = rl_head_config
-        # Only set defaults if not already specified in config.
-        if "noise_method" not in self.rl_config:
-            self.rl_config["noise_method"] = "flow_sde"
-        if "noise_level" not in self.rl_config:
-            self.rl_config["noise_level"] = 0.5
-        if "noise_anneal" not in self.rl_config:
-            self.rl_config["noise_anneal"] = False
         self.padding_value = rl_head_config.get("padding_value", 0)
         self.output_action_chunks = output_action_chunks
         # Keep the upstream diffusion/action-head width separate from the
@@ -552,7 +545,7 @@ class FlowMatchingActionHeadForRLActionPrediction(Gr00tN1d7ActionHead):
             x1_weight = t_input + delta
             x_t_std = torch.zeros_like(t_input)
         else:
-            if self.rl_config.get("noise_method") == "flow_sde":
+            if self.rl_config.get("noise_method", "flow_sde") == "flow_sde":
                 sigmas = (
                     noise_level
                     * torch.sqrt(

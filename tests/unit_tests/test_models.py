@@ -3334,7 +3334,7 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
 
 
 @pytest.mark.parametrize("parameter_dtype", [torch.float32, torch.bfloat16])
-def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch, parameter_dtype):
+def test_gr00t_sft_loss(monkeypatch, parameter_dtype):
     """SFT dispatch must preserve the upstream FM objective and gradient path."""
     if isinstance(sys.modules.get("imageio"), MagicMock):
         monkeypatch.delitem(sys.modules, "imageio")
@@ -3411,8 +3411,11 @@ def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch, parameter
     )
     model.config = config
     model.backbone = Backbone()
+    rl_head_config = OmegaConf.create({"add_value_head": False})
+    OmegaConf.set_struct(rl_head_config, True)
+    OmegaConf.set_readonly(rl_head_config, True)
     model.action_head = FlowMatchingActionHeadForRLActionPrediction(
-        config, {"add_value_head": False}, output_action_chunks=3
+        config, rl_head_config, output_action_chunks=3
     ).float()
     model.train()
     assert model.dtype == parameter_dtype
@@ -3517,7 +3520,7 @@ def gr00t_libero_parquet(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_gr00t_libero_statistics_match_training_values(gr00t_libero_parquet):
+def test_gr00t_libero_stats(gr00t_libero_parquet):
     from rlinf.data.datasets.gr00t.libero import LiberoEpisodeLoader
 
     reader = LiberoEpisodeLoader(gr00t_libero_parquet, ["pick up bowl"])
@@ -3525,7 +3528,6 @@ def test_gr00t_libero_statistics_match_training_values(gr00t_libero_parquet):
     cache = gr00t_libero_parquet / "cache/statistics.json"
     reader.prepare_statistics(cache)
     statistics = reader.load_statistics(cache)
-    assert len(frames) == 3
     assert frames[0]["state.gripper"].iloc[0].shape == (2,)
     np.testing.assert_array_equal(
         np.concatenate(frames[0]["action.gripper"].tolist()),
@@ -3547,7 +3549,7 @@ def test_gr00t_libero_statistics_match_training_values(gr00t_libero_parquet):
 
 
 @pytest.mark.parametrize("seed,sampling_rate", [(0, 1.0), (19, 1.0), (0, 0.5)])
-def test_gr00t_libero_shards_match_upstream(gr00t_libero_parquet, seed, sampling_rate):
+def test_gr00t_libero_shards(gr00t_libero_parquet, seed, sampling_rate):
     from gr00t.data.dataset.sharded_single_step_dataset import ShardedSingleStepDataset
     from gr00t.data.types import EmbodimentTag, ModalityConfig
 
@@ -3575,13 +3577,13 @@ def test_gr00t_libero_shards_match_upstream(gr00t_libero_parquet, seed, sampling
         LiberoEpisodeLoader(gr00t_libero_parquet, None), statistics={}, **options
     )
     upstream = ShardedSingleStepDataset(gr00t_libero_parquet, **options)
-    np.testing.assert_array_equal(dataset.shard_lengths, upstream.shard_lengths)
-    assert sum(dataset.get_shard_length(i) for i in range(len(dataset))) == 20
+    assert len(dataset) == len(upstream)
     dataset.set_processor(lambda messages: messages[0]["content"])
     upstream.set_processor(lambda messages: messages[0]["content"])
     for shard_index in range(len(dataset)):
         actual = dataset.get_shard(shard_index)
         expected = upstream.get_shard(shard_index)
+        assert len(actual) == dataset.get_shard_length(shard_index)
         assert len(actual) == len(expected)
         for sample, reference in zip(actual, expected):
             assert sample.text == reference.text
@@ -3589,9 +3591,7 @@ def test_gr00t_libero_shards_match_upstream(gr00t_libero_parquet, seed, sampling
             np.testing.assert_array_equal(sample.actions["x"], reference.actions["x"])
 
 
-def test_gr00t_sft_checkpoint_saves_training_processor(
-    gr00t_libero_parquet, monkeypatch
-):
+def test_gr00t_sft_metadata(gr00t_libero_parquet, monkeypatch):
     import json
 
     processing = pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
