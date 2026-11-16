@@ -79,7 +79,6 @@ class ObservationBuilder:
         )
         self.data = {
             self.video_key: [[video.unsqueeze(1)] for video in videos],
-            "action": [[torch.zeros(16, 64)] for _ in images],
             "mode": ["policy"] * len(images),
             "sequence_plan": [
                 build_sequence_plan_from_mode("policy", 1, 16) for _ in images
@@ -130,7 +129,7 @@ def test_physical_labels_use_rot6d_stats_once_and_preserve_input(batch, normaliz
     torch.testing.assert_close(batch["actions"], original)
     assert builder.observations["main_images"] is batch["image"]
     assert builder.observations["wrist_images"] is batch["wrist_image"]
-    assert builder.observations["states"] is batch["state"]
+    assert "states" not in builder.observations
     assert builder.observations["task_descriptions"] is batch["task"]
     assert data["action_processing_record"][0].raw_action_dim == 10
     assert [int(dim) for dim in data["raw_action_dim"]] == [10, 10]
@@ -147,9 +146,9 @@ def test_padding_is_clean_zero_and_does_not_change_vision_or_channel_masks(
     assert data["sequence_plan"][1].condition_frame_indexes_action == [12, 13, 14, 15]
     assert data["sequence_plan"][1].condition_frame_indexes_vision == [0]
     assert data["sequence_plan"][1].action_start_frame_offset == 1
-    # Builder-owned plans and action placeholders are not modified in place.
+    # The adapter leaves builder-owned plans alone and adds actions to its copy.
     assert builder.data["sequence_plan"][1].condition_frame_indexes_action == []
-    assert torch.count_nonzero(builder.data["action"][0][0]) == 0
+    assert "action" not in builder.data
     batch["actions"][1, 12:] = float("nan")
     changed = prepare(batch, normalizer)
     torch.testing.assert_close(changed["action"][1][0], data["action"][1][0])
@@ -228,7 +227,7 @@ def test_invalid_policy_layout_is_rejected(batch, normalizer, invalid):
                 ),
             )
         elif invalid == "size":
-            data["action"].pop()
+            data["sequence_plan"].pop()
         else:
             data["raw_action_dim"] = [torch.tensor(7)] * 2
         return data, tokens
@@ -293,3 +292,146 @@ def test_native_flow_loss_excludes_temporal_and_channel_padding():
         prediction.grad[:12, :10],
         torch.full((12, 10), -2 / 120),
     )
+
+
+class CaptionRecorder(torch.nn.Module):
+    """Capture the string passed to the external tokenizer without model weights."""
+
+    def __init__(self):
+        super().__init__()
+        from types import SimpleNamespace
+
+        self.parameter = torch.nn.Parameter(torch.zeros(()))
+        self.config = SimpleNamespace(max_action_dim=64)
+        self.input_video_key = "video"
+        self.captions = []
+
+    def tokenize_text(self, captions, **kwargs):
+        self.captions = list(captions)
+        self.tokenizer_kwargs = kwargs
+        return torch.tensor([[1, 2]] * len(captions), dtype=torch.long)
+
+
+def make_joint_policy(dropout_rate):
+    from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
+
+    model = CaptionRecorder()
+    policy = Cosmos3Policy(
+        model,
+        ema_enabled=False,
+        rollout_config={
+            "num_frames": 17,
+            "fps": 20,
+            "image_size": 256,
+            "action_model_mode": "wam",
+            "sft_objective": "joint",
+            "sft_cfg_dropout_rate": dropout_rate,
+        },
+    )
+    return policy, model
+
+
+def joint_batch():
+    pixels = torch.arange(256, dtype=torch.uint8).view(1, 1, 1, 256)
+    pixels = pixels.expand(1, 3, 256, 256).contiguous()
+    return {
+        "image": pixels,
+        "wrist_image": pixels.flip(-1),
+        "vision_images": pixels[:, None].expand(-1, 17, -1, -1, -1),
+        "vision_wrist_images": pixels.flip(-1)[:, None].expand(-1, 17, -1, -1, -1),
+        "vision_valid": torch.ones(1, dtype=torch.bool),
+        "task": ["pick the cup"],
+        "actions": torch.zeros(1, 16, 7),
+        "actions_is_pad": torch.zeros(1, 16, dtype=torch.bool),
+    }
+
+
+def test_joint_preprocessing_matches_native_sft_video_caption_and_actions():
+    import json
+
+    from cosmos_framework.data.generator.action.datasets.libero_lerobot_dataset import (
+        LIBEROLeRobotDataset,
+    )
+    from cosmos_framework.data.generator.action.utils.pose_utils import convert_rotation
+    from cosmos_framework.data.generator.action.utils.transforms import (
+        ActionTransformPipeline,
+    )
+
+    batch = joint_batch()
+    policy, tokenizer = make_joint_policy(0)
+    actual = policy.prepare_lerobot_sft_batch(batch)
+    raw7 = batch["actions"][0]
+    raw10 = torch.cat(
+        [
+            raw7[:, :3],
+            convert_rotation(raw7[:, 3:6], "axisangle", "rot6d"),
+            raw7[:, 6:],
+        ],
+        dim=-1,
+    )
+    # The native idle detector needs only the physical action spec and fps.
+    native_dataset = object.__new__(LIBEROLeRobotDataset)
+    native_dataset._fps = 20
+    native_dataset._rotation_space = "6d"
+    idle = native_dataset._compute_idle_frames(raw10)
+    assert idle > 0
+    native_video = torch.cat(
+        [batch["vision_images"][0], batch["vision_wrist_images"][0]], dim=-1
+    ).permute(1, 0, 2, 3)
+    sample = {
+        "video": native_video,
+        "action": policy._get_action_normalizer().normalize_action(raw10),
+        "ai_caption": batch["task"][0],
+        "conditioning_fps": torch.tensor(20),
+        "domain_id": torch.tensor(5),
+        "viewpoint": "concat_view",
+        "mode": "wam",
+        "idle_frames": idle,
+        "additional_view_description": (
+            "The left half shows the third-person view; the right half "
+            "shows the wrist-mounted camera."
+        ),
+    }
+    expected = ActionTransformPipeline(
+        tokenizer_config=None, max_action_dim=64, format_prompt_as_json=True
+    )(sample, None)
+    assert tokenizer.captions == [json.dumps(expected["ai_caption"])]
+    assert tokenizer.tokenizer_kwargs["is_video"] is False
+    assert tokenizer.tokenizer_kwargs["use_system_prompt"] is False
+    torch.testing.assert_close(actual["video"][0][0], expected["video"], rtol=0, atol=0)
+    torch.testing.assert_close(
+        actual["action"][0][0], expected["action"], rtol=0, atol=0
+    )
+    torch.testing.assert_close(actual["image_size"][0], expected["image_size"])
+    assert actual["sequence_plan"][0] == expected["sequence_plan"]
+
+
+@pytest.mark.parametrize(
+    "dropout_rate,random_value,dropped",
+    [(0.1, 0.05, True), (0.1, 0.15, False), (1.0, 0.99, True), (0.0, 0.0, False)],
+)
+def test_sft_caption_dropout_matches_native_probability(
+    monkeypatch, dropout_rate, random_value, dropped
+):
+    import random
+
+    monkeypatch.setattr(random, "random", lambda: random_value)
+    policy, tokenizer = make_joint_policy(dropout_rate)
+    prepared = policy.prepare_lerobot_sft_batch(joint_batch())
+    assert (tokenizer.captions[0] == "") is dropped
+    assert prepared["mode"] == ["wam"]
+    assert prepared["video"][0][0].shape == (3, 17, 192, 320)
+    assert prepared["action"][0][0].shape == (16, 64)
+
+
+def test_sft_tokens_use_native_truncation_without_rollout_length_limit(monkeypatch):
+    from cosmos_framework.data.generator.augmentors.text_tokenizer import (
+        _MAX_NUM_TOKENS,
+    )
+
+    policy, tokenizer = make_joint_policy(0)
+    policy._rollout_config["max_prompt_length"] = 16
+    ids = torch.arange(_MAX_NUM_TOKENS + 10, dtype=torch.long).unsqueeze(0)
+    monkeypatch.setattr(tokenizer, "tokenize_text", lambda *args, **kwargs: ids)
+    prepared = policy.prepare_lerobot_sft_batch(joint_batch())
+    assert prepared["text_token_ids"][0][0].tolist() == list(range(_MAX_NUM_TOKENS))

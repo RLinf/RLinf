@@ -33,6 +33,7 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler.collective import AsyncRouteWork
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -1084,7 +1085,9 @@ class EnvWorker(Worker):
         """Infer the batch dimension of a policy response."""
         return int(actions.shape[0])
 
-    def _recv_actions(self, input_channel: Channel, stage_id: int) -> torch.Tensor:
+    def _recv_actions(
+        self, input_channel: Channel, stage_id: int, *, async_op: bool = False
+    ) -> torch.Tensor | AsyncRouteWork:
         """Receive actions using the route paired with the policy request."""
         return self.recv_from(
             group_name=self.cfg.rollout.group_name,
@@ -1094,6 +1097,7 @@ class EnvWorker(Worker):
             batch_size=self.train_batch_size,
             infer_batch_size_fn=self._infer_action_batch_size,
             decoupled_mode=self.env_decoupled_mode,
+            async_op=async_op,
         )
 
     @Worker.timer("run_interact_once")
@@ -1132,8 +1136,11 @@ class EnvWorker(Worker):
                 for stage_id in range(self.stage_num):
                     if cooperative_yield:
                         await asyncio.sleep(0)
-
-                    actions = self._recv_actions(input_channel, stage_id)
+                        actions = await self._recv_actions(
+                            input_channel, stage_id, async_op=True
+                        ).async_wait()
+                    else:
+                        actions = self._recv_actions(input_channel, stage_id)
                     self.smooth_intervene.remember_actions(stage_id, actions)
 
                     env_output, env_info, chunk_step_data = self.env_interact_step(

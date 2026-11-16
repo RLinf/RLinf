@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Online LeRobot expert-action windows to Cosmos grouped policy batches."""
+"""Online LeRobot windows to Cosmos grouped action and video batches."""
 
 from __future__ import annotations
 
@@ -30,11 +30,12 @@ def prepare_lerobot_batch(
     max_action_dim: int,
     normalizer: Any,
     prepare_observation_batch: Callable[
-        [dict[str, Any]], tuple[dict[str, Any], dict[str, torch.Tensor]]
+        ..., tuple[dict[str, Any], dict[str, torch.Tensor]]
     ],
     video_key: str = "video",
+    include_vision: bool = False,
 ) -> dict[str, Any]:
-    """Convert physical LIBERO labels and current observations to policy inputs.
+    """Convert physical LIBERO labels and observations to Cosmos SFT inputs.
 
     Args:
         batch: LeRobot observations, task strings, raw actions [B,H,7], and a
@@ -42,9 +43,11 @@ def prepare_lerobot_batch(
         horizon: Number of action targets in each training window.
         max_action_dim: Padded Cosmos action width, at least 10.
         normalizer: Fixed LIBERO rot6d action normalizer, shared with inference.
-        prepare_observation_batch: Shared Cosmos observation and text builder.
-            It must return single-current-frame policy batches.
+        prepare_observation_batch: Builds grouped Cosmos observation metadata and
+            batched prompt tokens with their validity mask.
         video_key: Native Cosmos model's input video field.
+        include_vision: Train on real future observations where a complete
+            ``vision_images`` clip is available, as indicated by ``vision_valid``.
 
     Returns:
         Native grouped inputs, with normalized rot6d actions and ragged tokens.
@@ -65,14 +68,16 @@ def prepare_lerobot_batch(
         raise ValueError(
             f"Expected raw LIBERO actions [B,{horizon},7], got {tuple(raw7.shape)}."
         )
-    pad = torch.as_tensor(batch["actions_is_pad"], device=raw7.device)
+    pad = torch.as_tensor(batch["actions_is_pad"])
     if pad.dtype != torch.bool or pad.shape != raw7.shape[:2]:
         raise ValueError(
             f"Expected actions_is_pad bool {tuple(raw7.shape[:2])}, "
             f"got shape={tuple(pad.shape)} dtype={pad.dtype}."
         )
-    if pad[:, 0].any() or (pad[:, :-1] & ~pad[:, 1:]).any():
+    pad_cpu = pad.cpu()
+    if pad_cpu[:, 0].any() or (pad_cpu[:, :-1] & ~pad_cpu[:, 1:]).any():
         raise ValueError("LeRobot action windows must have a non-empty valid prefix.")
+    pad = pad.to(device=raw7.device)
     if not torch.isfinite(raw7[~pad]).all():
         raise ValueError("Non-padded expert actions must be finite.")
     # Episode padding can contain repeated actions or NaNs; neither is a label.
@@ -97,30 +102,60 @@ def prepare_lerobot_batch(
     observations = {
         "main_images": batch["image"],
         "task_descriptions": batch["task"],
+        "raw_actions": raw10,
+        "actions_is_pad": pad_cpu,
     }
     if batch.get("wrist_image") is not None:
         observations["wrist_images"] = batch["wrist_image"]
-    if batch.get("state") is not None:
-        observations["states"] = batch["state"]
-    prepared, forward_inputs = prepare_observation_batch(observations)
-    data = dict(prepared)
     batch_size = raw7.shape[0]
-    if data.get("mode") != ["policy"] * batch_size or any(
+    modes = ["policy"] * batch_size
+    vision_kwargs = {}
+    if include_vision:
+        missing = {"vision_images", "vision_valid"} - batch.keys()
+        if missing:
+            raise ValueError(
+                f"Joint Cosmos SFT batch is missing fields: {sorted(missing)}."
+            )
+        vision_valid = torch.as_tensor(batch["vision_valid"], device="cpu")
+        if vision_valid.shape != (batch_size,) or vision_valid.dtype != torch.bool:
+            raise ValueError(f"Expected vision_valid bool [{batch_size}].")
+        if (vision_valid & pad_cpu.any(dim=1)).any():
+            raise ValueError(
+                "A complete vision clip cannot contain padded action steps."
+            )
+        modes = ["wam" if valid else "policy" for valid in vision_valid.tolist()]
+        vision_kwargs = {
+            "vision_images": batch["vision_images"],
+            "vision_wrist_images": batch.get("vision_wrist_images"),
+            "vision_valid": vision_valid,
+        }
+
+    prepared, forward_inputs = prepare_observation_batch(observations, **vision_kwargs)
+    data = dict(prepared)
+    if data.get("mode") != modes or any(
         len(data.get(key, [])) != batch_size
-        for key in ("action", "sequence_plan", video_key, "raw_action_dim")
+        for key in ("sequence_plan", video_key, "raw_action_dim")
     ):
-        raise ValueError("Expected a Cosmos policy batch with matching batch size.")
-    for videos, plan, raw_dim in zip(
-        data[video_key], data["sequence_plan"], data["raw_action_dim"], strict=True
+        raise ValueError("Expected a Cosmos batch with matching sample modes and size.")
+    for videos, plan, raw_dim, mode in zip(
+        data[video_key],
+        data["sequence_plan"],
+        data["raw_action_dim"],
+        modes,
+        strict=True,
     ):
+        num_frames = horizon + 1 if mode == "wam" else 1
         if (
             len(videos) != 1
             or not isinstance(videos[0], torch.Tensor)
             or videos[0].ndim != 4
-            or videos[0].shape[1] != 1
+            or videos[0].shape[1] != num_frames
             or plan.condition_frame_indexes_vision != [0]
         ):
-            raise ValueError("Cosmos policy training requires one clean current image.")
+            raise ValueError(
+                f"Cosmos {mode} training requires {num_frames} frames with "
+                "the first frame conditioned."
+            )
         if plan.condition_frame_indexes_action:
             raise ValueError("LeRobot action windows must not contain action history.")
         if raw_dim is None or int(raw_dim) != 10:
@@ -147,7 +182,7 @@ def prepare_lerobot_batch(
             plan,
             condition_frame_indexes_action=torch.where(sample_pad)[0].tolist(),
         )
-        for plan, sample_pad in zip(data["sequence_plan"], pad, strict=True)
+        for plan, sample_pad in zip(data["sequence_plan"], pad_cpu, strict=True)
     ]
     # training_step accepts grouped ragged token IDs, not fixed-width replay IDs.
     data["text_token_ids"] = [

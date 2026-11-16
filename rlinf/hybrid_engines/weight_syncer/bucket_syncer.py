@@ -14,12 +14,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Iterable, Iterator
 
 import torch
 from torch.distributed.tensor import DTensor
 
 from rlinf.scheduler import Worker
+from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import (
     dtype_size,
     materialize_tensor,
@@ -29,6 +32,20 @@ from rlinf.utils.utils import (
 )
 
 from .base import RecvFn, SendFn, WeightSyncer
+
+logger = get_logger()
+
+
+def _tensor_fingerprint(name: str, tensor: torch.Tensor) -> str:
+    value = tensor.detach().cpu().contiguous()
+    header = json.dumps([name, str(value.dtype), list(value.shape)]).encode()
+    digest = hashlib.sha256(header)
+    digest.update(value.reshape(-1).view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _fingerprints_digest(fingerprints: dict[str, str]) -> str:
+    return hashlib.sha256(json.dumps(sorted(fingerprints.items())).encode()).hexdigest()
 
 
 def iter_named_tensor_buckets(
@@ -56,6 +73,7 @@ def iter_named_tensor_buckets(
     metadata_keys = {
         BucketWeightSyncer._TOTAL_BUCKETS_KEY,
         BucketWeightSyncer._SYNCER_VERSION_KEY,
+        BucketWeightSyncer._SHA256_KEY,
     }
     bucket_device = normalize_device(bucket_device)
     prepared_items: list[tuple[str, torch.Tensor | DTensor, torch.dtype]] = []
@@ -134,10 +152,14 @@ class BucketWeightSyncer(WeightSyncer):
         is_agent: Whether to apply agent-specific language-model key rewriting.
         load_instant: Whether the receiver loads each bucket immediately instead
             of staging all buckets on CPU before one final model load.
+        verify_interval: Audit versions divisible by this interval, including zero.
+            Zero disables checksums. Audits copy synchronized tensors to CPU.
+        last_verification: Version and digests for the latest audited apply, or None.
     """
 
     _TOTAL_BUCKETS_KEY = "total_buckets"
     _SYNCER_VERSION_KEY = "syncer_version"
+    _SHA256_KEY = "syncer_sha256"
 
     def __init__(
         self,
@@ -146,6 +168,7 @@ class BucketWeightSyncer(WeightSyncer):
         bucket_device: str | torch.device,
         is_agent: bool = False,
         load_instant: bool = True,
+        verify_interval: int = 0,
     ):
         super().__init__()
         self.bucket_size = bucket_size
@@ -153,6 +176,12 @@ class BucketWeightSyncer(WeightSyncer):
         self.bucket_device = normalize_device(bucket_device)
         self.is_agent = is_agent
         self.load_instant = load_instant
+        if verify_interval < 0:
+            raise ValueError("verify_interval must be nonnegative")
+        self.verify_interval = verify_interval
+        self.last_verification: dict | None = None
+        self._verified_fingerprints: dict[str, str] = {}
+        self._is_sender = True
 
     def _bucket_key(self, key: str, has_visual: bool) -> str | None:
         """
@@ -248,11 +277,12 @@ class BucketWeightSyncer(WeightSyncer):
             - param_names_need_sync (list[str]): A list of parameter names that need to be synchronized.
             - send (SendFn): The function for sender to communicate with the receiver.
             - recv (RecvFn | None): The function for receiver to communicate with the sender.
-            - is_sender (bool): Whether this worker is the active weight sender. BucketWeightSyncer ignores
-                this flag because the caller's send function already handles sender selection.
+            - is_sender (bool): Whether this worker sends payloads. Inactive workers
+                still materialize distributed tensors but skip checksum computation.
         """
 
-        del state_dict, send, recv, is_sender
+        del state_dict, send, recv
+        self._is_sender = is_sender
         self.param_names_need_sync = param_names_need_sync
         self.param_names_need_sync_set = set(param_names_need_sync)
         if not self.param_names_need_sync_set:
@@ -274,9 +304,82 @@ class BucketWeightSyncer(WeightSyncer):
             - send (SendFn): The function to send synchronized buckets. it should define who sends, how to send, and where to send.
             - version (int | torch.Tensor): The version of the model weights being synchronized.
         """
+        verify = (
+            self._is_sender
+            and self.verify_interval > 0
+            and int(version) % self.verify_interval == 0
+        )
+        fingerprints: dict[str, str] = {}
+        if verify:
+            missing = set(self.param_names_need_sync) - state_dict.keys()
+            if missing:
+                raise RuntimeError(
+                    f"Weight sync source is missing tensors: {sorted(missing)}"
+                )
         for bucket in self.iter_buckets(state_dict, version):
+            if verify:
+                bucket_fingerprints = {
+                    key: _tensor_fingerprint(key, value)
+                    for key, value in bucket.items()
+                    if key not in (self._TOTAL_BUCKETS_KEY, self._SYNCER_VERSION_KEY)
+                }
+                fingerprints.update(bucket_fingerprints)
+                digest = bytes.fromhex(_fingerprints_digest(bucket_fingerprints))
+                bucket[self._SHA256_KEY] = torch.tensor(
+                    list(digest), dtype=torch.uint8, device=self.bucket_device
+                )
             await send(bucket)
             del bucket
+        if verify:
+            logger.info(
+                f"Weight sync verified sender version={int(version)} "
+                f"tensors={len(fingerprints)} sha256={_fingerprints_digest(fingerprints)}"
+            )
+
+    def _verify_loaded_bucket(
+        self,
+        model: torch.nn.Module,
+        bucket: dict[str, torch.Tensor],
+        fingerprints: dict[str, str],
+        incompatible_keys,
+    ) -> None:
+        if incompatible_keys.unexpected_keys:
+            raise RuntimeError(
+                f"Weight sync has unexpected target keys: {incompatible_keys.unexpected_keys}"
+            )
+        target_state = model.state_dict()
+        for key, value in bucket.items():
+            if key not in target_state:
+                raise RuntimeError(f"Weight sync target is missing tensor: {key}")
+            target = target_state[key]
+            expected = fingerprints[key]
+            if target.dtype != value.dtype:
+                expected = _tensor_fingerprint(key, value.to(dtype=target.dtype))
+            actual = _tensor_fingerprint(key, target)
+            if actual != expected:
+                raise RuntimeError(
+                    f"Weight sync loaded tensor differs from source: {key}"
+                )
+            self._verified_fingerprints[key] = actual
+
+    def verify_applied_weights(self, model: torch.nn.Module) -> dict | None:
+        """Recheck the last audited snapshot against the model used for evaluation.
+
+        Returns None if the latest synchronization was not audited. Otherwise
+        returns its version, tensor count and transport/model SHA256 digests.
+        """
+        if self.last_verification is None:
+            return None
+        target_state = model.state_dict()
+        for key, expected in self._verified_fingerprints.items():
+            if (
+                key not in target_state
+                or _tensor_fingerprint(key, target_state[key]) != expected
+            ):
+                raise RuntimeError(
+                    f"Weight sync tensor changed before evaluation: {key}"
+                )
+        return dict(self.last_verification)
 
     async def apply(self, model: torch.nn.Module, recv: RecvFn) -> int:
         """
@@ -291,9 +394,18 @@ class BucketWeightSyncer(WeightSyncer):
             int: The version of the model weights that have been applied.
         """
 
+        self.last_verification = None
+        self._verified_fingerprints = {}
         bucket: dict[str, torch.Tensor] = await recv()
         total_buckets = int(bucket.pop(self._TOTAL_BUCKETS_KEY).item())
         applied_version = int(bucket.pop(self._SYNCER_VERSION_KEY).item())
+        verify_required = (
+            self.verify_interval > 0 and applied_version % self.verify_interval == 0
+        )
+        if verify_required or self._SHA256_KEY in bucket:
+            return await self._apply_verified(
+                model, recv, bucket, total_buckets, applied_version
+            )
 
         fallback_keepalive: list[torch.Tensor] = []
         current_stream: torch.Stream | None = None
@@ -337,3 +449,65 @@ class BucketWeightSyncer(WeightSyncer):
             del fallback_keepalive
 
         return applied_version
+
+    async def _apply_verified(
+        self,
+        model: torch.nn.Module,
+        recv: RecvFn,
+        first_bucket: dict[str, torch.Tensor],
+        total_buckets: int,
+        version: int,
+    ) -> int:
+        fingerprints: dict[str, str] = {}
+        cpu_buffer: dict[str, torch.Tensor] = {}
+        for index in range(total_buckets):
+            bucket = first_bucket if index == 0 else await recv()
+            first_bucket = None
+            checksum = bucket.pop(self._SHA256_KEY, None)
+            if (
+                checksum is None
+                or checksum.dtype != torch.uint8
+                or checksum.shape != (32,)
+            ):
+                raise RuntimeError(
+                    f"Weight sync version {version} bucket {index} has no valid SHA256"
+                )
+            bucket_fingerprints = {
+                key: _tensor_fingerprint(key, value) for key, value in bucket.items()
+            }
+            actual = _fingerprints_digest(bucket_fingerprints)
+            expected = bytes(checksum.cpu().tolist()).hex()
+            if actual != expected:
+                raise RuntimeError(
+                    f"Weight sync payload SHA256 mismatch at version {version} bucket {index}"
+                )
+            duplicate = fingerprints.keys() & bucket_fingerprints.keys()
+            if duplicate:
+                raise RuntimeError(
+                    f"Weight sync contains duplicate tensors: {sorted(duplicate)}"
+                )
+            fingerprints.update(bucket_fingerprints)
+            if self.load_instant:
+                incompatible = model.load_state_dict(bucket, strict=False)
+                self._verify_loaded_bucket(
+                    model, bucket, bucket_fingerprints, incompatible
+                )
+            else:
+                cpu_buffer.update({key: value.cpu() for key, value in bucket.items()})
+            # Fingerprinting copied tensors synchronously; no device work retains the bucket.
+            bucket.clear()
+        if not self.load_instant:
+            incompatible = model.load_state_dict(cpu_buffer, strict=False)
+            self._verify_loaded_bucket(model, cpu_buffer, fingerprints, incompatible)
+        self.last_verification = {
+            "version": version,
+            "tensor_count": len(fingerprints),
+            "transport_sha256": _fingerprints_digest(fingerprints),
+            "model_sha256": _fingerprints_digest(self._verified_fingerprints),
+        }
+        logger.info(
+            f"Weight sync verified receiver version={version} tensors={len(fingerprints)} "
+            f"transport_sha256={self.last_verification['transport_sha256']} "
+            f"model_sha256={self.last_verification['model_sha256']}"
+        )
+        return version

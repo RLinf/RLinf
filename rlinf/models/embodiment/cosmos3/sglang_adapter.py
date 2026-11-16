@@ -72,6 +72,7 @@ class Cosmos3SGLangAdapter:
         self._fps = int(c.get("fps", 20))
         # num_inference_steps=35 -> OOD prompt caption + different denoise.
         self._num_inference_steps = int(c.get("num_inference_steps", 30))
+        self._native_eval = bool(c.get("native_eval", False))
 
         # Cosmos3 LIBERO recipe: rot6d 10-D, frame_wise_relative, quantile_rot.
         # raw_action_dim is the MODEL width 10, distinct from the env's 7.
@@ -161,6 +162,14 @@ class Cosmos3SGLangAdapter:
 
     def _rot6d_to_axisangle(self, rot6d: np.ndarray) -> np.ndarray:
         """rot6d ``[N, 6]`` -> axis-angle (rotvec) ``[N, 3]``."""
+        if self._native_eval:
+            from cosmos_framework.data.generator.action.utils.pose_utils import (
+                convert_rotation,
+            )
+
+            return np.asarray(
+                convert_rotation(rot6d, "rot6d", "axisangle"), dtype=np.float32
+            )
         from scipy.spatial.transform import Rotation as R
 
         rot6d = np.asarray(rot6d, dtype=np.float32).reshape(-1, 6)
@@ -182,12 +191,16 @@ class Cosmos3SGLangAdapter:
         if mode != "eval":
             raise NotImplementedError("Cosmos3 sglang adapter supports eval only.")
         tasks = self._extract_tasks(env_obs)
-        image_uris = self._encode_images(
-            env_obs, len(tasks), self._target_w, self._target_h
-        )
-        n_cam = 2 if env_obs.get("wrist_images") is not None else 1
-        seed = int(self.cfg_rollout.get("sglang", {}).get("seed", 1140) or 1140)
-        prompts = [self._augment_prompt(t, n_cam) for t in tasks]
+        if self._native_eval:
+            image_uris, prompts = self._encode_native_observations(env_obs, tasks)
+        else:
+            image_uris = self._encode_images(
+                env_obs, len(tasks), self._target_w, self._target_h
+            )
+            n_cam = 2 if env_obs.get("wrist_images") is not None else 1
+            prompts = [self._augment_prompt(t, n_cam) for t in tasks]
+        seed = self.cfg_rollout.get("sglang", {}).get("seed", 1140)
+        seed = 1140 if seed is None else int(seed)
         input_payload: dict[str, Any] = {"prompt": prompts}
         if all(image_uris):
             input_payload["input_reference"] = image_uris
@@ -207,6 +220,10 @@ class Cosmos3SGLangAdapter:
             "height": self._target_h,
             "width": self._target_w,
         }
+        if "guidance" in self.model_cfg:
+            parameters["guidance_scale"] = float(self.model_cfg.guidance)
+        if "shift" in self.model_cfg:
+            parameters["flow_shift"] = float(self.model_cfg.shift)
         if self._domain_id is not None:
             parameters["domain_id"] = int(self._domain_id)
         elif self._domain_name is not None:
@@ -221,6 +238,84 @@ class Cosmos3SGLangAdapter:
             "runtime": {"response_format": "envelope", "output_format": "numpy"},
         }
         return payload, {}
+
+    def _encode_native_observations(
+        self, env_obs: dict, tasks: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Encode the same observation pixels and JSON captions as native DAgger."""
+        from cosmos_framework.data.generator.action.utils.json_formatter import (
+            ActionPromptJsonFormatter,
+        )
+        from cosmos_framework.inference.action import build_action_batch
+        from cosmos_framework.inference.args import ModelMode
+        from PIL import Image
+
+        from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
+
+        main = env_obs.get("main_images")
+        if main is None:
+            main = env_obs.get("images")
+        if main is None:
+            raise ValueError("Native Cosmos3 evaluation requires main_images.")
+        cameras = [Cosmos3Policy._rollout_images(main)]
+        if env_obs.get("wrist_images") is not None:
+            cameras.append(Cosmos3Policy._rollout_images(env_obs["wrist_images"]))
+        if any(len(camera) != len(tasks) for camera in cameras):
+            raise ValueError("Camera batches must match the task descriptions.")
+        image_size = int(self.model_cfg.get("image_size", 256))
+        images = torch.cat(
+            [Cosmos3Policy._resize_camera_frames(c, image_size) for c in cameras],
+            dim=-1,
+        )
+        viewpoint = "concat_view" if len(cameras) == 2 else "third_person_view"
+        horizon = self._num_frames - 1
+        formatter = ActionPromptJsonFormatter()
+        uris, prompts = [], []
+        for index, task in enumerate(tasks):
+            batch = build_action_batch(
+                video=images[index].unsqueeze(1),
+                action=torch.zeros(horizon, 64),
+                raw_action_dim=self._raw_action_dim,
+                prompt=task,
+                view_point=viewpoint,
+                domain_name=self._domain_name or "libero",
+                model_mode=ModelMode.WAM,
+                action_chunk_size=horizon,
+                fps=self._fps,
+                resolution=self.model_cfg.get("resolution"),
+                input_video_key="video",
+                device="cpu",
+            )
+            video = batch["video"][0][0]
+            if video.shape[-2:] != (self._target_h, self._target_w):
+                raise ValueError(
+                    "Configured size must match the native observation bucket: "
+                    f"expected {tuple(video.shape[-2:])}, "
+                    f"got {(self._target_h, self._target_w)}"
+                )
+            caption_data = {
+                "ai_caption": task,
+                "viewpoint": viewpoint,
+                "video": video,
+                "image_size": batch["image_size"][0],
+                "conditioning_fps": batch["conditioning_fps"][0],
+                "action": batch["action"][0][0],
+                "idle_frames": torch.tensor(0),
+                "mode": "wam",
+            }
+            if len(cameras) == 2:
+                caption_data["additional_view_description"] = (
+                    "The left half shows the third-person view; the right half "
+                    "shows the wrist-mounted camera."
+                )
+            prompts.append(json.dumps(formatter(caption_data)["ai_caption"]))
+            buffer = io.BytesIO()
+            Image.fromarray(video[:, 0].permute(1, 2, 0).numpy()).save(
+                buffer, format="PNG"
+            )
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            uris.append(f"data:image/png;base64,{encoded}")
+        return uris, prompts
 
     @staticmethod
     def _augment_prompt(task: str, n_cam: int) -> str:

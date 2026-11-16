@@ -25,6 +25,8 @@ sharded to GPU later by FSDP2. Model defaults live in the Hydra config group
 from __future__ import annotations
 
 import contextlib
+import copy
+import json
 import math
 import os
 import re
@@ -45,6 +47,82 @@ def _cosmos_framework_root() -> Path:
     import cosmos_framework
 
     return Path(cosmos_framework.__file__).resolve().parent.parent
+
+
+def _apply_checkpoint_model_config(cosmos_cfg, model_cfg: DictConfig) -> None:
+    """Use checkpoint architecture and processor with the SFT recipe settings."""
+    from cosmos_framework.inference.common.config import structure_config
+    from cosmos_framework.inference.common.public_model_config import (
+        load_model_config_from_hf_config,
+    )
+
+    model_path = Path(str(model_cfg.get("model_path", ""))).expanduser()
+    for config_path in (
+        model_path / "model" / "config.json",
+        model_path / "config.json",
+    ):
+        if not config_path.is_file():
+            continue
+        checkpoint_config = json.loads(config_path.read_text())
+        if "model" not in checkpoint_config:
+            continue
+        checkpoint_model = structure_config(
+            load_model_config_from_hf_config(checkpoint_config), DictConfig
+        )
+        recipe_config = cosmos_cfg.model.config
+        # Architecture, action width and tokenizer come from the same checkpoint.
+        # Training and memory settings remain owned by the selected SFT recipe.
+        for key in (
+            "action_gen",
+            "activation_checkpointing",
+            "compile",
+            "ema",
+            "max_num_tokens_after_packing",
+            "parallelism",
+            "rectified_flow_training_config",
+        ):
+            checkpoint_model.config[key] = copy.deepcopy(getattr(recipe_config, key))
+        checkpoint_model.config.diffusion_expert_config.load_weights_from_pretrained = (
+            recipe_config.diffusion_expert_config.load_weights_from_pretrained
+        )
+        num_domains = model_cfg.get("num_embodiment_domains")
+        if num_domains is not None:
+            if int(num_domains) < 1:
+                raise ValueError("Cosmos3 num_embodiment_domains must be positive.")
+            checkpoint_model.config.num_embodiment_domains = int(num_domains)
+        cosmos_cfg.model = checkpoint_model
+        logger.info(
+            "Cosmos3: using architecture from %s (backbone=%s, max_action_dim=%s)",
+            config_path,
+            checkpoint_model.config.vlm_config.model_name,
+            checkpoint_model.config.max_action_dim,
+        )
+        break
+
+    tokenizer_path = model_cfg.get("tokenizer_path") or os.environ.get(
+        "COSMOS_TOKENIZER_PATH"
+    )
+    if tokenizer_path:
+        from cosmos_framework.data.generator.processors import build_processor
+        from cosmos_framework.utils.lazy_config import LazyCall
+
+        tokenizer_path = Path(str(tokenizer_path)).expanduser().resolve()
+        if not tokenizer_path.is_dir():
+            raise FileNotFoundError(
+                f"Cosmos3 local processor directory does not exist: {tokenizer_path}"
+            )
+        cosmos_cfg.model.config.vlm_config.tokenizer = LazyCall(build_processor)(
+            tokenizer_type=str(tokenizer_path)
+        )
+        logger.info("Cosmos3: using local VLM processor from %s", tokenizer_path)
+
+    wan_vae_path = model_cfg.get("wan_vae_path") or os.environ.get("WAN_VAE_PATH")
+    if wan_vae_path:
+        tokenizer = cosmos_cfg.model.config.tokenizer
+        tokenizer.vae_path = str(wan_vae_path)
+        # A bucket would turn even an absolute local path into an S3 URI.
+        tokenizer.bucket_name = ""
+        tokenizer.object_store_credential_path_pretrained = ""
 
 
 def _promote_scalar_params_to_1d(model: nn.Module) -> None:
@@ -170,12 +248,16 @@ def _configure_sft_objective(model_config, cfg: DictConfig) -> None:
     if objective not in ("joint", "action_only"):
         raise ValueError(f"Unsupported Cosmos sft_objective={objective!r}.")
     rf_config = model_config.rectified_flow_training_config
-    if cfg.get("action_model_mode", "wam") == "policy":
-        rf_config.normalize_loss_by_active = True
     if objective == "joint":
+        rf_config.normalize_loss_by_active = False
+        if hasattr(rf_config, "sample_level_loss_averaging"):
+            rf_config.sample_level_loss_averaging = False
+        if hasattr(rf_config, "loss_reduction_mode"):
+            rf_config.loss_reduction_mode = "local_item_mean"
         return
     if cfg.get("action_model_mode", "wam") != "policy":
         raise ValueError("action_only supervision requires action_model_mode='policy'.")
+    rf_config.normalize_loss_by_active = True
     action_weight = float(rf_config.action_loss_weight)
     if not math.isfinite(action_weight) or action_weight <= 0:
         raise ValueError(
@@ -211,6 +293,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         cosmos3_cfg = make_config()
         experiment_name = "action_policy_libero_nano"
         cosmos3_cfg = override(cosmos3_cfg, ["--", f"experiment={experiment_name}"])
+        _apply_checkpoint_model_config(cosmos3_cfg, cfg)
 
         # Disable cosmos internal FSDP/CP/CFGP at any world size; RLinf FSDP owns
         # fully_shard. enable_inference_mode avoids degrees=1 re-enabling cosmos
@@ -227,17 +310,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             cfg.get("compile_enabled", False)
         )
         _configure_sft_objective(cosmos3_cfg.model.config, cfg)
-
-        # Wan2.2 VAE: the cookbook injects via ${oc.env:WAN_VAE_PATH}; we build the
-        # config directly, so set the local file path here instead.
-        wan_vae_path = cfg.get("wan_vae_path") or os.environ.get("WAN_VAE_PATH")
-        if wan_vae_path:
-            try:
-                cosmos3_cfg.model.config.tokenizer.vae_path = str(wan_vae_path)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
-                )
 
         # cosmos probes on CPU unless get_backend() == "nccl", which RLinf's lazily
         # bound group never reports; the probe is diagnostic only, so skip it.

@@ -65,7 +65,7 @@ run_eval_cmd() {
 
     mkdir -p "${log_dir}"
     local cmd=(
-        python "${SRC_FILE}"
+        "${eval_python:-python}" "${SRC_FILE}"
         --config-path "${config_path}/"
         --config-name "${config_name}"
         "runner.logger.log_path=${log_dir}"
@@ -196,7 +196,50 @@ else
     echo "Using benchmark=${BENCHMARK}, config=${CONFIG_NAME}"
 fi
 
-echo "Using Python at $(which python)"
+eval_python="$(command -v python)"
+if [[ "${CONFIG_NAME}" == *cosmos3*sglang* ]]; then
+    sglang_eval_venv="${RLINF_SGLANG_EVAL_VENV:-${REPO_PATH}/.venv-sglang}"
+    if [ ! -f "${sglang_eval_venv}/bin/activate" ] || [ ! -x "${sglang_eval_venv}/bin/python" ]; then
+        echo "SGLang evaluation Python is missing or its symlink is broken: ${sglang_eval_venv}/bin/python" >&2
+        exit 1
+    fi
+    eval_base_path="$PATH"
+    source "${sglang_eval_venv}/bin/activate"
+    export PATH="${VIRTUAL_ENV}/bin:${eval_base_path}"
+    export PYTHONNOUSERSITE=1
+    unset PYTHONHOME
+    eval_python="${sglang_eval_venv}/bin/python"
+    unset eval_base_path
+    cosmos_eval_package="rlinf.models.embodiment.cosmos3.sglang_native_compat"
+    if [ -n "${SGLANG_EXTERNAL_MODEL_PACKAGE:-}" ] && [ "${SGLANG_EXTERNAL_MODEL_PACKAGE}" != "${cosmos_eval_package}" ]; then
+        echo "Cosmos3 eval requires SGLANG_EXTERNAL_MODEL_PACKAGE=${cosmos_eval_package}; got ${SGLANG_EXTERNAL_MODEL_PACKAGE}" >&2
+        exit 1
+    fi
+    export SGLANG_EXTERNAL_MODEL_PACKAGE="${cosmos_eval_package}"
+    export COSMOS_TRAINING=0
+    unset cosmos_eval_package
+    "${eval_python}" -B - <<'PY'
+import importlib.metadata as metadata
+import importlib.util
+import os
+import socket
+import sys
+from pathlib import Path
+
+expected = Path(os.environ["VIRTUAL_ENV"]).resolve()
+if Path(sys.prefix).resolve() != expected:
+    raise RuntimeError(f"Expected evaluation environment {expected}, got {sys.prefix}")
+spec = importlib.util.find_spec("sglang")
+if spec is None or not Path(spec.origin).resolve().is_relative_to(expected):
+    raise RuntimeError(f"SGLang must be installed in {expected}; found {spec}")
+versions = {name: metadata.version(name) for name in ("sglang", "torch", "transformers", "diffusers")}
+print(f"SGLang eval preflight: host={socket.gethostname()}, python={sys.executable}, "
+      f"base_prefix={sys.base_prefix}, packages={versions}, "
+      f"external_package={os.environ['SGLANG_EXTERNAL_MODEL_PACKAGE']}", flush=True)
+PY
+fi
+
+echo "Using Python at ${eval_python}"
 LOG_DIR="${REPO_PATH}/logs/$(date +'%Y%m%d-%H:%M:%S')-${CONFIG_NAME}"
 
 MEGA_LOG_FILE="${LOG_DIR}/eval_embodiment.log"

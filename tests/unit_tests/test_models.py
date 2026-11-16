@@ -1358,3 +1358,218 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+def test_cosmos3_sglang_eval_config_matches_dagger_and_preserves_model_override(
+    monkeypatch,
+):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    with initialize_config_dir(
+        version_base="1.1", config_dir=str(root / "examples/embodiment/config")
+    ):
+        dagger = compose(config_name="libero_10_dagger_cosmos3")
+    model_path = "/custom/cosmos3-checkpoint/model_diffusers"
+    with initialize_config_dir(
+        version_base="1.1", config_dir=str(root / "evaluations/libero")
+    ):
+        standalone = compose(
+            config_name="libero_spatial_cosmos3_eval_sglang",
+            overrides=[f"rollout.model.model_path={model_path}"],
+        )
+
+    expected_env = OmegaConf.to_container(dagger.env.eval, resolve=True)
+    actual_env = OmegaConf.to_container(standalone.env.eval, resolve=True)
+    # Each runner places its optional videos under its own log directory.
+    expected_env["video_cfg"].pop("video_base_dir")
+    actual_env["video_cfg"].pop("video_base_dir")
+    assert actual_env == expected_env
+    assert standalone.rollout.pipeline_stage_num == dagger.rollout.pipeline_stage_num
+    model = standalone.rollout.model
+    native = dagger.actor.model
+    assert model.model_path == model_path
+    assert model.native_eval is True
+    assert model.num_action_chunks == native.num_action_chunks == 10
+    assert model.num_inference_steps == native.num_inference_steps == 30
+    assert standalone.rollout.sglang.seed == native.inference_seed == 123
+    assert model.guidance == native.guidance == 1.0
+    assert model.shift == 5.0
+    assert model.image_size == native.image_size == 256
+    assert model.num_frames == native.num_frames == 17
+    assert model.fps == native.fps == 20
+    assert model.action_fps == 20.0
+    assert model.resolution == "256"
+    assert model.size == "320x192"
+    assert model.action_mode == "policy"
+    assert native.action_model_mode == "wam"
+
+
+@pytest.mark.parametrize("camera_size", [96, 256])
+def test_cosmos3_sglang_native_eval_request_matches_native_pixels_and_json(
+    camera_size, monkeypatch
+):
+    pytest.importorskip("cosmos_framework")
+    # Earlier model tests install an imageio stub; native I/O needs the real package.
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    import base64
+    import io
+
+    from PIL import Image
+
+    from rlinf.models.embodiment.cosmos3.cosmos3_policy import Cosmos3Policy
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+    from rlinf.models.embodiment.cosmos3.sglang_native_compat import (
+        is_native_action_prompt,
+        make_native_prompt_builder,
+    )
+
+    class PromptOmni(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(1))
+            self.config = SimpleNamespace(max_action_dim=64, ema=None)
+            self.input_video_key = "video"
+            self.input_caption_key = "ai_caption"
+
+        def tokenize_text(self, captions, *, pad_token_id, device, **kwargs):
+            return torch.ones((len(captions), 2), dtype=torch.long, device=device)
+
+    cfg = _cosmos3_sglang_cfg()
+    cfg.rollout.model.update(
+        {
+            "native_eval": True,
+            "num_action_chunks": 10,
+            "num_frames": 17,
+            "image_size": 256,
+            "resolution": "256",
+            "size": "320x192",
+            "fps": 20,
+            "action_fps": 20.0,
+            "action_mode": "policy",
+            "num_inference_steps": 30,
+            "guidance": 1.0,
+            "shift": 5.0,
+        }
+    )
+    cfg.rollout.sglang.seed = 123
+    pattern = (
+        torch.arange(camera_size * camera_size * 3).reshape(camera_size, camera_size, 3)
+        % 251
+    ).to(torch.uint8)
+    observations = {
+        "main_images": torch.stack([pattern, pattern.roll(13, dims=0)]),
+        "wrist_images": torch.stack(
+            [pattern.flip(1), pattern.roll(19, dims=1).flip(0)]
+        ),
+        "task_descriptions": ["pick up the bowl", "put the cup on the plate"],
+    }
+    native_config = OmegaConf.to_container(cfg.rollout.model, resolve=True)
+    native_config["action_model_mode"] = "wam"
+    policy = Cosmos3Policy(PromptOmni(), rollout_config=native_config)
+    native_batch, _ = policy._prepare_rollout_batch(observations)
+    adapter = Cosmos3SGLangAdapter(cfg, rank=0)
+
+    payload, _ = adapter.build_request(observations)
+
+    assert payload["input"]["prompt"] == native_batch["ai_caption"]
+    for prompt in payload["input"]["prompt"]:
+        assert is_native_action_prompt(prompt)
+    original = MagicMock(
+        side_effect=AssertionError("Native captions must not be wrapped")
+    )
+    builder = make_native_prompt_builder(original)
+    assert (
+        builder(payload["input"]["prompt"], "concat_view", 17, 20, 192, 320)
+        == native_batch["ai_caption"]
+    )
+    original.assert_not_called()
+    expected_parameters = {
+        "action_mode": "policy",
+        "raw_action_dim": 10,
+        "num_frames": 17,
+        "action_fps": 20.0,
+        "action_view_point": "ego_view",
+        "fps": 20,
+        "num_inference_steps": 30,
+        "seed": 123,
+        "height": 192,
+        "width": 320,
+        "domain_name": "libero",
+        "guidance_scale": 1.0,
+        "flow_shift": 5.0,
+    }
+    assert {
+        key: payload["parameters"][key] for key in expected_parameters
+    } == expected_parameters
+    references = payload["input"]["input_reference"]
+    assert len(references) == len(native_batch["video"]) == 2
+    for encoded, native_video in zip(references, native_batch["video"], strict=True):
+        with Image.open(io.BytesIO(base64.b64decode(encoded.split(",", 1)[1]))) as png:
+            actual = np.asarray(png)
+        expected = native_video[0][:, 0].permute(1, 2, 0).cpu().numpy()
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_cosmos3_sglang_native_eval_decodes_nonorthogonal_rotation_and_ten_actions():
+    pytest.importorskip("cosmos_framework")
+    from cosmos_framework.data.generator.action.utils import action_processing
+    from cosmos_framework.data.generator.action.utils.pose_utils import (
+        convert_rotation,
+    )
+
+    from rlinf.models.embodiment.cosmos3.sglang_adapter import Cosmos3SGLangAdapter
+
+    stats_path = (
+        Path(action_processing.__file__).parents[1]
+        / "normalizer_stats/libero_native_frame_wise_relative_rot6d.json"
+    )
+    normalizer = action_processing.load_action_normalizer(
+        "quantile_rot",
+        stats_path=stats_path,
+        apply_forward_clamp=False,
+        expected_dim=10,
+    )
+    raw = torch.tensor([0.02, -0.03, 0.01, 1.2, 0.3, -0.1, 0.2, 0.7, 0.4, -0.5]).repeat(
+        16, 1
+    )
+    raw[:, 0] += torch.arange(16) * 0.001
+    normalized = normalizer.normalize_action(raw)
+    cfg = _cosmos3_sglang_cfg()
+    cfg.rollout.model.update(
+        {
+            "native_eval": True,
+            "num_action_chunks": 10,
+            "action_normalization": "quantile_rot",
+            "action_stats_path": str(stats_path),
+        }
+    )
+    adapter = Cosmos3SGLangAdapter(cfg, rank=0)
+    response = {"data": [{"input_index": 0, "action": {"values": normalized.numpy()}}]}
+
+    actions, _ = adapter.parse_response(response, state={})
+
+    expected = torch.cat(
+        [
+            raw[:10, :3],
+            convert_rotation(raw[:10, 3:9], "rot6d", "axisangle"),
+            raw[:10, 9:],
+        ],
+        dim=-1,
+    )
+    assert actions.shape == (1, 10, 7)
+    torch.testing.assert_close(actions[0], expected, atol=2e-6, rtol=2e-5)
+
+
+def test_cosmos3_sglang_prompt_wrapper_preserves_plain_text_contract():
+    from rlinf.models.embodiment.cosmos3.sglang_native_compat import (
+        make_native_prompt_builder,
+    )
+
+    original = MagicMock(return_value="formatted by SGLang")
+    builder = make_native_prompt_builder(original)
+    descriptions = ["pick up the cup", '{"actions": []}']
+    assert builder(descriptions, "ego_view", 17, 20, 192, 320) == "formatted by SGLang"
+    original.assert_called_once_with(descriptions, "ego_view", 17, 20, 192, 320)

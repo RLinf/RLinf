@@ -15,28 +15,31 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
-    env: 4-7
-    rollout: 4-7
+    actor,env,rollout: all
+
+weight_syncer:
+  bucket:
+    # Verify synchronized student parameters before each scheduled evaluation.
+    verify_interval: 300
 
 runner:
   task_type: embodied
   logger:
-    log_path: /mnt/public2/rhy/cosmos_rlinf/RLinf/logs/cosmos3_expert_rollout_smoke
+    log_path: /mnt/public/rhy/cosmos_dagger/RLinf/logs/cosmos3_expert_rollout_smoke
     project_name: rlinf
     experiment_name: cosmos3_expert_rollout_smoke
     logger_backends: [tensorboard]
 
-  max_epochs: 8000
+  max_epochs: 20000
   max_steps: -1
 
   only_eval: false
-  val_check_interval: -1
-  save_interval: 40
+  val_check_interval: 300
+  save_interval: 600
 
   resume_dir: null
-  ckpt_path: /mnt/public2/rhy/cosmos_rlinf/RLinf/logs/20261020-02:30:31-libero_sft_cosmos3/libero_sft_cosmos3/checkpoints/global_step_4000/actor/model_state_dict/full_weights.pt
-  expert_ckpt_path: /mnt/public2/rhy/cosmos_rlinf/RLinf/logs/20261020-15:35:02-libero_sft_cosmos3/libero_sft_cosmos3/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+  ckpt_path: /mnt/public/rhy/SFT_RLinf/RLinf/logs/20261029-07:40:09-libero_sft_cosmos3_edge/libero_sft_cosmos3_edge/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt
+  expert_ckpt_path: /mnt/public/rhy/SFT_RLinf/RLinf/logs/20261029-07:40:09-libero_sft_cosmos3_edge/libero_sft_cosmos3_edge/checkpoints/global_step_12000/actor/model_state_dict/full_weights.pt
 
 algorithm:
   reward_coef: 1.0
@@ -51,13 +54,13 @@ algorithm:
       enabled: True
       only_success: True
       robot_type: "panda"
-      fps: 20
+      fps: 10
       training_action_horizon: 16
       finalize_interval: 8
-      data_path: /mnt/public2/rhy/cosmos_rlinf/RLinf/data/cosmos3_dagger_online
-      rolling_lerobot_window_size: 50000
+      data_path: /mnt/public/rhy/dataset/data_new
+      rolling_lerobot_window_size: 20000
       lerobot_num_workers: 0
-      # Start training once the rolling dataset contains this many frames.
+      # Start training once this many complete training windows are available.
       min_frames: 1024
 
   replay_buffer:
@@ -80,7 +83,7 @@ env:
     rollout_epoch: 1
     total_num_envs: 16
     reward_coef: ${algorithm.reward_coef}
-    max_episode_steps: 1024
+    max_episode_steps: 512
     # Cover the episode horizon with complete ten-action chunks.
     max_steps_per_rollout_epoch: 520
     group_size: 1
@@ -93,10 +96,10 @@ env:
   eval:
     init_params: {ignore_done: true}
     rollout_epoch: 1
-    total_num_envs: 16
+    total_num_envs: 256
     auto_reset: true
     ignore_terminations: true
-    max_episode_steps: 1024
+    max_episode_steps: 512
     max_steps_per_rollout_epoch: 520
     group_size: 1
     is_eval: true
@@ -114,14 +117,14 @@ rollout:
   collect_prev_infos: false
   collect_final_values: false
   model:
-    model_path: /mnt/public2/rhy/docker_dev/update/model/Cosmos3-Nano-DCP
-    action_model_mode: policy
-    sft_objective: action_only
+    model_path: /mnt/public/rhy/dataset/Cosmos3-Edge-DCP
+    action_model_mode: wam
+    sft_objective: joint
     precision: ${actor.model.precision}
     load_to_device: true
     ema_enabled: false
   expert_model:
-    model_path: /mnt/public2/rhy/docker_dev/update/model/Cosmos3-Nano-DCP
+    model_path: /mnt/public/rhy/dataset/Cosmos3-Edge-DCP
     precision: ${actor.model.precision}
     load_to_device: true
     ema_enabled: false
@@ -131,38 +134,51 @@ rollout:
 actor:
   group_name: ActorGroup
   model:
-    model_path: /mnt/public2/rhy/docker_dev/update/model/Cosmos3-Nano-DCP
-    action_model_mode: policy
-    sft_objective: action_only
+    model_path: /mnt/public/rhy/dataset/Cosmos3-Edge-DCP
+    action_model_mode: wam
+    sft_objective: joint
+    sft_cfg_dropout_rate: 0.1
     num_inference_steps: 30
+    ema_enabled: true
+    keys_to_select:
+      - moe_gen
+      - time_embedder
+      - vae2llm
+      - llm2vae
+      - action2llm
+      - llm2action
+      - action_modality_embed
+      - k_norm_und_for_gen
   training_backend: fsdp
-  micro_batch_size: 1
-  global_batch_size: 32
-  seed: 1234
-  enable_offload: true
+  micro_batch_size: 64
+  global_batch_size: 512
+  seed: 42
+  enable_offload: false
   optim:
-    lr: 1e-5
+    lr: 5e-5
     value_lr: 1.0e-4
     adam_beta1: 0.9
-    adam_beta2: 0.95
+    adam_beta2: 0.99
     adam_eps: 1.0e-08
-    weight_decay: 1e-10
-    clip_grad: 5.0
+    weight_decay: 0.05
+    clip_grad: 1.0
     warmup_style: "cosine"
     lr_warmup_steps: 20
     total_training_steps: 8000
 
   fsdp_config:
-    strategy: "fsdp"
+    strategy: "fsdp2"
     sharding_strategy: "full_shard"
     use_orig_params: true
     gradient_checkpointing: False
-    # Synchronize each microbatch so accumulated gradients stay sharded.
-    enable_gradient_accumulation: false
-    limit_all_gathers: true
+    reshard_after_forward: true
+    enable_gradient_accumulation: true
+    forward_prefetch: true
+    backward_prefetch: pre
+    limit_all_gathers: false
     mixed_precision:
       param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
+      reduce_dtype: fp32
       buffer_dtype: null
       cast_forward_inputs: false
       cast_root_forward_inputs: false

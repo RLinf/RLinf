@@ -102,6 +102,11 @@ class RollingLeRobotDataset(Dataset):
             an in-memory Arrow store for training reads.
         fps: Dataset frame rate used when auto-generating ``delta_timestamps``.
             Defaults to ``10``.
+        vision_horizon: Number of future frames to include with the current
+            frame in a same-episode vision window. Zero disables the window.
+        require_full_window: Expose only starts with a complete action and
+            vision window in the same episode, without temporal padding.
+        keep_uint8_images: Keep decoded uint8 camera frames in each in-memory shard.
     """
 
     def __init__(
@@ -120,12 +125,17 @@ class RollingLeRobotDataset(Dataset):
         window_size: int | None = None,
         in_memory_mode: bool = False,
         fps: int = 10,
+        vision_horizon: int = 0,
+        keep_uint8_images: bool = False,
+        require_full_window: bool = False,
     ) -> None:
         if not in_memory_mode:
             raise ValueError(
                 "RollingLeRobotDataset now supports only in_memory_mode=True. "
                 "Archived LeRobot shards must be loaded into memory before training."
             )
+        if vision_horizon < 0:
+            raise ValueError("vision_horizon must be nonnegative.")
         self.root_dir = Path(root_dir)
         self.chunk_size = chunk_size
         self.keys = keys
@@ -134,13 +144,14 @@ class RollingLeRobotDataset(Dataset):
         self.wait_interval_s = wait_interval_s
         self.action_sequence_keys = action_sequence_keys
         self.require_all_intervene = bool(require_all_intervene)
+        self.require_full_window = bool(require_full_window)
         self.intervene_flag_key = intervene_flag_key
         self.window_size = window_size
         self._window_physical_start: int = 0
         self._window_valid_slice_lo: int = 0
         self._valid_physical_indices: list[int] | None = None
         self._valid_physical_set: set[int] | None = None
-        if self.require_all_intervene:
+        if self.require_all_intervene or self.require_full_window:
             self._valid_physical_indices = []
             self._valid_physical_set = set()
         # Serializes in-memory index growth vs __getitem__/__getitems__.
@@ -168,6 +179,8 @@ class RollingLeRobotDataset(Dataset):
         self._shard_cache_chunk_size: int = chunk_size
         self._shard_cache_fps: int = max(1, int(fps))
         self._shard_cache_action_keys: list[str] = list(action_sequence_keys or [])
+        self._vision_horizon = vision_horizon
+        self._keep_uint8_images = keep_uint8_images
         # Hit/miss counters for the shard-level cache lookup in
         # _load_item_from_lerobot (shard found in RAM vs. fell back to disk).
         self._shard_cache_hits: int = 0
@@ -176,13 +189,15 @@ class RollingLeRobotDataset(Dataset):
         logger.info(
             "[RollingLeRobotDataset] root_dir=%s, chunk_size=%d, "
             "sub_datasets=%d, logical_samples=%d, "
-            "physical_frames=%d, require_all_intervene=%s, window_size=%s",
+            "physical_frames=%d, require_all_intervene=%s, "
+            "require_full_window=%s, window_size=%s",
             self.root_dir,
             self.chunk_size,
             len(self._sub_datasets),
             len(self),
             self._num_physical_frames(),
             self.require_all_intervene,
+            self.require_full_window,
             self.window_size,
         )
 
@@ -194,7 +209,7 @@ class RollingLeRobotDataset(Dataset):
         return len(self) >= self.min_frames
 
     def _num_physical_frames(self) -> int:
-        """Total indexed frames (ignores intervene filter and window)."""
+        """Total indexed frames before sample filtering and windowing."""
         return int(self._cumulative_lengths[-1])
 
     def _logical_to_physical(self, logical_idx: int) -> int:
@@ -213,9 +228,8 @@ class RollingLeRobotDataset(Dataset):
     def _update_window_sampling_bounds(self) -> None:
         """Recompute window slice offsets so ``window_size`` caps **logical** frames.
 
-        *Logical frames* are the frames actually exposed by ``__len__`` /
-        ``__getitem__``: when ``require_all_intervene`` is active they are the
-        intervene-valid subset; otherwise every physical frame is logical.
+        *Logical frames* are starts exposed by ``__len__`` / ``__getitem__``,
+        after optional intervention-label and complete-window filtering.
 
         Without intervene filtering (``_valid_physical_indices is None``),
         physical == logical, so ``_window_physical_start`` is set to
@@ -280,6 +294,8 @@ class RollingLeRobotDataset(Dataset):
             action_sequence_keys=self._shard_cache_action_keys,
             fps=self._shard_cache_fps,
             image_transforms=self.image_transforms,
+            vision_horizon=self._vision_horizon,
+            keep_uint8_images=self._keep_uint8_images,
         )
 
     def append_episode_to_memory(self, path: str | Path, ep_frames: list[dict]) -> None:
@@ -330,31 +346,11 @@ class RollingLeRobotDataset(Dataset):
 
             self._cumulative_lengths[-1] += added_frames
             self._total_episodes += 1
-            if self.require_all_intervene and self._valid_physical_indices is not None:
+            if self._valid_physical_indices is not None:
                 assert self._valid_physical_set is not None
                 ep_ds = prepared_episode["dataset"]
-                if self.intervene_flag_key not in ep_ds.column_names:
-                    logger.warning(
-                        "[RollingLeRobotDataset] require_all_intervene=True but "
-                        "column %r missing in appended in-memory episode; keeping "
-                        "all %d chunk starts for this episode.",
-                        self.intervene_flag_key,
-                        added_frames,
-                    )
-                    valid_locals = range(old_len, old_len + added_frames)
-                else:
-                    flags = _hf_column_to_numpy_bool_1d(ep_ds, self.intervene_flag_key)
-                    assert int(flags.shape[0]) == added_frames
-                    deltas = np.arange(max(1, int(self.chunk_size)), dtype=np.int64)
-                    offsets = np.arange(added_frames, dtype=np.int64)[:, None]
-                    raw = offsets + deltas[None, :]
-                    in_episode = raw < added_frames
-                    step_ok = np.ones_like(in_episode, dtype=np.bool_)
-                    step_ok[in_episode] = flags[raw[in_episode]]
-                    valid_offsets = np.nonzero(step_ok.all(axis=1))[0]
-                    valid_locals = (old_len + int(offset) for offset in valid_offsets)
-                for local_i in valid_locals:
-                    gidx = physical_base + int(local_i)
+                for offset in self._valid_episode_offsets(ep_ds, added_frames):
+                    gidx = physical_base + old_len + int(offset)
                     self._valid_physical_indices.append(gidx)
                     self._valid_physical_set.add(gidx)
 
@@ -385,10 +381,15 @@ class RollingLeRobotDataset(Dataset):
             return 0
         n_evicted = 0
         for ds_idx, path in enumerate(self._sub_datasets):
+            # The latest shard can receive episodes even if none is usable yet.
+            if ds_idx == len(self._sub_datasets) - 1:
+                continue
             shard_end = self._cumulative_lengths[ds_idx + 1]
-            if shard_end <= self._window_physical_start:
-                if self._in_memory_shards.pop(path, None) is not None:
-                    n_evicted += 1
+            if (
+                shard_end <= self._window_physical_start
+                and self._in_memory_shards.pop(path, None) is not None
+            ):
+                n_evicted += 1
         if n_evicted:
             logger.debug(
                 "[RollingLeRobotDataset] evicted %d shard(s) from shard cache "
@@ -458,11 +459,37 @@ class RollingLeRobotDataset(Dataset):
             store.add_episode(ep_frames)
         return path, store
 
+    def _valid_episode_offsets(self, episode: Any, num_frames: int) -> np.ndarray:
+        """Return eligible starts without crossing an episode boundary."""
+        num_starts = num_frames
+        if self.require_full_window:
+            window_length = max(int(self.chunk_size), self._vision_horizon + 1)
+            num_starts = max(0, num_frames - window_length + 1)
+        offsets = np.arange(num_starts, dtype=np.int64)
+        if not self.require_all_intervene or not num_starts:
+            return offsets
+        if self.intervene_flag_key not in episode.column_names:
+            logger.warning(
+                "[RollingLeRobotDataset] require_all_intervene=True but column "
+                "%r missing; keeping all %d eligible starts for this episode.",
+                self.intervene_flag_key,
+                num_starts,
+            )
+            return offsets
+        flags = _hf_column_to_numpy_bool_1d(episode, self.intervene_flag_key)
+        if int(flags.shape[0]) != num_frames:
+            raise ValueError("Intervention flags must match the episode frame count.")
+        raw = offsets[:, None] + np.arange(max(1, int(self.chunk_size)))[None, :]
+        in_episode = raw < num_frames
+        step_ok = np.ones_like(in_episode, dtype=np.bool_)
+        step_ok[in_episode] = flags[raw[in_episode]]
+        return offsets[step_ok.all(axis=1)]
+
     def _append_valid_indices_for_store(
         self, store: InMemoryArrowStore, physical_base: int
     ) -> None:
-        """Add intervene-filtered indices for one attached in-memory store."""
-        if not self.require_all_intervene or self._valid_physical_indices is None:
+        """Add eligible indices for one attached in-memory store."""
+        if self._valid_physical_indices is None:
             return
 
         assert self._valid_physical_set is not None
@@ -472,30 +499,8 @@ class RollingLeRobotDataset(Dataset):
             store._ep_to,
             strict=True,
         ):
-            if self.intervene_flag_key not in ep_ds.column_names:
-                logger.warning(
-                    "[RollingLeRobotDataset] require_all_intervene=True but "
-                    "column %r missing in appended in-memory episode; keeping "
-                    "all %d chunk starts for this episode.",
-                    self.intervene_flag_key,
-                    int(ep_to) - int(ep_from),
-                )
-                valid_locals = range(int(ep_from), int(ep_to))
-            else:
-                flags = _hf_column_to_numpy_bool_1d(ep_ds, self.intervene_flag_key)
-                added_frames = int(ep_to) - int(ep_from)
-                assert int(flags.shape[0]) == added_frames
-                deltas = np.arange(max(1, int(self.chunk_size)), dtype=np.int64)
-                offsets = np.arange(added_frames, dtype=np.int64)[:, None]
-                raw = offsets + deltas[None, :]
-                in_episode = raw < added_frames
-                step_ok = np.ones_like(in_episode, dtype=np.bool_)
-                step_ok[in_episode] = flags[raw[in_episode]]
-                valid_offsets = np.nonzero(step_ok.all(axis=1))[0]
-                valid_locals = (int(ep_from) + int(offset) for offset in valid_offsets)
-
-            for local_i in valid_locals:
-                gidx = int(physical_base) + int(local_i)
+            for offset in self._valid_episode_offsets(ep_ds, int(ep_to) - int(ep_from)):
+                gidx = int(physical_base) + int(ep_from) + int(offset)
                 self._valid_physical_indices.append(gidx)
                 self._valid_physical_set.add(gidx)
 
@@ -551,7 +556,7 @@ class RollingLeRobotDataset(Dataset):
             self._in_memory_shards = {}
             self._cumulative_lengths = [0]
             self._total_episodes = 0
-            if self.require_all_intervene:
+            if self._valid_physical_indices is not None:
                 self._valid_physical_indices = []
                 self._valid_physical_set = set()
 
@@ -621,6 +626,7 @@ class RollingLeRobotDataset(Dataset):
             "total_frames": len(self),
             "total_episodes": self._total_episodes,
             "require_all_intervene": self.require_all_intervene,
+            "require_full_window": self.require_full_window,
             "window_size": self.window_size if self.window_size is not None else 0,
             "window_physical_start": self._window_physical_start,
             "shard_cache_enabled": self._shard_cache_enabled,

@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -122,7 +124,13 @@ class Cosmos3Policy(nn.Module, BasePolicy):
 
         from cosmos_framework.utils.misc import to as _cosmos_to
 
-        data = _cosmos_to(data, self.device)
+        # Native packing reads these fields as Python integers and token lists.
+        data = {
+            key: value
+            if key in {"text_token_ids", "image_size"}
+            else _cosmos_to(value, self.device)
+            for key, value in data.items()
+        }
 
         if not getattr(self, "_vae_patch_applied", False):
             self._vae_patch_applied = True
@@ -237,22 +245,17 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         return self._action_normalizer
 
     def prepare_lerobot_sft_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
-        """Convert online raw-7D expert labels into a Cosmos policy SFT batch."""
+        """Prepare expert actions and optional observed video for online SFT."""
         from rlinf.data.datasets.cosmos3.lerobot_batch import prepare_lerobot_batch
 
-        if self._rollout_config.get("action_model_mode", "wam") != "policy":
-            raise ValueError(
-                "Online Cosmos3 DAgger requires action_model_mode='policy' for "
-                "the actor and student rollout; future student video is not an "
-                "expert supervision target."
-            )
         return prepare_lerobot_batch(
             batch,
             horizon=int(self._rollout_config.get("num_frames", 17)) - 1,
             max_action_dim=int(self.omni.config.max_action_dim),
             normalizer=self._get_action_normalizer(),
-            prepare_observation_batch=self._prepare_rollout_batch,
+            prepare_observation_batch=self._prepare_sft_observation_batch,
             video_key=self.omni.input_video_key,
+            include_vision=self._rollout_config.get("sft_objective") == "joint",
         )
 
     def gradient_checkpointing_enable(self, **kwargs) -> None:
@@ -265,11 +268,13 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         )
 
     @staticmethod
-    def _rollout_images(images: Any) -> torch.Tensor:
-        """Convert one batched RGB camera stream to CPU uint8 BHWC."""
+    def _rollout_images(
+        images: Any, *, device: torch.device | str = "cpu"
+    ) -> torch.Tensor:
+        """Convert one batched RGB camera stream to uint8 BHWC."""
         if isinstance(images, (list, tuple)):
             images = torch.stack([torch.as_tensor(image) for image in images])
-        images = torch.as_tensor(images).detach().cpu()
+        images = torch.as_tensor(images).detach().to(device)
         if images.ndim == 5 and images.shape[1] == 1:
             images = images[:, 0]
         if images.ndim != 4 or images.shape[0] == 0:
@@ -281,11 +286,208 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             images = images.permute(0, 2, 3, 1)
         if images.shape[-1] != 3:
             raise ValueError(f"Expected three RGB channels, got {tuple(images.shape)}.")
-        if not torch.isfinite(images).all() or images.min() < 0 or images.max() > 255:
-            raise ValueError("Expected finite RGB pixels in [0,255].")
-        if images.is_floating_point() and images.max() <= 1:
-            images = images * 255
+        if images.dtype not in (torch.uint8, torch.bool):
+            minimum, maximum = torch.stack(torch.aminmax(images)).tolist()
+            if not 0 <= minimum <= maximum <= 255:
+                raise ValueError("Expected finite RGB pixels in [0,255].")
+            if images.is_floating_point() and maximum <= 1:
+                images = images * 255
         return images.to(torch.uint8).contiguous()
+
+    def _prepare_sft_observation_batch(
+        self,
+        observations: dict[str, Any],
+        *,
+        vision_images: torch.Tensor | None = None,
+        vision_wrist_images: torch.Tensor | None = None,
+        vision_valid: torch.Tensor | None = None,
+    ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+        """Build only the native training inputs, batching image transforms by mode."""
+        from cosmos_framework.data.generator.action.utils.domain_utils import (
+            get_domain_id,
+        )
+        from cosmos_framework.data.generator.action.utils.json_formatter import (
+            ActionPromptJsonFormatter,
+        )
+        from cosmos_framework.data.generator.action.utils.transforms import (
+            build_sequence_plan_from_mode,
+            find_closest_target_size,
+            reflection_pad_to_target,
+        )
+        from cosmos_framework.data.generator.augmentors.text_tokenizer import (
+            _MAX_NUM_TOKENS,
+        )
+        from cosmos_framework.utils.generator.data_utils import (
+            get_vision_data_resolution,
+        )
+
+        cfg = self._rollout_config
+        horizon = int(cfg.get("num_frames", 17)) - 1
+        image_size = int(cfg.get("image_size", 256))
+        fps = int(cfg.get("fps", 20))
+        if horizon <= 0 or horizon % 4 or image_size <= 0 or fps <= 0:
+            raise ValueError("Invalid Cosmos SFT action horizon, image size, or fps.")
+
+        cameras = [(observations["main_images"], vision_images)]
+        wrist_images = observations.get("wrist_images")
+        if wrist_images is not None:
+            cameras.append((wrist_images, vision_wrist_images))
+        batch_size = len(cameras[0][0])
+        tasks = observations["task_descriptions"]
+        if isinstance(tasks, str):
+            tasks = [tasks] * batch_size
+        if (
+            tasks is None
+            or len(tasks) != batch_size
+            or not all(isinstance(task, str) and task.strip() for task in tasks)
+        ):
+            raise ValueError(f"Expected {batch_size} non-empty task descriptions.")
+        if any(len(current) != batch_size for current, _ in cameras):
+            raise ValueError("Main and wrist cameras must have the same batch size.")
+
+        valid = (
+            vision_valid.tolist() if vision_valid is not None else [False] * batch_size
+        )
+        modes = ["wam" if has_clip else "policy" for has_clip in valid]
+        viewpoint = "concat_view" if len(cameras) == 2 else "third_person_view"
+        formatter = ActionPromptJsonFormatter()
+        fps_tensor = torch.tensor(fps, dtype=torch.long)
+        domain_id = torch.tensor(get_domain_id("libero"), dtype=torch.long)
+        raw_actions = observations.get("raw_actions")
+        action_padding = observations.get("actions_is_pad")
+        idle_frames = [0] * batch_size
+        if raw_actions is not None:
+            from cosmos_framework.data.generator.action.utils.action_spec import (
+                Gripper,
+                Pos,
+                Rot,
+                build_action_spec,
+            )
+            from cosmos_framework.data.generator.action.utils.pose_utils import (
+                compute_idle_frames,
+            )
+
+            raw_actions = torch.as_tensor(raw_actions).detach().cpu()
+            if raw_actions.shape != (batch_size, horizon, 10):
+                raise ValueError("Expected raw LIBERO actions [B,H,10] for captions.")
+            spec = build_action_spec(Pos(), Rot("rot6d"), Gripper())
+            # Match LIBEROLeRobotDataset._compute_idle_frames on physical actions.
+            for index, action in enumerate(raw_actions):
+                if action_padding is not None:
+                    action = action[~action_padding[index]]
+                idle_frames[index] = compute_idle_frames(
+                    action,
+                    spec,
+                    eps_t=5e-3 / fps,
+                    eps_r=math.radians(1.5) / fps,
+                    eps_g=1e-2,
+                    joint_threshold=5e-3 / fps,
+                    min_streak=3,
+                )
+        dropout_rate = float(cfg.get("sft_cfg_dropout_rate", 0.1))
+        if not 0 <= dropout_rate <= 1:
+            raise ValueError("sft_cfg_dropout_rate must be between 0 and 1.")
+        prepared = {}
+        for mode in ("wam", "policy"):
+            indices = [
+                index for index, item_mode in enumerate(modes) if item_mode == mode
+            ]
+            if not indices:
+                continue
+            frame_count = horizon + 1 if mode == "wam" else 1
+            views = []
+            for current, clip in cameras:
+                if mode == "wam":
+                    if clip is None:
+                        raise ValueError(
+                            "Complete vision windows require all camera clips."
+                        )
+                    pixels = torch.as_tensor(clip)
+                    if pixels.ndim != 5 or pixels.shape[:3] != (
+                        batch_size,
+                        frame_count,
+                        3,
+                    ):
+                        raise ValueError("Expected complete camera clips [B,T,3,H,W].")
+                    pixels = pixels.to(self.device, non_blocking=True)
+                    if len(indices) != batch_size:
+                        pixels = pixels[indices]
+                    frames = self._rollout_images(
+                        pixels.flatten(0, 1), device=self.device
+                    )
+                    del pixels
+                else:
+                    frames = self._rollout_images(current, device=self.device)[indices]
+                views.append(self._resize_camera_frames(frames, image_size))
+
+            video = torch.cat(views, dim=-1) if len(views) > 1 else views[0]
+            del views, frames
+            height, width = video.shape[-2:]
+            resolution = cfg.get("resolution")
+            if resolution is None:
+                resolution = get_vision_data_resolution((height, width))
+            target_w, target_h = find_closest_target_size(height, width, resolution)
+            resized = reflection_pad_to_target(
+                {"video": video}, ["video"], True, target_w, target_h
+            )
+            video = (
+                resized["video"]
+                .unflatten(0, (len(indices), frame_count))
+                .transpose(1, 2)
+                .contiguous()
+            )
+            for index, sample in zip(indices, video, strict=True):
+                caption_data = {
+                    "ai_caption": random.choice(
+                        [
+                            part.strip()
+                            for part in tasks[index].split(" | ")
+                            if part.strip()
+                        ]
+                        or [tasks[index]]
+                    ),
+                    "viewpoint": viewpoint,
+                    "video": sample,
+                    "video_num_frames": horizon + 1,
+                    "image_size": resized["image_size"],
+                    "conditioning_fps": fps_tensor,
+                    "idle_frames": idle_frames[index],
+                    "idle_frames_total": horizon,
+                    "mode": mode,
+                }
+                if len(cameras) == 2:
+                    caption_data["additional_view_description"] = (
+                        "The left half shows the third-person view; the right half "
+                        "shows the wrist-mounted camera."
+                    )
+                caption = json.dumps(formatter(caption_data)["ai_caption"])
+                if dropout_rate > 0 and random.random() < dropout_rate:
+                    caption = ""
+                plan = build_sequence_plan_from_mode(
+                    mode=mode, video_length=frame_count, action_length=horizon
+                )
+                prepared[index] = (sample, resized["image_size"], plan, caption)
+
+        videos, sizes, plans, captions = zip(
+            *(prepared[i] for i in range(batch_size)), strict=True
+        )
+        tokens = self.omni.tokenize_text(
+            list(captions),
+            pad_token_id=-1,
+            device="cpu",
+            is_video=False,
+            use_system_prompt=False,
+        )
+        tokens = tokens[:, :_MAX_NUM_TOKENS]
+        return {
+            self.omni.input_video_key: [[video] for video in videos],
+            "image_size": torch.stack(sizes),
+            "sequence_plan": list(plans),
+            "mode": modes,
+            "raw_action_dim": [torch.tensor(10, dtype=torch.long)] * batch_size,
+            "conditioning_fps": [fps_tensor] * batch_size,
+            "domain_id": [domain_id] * batch_size,
+        }, {"tokenized_prompt": tokens, "tokenized_prompt_mask": tokens != -1}
 
     def _prepare_rollout_batch(
         self, env_obs: dict[str, Any]
@@ -342,16 +544,10 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             raise ValueError(
                 f"LIBERO rot6d requires max_action_dim >= 10, got {action_dim}."
             )
-        resized = [
-            F.interpolate(
-                camera.permute(0, 3, 1, 2).float(),
-                size=(image_size, image_size),
-                mode="bilinear",
-                align_corners=False,
-            ).to(torch.uint8)
-            for camera in cameras
-        ]
-        images = torch.cat(resized, dim=-1)
+        images = torch.cat(
+            [self._resize_camera_frames(camera, image_size) for camera in cameras],
+            dim=-1,
+        )
         viewpoint = "concat_view" if len(cameras) == 2 else "third_person_view"
         formatter = ActionPromptJsonFormatter()
         items = []
@@ -439,6 +635,18 @@ class Cosmos3Policy(nn.Module, BasePolicy):
                 )
             forward_inputs["observation/state"] = states.detach().clone()
         return batch, forward_inputs
+
+    @staticmethod
+    def _resize_camera_frames(frames: torch.Tensor, image_size: int) -> torch.Tensor:
+        frames = frames.permute(0, 3, 1, 2)
+        if frames.shape[-2:] == (image_size, image_size):
+            return frames
+        return F.interpolate(
+            frames.float(),
+            size=(image_size, image_size),
+            mode="bilinear",
+            align_corners=False,
+        ).to(torch.uint8)
 
     @torch.no_grad()
     def predict_action_batch(

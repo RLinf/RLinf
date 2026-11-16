@@ -198,6 +198,7 @@ class Cluster:
         self._ray_code_sync_fragment: Optional[dict[str, Any]] = None
         self._runtime_code_sync_strip_roots: tuple[str, ...] = ()
         if num_nodes is not None or cluster_cfg is not None:
+            local_ray_requested = os.environ.get("RAY_ADDRESS") == "local"
             self._ray_instance_count = 0
             while True:
                 try:
@@ -208,6 +209,8 @@ class Cluster:
                     )
                     break
                 except Cluster.NamespaceConflictError:
+                    if local_ray_requested:
+                        os.environ["RAY_ADDRESS"] = "local"
                     # Switch the namespace when multiple ray instances are created in the same node
                     self._ray_instance_count += 1
                     self._logger.info(
@@ -357,6 +360,10 @@ class Cluster:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
             self._start_local_ray(ray_init_kwargs)
 
+        if os.environ.get("RAY_ADDRESS") == "local":
+            # Child clients and State APIs must address this head explicitly.
+            os.environ["RAY_ADDRESS"] = ray.get_runtime_context().gcs_address
+
         # Ray log collector
         if distributed_log_dir is not None:
             self._distributed_log_collector = DistributedRayLogCollector(
@@ -463,10 +470,11 @@ class Cluster:
 
             with without_http_proxies():
                 alive_actors = list_actors(
+                    address=ray.get_runtime_context().gcs_address,
                     filters=[
                         ("STATE", "=", "ALIVE"),
                         ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                    ]
+                    ],
                 )
             for actor_state in alive_actors:
                 actor = ray.get_actor(actor_state.name)

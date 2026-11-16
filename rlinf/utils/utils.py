@@ -117,29 +117,46 @@ def normalize_device(device: torch.device | str | None) -> torch.device:
 
 
 def collect_param_names_need_sync(module: torch.nn.Module) -> list[str]:
-    """Collect trainable parameters and persistent buffers for selective sync."""
-    trainable_param_names = [
-        name
+    """Collect state-dict keys for trainable parameters and persistent buffers."""
+    trainable = {
+        id(param): name
         for name, param in module.named_parameters(remove_duplicate=False)
         if param.requires_grad
-    ]
-
-    persistent_buffer_names: list[str] = []
+    }
+    persistent_buffers: dict[int, str] = {}
     for module_name, submodule in module.named_modules(remove_duplicate=False):
         non_persistent_buffers = getattr(
             submodule, "_non_persistent_buffers_set", set()
         )
-        for buffer_name, _ in submodule.named_buffers(
+        for buffer_name, buffer in submodule.named_buffers(
             recurse=False, remove_duplicate=False
         ):
-            if buffer_name in non_persistent_buffers:
-                continue
-            full_name = (
-                buffer_name if not module_name else f"{module_name}.{buffer_name}"
-            )
-            persistent_buffer_names.append(full_name)
+            if buffer_name not in non_persistent_buffers:
+                full_name = (
+                    buffer_name if not module_name else f"{module_name}.{buffer_name}"
+                )
+                persistent_buffers[id(buffer)] = full_name
 
-    return trainable_param_names + persistent_buffer_names
+    # Checkpoint wrappers expose canonical state keys while traversal names include
+    # wrapper modules. keep_vars preserves identity without copying tensor storage.
+    state_dict = module.state_dict(keep_vars=True)
+    state_ids = {id(value) for value in state_dict.values()}
+    selected = trainable | persistent_buffers
+    missing = selected.keys() - state_ids
+    if missing:
+        names = sorted(selected[identity] for identity in missing)
+        raise RuntimeError(
+            f"State dict does not preserve selected tensor identities: {names}"
+        )
+    trainable_names = [
+        name for name, value in state_dict.items() if id(value) in trainable
+    ]
+    buffer_names = [
+        name
+        for name, value in state_dict.items()
+        if id(value) in persistent_buffers and id(value) not in trainable
+    ]
+    return trainable_names + buffer_names
 
 
 def tensors_record_stream(

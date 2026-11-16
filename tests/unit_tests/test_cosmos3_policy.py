@@ -43,7 +43,11 @@ class _FakeOmni(torch.nn.Module):
         self.predictions = None
         self.fail = False
 
-    def tokenize_text(self, captions, *, pad_token_id, device):
+    def tokenize_text(
+        self, captions, *, pad_token_id, device, is_video=False, use_system_prompt=None
+    ):
+        assert not is_video
+        assert use_system_prompt in (None, False)
         # Unequal prompt lengths exercise replay padding and its validity mask.
         return torch.tensor([[11, 12, 13], [21, 22, pad_token_id]], device=device)[
             : len(captions)
@@ -390,3 +394,31 @@ def test_lerobot_sft_forward_keeps_native_loss_graph_and_updates_parameters(roll
     before = omni.anchor.detach().clone()
     torch.optim.SGD(policy.parameters(), lr=0.01).step()
     assert not torch.equal(omni.anchor.detach(), before)
+
+
+@pytest.mark.parametrize("mode", ["wam", "policy"])
+@pytest.mark.parametrize("reduction_api", ["legacy", "sample_aware"])
+def test_joint_sft_loss_reduction_is_independent_of_inference_mode(mode, reduction_api):
+    from rlinf.models.embodiment.cosmos3 import _configure_sft_objective
+
+    rf = SimpleNamespace(
+        loss_scale=10.0,
+        image_loss_scale=None,
+        action_loss_weight=10.0,
+        normalize_loss_by_active=True,
+    )
+    if reduction_api == "legacy":
+        rf.sample_level_loss_averaging = True
+    else:
+        rf.loss_reduction_mode = "global_sample_mean"
+    _configure_sft_objective(
+        SimpleNamespace(rectified_flow_training_config=rf),
+        {"action_model_mode": mode, "sft_objective": "joint"},
+    )
+    assert not rf.normalize_loss_by_active
+    if reduction_api == "legacy":
+        assert not rf.sample_level_loss_averaging
+    else:
+        assert rf.loss_reduction_mode == "local_item_mean"
+    assert rf.loss_scale == rf.action_loss_weight == 10.0
+    assert rf.image_loss_scale is None

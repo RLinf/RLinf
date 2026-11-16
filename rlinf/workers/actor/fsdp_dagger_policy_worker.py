@@ -88,16 +88,28 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 "algorithm.dagger.online_lerobot.training_action_horizon must be "
                 f"a positive integer; found {training_action_horizon!r}."
             )
+        joint_vision_sft = (
+            self.cfg.actor.model.model_type == "cosmos3"
+            and self.cfg.actor.model.get("sft_objective") == "joint"
+        )
+        window_size = online_lerobot_cfg.get("rolling_lerobot_window_size", None)
+        require_all_intervene = self.cfg.algorithm.dagger.get("only_save_expert", False)
         self.dataset = RollingLeRobotDataset(
             root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
             chunk_size=training_action_horizon,
+            vision_horizon=training_action_horizon if joint_vision_sft else 0,
+            require_full_window=joint_vision_sft,
             min_frames=online_lerobot_cfg.get("min_frames", 1),
             wait_interval_s=online_lerobot_cfg.get("wait_interval_s", 10.0),
-            require_all_intervene=self.cfg.algorithm.dagger.get(
-                "only_save_expert", False
-            ),
-            window_size=online_lerobot_cfg.get("rolling_lerobot_window_size", None),
+            require_all_intervene=require_all_intervene,
+            window_size=window_size,
             in_memory_mode=True,
+            keep_uint8_images=(
+                joint_vision_sft
+                and not require_all_intervene
+                and window_size is not None
+                and int(window_size) > 0
+            ),
             fps=int(
                 OmegaConf.select(
                     self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
@@ -455,6 +467,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             writer.add_episode(ep_frames)
         writer.finalize()
 
+    @Worker.timer("prepare_sft_inputs")
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
         if not self.enable_online_lerobot:
@@ -573,6 +586,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def update_lerobot_one_epoch(self):
         """Run one LeRobot update epoch."""
 
+        cosmos3_batch = (
+            self.cfg.actor.model.model_type == "cosmos3" and not self.enable_drq
+        )
         with self.worker_timer("prepare_micro_batches"):
             with self._lerobot_loader_lock:
                 num_batches = len(self._lerobot_loader)
@@ -580,7 +596,41 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     next(self._lerobot_iter) for _ in range(num_batches)
                 ]
             for idx, batch in enumerate(train_micro_batch_list):
+                if cosmos3_batch:
+                    # Leave pixels on the host until Cosmos builds its video batch.
+                    prepared = {
+                        key: batch[key]
+                        for key in (
+                            "task",
+                            "image",
+                            "wrist_image",
+                            "vision_images",
+                            "vision_wrist_images",
+                            "vision_valid",
+                        )
+                        if key in batch
+                    }
+                    prepared.update(
+                        put_tensor_device(
+                            {
+                                key: batch[key]
+                                for key in ("actions", "actions_is_pad")
+                                if key in batch
+                            },
+                            device=self.device,
+                        )
+                    )
+                    train_micro_batch_list[idx] = prepared
+                    continue
+
+                # Cosmos preprocesses the video windows on CPU before forward.
+                vision = {
+                    key: batch.pop(key)
+                    for key in ("vision_images", "vision_wrist_images", "vision_valid")
+                    if key in batch
+                }
                 batch = put_tensor_device(batch, device=self.device)
+                batch.update(vision)
                 if self.enable_drq:
                     drq.apply_drq(batch["curr_obs"], pad=4)
                 train_micro_batch_list[idx] = batch

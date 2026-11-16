@@ -858,6 +858,9 @@ class MultiStepRolloutWorker(Worker):
             split_fn=self._split_actions,
         )
 
+    async def _wait_for_model_sync(self) -> None:
+        """Wait before processing a policy request on workers with concurrent sync."""
+
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(
         self,
@@ -873,6 +876,7 @@ class MultiStepRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
+                await self._wait_for_model_sync()
                 if not policy_input.requires_inference:
                     actions = policy_input.external_actions
                     forward_inputs = None
@@ -923,6 +927,7 @@ class MultiStepRolloutWorker(Worker):
             if not policy_input.is_last:
                 raise ValueError("Expected a final policy input at epoch end.")
             # The final message closes the last chunk without requesting actions.
+            await self._wait_for_model_sync()
             self._publish_env_parts(policy_input, None, actor_channel)
 
     @Worker.timer("rollout/generate")
@@ -952,6 +957,16 @@ class MultiStepRolloutWorker(Worker):
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()
+        if getattr(self.weight_syncer, "verify_interval", 0):
+            await self._wait_for_model_sync()
+            verification = self.weight_syncer.verify_applied_weights(self.hf_model)
+            if verification is not None:
+                if verification["version"] != self.version:
+                    raise RuntimeError(
+                        f"Eval student version {self.version} differs from verified "
+                        f"version {verification['version']}"
+                    )
+                self.log_info(f"Eval student weights verified: {verification}")
         if self.env_decoupled_mode:
             while True:
                 (
@@ -967,6 +982,7 @@ class MultiStepRolloutWorker(Worker):
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
+                await self._wait_for_model_sync()
                 actions, _ = self._predict_rollout_actions(
                     env_output["obs"],
                     mode="eval",
@@ -1001,6 +1017,7 @@ class MultiStepRolloutWorker(Worker):
                             merge_fn=self._merge_obs_batches,
                             infer_batch_size_fn=self._infer_env_batch_size,
                         ).async_wait()
+                        await self._wait_for_model_sync()
                         actions, _ = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",
