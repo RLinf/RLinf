@@ -20,9 +20,20 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
-from gr00t.data.dataset.sharded_single_step_dataset import ShardedSingleStepDataset
+from gr00t.data.dataset.sharded_single_step_dataset import extract_step_data
+from gr00t.data.interfaces import ShardedDataset
+from gr00t.data.types import EmbodimentTag, MessageType, ModalityConfig
 from PIL import Image
+
+_COMPONENT_SLICES = {
+    "x": slice(0, 1),
+    "y": slice(1, 2),
+    "z": slice(2, 3),
+    "roll": slice(3, 4),
+    "pitch": slice(4, 5),
+    "yaw": slice(5, 6),
+    "gripper": slice(6, None),
+}
 
 
 class LiberoEpisodeLoader:
@@ -61,20 +72,25 @@ class LiberoEpisodeLoader:
     def get_episode_length(self, index: int) -> int:
         return self.episode_lengths[index]
 
-    def read_numeric(self, index: int) -> tuple[np.ndarray, np.ndarray]:
-        frame = pq.read_table(self.episode_path(index), columns=["state", "actions"])
-        state = np.asarray(frame["state"].to_pylist(), dtype=np.float32)
-        actions = np.asarray(frame["actions"].to_pylist(), dtype=np.float32)
-        actions[:, -1] = (1 - actions[:, -1]) / 2
-        return state, actions
+    @staticmethod
+    def _convert_numeric(frame: pd.DataFrame) -> dict[str, np.ndarray]:
+        values = {
+            "state": np.stack(frame["state"]).astype(np.float32),
+            "action": np.stack(frame["actions"]).astype(np.float32),
+        }
+        values["action"][:, -1] = (1 - values["action"][:, -1]) / 2
+        return values
+
+    def read_numeric(self, index: int) -> dict[str, np.ndarray]:
+        frame = pd.read_parquet(self.episode_path(index), columns=["state", "actions"])
+        return self._convert_numeric(frame)
 
     def compute_statistics(self) -> dict:
         with ThreadPoolExecutor(max_workers=8) as pool:
             numeric = list(pool.map(self.read_numeric, range(len(self.episodes))))
         result = {}
-        keys = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
-        for modality, column in (("state", 0), ("action", 1)):
-            values = np.concatenate([item[column] for item in numeric])
+        for modality in ("state", "action"):
+            values = np.concatenate([item[modality] for item in numeric])
             stats = {
                 "mean": values.mean(axis=0),
                 "std": values.std(axis=0),
@@ -84,28 +100,47 @@ class LiberoEpisodeLoader:
                 "q99": np.quantile(values, 0.99, axis=0),
             }
             result[modality] = {
-                key: {
-                    name: value[
-                        index : index + (2 if modality == "state" and index == 6 else 1)
-                    ].tolist()
-                    for name, value in stats.items()
-                }
-                for index, key in enumerate(keys)
+                key: {name: value[indices].tolist() for name, value in stats.items()}
+                for key, indices in _COMPONENT_SLICES.items()
             }
         return result
+
+    def prepare_statistics(self, cache_path: Path) -> None:
+        """Refresh cached statistics when the selected episode files change."""
+        sources = []
+        for index, episode in enumerate(self.episodes):
+            stat = self.episode_path(index).stat()
+            sources.append([episode["episode_index"], stat.st_size, stat.st_mtime_ns])
+        dataset_path = str(self.path.resolve())
+        cached = json.loads(cache_path.read_text()) if cache_path.exists() else None
+        if (
+            cached is not None
+            and cached.get("dataset_path") == dataset_path
+            and cached["sources"] == sources
+        ):
+            return
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "dataset_path": dataset_path,
+                    "sources": sources,
+                    "statistics": self.compute_statistics(),
+                }
+            )
+        )
+
+    @staticmethod
+    def load_statistics(cache_path: Path) -> dict:
+        """Read statistics after the rank preparing the cache has finished."""
+        return json.loads(cache_path.read_text())["statistics"]
 
     def __getitem__(self, index: int) -> pd.DataFrame:
         raw = pd.read_parquet(self.episode_path(index))
         frame = pd.DataFrame(index=raw.index)
-        for modality, source in (("state", "state"), ("action", "actions")):
-            values = np.stack(raw[source]).astype(np.float32)
-            if modality == "action":
-                values[:, -1] = (1 - values[:, -1]) / 2
-            for column, key in enumerate(
-                ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
-            ):
-                width = 2 if modality == "state" and column == 6 else 1
-                frame[f"{modality}.{key}"] = list(values[:, column : column + width])
+        for modality, values in self._convert_numeric(raw).items():
+            for key, indices in _COMPONENT_SLICES.items():
+                frame[f"{modality}.{key}"] = list(values[:, indices])
         for key in ("image", "wrist_image"):
             frame[f"video.{key}"] = raw[key].map(
                 lambda image: np.asarray(
@@ -118,35 +153,72 @@ class LiberoEpisodeLoader:
         return frame
 
 
-class LiberoParquetDataset(ShardedSingleStepDataset):
-    """Reuse upstream sharding and step extraction with an embedded-image reader."""
+class LiberoParquetDataset(ShardedDataset):
+    """Shard embedded-image episodes with GR00T's balanced timestep schedule."""
 
     def __init__(
         self,
-        path,
-        embodiment_tag,
-        modality_configs,
-        statistics,
-        task_names=None,
-        shard_size=1024,
-        episode_sampling_rate=1.0,
-        seed=0,
-        allow_padding=False,
+        episode_loader: LiberoEpisodeLoader,
+        embodiment_tag: EmbodimentTag,
+        modality_configs: dict[str, ModalityConfig],
+        statistics: dict,
+        shard_size: int = 1024,
+        episode_sampling_rate: float = 1.0,
+        seed: int = 0,
+        allow_padding: bool = False,
     ):
-        self.dataset_path = Path(path)
+        super().__init__(episode_loader.path)
+        self.episode_loader = episode_loader
         self.embodiment_tag = embodiment_tag
         self.modality_configs = modality_configs
-        self.shard_size = shard_size
-        self.episode_sampling_rate = episode_sampling_rate
-        self.seed = seed
+        self.statistics = statistics
         self.allow_padding = allow_padding
         self.processor = None
-        self.rng = np.random.default_rng(seed)
         deltas = modality_configs["action"].delta_indices
-        self.action_horizon = max(deltas) - min(deltas) + 1
-        self.episode_loader = LiberoEpisodeLoader(self.dataset_path, task_names)
-        self.statistics = statistics
-        self.shard_dataset()
+        horizon = max(deltas) - min(deltas) + 1
+        lengths = np.maximum(
+            0, np.asarray(episode_loader.episode_lengths) - horizon + 1
+        )
+        num_shards = int(np.ceil(lengths.sum() / shard_size))
+        self.sharded_episodes = [[] for _ in range(num_shards)]
+        self.shard_lengths = np.zeros(num_shards, dtype=int)
+        rng = np.random.default_rng(seed)
+        num_splits = int(1 / episode_sampling_rate)
+        # Keep the upstream balanced assignment and RNG order for existing runs.
+        for episode_index in rng.permutation(len(lengths)):
+            steps = np.arange(lengths[episode_index])
+            rng.shuffle(steps)
+            for split in range(num_splits):
+                indices = steps[split::num_splits]
+                shard = np.argmin(self.shard_lengths)
+                self.sharded_episodes[shard].append((episode_index, indices))
+                self.shard_lengths[shard] += len(indices)
+
+    def __len__(self) -> int:
+        return len(self.shard_lengths)
+
+    def get_shard_length(self, idx: int) -> int:
+        return self.shard_lengths[idx]
+
+    def get_shard(self, idx: int) -> list[dict]:
+        """Load episode steps and process the action chunks assigned to one shard."""
+        datapoints = []
+        for episode_index, steps in self.sharded_episodes[idx]:
+            episode = self.episode_loader[episode_index]
+            for step in steps:
+                content = extract_step_data(
+                    episode,
+                    step,
+                    self.modality_configs,
+                    self.embodiment_tag,
+                    self.allow_padding,
+                )
+                datapoints.append(
+                    self.processor(
+                        [{"type": MessageType.EPISODE_STEP.value, "content": content}]
+                    )
+                )
+        return datapoints
 
     def get_dataset_statistics(self) -> dict:
         return self.statistics

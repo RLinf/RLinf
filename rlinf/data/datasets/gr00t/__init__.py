@@ -11,6 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .sft import build_gr00t_sft_dataloader
+from .dataloader import build_gr00t_sft_dataloader
 
 __all__ = ["build_gr00t_sft_dataloader"]

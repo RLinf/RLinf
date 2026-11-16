@@ -14,6 +14,7 @@
 
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Any
 
 
 class ForwardType(Enum):
@@ -47,6 +48,7 @@ class BasePolicy(ABC):
         - iql_forward
         - prepare_dagger_sft_batch
         - prepare_nft_reference_model
+        - save_sft_checkpoint_metadata
     """
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -77,6 +79,13 @@ class BasePolicy(ABC):
 
     def prepare_nft_reference_model(self) -> None:
         """Release state unused by NFT forward on a cached reference model."""
+
+    def save_sft_checkpoint_metadata(self, save_path: str, data_config: Any) -> None:
+        """Save optional model and preprocessing metadata beside SFT weights.
+
+        Called on rank zero with the data configuration returned by the SFT
+        dataloader builder, after model and dataloader state have been saved.
+        """
 
     @abstractmethod
     def default_forward(self, **kwargs): ...

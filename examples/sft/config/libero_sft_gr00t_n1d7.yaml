@@ -31,7 +31,6 @@ data:
   train_data_paths:
     - /path/to/libero_spatial_no_noops_1.0.0_lerobot
   val_data_paths: null
-  embodiment_tag: libero_sim
   num_workers: 4
   video_backend: torchcodec
   shard_size: 1024
@@ -59,10 +58,8 @@ actor:
     action_dim: 7
     num_action_chunks: 16
     denoising_steps: 4
-    num_steps: 4
     embodiment_tag: libero_sim
     obs_converter_type: libero
-    add_value_head: false
 
     sft:
       tune_llm: true
@@ -74,12 +71,6 @@ actor:
     rl_head_config:
       add_value_head: false
       disable_dropout: false
-      noise_method: flow_sde
-      noise_level: 0.5
-      noise_params: [0.7, 0.3, 400]
-      noise_anneal: false
-      action_noise_scale: 0.0
-      padding_value: 570
   optim:
     lr: 1.0e-05
     adam_beta1: 0.9

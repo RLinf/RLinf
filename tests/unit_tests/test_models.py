@@ -3455,3 +3455,183 @@ def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch, parameter
     for name, parameter in model.named_parameters():
         if name in gradients:
             torch.testing.assert_close(parameter.grad, gradients[name], rtol=0, atol=0)
+
+
+@pytest.fixture
+def gr00t_libero_parquet(tmp_path, monkeypatch):
+    import json
+    from io import BytesIO
+
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+    image_module = pytest.importorskip("PIL.Image")
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("gr00t.data.dataset.sharded_single_step_dataset")
+
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    data = tmp_path / "data/chunk-000"
+    data.mkdir(parents=True)
+    info = {
+        "chunks_size": 1000,
+        "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+    }
+    (meta / "info.json").write_text(json.dumps(info))
+    (meta / "tasks.jsonl").write_text('{"task_index": 0, "task": "pick up bowl"}\n')
+    (meta / "stats.json").write_text("{}")
+    (meta / "modality.json").write_text(
+        json.dumps(
+            {
+                "state": {"x": {"start": 0, "end": 1, "original_key": "state"}},
+                "action": {"x": {"start": 0, "end": 1, "original_key": "actions"}},
+                "annotation": {
+                    "human.action.task_description": {"original_key": "task_index"}
+                },
+            }
+        )
+    )
+    encoded = BytesIO()
+    image_module.new("RGB", (2, 2), (10, 20, 30)).save(encoded, format="PNG")
+    image = {"bytes": encoded.getvalue(), "path": None}
+    episodes = []
+    for index, length in enumerate((18, 21, 26)):
+        state = np.arange(length * 8, dtype=np.float32).reshape(length, 8)
+        action = np.arange(length * 7, dtype=np.float32).reshape(length, 7)
+        action[:, -1] = np.where(np.arange(length) % 2, 1, -1)
+        pd.DataFrame(
+            {
+                "state": list(state),
+                "actions": list(action),
+                "image": [image] * length,
+                "wrist_image": [image] * length,
+                "task_index": np.zeros(length, dtype=np.int64),
+            }
+        ).to_parquet(data / f"episode_{index:06d}.parquet")
+        episodes.append(
+            {"episode_index": index, "length": length, "tasks": ["pick up bowl"]}
+        )
+    (meta / "episodes.jsonl").write_text(
+        "".join(json.dumps(episode) + "\n" for episode in episodes)
+    )
+    return tmp_path
+
+
+def test_gr00t_libero_statistics_match_training_values(gr00t_libero_parquet):
+    from rlinf.data.datasets.gr00t.libero import LiberoEpisodeLoader
+
+    reader = LiberoEpisodeLoader(gr00t_libero_parquet, ["pick up bowl"])
+    frames = [reader[index] for index in range(len(reader.episodes))]
+    cache = gr00t_libero_parquet / "cache/statistics.json"
+    reader.prepare_statistics(cache)
+    statistics = reader.load_statistics(cache)
+    assert len(frames) == 3
+    assert frames[0]["state.gripper"].iloc[0].shape == (2,)
+    np.testing.assert_array_equal(
+        np.concatenate(frames[0]["action.gripper"].tolist()),
+        np.tile([1.0, 0.0], 9),
+    )
+    np.testing.assert_array_equal(frames[0]["video.image"].iloc[0][0, 0], [10, 20, 30])
+    for modality in ("state", "action"):
+        for key, stats in statistics[modality].items():
+            values = np.concatenate(
+                [np.stack(frame[f"{modality}.{key}"]) for frame in frames]
+            )
+            np.testing.assert_allclose(stats["mean"], values.mean(axis=0))
+            np.testing.assert_allclose(stats["std"], values.std(axis=0))
+            np.testing.assert_allclose(stats["q01"], np.quantile(values, 0.01, axis=0))
+            np.testing.assert_allclose(stats["q99"], np.quantile(values, 0.99, axis=0))
+    modified_at = cache.stat().st_mtime_ns
+    reader.prepare_statistics(cache)
+    assert cache.stat().st_mtime_ns == modified_at
+
+
+@pytest.mark.parametrize("seed,sampling_rate", [(0, 1.0), (19, 1.0), (0, 0.5)])
+def test_gr00t_libero_shards_match_upstream(gr00t_libero_parquet, seed, sampling_rate):
+    from gr00t.data.dataset.sharded_single_step_dataset import ShardedSingleStepDataset
+    from gr00t.data.types import EmbodimentTag, ModalityConfig
+
+    from rlinf.data.datasets.gr00t.libero import (
+        LiberoEpisodeLoader,
+        LiberoParquetDataset,
+    )
+
+    modality_configs = {
+        "state": ModalityConfig(delta_indices=[0], modality_keys=["x"]),
+        "action": ModalityConfig(delta_indices=list(range(16)), modality_keys=["x"]),
+        "language": ModalityConfig(
+            delta_indices=[0],
+            modality_keys=["annotation.human.action.task_description"],
+        ),
+    }
+    options = {
+        "embodiment_tag": EmbodimentTag("libero_sim"),
+        "modality_configs": modality_configs,
+        "shard_size": 8,
+        "episode_sampling_rate": sampling_rate,
+        "seed": seed,
+    }
+    dataset = LiberoParquetDataset(
+        LiberoEpisodeLoader(gr00t_libero_parquet, None), statistics={}, **options
+    )
+    upstream = ShardedSingleStepDataset(gr00t_libero_parquet, **options)
+    np.testing.assert_array_equal(dataset.shard_lengths, upstream.shard_lengths)
+    assert sum(dataset.get_shard_length(i) for i in range(len(dataset))) == 20
+    dataset.set_processor(lambda messages: messages[0]["content"])
+    upstream.set_processor(lambda messages: messages[0]["content"])
+    for shard_index in range(len(dataset)):
+        actual = dataset.get_shard(shard_index)
+        expected = upstream.get_shard(shard_index)
+        assert len(actual) == len(expected)
+        for sample, reference in zip(actual, expected):
+            assert sample.text == reference.text
+            np.testing.assert_array_equal(sample.states["x"], reference.states["x"])
+            np.testing.assert_array_equal(sample.actions["x"], reference.actions["x"])
+
+
+def test_gr00t_sft_checkpoint_saves_training_processor(
+    gr00t_libero_parquet, monkeypatch
+):
+    import json
+
+    processing = pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
+    from gr00t.configs.data.embodiment_configs import MODALITY_CONFIGS
+    from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
+
+    from rlinf.data.datasets.gr00t.libero import LiberoEpisodeLoader
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        GR00T_N1_7_ForRLActionPrediction,
+    )
+
+    monkeypatch.setattr(
+        processing,
+        "build_processor",
+        lambda *args, **kwargs: SimpleNamespace(tokenizer=SimpleNamespace()),
+    )
+    statistics = {
+        "libero_sim": LiberoEpisodeLoader(
+            gr00t_libero_parquet, None
+        ).compute_statistics()
+    }
+    old_statistics = copy.deepcopy(statistics)
+    old_statistics["libero_sim"]["state"]["x"]["mean"] = [-99.0]
+    options = {
+        "modality_configs": {"libero_sim": MODALITY_CONFIGS["libero_sim"]},
+        "image_target_size": [256, 256],
+        "image_crop_size": [224, 224],
+    }
+    training_processor = processing.Gr00tN1d7Processor(statistics=statistics, **options)
+    policy = GR00T_N1_7_ForRLActionPrediction.__new__(GR00T_N1_7_ForRLActionPrediction)
+    torch.nn.Module.__init__(policy)
+    policy.config = Gr00tN1d7Config(action_horizon=16, max_action_dim=7)
+    policy.processor = processing.Gr00tN1d7Processor(
+        statistics=old_statistics, **options
+    )
+    output = gr00t_libero_parquet / "checkpoint"
+    policy.save_sft_checkpoint_metadata(str(output), {"processor": training_processor})
+    assert json.loads((output / "statistics.json").read_text()) == statistics
+    assert (output / "processor_config.json").is_file()
+    assert (output / "embodiment_id.json").is_file()
+    restored = Gr00tN1d7Config.from_pretrained(output)
+    assert restored.action_horizon == 16
+    assert restored.max_action_dim == 7

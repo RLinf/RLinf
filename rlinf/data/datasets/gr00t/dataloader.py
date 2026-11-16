@@ -13,7 +13,6 @@
 # limitations under the License.
 """Use GR00T's official sharded LeRobot input pipeline for SFT."""
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -72,41 +71,17 @@ def build_gr00t_sft_dataloader(
             task_names = data_cfg.get("task_names")
             reader = LiberoEpisodeLoader(Path(path), task_names)
             statistics_path = Path(data_cfg.statistics_path)
-            sources = [
-                (
-                    episode["episode_index"],
-                    reader.episode_path(index).stat().st_size,
-                    reader.episode_path(index).stat().st_mtime_ns,
-                )
-                for index, episode in enumerate(reader.episodes)
-            ]
-            sources = [list(source) for source in sources]
             if rank == 0:
-                cached = (
-                    json.loads(statistics_path.read_text())
-                    if statistics_path.exists()
-                    else None
-                )
-                if cached is None or cached["sources"] != sources:
-                    statistics_path.parent.mkdir(parents=True, exist_ok=True)
-                    statistics_path.write_text(
-                        json.dumps(
-                            {
-                                "sources": sources,
-                                "statistics": reader.compute_statistics(),
-                            }
-                        )
-                    )
+                reader.prepare_statistics(statistics_path)
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
-            statistics = json.loads(statistics_path.read_text())["statistics"]
+            statistics = reader.load_statistics(statistics_path)
             datasets.append(
                 LiberoParquetDataset(
-                    path=path,
+                    episode_loader=reader,
                     embodiment_tag=tag,
                     modality_configs=modality_configs,
                     statistics=statistics,
-                    task_names=task_names,
                     shard_size=data_cfg.get("shard_size", 1024),
                     episode_sampling_rate=data_cfg.get("episode_sampling_rate", 1.0),
                     seed=cfg.actor.seed,
@@ -132,7 +107,10 @@ def build_gr00t_sft_dataloader(
             )
         )
     # Match DatasetFactory: paths within one embodiment are weighted by size.
-    sizes = [sum(dataset.shard_lengths) for dataset in datasets]
+    sizes = [
+        sum(dataset.get_shard_length(i) for i in range(len(dataset)))
+        for dataset in datasets
+    ]
     total = sum(sizes)
     if total == 0:
         raise ValueError("GR00T SFT requires at least one valid action chunk")

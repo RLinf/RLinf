@@ -134,6 +134,7 @@ GR00T-N1.7 监督微调
 .. code-block:: bash
 
    export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
    python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
      runner.resume_dir=/absolute/path/to/checkpoints/global_step_1000
 

@@ -963,6 +963,11 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         else:
             raise NotImplementedError
 
+    def save_sft_checkpoint_metadata(self, save_path: str, data_config: Any) -> None:
+        """Save the training processor's normalization and the model config."""
+        data_config["processor"].save_pretrained(save_path)
+        self.config.save_pretrained(save_path)
+
     def sft_forward(self, data: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Train on the official collator output with the upstream masked FM loss."""
         # FSDP parameter views do not define the precision of SFT inputs or targets.
