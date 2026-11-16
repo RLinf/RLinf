@@ -79,15 +79,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         training_action_horizon = online_lerobot_cfg.get(
             "training_action_horizon", self.cfg.actor.model.num_action_chunks
         )
-        if (
-            isinstance(training_action_horizon, bool)
-            or not isinstance(training_action_horizon, int)
-            or training_action_horizon <= 0
-        ):
-            raise ValueError(
-                "algorithm.dagger.online_lerobot.training_action_horizon must be "
-                f"a positive integer; found {training_action_horizon!r}."
-            )
         joint_vision_sft = (
             self.cfg.actor.model.model_type == "cosmos3"
             and self.cfg.actor.model.get("sft_objective") == "joint"
@@ -496,17 +487,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         metrics = {}
         loss = output
         if isinstance(output, dict):
-            loss = output.get("loss")
+            loss = output["loss"]
             for key, value in output.items():
                 if key != "loss" and torch.is_tensor(value) and value.numel() == 1:
                     metrics[f"dagger/{key}"] = value.detach().float().item()
-        if not torch.is_tensor(loss) or loss.numel() != 1:
-            raise ValueError(
-                "DAgger SFT forward must return a scalar tensor or {'loss': tensor}."
-            )
-        if not loss.requires_grad:
-            raise ValueError("DAgger SFT loss must retain its autograd graph.")
-        return loss.reshape(()), metrics
+        return loss, metrics
 
     def _finish_sft_update(self, metrics, actor_losses) -> dict[str, float]:
         """Apply the manager's scaler/strategy step and advance successful updates."""
@@ -623,14 +608,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     train_micro_batch_list[idx] = prepared
                     continue
 
-                # Cosmos preprocesses the video windows on CPU before forward.
-                vision = {
-                    key: batch.pop(key)
-                    for key in ("vision_images", "vision_wrist_images", "vision_valid")
-                    if key in batch
-                }
                 batch = put_tensor_device(batch, device=self.device)
-                batch.update(vision)
                 if self.enable_drq:
                     drq.apply_drq(batch["curr_obs"], pad=4)
                 train_micro_batch_list[idx] = batch
