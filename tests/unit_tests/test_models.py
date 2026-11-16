@@ -3333,7 +3333,8 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert torch.isfinite(result["prev_logprobs"]).all()
 
 
-def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch):
+@pytest.mark.parametrize("parameter_dtype", [torch.float32, torch.bfloat16])
+def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch, parameter_dtype):
     """SFT dispatch must preserve the upstream FM objective and gradient path."""
     if isinstance(sys.modules.get("imageio"), MagicMock):
         monkeypatch.delitem(sys.modules, "imageio")
@@ -3404,12 +3405,17 @@ def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch):
 
     model = GR00T_N1_7_ForRLActionPrediction.__new__(GR00T_N1_7_ForRLActionPrediction)
     torch.nn.Module.__init__(model)
+    model.register_parameter(
+        "_dtype_anchor",
+        torch.nn.Parameter(torch.zeros((), dtype=parameter_dtype), requires_grad=False),
+    )
     model.config = config
     model.backbone = Backbone()
     model.action_head = FlowMatchingActionHeadForRLActionPrediction(
         config, {"add_value_head": False}, output_action_chunks=3
     ).float()
     model.train()
+    assert model.dtype == parameter_dtype
     mask = torch.zeros(2, 3, 8)
     mask[:, :, :4] = 1
     mask[1, -1] = 0
@@ -3437,7 +3443,8 @@ def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch):
     assert not any("value_head" in name for name, _ in model.named_parameters())
 
     model.zero_grad(set_to_none=True)
-    backbone_inputs, action_inputs = model.prepare_input(inputs)
+    backbone_inputs = model.backbone.prepare_input(inputs)
+    action_inputs = model.action_head.prepare_input(inputs)
     backbone_outputs = model.backbone(backbone_inputs)
     torch.manual_seed(19)
     expected = upstream.Gr00tN1d7ActionHead.forward(
