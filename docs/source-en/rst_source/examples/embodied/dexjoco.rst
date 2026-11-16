@@ -82,7 +82,8 @@ Installation
    :end-before: Then set up the dependencies
 
 Install the dependencies for your chosen policy and run the commands below from
-the RLinf repository root:
+the RLinf repository root. The installer creates the virtual environment in
+``.venv`` under the repository root:
 
 .. code:: bash
 
@@ -112,7 +113,7 @@ Each recipe below prepares its own training inputs from this directory.
 Run It
 ------
 
-Choose a policy and follow its SFT, PPO, and evaluation steps with these training
+Choose a policy and follow its SFT, PPO, and evaluation steps with these
 configurations:
 
 .. list-table::
@@ -122,7 +123,7 @@ configurations:
    * - Recipe
      - Config
      - GPUs
-     - Training steps
+     - Run length
    * - CNN + SFT
      - ``examples/sft/config/dexjoco_sft_cnn.yaml``
      - 1 × 48 GB
@@ -131,6 +132,10 @@ configurations:
      - ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``
      - 8 × H100
      - 200 iterations
+   * - CNN evaluation
+     - ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``
+     - 8 × H100
+     - 64 episodes
    * - π₀.₅ + SFT
      - ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``
      - 16 × H100
@@ -139,6 +144,10 @@ configurations:
      - ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``
      - 8 × H100
      - 150 iterations
+   * - π₀.₅ evaluation
+     - ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``
+     - 8 × H100
+     - 64 episodes
 
 CNN: SFT and PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -213,16 +222,28 @@ and global batch 1600. Launch it with:
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
 
-Evaluate the saved checkpoint with the same action statistics. The following
-command runs 64 episodes across the eight GPUs:
+Evaluate the saved checkpoint with the same action statistics. Set these fields
+in ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``:
+
+.. code:: yaml
+
+   runner:
+     ckpt_path: /path/to/dexjoco_ppo_cnn/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt
+   env:
+     eval:
+       seed: 10000
+       video_cfg:
+         save_video: False
+   rollout:
+     model:
+       model_path: /path/to/RLinf-ResNet10-pretrained
+       action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
+
+The following command runs 64 episodes across the eight GPUs:
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
-     runner.ckpt_path=/path/to/dexjoco_ppo_cnn/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt \
-     rollout.model.model_path=/path/to/RLinf-ResNet10-pretrained \
-     rollout.model.action_norm_stats=/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json \
-     env.eval.seed=10000 env.eval.video_cfg.save_video=False
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
 π₀.₅: SFT and PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -293,13 +314,22 @@ token-level log-probabilities, policy learning rate 5e-6, and value learning rat
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_openpi_pi05
 
-Evaluate a saved checkpoint with the training statistics:
+Evaluate a saved checkpoint with the training statistics. Set these paths in
+``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``:
+
+.. code:: yaml
+
+   rollout:
+     model:
+       model_path: /path/to/dexjoco_ppo_openpi_pi05/checkpoints/global_step_150
+       openpi_data:
+         norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
+
+Then run:
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/dexjoco_ppo_openpi_pi05/checkpoints/global_step_150 \
-     rollout.model.openpi_data.norm_stats_path=/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
+   bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval
 
 The evaluation config runs 64 episodes on eight workers with seed 10000,
 10-action chunks, 5 denoising steps, and a 1000-step episode limit.

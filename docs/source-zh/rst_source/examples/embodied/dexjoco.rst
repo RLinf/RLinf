@@ -79,7 +79,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
 .. include:: _setup_common.rst
    :end-before: 然后，使用下列两种方式之一准备依赖
 
-按所选 policy 安装依赖，后续命令均在 RLinf 仓库根目录执行：
+按所选 policy 安装依赖，后续命令均在 RLinf 仓库根目录执行。安装脚本会在仓库根目录的 ``.venv`` 中创建虚拟环境：
 
 .. code:: bash
 
@@ -106,7 +106,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
 运行
 ----------------------------------------
 
-选择一种 policy，使用以下训练配置依次完成 SFT、PPO 和评测：
+选择一种 policy，使用以下配置依次完成 SFT、PPO 和评测：
 
 .. list-table::
    :header-rows: 1
@@ -115,7 +115,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
    * - 配方
      - 配置
      - GPU
-     - 训练步数
+     - 运行规模
    * - CNN + SFT
      - ``examples/sft/config/dexjoco_sft_cnn.yaml``
      - 1 × 48 GB
@@ -124,6 +124,10 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
      - ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``
      - 8 × H100
      - 200 轮
+   * - CNN 评测
+     - ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``
+     - 8 × H100
+     - 64 个回合
    * - π₀.₅ + SFT
      - ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``
      - 16 × H100
@@ -132,6 +136,10 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
      - ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``
      - 8 × H100
      - 150 轮
+   * - π₀.₅ 评测
+     - ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``
+     - 8 × H100
+     - 64 个回合
 
 CNN：SFT 与 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -199,15 +207,27 @@ PPO 使用 128 个环境、action-level log-probability、1e-5 学习率和 1600
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_cnn
 
-评测时使用训练所用的动作统计量。下面的命令在 8 张 GPU 上运行 64 个回合：
+评测时使用训练所用的动作统计量。在 ``evaluations/dexjoco/dexjoco_cnn_eval.yaml`` 中设置：
+
+.. code:: yaml
+
+   runner:
+     ckpt_path: /path/to/dexjoco_ppo_cnn/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt
+   env:
+     eval:
+       seed: 10000
+       video_cfg:
+         save_video: False
+   rollout:
+     model:
+       model_path: /path/to/RLinf-ResNet10-pretrained
+       action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
+
+下面的命令在 8 张 GPU 上运行 64 个回合：
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
-     runner.ckpt_path=/path/to/dexjoco_ppo_cnn/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt \
-     rollout.model.model_path=/path/to/RLinf-ResNet10-pretrained \
-     rollout.model.action_norm_stats=/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json \
-     env.eval.seed=10000 env.eval.video_cfg.save_video=False
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
 π₀.₅：SFT 与 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -271,13 +291,21 @@ SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_openpi_pi05
 
-使用训练所用的统计量评测保存的检查点：
+使用训练所用的统计量评测保存的检查点。在 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml`` 中设置：
+
+.. code:: yaml
+
+   rollout:
+     model:
+       model_path: /path/to/dexjoco_ppo_openpi_pi05/checkpoints/global_step_150
+       openpi_data:
+         norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
+
+然后运行：
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/dexjoco_ppo_openpi_pi05/checkpoints/global_step_150 \
-     rollout.model.openpi_data.norm_stats_path=/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
+   bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval
 
 评测配置在 8 个 worker 上运行 64 个回合，种子为 10000，每个动作块执行 10 步、去噪 5 步，回合上限为 1000 步。其他评测选项见 :doc:`/rst_source/evaluations/reference/cli`。
 
