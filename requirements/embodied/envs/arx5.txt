@@ -1,5 +1,9 @@
 # ARX X5 SDK, RealSense, keyboard episode control, and PICO data collection.
-numpy
+# OpenPI uses NumPy 1; resolve the motion SDK against the same ABI.
+numpy>=1.26.4,<2
+# Include NumPy consumers so uv also resolves compatible wheels on an existing venv.
+scipy
+opencv-python
 python-can>=4.0
 pin
 ruckig

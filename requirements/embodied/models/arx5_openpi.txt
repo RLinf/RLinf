@@ -1,0 +1,6 @@
+# Resolve OpenPI and the robot SDK together: recent Pinocchio wheels need NumPy 2.
+-r ../envs/arx5.txt
+-r openpi.txt
+rlinf-openpi==0.1.1
+# Match the metadata to rlinf-transformer-openpi, which owns the same module.
+transformers==4.53.2

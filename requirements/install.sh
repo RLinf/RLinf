@@ -141,6 +141,7 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+                           arx5 defaults to OpenPI for collection, SFT, evaluation, and DAgger.
     --paddle-gpu           Install CUDA-enabled PaddlePaddle for diffusion OCR rewards.
 
 Common options:
@@ -2574,6 +2575,12 @@ install_openvla_oft_model() {
 
 install_openpi_model() {
     case "$ENV_NAME" in
+        arx5)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_arx5_env
+            uv pip install -r "$SCRIPT_DIR/embodied/models/arx5_openpi.txt"
+            ;;
         geniesim)
             create_and_sync_venv
             install_common_embodied_deps
@@ -2756,6 +2763,10 @@ EOF
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
+    if [ "$ENV_NAME" = "arx5" ]; then
+        # OpenPI reinstalls headless OpenCV; collection needs the GUI wheel.
+        use_opencv_gui_wheel
+    fi
 }
 
 install_phyai_runtime() {
@@ -3494,10 +3505,6 @@ install_env_only() {
     if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
     fi
-    if [ "$ENV_NAME" = "arx5" ] && [ "$USER_SET_PYTHON" -eq 0 ]; then
-        # The distributed ARX5 SDK contains CPython 3.12 extensions.
-        PYTHON_VERSION="3.12"
-    fi
     create_and_sync_venv
     SKIP_ROS=${SKIP_ROS:-0}
     # A robot host trains in its env venv, so it takes the same embodied extra,
@@ -4083,7 +4090,6 @@ install_franka_franky_env() {
 
 install_arx5_env() {
     local requirements="$SCRIPT_DIR/embodied/envs/arx5.txt"
-    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     uv pip install -r "$requirements"
     install_lerobot -r "$requirements"
     # Resolve Diffusers/Hub against the Transformers pin from the embodied extra.
@@ -4696,6 +4702,14 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    if [ "$TARGET" = "embodied" ] && [ "$ENV_NAME" = "arx5" ]; then
+        # Collection and policy training share the ARX5 environment.
+        MODEL="${MODEL:-openpi}"
+        if [ "$USER_SET_PYTHON" -eq 0 ]; then
+            # The distributed ARX5 SDK contains CPython 3.12 extensions.
+            PYTHON_VERSION="3.12"
+        fi
+    fi
     if [ "$INSTALL_PADDLE_GPU" -eq 1 ] \
         && { [ "$TARGET" != "embodied" ] || [ "$MODEL" != "diffusion" ]; }; then
         echo "--paddle-gpu is only supported with 'embodied --model diffusion'." >&2
