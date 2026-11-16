@@ -27,6 +27,7 @@ runner:
   max_steps: 600
   val_check_interval: -1
   save_interval: 100
+  resume_dir: null # SFT checkpoint directory (checkpoints/global_step_N) to resume from.
 
 data:
   # One LeRobot dataset whose features match actor.model.lingbotvlav2.robot_config_path.
