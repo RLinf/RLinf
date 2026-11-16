@@ -28,7 +28,7 @@ from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.nested_dict_process import put_tensor_device
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, seed_everything
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -55,6 +55,7 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
         self.refl_pre_loss_weight = float(cfg.algorithm.refl_pre_loss_weight)
 
     def init_worker(self) -> None:
+        seed_everything(self.cfg.actor.seed)
         super().init_worker()
         self.reward_scorer = build_refl_scorer(
             self.cfg.actor.refl_reward_model, self.device
@@ -62,6 +63,7 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
         if self.refl_pre_loss_weight > 0:
             self._build_pre_data_loader()
         self._build_prompt_data_loader()
+        seed_everything(self.cfg.actor.seed + self._rank)
 
     def _build_pre_data_loader(self) -> None:
         from rlinf.envs.sim.diffusion import build_reward_dataset
@@ -89,7 +91,7 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
     def _build_prompt_data_loader(self) -> None:
         from rlinf.envs.sim.diffusion import build_reward_dataset
 
-        dataset = build_reward_dataset(self.cfg.env.train.dataset)
+        dataset = build_reward_dataset(self.cfg.actor.refl_data)
         loader = DataLoader(
             dataset,
             batch_size=self.cfg.actor.micro_batch_size,
@@ -97,7 +99,7 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
                 dataset,
                 num_replicas=self._world_size,
                 rank=self._rank,
-                seed=self.cfg.env.train.seed,
+                seed=self.cfg.actor.seed,
                 drop_last=True,
             ),
             num_workers=0,
@@ -106,9 +108,7 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
         self.prompt_data_iter = _repeat_batches(loader)
 
     def _training_batches(self) -> Iterator[Sequence[dict[str, Any]]]:
-        sample_count = (
-            self.cfg.env.train.total_num_envs * self.cfg.env.train.rollout_epoch
-        )
+        sample_count = self.cfg.actor.refl_samples_per_step
         for _ in range(sample_count // self.cfg.actor.global_batch_size):
             yield [
                 {

@@ -1186,15 +1186,12 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
 
 def validate_refl_cfg(cfg: DictConfig) -> None:
     """Validate ReFL sampling and the sample budget of each runner step."""
-    train = cfg.env.train
-    if train.env_type != "diffusion" or train.dataset.type != "visual.prompt_dataset":
-        raise ValueError(
-            "ReFL requires a diffusion prompt dataset, not an environment rollout."
-        )
+    if cfg.env.get("train") is not None:
+        raise ValueError("ReFL reads actor.refl_data; expected env.train=null.")
+    if cfg.actor.refl_data.type != "visual.prompt_dataset":
+        raise ValueError("ReFL requires actor.refl_data.type=visual.prompt_dataset.")
     if cfg.algorithm.update_epoch != 1 or cfg.algorithm.group_size != 1:
         raise ValueError("ReFL requires update_epoch=1 and group_size=1.")
-    if train.max_steps_per_rollout_epoch != 1 or train.max_episode_steps != 1:
-        raise ValueError("ReFL requires one-step diffusion training samples.")
     if cfg.runner.get("use_training_pipeline", False) or cfg.runner.get(
         "overlap_env_bootstrap", False
     ):
@@ -1203,7 +1200,7 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
     if (cfg.get("reward") or {}).get("use_reward_model", False):
         raise ValueError("ReFL uses actor.refl_reward_model, not a reward worker.")
-    sample_count = train.total_num_envs * train.rollout_epoch
+    sample_count = cfg.actor.refl_samples_per_step
     batch_size = cfg.actor.global_batch_size
     if batch_size <= 0 or sample_count <= 0 or sample_count % batch_size:
         raise ValueError(
@@ -1762,7 +1759,7 @@ def validate_embodied_cfg(cfg):
                 "env.eval.early_stop_on_done does not support decoupled mode."
             )
 
-    if not only_eval:
+    if not only_eval and algorithm_cfg.get("loss_type") != "embodied_refl":
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )

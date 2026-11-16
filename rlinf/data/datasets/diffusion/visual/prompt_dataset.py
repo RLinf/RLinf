@@ -34,8 +34,12 @@ class PromptDataset(TextDataset):
         prompts = dict.fromkeys(load_json_prompts(str(cfg_require(cfg, "path"))))
         exclude_path = cfg_get(cfg, "exclude_path")
         if exclude_path:
-            for prompt in load_json_prompts(str(exclude_path)):
-                prompts.pop(prompt, None)
+            excluded = {
+                prompt.casefold() for prompt in load_json_prompts(str(exclude_path))
+            }
+            prompts = {
+                prompt: None for prompt in prompts if prompt.casefold() not in excluded
+            }
         return cls([{"task_description": prompt} for prompt in prompts])
 
 

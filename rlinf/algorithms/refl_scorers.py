@@ -29,7 +29,7 @@ class ReFLScorer(Protocol):
     """
 
     def __call__(
-        self, samples: torch.Tensor, forward_inputs: dict[str, torch.Tensor]
+        self, samples: torch.Tensor, forward_inputs: dict[str, Any]
     ) -> torch.Tensor:
         """Return per-sample rewards without detaching ``samples``."""
         ...

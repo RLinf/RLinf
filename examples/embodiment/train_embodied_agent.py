@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 import json
 
 import hydra
@@ -125,14 +124,10 @@ def main(cfg) -> None:
     )
 
     runner_cls = EmbodiedRunner
-    inference_cfg = cfg
     if cfg.algorithm.loss_type == "embodied_refl":
         from rlinf.runners.refl_runner import ReFLRunner
 
         runner_cls = ReFLRunner
-        inference_cfg = copy.deepcopy(cfg)
-        with open_dict(inference_cfg):
-            inference_cfg.env.train = None
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
@@ -152,7 +147,7 @@ def main(cfg) -> None:
             "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "
             f"embodied training, got {rollout_backend!r}."
         )
-    rollout_group = rollout_worker_cls.create_group(inference_cfg).launch(
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
         cluster,
         name=cfg.rollout.group_name,
         placement_strategy=rollout_placement,
@@ -160,7 +155,7 @@ def main(cfg) -> None:
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(inference_cfg).launch(
+    env_group = EnvWorker.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 

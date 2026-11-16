@@ -102,14 +102,15 @@ class ImageRewardScorer:
         return rewards.squeeze(-1)
 
     def __call__(
-        self, samples: torch.Tensor, forward_inputs: dict[str, torch.Tensor]
+        self, samples: torch.Tensor, forward_inputs: dict[str, Any]
     ) -> torch.Tensor:
-        """Score ReFL images using the stored prompt tokens."""
-        return self.score(
-            samples,
-            forward_inputs["reward_input_ids"],
-            forward_inputs["reward_attention_mask"],
-        )
+        """Score images from raw prompts or pre-tokenized ImageReward context."""
+        if "prompts" in forward_inputs:
+            input_ids, attention_mask = self.tokenize(forward_inputs["prompts"])
+        else:
+            input_ids = forward_inputs["reward_input_ids"]
+            attention_mask = forward_inputs["reward_attention_mask"]
+        return self.score(samples, input_ids, attention_mask)
 
 
 class ImageRewardBackend(ImageRewardBackendBase):

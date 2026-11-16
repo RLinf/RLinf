@@ -40,6 +40,7 @@ def test_prompt_dataset_excludes_eval_and_preserves_unique_order(tmp_path):
                 {"prompt": "a cat"},
                 {"text": "a fox"},
                 {"text": "a dog"},
+                {"text": "A CAT"},
             ]
         )
     )
@@ -130,7 +131,10 @@ def test_refl_config_composes(monkeypatch, pre_weight):
     assert cfg.actor.refl_reward_model.type == "image_reward"
     assert cfg.actor.refl_pre_data.num_workers == 0
     assert cfg.algorithm.refl_pre_loss_weight == pre_weight
-    assert cfg.env.train.reward.model_path == cfg.actor.refl_reward_model.model_path
+    assert cfg.env.train is None
+    assert cfg.actor.refl_data.type == "visual.prompt_dataset"
+    assert cfg.actor.refl_samples_per_step == 512
+    assert cfg.env.eval.reward.model_path == cfg.actor.refl_reward_model.model_path
     assert cfg.env.eval.sequential_eval
     assert cfg.runner.max_steps == 200
 
@@ -205,16 +209,10 @@ class _ExternalImageReward(torch.nn.Module):
         return self.projection(pixels.mean(dim=(-2, -1)))
 
 
-@pytest.mark.parametrize("scorer_type", [None, "image_reward"])
-def test_image_reward_freezes_weights_but_preserves_image_gradients(
-    tmp_path, monkeypatch, scorer_type
-):
+@pytest.fixture
+def image_reward_package(tmp_path, monkeypatch):
     pytest.importorskip("torchvision")
     from transformers import BertTokenizer
-
-    from rlinf.envs.sim.diffusion.rewards.visual.image_reward import (
-        ImageRewardBackend,
-    )
 
     vocab = tmp_path / "vocab.txt"
     vocab.write_text("[PAD]\n[UNK]\n[CLS]\n[SEP]\n[MASK]\na\nfox\ncat\n")
@@ -227,14 +225,27 @@ def test_image_reward_freezes_weights_but_preserves_image_gradients(
         "med_config": "local-config",
         "precision": "fp32",
     }
+    return reward_cfg, external_model
+
+
+@pytest.mark.parametrize("scorer_type", [None, "image_reward"])
+def test_image_reward_freezes_weights_but_preserves_image_gradients(
+    image_reward_package, scorer_type
+):
+    from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardBackend
+
+    reward_cfg, external_model = image_reward_package
     if scorer_type is not None:
         reward_cfg["type"] = scorer_type
     scorer = build_refl_scorer(reward_cfg, device="cpu")
     images = torch.full((2, 3, 16, 16), 0.5, requires_grad=True)
     tokens = scorer.tokenize(["a fox", "a cat"])
-    rewards = scorer(
-        images,
-        {"reward_input_ids": tokens[0], "reward_attention_mask": tokens[1]},
+    rewards = scorer(images, {"prompts": ["a fox", "a cat"]})
+    torch.testing.assert_close(
+        rewards,
+        scorer(
+            images, {"reward_input_ids": tokens[0], "reward_attention_mask": tokens[1]}
+        ),
     )
     torch.testing.assert_close(rewards, scorer.score(images, *tokens))
     assert rewards.shape == (2,)
@@ -265,7 +276,6 @@ def tiny_sd3(tmp_path):
     from tokenizers.models import WordLevel
     from tokenizers.pre_tokenizers import Whitespace
     from transformers import (
-        BertTokenizer,
         CLIPTextConfig,
         CLIPTextModelWithProjection,
         PreTrainedTokenizerFast,
@@ -360,11 +370,6 @@ def tiny_sd3(tmp_path):
         tokenizer_3=tokenizer,
     )
     configure_pipeline_trainability(pipeline, train_transformer=True)
-    bert_dir = tmp_path / "bert"
-    bert_dir.mkdir()
-    bert_vocab = bert_dir / "vocab.txt"
-    bert_vocab.write_text("[PAD]\n[UNK]\n[CLS]\n[SEP]\n[MASK]\na\nfox\ncat\n")
-    BertTokenizer(vocab_file=str(bert_vocab)).save_pretrained(bert_dir)
     config = StableDiffusion3Config(
         resolution=16,
         num_steps=4,
@@ -374,7 +379,6 @@ def tiny_sd3(tmp_path):
         guidance_scale=1.0,
         train_sampler="ode",
         refl_late_fraction=0.5,
-        reward_tokenizer_path=str(bert_dir),
         use_lora=False,
         offload_auxiliary_modules=False,
     )
@@ -579,8 +583,10 @@ def test_refl_batch_sampling_preserves_gradients(
     assert forwards == [False] * prefix_steps + [True]
     assert decodes == [True]
     context = output["forward_inputs"]
-    assert context["reward_input_ids"].shape == (2, 35)
-    assert all(not value.requires_grad for value in context.values())
+    assert context["prompts"] == ["a fox", "a cat"]
+    assert all(
+        not value.requires_grad for value in context.values() if torch.is_tensor(value)
+    )
     assert output["samples"].shape[:2] == (2, 3)
     output["samples"].square().mean().backward()
     grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
@@ -651,31 +657,26 @@ def test_refl_config_validates_training_batches():
     cfg = OmegaConf.create(
         {
             "algorithm": {"update_epoch": 1, "group_size": 1},
-            "actor": {"global_batch_size": 64},
-            "runner": {},
-            "env": {
-                "train": {
-                    "env_type": "diffusion",
-                    "dataset": {"type": "visual.prompt_dataset"},
-                    "max_steps_per_rollout_epoch": 1,
-                    "max_episode_steps": 1,
-                    "total_num_envs": 4,
-                    "rollout_epoch": 128,
-                }
+            "actor": {
+                "global_batch_size": 64,
+                "refl_samples_per_step": 512,
+                "refl_data": {"type": "visual.prompt_dataset"},
             },
+            "runner": {},
+            "env": {"train": None},
         }
     )
     validate_refl_cfg(cfg)
-    cfg.env.train.rollout_epoch = 127
+    cfg.actor.refl_samples_per_step = 511
     with pytest.raises(ValueError, match="positive multiple"):
         validate_refl_cfg(cfg)
-    cfg.env.train.rollout_epoch = 128
+    cfg.actor.refl_samples_per_step = 512
     cfg.algorithm.update_epoch = 2
     with pytest.raises(ValueError, match="update_epoch=1"):
         validate_refl_cfg(cfg)
     cfg.algorithm.update_epoch = 1
-    cfg.env.train.env_type = "maniskill"
-    with pytest.raises(ValueError, match="diffusion prompt dataset"):
+    cfg.actor.refl_data.type = "visual.image_text_dataset"
+    with pytest.raises(ValueError, match="refl_data.type=visual.prompt_dataset"):
         validate_refl_cfg(cfg)
 
 
@@ -686,3 +687,329 @@ def test_refl_rejects_conflicting_inputs(tiny_sd3):
             forward_inputs={"prompts": ["a fox"]},
             refl_inputs={"x_t": torch.zeros(1), "timesteps": torch.zeros(1)},
         )
+
+
+def test_dataset_factory_import_does_not_require_gym():
+    import subprocess
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['gym'] = None; "
+            "from rlinf.envs.sim.diffusion import build_reward_dataset; "
+            "assert callable(build_reward_dataset)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_sequential_evaluation_repeats_the_same_prompt_batches(
+    tmp_path, image_reward_package
+):
+    pytest.importorskip("gym")
+    from rlinf.envs.sim.diffusion.generation_env import GenerationEnv
+
+    reward_cfg, _ = image_reward_package
+    prompts = tmp_path / "eval.json"
+    prompts.write_text(json.dumps([{"text": f"prompt {i}"} for i in range(5)]))
+    cfg = {
+        "dataset": {"type": "visual.prompt_dataset", "path": str(prompts)},
+        "reward": {
+            **reward_cfg,
+            "type": "single",
+            "model": "visual.image_reward",
+            "use_gpu": False,
+        },
+        "sequential_eval": True,
+        "is_eval": True,
+        "rollout_epoch": 3,
+    }
+    envs = [GenerationEnv(cfg, 1, rank, 2) for rank in range(2)]
+    rounds = []
+    for _ in range(2):
+        batches = []
+        for _ in range(3):
+            for env in envs:
+                batches.append(env.reset()[0]["task_descriptions"])
+                env.update_reset_state_ids()
+        rounds.append(batches)
+    assert rounds[0] == [[f"prompt {i % 5}"] for i in range(6)]
+    assert rounds[1] == rounds[0]
+
+
+@pytest.mark.parametrize("pre_weight", [0.0, 0.1, 0.01])
+def test_refl_actor_updates_current_weights_and_respects_sample_budget(
+    tmp_path, monkeypatch, pre_weight
+):
+    from contextlib import nullcontext
+
+    from rlinf.scheduler import Worker
+    from rlinf.scheduler.hardware import AcceleratorType
+    from rlinf.workers.actor.fsdp_refl_policy_worker import EmbodiedReFLFSDPPolicy
+
+    events = []
+
+    class ToyPolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(0.5))
+            self.sampled_weights = []
+
+        def forward(self, forward_type, forward_inputs=None, data=None, **kwargs):
+            if forward_type == ForwardType.SFT:
+                events.append("pre")
+                return (self.weight - 1).square()
+            assert forward_type == ForwardType.REFL
+            events.append("reward")
+            self.sampled_weights.append(self.weight.detach().item())
+            return {"samples": self.weight.expand(len(forward_inputs["prompts"]), 1)}
+
+    class LocalActor(EmbodiedReFLFSDPPolicy):
+        def __init__(self, cfg):
+            self.cfg = cfg
+            self._rank, self._world_size = 0, 1
+            self._accelerator_type = AcceleratorType.NO_ACCEL
+            self._timer_metrics = {}
+            self.device = torch.device("cpu")
+            self.amp_context = nullcontext()
+            self.is_weight_offloaded = self.is_optimizer_offloaded = False
+            self.refl_pre_loss_weight = pre_weight
+            self.refl_margin, self.refl_grad_scale = 2.0, 0.1
+            self.refl_xt_source = "rollout"
+            self.gradient_accumulation = 2
+            self.model = ToyPolicy()
+            self.reward_scorer = lambda samples, context: -samples.square().sum(-1)
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.1)
+            self.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+                self.optimizer, factor=1.0, total_iters=1
+            )
+            self.grad_scaler = torch.amp.GradScaler("cpu", enabled=False)
+            if pre_weight > 0:
+                self._build_pre_data_loader()
+            self._build_prompt_data_loader()
+
+        def before_micro_batch(self, model, is_last_micro_batch):
+            return nullcontext()
+
+        def optimizer_step(self):
+            events.append("step")
+            norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.optimizer.step()
+            return norm.item(), [self.optimizer.param_groups[0]["lr"]]
+
+    # The CPU policy runs without an accelerator or cross-process collectives.
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            current_device=lambda: torch.device("cpu"),
+            empty_cache=lambda: None,
+            synchronize=lambda: None,
+            ipc_collect=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda tensor, **kwargs: None)
+    prompts = tmp_path / "train.json"
+    prompts.write_text(json.dumps([{"text": f"prompt {i}"} for i in range(4)]))
+    images = tmp_path / "pairs"
+    images.mkdir()
+    for i in range(4):
+        Image.new("RGB", (8, 8)).save(images / f"{i}.png")
+        (images / f"{i}.txt").write_text(f"prompt {i}")
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 42,
+                "micro_batch_size": 1,
+                "global_batch_size": 2,
+                "refl_samples_per_step": 4,
+                "refl_data": {"type": "visual.prompt_dataset", "path": str(prompts)},
+                "refl_pre_data": {
+                    "type": "visual.image_text_dataset",
+                    "path": str(images),
+                    "resolution": 8,
+                    "num_workers": 0,
+                },
+            },
+        }
+    )
+    actor = LocalActor(cfg)
+    metrics = actor.run_training()
+    update_events = ["pre", "pre", "step"] if pre_weight else []
+    assert events == (update_events + ["reward", "reward", "step"]) * 2
+    assert metrics["actor/refl_samples"] == 4
+    assert metrics["actor/refl_reward_updates"] == 2
+    assert metrics["actor/refl_pre_updates"] == (2 if pre_weight else 0)
+    assert actor.lr_scheduler.last_epoch == 1
+    sampled = actor.model.sampled_weights
+    assert sampled[0] == sampled[1] and sampled[2] == sampled[3]
+    assert sampled[0] == pytest.approx(0.5 + 0.1 * pre_weight)
+    assert actor.model.weight.item() < sampled[-1]
+    assert actor.model.weight.grad is None
+
+
+def test_refl_runner_evaluates_saves_and_resumes_without_training_rollout(tmp_path):
+    import queue
+    import threading
+
+    from rlinf.runners.refl_runner import ReFLRunner
+    from rlinf.utils.distributed import ScopedTimer
+    from rlinf.utils.logging import get_logger
+    from rlinf.utils.metric_logger import MetricLogger
+
+    class Result:
+        def __init__(self, value=None):
+            self.value = value
+
+        def wait(self):
+            return self.value
+
+        def consume_durations(self, return_per_rank=False):
+            return {}, [{}]
+
+    class ActorGroup:
+        worker_group_name = "ActorGroup"
+
+        def __init__(self):
+            self.weight = 0
+            self.steps = []
+            self.saved = []
+
+        def init_worker(self):
+            return Result()
+
+        def set_global_step(self, step):
+            self.step = step
+            return Result()
+
+        def run_training(self):
+            self.steps.append(self.step)
+            self.weight += 1
+            return Result([{"actor/refl_samples": 4.0}])
+
+        def sync_model_to_rollout(self):
+            rollout.weight = self.weight
+            return Result()
+
+        def save_checkpoint(self, path, step):
+            self.saved.append(step)
+            torch.save(self.weight, Path(path) / "weight.pt")
+            return Result()
+
+        def load_checkpoint(self, path):
+            self.weight = torch.load(Path(path) / "weight.pt", weights_only=True)
+            return Result()
+
+    class EvalGroup:
+        def __init__(self):
+            self.weight = 0
+            self.evaluated = []
+
+        def init_worker(self):
+            return Result()
+
+        def set_global_step(self, step):
+            return Result()
+
+        def sync_model_from_actor(self):
+            return Result()
+
+        def evaluate(self, **kwargs):
+            self.evaluated.append(rollout.weight)
+            return Result([{"image_reward": torch.tensor([float(rollout.weight)])}])
+
+    def make_runner(actor, max_steps, resume_dir=None):
+        # Worker groups are the RPC edge; the runner's loop and lifecycle are real.
+        runner = ReFLRunner.__new__(ReFLRunner)
+        runner.cfg = OmegaConf.create(
+            {
+                "runner": {
+                    "max_epochs": 4,
+                    "max_steps": max_steps,
+                    "val_check_interval": 2,
+                    "save_interval": 2,
+                    "resume_dir": resume_dir,
+                    "logger": {
+                        "log_path": str(tmp_path),
+                        "experiment_name": "runner",
+                        "logger_backends": [],
+                    },
+                },
+            }
+        )
+        runner.actor, runner.rollout, runner.env = actor, rollout, env
+        runner.reward = None
+        runner.env_channel, runner.rollout_channel = object(), object()
+        runner.global_step = 0
+        runner.set_max_steps()
+        runner.timer = ScopedTimer(sync_cuda=False)
+        runner.logger = get_logger()
+        runner.metric_logger = MetricLogger(runner.cfg)
+        runner.enable_per_worker_metric_log = False
+        runner._profile_all_steps, runner._profile_steps = False, None
+        runner.log_queue = queue.Queue()
+        runner.log_thread = threading.Thread(target=runner._log_worker, daemon=True)
+        runner.log_thread.start()
+        runner.init_workers()
+        return runner
+
+    rollout, env = EvalGroup(), EvalGroup()
+    first_actor = ActorGroup()
+    first = make_runner(first_actor, 2)
+    first.run()
+    checkpoint = tmp_path / "runner/checkpoints/global_step_2/actor"
+    assert torch.load(checkpoint / "weight.pt", weights_only=True) == 2
+    assert first_actor.steps == [0, 1] and first_actor.saved == [2]
+    assert not first.log_thread.is_alive()
+
+    resumed_actor = ActorGroup()
+    resumed = make_runner(resumed_actor, 4, str(checkpoint.parent))
+    assert resumed.global_step == 2 and resumed_actor.weight == 2
+    resumed.run()
+    assert resumed_actor.steps == [2, 3] and resumed_actor.saved == [4]
+    assert env.evaluated == rollout.evaluated == [2, 4]
+    assert resumed.global_step == 4
+    assert not resumed.log_thread.is_alive()
+
+
+def test_refl_actor_seeds_model_initialization_and_rank_sampling(tmp_path):
+    from rlinf.workers.actor.fsdp_refl_policy_worker import EmbodiedReFLFSDPPolicy
+
+    class LocalActor(EmbodiedReFLFSDPPolicy):
+        def __init__(self, cfg, rank):
+            self.cfg = cfg
+            self._rank, self._world_size = rank, 2
+            self.enable_offload = False
+            self.refl_pre_loss_weight = 0.0
+
+        def setup_model_and_optimizer(self):
+            self.model = torch.nn.Linear(2, 2)
+
+    register_refl_scorer("test_seeded_reward", lambda cfg, device: lambda x, ctx: x)
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text(json.dumps([{"text": f"prompt {i}"} for i in range(4)]))
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 42,
+                "micro_batch_size": 1,
+                "refl_reward_model": {"type": "test_seeded_reward"},
+                "refl_data": {"type": "visual.prompt_dataset", "path": str(prompts)},
+            },
+        }
+    )
+    weights, noises = [], []
+    for rank, ambient_seed in ((0, 123), (0, 456), (1, 789)):
+        torch.manual_seed(ambient_seed)
+        actor = LocalActor(cfg, rank)
+        actor.device = torch.device("cpu")
+        actor.init_worker()
+        weights.append(actor.model.weight.detach().clone())
+        noises.append(torch.randn(8))
+    torch.testing.assert_close(weights[0], weights[1])
+    torch.testing.assert_close(weights[0], weights[2])
+    torch.testing.assert_close(noises[0], noises[1])
+    assert not torch.equal(noises[0], noises[2])

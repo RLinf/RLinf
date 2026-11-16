@@ -17,7 +17,6 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from functools import cached_property
 from typing import Any, Literal
 
 import torch
@@ -25,7 +24,6 @@ import torch.nn.functional as F
 from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import (
     retrieve_timesteps,
 )
-from transformers import BertTokenizer
 
 from rlinf.models.diffusion.sd3.sampler import sde_step_with_logprob
 from rlinf.models.diffusion.sd3.utils import (
@@ -55,8 +53,6 @@ class StableDiffusion3Config:
     output_type: str = "pt"
     rl_mode: Literal["flow-grpo", "nft", "art", "refl"] = "flow-grpo"
     refl_late_fraction: float = 0.25
-    reward_tokenizer_path: str = "bert-base-uncased"
-    reward_max_tokens: int = 35
     use_lora: bool = True
     lora_rank: int = 32
     lora_alpha: int = 64
@@ -303,7 +299,7 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
     @torch.no_grad()
     def _sample_refl_inputs(
         self, prompts: list[str], xt_source: str
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
         """Sample late states with current weights, without decoding a rollout image."""
         if xt_source not in {"rollout", "resample"}:
             raise ValueError(
@@ -348,18 +344,10 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
         if xt_source == "resample":
             t_bc = t.view(-1, 1, 1, 1)
             state = (1 - t_bc) * state + t_bc * torch.randn_like(state)
-        tokens = self.reward_tokenizer(
-            prompts,
-            padding="max_length",
-            truncation=True,
-            max_length=self.config.reward_max_tokens,
-            return_tensors="pt",
-        ).to(prompt_embeds.device)
         context = {
             "prompt_embeds": prompt_embeds,
             "pooled_prompt_embeds": pooled_prompt_embeds,
-            "reward_input_ids": tokens.input_ids,
-            "reward_attention_mask": tokens.attention_mask,
+            "prompts": prompts,
         }
         return context, {"x_t": state, "timesteps": t}
 
@@ -392,10 +380,6 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             pooled_prompt_embeds,
         )
         return F.mse_loss(velocity.float(), (noise - latents).float())
-
-    @cached_property
-    def reward_tokenizer(self) -> BertTokenizer:
-        return BertTokenizer.from_pretrained(self.config.reward_tokenizer_path)
 
     def obs_processor(self, env_obs: Any) -> list[str]:
         if isinstance(env_obs, Mapping):

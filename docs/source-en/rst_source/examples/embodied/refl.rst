@@ -5,101 +5,97 @@ Fine-Tune SD3 with ImageReward
    :align: center
    :width: 80%
 
-   ImageReward overview. Source: the ImageReward authors' official repository.
+   ImageReward overview, from the authors' official repository.
 
-Fine-tune Stable Diffusion 3.5 Medium with Reward Feedback Learning (ReFL)
-by backpropagating an ImageReward preference loss through generated images.
-Start with reward-only training, then add supervised image-text updates to
-compare the two training setups.
+Fine-tune Stable Diffusion 3.5 Medium with Reward Feedback Learning (ReFL) to
+improve ImageReward scores. Training uses text prompts, with optional
+image-caption pairs for supervised updates.
 
 Overview
 --------
 
-The actor trains SD3 LoRA by sampling each batch with its current weights
-and computing a differentiable ImageReward loss. During evaluation, rollout
-workers generate images and the diffusion environment scores them.
+The ``sd3_refl_imagereward`` config trains SD3's LoRA weights on four NVIDIA GPUs.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Environments
-      :text-align: center
-
-      Diffusion generation
-
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: Algorithm
       :text-align: center
 
       ReFL
 
-   .. grid-item-card:: Tasks
+   .. grid-item-card:: Models
       :text-align: center
 
-      Text-to-image preference tuning
+      SD3.5 Medium
 
-   .. grid-item-card:: Hardware
+   .. grid-item-card:: Environments / Data
       :text-align: center
 
-      NVIDIA CUDA; four-GPU recipe below
+      Text prompts, image-caption pairs
 
-| **You'll do:** install → prepare models and prompts → train → inspect images and rewards.
-| **Prerequisites:** an SD3.5 model license and four NVIDIA GPUs for the command below.
+   .. grid-item-card:: Training
+      :text-align: center
+
+      LoRA · FSDP2 · BF16
 
 Tasks
 ~~~~~
 
-Use ``examples/diffusion/config/sd3_refl_imagereward.yaml`` for this recipe.
-The supervised update takes captioned images separately from the prompt dataset.
+Training optimizes text-to-image generation with ImageReward scores.
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 35 40
+   :widths: 30 35 35
 
    * - Model
+     - Config
      - Reward
-     - Training data
-   * - SD3.5 Medium with LoRA
+   * - SD3.5 Medium
+     - ``sd3_refl_imagereward``
      - ImageReward human-preference score
-     - Text prompts; optional captioned images for supervised updates
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Training batches contain text prompts. The actor samples late denoising
-states without gradients, then predicts and decodes clean images for the
-reward update. During evaluation, each image completes one environment episode.
+Each prompt produces one image for ImageReward to score.
 
 .. list-table::
    :header-rows: 1
    :widths: 22 78
 
-   * - Field
-     - Description
+   * - Value
+     - Meaning
    * - Observation
-     - ``task_descriptions``: a batch of text prompts.
+     - A text prompt.
    * - Action
-     - Generated RGB images.
+     - A generated RGB image.
    * - Reward
-     - ``avg`` and ``image_reward``: the same scalar score; higher is better.
-   * - Update inputs
-     - Text prompts; the actor generates late denoising states and prompt embeddings for each batch.
+     - One ImageReward score per image; higher is better.
+
+How ReFL Works
+--------------
+
+ReFL samples up to a late denoising step, then predicts a clean image in one
+step. A frozen ImageReward model scores the image, and the reward gradient
+updates the generator's LoRA weights. With the supervised loss Lpre enabled,
+each reward update follows a supervised update on image-caption pairs.
+
+This recipe applies the method from the
+`ImageReward paper <https://arxiv.org/abs/2304.05977>`_ to SD3 flow matching.
 
 Installation
 ------------
 
-From the repository root, install and activate the diffusion environment:
+Install and activate the diffusion environment from the repository root:
 
 .. code-block:: bash
 
    bash requirements/install.sh embodied --model diffusion
    source .venv/bin/activate
 
-The installer selects ``image-reward==1.5`` and its required
-``timm==0.6.13``. Keep these versions when reusing a training environment.
-See :doc:`/rst_source/start/installation` for installation options.
-
-Download the Model
-------------------
+Download the Model and Data
+---------------------------
 
 Accept the SD3.5 license on Hugging Face and run ``hf auth login``. Download
 the generator, ImageReward checkpoint, tokenizer, and official prompt files:
@@ -118,197 +114,144 @@ the generator, ImageReward checkpoint, tokenizer, and official prompt files:
    for file in refl_data.json test.json; do
      curl --fail --location \
        "https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/data/$file" \
-       --output "$IR_DATA/$file" || break
+       --output "$IR_DATA/$file"
    done
 
-Keep these variables in the shell used for training. On multiple nodes,
-prepare the ``bert-base-uncased`` tokenizer cache on each node.
-
-Prompt files contain a JSON list of objects with a ``text`` or ``prompt``
-field. The loader trims whitespace, removes duplicates, and excludes evaluation
-prompts from training through ``env.train.dataset.exclude_path``. The pinned
-files yield 9,756 training prompts and 463 evaluation prompts.
+Training uses ``refl_data.json``; evaluation uses ``test.json``.
+``actor.refl_data.exclude_path`` points to the evaluation file to exclude
+those prompts from training.
 
 Run It
 ------
 
-Start with reward-only training to establish a comparison for supervised
-updates. The command below places actor, env, and rollout on GPUs 0–3.
-
-Reward-Only Training
-~~~~~~~~~~~~~~~~~~~~
-
-Set the local paths and launch a 200-step run. Each runner step processes
-512 training samples in eight global batches of 64. The actor samples each
-batch immediately before its reward update:
+Use ``examples/diffusion/config/sd3_refl_imagereward.yaml`` to train for 50 steps
+on GPUs 0–3. Each step trains on 512 samples in global batches of 64,
+for eight reward updates:
 
 .. code-block:: bash
 
    REFL_ARGS=(
      'cluster.component_placement={actor\,env\,rollout:0-3}'
      actor.model.model_path="$SD3_MODEL"
-     rollout.model.model_path="$SD3_MODEL"
-     actor.model.sd3.lora_path=null
-     actor.refl_reward_model.type=image_reward
      actor.refl_reward_model.model_path="$IR_MODEL/ImageReward.pt"
      actor.refl_reward_model.med_config="$IR_MODEL/med_config.json"
-     env.train.dataset.path="$IR_DATA/refl_data.json"
-     env.train.dataset.exclude_path="$IR_DATA/test.json"
-     env.eval.dataset.path="$IR_DATA/test.json"
-     env.train.total_num_envs=4
-     env.train.rollout_epoch=128
-     env.eval.total_num_envs=4
-     env.eval.rollout_epoch=128
+     actor.refl_data.path="$IR_DATA/refl_data.json"
+     actor.refl_data.exclude_path="$IR_DATA/test.json"
+     actor.refl_samples_per_step=512
      actor.global_batch_size=64
      actor.micro_batch_size=1
      actor.refl_pre_data.num_workers=0
-     rollout.pipeline_stage_num=1
+     env.eval.dataset.path="$IR_DATA/test.json"
+     env.eval.total_num_envs=4
+     env.eval.rollout_epoch=128
      env.eval.reward.batch_size=1
-     actor.seed=42
-     env.train.seed=42
-     env.eval.seed=0
-     runner.max_epochs=200
-     runner.max_steps=200
+     runner.max_epochs=50
+     runner.max_steps=50
      runner.val_check_interval=10
      runner.save_interval=10
-     runner.resume_dir=null
-     runner.ckpt_path=null
    )
 
    CUDA_VISIBLE_DEVICES=0,1,2,3 \
-   bash -o pipefail examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
      "${REFL_ARGS[@]}" \
-     algorithm.refl_pre_loss_weight=0.0 \
      runner.logger.experiment_name=sd3_refl_reward_only
 
-The run evaluates and saves a checkpoint every 10 steps. For a short first
-check, override ``runner.max_epochs=2``, ``runner.max_steps=2``,
-``runner.val_check_interval=2``, and ``runner.save_interval=-1``.
-Micro-batch size 1 is a starting point; actor-side sampling and differentiable
-scoring consume GPU memory. Adjust placement using
-:doc:`/rst_source/concepts/placement`.
+The default ``algorithm.refl_pre_loss_weight=0.0`` trains with the reward loss
+alone. The run evaluates and saves a checkpoint every 10 steps, and reports
+``eval/image_reward`` as the evaluation score. Logs and checkpoints go under
+``logs/<timestamp>-sd3_refl_imagereward/``.
 
-The actor uses ``actor.refl_reward_model.type=image_reward`` for training.
-At each evaluation, it syncs weights to rollout workers, which generate images
-for the environment to score with ``env.eval.reward.model=visual.image_reward``.
+Configure Reward Updates
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-Set the Training Sample Budget
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The actor shuffles prompts each dataset epoch and samples each training batch
-with its current weights. ``env.train.total_num_envs * env.train.rollout_epoch``
-sets the sample budget per runner step. With the values above, each runner
-step processes ``4 * 128 = 512`` samples in eight global batches.
-
-Use a positive multiple of ``actor.global_batch_size`` for the sample budget,
-with ``algorithm.group_size=1`` and ``algorithm.update_epoch=1``.
-
-Configure the Reward Update
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The actor selects a late denoising state, predicts a clean latent in one step,
-and decodes it to an image. The VAE and ImageReward parameters stay frozen,
-while gradients pass through both to the generator. The reward loss penalizes
-scores below ``refl_margin`` and scales the penalty by ``refl_grad_scale``.
-Samples at or above the margin have zero reward gradient. These settings live
-under ``algorithm``:
+``actor.refl_samples_per_step`` sets the number of samples per step, in multiples
+of the global batch size. The main reward settings are:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 15 55
+   :widths: 32 15 53
 
    * - Setting
      - Default
      - Effect
-   * - ``refl_margin``
+   * - ``algorithm.refl_margin``
      - ``2.0``
-     - Reward threshold in the hinge loss.
-   * - ``refl_grad_scale``
+     - Images at or above this score contribute zero reward gradient.
+   * - ``algorithm.refl_grad_scale``
      - ``1e-3``
      - Multiplier on the reward loss.
-   * - ``refl_xt_source``
+   * - ``algorithm.refl_xt_source``
      - ``rollout``
-     - Select a late state from the denoising trajectory. ``resample`` re-noises the final latent at a sampled late time.
-   * - ``refl_pre_loss_weight``
-     - ``0.0``
-     - A positive value enables the supervised update below.
+     - Select a late trajectory state. ``resample`` re-noises the final latent.
 
-``refl_xt_source`` controls how the model constructs the late state used for
-the reward update.
-The `ImageReward paper <https://arxiv.org/abs/2304.05977>`_ introduces ReFL
-with SD1.4. This recipe applies its reward feedback to SD3 flow matching.
+Add Supervised Training
+~~~~~~~~~~~~~~~~~~~~~~~
 
-Add Supervised Image-Text Updates
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-To continue denoising training alongside the reward update, prepare local
-image-caption pairs in the img2dataset ``files`` layout. This optional
-supervised objective is called Lpre:
+Pair each image with a same-stem UTF-8 ``.txt`` caption. The loader also searches
+subdirectories:
 
 .. code-block:: text
 
    image_text_data/
      00000.jpg
      00000.txt
-     shard_01/
-       00001.png
-       00001.txt
+     00001.png
+     00001.txt
 
-The loader searches subdirectories for ``.jpg``, ``.jpeg``, ``.png``, and
-``.webp`` images with same-stem UTF-8 ``.txt`` captions. It resizes and
-center-crops images to 512 pixels, randomly flips them, and normalizes pixels
-to ``[-1, 1]``. The default ``caption_prefix`` removes ``The image shows``
-and its following space from the start of a caption. You can use your own pairs
-or prepare a subset from
-`PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_ in this layout.
-
-Set the image-caption directory and reuse the settings above:
+The experiments below use a subset of
+`PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_. Replace
+``<image_text_dir>`` with your image-caption directory and run with Lpre weights
+of ``0.1`` and ``0.01``:
 
 .. code-block:: bash
 
-   export PRE_DATA=/path/to/image_text_data
+   export PRE_DATA="<image_text_dir>"
 
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-   bash -o pipefail examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
-     "${REFL_ARGS[@]}" \
-     actor.refl_pre_data.path="$PRE_DATA" \
-     algorithm.refl_pre_loss_weight=0.1 \
-     runner.logger.experiment_name=sd3_refl_pre01
+   for WEIGHT in 0.1 0.01; do
+     CUDA_VISIBLE_DEVICES=0,1,2,3 \
+     bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+       "${REFL_ARGS[@]}" \
+       actor.refl_pre_data.path="$PRE_DATA" \
+       algorithm.refl_pre_loss_weight="$WEIGHT" \
+       runner.logger.experiment_name="sd3_refl_pre${WEIGHT}"
+   done
 
-Each global batch follows this order:
+Each step has eight supervised updates and eight reward updates. Start with
+Lpre weight ``0.01``, which gives higher evaluation scores in the results below.
 
-1. Take an optimizer step on ``refl_pre_loss_weight * Lpre``.
-2. Sample late denoising states with the updated model.
-3. Predict clean images, score them, and take a reward optimizer step.
+Expected Results
+----------------
 
-Lpre uses SD3's flow-matching denoising objective. Set its weight to ``0``
-for reward-only training.
+The experiments use four NVIDIA A800 80 GB GPUs, SD3.5 Medium, LoRA (rank ``32``,
+alpha ``64``), FSDP2, and BF16. Training runs for 50 steps with learning rate
+``1e-4``, seed ``42``, and 512 samples per step.
 
-The two optimizer steps share AdamW moment estimates, so parameter updates
-depend on both the loss weights and the optimizer state. Start with ``0.1``
-and compare weights using the same dataset, initial model, learning rate,
-seeds, batches, and run length. At the settings above, each runner step has
-eight Lpre updates and eight reward updates.
+Images are 512 × 512, with 10 training denoising steps and 40 evaluation steps.
+Evaluation uses guidance scale ``4.5`` and generates 512 images from 463 prompts.
+The table reports the mean ImageReward score.
 
-Visualization and Results
--------------------------
+.. list-table:: Mean Evaluation ImageReward
+   :header-rows: 1
+   :widths: 20 16 16 16 16 16
 
-Inspect generated images alongside ``eval/image_reward`` and
-``train/actor/refl_reward``. With Lpre enabled, also check
-``train/actor/refl_pre_loss``, ``train/actor/refl_pre_grad_norm``, and
-``train/actor/refl_reward_grad_norm``. Lpre logs its unweighted loss; the reward
-loss includes ``refl_grad_scale``.
+   * - Lpre Weight
+     - Step 10
+     - Step 20
+     - Step 30
+     - Step 40
+     - Step 50
+   * - ``0.1``
+     - 0.1973
+     - 0.6263
+     - 0.6783
+     - 0.7831
+     - 0.9248
+   * - ``0.01``
+     - 0.5075
+     - 0.7576
+     - 0.9299
+     - 1.1453
+     - 1.1980
 
-Check ``train/actor/refl_samples`` and ``train/actor/refl_reward_updates``
-to confirm the per-step sample and update counts.
-``time/actor_training`` includes sampling and optimizer updates;
-``time/eval`` records evaluation.
-
-Evaluation generates 512 images from 463 prompts, so 49 prompts repeat. Keep
-the evaluation settings fixed across comparisons. Set
-``env.eval.video_cfg.save_video=true`` to save generated images as repeated
-video frames under ``env.eval.video_cfg.video_base_dir``.
-
-See :doc:`/rst_source/guides/logger` for log locations and
-:doc:`/rst_source/reference/metrics` for shared metrics. For a different
-scorer or model, follow :ref:`the ReFL interface guide <refl-model-interface>`.
+See :ref:`the ReFL interface guide <refl-model-interface>` to use another scorer
+or generator, and :doc:`/rst_source/guides/logger` to view logs.

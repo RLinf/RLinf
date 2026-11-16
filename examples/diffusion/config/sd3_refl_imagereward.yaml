@@ -1,5 +1,4 @@
 defaults:
-  - env/image_reward@env.train
   - env/image_reward@env.eval
   - model/sd3@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
@@ -69,26 +68,7 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
-  train:
-    total_num_envs: 128
-    group_size: ${algorithm.group_size}
-    max_episode_steps: 1
-    max_steps_per_rollout_epoch: 1
-    rollout_epoch: 4
-    dataset:
-      type: "visual.prompt_dataset"
-      # data/refl_data.json from https://github.com/zai-org/ImageReward.
-      path: /path/to/ImageReward/data/refl_data.json
-      exclude_path: /path/to/ImageReward/data/test.json
-    reward:
-      type: "single"
-      model: "visual.image_reward"
-      key: "avg"
-      use_gpu: True
-      batch_size: 32
-      model_path: ${actor.refl_reward_model.model_path}
-      med_config: ${actor.refl_reward_model.med_config}
-      precision: ${actor.refl_reward_model.precision}
+  train: null
   eval:
     total_num_envs: 128
     group_size: 1
@@ -123,8 +103,7 @@ rollout:
     model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
     sd3:
-      # Guidance 1.0 keeps training rollouts on the conditional branch while
-      # evaluation samples with real CFG.
+      # Evaluation uses classifier-free guidance.
       cfg: True
       guidance_scale: 1.0
       eval_guidance_scale: 4.5
@@ -136,6 +115,12 @@ actor:
   global_batch_size: 64
   seed: 42
   enable_offload: False
+
+  refl_samples_per_step: 512
+  refl_data:
+    type: "visual.prompt_dataset"
+    path: /path/to/ImageReward/data/refl_data.json
+    exclude_path: /path/to/ImageReward/data/test.json
 
   refl_reward_model:
     type: image_reward
@@ -160,8 +145,6 @@ actor:
     sd3:
       rl_mode: refl
       refl_late_fraction: 0.25
-      reward_tokenizer_path: bert-base-uncased
-      reward_max_tokens: 35
       resolution: 512
       num_steps: 10
       eval_num_steps: 40

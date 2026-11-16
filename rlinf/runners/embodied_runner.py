@@ -104,14 +104,16 @@ class EmbodiedRunner:
         self.rollout_channel = Channel.create("Rollout")
         # Trajectory assembly runs on the channel worker, so neither the env
         # nor the rollout worker has to hold partial trajectory state.
-        self.actor_channel = Channel.create(
-            "Actor",
-            collector=select_trajectory_collector(self.cfg),
-            dispatcher=select_trajectory_dispatcher(self.cfg),
-            cfg=self.cfg,
-            producers=[self.rollout],
-            consumers=[self.actor],
-        )
+        self.actor_channel = None
+        if self.cfg.env.get("train") is not None:
+            self.actor_channel = Channel.create(
+                "Actor",
+                collector=select_trajectory_collector(self.cfg),
+                dispatcher=select_trajectory_dispatcher(self.cfg),
+                cfg=self.cfg,
+                producers=[self.rollout],
+                consumers=[self.actor],
+            )
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:

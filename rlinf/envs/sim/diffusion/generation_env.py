@@ -79,7 +79,10 @@ class GenerationEnv(gym.Env):
     def _next_group_indices(self) -> np.ndarray:
         if self.sequential_eval:
             start = self._cursor + self.seed_offset * self.num_group
-            self._cursor += self.num_group * self.total_num_processes
+            stride = self.num_group * self.total_num_processes
+            round_groups = stride * int(cfg_get(self.cfg, "rollout_epoch", 1))
+            # Repeat the same prompt list, including repeats beyond the dataset size.
+            self._cursor = (self._cursor + stride) % round_groups
             indices = np.arange(start, start + self.num_group)
             return indices % len(self.dataset)
         return self._generator.integers(
