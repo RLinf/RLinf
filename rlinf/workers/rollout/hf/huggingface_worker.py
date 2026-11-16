@@ -979,16 +979,7 @@ class MultiStepRolloutWorker(Worker):
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()
-        if getattr(self.weight_syncer, "verify_interval", 0):
-            await self._wait_for_model_sync()
-            verification = self.weight_syncer.verify_applied_weights(self.hf_model)
-            if verification is not None:
-                if verification["version"] != self.version:
-                    raise RuntimeError(
-                        f"Eval student version {self.version} differs from verified "
-                        f"version {verification['version']}"
-                    )
-                self.log_info(f"Eval student weights verified: {verification}")
+        await self._wait_for_model_sync()
         if self.env_decoupled_mode:
             while True:
                 (

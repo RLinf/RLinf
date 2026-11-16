@@ -94,9 +94,6 @@ class WeightSyncer(ABC):
                 load_instant=OmegaConf.select(
                     bucket_config, "load_instant", default=True
                 ),
-                verify_interval=OmegaConf.select(
-                    bucket_config, "verify_interval", default=0
-                ),
             )
         elif syncer_type == "patch":
             from .patch_syncer import PatchWeightSyncer

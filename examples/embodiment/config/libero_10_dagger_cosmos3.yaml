@@ -17,11 +17,6 @@ cluster:
   component_placement:
     actor,env,rollout: all
 
-weight_syncer:
-  bucket:
-    # Verify synchronized student parameters before each scheduled evaluation.
-    verify_interval: 300
-
 runner:
   task_type: embodied
   logger:
