@@ -132,14 +132,16 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  # Must equal actor.model.forward_micro_batch_size so every replay chunk has
-  # the rollout's GEMM shape.
+  # A multiple of actor.model.forward_micro_batch_size, so every replay chunk
+  # has the rollout's GEMM shape.
   micro_batch_size: 16
   global_batch_size: 128
   seed: 1234
   enable_offload: True
 
   model:
+    model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
     add_value_head: false
     # The 36-layer action expert is launch-bound at batch 1: one velocity call
     # costs the same for 1 and 16 samples. 16 is every env a rollout worker
@@ -148,6 +150,12 @@ actor:
     forward_micro_batch_size: 16
     # fp32 trainable weights keep each optimizer step; FSDP2 computes in bf16.
     precision: fp32
+    # Seeds the initial evaluation noise; training noise stays random.
+    eval_seed: 0
+    lingbotvlav2:
+      training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+      robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+      stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
   optim:
     lr: 5.6e-6

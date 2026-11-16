@@ -142,9 +142,20 @@ actor:
   enable_offload: True
 
   model:
+    model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
     value_type: ${algorithm.reward_type}
     # fp32 trainable weights keep each optimizer step; FSDP2 computes in bf16.
     precision: fp32
+    # Samples per MoE/GEMM call. A bf16 grouped GEMM gives a different result
+    # at a different batch size, so rollout and replay score at one shape.
+    forward_micro_batch_size: 1
+    # Seeds the initial evaluation noise; training noise stays random.
+    eval_seed: 0
+    lingbotvlav2:
+      training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+      robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+      stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
 
   optim:
     lr: 5.6e-6
