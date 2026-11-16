@@ -31,7 +31,7 @@ runner:
   seq_length: 7096
 
   enable_dynamic_batch_size: True
-  max_tokens_per_mbs: 11008
+  max_tokens_per_mbs: 8192  # Limit actor microbatch memory on 64 GB Ascend cards.
 
   resume_dir: null
   experiment_name: searchr1-grpo-qwen2.5-3b-instruct-fsdp
