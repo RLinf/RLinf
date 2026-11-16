@@ -73,8 +73,19 @@ _REQUIRED_PATHS = (
 )
 
 
+def _check_required_paths(config: DictConfig) -> None:
+    """Fail at startup when a checkpoint or asset path is unset or missing."""
+    for key in _REQUIRED_PATHS:
+        value = OmegaConf.select(config, key)
+        if not value or not Path(str(value)).expanduser().exists():
+            raise FileNotFoundError(
+                f"Expected an existing path in model.{key}, got {value!r}."
+            )
+
+
 def build_model_config(config: DictConfig):
     """Rebuild the release model config with the flags RLinf trains under."""
+    _check_required_paths(config)
     model_config = build_checkpoint_config(
         read_checkpoint_config(Path(config.model_path).expanduser()),
         config.tokenizer_path,
@@ -146,9 +157,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 "Expected model.precision bf16 (rollout) or fp32 (actor), "
                 f"got {torch_dtype}."
             )
-        for key in _REQUIRED_PATHS:
-            if not OmegaConf.select(config, key):
-                raise ValueError(f"Expected an absolute path in model.{key}, got none.")
+        _check_required_paths(config)
         self.config = config
         self.num_steps = int(config.num_steps)
         self.forward_micro_batch_size = int(config.forward_micro_batch_size)
