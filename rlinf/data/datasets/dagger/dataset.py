@@ -134,8 +134,6 @@ class RollingLeRobotDataset(Dataset):
                 "RollingLeRobotDataset now supports only in_memory_mode=True. "
                 "Archived LeRobot shards must be loaded into memory before training."
             )
-        if vision_horizon < 0:
-            raise ValueError("vision_horizon must be nonnegative.")
         self.root_dir = Path(root_dir)
         self.chunk_size = chunk_size
         self.keys = keys
@@ -347,7 +345,6 @@ class RollingLeRobotDataset(Dataset):
             self._cumulative_lengths[-1] += added_frames
             self._total_episodes += 1
             if self._valid_physical_indices is not None:
-                assert self._valid_physical_set is not None
                 ep_ds = prepared_episode["dataset"]
                 for offset in self._valid_episode_offsets(ep_ds, added_frames):
                     gidx = physical_base + old_len + int(offset)
@@ -477,8 +474,6 @@ class RollingLeRobotDataset(Dataset):
             )
             return offsets
         flags = _hf_column_to_numpy_bool_1d(episode, self.intervene_flag_key)
-        if int(flags.shape[0]) != num_frames:
-            raise ValueError("Intervention flags must match the episode frame count.")
         raw = offsets[:, None] + np.arange(max(1, int(self.chunk_size)))[None, :]
         in_episode = raw < num_frames
         step_ok = np.ones_like(in_episode, dtype=np.bool_)
@@ -492,7 +487,6 @@ class RollingLeRobotDataset(Dataset):
         if self._valid_physical_indices is None:
             return
 
-        assert self._valid_physical_set is not None
         for ep_ds, ep_from, ep_to in zip(
             store._episode_datasets,
             store._ep_from,

@@ -66,10 +66,6 @@ class InMemoryArrowStore:
         vision_horizon: int = 0,
         keep_uint8_images: bool = False,
     ) -> None:
-        if vision_horizon < 0:
-            raise ValueError("vision_horizon must be nonnegative.")
-        if keep_uint8_images and image_transforms is not None:
-            raise ValueError("uint8 images require image_transforms=None.")
         self._chunk_size = chunk_size
         self._fps = max(fps, 1)
         self._image_transforms = image_transforms
@@ -167,8 +163,6 @@ class InMemoryArrowStore:
         image_keys = self._image_keys
         if hf_features is None:
             hf_features, image_keys = self._infer_hf_features(ep_frames[0])
-            if self._vision_horizon and "image" not in image_keys:
-                raise ValueError("Vision windows require the 'image' frame column.")
 
         ep_idx = len(self._ep_from) if episode_index is None else int(episode_index)
         base = self._total_frames if base is None else int(base)
