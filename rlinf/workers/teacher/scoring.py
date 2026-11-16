@@ -44,7 +44,7 @@ def rollout_topk_count(cfg: DictConfig, tokenizer: PreTrainedTokenizerBase) -> i
     config = AutoConfig.from_pretrained(
         model.model_path, trust_remote_code=model.get("trust_remote_code", False)
     )
-    return plan.topk + max(0, config.vocab_size - len(tokenizer))
+    return plan.topk + max(0, config.get_text_config().vocab_size - len(tokenizer))
 
 
 def select_rollout_topk(

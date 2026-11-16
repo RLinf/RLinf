@@ -103,6 +103,59 @@ class TestTeacher(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "response length"):
             select_rollout_topk(rows, 3, 2, 5)
 
+    def test_text_metadata_for_flat_and_composite_models(self):
+        from omegaconf import OmegaConf
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordLevel
+        from transformers import (
+            GPT2Config,
+            PreTrainedTokenizerFast,
+            VisionEncoderDecoderConfig,
+            ViTConfig,
+        )
+
+        from rlinf.workers.teacher.scoring import rollout_topk_count
+
+        text_config = GPT2Config(vocab_size=8, n_positions=64)
+        configs = (
+            text_config,
+            VisionEncoderDecoderConfig.from_encoder_decoder_configs(
+                ViTConfig(), text_config
+            ),
+        )
+        with tempfile.TemporaryDirectory() as path:
+            tokenizer = PreTrainedTokenizerFast(
+                tokenizer_object=Tokenizer(WordLevel({f"t{i}": i for i in range(5)})),
+                eos_token="t2",
+            )
+            tokenizer.save_pretrained(path)
+            cfg = OmegaConf.create(
+                {
+                    "rollout": {"model": {"model_path": path}},
+                    "distillation": {
+                        "enabled": True,
+                        "teacher_models": {"default": {"model_path": path}},
+                        "distillation_loss": {
+                            "loss_mode": "forward_kl_topk",
+                            "topk": 2,
+                            "topk_source": "student",
+                            "use_policy_gradient": False,
+                        },
+                    },
+                }
+            )
+            for config in configs:
+                with self.subTest(model_type=config.model_type):
+                    config.save_pretrained(path)
+                    for backend_cls in (SGLangTeacherBackend, VLLMTeacherBackend):
+                        backend = backend_cls(TeacherModelConfig(path), "default")
+                        info = backend.load_model_info()
+                        self.assertEqual(info.vocab_size, 5)
+                        self.assertEqual(backend.model_vocab_size, 8)
+                        self.assertEqual(info.max_context_length, 64)
+                        self.assertTrue(backend.has_extra_model_tokens)
+                    self.assertEqual(rollout_topk_count(cfg, tokenizer), 5)
+
     def test_sglang_chunked_position_scores_preserve_ids_and_real_vocabulary(self):
         try:
             from sglang.srt.layers.utils.logprob import get_token_ids_logprobs_chunk

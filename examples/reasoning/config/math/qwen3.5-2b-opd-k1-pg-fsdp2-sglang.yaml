@@ -1,0 +1,107 @@
+defaults:
+  - qwen2.5-1.5b-opd-fsdp
+  - _self_
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: 0-1
+    teacher_default: 2-3
+
+runner:
+  execution_mode: sync
+  experiment_name: qwen3.5-2b-opd-k1-pg
+  seq_length: 10240
+  val_check_interval: -1
+
+algorithm:
+  group_size: 1
+  n_minibatches: 1
+  training_batch_size_per_gpu: 1
+  recompute_logprobs: false
+  shuffle_rollout: false
+  sampling_params:
+    do_sample: true
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    repetition_penalty: 1.0
+    max_new_tokens: 8192
+
+data:
+  dataset_name: dapo
+  max_prompt_length: 2048
+  rollout_batch_size: 96
+  shuffle: false
+  validation_shuffle: false
+  seed: 42
+  train_data_paths:
+    - /mnt/public2/suheng/data/trainset/DAPO-Math-17k/data/DAPO-17K.jsonl
+  val_data_paths: null
+  prompt_key: prompt
+  answer_key: reward_model
+  apply_chat_template: true
+
+rollout:
+  rollout_backend: sglang
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  gpu_memory_utilization: 0.5
+  return_logprobs: true
+  seed: 42
+  model:
+    model_type: qwen3_5
+    model_path: /mnt/public2/suheng/models/Qwen3.5-2B
+    precision: bf16
+
+actor:
+  training_backend: fsdp
+  global_batch_size: 96
+  micro_batch_size: 1
+  seed: 42
+  model:
+    model_type: qwen3_5
+    model_path: /mnt/public2/suheng/models/Qwen3.5-2B
+    seq_length: 10240
+    encoder_seq_length: 10240
+  tokenizer:
+    tokenizer_model: /mnt/public2/suheng/models/Qwen3.5-2B
+    use_fast: true
+  optim:
+    lr: 1.0e-6
+  lr_sched:
+    max_lr: 1.0e-6
+  fsdp_config:
+    strategy: fsdp2
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+    use_liger_kernel: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+    grad_scaler:
+      enabled: false
+
+distillation:
+  enabled: true
+  teacher_models:
+    default:
+      model_path: /mnt/public2/suheng/models/Qwen3.5-35B-A3B
+      num_replicas: 1
+      inference:
+        backend: sglang
+        tensor_parallel_size: 2
+        pipeline_parallel_size: 1
+        max_model_len: 10241
+        engine_kwargs:
+          mem_fraction_static: 0.80
+          random_seed: 42
+          dtype: bfloat16
+  distillation_loss:
+    loss_mode: k1
+    use_policy_gradient: true
+    use_task_rewards: false
+    distillation_loss_coef: 1.0

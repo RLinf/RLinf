@@ -69,12 +69,13 @@ class TeacherScoringBackend(ABC):
         trust = self.config.inference.get("trust_remote_code", False)
         tokenizer = hf_tokenizer(path, trust_remote_code=trust)
         config = AutoConfig.from_pretrained(path, trust_remote_code=trust)
-        self.model_vocab_size = config.vocab_size
+        text_config = config.get_text_config()
+        self.model_vocab_size = text_config.vocab_size
         ids = set(tokenizer.get_vocab().values())
         if ids != set(range(len(ids))):
             raise ValueError("Teacher requires a contiguous real tokenizer vocabulary")
         vocab = len(ids)
-        if config.vocab_size < vocab:
+        if self.model_vocab_size < vocab:
             raise ValueError(
                 "Teacher model vocabulary does not cover all tokenizer IDs"
             )
@@ -94,7 +95,7 @@ class TeacherScoringBackend(ABC):
             tokenizer_fingerprint(tokenizer),
             vocab,
             self.config.inference.get(
-                "max_model_len", getattr(config, "max_position_embeddings", 32768)
+                "max_model_len", getattr(text_config, "max_position_embeddings", 32768)
             ),
         )
         return self.info
