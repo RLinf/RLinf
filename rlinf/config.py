@@ -2494,19 +2494,21 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             "server path: the router's /health probes generate tokens, and "
             "engine liveness is already watched by the rollout worker."
         )
-    per_task_timeouts = [
-        float(settings.generate_timeout_s)
-        for settings in cfg.session_server.per_task.values()
+    generate_timeouts = [
+        float(cfg.session_server.generate_timeout_s),
+        *(
+            float(settings.generate_timeout_s)
+            for settings in cfg.session_server.per_task.values()
+        ),
     ]
-    if per_task_timeouts and max(per_task_timeouts) > float(
-        cfg.rollout.router.request_timeout_secs
-    ):
+    if max(generate_timeouts) > float(cfg.rollout.router.request_timeout_secs):
         raise ValueError(
             f"rollout.router.request_timeout_secs "
-            f"({cfg.rollout.router.request_timeout_secs}) must be >= every "
+            f"({cfg.rollout.router.request_timeout_secs}) must be >= "
+            f"session_server.generate_timeout_s and every "
             f"session_server.per_task.*.generate_timeout_s (largest found: "
-            f"{max(per_task_timeouts)}): the router drops a request at its "
-            "own timeout before the session server's per-task timeout "
+            f"{max(generate_timeouts)}): the router drops a request at its "
+            "own timeout before the session server's generate timeout "
             "fires."
         )
     if cfg.cluster.get("auto_scheduler", False):
