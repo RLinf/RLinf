@@ -24,9 +24,9 @@ runner:
     logger_backends: ["tensorboard"]  # wandb, swanlab
 
   max_epochs: -1
-  max_steps: 2000
+  max_steps: 600
   val_check_interval: -1
-  save_interval: 500
+  save_interval: 100
 
 data:
   # One LeRobot dataset whose features match actor.model.lingbotvlav2.robot_config_path.
@@ -40,6 +40,18 @@ actor:
   global_batch_size: 64
   seed: 1234
 
+  model:
+    model_path: /path/to/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt
+    tokenizer_path: /path/to/Qwen3-VL-4B-Instruct
+    # Storage dtype of the trainable weights; compute is bf16.
+    precision: fp32
+    forward_micro_batch_size: 1
+    eval_seed: 0
+    lingbotvlav2:
+      training_config_path: /path/to/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml
+      robot_config_path: /path/to/lingbot-vla-v2/configs/robot_configs/robotwin.yaml
+      stats_path: /path/to/lingbot-vla-v2/assets/norm_stats/robotwin.json
+
   optim:
     lr: 1.0e-5
     adam_beta1: 0.9
@@ -47,6 +59,8 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 1.0e-4
     clip_grad: 1.0
+    # The cosine horizon is longer than runner.max_steps, so training stops
+    # with the LR still near its peak.
     total_training_steps: 2000
     lr_warmup_steps: 100
     lr_scheduler: "cosine"
