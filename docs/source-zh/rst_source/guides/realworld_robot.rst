@@ -210,6 +210,85 @@ YAML 配置
    ZED SDK 须在 GPU 节点、在 ``ray start`` **之前** 安装到 Ray 使用的同一虚拟环境中；
    Robotiq 串口权限须在 NUC 控制节点上配置好。详见 :doc:`../examples/embodied/franka_zed_robotiq`。
 
+Kuavo 硬件配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在运行 Kuavo 环境的控制节点上，确保 Ray 使用的 Python 环境可导入 Kuavo SDK；在运行相机订阅的节点上，准备好 ROS 图像消息包。SDK 及其生成的 ROS 消息包按厂商步骤安装。如果 SDK 不在控制节点的 Python 环境中，可将 SDK 源码目录交给安装脚本，并将 ``KUAVO_HUMANOID_SDK_VERSION`` 设置为该源码对应的 SDK 发布版本。请在仓库根目录运行：
+
+.. code-block:: bash
+
+   KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
+     bash requirements/install.sh embodied --env kuavo
+
+安装器默认创建或复用 ``.venv``；使用 ``--venv /path/to/venv`` 指定其他环境，并在启动 Ray 前激活所选环境。
+
+设置 ``KUAVO_SDK_PATH`` 时，脚本会以 editable 模式安装该目录；不设置时，确保 Ray 使用的 Python 环境能够从机器人 ROS workspace 导入 SDK。
+
+.. warning::
+
+   启动 Python 或 Ray 前，在 driver、环境、控制器和相机节点设置：
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   此设置对整个进程生效，用于跳过 ROS 清理。未设置或设为 ``reset`` 时，加载真机任务可能在读取 YAML 前停止 ROS core 进程。共享同一 master 的所有任务都应使用 ``preserve``；修改设置后须重启进程。
+
+先启动机器人控制器、反馈发布节点、相机和末端执行器服务，再启动任务。Kuavo 连接已有 ROS 服务，不负责启动或停止服务；仅启动 ``roscore`` 并不足够。
+
+选择 ``hardware.type: Kuavo``，在硬件所属节点配置：
+
+.. code-block:: yaml
+
+   - label: kuavo
+     node_ranks: 1
+     hardware:
+       type: Kuavo
+       configs:
+         - node_rank: 1
+           platform_type: 4pro
+           which_arm: both
+           end_effector_type: leju_claw
+           controller_node_rank: 1
+           ros_rate: 10
+           image_size: [848, 480]
+           feedback_timeout_s: 2.0
+           feedback_stale_timeout_s: 0.5
+
+将 ``joint_limits_min`` 和 ``joint_limits_max`` 设为机器人的安全工作范围：共 14 个弧度值，左臂在前、右臂在后。每个关节默认的 ``-3.14`` 和 ``3.14`` 不是经过标定的硬件限位。``end_effector_limits_min`` 和 ``end_effector_limits_max`` 分别为左、右末端的两个归一化值，默认值是 ``[0, 0]`` 和 ``[1, 1]``。
+
+.. list-table::
+   :header-rows: 1
+
+   * - 硬件字段
+     - 取值与作用
+   * - ``platform_type``
+     - ``4pro``、``5`` 或 ``5w``；选择完整双臂反馈的起始索引。
+   * - ``which_arm``
+     - ``left``、``right`` 或 ``both``；关节控制任务要求 ``both``。
+   * - ``end_effector_type``
+     - ``leju_claw``、``qiangnao`` 或 ``rq2f85``；每只手对应一个 policy 动作值。
+   * - ``head_position``
+     - 可选的头部 yaw/pitch 弧度值，连接时下发；默认 ``null``。
+   * - ``obs_key_map``
+     - 每个观测的 ROS ``topic``、``msg_type`` 和发布端 ``frequency``。
+   * - ``image_size``
+     - 输出 ``[width, height]``；支持 ``Image`` 和 ``CompressedImage``。
+   * - ``feedback_timeout_s`` / ``feedback_stale_timeout_s``
+     - 连接及服务等待上限、反馈接收后的最大有效时长，单位为秒。
+
+默认路由使用 ``/sensors_data_raw`` 获取关节反馈，使用 ``/cam_{h,l,r}/color/image_raw/compressed`` 获取头部、左腕和右腕图像。末端反馈来自 ``/leju_claw_state``、``/dexhand/state`` 或 ``/gripper/state``。Leju claw 还需要类型为 ``controlLejuClaw`` 的 ``/control_robot_leju_claw`` 服务。需要时在 ``obs_key_map`` 中覆盖路由；``frequency`` 不会修改发布端频率。
+
+使用 ``examples/embodiment/config/env/realworld_kuavo_joint.yaml`` 选择 ``env_type: real`` 和 ``KuavoJointEnv-v1``。设备设置放在 ``hardware.configs``，任务设置放在 ``override_cfg``。任务要求 ``arm_state_keys: [joint_q, gripper]`` 和 ``control_mode: joint``。16 维 state/action 顺序为左臂 7 个关节、左夹爪、右臂 7 个关节、右夹爪。动作是弧度表示的绝对关节目标和 ``0..1`` 的归一化夹爪目标。每步发送一次完整双臂命令和一次双侧末端命令。
+
+Reset 读取当前姿态，不执行归位或张开夹爪；连接时将手臂切换到外部控制模式。每步检查动作和相机帧是否有效，将目标裁剪到配置的限位内，并用 ``max_joint_delta`` 限制目标相对实测位置的变化（默认 ``0.05`` 弧度）。``step_frequency`` 默认使用硬件 ``ros_rate``。相机等待上限 ``camera_frame_timeout_s``\ （默认 ``1.0`` 秒）和过期阈值 ``camera_stale_timeout_s``\ （默认 ``2.0`` 秒）放在 ``override_cfg``。
+
+.. warning::
+
+   保持物理急停可用。Step 失败后，环境尝试按新鲜且在限位内的关节反馈发送一次保持命令，随后要求关闭并重新创建环境。这不是急停机制。夹爪服务超时不能撤销控制器已收到的命令，重新连接前应确认控制器状态。服务确认收到命令不代表实测已经到位。
+
+基础任务返回零奖励，示例使用 ``keyboard_reward_wrapper: eval_control`` 由操作者评分。GR00T N1.7 使用 ``examples/embodiment/config/model/gr00t_n1d7_kuavo.yaml``，并配齐匹配的 checkpoint、processor 和 backbone。转换器使用同一 16 维布局，RGB 图像按头部、左腕、右腕排序，并携带任务文本。
+
 从环境变量自动配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -142,7 +142,7 @@ def sdk_modules() -> dict[str, types.ModuleType]:
     made.update(cameras.modules())
     made.update(arms.modules())
     made.update(grippers.modules())
-    made.update(sdks.modules())
+    made.update(sdks.modules(ros_modules=made))
     made.update(teleop.modules())
     return made
 

@@ -220,6 +220,132 @@ same machine:
    ``ray start``. Configure Robotiq serial permissions on the NUC. See
    :doc:`../examples/embodied/franka_zed_robotiq`.
 
+Kuavo hardware configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On the Kuavo control node, make sure the Python environment used by Ray can
+import the Kuavo SDK. On camera nodes, prepare the ROS image message packages.
+Install the SDK and its generated ROS message packages using the vendor's
+instructions. If the SDK is not available in the control node's Python
+environment, point the installer at its source checkout. Set
+``KUAVO_HUMANOID_SDK_VERSION`` to the checkout's SDK release version.
+From the repository root, run:
+
+.. code-block:: bash
+
+   KUAVO_SDK_PATH=/path/to/kuavo_humanoid_sdk \
+     bash requirements/install.sh embodied --env kuavo
+
+The installer creates or reuses ``.venv`` by default. Use
+``--venv /path/to/venv`` to select another environment, then activate that
+environment before starting Ray.
+
+When ``KUAVO_SDK_PATH`` is set, the script installs that directory in editable
+mode. When it is unset, make sure the Python environment used by Ray can import
+the SDK from the robot's ROS workspace.
+
+.. warning::
+
+   Before starting Python or Ray, set this on the driver, environment,
+   controller, and camera nodes:
+
+   .. code-block:: bash
+
+      export RLINF_ROS_SETUP=preserve
+
+   This process-wide setting skips ROS cleanup. If unset or set to ``reset``,
+   loading real-world tasks can stop ROS core processes before YAML is read.
+   Keep all tasks sharing the master in ``preserve`` mode and restart the
+   process after changing the setting.
+
+Start the robot controller, feedback publishers, cameras, and end-effector
+services before the task. Kuavo connects to existing ROS services; it does not
+start or stop them. Starting ``roscore`` alone is not sufficient.
+
+Select ``hardware.type: Kuavo`` and configure the hardware on its owning node:
+
+.. code-block:: yaml
+
+   - label: kuavo
+     node_ranks: 1
+     hardware:
+       type: Kuavo
+       configs:
+         - node_rank: 1
+           platform_type: 4pro
+           which_arm: both
+           end_effector_type: leju_claw
+           controller_node_rank: 1
+           ros_rate: 10
+           image_size: [848, 480]
+           feedback_timeout_s: 2.0
+           feedback_stale_timeout_s: 0.5
+
+Set ``joint_limits_min`` and ``joint_limits_max`` to the robot's safe operating
+range: 14 angles in radians, left arm then right. The defaults, ``-3.14`` and
+``3.14`` for each joint, are not calibrated hardware limits. Set
+``end_effector_limits_min`` and ``end_effector_limits_max`` as two normalized
+values, left then right; their defaults are ``[0, 0]`` and ``[1, 1]``.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Hardware field
+     - Values and behavior
+   * - ``platform_type``
+     - ``4pro``, ``5``, or ``5w``; selects the full dual-arm feedback offset.
+   * - ``which_arm``
+     - ``left``, ``right``, or ``both``; the joint-control task requires ``both``.
+   * - ``end_effector_type``
+     - ``leju_claw``, ``qiangnao``, or ``rq2f85``; one policy value per hand.
+   * - ``head_position``
+     - Optional yaw/pitch in radians, applied when connecting; default ``null``.
+   * - ``obs_key_map``
+     - ROS ``topic``, ``msg_type``, and publisher ``frequency`` per observation.
+   * - ``image_size``
+     - Output ``[width, height]``; supports ``Image`` and ``CompressedImage``.
+   * - ``feedback_timeout_s`` / ``feedback_stale_timeout_s``
+     - Connection/service wait and maximum feedback receipt age, in seconds.
+
+The default routes use ``/sensors_data_raw`` for joints and
+``/cam_{h,l,r}/color/image_raw/compressed`` for head, left-wrist, and right-wrist
+images. End-effector feedback comes from ``/leju_claw_state``,
+``/dexhand/state``, or ``/gripper/state``. Leju claws also require the
+``/control_robot_leju_claw`` service of type ``controlLejuClaw``. Override routes
+in ``obs_key_map`` when needed; ``frequency`` does not change publisher rates.
+
+Use ``examples/embodiment/config/env/realworld_kuavo_joint.yaml`` to select
+``env_type: real`` and ``KuavoJointEnv-v1``. Keep device settings in
+``hardware.configs`` and task settings in ``override_cfg``. The task requires
+``arm_state_keys: [joint_q, gripper]`` and ``control_mode: joint``. Its 16-value
+state/action layout is seven left-arm joints, left gripper, seven right-arm
+joints, right gripper. Actions are absolute joint angles in radians and
+normalized ``0..1`` gripper targets. Each step sends one full arm command and
+one command for both end effectors.
+
+Reset reads the current pose without homing or opening grippers; connecting
+switches the arms to external control mode. Steps validate actions and camera
+freshness, clip to configured limits, and cap joint changes relative to measured
+positions with ``max_joint_delta`` (default ``0.05`` radians). ``step_frequency``
+defaults to hardware ``ros_rate``. Camera waiting/freshness limits are
+``camera_frame_timeout_s`` (``1.0`` second) and ``camera_stale_timeout_s``
+(``2.0`` seconds), set in ``override_cfg``.
+
+.. warning::
+
+   Keep the physical emergency stop available. On step failure, the environment
+   attempts one hold command using fresh, in-limit joint feedback, then requires
+   closing and rebuilding. This is not an emergency stop. A claw service timeout
+   cannot cancel a command already received by the controller; confirm controller
+   state before reconnecting. A service acknowledgement is not measured motion.
+
+The base task returns zero reward; the example uses
+``keyboard_reward_wrapper: eval_control`` for operator-scored episodes.
+For GR00T N1.7, use ``examples/embodiment/config/model/gr00t_n1d7_kuavo.yaml``
+with matching checkpoint, processor, and backbone assets. The converter uses
+the same 16-value layout, RGB images ordered head/left wrist/right wrist, and
+task text.
+
 Auto-configuration from environment variables
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

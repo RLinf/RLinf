@@ -118,9 +118,18 @@ class RealWorldEnv(gym.Env):
     def realworld_setup() -> None:
         """Run node-level setup before creating real-world environments.
 
-        The setup is serialized because ROS permits only one core per node.
-        Existing ROS core processes are stopped before environments start.
+        Set ``RLINF_ROS_SETUP=preserve`` before launching Python to use an
+        externally managed ROS master. Otherwise, setup is serialized and
+        existing ROS core processes are stopped before environments start.
         """
+        ros_setup = os.environ.get("RLINF_ROS_SETUP", "reset")
+        if ros_setup not in ("reset", "preserve"):
+            raise ValueError(
+                f"RLINF_ROS_SETUP must be 'reset' or 'preserve', got {ros_setup!r}."
+            )
+        if ros_setup == "preserve":
+            return
+
         # Serialize setup across environment processes on the same node.
         node_lock_file = "/tmp/.realworld.lock"
         # Fall back to the user directory if the temporary path is unavailable.
