@@ -24,7 +24,7 @@ The policy learns 16-step action chunks from two camera views, robot state, and 
    .. grid-item-card:: Data
       :text-align: center
 
-      LIBERO Spatial · LeRobot
+      Physical Intelligence LIBERO
 
    .. grid-item-card:: Hardware
       :text-align: center
@@ -41,7 +41,7 @@ Tasks
      - Demonstrations
      - Config
    * - LIBERO Spatial: 10 tasks
-     - 432 episodes, 52,970 timesteps at 20 Hz
+     - 432 episodes, 52,970 timesteps at 10 Hz
      - ``libero_sft_gr00t_n1d7``
 
 Observation and Action
@@ -87,21 +87,19 @@ Accept the access terms for `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Co
 
 The GR00T checkpoint contains the backbone weights. The Cosmos directory supplies the configuration and tokenizer used to load them.
 
-Download the `Spatial LeRobot dataset <https://huggingface.co/datasets/IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot>`_ and copy the GR00T modality description into its metadata:
+Download `Physical Intelligence LIBERO <https://huggingface.co/datasets/physical-intelligence/libero>`_:
 
 .. code-block:: bash
 
-   hf download IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
-     --repo-type dataset --local-dir datasets/libero_spatial
-   cp "${GR00T_PATH:-.venv/gr00t}/examples/LIBERO/modality.json" \
-     datasets/libero_spatial/meta/modality.json
+   hf download physical-intelligence/libero \
+     --repo-type dataset --local-dir datasets/physical-intelligence-libero
 
-Keep ``meta/``, ``data/``, and ``videos/`` together. Training computes normalization statistics from this dataset and saves them with each checkpoint.
+The full dataset contains 1,693 episodes across 40 tasks, with both camera images embedded in Parquet files. Keep ``meta/`` and ``data/`` together. You can reuse an existing download by setting its path below. The example selects the 10 Spatial tasks through ``data.task_names``, converts gripper actions to the GR00T convention, and computes normalization statistics from those selected episodes.
 
 Run It
 ------
 
-Edit ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Set the three asset paths, then choose GPU placement, batch sizes, and the update budget:
+Edit ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Set the dataset and model paths, then choose GPU placement, batch sizes, and the update budget:
 
 .. code-block:: yaml
 
@@ -110,7 +108,9 @@ Edit ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Set the three asset pat
        actor: 0-7
    data:
      train_data_paths:
-       - /absolute/path/to/datasets/libero_spatial
+       - /absolute/path/to/datasets/physical-intelligence-libero
+     format: physical_libero
+     statistics_path: ./data_statistics/libero_spatial.json
    runner:
      max_steps: 20000
      save_interval: 1000
@@ -122,6 +122,8 @@ Edit ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Set the three asset pat
        backbone_model_path: /absolute/path/to/checkpoints/Cosmos-Reason2-2B
      optim:
        total_training_steps: 20000
+
+Keep the Spatial task list supplied in the configuration. ``data.statistics_path`` is a writable cache file for the selected data; normalization statistics are also saved with each checkpoint.
 
 The global batch size must be divisible by the number of GPUs times the microbatch size. Keep ``runner.max_epochs: -1``: training samples continuously and stops at ``runner.max_steps``. Set ``actor.optim.total_training_steps`` to the intended learning-rate schedule length. The 20,000-update budget is an example, not a measured convergence target.
 

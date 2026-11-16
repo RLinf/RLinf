@@ -29,10 +29,22 @@ runner:
 
 data:
   train_data_paths:
-    - /path/to/libero_spatial_no_noops_1.0.0_lerobot
+    - /path/to/physical-intelligence-libero
   val_data_paths: null
+  format: physical_libero
+  statistics_path: ./data_statistics/libero_spatial.json
+  task_names:
+    - "pick up the black bowl between the plate and the ramekin and place it on the plate"
+    - "pick up the black bowl from table center and place it on the plate"
+    - "pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate"
+    - "pick up the black bowl next to the cookie box and place it on the plate"
+    - "pick up the black bowl next to the plate and place it on the plate"
+    - "pick up the black bowl next to the ramekin and place it on the plate"
+    - "pick up the black bowl on the cookie box and place it on the plate"
+    - "pick up the black bowl on the ramekin and place it on the plate"
+    - "pick up the black bowl on the stove and place it on the plate"
+    - "pick up the black bowl on the wooden cabinet and place it on the plate"
   num_workers: 4
-  video_backend: torchcodec
   shard_size: 1024
   episode_sampling_rate: 1.0
   num_shards_per_epoch: 10000

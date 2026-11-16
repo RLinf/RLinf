@@ -24,7 +24,7 @@ GR00T-N1.7 监督微调
    .. grid-item-card:: 数据
       :text-align: center
 
-      LIBERO Spatial · LeRobot
+      Physical Intelligence LIBERO
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -41,7 +41,7 @@ GR00T-N1.7 监督微调
      - 示范数据
      - 配置
    * - LIBERO Spatial：10 个任务
-     - 432 条轨迹，52,970 个时间步，采样频率 20 Hz
+     - 432 条轨迹，52,970 个时间步，采样频率 10 Hz
      - ``libero_sft_gr00t_n1d7``
 
 观测与动作
@@ -87,16 +87,14 @@ GR00T-N1.7 监督微调
 
 GR00T checkpoint 包含 backbone 权重，Cosmos 目录用于提供加载所需的配置和 tokenizer。
 
-下载 `Spatial LeRobot 数据集 <https://huggingface.co/datasets/IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot>`_，并复制 GR00T 的模态描述文件：
+下载 `Physical Intelligence LIBERO 数据集 <https://huggingface.co/datasets/physical-intelligence/libero>`_：
 
 .. code-block:: bash
 
-   hf download IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
-     --repo-type dataset --local-dir datasets/libero_spatial
-   cp "${GR00T_PATH:-.venv/gr00t}/examples/LIBERO/modality.json" \
-     datasets/libero_spatial/meta/modality.json
+   hf download physical-intelligence/libero \
+     --repo-type dataset --local-dir datasets/physical-intelligence-libero
 
-保留完整的 ``meta/``、``data/`` 和 ``videos/`` 目录。训练会计算这份数据的归一化统计，并随 checkpoint 保存。
+完整数据集包含 40 个任务、1,693 条轨迹，双相机图像直接存放在 Parquet 文件中。保留 ``meta/`` 和 ``data/`` 目录；已有完整下载可直接在下方填写路径。示例用 ``data.task_names`` 筛选 10 个 Spatial 任务，将夹爪动作转换为 GR00T 约定，再计算所选轨迹的归一化统计。
 
 运行
 ----
@@ -110,7 +108,9 @@ GR00T checkpoint 包含 backbone 权重，Cosmos 目录用于提供加载所需�
        actor: 0-7
    data:
      train_data_paths:
-       - /absolute/path/to/datasets/libero_spatial
+       - /absolute/path/to/datasets/physical-intelligence-libero
+     format: physical_libero
+     statistics_path: ./data_statistics/libero_spatial.json
    runner:
      max_steps: 20000
      save_interval: 1000
@@ -122,6 +122,8 @@ GR00T checkpoint 包含 backbone 权重，Cosmos 目录用于提供加载所需�
        backbone_model_path: /absolute/path/to/checkpoints/Cosmos-Reason2-2B
      optim:
        total_training_steps: 20000
+
+保留配置中已有的 Spatial 任务列表。``data.statistics_path`` 指向可写的统计缓存文件，归一化统计也会随 checkpoint 保存。
 
 全局 batch size 必须能被 GPU 数与 microbatch size 的乘积整除。保留 ``runner.max_epochs: -1``，训练持续采样，到 ``runner.max_steps`` 指定的更新次数后停止。``actor.optim.total_training_steps`` 决定学习率计划长度。20,000 次更新是示例预算，不代表已经测得的收敛目标。
 

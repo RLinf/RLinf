@@ -19,6 +19,8 @@ runner:
     logger_backends: null
 
 data:
+  format: lerobot
+  video_backend: torchcodec
   train_data_paths:
     - /workspace/dataset/data/sft-ci-data/gr00t-libero-spatial-episode0
   num_workers: 0
