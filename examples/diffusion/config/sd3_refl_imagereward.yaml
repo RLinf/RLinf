@@ -63,7 +63,7 @@ algorithm:
   refl_grad_scale: 1.0e-3
   # 0 trains on Lreward alone. Set it above 0 to enable the pre-training step.
   refl_pre_loss_weight: 0.0
-  # rollout: stored late latents. resample: x0 re-noised to a late t.
+  # rollout: a late trajectory state. resample: x0 re-noised to a late t.
   refl_xt_source: rollout
 
 env:

@@ -15,8 +15,9 @@ compare the two training setups.
 Overview
 --------
 
-The recipe uses LoRA and the diffusion environment: each prompt produces an
-image, and its ImageReward score supplies the reward.
+The actor trains SD3 LoRA by sampling each batch with its current weights
+and computing a differentiable ImageReward loss. During evaluation, rollout
+workers generate images and the diffusion environment scores them.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -64,8 +65,9 @@ The supervised update takes captioned images separately from the prompt dataset.
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Each image completes one environment episode. Rollout also stores late
-denoising states for the differentiable actor update.
+Training batches contain text prompts. The actor samples late denoising
+states without gradients, then predicts and decodes clean images for the
+reward update. During evaluation, each image completes one environment episode.
 
 .. list-table::
    :header-rows: 1
@@ -80,7 +82,7 @@ denoising states for the differentiable actor update.
    * - Reward
      - ``avg`` and ``image_reward``: the same scalar score; higher is better.
    * - Update inputs
-     - Detached late denoising states and prompt embeddings from rollout.
+     - Text prompts; the actor generates late denoising states and prompt embeddings for each batch.
 
 Installation
 ------------
@@ -136,8 +138,9 @@ updates. The command below places actor, env, and rollout on GPUs 0–3.
 Reward-Only Training
 ~~~~~~~~~~~~~~~~~~~~
 
-Set the local paths and launch a 200-step run. Each runner step generates
-512 training samples, processed in eight global batches of 64:
+Set the local paths and launch a 200-step run. Each runner step processes
+512 training samples in eight global batches of 64. The actor samples each
+batch immediately before its reward update:
 
 .. code-block:: bash
 
@@ -160,7 +163,6 @@ Set the local paths and launch a 200-step run. Each runner step generates
      actor.micro_batch_size=1
      actor.refl_pre_data.num_workers=0
      rollout.pipeline_stage_num=1
-     env.train.reward.batch_size=1
      env.eval.reward.batch_size=1
      actor.seed=42
      env.train.seed=42
@@ -182,13 +184,24 @@ Set the local paths and launch a 200-step run. Each runner step generates
 The run evaluates and saves a checkpoint every 10 steps. For a short first
 check, override ``runner.max_epochs=2``, ``runner.max_steps=2``,
 ``runner.val_check_interval=2``, and ``runner.save_interval=-1``.
-Micro-batch size 1 is a starting point; both actor-side differentiable scoring
-and environment scoring consume GPU memory. Adjust placement using
+Micro-batch size 1 is a starting point; actor-side sampling and differentiable
+scoring consume GPU memory. Adjust placement using
 :doc:`/rst_source/concepts/placement`.
 
-The actor scorer is selected by ``actor.refl_reward_model.type``; its default
-is ``image_reward``. For environment scoring, keep ``env.*.reward.model``
-set to ``visual.image_reward``.
+The actor uses ``actor.refl_reward_model.type=image_reward`` for training.
+At each evaluation, it syncs weights to rollout workers, which generate images
+for the environment to score with ``env.eval.reward.model=visual.image_reward``.
+
+Set the Training Sample Budget
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The actor shuffles prompts each dataset epoch and samples each training batch
+with its current weights. ``env.train.total_num_envs * env.train.rollout_epoch``
+sets the sample budget per runner step. With the values above, each runner
+step processes ``4 * 128 = 512`` samples in eight global batches.
+
+Use a positive multiple of ``actor.global_batch_size`` for the sample budget,
+with ``algorithm.group_size=1`` and ``algorithm.update_epoch=1``.
 
 Configure the Reward Update
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -221,11 +234,13 @@ These settings live under ``algorithm``:
      - Multiplier on the reward loss.
    * - ``refl_xt_source``
      - ``rollout``
-     - Select a stored late state. ``resample`` re-noises the final latent at a sampled late time.
+     - Select a late state from the denoising trajectory. ``resample`` re-noises the final latent at a sampled late time.
    * - ``refl_pre_loss_weight``
      - ``0.0``
      - A positive value enables the supervised update below.
 
+``refl_xt_source`` controls how the model constructs the late state used for
+the reward update.
 The `ImageReward paper <https://arxiv.org/abs/2304.05977>`_ introduces ReFL
 with SD1.4. This recipe applies its reward feedback to SD3 flow matching.
 
@@ -266,17 +281,20 @@ Set the image-caption directory and reuse the settings above:
      algorithm.refl_pre_loss_weight=0.1 \
      runner.logger.experiment_name=sd3_refl_pre01
 
-For each global batch, the actor first takes an optimizer step on
-``refl_pre_loss_weight * Lpre``, then another on the reward loss. Lpre uses
-SD3's flow-matching denoising objective. A zero weight skips the image loader
-and the supervised step.
+Each global batch follows this order:
 
-The two steps share AdamW moment estimates, so a weight of ``0.01`` does not
-mean a supervised parameter update of 1% of the update at weight ``1.0``.
-The example value ``0.1`` is a comparison setting, not an established optimum.
-When comparing weights, hold the dataset, initial model, learning rate, seeds,
-batches, and run length fixed. Lpre adds eight optimizer steps per runner
-step at the settings above, so also record the extra compute.
+1. Take an optimizer step on ``refl_pre_loss_weight * Lpre``.
+2. Sample late denoising states with the updated model.
+3. Predict clean images, score them, and take a reward optimizer step.
+
+Lpre uses SD3's flow-matching denoising objective. Set its weight to ``0``
+for reward-only training.
+
+The two optimizer steps share AdamW moment estimates, so parameter updates
+depend on both the loss weights and the optimizer state. Start with ``0.1``
+and compare weights using the same dataset, initial model, learning rate,
+seeds, batches, and run length. At the settings above, each runner step has
+eight Lpre updates and eight reward updates.
 
 Visualization and Results
 -------------------------
@@ -285,8 +303,12 @@ Inspect generated images alongside ``eval/image_reward`` and
 ``train/actor/refl_reward``. With Lpre enabled, also check
 ``train/actor/refl_pre_loss``, ``train/actor/refl_pre_grad_norm``, and
 ``train/actor/refl_reward_grad_norm``. Lpre logs its unweighted loss; the reward
-loss includes ``refl_grad_scale``. A higher ImageReward score alone does not
-establish better visual quality.
+loss includes ``refl_grad_scale``.
+
+Check ``train/actor/refl_samples`` and ``train/actor/refl_reward_updates``
+to confirm the per-step sample and update counts.
+``time/actor_training`` includes sampling and optimizer updates;
+``time/eval`` records evaluation.
 
 Evaluation generates 512 images from 463 prompts, so 49 prompts repeat. Keep
 the evaluation settings fixed across comparisons. Set

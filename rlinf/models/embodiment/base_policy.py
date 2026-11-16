@@ -16,10 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import torch
+from typing import Any
 
 
 class ForwardType(Enum):
@@ -69,19 +66,21 @@ class BasePolicy(ABC):
         forward_inputs: dict[str, Any],
         xt_source: str = "rollout",
         **kwargs: Any,
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Any]:
         """Return differentiable ``samples`` for a ReFL scorer.
 
         The model owns time units, state selection, noising, and sample decoding.
 
         Args:
-            forward_inputs: Model-specific rollout inputs for the batch.
-            xt_source: Use a stored rollout state or a model-specific resample.
+            forward_inputs: Model-specific sampling conditions or explicit training inputs.
+            xt_source: Select a trajectory state or a model-specific resample.
             **kwargs: Additional model-specific generation inputs.
 
         Returns:
             A dict containing ``samples``, with gradients to trainable policy
-            parameters and the layout expected by the configured scorer.
+            parameters and the layout expected by the configured scorer. Models
+            may also return ``forward_inputs`` with prepared scorer context;
+            otherwise the scorer receives the original inputs.
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support ReFL sample generation."

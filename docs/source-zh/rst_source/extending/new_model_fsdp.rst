@@ -174,9 +174,11 @@ RL 逻辑保持在模型内部。
 通过可微奖励训练
 ^^^^^^^^^^^^^^^^
 
-要直接通过可微奖励训练，模型生成的样本需要保留从分数到可训练参数的梯度。实现 ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)``，返回包含 ``samples`` 的 dict；该 tensor 的首维为 batch。状态选择、时间单位、加噪和解码由模型处理，样本布局由模型与 scorer 约定。rollout 将两者需要的输入保存在 ``forward_inputs`` 中。
+要直接通过可微奖励训练，模型生成的样本需要保留从分数到可训练参数的梯度。实现 ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)``，返回包含 ``samples`` 的 dict；该 tensor 的首维为 batch。状态选择、时间单位、加噪和解码由模型处理，样本布局由模型与 scorer 约定。
 
-``BasePolicy.forward`` 会将 ``ForwardType.REFL`` 分发到这个方法。模型若覆盖了 ``forward``，也应保留这条分发。actor 通过 ``algorithm.refl_xt_source`` 传入 ``xt_source``，再把返回的样本交给 ``scorer(samples, forward_inputs)``。
+SD3 接收 ``forward_inputs={"prompts": prompts}``，其中 ``prompts`` 是字符串列表。模型用当前权重采样状态，并准备 scorer 所需的上下文。要使用其他组件传入的状态，通过 ``refl_inputs`` 传入 ``x_t`` 和归一化的 ``timesteps``，在 ``forward_inputs`` 中提供 ``prompt_embeds`` 与 ``pooled_prompt_embeds``。SD3 的时间 0 对应数据，1 对应噪声。
+
+``BasePolicy.forward`` 会将 ``ForwardType.REFL`` 分发到这个方法。模型若覆盖了 ``forward``，也应保留这条分发。actor 通过 ``algorithm.refl_xt_source`` 传入 ``xt_source``，再把返回的样本交给 ``scorer(samples, forward_inputs)``。要将准备好的上下文传给 scorer，在返回的 dict 中同时加入 ``samples`` 和 ``forward_inputs``；省略后者时，actor 将原始输入传给 scorer。
 
 scorer 为每个样本返回一个奖励，shape 为 ``[B]``，数值越大越好。冻结 scorer 的模型参数，同时保留经过输入的梯度。actor 会在计算 loss 前检查奖励的 shape。
 

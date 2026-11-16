@@ -12,7 +12,7 @@
 概览
 ----
 
-本例使用 LoRA 和 diffusion 环境。每条 prompt 生成一张图片，由 ImageReward 为图片打分。
+actor 用当前权重逐批采样，通过可微的 ImageReward loss 更新 SD3 LoRA。评测时，rollout worker 生成图片，diffusion 环境计算分数。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -59,7 +59,7 @@
 观测与动作
 ~~~~~~~~~~
 
-生成一张图片即完成一个环境 episode。rollout 同时保存晚期去噪状态，供 actor 计算可微奖励。
+训练 batch 的输入是文本 prompt。actor 先在无梯度模式下采样晚期去噪状态，再预测并解码干净图片，用于奖励更新。评测时，每张生成图片对应一个环境 episode。
 
 .. list-table::
    :header-rows: 1
@@ -74,7 +74,7 @@
    * - 奖励
      - ``avg`` 和 ``image_reward``：同一个标量分数，越高越好。
    * - 更新输入
-     - rollout 保存并 detach 的晚期去噪状态和 prompt embedding。
+     - 文本 prompt；actor 为每个 batch 生成晚期去噪状态和 prompt embedding。
 
 安装
 ----
@@ -122,7 +122,7 @@ prompt 文件是 JSON 列表，每项包含 ``text`` 或 ``prompt`` 字段。加
 仅使用奖励训练
 ~~~~~~~~~~~~~~
 
-设置本地路径后启动 200 步训练。每个 runner step 生成 512 个训练样本，按 global batch size 64 分成八批更新：
+设置本地路径后启动 200 步训练。每个 runner step 处理 512 个训练样本，按 global batch size 64 分成八批。actor 在每批奖励更新前采样：
 
 .. code-block:: bash
 
@@ -145,7 +145,6 @@ prompt 文件是 JSON 列表，每项包含 ``text`` 或 ``prompt`` 字段。加
      actor.micro_batch_size=1
      actor.refl_pre_data.num_workers=0
      rollout.pipeline_stage_num=1
-     env.train.reward.batch_size=1
      env.eval.reward.batch_size=1
      actor.seed=42
      env.train.seed=42
@@ -164,9 +163,16 @@ prompt 文件是 JSON 列表，每项包含 ``text`` 或 ``prompt`` 字段。加
      algorithm.refl_pre_loss_weight=0.0 \
      runner.logger.experiment_name=sd3_refl_reward_only
 
-训练每 10 步评测并保存一次 checkpoint。首次运行可以覆盖为 ``runner.max_epochs=2``、``runner.max_steps=2``、``runner.val_check_interval=2`` 和 ``runner.save_interval=-1``，先检查短流程。micro-batch size 1 是起始设置；actor 的可微打分和环境打分都会占用 GPU 显存。placement 的配置方式见 :doc:`/rst_source/concepts/placement`。
+训练每 10 步评测并保存一次 checkpoint。首次运行可以覆盖为 ``runner.max_epochs=2``、``runner.max_steps=2``、``runner.val_check_interval=2`` 和 ``runner.save_interval=-1``，先检查短流程。micro-batch size 1 是起始设置；actor 内的采样和可微打分都会占用 GPU 显存。placement 的配置方式见 :doc:`/rst_source/concepts/placement`。
 
-``actor.refl_reward_model.type`` 选择 actor 使用的 scorer，默认值为 ``image_reward``。环境通过 ``env.*.reward.model`` 为生成结果打分，本例设为 ``visual.image_reward``。
+训练使用 ``actor.refl_reward_model.type=image_reward`` 指定的 scorer。每次评测时，actor 将权重同步给 rollout worker，由它生成图片，再由环境通过 ``env.eval.reward.model=visual.image_reward`` 计算分数。
+
+调整每步训练量
+~~~~~~~~~~~~~~
+
+actor 按数据集 epoch 打乱 prompt，用当前权重为每个训练 batch 采样。``env.train.total_num_envs * env.train.rollout_epoch`` 指定每个 runner step 的训练样本数。按上方配置，每步处理 ``4 * 128 = 512`` 个样本，分成八个 global batch 更新。
+
+样本数应为 ``actor.global_batch_size`` 的正整数倍，并设置 ``algorithm.group_size=1``、``algorithm.update_epoch=1``。
 
 配置奖励更新
 ~~~~~~~~~~~~
@@ -195,12 +201,12 @@ actor 从晚期去噪状态出发，一步预测干净 latent，再解码成图�
      - 奖励 loss 的缩放系数。
    * - ``refl_xt_source``
      - ``rollout``
-     - 选择保存的晚期状态；``resample`` 则对最终 latent 在采样的晚期时间重新加噪。
+     - 从去噪轨迹中选择晚期状态；``resample`` 则对最终 latent 在采样的晚期时间重新加噪。
    * - ``refl_pre_loss_weight``
      - ``0.0``
      - 大于零时，启用下方的监督更新。
 
-`ImageReward 论文 <https://arxiv.org/abs/2304.05977>`_ 使用 SD1.4 介绍 ReFL，本例将奖励反馈用于 SD3 flow matching。
+``refl_xt_source`` 控制模型如何构造奖励更新所用的晚期状态。`ImageReward 论文 <https://arxiv.org/abs/2304.05977>`_ 使用 SD1.4 介绍 ReFL，本例将奖励反馈用于 SD3 flow matching。
 
 添加图文监督更新
 ~~~~~~~~~~~~~~~~
@@ -231,14 +237,22 @@ actor 从晚期去噪状态出发，一步预测干净 latent，再解码成图�
      algorithm.refl_pre_loss_weight=0.1 \
      runner.logger.experiment_name=sd3_refl_pre01
 
-每个 global batch 先对 ``refl_pre_loss_weight * Lpre`` 执行一次 optimizer step，再对奖励 loss 执行一次。Lpre 使用 SD3 的 flow-matching 去噪目标；权重为零时，跳过图片加载和监督更新。
+每个 global batch 按以下顺序训练：
 
-两次更新共享 AdamW 的动量统计，因此权重 ``0.01`` 不表示监督参数更新量是权重 ``1.0`` 时的 1%。示例中的 ``0.1`` 用于对照实验，不代表已确定的最优值。比较权重时，固定数据集、初始模型、学习率、seed、batch 和训练长度。按上方配置，Lpre 每个 runner step 会额外执行八次 optimizer step，也应记录增加的计算开销。
+1. 对 ``refl_pre_loss_weight * Lpre`` 执行一次 optimizer step。
+2. 用更新后的模型采样晚期去噪状态。
+3. 预测干净图片、打分，再执行一次奖励 optimizer step。
+
+Lpre 使用 SD3 的 flow-matching 去噪目标。将权重设为 ``0`` 即只使用奖励训练。
+
+两次更新共享 AdamW 的动量统计，参数更新量同时取决于 loss 权重和 optimizer 状态。可以从 ``0.1`` 开始，固定数据集、初始模型、学习率、seed、batch 和训练长度来比较权重。按上方配置，每个 runner step 包含八次 Lpre 更新和八次奖励更新。
 
 可视化与结果
 ------------
 
-结合生成图片观察 ``eval/image_reward`` 和 ``train/actor/refl_reward``。启用 Lpre 后，再检查 ``train/actor/refl_pre_loss``、``train/actor/refl_pre_grad_norm`` 和 ``train/actor/refl_reward_grad_norm``。Lpre 记录未加权的 loss，奖励 loss 则包含 ``refl_grad_scale``。ImageReward 分数上升本身并不等于视觉质量改善。
+结合生成图片观察 ``eval/image_reward`` 和 ``train/actor/refl_reward``。启用 Lpre 后，再检查 ``train/actor/refl_pre_loss``、``train/actor/refl_pre_grad_norm`` 和 ``train/actor/refl_reward_grad_norm``。Lpre 记录未加权的 loss，奖励 loss 则包含 ``refl_grad_scale``。
+
+通过 ``train/actor/refl_samples`` 和 ``train/actor/refl_reward_updates`` 检查每步样本数与更新次数。``time/actor_training`` 包含采样和 optimizer 更新，``time/eval`` 记录评测耗时。
 
 每次评测用 463 条 prompt 生成 512 张图片，因此有 49 条 prompt 会重复。对照实验应保持相同的评测设置。将 ``env.eval.video_cfg.save_video=true`` 可把生成图片保存为重复帧视频，输出目录为 ``env.eval.video_cfg.video_base_dir``。
 

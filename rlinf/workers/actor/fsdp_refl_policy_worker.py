@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import numpy as np
@@ -27,23 +27,25 @@ from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
-from rlinf.utils.nested_dict_process import (
-    process_nested_dict_for_train,
-    put_tensor_device,
-    split_dict_to_chunk,
-)
+from rlinf.utils.nested_dict_process import put_tensor_device
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
-class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
-    """Reward Feedback Learning for diffusion policies.
+def _repeat_batches(loader: DataLoader) -> Iterator[dict[str, Any]]:
+    if len(loader) == 0:
+        raise ValueError(
+            "ReFL requires at least one complete data batch per actor rank."
+        )
+    epoch = 0
+    while True:
+        forward_set_epoch(loader, epoch)
+        yield from loader
+        epoch += 1
 
-    Rollout supplies the no-grad denoising path. Each update then follows
-    Algorithm 1 of the paper: one optimizer step on the pre-training loss when
-    ``algorithm.refl_pre_loss_weight`` is positive, and one on the reward of a
-    one-step x0 prediction from a late denoising state.
-    """
+
+class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
+    """Sample each ReFL batch with current weights after its pre-training update."""
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -59,6 +61,7 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
         )
         if self.refl_pre_loss_weight > 0:
             self._build_pre_data_loader()
+        self._build_prompt_data_loader()
 
     def _build_pre_data_loader(self) -> None:
         from rlinf.envs.sim.diffusion import build_reward_dataset
@@ -78,32 +81,58 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
             num_workers=pre_data_cfg.get("num_workers", 4),
             drop_last=True,
         )
-        self.pre_data_epoch = 0
-        self.pre_data_iter = iter(self.pre_data_loader)
+        self.pre_data_iter = _repeat_batches(self.pre_data_loader)
 
     def _next_pre_micro_batches(self) -> list[dict[str, Any]]:
-        micro_batches = []
-        for _ in range(self.gradient_accumulation):
-            try:
-                micro_batches.append(next(self.pre_data_iter))
-            except StopIteration:
-                self.pre_data_epoch += 1
-                forward_set_epoch(self.pre_data_loader, self.pre_data_epoch)
-                self.pre_data_iter = iter(self.pre_data_loader)
-                micro_batches.append(next(self.pre_data_iter))
-        return micro_batches
+        return [next(self.pre_data_iter) for _ in range(self.gradient_accumulation)]
+
+    def _build_prompt_data_loader(self) -> None:
+        from rlinf.envs.sim.diffusion import build_reward_dataset
+
+        dataset = build_reward_dataset(self.cfg.env.train.dataset)
+        loader = DataLoader(
+            dataset,
+            batch_size=self.cfg.actor.micro_batch_size,
+            sampler=DistributedSampler(
+                dataset,
+                num_replicas=self._world_size,
+                rank=self._rank,
+                seed=self.cfg.env.train.seed,
+                drop_last=True,
+            ),
+            num_workers=0,
+            drop_last=True,
+        )
+        self.prompt_data_iter = _repeat_batches(loader)
+
+    def _training_batches(self) -> Iterator[Sequence[dict[str, Any]]]:
+        sample_count = (
+            self.cfg.env.train.total_num_envs * self.cfg.env.train.rollout_epoch
+        )
+        for _ in range(sample_count // self.cfg.actor.global_batch_size):
+            yield [
+                {
+                    "forward_inputs": {
+                        "prompts": next(self.prompt_data_iter)["task_description"]
+                    }
+                }
+                for _ in range(self.gradient_accumulation)
+            ]
 
     def _reward_loss(
         self, batch: dict[str, Any]
     ) -> tuple[torch.Tensor, dict[str, float]]:
         forward_inputs = batch["forward_inputs"]
         with self.amp_context:
-            samples = self.model(
+            output = self.model(
                 forward_type=ForwardType.REFL,
                 forward_inputs=forward_inputs,
                 xt_source=self.refl_xt_source,
-            )["samples"]
-            rewards = self.reward_scorer(samples, forward_inputs)
+            )
+            samples = output["samples"]
+            rewards = self.reward_scorer(
+                samples, output.get("forward_inputs", forward_inputs)
+            )
         if rewards.shape != samples.shape[:1]:
             raise ValueError(
                 f"ReFL scorer must return rewards of shape {samples.shape[:1]}, "
@@ -151,47 +180,34 @@ class EmbodiedReFLFSDPPolicy(EmbodiedFSDPActor):
             self.load_optimizer(self.device)
 
         self.model.train()
-        rollout_size = (
-            self.rollout_batch["prev_logprobs"].shape[0]
-            * self.rollout_batch["prev_logprobs"].shape[1]
-        )
-        g = torch.Generator()
-        g.manual_seed(self.cfg.actor.seed + self._rank)
-        shuffle_id = torch.randperm(rollout_size, generator=g)
-        with torch.no_grad():
-            self.rollout_batch = process_nested_dict_for_train(
-                self.rollout_batch, shuffle_id
+        metrics = {}
+        reward_updates = 0
+        for micro_batches in self._training_batches():
+            if self.refl_pre_loss_weight > 0:
+                grad_norm, _ = self._accumulate_and_step(
+                    self._next_pre_micro_batches(), self._pre_loss, metrics
+                )
+                append_to_dict(metrics, {"actor/refl_pre_grad_norm": grad_norm})
+
+            grad_norm, lr_list = self._accumulate_and_step(
+                micro_batches, self._reward_loss, metrics
+            )
+            reward_updates += 1
+            append_to_dict(
+                metrics,
+                {
+                    "actor/refl_reward_grad_norm": grad_norm,
+                    "actor/lr": lr_list[0],
+                },
             )
 
-        batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
-        assert rollout_size % batch_size_per_rank == 0, (
-            f"{rollout_size} is not divisible by {batch_size_per_rank}"
-        )
-
-        metrics = {}
-        for _ in range(self.update_epoch):
-            for global_batch in split_dict_to_chunk(
-                self.rollout_batch, rollout_size // batch_size_per_rank
-            ):
-                if self.refl_pre_loss_weight > 0:
-                    grad_norm, _ = self._accumulate_and_step(
-                        self._next_pre_micro_batches(), self._pre_loss, metrics
-                    )
-                    append_to_dict(metrics, {"actor/refl_pre_grad_norm": grad_norm})
-
-                grad_norm, lr_list = self._accumulate_and_step(
-                    split_dict_to_chunk(global_batch, self.gradient_accumulation),
-                    self._reward_loss,
-                    metrics,
-                )
-                append_to_dict(
-                    metrics,
-                    {
-                        "actor/refl_reward_grad_norm": grad_norm,
-                        "actor/lr": lr_list[0],
-                    },
-                )
-
+        metrics["actor/refl_reward_updates"] = [reward_updates]
+        metrics["actor/refl_pre_updates"] = [
+            reward_updates if self.refl_pre_loss_weight > 0 else 0
+        ]
+        metrics["actor/refl_samples"] = [
+            reward_updates * self.cfg.actor.global_batch_size
+        ]
         self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()

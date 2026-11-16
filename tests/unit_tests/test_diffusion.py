@@ -121,7 +121,11 @@ def test_refl_config_composes(monkeypatch, pre_weight):
             ],
         )
         OmegaConf.resolve(cfg)
+    from rlinf.config import validate_refl_cfg
+
+    validate_refl_cfg(cfg)
     assert cfg.algorithm.loss_type == "embodied_refl"
+    assert "refl_sampling" not in cfg.algorithm
     assert cfg.actor.model.sd3.rl_mode == "refl"
     assert cfg.actor.refl_reward_model.type == "image_reward"
     assert cfg.actor.refl_pre_data.num_workers == 0
@@ -278,7 +282,15 @@ def tiny_sd3(tmp_path):
     vocab = {
         word: i
         for i, word in enumerate(
-            ["[PAD]", "[UNK]", "[BOS]", "[EOS]", "a", "fox", "cat"]
+            [
+                "[PAD]",
+                "[UNK]",
+                "[BOS]",
+                "[EOS]",
+                "a",
+                "fox",
+                "cat",
+            ]
         )
     }
     tokenizer_backend = Tokenizer(WordLevel(vocab, unk_token="[UNK]"))
@@ -375,7 +387,7 @@ def tiny_sd3(tmp_path):
 @pytest.mark.parametrize("cfg", [False, True])
 @pytest.mark.parametrize("use_lora", [False, True])
 @pytest.mark.parametrize("native_time_scale", [1000, 2000])
-def test_refl_rollout_and_differentiable_forward(
+def test_refl_explicit_state_forward_preserves_gradients(
     tiny_sd3, cfg, use_lora, native_time_scale
 ):
     from diffusers import FlowMatchEulerDiscreteScheduler
@@ -394,28 +406,28 @@ def test_refl_rollout_and_differentiable_forward(
         model.pipeline.transformer = model.transformer
     model.config.use_lora = use_lora
     model.config.cfg = cfg
-    images, output = model.predict_action_batch({"task_descriptions": ["a fox"]})
-    forward_inputs = output["forward_inputs"]
-    assert forward_inputs["latents"].shape == (1, 2, 16, 8, 8)
-    assert forward_inputs["reward_input_ids"].shape == (1, 35)
-    assert (forward_inputs["timesteps"] > 0).all()
-    assert (forward_inputs["timesteps"] <= 1).all()
-    torch.testing.assert_close(
-        forward_inputs["timesteps"],
-        model.pipeline.scheduler.timesteps[None, -2:] / native_time_scale,
-    )
-    assert all(not tensor.requires_grad for tensor in forward_inputs.values())
-    assert "next_latents" not in forward_inputs
-
-    predicted = model(
+    embeds, pooled = model.encode_prompts(["a fox"])
+    x_t = torch.randn(1, 16, 8, 8)
+    t = torch.tensor([0.25])
+    with torch.no_grad():
+        velocity = model.transformer(
+            hidden_states=x_t,
+            timestep=t * native_time_scale,
+            encoder_hidden_states=embeds,
+            pooled_projections=pooled,
+            return_dict=False,
+        )[0]
+        x0 = x_t - t.view(-1, 1, 1, 1) * velocity
+        vae = model.pipeline.vae
+        latents = x0 / vae.config.scaling_factor + vae.config.shift_factor
+        expected = (vae.decode(latents, return_dict=False)[0] / 2 + 0.5).clamp(0, 1)
+    output = model(
         forward_type=ForwardType.REFL,
-        forward_inputs=forward_inputs,
-        refl_inputs={
-            "x_t": forward_inputs["latents"][:, -1],
-            "timesteps": forward_inputs["timesteps"][:, -1],
-        },
-    )["samples"]
-    torch.testing.assert_close(predicted, images, atol=1e-5, rtol=1e-5)
+        forward_inputs={"prompt_embeds": embeds, "pooled_prompt_embeds": pooled},
+        refl_inputs={"x_t": x_t, "timesteps": t},
+    )
+    predicted = output["samples"]
+    torch.testing.assert_close(predicted, expected, atol=1e-5, rtol=1e-5)
     predicted.square().mean().backward()
     grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(grad).all() for grad in grads)
@@ -434,47 +446,45 @@ def test_refl_rollout_and_differentiable_forward(
         )
 
 
-@pytest.mark.parametrize("xt_source", ["rollout", "resample"])
-def test_refl_model_state_selection_matches_the_original_sd3_path(tiny_sd3, xt_source):
+@pytest.mark.parametrize("mode", ["train", "eval"])
+def test_refl_inference_returns_images(tiny_sd3, mode):
     model = tiny_sd3
-    _, output = model.predict_action_batch({"task_descriptions": ["a fox", "a cat"]})
+    model.config.eval_num_steps = 6
+    images, output = model.predict_action_batch(
+        {"task_descriptions": ["a fox", "a cat"]}, mode=mode
+    )
+    assert images.shape == (2, 3, 16, 16)
+    assert torch.isfinite(images).all() and not images.requires_grad
+    assert output == {"prev_values": None}
+
+
+@pytest.mark.parametrize("rl_mode", ["flow-grpo", "nft"])
+def test_sd3_other_algorithms_keep_rollout_training_inputs(tiny_sd3, rl_mode):
+    model = tiny_sd3
+    model.config.rl_mode = rl_mode
+    images, output = model.predict_action_batch({"task_descriptions": ["a fox"]})
+    assert images.shape == (1, 3, 16, 16)
+    assert output["prev_logprobs"].shape == (1, 3)
     inputs = output["forward_inputs"]
-    latents = inputs["latents"]
-    # Reproduce the original worker's random late-state selection.
-    torch.manual_seed(123)
-    rows = torch.arange(latents.shape[0])
-    steps = torch.randint(0, latents.shape[1], rows.shape)
-    t = inputs["timesteps"][rows, steps]
-    if xt_source == "rollout":
-        x_t = latents[rows, steps]
-    else:
-        x0 = inputs["x0"]
-        t_bc = t.view(-1, 1, 1, 1)
-        x_t = (1 - t_bc) * x0 + t_bc * torch.randn_like(x0)
-    expected = model(
-        forward_type=ForwardType.REFL,
-        forward_inputs=inputs,
-        refl_inputs={"x_t": x_t, "timesteps": t},
-    )["samples"]
-    torch.manual_seed(123)
-    actual = model(
-        forward_type=ForwardType.REFL,
-        forward_inputs=inputs,
-        xt_source=xt_source,
-    )["samples"]
-    torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
-    parameters = [p for p in model.transformer.parameters() if p.requires_grad]
-    expected_grads = torch.autograd.grad(expected.square().mean(), parameters)
-    actual.square().mean().backward()
-    for parameter, expected_grad in zip(parameters, expected_grads):
-        torch.testing.assert_close(parameter.grad, expected_grad, atol=1e-6, rtol=1e-6)
-    assert all(torch.isfinite(p.grad).all() for p in parameters)
-    assert sum(p.grad.abs().sum() for p in parameters) > 0
+    assert inputs["latents"].shape == (1, 3, 16, 8, 8)
+    assert inputs["next_latents"].shape == inputs["latents"].shape
+    assert all(not value.requires_grad for value in inputs.values())
+    if rl_mode == "nft":
+        assert inputs["nft_x0"].shape == (1, 1, 16, 8, 8)
 
 
 def test_refl_model_rejects_unknown_state_sources(tiny_sd3):
     with pytest.raises(ValueError, match="xt_source must be 'rollout' or 'resample'"):
-        tiny_sd3(forward_type=ForwardType.REFL, forward_inputs={}, xt_source="unknown")
+        tiny_sd3(
+            forward_type=ForwardType.REFL,
+            forward_inputs={"prompts": ["a fox"]},
+            xt_source="unknown",
+        )
+
+
+def test_refl_model_requires_prompts_or_an_explicit_state(tiny_sd3):
+    with pytest.raises(ValueError, match="Expected prompts.*or explicit refl_inputs"):
+        tiny_sd3(forward_type=ForwardType.REFL, forward_inputs={})
 
 
 def test_sd3_pretraining_forward_backpropagates_only_to_transformer(tiny_sd3):
@@ -528,3 +538,144 @@ def test_sd3_pretraining_matches_flow_velocity_target(tiny_sd3):
             data={"images": images, "prompts": ["a fox"]},
         )
     torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("xt_source", ["rollout", "resample"])
+@pytest.mark.parametrize("native_time_scale", [1000, 2000])
+def test_refl_batch_sampling_preserves_gradients(
+    tiny_sd3, xt_source, native_time_scale
+):
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    model = tiny_sd3
+    model.pipeline.scheduler = FlowMatchEulerDiscreteScheduler(
+        num_train_timesteps=native_time_scale
+    )
+    forwards = []
+    decodes = []
+    hook = model.transformer.register_forward_pre_hook(
+        lambda module, args: forwards.append(torch.is_grad_enabled())
+    )
+    decode_hook = model.pipeline.vae.decoder.register_forward_pre_hook(
+        lambda module, args: decodes.append(torch.is_grad_enabled())
+    )
+    try:
+        output = model(
+            forward_type=ForwardType.REFL,
+            forward_inputs={"prompts": ["a fox", "a cat"]},
+            xt_source=xt_source,
+        )
+    finally:
+        hook.remove()
+        decode_hook.remove()
+    prefix_steps = model.config.num_steps - (xt_source == "rollout")
+    assert forwards == [False] * prefix_steps + [True]
+    assert decodes == [True]
+    context = output["forward_inputs"]
+    assert context["reward_input_ids"].shape == (2, 35)
+    assert all(not value.requires_grad for value in context.values())
+    assert output["samples"].shape[:2] == (2, 3)
+    output["samples"].square().mean().backward()
+    grads = [p.grad for p in model.transformer.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+    assert sum(g.abs().sum() for g in grads) > 0
+    assert all(p.grad is None for p in model.pipeline.vae.parameters())
+
+
+@pytest.mark.parametrize("solver", ["ode", "sde", "dpm1", "dpm2"])
+def test_refl_batch_states_match_full_sampling_prefix(tiny_sd3, solver):
+    from rlinf.models.diffusion.sd3.utils import denoise_with_logprob
+
+    model = tiny_sd3
+    embeds, pooled = model.encode_prompts(["a fox", "a cat"])
+    latents = torch.randn(2, 16, 8, 8)
+    kwargs = {
+        "pipeline": model.pipeline,
+        "transformer": model.transformer,
+        "prompt_embeds": embeds,
+        "pooled_prompt_embeds": pooled,
+        "negative_prompt_embeds": None,
+        "negative_pooled_prompt_embeds": None,
+        "cfg_enabled": False,
+        "guidance_scale": 1.0,
+        "noise_level": 0.7 if solver == "sde" else 0.0,
+        "num_steps": 4,
+        "resolution": 16,
+        "output_type": "latent",
+        "solver": solver,
+        "latents": latents.clone(),
+    }
+    torch.manual_seed(123)
+    _, chain, _ = denoise_with_logprob(**kwargs, return_trajectory=True)
+    steps = torch.tensor([2, 3])
+    torch.manual_seed(123)
+    selected, trajectory, log_probs = denoise_with_logprob(
+        **kwargs, return_trajectory=False, sample_steps=steps
+    )
+    torch.testing.assert_close(selected, torch.stack([chain[2][0], chain[3][1]]))
+    assert trajectory is None and log_probs is None
+    with pytest.raises(ValueError, match="one sampling step"):
+        denoise_with_logprob(
+            **kwargs, return_trajectory=False, sample_steps=steps.float() + 0.5
+        )
+
+
+def test_sd3_unit_guidance_does_not_compute_unconditional_branch(tiny_sd3):
+    model = tiny_sd3
+    model.config.cfg = True
+    model.config.guidance_scale = 1.0
+    batch_sizes = []
+    hook = model.transformer.register_forward_pre_hook(
+        lambda module, args, kwargs: batch_sizes.append(
+            kwargs["hidden_states"].shape[0]
+        ),
+        with_kwargs=True,
+    )
+    try:
+        model.predict_action_batch({"task_descriptions": ["a fox"]})
+    finally:
+        hook.remove()
+    assert batch_sizes == [1] * model.config.num_steps
+
+
+def test_refl_config_validates_training_batches():
+    from rlinf.config import validate_refl_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"update_epoch": 1, "group_size": 1},
+            "actor": {"global_batch_size": 64},
+            "runner": {},
+            "env": {
+                "train": {
+                    "env_type": "diffusion",
+                    "dataset": {"type": "visual.prompt_dataset"},
+                    "max_steps_per_rollout_epoch": 1,
+                    "max_episode_steps": 1,
+                    "total_num_envs": 4,
+                    "rollout_epoch": 128,
+                }
+            },
+        }
+    )
+    validate_refl_cfg(cfg)
+    cfg.env.train.rollout_epoch = 127
+    with pytest.raises(ValueError, match="positive multiple"):
+        validate_refl_cfg(cfg)
+    cfg.env.train.rollout_epoch = 128
+    cfg.algorithm.update_epoch = 2
+    with pytest.raises(ValueError, match="update_epoch=1"):
+        validate_refl_cfg(cfg)
+    cfg.algorithm.update_epoch = 1
+    cfg.env.train.env_type = "maniskill"
+    with pytest.raises(ValueError, match="diffusion prompt dataset"):
+        validate_refl_cfg(cfg)
+
+
+def test_refl_rejects_conflicting_inputs(tiny_sd3):
+    with pytest.raises(ValueError, match="not both"):
+        tiny_sd3(
+            forward_type=ForwardType.REFL,
+            forward_inputs={"prompts": ["a fox"]},
+            refl_inputs={"x_t": torch.zeros(1), "timesteps": torch.zeros(1)},
+        )

@@ -205,13 +205,21 @@ whose scores retain gradients to its trainable parameters. Implement
 ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)`` and return a
 dict containing ``samples``, a tensor with batch dimension first. The model owns
 state selection, time units, noising, and decoding; the scorer defines the
-sample layout it accepts. Rollout stores the inputs both need in
-``forward_inputs``.
+sample layout it accepts.
+
+SD3 receives ``forward_inputs={"prompts": prompts}``, where ``prompts`` is
+a list of strings. The model samples states with its current weights and
+prepares the scorer context. To use a state supplied by another component,
+pass ``refl_inputs`` containing ``x_t`` and normalized ``timesteps``, with
+``prompt_embeds`` and ``pooled_prompt_embeds`` in ``forward_inputs``.
+SD3 uses time 0 for data and 1 for noise.
 
 ``BasePolicy.forward`` dispatches ``ForwardType.REFL`` to this method. If your
 model overrides ``forward``, keep that dispatch in the override. The actor
 passes ``xt_source`` from ``algorithm.refl_xt_source`` and feeds the returned
-samples to ``scorer(samples, forward_inputs)``.
+samples to ``scorer(samples, forward_inputs)``. To pass prepared context to
+the scorer, include ``forward_inputs`` in the returned dict alongside
+``samples``. When that key is omitted, the actor passes the original inputs.
 
 The scorer returns one reward per sample, shape ``[B]``, with larger values
 preferred. Freeze its model parameters while preserving the gradient through

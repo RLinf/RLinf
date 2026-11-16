@@ -1181,6 +1181,34 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     )
 
 
+def validate_refl_cfg(cfg: DictConfig) -> None:
+    """Validate ReFL sampling and the sample budget of each runner step."""
+    train = cfg.env.train
+    if train.env_type != "diffusion" or train.dataset.type != "visual.prompt_dataset":
+        raise ValueError(
+            "ReFL requires a diffusion prompt dataset, not an environment rollout."
+        )
+    if cfg.algorithm.update_epoch != 1 or cfg.algorithm.group_size != 1:
+        raise ValueError("ReFL requires update_epoch=1 and group_size=1.")
+    if train.max_steps_per_rollout_epoch != 1 or train.max_episode_steps != 1:
+        raise ValueError("ReFL requires one-step diffusion training samples.")
+    if cfg.runner.get("use_training_pipeline", False) or cfg.runner.get(
+        "overlap_env_bootstrap", False
+    ):
+        raise ValueError(
+            "ReFL does not use the embodied training pipeline or env bootstrap."
+        )
+    if (cfg.get("reward") or {}).get("use_reward_model", False):
+        raise ValueError("ReFL uses actor.refl_reward_model, not a reward worker.")
+    sample_count = train.total_num_envs * train.rollout_epoch
+    batch_size = cfg.actor.global_batch_size
+    if batch_size <= 0 or sample_count <= 0 or sample_count % batch_size:
+        raise ValueError(
+            f"ReFL samples per step ({sample_count}) must be a positive "
+            f"multiple of actor.global_batch_size ({batch_size})."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1190,6 +1218,8 @@ def validate_embodied_cfg(cfg):
         validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
+        validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "

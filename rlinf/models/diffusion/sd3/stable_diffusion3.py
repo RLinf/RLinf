@@ -251,18 +251,30 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
 
     def refl_forward(
         self,
-        forward_inputs: dict[str, torch.Tensor],
+        forward_inputs: dict[str, Any],
         refl_inputs: dict[str, torch.Tensor] | None = None,
         xt_source: str = "rollout",
         **kwargs,
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Any]:
         """Return differentiable image ``samples`` in [0, 1], shape [B, 3, H, W].
 
         ``refl_inputs`` can supply an explicit state and normalized timestep;
-        otherwise sample a late state using ``xt_source``.
+        otherwise ``forward_inputs["prompts"]`` supplies the sampling conditions.
+        Prompt sampling returns prepared scorer context in ``forward_inputs``.
         """
-        if refl_inputs is None:
-            refl_inputs = self._sample_refl_state(forward_inputs, xt_source)
+        sample_from_prompts = "prompts" in forward_inputs
+        if sample_from_prompts:
+            if refl_inputs is not None:
+                raise ValueError(
+                    "Pass either prompts for sampling or an explicit ReFL state, not both."
+                )
+            forward_inputs, refl_inputs = self._sample_refl_inputs(
+                forward_inputs["prompts"], xt_source
+            )
+        elif refl_inputs is None:
+            raise ValueError(
+                "Expected prompts for ReFL sampling or explicit refl_inputs."
+            )
         x_t = refl_inputs["x_t"]
         t = refl_inputs["timesteps"]
         velocity = self._conditional_velocity(
@@ -277,27 +289,73 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
         vae.to(device=x0.device)
         latents = x0 / vae.config.scaling_factor + vae.config.shift_factor
         images = vae.decode(latents.to(dtype=vae.dtype), return_dict=False)[0]
-        return {"samples": (images / 2 + 0.5).clamp(0, 1)}
+        result: dict[str, Any] = {"samples": (images / 2 + 0.5).clamp(0, 1)}
+        if sample_from_prompts:
+            result["forward_inputs"] = forward_inputs
+        return result
 
-    def _sample_refl_state(
-        self, forward_inputs: dict[str, torch.Tensor], xt_source: str
-    ) -> dict[str, torch.Tensor]:
-        """Select a late state with flow time 1 at noise and 0 at data."""
+    @torch.no_grad()
+    def _sample_refl_inputs(
+        self, prompts: list[str], xt_source: str
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        """Sample late states with current weights, without decoding a rollout image."""
         if xt_source not in {"rollout", "resample"}:
             raise ValueError(
                 f"SD3 ReFL xt_source must be 'rollout' or 'resample', got {xt_source!r}."
             )
-        latents = forward_inputs["latents"]
-        rows = torch.arange(latents.shape[0], device=latents.device)
-        steps = torch.randint(0, latents.shape[1], rows.shape, device=latents.device)
-        t = forward_inputs["timesteps"][rows, steps]
-        if xt_source == "rollout":
-            x_t = latents[rows, steps]
-        else:
-            x0 = forward_inputs["x0"]
-            t_bc = t.view(-1, *([1] * (x0.ndim - 1)))
-            x_t = (1 - t_bc) * x0 + t_bc * torch.randn_like(x0)
-        return {"x_t": x_t, "timesteps": t}
+        prompt_embeds, pooled_prompt_embeds = self.encode_prompts(prompts)
+        start = self.config.num_steps - math.ceil(
+            self.config.num_steps * self.config.refl_late_fraction
+        )
+        steps = torch.randint(
+            start, self.config.num_steps, (len(prompts),), device=prompt_embeds.device
+        )
+        cfg_enabled = self.config.cfg and self.config.guidance_scale != 1.0
+        negative_prompt_embeds, negative_pooled_prompt_embeds = None, None
+        if cfg_enabled:
+            negative_prompt_embeds, negative_pooled_prompt_embeds = self.encode_prompts(
+                [""] * len(prompts)
+            )
+        if self.config.offload_auxiliary_modules:
+            move_text_encoders(self.pipeline, device="cpu")
+        state, _, _ = denoise_with_logprob(
+            pipeline=self.pipeline,
+            transformer=self.transformer,
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            cfg_enabled=cfg_enabled,
+            guidance_scale=self.config.guidance_scale,
+            noise_level=self.config.noise_level,
+            solver=self.config.train_sampler,
+            num_steps=self.config.num_steps,
+            resolution=self.config.resolution,
+            output_type="latent",
+            return_trajectory=False,
+            sample_steps=steps if xt_source == "rollout" else None,
+        )
+        t = (
+            self.pipeline.scheduler.timesteps[steps]
+            / self.pipeline.scheduler.config.num_train_timesteps
+        )
+        if xt_source == "resample":
+            t_bc = t.view(-1, 1, 1, 1)
+            state = (1 - t_bc) * state + t_bc * torch.randn_like(state)
+        tokens = self.reward_tokenizer(
+            prompts,
+            padding="max_length",
+            truncation=True,
+            max_length=self.config.reward_max_tokens,
+            return_tensors="pt",
+        ).to(prompt_embeds.device)
+        context = {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "reward_input_ids": tokens.input_ids,
+            "reward_attention_mask": tokens.attention_mask,
+        }
+        return context, {"x_t": state, "timesteps": t}
 
     def sft_forward(self, data: dict[str, Any], **kwargs) -> torch.Tensor:
         """Return the flow-matching pre-training loss on text-image pairs.
@@ -332,35 +390,6 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
     @cached_property
     def reward_tokenizer(self) -> BertTokenizer:
         return BertTokenizer.from_pretrained(self.config.reward_tokenizer_path)
-
-    def _refl_forward_inputs(
-        self,
-        prompts: list[str],
-        prompt_embeds: torch.Tensor,
-        pooled_prompt_embeds: torch.Tensor,
-        full_latents: torch.Tensor,
-        timesteps: torch.Tensor,
-    ) -> dict[str, torch.Tensor]:
-        """Keep only the late denoising window ReFL samples its states from."""
-        num_steps = timesteps.shape[1]
-        start = num_steps - math.ceil(num_steps * self.config.refl_late_fraction)
-        tokens = self.reward_tokenizer(
-            prompts,
-            padding="max_length",
-            truncation=True,
-            max_length=self.config.reward_max_tokens,
-            return_tensors="pt",
-        ).to(full_latents.device)
-        return {
-            "latents": full_latents[:, start:num_steps].detach(),
-            "timesteps": timesteps[:, start:].detach()
-            / self.pipeline.scheduler.config.num_train_timesteps,
-            "x0": full_latents[:, -1].detach(),
-            "prompt_embeds": prompt_embeds.detach(),
-            "pooled_prompt_embeds": pooled_prompt_embeds.detach(),
-            "reward_input_ids": tokens.input_ids,
-            "reward_attention_mask": tokens.attention_mask,
-        }
 
     def obs_processor(self, env_obs: Any) -> list[str]:
         if isinstance(env_obs, Mapping):
@@ -439,11 +468,11 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             resolution=self.config.resolution,
             output_type=self.config.output_type,
             offload_vae=self.config.offload_auxiliary_modules,
-            return_trajectory=not is_eval,
+            return_trajectory=not is_eval and self.config.rl_mode != "refl",
             generator=kwargs.get("generator"),
             latents=kwargs.get("latents"),
         )
-        if is_eval:
+        if is_eval or self.config.rl_mode == "refl":
             return images, {"prev_values": None}
 
         timesteps = self.pipeline.scheduler.timesteps[: len(log_probs)].repeat(
@@ -456,19 +485,6 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             max(1, int(self.config.num_steps * self.config.timestep_fraction)),
             old_logprobs.shape[1],
         )
-
-        if self.config.rl_mode == "refl":
-            return images, {
-                "prev_logprobs": old_logprobs[:, :num_train_timesteps].detach(),
-                "prev_values": None,
-                "forward_inputs": self._refl_forward_inputs(
-                    prompts,
-                    prompt_embeds,
-                    pooled_prompt_embeds,
-                    full_latents,
-                    timesteps,
-                ),
-            }
 
         forward_inputs = {
             "latents": full_latents[:, :num_train_timesteps].detach(),
