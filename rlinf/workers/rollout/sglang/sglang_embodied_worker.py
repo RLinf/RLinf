@@ -124,7 +124,7 @@ class SGLangEmbodiedWorker(Worker):
         )
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
         self._max_concurrent_requests = int(
-            sglang_cfg.get("max_concurrent_requests", 1)
+            sglang_cfg.get("max_concurrent_requests", self._placement.rollout_dp_size)
         )
         if self._max_concurrent_requests < 1:
             raise ValueError("SGLang max_concurrent_requests must be positive")

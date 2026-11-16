@@ -152,6 +152,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     rollout_tp_size=placement.rollout_tp_size,
                     rollout_world_size=placement.rollout_world_size,
                     rollout_sp_degree=placement.rollout_sp_degree,
+                    rollout_dp_size=placement.rollout_dp_size,
                 )[self._rank]
             )
 

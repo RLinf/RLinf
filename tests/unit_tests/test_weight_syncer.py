@@ -2425,6 +2425,131 @@ def test_sglang_weight_target_training_sync_loads_full_state_each_version(
             torch.testing.assert_close(loader.state[target.name_mapper(name)], tensor)
 
 
+@pytest.mark.parametrize("dp", [1, 2, 4])
+@pytest.mark.parametrize("request_type", ["init", "sync"])
+@pytest.mark.parametrize("failure", [None, "response", "transport"])
+def test_embodied_control_reaches_all_dp_replicas(
+    monkeypatch, dp, request_type, failure
+):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    client_module = pytest.importorskip(
+        "sglang.multimodal_gen.runtime.scheduler_client"
+    )
+    from rlinf.hybrid_engines.sglang.common.embodied_scheduler import _SchedulerManager
+    from rlinf.hybrid_engines.sglang.common.io_struct import (
+        SyncHFWeightInput,
+        TaskMethodInput,
+    )
+
+    request = (
+        TaskMethodInput("init_rlinf_worker")
+        if request_type == "init"
+        else SyncHFWeightInput()
+    )
+
+    async def exercise():
+        endpoints = list(range(dp))
+        arrived, finished = set(), set()
+        all_arrived = asyncio.Event()
+
+        async def forward_one(endpoint, obj, timeout):
+            assert obj is request
+            arrived.add(endpoint)
+            if len(arrived) == dp:
+                all_arrived.set()
+            # Models the collective in initialization and weight reception.
+            await all_arrived.wait()
+            finished.add(endpoint)
+            if endpoint == dp - 1 and failure == "transport":
+                raise RuntimeError("replica disconnected")
+            return SimpleNamespace(
+                error="replica load failed"
+                if endpoint == dp - 1 and failure == "response"
+                else None,
+                output={"version": 3},
+            )
+
+        async def forward(obj):
+            assert dp == 1, "DP control must bypass native single-replica dispatch"
+            return await forward_one(0, obj, None)
+
+        monkeypatch.setattr(
+            client_module,
+            "async_scheduler_client",
+            SimpleNamespace(
+                server_args=SimpleNamespace(dp_size=dp, scheduler_endpoints=endpoints),
+                _forward_one=forward_one,
+                forward=forward,
+            ),
+        )
+        manager = _SchedulerManager()
+        call = (
+            manager.run_task_method
+            if request_type == "init"
+            else manager.sync_hf_weight
+        )
+        if failure:
+            with pytest.raises((HTTPException, RuntimeError)):
+                await asyncio.wait_for(call(request, None), timeout=2)
+        else:
+            assert await asyncio.wait_for(call(request, None), timeout=2) == {
+                "version": 3
+            }
+        assert arrived == finished == set(endpoints)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("peer_result", [(3, None), (2, None), (None, "load failed")])
+def test_embodied_weight_sync_checks_all_server_ranks(
+    tmp_path, monkeypatch, peer_result
+):
+    from types import SimpleNamespace
+
+    distributed = pytest.importorskip("sglang.multimodal_gen.runtime.distributed")
+    from rlinf.hybrid_engines.sglang.common.embodied_scheduler import Scheduler
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+    _, state, loader, target = _make_sglang_weight_target(tmp_path)
+    transport = _WeightBucketTransport()
+    transport.send_hf_weights(
+        state, "RolloutGroup", [(0, 0)], cpu_offload=True, version=3
+    )
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler._rlinf_worker = transport
+    scheduler._actor_group_name = "ActorGroup"
+    scheduler.actor_weight_rank = 0
+    scheduler.worker = SimpleNamespace(rank=0)
+    scheduler.weight_target = target
+    scheduler._sync_failed = False
+    scheduler._weights_ready = True
+    world = SimpleNamespace(world_size=2, cpu_group=object())
+    monkeypatch.setattr(distributed, "get_world_group", lambda: world)
+
+    def gather(results, local, *, group):
+        assert group is world.cpu_group
+        assert local == (3, None)
+        assert len(results) == 2
+        results[:] = [local, peer_result]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather)
+    if peer_result == (3, None):
+        assert scheduler.sync_hf_weight([SyncHFWeightInput()]).output == {"version": 3}
+        assert scheduler._weights_ready
+        for name, tensor in state.items():
+            torch.testing.assert_close(loader.state[target.name_mapper(name)], tensor)
+    else:
+        with pytest.raises(RuntimeError, match="server weight sync failed"):
+            scheduler.sync_hf_weight([SyncHFWeightInput()])
+        assert not scheduler._weights_ready
+        assert scheduler._sync_failed
+        with pytest.raises(RuntimeError, match="Serving weights are unavailable"):
+            scheduler._handle_generation([])
+
+
 def test_sglang_weight_target_load_checkpoint_includes_frozen_weights_and_buffers(
     tmp_path,
 ):

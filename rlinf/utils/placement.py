@@ -262,13 +262,14 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
     """Place embodied components according to the rollout backend.
 
     Hugging Face and other local backends retain hybrid placement. SGLang
-    uses one rollout process per node-local TP/SP/CFG server instance.
+    uses one rollout process per node-local DP/TP/SP/CFG server instance.
     """
 
     def __init__(self, config: DictConfig, cluster: Cluster):
         self.rollout_backend = config.rollout.get("rollout_backend")
         self._rollout_tp_size = 1
         self._rollout_sp_degree = 1
+        self._rollout_dp_size = 1
         self._rollout_cfg_parallel_degree = 1
         if self.rollout_backend != "sglang":
             super().__init__(config, cluster)
@@ -277,25 +278,25 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
         server = config.rollout.sglang.server
         self._rollout_tp_size = int(server.get("tp_size", 1))
         self._rollout_sp_degree = int(server.get("sp_degree", 1))
+        self._rollout_dp_size = int(server.get("dp_size", 1))
         self._rollout_cfg_parallel_degree = int(server.get("cfg_parallel_degree", 1))
         if (
             min(
                 self._rollout_tp_size,
                 self._rollout_sp_degree,
+                self._rollout_dp_size,
                 self._rollout_cfg_parallel_degree,
             )
             < 1
         ):
             raise ValueError(
-                "Expected positive SGLang tp_size, sp_degree, and cfg_parallel_degree"
+                "Expected positive SGLang dp_size, tp_size, sp_degree, and cfg_parallel_degree"
             )
         if int(server.get("nnodes", 1)) != 1:
             raise ValueError(
                 "Embodied SGLang model instances must fit on one node; "
                 "use separate server instances for cross-node DP"
             )
-        if int(server.get("dp_size", 1)) != 1:
-            raise ValueError("Embodied SGLang requires dp_size=1")
         only_eval = config.runner.get("only_eval", False) or (
             config.runner.get("task_type") == "embodied_eval"
         )
@@ -305,8 +306,8 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
         width = self.rollout_gpus_per_process
         if configured_gpus is not None and int(configured_gpus) != width:
             raise ValueError(
-                f"Expected server.num_gpus=TP*SP*CFG={width}, got {configured_gpus}; "
-                "omit num_gpus to derive it from TP/SP/CFG"
+                f"Expected server.num_gpus=DP*TP*SP*CFG={width}, got {configured_gpus}; "
+                "omit num_gpus to derive it from DP/TP/SP/CFG"
             )
         super().__init__(config, cluster)
         if not isinstance(self.get_strategy("rollout"), FlexiblePlacementStrategy):
@@ -360,7 +361,7 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
                     gpu_groups.setdefault(node_rank, []).append(rank)
             if any(len(ranks) % width for ranks in gpu_groups.values()):
                 raise ValueError(
-                    f"Each node's rollout GPUs must be divisible by TP*SP*CFG={width}; "
+                    f"Each node's rollout GPUs must be divisible by DP*TP*SP*CFG={width}; "
                     f"got {gpu_groups}. Model instances must fit on one node."
                 )
             instance_gpus = [
@@ -402,9 +403,14 @@ class EmbodiedComponentPlacement(HybridComponentPlacement):
         return self._rollout_sp_degree
 
     @property
+    def rollout_dp_size(self) -> int:
+        return self._rollout_dp_size
+
+    @property
     def rollout_gpus_per_process(self) -> int:
         return (
             self.rollout_tp_size
+            * self.rollout_dp_size
             * self.rollout_sp_degree
             * self._rollout_cfg_parallel_degree
         )

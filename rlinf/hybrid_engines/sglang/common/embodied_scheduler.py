@@ -14,6 +14,8 @@
 
 """RLinf embodied control and weight reception for SGLang Diffusion servers."""
 
+import asyncio
+
 from fastapi import HTTPException
 from sglang.multimodal_gen.runtime.managers.scheduler import Scheduler as _Scheduler
 from sglang.multimodal_gen.runtime.pipelines_core.schedule_batch import OutputBatch
@@ -72,8 +74,6 @@ class Scheduler(_Scheduler):
             self._loaded_checkpoint = checkpoint
             self._weights_ready = True
             return
-        if self.server_args.dp_size != 1:
-            raise ValueError("Use separate embodied server instances for DP replicas")
         from rlinf.models.embodiment.sglang_adapter import get_sglang_adapter_cls
 
         self._weights_ready = False
@@ -107,6 +107,7 @@ class Scheduler(_Scheduler):
             rollout_tp_size=placement.rollout_tp_size,
             rollout_world_size=placement.rollout_world_size,
             rollout_sp_degree=placement.rollout_sp_degree,
+            rollout_dp_size=placement.rollout_dp_size,
         )
         self.actor_weight_rank = rank_map[(model_instance_id, rank)]
         self._actor_group_name = config.actor.group_name
@@ -134,7 +135,7 @@ class Scheduler(_Scheduler):
             )
         self._weights_ready = False
         import torch.distributed as dist
-        from sglang.multimodal_gen.runtime.distributed import get_replica_group
+        from sglang.multimodal_gen.runtime.distributed import get_world_group
 
         version = None
         error = None
@@ -153,10 +154,11 @@ class Scheduler(_Scheduler):
                 )
         except Exception as exc:
             error = f"rank {self.worker.rank}: {type(exc).__name__}: {exc}"
-        replica = get_replica_group()
-        results = [None] * replica.world_size
+        # All DP replicas must commit the same version before serving resumes.
+        world = get_world_group()
+        results = [None] * world.world_size
         try:
-            dist.all_gather_object(results, (version, error), group=replica.cpu_group)
+            dist.all_gather_object(results, (version, error), group=world.cpu_group)
         except Exception:
             self._sync_failed = True
             raise
@@ -164,7 +166,7 @@ class Scheduler(_Scheduler):
         if errors or len({v for v, _ in results}) != 1:
             self._sync_failed = True
             raise RuntimeError(
-                f"Embodied replica weight sync failed: {errors or results}; restart server"
+                f"Embodied server weight sync failed: {errors or results}; restart server"
             )
         self._weights_ready = True
         return OutputBatch(output={"version": version})
@@ -185,10 +187,26 @@ class _SchedulerManager:
             async_scheduler_client,
         )
 
-        result = await async_scheduler_client.forward(obj)
-        if result.error:
-            raise HTTPException(status_code=500, detail=result.error)
-        return result.output
+        if async_scheduler_client.server_args.dp_size == 1:
+            results = [await async_scheduler_client.forward(obj)]
+        else:
+            # Native forward() treats RLinf's custom requests as generation.
+            # Send concurrently: initialization and sync use world collectives.
+            results = await asyncio.gather(
+                *(
+                    async_scheduler_client._forward_one(endpoint, obj, None)
+                    for endpoint in async_scheduler_client.server_args.scheduler_endpoints
+                ),
+                return_exceptions=True,
+            )
+        errors = [
+            str(result) if isinstance(result, BaseException) else result.error
+            for result in results
+            if isinstance(result, BaseException) or result.error
+        ]
+        if errors:
+            raise HTTPException(status_code=500, detail="; ".join(errors))
+        return results[0].output
 
     async def run_task_method(self, obj, request):
         return await self._forward(obj)

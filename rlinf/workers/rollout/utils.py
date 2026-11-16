@@ -191,23 +191,25 @@ class DisaggRankMapper(RankMapper):
         rollout_tp_size: int,
         rollout_world_size: int,
         rollout_sp_degree: int = 1,
+        rollout_dp_size: int = 1,
     ) -> dict[int, list[tuple[int, int]]]:
         """Map actor 1D rank to a list of rollout transmission 2D ranks
         ``(engine_id, rank_in_engine)``. Each receiver has exactly one sender.
-        Each instance has ``rollout_tp_size * rollout_sp_degree`` model ranks.
-        SP defaults to 1 for SRT.
+        Each instance has ``rollout_dp_size * rollout_tp_size * rollout_sp_degree``
+        model ranks. DP counts full replicas, not SRT attention-DP groups.
         """
-        ranks_per_instance = rollout_tp_size * rollout_sp_degree
+        ranks_per_instance = rollout_dp_size * rollout_tp_size * rollout_sp_degree
         if (
             rollout_tp_size < 1
             or rollout_sp_degree < 1
+            or rollout_dp_size < 1
             or rollout_world_size % ranks_per_instance
         ):
             raise ValueError(
                 f"Expected positive rollout_tp_size={rollout_tp_size} and "
-                f"rollout_sp_degree={rollout_sp_degree}, with "
+                f"rollout_sp_degree={rollout_sp_degree}, rollout_dp_size={rollout_dp_size}, with "
                 f"rollout_world_size={rollout_world_size} divisible by "
-                f"TP*SP={ranks_per_instance}"
+                f"DP*TP*SP={ranks_per_instance}"
             )
         rank_map = {}
         for actor_rank in range(actor_world_size):
@@ -249,6 +251,7 @@ class DisaggRankMapper(RankMapper):
         rollout_tp_size: int,
         rollout_world_size: int,
         rollout_sp_degree: int = 1,
+        rollout_dp_size: int = 1,
     ) -> dict[tuple[int, int], int]:
         """Inverse of get_actor_rank_to_rollout_rank_map."""
         rank_map = cls.get_actor_rank_to_rollout_rank_map(
@@ -258,6 +261,7 @@ class DisaggRankMapper(RankMapper):
             rollout_tp_size,
             rollout_world_size,
             rollout_sp_degree=rollout_sp_degree,
+            rollout_dp_size=rollout_dp_size,
         )
         result_map = {}
         for actor_rank, rollout_2d_ranks in rank_map.items():
