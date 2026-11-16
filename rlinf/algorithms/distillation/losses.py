@@ -202,7 +202,7 @@ def compute_distillation_loss(
     loss = reduction.reduce(tokens, mask)
     return loss, {
         "distillation/loss": loss.detach(),
-        "distillation/token_count": mask.sum().detach(),
+        "distillation/token_count": mask.sum(dtype=torch.float32).detach(),
     }
 
 

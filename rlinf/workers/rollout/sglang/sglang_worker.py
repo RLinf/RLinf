@@ -209,6 +209,7 @@ class SGLangWorker(Worker):
 
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
+            context_length=self._cfg_rollout.get("max_model_len", None),
             random_seed=self._cfg_rollout.get("seed", None),
             disable_cuda_graph=not use_cudagraph,
             cuda_graph_max_bs=min(

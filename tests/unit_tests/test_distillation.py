@@ -29,8 +29,10 @@ from rlinf.algorithms.distillation.config import (
 )
 from rlinf.algorithms.distillation.fsdp import compute_distribution_loss
 from rlinf.algorithms.distillation.losses import (
+    DistillationForwardOutput,
     DistillationReductionContext,
     combine_distillation_and_task_loss,
+    compute_distillation_loss,
     compute_distillation_pg_tokens,
     compute_distillation_tokens,
 )
@@ -695,6 +697,51 @@ class TestDistillation(unittest.TestCase):
         zero.backward()
         self.assertEqual(zero.item(), 0)
         torch.testing.assert_close(x.grad, torch.zeros_like(x))
+
+    def test_distillation_metrics_support_microbatch_aggregation(self):
+        response_mask = torch.tensor([[True, True, False], [True, True, True]])
+        teacher_valid_mask = torch.tensor([[True, False, True], [True, True, False]])
+        for mode in ("k1", "forward_kl_topk"):
+            with self.subTest(mode=mode):
+                config = DistillationLossConfig(
+                    loss_mode=mode, use_policy_gradient=mode == "k1"
+                )
+                plan = build_distillation_plan(
+                    {
+                        "distillation": {
+                            "enabled": True,
+                            "teacher_models": {"default": {"model_path": "teacher"}},
+                            "distillation_loss": {
+                                "loss_mode": mode,
+                                "use_policy_gradient": config.use_policy_gradient,
+                            },
+                        }
+                    }
+                )
+                microbatch_metrics = []
+                for i in range(2):
+                    _, metrics = compute_distillation_loss(
+                        DistillationForwardOutput(
+                            logprobs=torch.full((1, 3), -1.0, requires_grad=True),
+                            distribution_losses=torch.ones(1, 3, requires_grad=True),
+                        ),
+                        {
+                            "response_mask": response_mask[i : i + 1],
+                            "teacher_valid_mask": teacher_valid_mask[i : i + 1],
+                            "teacher_logprobs": torch.full((1, 3, 1), -1.2),
+                            "rollout_logprobs": torch.full((1, 3), -1.0),
+                        },
+                        plan=plan,
+                        config=config,
+                        reduction=DistillationReductionContext(3),
+                    )
+                    microbatch_metrics.append(metrics)
+                means = {
+                    key: torch.stack([m[key] for m in microbatch_metrics]).mean()
+                    for key in microbatch_metrics[0]
+                }
+                self.assertEqual(means["distillation/token_count"].item(), 1.5)
+                self.assertTrue(all(torch.isfinite(value) for value in means.values()))
 
     def test_pure_distillation_metrics_without_task_fields(self):
         from rlinf.utils.distributed import (
