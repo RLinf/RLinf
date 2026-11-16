@@ -52,7 +52,7 @@ Tasks
    * - Task
      - Description
    * - CartPole
-     - Balance the pole with state observations from ``embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json``.
+     - Balance the pole with state observations from ``embodichain_tasks/configs/tasks/classic_control/cart_pole/env.json``.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -99,7 +99,10 @@ Switch to the EmbodiChain virtual environment inside the image:
 
 **Custom environment**
 
-Install EmbodiChain dependencies:
+Install EmbodiChain 0.3.0 and its dependencies. The installer gets
+``dexsim-engine==0.5.0`` from ``http://pyp.open3dv.site:2345/simple/dexsim-engine/``
+and resolves the remaining packages through your configured Python package index.
+Your machine must be able to reach the vendor server on port 2345.
 
 .. code:: bash
 

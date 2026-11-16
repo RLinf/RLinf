@@ -8,6 +8,7 @@ For full hardware setup, dependencies, data collection, and task details, see:
 
 - :doc:`../examples/embodied/franka` — standard RealSense + Franka gripper workflow
 - :doc:`../examples/embodied/franka_zed_robotiq` — ZED camera + Robotiq gripper on split nodes
+- :doc:`../examples/embodied/franka_orbbec` — Orbbec camera with aligned depth
 
 For ``RLINF_NODE_RANK``, ``ray start``, and code sync, see :doc:`multi_node`.
 For ``node_groups`` / ``component_placement`` semantics, see :doc:`hetero`.

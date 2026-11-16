@@ -43,7 +43,7 @@ runner:
 
 algorithm:
   reward_coef: 1.0
-  
+
   dagger:
     init_beta: 1.0
     beta_schedule: exponential

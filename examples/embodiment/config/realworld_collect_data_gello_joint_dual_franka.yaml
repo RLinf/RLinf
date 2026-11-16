@@ -98,17 +98,9 @@ env:
 
     data_collection:
       enabled: True
-      # Edit ``save_dir`` here to point successive collect runs at the
-      # same dataset root. Each run's log_path is still per-session
-      # under logs/, so run_embodiment.log stays unique even when
-      # datasets accumulate.
-      save_dir: ${runner.logger.log_path}/collected_data
-      # When true, CollectEpisode seeds its episode counter from shards
-      # already on disk under save_dir and the collector's progress bar
-      # starts from that count. New episodes land in a fresh ``id_{N}``
-      # shard so previously-finalized data is never touched.
+      save_dir: ${runner.logger.log_path}
       resume: false
-      export_format: "lerobot"
+      export_format: [replay_buffer, lerobot_dataset]
       only_success: True
       robot_type: "dual_FR3"
       fps: 10

@@ -55,7 +55,7 @@ The fields below live under ``env.eval`` and control parallelism, trajectory len
    * - Field
      - Role and recommended settings
    * - ``total_num_envs``
-     - Total number of parallel environments, evenly distributed across env workers. Higher values improve throughput but use more GPU/RAM. Set to the total init-state count when resources allow; use a smaller value with ``auto_reset`` when memory is limited.
+     - Total number of parallel environments, evenly distributed across env workers. Higher values improve throughput but use more GPU/RAM (LIBERO: about 2 GiB host RAM per env, measured on ``libero_spatial``). Set to the total init-state count when resources allow; use a smaller value with ``auto_reset`` when memory is limited.
    * - ``rollout_epoch``
      - Number of evaluation rollout epochs. Each epoch traverses the test set under the same seed; multiple epochs are averaged for lower variance. Use ``1`` for full coverage; use ``2`` or more for stabler metrics.
    * - ``max_episode_steps``

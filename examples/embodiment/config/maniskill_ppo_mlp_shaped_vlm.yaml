@@ -29,7 +29,7 @@ hydra:
     - file://${oc.env:EMBODIED_PATH}/config/
 
 vlm_trend_paths:
-  policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+  policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
   model_path: /path/to/Qwen3-VL-4B-Instruct
   success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
   potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt

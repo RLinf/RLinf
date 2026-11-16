@@ -35,10 +35,14 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
     ``cfg.model_path`` may point at either a new-format base checkpoint
-    containing ``model.safetensors`` or an RLinf FSDP SFT checkpoint containing
-    ``full_weights.pt``. Model shape comes from YAML; no checkpoint
-    ``config.json`` is read. ``cfg.openpi.task`` selects ``Pi0`` (SFT) or a
+    containing ``model.safetensors`` or ``model.safetensors.index.json``, or an
+    RLinf FSDP SFT checkpoint containing ``full_weights.pt``. Model shape comes
+    from YAML; no checkpoint ``config.json`` is read.
+    ``cfg.openpi.task`` selects ``Pi0`` (SFT) or a
     task subclass; omitted ``task`` defaults to SFT.
+
+    ``cfg.precision`` controls parameter storage. ``cfg.openpi.embed_dtype``
+    controls backbone activations and defaults to the parameter precision.
     """
     import pathlib
 
@@ -57,6 +61,12 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         if torch_dtype is not None
         else torch_dtype_from_precision(cfg.precision)
     )
+    embed_precision = OmegaConf.select(model_cfg, "embed_dtype", default=None)
+    embed_dtype = (
+        target_dtype
+        if embed_precision is None
+        else torch_dtype_from_precision(embed_precision)
+    )
 
     model_path = pathlib.Path(cfg.model_path).expanduser()
     safetensors_path = resolve_model_safetensors(model_path)
@@ -64,14 +74,15 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     if safetensors_path is None and full_weights_path is None:
         raise FileNotFoundError(
             "openpi checkpoint not found. Expected either "
-            f"{model_path}/model.safetensors or one of "
+            f"{model_path}/model.safetensors, "
+            f"{model_path}/model.safetensors.index.json, or one of "
             f"{[str(model_path / rel) for rel in FULL_WEIGHTS_CANDIDATES]}."
         )
     if full_weights_path is not None and safetensors_path is not None:
         logger.warning(
             "openpi: both %s and %s exist; loading full_weights (RLinf "
-            "resume) and ignoring model.safetensors. Remove the leftover file "
-            "if that is not what you intended.",
+            "resume) and ignoring the safetensors checkpoint. Remove the "
+            "leftover file if that is not what you intended.",
             full_weights_path,
             safetensors_path,
         )
@@ -89,7 +100,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_dim": int(model_cfg.model_action_dim),
         "paligemma_variant": str(model_cfg.paligemma_variant),
         "action_expert_variant": str(model_cfg.action_expert_variant),
-        "dtype": _pi0_dtype_name(target_dtype),
+        "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
     }
     discrete_state_input = OmegaConf.select(
@@ -100,6 +111,16 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     max_token_len = OmegaConf.select(model_cfg, "max_token_len", default=None)
     if max_token_len is not None:
         pi0_kwargs["max_token_len"] = int(max_token_len)
+    pi0_kwargs["short_memory"] = bool(
+        OmegaConf.select(model_cfg, "short_memory", default=False)
+    )
+    if pi0_kwargs["short_memory"]:
+        temporal_layers = model_cfg.get("short_memory_temporal_layers")
+        if temporal_layers is not None:
+            pi0_kwargs["short_memory_temporal_layers"] = tuple(temporal_layers)
+        drop_history_layer = model_cfg.get("short_memory_drop_history_layer")
+        if drop_history_layer is not None:
+            pi0_kwargs["short_memory_drop_history_layer"] = int(drop_history_layer)
 
     pi0_config = Pi0Config(**pi0_kwargs)
     rlt_cfg = build_rlt_config(model_cfg)
@@ -111,6 +132,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     task = OmegaConf.select(model_cfg, "task", default="sft")
     task = str(task).lower() if task is not None else "sft"
+    if pi0_config.short_memory and task not in ("eval", "sft"):
+        raise ValueError(
+            f"openpi.short_memory supports task='eval' or 'sft'; got {task!r}. "
+            "RL replay does not carry camera history."
+        )
 
     if task == "sft":
         model = Pi0(
@@ -163,6 +189,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             value_vlm_mode=str(
                 OmegaConf.select(model_cfg, "value_vlm_mode", default="mean_token")
             ),
+            value_head_hidden_sizes=_value_head_hidden_sizes(model_cfg),
             detach_critic_input=bool(
                 OmegaConf.select(model_cfg, "detach_critic_input", default=False)
             ),
@@ -326,7 +353,7 @@ def _apply_openpi_param_dtypes(model, target_dtype) -> None:
 
 
 def _pi0_dtype_name(target_dtype) -> str:
-    """Map the factory compute dtype onto ``Pi0Config.dtype`` (embed dtype)."""
+    """Map a torch dtype onto ``Pi0Config.dtype`` (embed dtype)."""
     import torch
 
     if target_dtype is None or target_dtype == torch.bfloat16:
@@ -384,6 +411,13 @@ def _require_config_name(model_cfg, task: str) -> str:
             "(it selects the upstream openpi TrainConfig)."
         )
     return config_name
+
+
+def _value_head_hidden_sizes(model_cfg):
+    from omegaconf import OmegaConf
+
+    sizes = OmegaConf.select(model_cfg, "value_head_hidden_sizes", default=None)
+    return None if sizes is None else tuple(int(x) for x in sizes)
 
 
 def _resolve_data_kwargs(cfg):

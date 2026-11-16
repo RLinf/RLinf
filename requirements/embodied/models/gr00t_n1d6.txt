@@ -1,3 +1,6 @@
+# GR00T is installed with --no-deps, so its own pandas pin is skipped.
+# pandas 3.1+ imports only with numpy>=2.0.2; this stack stays on numpy 1.26.
+pandas==2.2.3
 diffusers==0.35.1
 av==15.1.0
 pydantic==2.12.5

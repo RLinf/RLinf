@@ -638,6 +638,8 @@ observation space and the runner all run as they would on a bench:
      - ``so101_mock_sac_mlp_reach``
    * - Piper
      - ``piper_mock_sac_mlp_reach``
+   * - Dual YAM
+     - ``realworld_dual_yam_collect_data_mock``
 
 Run It Against the Robot
 ~~~~~~~~~~~~~~~~~~~~~~~~

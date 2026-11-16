@@ -202,6 +202,9 @@ Replace the placeholders marked with ``# Replace:``:
 * ``SFT_DATASET_REPO_ID``: the converted dataset ID, usually
   ``<repo_id>/tcp_rot6d_v1``.
 * ``MODEL_PATH``: deployment checkpoint directory on ``node 0``.
+* The shared ``realworld_dual_franka_tcp_rot6d`` TCP xyz limits are
+  x in [0.3, 0.9], y in [-0.4, 0.4], and z in [0.02, 0.7].
+  ``target_ee_pose`` must sit inside that box.
 
 
 Hardware Checks
@@ -503,7 +506,10 @@ Launch deployment
 
 Reuse the Ray cluster from collection, or restart it with the same environment
 variables. Launch the policy through the :doc:`real-world evaluation guide
-<../../evaluations/guides/realworld>` with ``realworld_eval_dual_franka``.
+<../../evaluations/guides/realworld>`. Two-node deployment uses
+``realworld_eval_dual_franka``. When the GPU and both arms share one machine
+and execution should overlap inference, use ``realworld_dual_franka_pi05_RTC``.
+After homing, press ``a`` on the keyboard or pedal to start the policy.
 
 Deployment pedal controls:
 

@@ -42,6 +42,7 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -264,6 +265,38 @@ class MultiStepRolloutWorker(Worker):
                 ),
             }
 
+    async def _take_decoupled_shard(
+        self,
+        channel: Any,
+        key: Any,
+        timeout: float | None,
+    ) -> Any | None:
+        """Take one routed shard, or ``None`` when a finite wait expires.
+
+        A finite wait that expires leaves its ``channel.get`` in flight. The next
+        gather consumes that same get. A second get on this key would wait for a
+        later observation, while the env workers that produced the first one stay
+        blocked until its actions are sent.
+        """
+        inflight = getattr(self, "decoupled_inflight_get_tasks", None)
+        if inflight is None:
+            inflight = {}
+            self.decoupled_inflight_get_tasks = inflight
+        task = inflight.get(key)
+        if task is None:
+            work = channel.get(key=key, async_op=True)
+            task = asyncio.create_task(work.async_wait())
+            inflight[key] = task
+
+        if timeout is None:
+            done, _ = await asyncio.wait({task})
+        else:
+            done, _ = await asyncio.wait({task}, timeout=timeout)
+        if task not in done:
+            return None
+        inflight.pop(key, None)
+        return task.result()
+
     async def recv_from_and_record_batch_routes_with_timeout(
         self,
         group_name: str,
@@ -279,9 +312,11 @@ class MultiStepRolloutWorker(Worker):
     ):
         """Receive routed batch shards and record their return routes.
 
-        This method is used in env-decoupled mode. It builds a receive plan for the
-        source worker group, receives shard messages from ``channel`` one by one, and
-        stops when all planned items are received or ``timeout_time`` is reached.
+        Used in env-decoupled mode. The first shard waits until it arrives.
+        Further shards are collected for at most ``timeout_time`` seconds after
+        that. Shards already in hand are then returned so their actions can be
+        sent. A receive still in flight at the deadline is kept and becomes the
+        first shard of a later call.
 
         Each received channel item must be a dict with ``batch_index`` (route
         metadata) and ``batch`` (payload shard).
@@ -300,8 +335,8 @@ class MultiStepRolloutWorker(Worker):
             merge_fn: Optional custom function for merging received shards.
             infer_batch_size_fn: Optional function used to infer shard batch size during
                 validation.
-            timeout_time: Maximum time in seconds to wait before finalizing partial
-                results.
+            timeout_time: Seconds to keep collecting shards after the first one
+                arrives. The first shard is not limited by this deadline.
             recv_queue_size: Number of receive queue entries used when building the
                 receive plan.
 
@@ -359,35 +394,20 @@ class MultiStepRolloutWorker(Worker):
                 return received_items[0]
             return merge_batches(received_items), split_sizes
 
-        timeout_time = timeout_time + time.time()
-        get_items = None
+        key = plan.entries[0].key
         max_item_num = len(plan.entries)
-        get_item_num = 0
-        received_items = []
-        while get_item_num < max_item_num:
-            # get the items
-            if get_items is None:
-                get_items = channel.get(
-                    key=plan.entries[get_item_num].key, async_op=True
-                )
-            else:
-                # Now, the worker is getting a item, sleep to wait
-                await asyncio.sleep(0.0001)
-
-            # handle the get_items finish
-            if get_items.done():
-                # save the data and init the get_items to get next data
-                received_items.append(await get_items.async_wait())
-                get_items = None
-                get_item_num = get_item_num + 1
-
-            # handle the timeout case
-            if time.time() >= timeout_time:
-                max_item_num = get_item_num
-                if get_items is not None:
-                    received_items.append(await get_items.async_wait())
-                    get_items = None
-                    get_item_num = get_item_num + 1
+        received_items: list[Any] = []
+        deadline: float | None = None
+        while len(received_items) < max_item_num:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            wait = None if deadline is None else deadline - time.monotonic()
+            item = await self._take_decoupled_shard(channel, key, wait)
+            if item is None:
+                break
+            received_items.append(item)
+            if deadline is None:
+                deadline = time.monotonic() + timeout_time
 
         return _finalize(received_items)
 
@@ -524,6 +544,8 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
+            SupportedModel.PSI0,
+            SupportedModel.LINGBOTVLAV2,
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
@@ -758,14 +780,17 @@ class MultiStepRolloutWorker(Worker):
                 raise ValueError(
                     "Terminal inference requires a post-action observation."
                 )
-            _, result = self._predict_rollout_actions(next_obs)
-            values = result.get("prev_values")
+            if self.model_cfg.model_type == SupportedModel.PSI0.value:
+                values = self.hf_model.predict_value_batch(next_obs)
+            else:
+                _, result = self._predict_rollout_actions(next_obs)
+                values = result.get("prev_values")
+                if self.enable_rlt:
+                    next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                        result.get("forward_inputs"), transition=True
+                    )
             if values is not None:
                 final_prev_values = values.cpu().contiguous()
-            if self.enable_rlt:
-                next_rlt_obs = extract_rlt_obs_from_forward_inputs(
-                    result.get("forward_inputs"), transition=True
-                )
         # Republish environment-owned data here to keep one Actor-channel writer.
         actor_channel.put(
             env_part.complete(
@@ -877,11 +902,11 @@ class MultiStepRolloutWorker(Worker):
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
                 await self._wait_for_model_sync()
-                if not policy_input.requires_inference:
-                    actions = policy_input.external_actions
-                    forward_inputs = None
-                    policy_output = None
-                else:
+                # Omit raw observations when the collector does not consume them.
+                transition_obs = (
+                    policy_input.obs if self.collect_raw_transition_obs else {}
+                )
+                if policy_input.requires_inference:
                     actions, result = self._predict_rollout_actions(
                         policy_input.obs,
                         rlt_switch_flags=policy_input.rlt_switch_flags,
@@ -889,27 +914,24 @@ class MultiStepRolloutWorker(Worker):
                     )
                     forward_inputs = result.get("forward_inputs")
                     policy_output = self._build_policy_output(actions, result)
-                self._send_actions(
-                    output_channel,
-                    actions.contiguous(),
-                    stage_id,
-                    split_sizes,
-                )
-                # Omit raw observations when the collector does not consume them.
-                transition_obs = (
-                    policy_input.obs if self.collect_raw_transition_obs else {}
-                )
-                if not policy_input.requires_inference:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        external_actions=actions,
+                    self._send_actions(
+                        output_channel,
+                        actions.contiguous(),
+                        stage_id,
+                        split_sizes,
                     )
-                else:
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
                         output=policy_output,
+                    )
+                else:
+                    # The env runs the actions it supplied, so nothing goes back.
+                    forward_inputs = None
+                    trajectory_part = PolicyPart(
+                        sources=policy_input.sources,
+                        obs=transition_obs,
+                        external_actions=policy_input.external_actions,
                     )
                 # Publish model-owned data immediately; its environment half
                 # arrives later through an EnvPart with the same key.
@@ -1005,6 +1027,7 @@ class MultiStepRolloutWorker(Worker):
                 desc="Evaluating Rollout Epochs",
                 disable=(self._rank != 0),
             ):
+                eval_epoch_done = False
                 for _ in range(self.n_eval_chunk_steps):
                     for stage_id in range(self.num_pipeline_stages):
                         env_output = await self.recv_from(
@@ -1017,6 +1040,9 @@ class MultiStepRolloutWorker(Worker):
                             merge_fn=self._merge_obs_batches,
                             infer_batch_size_fn=self._infer_env_batch_size,
                         ).async_wait()
+                        if env_output.get("eval_epoch_done"):
+                            eval_epoch_done = True
+                            break
                         await self._wait_for_model_sync()
                         actions, _ = self._predict_rollout_actions(
                             env_output["obs"],
@@ -1037,17 +1063,21 @@ class MultiStepRolloutWorker(Worker):
                             batch_size=self.eval_batch_size,
                         )
 
+                    if eval_epoch_done:
+                        break
+
             if self.enable_offload:
                 self.offload_model()
 
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
-        self.hf_model.to("cpu")
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to("cpu")
-        if self.expert_model is not None:
-            self.expert_model.to("cpu")
+        with pinned_offload_context():
+            self.hf_model.to("cpu")
+            if self.rlt_feature_model is not None:
+                self.rlt_feature_model.to("cpu")
+            if self.expert_model is not None:
+                self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
@@ -1117,6 +1147,8 @@ class MultiStepRolloutWorker(Worker):
                     merged[key] = torch.cat(values, dim=0)
                 elif isinstance(first_non_none, list):
                     merged[key] = [item for sublist in values for item in sublist]
+                elif isinstance(first_non_none, dict):
+                    merged[key] = _merge_obs_dicts(values)
                 else:
                     merged[key] = values
             return merged
@@ -1138,6 +1170,9 @@ class MultiStepRolloutWorker(Worker):
             ),
             "intervene_flags": self._merge_optional_flag_tensors(
                 obs_dicts, intervene_flags_list
+            ),
+            "eval_epoch_done": any(
+                bool(obs_batch.get("eval_epoch_done")) for obs_batch in obs_batches
             ),
         }
 

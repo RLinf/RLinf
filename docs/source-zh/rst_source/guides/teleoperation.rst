@@ -31,7 +31,7 @@
      - 操作主臂，使从臂逐关节跟随；每条手臂配置一项。
      - ``left_gello_port`` / ``right_gello_port``
    * - ``pico``
-     - 使用手持 VR 控制器，按住 grip 时接管机器人；双臂机器人需为每条手臂分别配置。
+     - 使用手持 VR 控制器，按住 grip 时接管机器人；双臂机器人需为每条手臂分别配置。机械臂接收关节位置时，经 env 的逆运动学换算。
      - ``pico:`` 段
    * - ``glove``
      - 弯曲手指控制灵巧手，与驱动机械臂的设备配合使用。
@@ -202,9 +202,11 @@ placement 决定设备在哪里读取，常规 env loop 则决定动作下发频
            raise ValueError("teleop device 'example' requires a port")
        return TeleopEntry(cls(**settings), drives=options.get("drives"))
 
-``cfg`` 是完整的 env 配置段，用于读取设备级配置；``options`` 只属于当前列表项，可单独指定端口或 ``drives``。应在此处校验允许的 key，避免拼写错误的硬件参数被静默忽略。``facts`` 描述 env 的动作布局和语义，例如机械臂接收绝对位姿还是增量，设备可据此调整，无需导入某个具体 env class。
+``cfg`` 是完整的 env 配置段，用于读取设备级配置；``options`` 只属于当前列表项，可单独指定端口或 ``drives``。应在此处校验允许的 key，避免拼写错误的硬件参数被静默忽略。``facts`` 描述 env 的动作布局和语义，例如机械臂接收绝对位姿、增量还是关节位置，关节臂还附带 env 的 ``arm_kinematics``，设备可据此调整，无需导入某个具体 env class。
 
 只有当某台设备还要在独立线程中直接下发指令时，才需要覆盖 ``streamer()``；除 ``gello_joint`` 外，其余设备均使用默认实现并返回 ``None``，参见 :ref:`提高主从臂跟随频率 <teleop-rate>`。builder 会先构建所有 entry，再创建 streamer，因此 streamer 可以接管并非由自身构造的设备。
+
+如果一台设备驱动的多条手臂必须一起停下，覆盖 ``interlock()``。builder 在所有 entry 构建完成后调用它。它返回的检查在每个 entry 都换算完读数之后、动作下发之前运行，因此即使另一条手臂在同一个 tick 的稍后才出现故障，也能让先换算的手臂一起保持不动。``pico`` 通过关节位置驱动两条及以上手臂时会返回这样的检查。
 
 最后，将注册名加入对应 env 的 ``TELEOP`` 元组，声明该 env 能够表示该设备产生的动作。这里无需再次注册设备。
 

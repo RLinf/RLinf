@@ -17,6 +17,14 @@ reinforcement learning (PPO / GRPO) across several simulators using RLinf. For t
 method, see the paper
 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__.
 
+Use :doc:`Short Memory <pi0/short_memory>` to condition OpenPI on past camera
+frames during SFT and evaluation.
+
+.. toctree::
+   :hidden:
+
+   Short Memory <pi0/short_memory>
+
 Overview
 --------
 
@@ -440,6 +448,19 @@ Using libero-10 as an example, the configuration files for π\ :sub:`0`\  and π
 --------------
 
 **4. Launch Command**
+
+OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard``.
+To shard training state across actor ranks, set the following fields in the
+chosen YAML. Use ``shard_grad_op`` to retain gathered parameters between
+forward and backward, or ``full_shard`` to release them after forward.
+Keep the recipe's mixed precision settings.
+
+.. code:: yaml
+
+   actor:
+     fsdp_config:
+       sharding_strategy: full_shard
+       use_orig_params: true
 
 To start training with a chosen configuration, run the following
 command:

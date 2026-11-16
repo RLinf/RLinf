@@ -65,9 +65,20 @@ def build_teleop(
         streamer = device_cls.streamer(cfg, facts, entries)
         if streamer is not None:
             break
+    interlock = None
+    for device_cls in asked:
+        interlock = device_cls.interlock(cfg, facts, entries)
+        if interlock is not None:
+            break
 
     group = TeleopGroup(entries, available=facts.kinds)
     group.connect()
     if timeout is None:
         timeout = group.hold_window
-    return ComposedTeleop(group, facts.layout, timeout=timeout, streamer=streamer)
+    return ComposedTeleop(
+        group,
+        facts.layout,
+        timeout=timeout,
+        streamer=streamer,
+        interlock=interlock,
+    )

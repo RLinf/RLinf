@@ -42,7 +42,7 @@ DAgger 微调具身策略：学生策略与环境交互，专家对访问到的�
 
       Sync · Async
 
-| **你将完成：** 安装 → 设置学生/专家检查点 → 运行 ``run_embodiment.sh``（或 ``run_async.sh``）→ 观察 ``env/success_once``。
+| **你将完成：** 安装 → 设置学生/专家检查点 → 运行 ``run_embodiment.sh``\ （或 ``run_async.sh``）→ 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 学生与专家检查点（见下文步骤）。
 
 支持的配置

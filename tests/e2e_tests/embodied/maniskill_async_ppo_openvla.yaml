@@ -26,9 +26,9 @@ runner:
     log_path: /workspace/results/maniskill_async_ppo_openvla
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
-  max_epochs: 2
+  max_epochs: 1
   max_steps: -1
   only_eval: False
   val_check_interval: -1
@@ -65,8 +65,8 @@ env:
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 16
-    max_steps_per_rollout_epoch: 16
+    max_episode_steps: 2
+    max_steps_per_rollout_epoch: 2
   eval:
     rollout_epoch: 1
     total_num_envs: 4

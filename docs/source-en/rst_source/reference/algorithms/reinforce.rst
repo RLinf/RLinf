@@ -13,7 +13,7 @@ Core design choices conclude:
 * **Single-response training** (`group_size = 1`): one sampled answer per prompt.  
 * **Per-token KL penalty** (default *k₂*): KL is subtracted from the scalar reward instead of being added as an extra loss term.  
 * **Global advantage normalization** across the whole batch.  
-* **REINFORCE++ baseline**: when `group_size > 1`, mean reward within each prompt group is used as a baseline *before* global normalization.
+* **REINFORCE++ baseline** (`use_reinpp_baseline: True`, requires `group_size > 1`): mean reward within each prompt group is used as a baseline *before* global normalization.
 
 2. Objective Function
 ----------------------
@@ -77,6 +77,7 @@ REINFORCE++ baseline
 
    algorithm:
      adv_type:      "reinpp"
+     use_reinpp_baseline: True     # subtract the group-mean reward
      group_size:    16             # multiple responses per prompt
      kl_beta:       0.0001
 

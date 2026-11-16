@@ -1,0 +1,18 @@
+# Install PyTorch/torchvision/flash-attn as one matched platform stack first.
+# The source training package is installed --no-deps; its SFT pins are not
+# suitable for RLinf's Ray/protobuf runtime.
+transformers==4.57.6
+numpy==1.26.4
+safetensors>=0.5.3,<0.9
+diffusers==0.36.0
+einops>=0.8.1
+pydantic>=2,<3
+sentencepiece>=0.2
+ftfy
+jsonlines
+blobfile
+transforms3d
+termcolor
+h5py
+pandas
+timm

@@ -566,6 +566,9 @@ class FlowMatchingActionHeadForRLActionPrediction(Gr00tN1d7ActionHead):
         else:
             value_embs = torch.cat((vl_embs_value, state_features_value), dim=1)
 
+        if self.rl_config.get("detach_critic_input", False):
+            value_embs = value_embs.detach()
+
         values_vlm = self.value_head(value_embs)[:, 0]
         return values_vlm
 

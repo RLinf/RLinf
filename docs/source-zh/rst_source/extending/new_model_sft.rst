@@ -182,8 +182,8 @@ RLinf 通过 ``SupportedModel`` 识别模型类型。对于自定义 SFT 模型�
 建议 checklist：
 
 - 训练时 batch 至少有：
-  - ``input_ids``（或你的同义字段）
-  - ``attention_mask``（可选，但建议有）
+  - ``input_ids``\ （或你的同义字段）
+  - ``attention_mask``\ （可选，但建议有）
   - ``labels`` 或可构造 labels 的字段
 
 - 评估时 batch 至少有：

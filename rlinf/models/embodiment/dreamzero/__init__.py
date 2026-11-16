@@ -27,6 +27,8 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
 )
 from rlinf.models.embodiment.dreamzero.dreamzero_config import DreamZeroConfig
 from rlinf.models.embodiment.dreamzero.dreamzero_policy import DreamZeroPolicy
+from rlinf.models.embodiment.dreamzero.patch.npu_patches import apply_npu_patches
+from rlinf.scheduler import AcceleratorType, Worker
 from rlinf.utils.logging import get_logger
 
 
@@ -94,22 +96,17 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAEStateDictConverter",
     )
     _dit_chunk = "groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk"
-    Patcher.add_wrapper(
-        f"{_dit_chunk}.CausalWanSelfAttention._process_clean_image_only",
-        torch.compile(mode="reduce-overhead"),
-    )
-    Patcher.add_wrapper(
-        f"{_dit_chunk}.CausalWanSelfAttention._process_state_blocks",
-        torch.compile(mode="reduce-overhead"),
-    )
-    Patcher.add_wrapper(
-        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_image_blocks",
-        torch.compile(mode="reduce-overhead"),
-    )
-    Patcher.add_wrapper(
-        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_action_blocks",
-        torch.compile(mode="reduce-overhead"),
-    )
+    if Worker.accelerator_type != AcceleratorType.NPU:
+        for method in (
+            "_process_clean_image_only",
+            "_process_state_blocks",
+            "_process_noisy_image_blocks",
+            "_process_noisy_action_blocks",
+        ):
+            Patcher.add_wrapper(
+                f"{_dit_chunk}.CausalWanSelfAttention.{method}",
+                torch.compile(mode="reduce-overhead"),
+            )
     Patcher.add_patch(
         f"{_dit_chunk}.CausalWanModel._forward_train",
         "rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train._forward_train",
@@ -118,6 +115,7 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         "groot.vla.data.schema.embodiment_tags.EmbodimentTag",
         "rlinf.data.datasets.dreamzero.data_transforms.embodiment_tag.EmbodimentTag",
     )
+    apply_npu_patches(Patcher)
     Patcher.apply()
 
     model_path = cfg.get("model_path", None)

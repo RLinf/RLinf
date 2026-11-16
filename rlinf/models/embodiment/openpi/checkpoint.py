@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 from typing import Any
 
@@ -58,12 +59,17 @@ def _missing_pi0_keys(missing_keys) -> list[str]:
 
 
 def resolve_model_safetensors(model_path: Any) -> pathlib.Path | None:
-    """Resolve a base ``model.safetensors`` checkpoint path."""
+    """Resolve a single-file safetensors checkpoint or its shard index."""
     path = pathlib.Path(model_path).expanduser()
-    if path.is_file() and path.name.endswith(".safetensors"):
+    if path.is_file() and path.name.endswith(
+        (".safetensors", ".safetensors.index.json")
+    ):
         return path
-    weights_path = path / "model.safetensors"
-    return weights_path if weights_path.exists() else None
+    for filename in ("model.safetensors", "model.safetensors.index.json"):
+        weights_path = path / filename
+        if weights_path.is_file():
+            return weights_path
+    return None
 
 
 def resolve_full_weights(model_path: Any) -> pathlib.Path | None:
@@ -189,16 +195,73 @@ def load_full_weights(model, weights_path, *, expect_rlt: bool) -> None:
         logger.info("openpi: loaded full checkpoint from %s", weights_path)
 
 
-def load_base_safetensors(model, safetensors_path) -> None:
-    """Load a base checkpoint, accepting new and legacy OpenPI layouts."""
+def _load_safetensors_state_dict(safetensors_path: pathlib.Path) -> dict:
+    """Load all indexed shards before any cross-tensor layout conversion."""
     import safetensors.torch
 
+    if not safetensors_path.name.endswith(".safetensors.index.json"):
+        return safetensors.torch.load_file(str(safetensors_path), device="cpu")
+
+    index = json.loads(safetensors_path.read_text())
+    weight_map = index.get("weight_map") if isinstance(index, dict) else None
+    if (
+        not isinstance(weight_map, dict)
+        or not weight_map
+        or not all(
+            isinstance(key, str)
+            and isinstance(shard, str)
+            and shard.endswith(".safetensors")
+            for key, shard in weight_map.items()
+        )
+    ):
+        raise ValueError(
+            f"Expected a non-empty tensor-to-safetensors weight_map in "
+            f"{safetensors_path}; found {weight_map!r}."
+        )
+
+    state_dict = {}
+    for shard in sorted(set(weight_map.values())):
+        shard_path = safetensors_path.parent / shard
+        if not shard_path.is_file():
+            raise FileNotFoundError(
+                f"Safetensors shard {shard_path} referenced by "
+                f"{safetensors_path} not found."
+            )
+        shard_state = safetensors.torch.load_file(str(shard_path), device="cpu")
+        expected = {key for key, filename in weight_map.items() if filename == shard}
+        missing = sorted(expected - shard_state.keys())
+        unexpected = sorted(shard_state.keys() - expected)
+        if missing or unexpected:
+            raise ValueError(
+                f"Safetensors shard {shard_path} does not match "
+                f"{safetensors_path}: missing={missing[:8]}, "
+                f"unexpected={unexpected[:8]}."
+            )
+        state_dict.update(shard_state)
+    return state_dict
+
+
+def load_base_safetensors(model, safetensors_path) -> None:
+    """Load single-file or indexed shards in new or legacy OpenPI layouts."""
+    safetensors_path = pathlib.Path(safetensors_path)
     state_dict = _convert_official_openpi_keys(
-        safetensors.torch.load_file(str(safetensors_path), device="cpu"),
+        _load_safetensors_state_dict(safetensors_path),
         safetensors_path,
     )
     incompatible = model.load_state_dict(state_dict, strict=False)
     unexpected = list(incompatible.unexpected_keys)
+    if not hasattr(model, "value_head"):
+        unused_value_keys = [key for key in unexpected if key.startswith("value_head.")]
+        if unused_value_keys:
+            logger.info(
+                "openpi: ignoring %d value_head tensors from %s; "
+                "the target model has no value head",
+                len(unused_value_keys),
+                safetensors_path,
+            )
+            unexpected = [
+                key for key in unexpected if not key.startswith("value_head.")
+            ]
     if unexpected:
         raise RuntimeError(
             f"Unexpected keys loading {safetensors_path}: {unexpected[:8]}"

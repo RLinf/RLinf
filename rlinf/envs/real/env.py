@@ -145,6 +145,13 @@ class RealWorldEnv(gym.Env):
             self.env.call("get_wrapper_attr", "task_description")
         )
 
+    def close(self) -> None:
+        """Close the vector env and its physical robot/camera resources."""
+        if getattr(self, "_closed", False):
+            return
+        self.env.close()
+        self._closed = True
+
     def get_hold_actions(
         self, fallback_actions: np.ndarray | None = None
     ) -> np.ndarray:

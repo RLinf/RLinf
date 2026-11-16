@@ -9,6 +9,13 @@ BACKEND=${2:-"egl"}
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+
+if [[ "${CONFIG}" == *mock* ]]; then
+    export RLINF_ROBOT_MOCKS=1
+    export PYTHONPATH=${REPO_PATH}/tests:${REPO_PATH}/tests/robot_mocks:$PYTHONPATH
+    echo "[mock] faking the vendor SDKs; no robot is required"
+fi
+
 export HYDRA_FULL_ERROR=1
 export EMBODIED_PATH=${REPO_PATH}/examples/embodiment
 export EVALUATIONS_PATH=${REPO_PATH}/evaluations

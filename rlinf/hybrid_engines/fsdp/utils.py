@@ -147,19 +147,32 @@ def _normalize_wrap_targets(value):
 
 
 def _resolve_module_classes_to_wrap(module, module_classes_to_wrap):
-    resolved_module_classes = set()
-    for module_class in _normalize_wrap_targets(module_classes_to_wrap) or []:
-        if isinstance(module_class, str):
-            resolved_class = get_module_class_from_name(module, module_class)
-            if resolved_class is None:
-                raise Exception("Could not find the module class to wrap in the model.")
-            resolved_module_classes.add(resolved_class)
-        else:
-            raise TypeError(
-                "module_classes_to_wrap entries must be class name strings; "
-                f"got {type(module_class).__name__!r}"
+    """Resolve short or qualified module class names against the model tree."""
+    classes = {
+        cls
+        for child in module.modules()
+        for cls in type(child).__mro__
+        if issubclass(cls, torch.nn.Module)
+    }
+    resolved = set()
+    for target in _normalize_wrap_targets(module_classes_to_wrap) or []:
+        if not isinstance(target, str):
+            raise TypeError("module_classes_to_wrap entries must be class name strings")
+        matches = {
+            cls
+            for cls in classes
+            if target in (cls.__name__, f"{cls.__module__}.{cls.__qualname__}")
+        }
+        if not matches:
+            raise ValueError(
+                f"Module class selector {target!r} matched no non-root modules"
             )
-    return resolved_module_classes
+        if len(matches) > 1:
+            raise ValueError(
+                f"Ambiguous module class {target!r}; use a qualified class name"
+            )
+        resolved.update(matches)
+    return resolved
 
 
 def _fsdp2_fully_shard_supports_ignored_params() -> bool:
@@ -758,7 +771,7 @@ def clip_grad_by_total_norm_(
 
     Taken and modified from: https://github.com/NVIDIA/Megatron-LM/blob/a695b2bd2a0ca9ca63385a48c41a1c5a033cdd1e/megatron/core/optimizer/clip_grads.py#L138
 
-    Note that the gradients are modified in place.
+    Note that the gradients are modified in place, in their original dtype.
 
     Args:
         parameters (Union[list[Union[torch.Tensor, DTensor]], Union[torch.Tensor, DTensor]]):
@@ -770,11 +783,17 @@ def clip_grad_by_total_norm_(
     if isinstance(parameters, (torch.Tensor, DTensor)):
         parameters = [parameters]
 
+    # Grads.
+    grads = [
+        to_local_if_dtensor(p.grad.detach()) for p in parameters if p.grad is not None
+    ]
+
+    # Scale.
     clip_coeff = max_grad_norm / (total_norm + 1.0e-6)
+
     if clip_coeff < 1.0:
-        for param in parameters:
-            if param.grad is not None:
-                to_local_if_dtensor(param.grad.detach()).mul_(clip_coeff)
+        for g in grads:
+            g.mul_(clip_coeff)
 
 
 @torch.no_grad()

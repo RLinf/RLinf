@@ -71,6 +71,7 @@ env:
   # Override the default values in env/robotwin_click_bell
   train:
     rollout_epoch: 8
+    malloc_trim_reset_interval: 8
     total_num_envs: 128
     reward_coef: ${algorithm.reward_coef}
     use_custom_reward: False

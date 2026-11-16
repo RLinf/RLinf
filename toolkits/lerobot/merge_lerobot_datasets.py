@@ -35,6 +35,12 @@ Dry-run (just print what would be merged, no files written)
     python toolkits/replay_buffer/merge_lerobot_datasets.py \\
         --source-dir logs/20260402-16:27:36-maniskill_ppo_cnn/maniskill \\
         --output-dir merged_data --dry-run
+
+Successful episodes only, such as a streaming collection that also kept
+unsuccessful takes
+    python toolkits/lerobot/merge_lerobot_datasets.py \\
+        --source-dir logs/<run>/lerobot_dataset \\
+        --output-dir merged_data --only-success
 """
 
 from __future__ import annotations
@@ -159,11 +165,26 @@ def _ensure_list(value: object) -> list:
     return value if isinstance(value, list) else [value]
 
 
+def _episode_succeeded(parquet_path: Path) -> bool:
+    """Read an episode's ``is_success`` flag from its first frame."""
+    import pyarrow.parquet as pq
+
+    names = pq.read_schema(parquet_path).names
+    if "is_success" not in names:
+        raise ValueError(
+            f"--only-success needs an 'is_success' column, but {parquet_path} "
+            f"has only {names}."
+        )
+    first = pq.read_table(parquet_path, columns=["is_success"]).column(0)[0].as_py()
+    return bool(first[0] if isinstance(first, list) else first)
+
+
 def merge_lerobot_datasets(
     source_dirs: list[str | Path],
     output_dir: str | Path,
     *,
     dry_run: bool = False,
+    only_success: bool = False,
 ) -> int:
     """Merge all LeRobot datasets discovered under *source_dirs* into *output_dir*.
 
@@ -171,6 +192,7 @@ def merge_lerobot_datasets(
         source_dirs: One or more root directories to search recursively.
         output_dir: Destination for the merged dataset.
         dry_run: If True, only print what would be done without writing any files.
+        only_success: If True, leave out episodes whose ``is_success`` is false.
 
     Returns:
         Total number of merged episodes.
@@ -207,6 +229,7 @@ def merge_lerobot_datasets(
 
     # episode_index (within dataset) → stats record, keyed by (ds_path, ep_idx)
     source_episode_stats: dict[tuple[Path, int], dict] = {}
+    skipped_unsuccessful = 0
 
     for ds_path in datasets:
         info_path = ds_path / "meta" / "info.json"
@@ -244,6 +267,9 @@ def merge_lerobot_datasets(
                     f"[merge] WARNING: parquet not found: {parquet_path}, skipping episode"
                 )
                 continue
+            if only_success and not _episode_succeeded(parquet_path):
+                skipped_unsuccessful += 1
+                continue
 
             all_episodes.append((ds_path, ep_meta, parquet_path))
 
@@ -252,6 +278,8 @@ def merge_lerobot_datasets(
                     global_tasks[task] = len(global_tasks)
 
     total_episodes = len(all_episodes)
+    if only_success:
+        print(f"[merge] Left out {skipped_unsuccessful} unsuccessful episode(s)")
     print(f"[merge] Total episodes to merge: {total_episodes}")
     print(
         f"[merge] Unique tasks: {len(global_tasks)} → {list(global_tasks.keys())[:5]}"
@@ -418,6 +446,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print discovered datasets and episode counts without writing any files.",
     )
+    p.add_argument(
+        "--only-success",
+        action="store_true",
+        help="Leave out episodes whose is_success flag is false.",
+    )
     return p
 
 
@@ -427,6 +460,7 @@ def main() -> None:
         source_dirs=args.source_dir,
         output_dir=args.output_dir,
         dry_run=args.dry_run,
+        only_success=args.only_success,
     )
     if n == 0:
         sys.exit(1)

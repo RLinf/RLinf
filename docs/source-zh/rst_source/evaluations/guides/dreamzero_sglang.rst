@@ -8,6 +8,8 @@ DreamZero SGLang 评测
 安装测试环境
 ------------
 
+DreamZero SGLang 评测需要 CUDA 13.0 及以上版本。安装以下依赖前，请确认环境满足此要求。
+
 安装 embodied、LIBERO 和 DreamZero SGLang 依赖：
 
 .. code-block:: bash

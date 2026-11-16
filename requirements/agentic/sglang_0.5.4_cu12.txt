@@ -1,13 +1,13 @@
 # engine: sglang==0.5.4
-# engine: flashinfer-python==0.4.1
+# engine: https://github.com/flashinfer-ai/flashinfer/releases/download/v0.4.1/flashinfer_python-0.4.1-py3-none-any.whl
 # sglang 0.5.4 on CUDA 12 (torch 2.8). Used by the Qwen3-VL SGLang reward
 # server, which needs --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1.
 #
-# sglang and flashinfer are both installed --no-deps. flashinfer 0.4.1 pins
-# apache-tvm-ffi==0.1.0b15, a pre-release that has since been withdrawn from
-# PyPI, so the published dependency set can no longer be resolved at all. Their
-# runtime dependencies are listed here instead, with apache-tvm-ffi held to a
-# released 0.1.x -- the range flashinfer itself moved to from 0.5.0 onwards.
+# The two engine lines above are installed with --no-deps. flashinfer is a
+# wheel URL because PyPI only has the 0.4.1 source package, whose build asks
+# for apache-tvm-ffi==0.1.0b15, a release that is no longer on PyPI. The
+# packages below are the runtime dependencies --no-deps skips. apache-tvm-ffi
+# stays at 0.1.9, the version this stack actually runs with.
 #
 # The torch family is left out: pyproject.toml pins it.
 IPython

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from typing import Any, Mapping, Optional
 
 import numpy as np
@@ -100,13 +101,14 @@ class PicoExpert:
         hand: str = "right",
         control_trigger: str = "grip",
         control_threshold: float = 0.9,
-        gripper_trigger: str = "trigger",
+        gripper_trigger: Optional[str] = None,
         gripper_close_threshold: float = 0.5,
         gripper_close_button: str = "A",
         gripper_open_button: str = "B",
         gripper_invert: bool = False,
         position_scale: float = 1.0,
         rotation_scale: float = 1.0,
+        rotation_delta_frame: str = "controller_local",
         operator_to_robot_yaw: float = 0.0,
         timeout_ms: int = 1000,
         reconnect_interval_ms: int = 500,
@@ -136,6 +138,11 @@ class PicoExpert:
         self.gripper_invert = bool(gripper_invert)
         self.position_scale = float(position_scale)
         self.rotation_scale = float(rotation_scale)
+        if rotation_delta_frame not in ("controller_local", "operator"):
+            raise ValueError(
+                "rotation_delta_frame must be controller_local or operator"
+            )
+        self.rotation_delta_frame = rotation_delta_frame
         self.operator_to_robot_yaw = float(operator_to_robot_yaw)
         self._operator_to_robot_rot = R.from_euler("z", self.operator_to_robot_yaw)
         self.timeout_ms = int(zmq_cfg.get("timeout_ms", timeout_ms))
@@ -173,6 +180,8 @@ class PicoExpert:
         self._lock = threading.Lock()
         self._latest_data: Optional[dict[str, Any]] = None
         self._last_update_time = 0.0
+        self._button_events: deque[str] = deque(maxlen=64)
+        self._previous_buttons: dict[str, bool] = {}
 
         self._context = None
         self._socket = None
@@ -220,13 +229,16 @@ class PicoExpert:
 
     def stop(self) -> None:
         self._running = False
+        # The receive thread is the only one inside ``recv``, so it has to leave
+        # before the socket it is blocked on is destroyed. It returns within one
+        # receive timeout, and only then is closing the socket safe.
+        if self._thread is not None:
+            self._thread.join(timeout=self.timeout_ms / 1000.0 + 0.5)
+            self._thread = None
+
         if self._socket is not None:
             self._socket.close(linger=0)
             self._socket = None
-
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        self._thread = None
 
         if self._context is not None:
             self._context.term()
@@ -293,15 +305,12 @@ class PicoExpert:
         if not held:
             return reading
 
+        # The rear control trigger is the dead-man switch for the complete
+        # teleoperation command, including the gripper. In particular, a
+        # front-trigger release after handing control back to the policy must
+        # not turn into a delayed open command.
+        close_pressed, open_pressed = self._gripper_state(data)
         moved, turned = self._motion_since_hold(position, rotation)
-        close_pressed = self._control_pressed(
-            data, self.hand, self.gripper_close_button, self.gripper_close_threshold
-        )
-        open_pressed = self._control_pressed(
-            data, self.hand, self.gripper_open_button, self.gripper_close_threshold
-        )
-        if self.gripper_invert:
-            close_pressed, open_pressed = open_pressed, close_pressed
 
         return {
             **reading,
@@ -311,12 +320,35 @@ class PicoExpert:
             "grip_open": open_pressed,
         }
 
+    def get_buttons(self) -> dict[str, bool]:
+        """Return every controller button, by its reported name.
+
+        Button edges are not part of :meth:`get_reading`, which reports only
+        the motion and grip the arm command needs. A caller that starts and
+        stops recording from the controller, as the YAM VR wrapper does, reads
+        the raw states here.
+        """
+        data = self._snapshot()
+        if data is None:
+            return {}
+        return {name: bool(value) for name, value in data.get("buttons", {}).items()}
+
     def _recv_loop(self) -> None:
         while self._running:
             try:
                 msg_bytes = self._socket.recv()
                 data = json.loads(msg_bytes.decode("utf-8"))
+                buttons = data.get("buttons", {})
+                if not isinstance(buttons, Mapping):
+                    buttons = {}
+                current_buttons = {
+                    str(name): bool(pressed) for name, pressed in buttons.items()
+                }
                 with self._lock:
+                    for name, pressed in current_buttons.items():
+                        if pressed and not self._previous_buttons.get(name, False):
+                            self._button_events.append(name)
+                    self._previous_buttons = current_buttons
                     self._latest_data = data
                     self._last_update_time = time.time()
             except zmq.error.Again:
@@ -326,6 +358,17 @@ class PicoExpert:
                     break
                 logger.warning("Error receiving PICO data: %s", exc)
                 time.sleep(self.reconnect_interval_s)
+
+    def pop_button_presses(self) -> list[str]:
+        """Return rising-edge button presses since the previous poll.
+
+        The receiver runs faster than the environment loop, so short Pico
+        button taps are retained instead of being lost between ``env.step`` calls.
+        """
+        with self._lock:
+            presses = list(self._button_events)
+            self._button_events.clear()
+        return presses
 
     def _snapshot(self) -> Optional[dict[str, Any]]:
         with self._lock:
@@ -359,12 +402,17 @@ class PicoExpert:
         moved = self._operator_vector_to_robot_vector(
             (controller_pos - self._ref_controller_pos) * self.position_scale
         )
-        turned_local = (self._ref_controller_rot.inv() * controller_rot).as_rotvec()
-        turned = (
-            self._operator_vector_to_robot_vector(
-                self._controller_local_vector_to_command_vector(turned_local)
+        if self.rotation_delta_frame == "operator":
+            # Both orientations already carry the VR-axis and head calibration,
+            # so the spatial delta shares the translation axes and does not
+            # depend on how the controller was held when the grip was engaged.
+            turned_space = (controller_rot * self._ref_controller_rot.inv()).as_rotvec()
+        else:
+            turned_space = self._controller_local_vector_to_command_vector(
+                (self._ref_controller_rot.inv() * controller_rot).as_rotvec()
             )
-            * self.rotation_scale
+        turned = (
+            self._operator_vector_to_robot_vector(turned_space) * self.rotation_scale
         )
         return moved, turned
 
@@ -467,6 +515,25 @@ class PicoExpert:
         if not name:
             return False
         return self._control_value(data, side, str(name)) >= float(threshold)
+
+    def _gripper_state(self, data: Mapping[str, Any]) -> tuple[bool, bool]:
+        """Read independent buttons unless trigger control is explicitly selected."""
+        if self.gripper_trigger:
+            close_pressed = self._control_pressed(
+                data, self.hand, self.gripper_trigger, self.gripper_close_threshold
+            )
+            # Trigger mode reserves the face buttons for episode control.
+            open_pressed = not close_pressed
+        else:
+            close_pressed = self._control_pressed(
+                data, self.hand, self.gripper_close_button, self.gripper_close_threshold
+            )
+            open_pressed = self._control_pressed(
+                data, self.hand, self.gripper_open_button, self.gripper_close_threshold
+            )
+        if self.gripper_invert:
+            close_pressed, open_pressed = open_pressed, close_pressed
+        return close_pressed, open_pressed
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
         try:

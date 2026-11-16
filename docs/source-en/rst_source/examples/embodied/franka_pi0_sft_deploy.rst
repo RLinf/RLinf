@@ -195,7 +195,7 @@ the Bin-relocation pick-and-place task:
   env:
     data_collection:
       enabled: True
-      export_format: "lerobot"
+      export_format: lerobot_dataset
 
 During collection, use the SpaceMouse to teleoperate the robot and perform
 the task. After each episode, press ``c`` to mark it as successful and reset
@@ -203,7 +203,7 @@ the robot pose. Remember to return the target object to the starting position.
 
 The script stops after collecting 20 episodes by default (configurable via
 ``num_data_episodes``). Collected LeRobot-format data is saved under
-``logs/<running-timestamp>/collected_data``.
+``logs/<running-timestamp>/lerobot_dataset/rank_*/id_*/``.
 
 Step 3: SFT Training Pi0
 ~~~~~~~~~~~~~~~~~~~~~~~~~

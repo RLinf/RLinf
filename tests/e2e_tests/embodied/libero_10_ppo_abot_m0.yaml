@@ -24,7 +24,7 @@ runner:
     log_path: "../results/libero_10_ppo_abot_m0_e2e"
     project_name: rlinf
     experiment_name: "test_abot_m0"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -69,8 +69,8 @@ env:
   train:
     rollout_epoch: 1
     total_num_envs: 8
-    max_episode_steps: 100
-    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
     reward_coef: ${algorithm.reward_coef}
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: false

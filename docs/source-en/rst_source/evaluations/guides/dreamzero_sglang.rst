@@ -8,6 +8,8 @@ Compared with the original DreamZero eval path in :doc:`../../examples/embodied/
 Install the Test Environment
 ----------------------------
 
+DreamZero SGLang evaluation requires CUDA 13.0 or later. Ensure this requirement is met before installing the dependencies below.
+
 Set up RLinf with the embodied, LIBERO, and DreamZero SGLang dependencies:
 
 .. code-block:: bash
