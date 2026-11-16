@@ -9,7 +9,7 @@ hydra:
 runner:
   max_epochs: 2
   max_steps: 2
-  val_check_interval: 10
+  val_check_interval: -1
   save_interval: 2
   logger:
     log_path: ${oc.env:RUNNER_TEMP,/tmp}/bench2dex-sync

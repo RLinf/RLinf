@@ -762,6 +762,16 @@ def test_bench2dex_recipes(
         assert "noise_rng" not in model.openpi
         assert cfg.env.eval.skip_intermediate_renders is False
         return
+    from rlinf.utils.runner_utils import check_progress
+
+    run_val, save_model, _ = check_progress(
+        step=cfg.runner.save_interval,
+        max_steps=cfg.runner.max_epochs,
+        val_check_interval=cfg.runner.val_check_interval,
+        save_interval=cfg.runner.save_interval,
+        limit_val_batches=None,
+    )
+    assert save_model and not run_val
     is_async = "_async_" in config_name
     is_grpo = "_grpo_" in config_name
     assert cfg.env.train.get("bootstrap_non_auto_reset", False) is (not is_grpo)
@@ -778,7 +788,7 @@ def test_bench2dex_recipes(
     assert cfg.actor.global_batch_size % (4 * cfg.actor.micro_batch_size) == 0
     if action_dim == 40:
         assert samples == 4480
-        assert cfg.runner.val_check_interval == 10
+        assert cfg.runner.val_check_interval == -1
         assert cfg.runner.save_interval == 2
         assert cfg.env.eval.total_num_envs * cfg.env.eval.rollout_epoch == 32
         assert cfg.env.train.init_params.generalization_profile == "none"
@@ -796,9 +806,17 @@ def test_bench2dex_recipes(
     "config_name", ["bench2dex_ppo_openpi_pi05", "bench2dex_async_ppo_openpi_pi05"]
 )
 def test_bench2dex_e2e_recipes(compose_bench2dex_recipe, config_name):
+    from rlinf.utils.runner_utils import check_progress
+
     cfg = compose_bench2dex_recipe("tests/e2e_tests/embodied", config_name)
     assert cfg.runner.max_steps == cfg.runner.save_interval == 2
-    assert cfg.runner.val_check_interval == 10
+    assert check_progress(
+        step=2,
+        max_steps=cfg.runner.max_steps,
+        val_check_interval=cfg.runner.val_check_interval,
+        save_interval=cfg.runner.save_interval,
+        limit_val_batches=None,
+    ) == (False, True, True)
     assert (
         cfg.env.train.total_num_envs * cfg.env.train.rollout_epoch * 35
         == cfg.actor.global_batch_size

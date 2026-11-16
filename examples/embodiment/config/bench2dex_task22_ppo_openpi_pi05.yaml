@@ -27,7 +27,7 @@ runner:
   max_epochs: 190
   max_steps: -1
   only_eval: false
-  val_check_interval: 10
+  val_check_interval: -1
   save_interval: 2
   resume_dir: null
   ckpt_path: null
