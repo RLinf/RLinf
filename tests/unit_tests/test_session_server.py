@@ -43,6 +43,7 @@ needs.
 """
 
 import asyncio
+import contextvars
 import threading
 import time
 from types import SimpleNamespace
@@ -120,10 +121,11 @@ def cluster():
     yield c
 
 
-@pytest.fixture(scope="module")
-def env(cluster):
+def _build_env(cluster, verify_assembly, suffix):
     """One session server, one real rollout buffer, two payload shards,
-    and a mock sglang server."""
+    and a mock sglang server. ``verify_assembly`` picks the session
+    server's response mode; ``suffix`` keeps the channel and group names
+    of a second stack from colliding with the first."""
     server_cfg = OmegaConf.create(
         {
             "algorithm": {
@@ -147,7 +149,7 @@ def env(cluster):
                 "max_pending_payload_bytes": 512 * 1024 * 1024,
                 "generate_timeout_s": 600.0,
                 "per_task": {},
-                "verify_assembly": False,
+                "verify_assembly": verify_assembly,
             },
         }
     )
@@ -184,13 +186,17 @@ def env(cluster):
     mock = MockSGLangServer()
     mock.start()
 
-    agent_output = Channel.create(name="AgentOutput")
-    dataloader = Channel.create(name="DataLoader")
-    rollout = Channel.create(name="Rollout")
-    payload_channels = create_payload_channels("Payload", num_shards=2, node_rank=0)
+    agent_output = Channel.create(name=f"AgentOutput{suffix}")
+    dataloader = Channel.create(name=f"DataLoader{suffix}")
+    rollout = Channel.create(name=f"Rollout{suffix}")
+    payload_channels = create_payload_channels(
+        f"Payload{suffix}", num_shards=2, node_rank=0
+    )
 
     server = SessionServerWorker.create_group(server_cfg, 0).launch(
-        cluster, name="SessionServer", placement_strategy=NodePlacementStrategy([0])
+        cluster,
+        name=f"SessionServer{suffix}",
+        placement_strategy=NodePlacementStrategy([0]),
     )
     # serve() is resident: dispatch it and never wait on the handle.
     server.serve(mock.url, agent_output, payload_channels)
@@ -209,13 +215,15 @@ def env(cluster):
     server.set_loaded_versions({0: LOADED_VERSION}).wait()
 
     buffer = RolloutBufferWorker.create_group(buffer_cfg, fake_dataset()).launch(
-        cluster, name="RolloutBuffer", placement_strategy=NodePlacementStrategy([0])
+        cluster,
+        name=f"RolloutBuffer{suffix}",
+        placement_strategy=NodePlacementStrategy([0]),
     )
     buffer.set_loaded_versions({0: LOADED_VERSION}).wait()
     # Resident like serve(): dispatch and never wait on the handle.
     buffer.run_continuously(agent_output, dataloader, rollout, payload_channels)
 
-    yield SimpleNamespace(
+    return SimpleNamespace(
         base_url=base_url,
         server=server,
         mock=mock,
@@ -225,9 +233,28 @@ def env(cluster):
         payload_channels=payload_channels,
     )
 
-    buffer.stop().wait()
-    server.stop().wait()
-    mock.stop()
+
+def _stop_env(env):
+    env.buffer.stop().wait()
+    env.server.stop().wait()
+    env.mock.stop()
+
+
+@pytest.fixture(scope="module")
+def env(cluster):
+    """The default stack, assembly verification off."""
+    built = _build_env(cluster, verify_assembly=False, suffix="")
+    yield built
+    _stop_env(built)
+
+
+@pytest.fixture(scope="module")
+def verify_env(cluster):
+    """The same stack with assembly verification on, so generate
+    responses carry logprobs."""
+    built = _build_env(cluster, verify_assembly=True, suffix="Verify")
+    yield built
+    _stop_env(built)
 
 
 def create_session(env, group_id, traj_index):
@@ -551,6 +578,148 @@ class TestNormalCompletion:
         assert generate(env, sids[0], [1]).status_code == 404
 
 
+class TestAgentLoopSessionTransport:
+    """The agent loop's session server path, driven end to end.
+
+    With verify_assembly off, the session server keeps logprobs out of its
+    responses (training reads them from the payload), so the agent loop
+    must not ask for agent-side logprobs.
+    """
+
+    @staticmethod
+    def _make_worker(verify):
+        """A minimal loop worker with the loop state but no Worker init.
+
+        return_logprobs starts as AgentLoopWorker.__init__ sets it, and
+        init_worker applies the session server rule under test.
+        """
+        cfg = OmegaConf.create(
+            {
+                "algorithm": {
+                    "group_size": GROUP_SIZE,
+                    "recompute_logprobs": False,
+                },
+                "session_server": {"enable": False, "verify_assembly": verify},
+            }
+        )
+        # Validate with the path disabled: that fills the session_server
+        # defaults without the enabled-path checks, which read the runner,
+        # actor and rollout config this test does not build.
+        cfg = validate_session_server_cfg(cfg)
+        cfg.session_server.enable = True
+        worker = TwoTurnLogprobLoopWorker.__new__(TwoTurnLogprobLoopWorker)
+        worker.print_outputs = False
+        worker.cfg = cfg
+        worker.return_logprobs = not cfg.algorithm.recompute_logprobs
+        worker.extra_keys_turn = None
+        worker.extra_keys_traj = None
+        worker._session_binding = contextvars.ContextVar(
+            "rlinf_agent_session_binding", default=None
+        )
+        return worker
+
+    @pytest.mark.parametrize("verify", [False, True])
+    def test_group_runs_and_delivers_with_logprob_rule(self, request, cluster, verify):
+        env = request.getfixturevalue("verify_env" if verify else "env")
+        rollout_request = next_request(env)
+        group_id = rollout_request.group_ids[0]
+        prompt_ids = rollout_request.input_ids[0]
+
+        worker = self._make_worker(verify)
+        worker.init_worker(
+            None,
+            None,
+            None,
+            None,
+            None,
+            session_server_urls=[env.base_url],
+            session_server_generate_timeout_s=30.0,
+            session_server_keepalive_timeout_s=4.0,
+        )
+
+        asyncio.run(
+            worker.run_agentloop_rollout_group(
+                prompt_ids,
+                rollout_request.answers[0],
+                GROUP_SIZE,
+                env.rollout,
+                group_id,
+                TASK_NAME,
+            )
+        )
+        # The session-server rule under test: agent-side logprobs are
+        # collected only for the assembly check.
+        assert worker.return_logprobs is verify
+
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        assert delivery.group_id == group_id
+        channel = payload_channel_for(
+            delivery.payload_ref.locator, env.payload_channels
+        )
+        payload = poll_channel(channel, key=delivery.payload_ref.key)
+        assert isinstance(payload, GroupPayload)
+        result = assemble_group_payload(payload, return_logprobs=True)
+        # Every turn of both trajectories carries per-token logprobs.
+        assert result.rollout_logprobs is not None
+        assert [len(lp) for lp in result.rollout_logprobs] == result.response_lengths
+
+
+class TwoTurnLogprobLoopWorker(MultiAgentLoopWorker):
+    """Two generate turns per trajectory, with the per-token logprob
+    check of Search-R1.
+
+    Turn one continues into turn two (the tool response becomes the next
+    turn's input); the second generate ends the trajectory. The rewards
+    differ per trajectory so the equal-reward rejection lets the group
+    through.
+    """
+
+    async def pre_process_query(self, prompt_ids, answer):
+        return list(prompt_ids), {}
+
+    async def generate_llm_response(
+        self, generate_context, trace_prints, problem_prompt_ids, turn_prompt_ids
+    ):
+        result = await self.generate(turn_prompt_ids)
+        response_ids = result["output_ids"]
+        logprobs = result.get("logprobs") if self.return_logprobs else None
+        if self.return_logprobs and (
+            logprobs is None or len(logprobs) != len(response_ids)
+        ):
+            raise ValueError("one rollout logprob per generated token is required")
+        binding = self._session_binding.get()
+        output = AgentLoopOutput(
+            prompt_ids=turn_prompt_ids,
+            response_ids=response_ids,
+            response_logprobs=logprobs,
+            is_end=True,
+            reward_score=1.0 if binding.traj_index == 0 else 0.5,
+        )
+        generate_context["turns"] = generate_context.get("turns", 0) + 1
+        return (
+            generate_context["turns"] < 2,
+            response_ids,
+            "",
+            output,
+        )
+
+    async def generate_tool_response(
+        self,
+        generate_context,
+        trace_prints,
+        problem_prompt_ids,
+        turn_prompt_ids,
+        llm_response_ids,
+        llm_response_text,
+    ):
+        return True, turn_prompt_ids + llm_response_ids + [77]
+
+    async def post_process_query(self, generate_context, output):
+        return output
+
+
 class TestAbort:
     def test_late_response_after_abort_is_dropped_by_the_buffer(self, env):
         request = next_request(env)
@@ -685,10 +854,11 @@ class TestPutFailure:
     def test_failed_background_put_voids_group(self, env):
         request = next_request(env)
         group_id = request.group_ids[0]
-        # This scenario's group id is even, so its parts go to shard 0;
-        # kill that shard's channel worker so every payload put fails.
-        assert group_id % 2 == 0
-        ray.kill(env.payload_channels[0]._main_channel_worker_actor)
+        # The group's parts all go to the shard its id maps to; kill that
+        # shard's channel worker so every payload put fails.
+        shard = group_id % len(env.payload_channels)
+        env.killed_shard = shard
+        ray.kill(env.payload_channels[shard]._main_channel_worker_actor)
 
         sid = create_session(env, group_id, 0)
         assert generate(env, sid, [1, 2]).status_code == 200
@@ -704,11 +874,15 @@ class TestPutFailure:
 
 class TestFinalizePutFailure:
     def test_finalize_put_failure_discards_not_delivers(self, env):
-        # Must stay last: this scenario kills the second payload shard,
-        # and the scenarios above still need both shards alive.
+        # Must stay last: this scenario kills the shard the group's parts
+        # go to, and the scenarios above need both shards alive.
         request = next_request(env)
         group_id = request.group_ids[0]
-        assert group_id % 2 == 1
+        shard = group_id % len(env.payload_channels)
+        assert shard != getattr(env, "killed_shard", None), (
+            "this scenario needs a live shard; reorder the scenarios so the "
+            "two put-failure groups land on different shards"
+        )
         sid0 = create_session(env, group_id, 0)
         sid1 = create_session(env, group_id, 1)
         assert generate(env, sid0, [1, 2]).status_code == 200
@@ -724,7 +898,7 @@ class TestFinalizePutFailure:
             time.sleep(0.1)
         else:
             pytest.fail("payload settlements did not drain")
-        ray.kill(env.payload_channels[1]._main_channel_worker_actor)
+        ray.kill(env.payload_channels[shard]._main_channel_worker_actor)
 
         assert close(env, sid0).status_code == 200
         assert close(env, sid1).status_code == 200

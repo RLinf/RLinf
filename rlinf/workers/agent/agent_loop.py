@@ -214,6 +214,9 @@ class AgentLoopWorker(Worker):
             # The block is complete here (validate_session_server_cfg
             # filled it); runs without session servers never read this value.
             self._verify_assembly = bool(self.cfg.session_server.verify_assembly)
+            # The session server returns logprobs only for the assembly
+            # check; training reads them from the payload.
+            self.return_logprobs = self.return_logprobs and self._verify_assembly
 
     async def generate(
         self,
