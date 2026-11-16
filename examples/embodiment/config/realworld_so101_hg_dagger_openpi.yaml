@@ -94,6 +94,7 @@ algorithm:
 env:
   group_name: EnvGroup
   train:
+    smooth_intervene: true
     rollout_epoch: 1
     auto_reset: true
     ignore_terminations: false

@@ -293,6 +293,7 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
         self._control_mode = "policy"
         self._pending_space = False
         self._hold_action_chunk = False
+        self._deferred_keys: list[str] = []
 
     def _set_control_mode(self, mode: str) -> None:
         """Assign control ownership to the policy or the SO-101 leader."""
@@ -307,6 +308,7 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
         super().begin_episode()
         self._pending_space = False
         self._hold_action_chunk = False
+        self._deferred_keys.clear()
         self._set_control_mode("policy")
 
     def reset(
@@ -337,15 +339,29 @@ class SO101HGDAggerWrapper(SO101StartEndWrapper):
 
     def presses(self) -> Iterator[str]:
         """Queue Space for the next action chunk and pass episode keys through."""
+        self._poll_control_keys()
+        pending, self._deferred_keys = self._deferred_keys, []
+        yield from pending
+
+    def _poll_control_keys(self) -> None:
+        """Queue Space handovers and preserve episode keys read at chunk end."""
         for key in super().presses():
             if key == "Key.space":
                 if self._recording:
                     self._pending_space = True
-                continue
-            yield key
+            else:
+                self._deferred_keys.append(key)
+
+    def smooth_intervention_active(self) -> bool:
+        """Report when the leader or a pending Space press owns the next chunk."""
+        self._poll_control_keys()
+        return self._recording and (
+            self._control_mode == "manual" or self._pending_space
+        )
 
     def on_action_chunk_begin(self) -> None:
         """Apply a pending handover after the previous action chunk completes."""
+        self._poll_control_keys()
         try:
             on_begin = self.env.get_wrapper_attr("on_action_chunk_begin")
         except AttributeError:

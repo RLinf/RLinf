@@ -3238,6 +3238,28 @@ def test_smooth_intervention_builds_external_input_without_policy_history():
     )
 
 
+def test_smooth_intervention_uses_env_control_state_when_available():
+    """Let an environment define when its own controller still owns control."""
+    controller = SmoothInterveneController(1, 1, 2, 3, enabled=True)
+    env = SimpleNamespace(smooth_intervention_active=lambda: True)
+
+    active = controller.on_chunk_done(
+        0,
+        torch.zeros((1, 2), dtype=torch.bool),
+        torch.zeros(1, dtype=torch.bool),
+        env=env,
+    )
+    terminal = controller.on_chunk_done(
+        0,
+        torch.zeros((1, 2), dtype=torch.bool),
+        torch.ones(1, dtype=torch.bool),
+        env=env,
+    )
+
+    assert active
+    assert not terminal
+
+
 def test_smooth_intervention_requires_online_lerobot_dagger():
     cfg = OmegaConf.create(
         {
@@ -3258,6 +3280,69 @@ def test_smooth_intervention_requires_online_lerobot_dagger():
     )
 
     with pytest.raises(ValueError, match="loss_type=embodied_dagger"):
+        SmoothInterveneController.from_cfg(
+            cfg,
+            stage_num=1,
+            enable_train=True,
+            train_num_envs_per_stage=1,
+        )
+
+
+def test_smooth_intervention_accepts_so101_leader_with_hg_dagger():
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    del SO101Leader
+    cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"num_action_chunks": 2, "action_dim": 6}},
+            "algorithm": {
+                "loss_type": "embodied_dagger",
+                "dagger": {"online_lerobot": {"enabled": True}},
+            },
+            "env": {
+                "train": {
+                    "smooth_intervene": True,
+                    "env_type": "real",
+                    "teleop": [{"so101_leader": {"port": "/dev/unused"}}],
+                    "so101_episode_wrapper": "hg_dagger",
+                }
+            },
+        }
+    )
+
+    controller = SmoothInterveneController.from_cfg(
+        cfg,
+        stage_num=1,
+        enable_train=True,
+        train_num_envs_per_stage=1,
+    )
+
+    assert controller.enabled
+
+
+def test_smooth_intervention_requires_hg_dagger_for_so101_leader():
+    from rlinf.robotics.parts.teleop import SO101Leader
+
+    del SO101Leader
+    cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"num_action_chunks": 2, "action_dim": 6}},
+            "algorithm": {
+                "loss_type": "embodied_dagger",
+                "dagger": {"online_lerobot": {"enabled": True}},
+            },
+            "env": {
+                "train": {
+                    "smooth_intervene": True,
+                    "env_type": "real",
+                    "teleop": [{"so101_leader": {"port": "/dev/unused"}}],
+                    "so101_episode_wrapper": "start_end",
+                }
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="SO-101 leader requires"):
         SmoothInterveneController.from_cfg(
             cfg,
             stage_num=1,

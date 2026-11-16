@@ -16,10 +16,10 @@
 
 Bypasses policy inference across action-chunk boundaries while human teleop
 continues. Requires ``algorithm.loss_type=embodied_dagger`` with online LeRobot
-collection enabled, a ``realworld`` env, and PICO teleop
-(``env.train.teleop: pico``); SpaceMouse is not supported. The env only
-supplies hold actions; this module owns external-action request construction and the
-per-stage continue/skip state.
+collection enabled, and a ``realworld`` env. PICO and SO-101 Leader with the
+HG-DAgger keyboard wrapper are supported; SpaceMouse is not supported. The env
+supplies hold actions and reports whether its controller still owns control.
+This module owns external-action request construction and per-stage state.
 """
 
 from __future__ import annotations
@@ -115,10 +115,22 @@ class SmoothInterveneController:
                 supported=TeleopDevice.names(),
             )
             named = [d if isinstance(d, str) else next(iter(dict(d))) for d in devices]
-            if not named or any(name != "pico" for name in named):
+            episode_wrapper = OmegaConf.select(cfg, "env.train.so101_episode_wrapper")
+            so101_hg_dagger = (
+                named == ["so101_leader"] and episode_wrapper == "hg_dagger"
+            )
+            if "so101_leader" in named and episode_wrapper != "hg_dagger":
                 raise ValueError(
-                    "smooth_intervene requires every env.train.teleop entry to be "
-                    f"pico (PICO-only; got {named!r})"
+                    "smooth_intervene with SO-101 leader requires "
+                    "env.train.so101_episode_wrapper=hg_dagger"
+                )
+            if not named or (
+                not all(name == "pico" for name in named) and not so101_hg_dagger
+            ):
+                raise ValueError(
+                    "smooth_intervene requires PICO teleop or exactly one "
+                    "SO-101 leader with the hg_dagger episode wrapper; "
+                    f"got {named!r}"
                 )
         model_path = "actor.model" if enable_train else "rollout.model"
         return cls(
@@ -191,11 +203,23 @@ class SmoothInterveneController:
         stage_id: int,
         intervene_flags: torch.Tensor | None,
         dones: torch.Tensor,
+        *,
+        env=None,
     ) -> bool:
         """Update and return whether the next chunk should skip inference."""
         if not self.enabled:
             self.next_intervene_flags[stage_id] = False
             return False
-        continue_smooth = should_continue_smooth_intervene(intervene_flags, dones)
+        if bool(dones.any().item()):
+            continue_smooth = False
+        else:
+            env_control_state = get_env_attr(env, "smooth_intervention_active")
+            if callable(env_control_state):
+                env_control_state = env_control_state()
+            continue_smooth = (
+                should_continue_smooth_intervene(intervene_flags, dones)
+                if env_control_state is None
+                else bool(env_control_state)
+            )
         self.next_intervene_flags[stage_id] = continue_smooth
         return continue_smooth

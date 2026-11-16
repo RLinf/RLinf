@@ -1851,6 +1851,22 @@ def test_so101_hg_dagger_selects_its_episode_wrapper():
     )
 
 
+def test_realworld_env_exposes_optional_wrapper_smooth_control_state():
+    """Expose a nested episode wrapper's optional smooth-control decision."""
+    from rlinf.envs.real.env import RealWorldEnv
+
+    class EpisodeWrapper:
+        def get_wrapper_attr(self, name):
+            if name == "smooth_intervention_active":
+                return lambda: True
+            raise AttributeError(name)
+
+    env = object.__new__(RealWorldEnv)
+    env.env = SimpleNamespace(envs=[EpisodeWrapper()])
+
+    assert env.smooth_intervention_active() is True
+
+
 def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
     """Defer leader handovers until chunks finish and mark expert actions."""
     from rlinf.envs.real.so101.wrappers import SO101HGDAggerWrapper
@@ -1948,14 +1964,17 @@ def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
     wrapper.DEBOUNCE_S = 0.0
     wrapper.reset()
     assert leader.mode == "policy"
-    wrapper.listener.batches = [["a"], ["Key.space"], [], ["Key.space"], [], []]
+    wrapper.listener.batches = [["a"], [], [], ["Key.space"], [], []]
 
     _, _, _, _, started = wrapper.step(np.array([1.0]))
     assert started["keyboard_event"] == "start"
     assert leader.mode == "policy"
+    assert not wrapper.smooth_intervention_active()
 
     _, _, _, _, queued = wrapper.step(np.array([2.0]))
-    assert wrapper._pending_space is True
+    wrapper.listener.batches = [["Key.space"]]
+    assert wrapper.smooth_intervention_active()
+    assert wrapper._pending_space
     assert leader.mode == "policy"
 
     wrapper.on_action_chunk_begin()
@@ -1967,6 +1986,7 @@ def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
     assert manual["intervene_flag"].tolist() == [True]
     np.testing.assert_array_equal(inner.actions[-1], [7.0])
 
+    wrapper.listener.batches = [["Key.space"]]
     wrapper.step(np.array([4.0]))
     wrapper.on_action_chunk_begin()
     assert leader.mode == "policy"
@@ -1976,6 +1996,7 @@ def test_so101_hg_dagger_switches_control_only_at_chunk_boundaries(monkeypatch):
     np.testing.assert_array_equal(inner.actions[-1], [-1.0])
     np.testing.assert_array_equal(stale["intervene_action"], [-1.0])
     assert stale["intervene_flag"].tolist() == [True]
+    assert not wrapper.smooth_intervention_active()
 
     wrapper.on_action_chunk_begin()
     wrapper.step(np.array([6.0]))
