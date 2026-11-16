@@ -336,9 +336,6 @@ def tp_gather_fn_qwen3_5(
     model_config=None,
 ) -> dict:
     """Gather Qwen3.5 language, vision, merger and MTP parameters."""
-    assert model_config is not None and split_fc1 and not tp_gather_is_identity, (
-        "Qwen3.5 requires model_config, HF conversion and full TP gathering."
-    )
     tp_size = torch.distributed.get_world_size(tp_group)
     qk = model_config.linear_key_head_dim * model_config.linear_num_key_heads
     v = model_config.linear_value_head_dim * model_config.linear_num_value_heads

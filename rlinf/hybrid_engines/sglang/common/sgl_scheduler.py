@@ -15,7 +15,6 @@
 import logging
 from functools import wraps
 from importlib.metadata import version
-from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
 import torch
@@ -83,16 +82,12 @@ def patch_sglang_presharded_weights(model: torch.nn.Module) -> None:
     from sglang.srt.model_loader.weight_utils import default_weight_loader
     from sglang.srt.models.qwen3_5 import Qwen3_5GatedDeltaNet
 
-    assert getattr(model, "quant_config", None) is None, (
-        "Pre-sharded Qwen3.5 weight sync requires unquantized models."
-    )
-
     def packed_loader(module, original):
         @wraps(original)
         def load(param, weight, shard_id=None):
             if module.use_presharded_weights and isinstance(shard_id, tuple):
                 sizes = [module.output_sizes[i] // module.tp_size for i in shard_id]
-                dim = getattr(param, "output_dim", 0)
+                dim = param.output_dim
                 for index, chunk in zip(
                     shard_id, weight.split(sizes, dim), strict=True
                 ):
@@ -121,7 +116,7 @@ def patch_sglang_presharded_weights(model: torch.nn.Module) -> None:
                     module.num_kv_heads * module.head_size,
                     module.num_kv_heads * module.v_head_size,
                 )
-                dim = getattr(param, "output_dim", 0)
+                dim = param.output_dim
                 for index, chunk in zip("qkv", weight.split(sizes, dim), strict=True):
                     original(param, chunk, index)
             else:
@@ -150,18 +145,9 @@ def patch_sglang_presharded_weights(model: torch.nn.Module) -> None:
 
 def get_mtp_draft_model(draft_worker: Any) -> torch.nn.Module:
     """Resolve the MTP runner through SGLang's supported worker wrappers."""
-    runner = getattr(draft_worker, "draft_model_runner", None)
-    inner = getattr(draft_worker, "draft_worker", None)
-    if inner is None:
-        inner = getattr(draft_worker, "_draft_worker", None)
-    if runner is None and inner is not None:
-        runner = getattr(inner, "draft_runner", None)
-    if runner is None:
-        runner = getattr(draft_worker, "draft_runner", None)
-    assert runner is not None, (
-        "MTP weight sync requires an initialized SGLang draft runner."
-    )
-    return runner.model
+    if draft_worker.server_args.disable_overlap_schedule:
+        return draft_worker.draft_model_runner.model
+    return draft_worker.draft_worker.draft_runner.model
 
 
 class Scheduler(_Scheduler):
@@ -199,7 +185,6 @@ class Scheduler(_Scheduler):
         self.offloaded_tags: dict = dict.fromkeys(GPU_MEMORY_ALL_TYPES, False)
         self.weight_norm_dict = None
         self._sync_draft_model = None
-        self._expected_sync_weights = None
         self._draft_static_state = None
 
         try:
@@ -335,90 +320,41 @@ class Scheduler(_Scheduler):
                 # in case two processes have different CUDA_VISIBLE_DEVICES
                 list_args[6] = Worker.torch_platform.current_device()
                 new_weight = func(*list_args)
-                batch_weight.append((name, new_weight))
+                batch_weight.append((rename(name), new_weight))
         else:
             # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
-                batch_weight.append((name, tensor))
+                batch_weight.append((rename(name), tensor))
 
-        if self._expected_sync_weights is None:
-            model.load_weights(
-                [(rename(name), weight) for name, weight in batch_weight]
+        model.load_weights(batch_weight)
+        if self._sync_draft_model is not None:
+            self._sync_draft_model.load_weights(
+                [
+                    (name, weight)
+                    for name, weight in batch_weight
+                    if name.startswith("mtp.")
+                ]
             )
-        else:
-            names = {name for name, _ in batch_weight}
-            unknown = names - self._expected_sync_weights
-            duplicate = names & self._loaded_sync_weights
-            if unknown or duplicate:
-                raise ValueError(
-                    f"Invalid weight update: unknown={sorted(unknown)}, duplicate={sorted(duplicate)}."
-                )
-            main_weights, mtp_weights = [], []
-            for name, weight in batch_weight:
-                if name.startswith("mtp."):
-                    mtp_weights.append((name, weight))
-                else:
-                    main_weights.append((rename(name), weight))
-            self._loaded_model_parameters[0].update(model.load_weights(main_weights))
-            if self._sync_draft_model is not None:
-                self._loaded_model_parameters[1].update(
-                    self._sync_draft_model.load_weights(mtp_weights)
-                )
-            self._loaded_sync_weights.update(names)
 
         for name, weight in batch_weight:
             del weight
         batch_weight.clear()
 
-    def _begin_weight_update(self) -> None:
-        """Start coverage tracking for the target and optional draft update."""
-        self._loaded_sync_weights: set[str] = set()
-        self._loaded_model_parameters = [set(), set()]
-
     @torch.no_grad()
-    def _finish_weight_update(self) -> None:
-        """Require all checkpoint weights and refresh the draft's shared weights."""
-        missing = self._expected_sync_weights - self._loaded_sync_weights
-        if missing:
-            raise ValueError(
-                f"Weight sync is missing {len(missing)} weights: {sorted(missing)[:8]}."
-            )
+    def _sync_draft_embed_and_head(self) -> None:
+        """Refresh the draft's copies of target embeddings and output weights."""
         target = self.tp_worker.worker.model_runner.model
         draft = self._sync_draft_model
-        if draft is not None:
-            for source, dest in zip(
-                target.get_embed_and_head(), draft.get_embed_and_head(), strict=True
-            ):
-                if source.shape != dest.shape:
-                    raise ValueError(
-                        "Target and MTP embedding/head shard shapes differ."
-                    )
-                if source.data_ptr() != dest.data_ptr():
-                    dest.copy_(source)
-        models = (target,) if draft is None else (target, draft)
-        for index, model in enumerate(models):
-            parameters = dict(model.named_parameters(remove_duplicate=False))
-            covered = {
-                id(parameters[name])
-                for name in self._loaded_model_parameters[index]
-                if name in parameters
-            }
-            if index:
-                covered.update(id(param) for param in draft.get_embed_and_head())
-            missing = [
-                name for name, param in parameters.items() if id(param) not in covered
-            ]
-            if missing:
-                raise ValueError(
-                    f"Native loader did not load model {index} parameters: {missing[:8]}."
-                )
+        for source, dest in zip(
+            target.get_embed_and_head(), draft.get_embed_and_head(), strict=True
+        ):
+            if source.data_ptr() != dest.data_ptr():
+                dest.copy_(source)
 
     def sync_hf_weight(self, recv_req: SyncHFWeightInput):
         assert self.weight_reload == "sync", (
             "only sglang with 'sync' can run 'sync_hf_weight'"
         )
-        if self._expected_sync_weights is not None:
-            return self._sync_acknowledged_weights()
         use_cudagraph = not self.cfg.rollout.enforce_eager
         assert use_cudagraph, "use_cudagraph must be True now."
 
@@ -473,6 +409,8 @@ class Scheduler(_Scheduler):
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
         state_dict = None
+        if self._sync_draft_model is not None:
+            self._sync_draft_embed_and_head()
 
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
@@ -490,6 +428,11 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
+        if self.model_config.is_multimodal:
+            from sglang.srt.managers import mm_utils
+
+            if mm_utils.embedding_cache is not None:
+                mm_utils.embedding_cache.clear()
         self._handle_cache_after_sync(recv_req.pause_mode)
         return SyncHFWeightOutput()
 
@@ -552,90 +495,6 @@ class Scheduler(_Scheduler):
                 f"running={len(self.running_batch.reqs)}, "
                 f"waiting={len(self.waiting_queue)}"
             )
-
-    def _sync_acknowledged_weights(self) -> SyncHFWeightOutput:
-        """Load target/MTP buckets and acknowledge completed weight copies."""
-        state_dict = self._rlinf_worker.recv(
-            src_group_name=self._actor_group_name, src_rank=self.actor_weight_rank
-        )
-        bucket_count = state_dict.pop("bucket_length", 0)
-        if isinstance(bucket_count, torch.Tensor) and bucket_count.numel() == 1:
-            bucket_count = bucket_count.item()
-        # Only the Qwen3.5 sender uses this acknowledged, sequential protocol.
-        if not isinstance(bucket_count, int) or bucket_count < 1:
-            self._rlinf_worker.send(
-                {"bucket_index": 0, "error": f"Invalid bucket count: {bucket_count}"},
-                self._actor_group_name,
-                self.actor_weight_rank,
-            )
-            raise ValueError(
-                f"Expected a positive Qwen3.5 bucket count, got {bucket_count}."
-            )
-        for index in range(bucket_count):
-            if index:
-                state_dict = self._rlinf_worker.recv(
-                    src_group_name=self._actor_group_name,
-                    src_rank=self.actor_weight_rank,
-                )
-            error = None
-            try:
-                if index == 0:
-                    if not self.is_fully_idle():
-                        raise RuntimeError(
-                            "Qwen3.5 weight sync requires an idle rollout scheduler."
-                        )
-                    if self.is_weight_offloaded:
-                        self.resume_memory_occupation(
-                            ResumeMemoryOccupationReqInput(tags=["weights"])
-                        )
-                    self._begin_weight_update()
-                self.batch_load_hf_weight(state_dict)
-                if index == bucket_count - 1:
-                    self._finish_weight_update()
-                    if self.weight_norm_dict is not None:
-                        diff = validate_weight_diff(
-                            self.tp_worker.worker.model_runner.model,
-                            self.weight_norm_dict,
-                        )
-                        if diff:
-                            raise RuntimeError(
-                                f"Qwen3.5 first sync weight mismatch: {diff}"
-                            )
-                        self.weight_norm_dict = None
-                    from sglang.srt.managers import mm_utils
-
-                    if mm_utils.embedding_cache is not None:
-                        mm_utils.embedding_cache.clear()
-                    if not self.flush_cache():
-                        raise RuntimeError(
-                            "Qwen3.5 cache flush failed after weight loading."
-                        )
-            except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"
-            finally:
-                Worker.torch_platform.synchronize()
-                state_dict = None
-
-            # Agree locally before the Actor group confirms the global result.
-            errors = [None] * torch.distributed.get_world_size(self.tp_cpu_group)
-            torch.distributed.all_gather_object(errors, error, group=self.tp_cpu_group)
-            failure = next((item for item in errors if item is not None), None)
-            self._rlinf_worker.send(
-                {"bucket_index": index, "error": failure},
-                self._actor_group_name,
-                self.actor_weight_rank,
-            )
-            decision = self._rlinf_worker.recv(
-                src_group_name=self._actor_group_name, src_rank=self.actor_weight_rank
-            )
-            if decision.get("bucket_index") != index:
-                raise RuntimeError(f"Invalid Qwen3.5 bucket confirmation: {decision}")
-            failure = decision.get("error") or failure
-            if failure is not None:
-                raise RuntimeError(
-                    f"Qwen3.5 weight sync failed at bucket {index}: {failure}"
-                )
-        return SyncHFWeightOutput()
 
     def run_task_method(self, obj: TaskMethodInput):
         """
@@ -705,29 +564,11 @@ class Scheduler(_Scheduler):
                 self.cfg.rollout.model.model_type == "qwen3_5"
                 and self.cfg.actor.training_backend == "megatron"
             ):
-                from safetensors import safe_open
-
                 load_mtp = self.cfg.actor.model.get("load_mtp", True)
                 patch_sglang_presharded_weights(model)
                 if load_mtp:
                     self._sync_draft_model = get_mtp_draft_model(self.draft_worker)
                     patch_sglang_presharded_weights(self._sync_draft_model)
-                # The HF manifest checks logical components of fused parameters
-                # without duplicating the backend's name and layout mappings.
-                self._expected_sync_weights = set()
-                for path in Path(self.cfg.rollout.model.model_path).glob(
-                    "*.safetensors"
-                ):
-                    with safe_open(path, framework="pt", device="cpu") as weights:
-                        self._expected_sync_weights.update(
-                            name
-                            for name in weights.keys()
-                            if load_mtp or not name.startswith("mtp.")
-                        )
-                assert self._expected_sync_weights, (
-                    "Full-model sync requires a safetensors checkpoint manifest."
-                )
-                self._begin_weight_update()
             # it's important to use load_weight to load resharded weight from megatron
             sync_models = (
                 (model,)
