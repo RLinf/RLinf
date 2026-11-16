@@ -11,6 +11,8 @@ PYTHON_VERSION="3.11.14"
 # Set by --python; MUSA only defaults PYTHON_VERSION when it is unset.
 USER_SET_PYTHON=0
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+# lerobot 0.4.2 (LeRobot v3.0 datasets), for LingBot-VLA V2 SFT.
+LINGBOT_VLA_V2_LEROBOT_COMMIT="58f70b6bd370864139a3795ac3497a9eae8c42d5"
 TORCH_VERSION=""
 SGLANG_VERSION=""
 ENGINE=""
@@ -3140,6 +3142,8 @@ install_lingbot_vla_v2_model() {
     local vla2_path
     vla2_path=$(clone_or_reuse_repo LINGBOT_VLA_V2_PATH "$VENV_DIR/lingbot-vla-v2" "${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla-v2.git" -b rlinf)
     uv pip install -e "$vla2_path" --no-deps
+    # LeRobot v3.0 dataset reader for SFT; keep the packages already installed.
+    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LINGBOT_VLA_V2_LEROBOT_COMMIT}"
 
     case "$ENV_NAME" in
         robotwin)

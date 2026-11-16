@@ -7,12 +7,12 @@ LingbotVLA 2.0 模型强化学习
 
    LingbotVLA 2.0 框架（图片来源：`Robbyant <https://github.com/robbyant/lingbot-vla-v2>`__）。
 
-用 PPO 在 RoboTwin 2.0 上微调 `LingbotVLA 2.0 <https://huggingface.co/robbyant/lingbot-vla-v2-6b-robotwin>`__ 的动作专家。RLinf **原生**\ 加载官方发布的 RoboTwin checkpoint，并以它作为训练起点。LingbotVLA 2.0 是基于 Qwen3-VL 底座的视觉-语言-动作模型：它的混合专家（MoE）动作专家通过 flow matching 在 55 维的 latent 动作空间中生成 50 步动作块，再由机器人配置映射为 RoboTwin 的 14 维关节指令。PPO 只更新动作专家，Qwen3-VL 底座和动作专家的 MoE 路由器保持冻结。
+用 SFT、PPO 或 GRPO 在 RoboTwin 2.0 上微调 `LingbotVLA 2.0 <https://huggingface.co/robbyant/lingbot-vla-v2-6b-robotwin>`__ 的动作专家。RLinf **原生**\ 加载官方发布的 RoboTwin checkpoint，并以它作为训练起点。LingbotVLA 2.0 是基于 Qwen3-VL 底座的视觉-语言-动作模型：它的混合专家（MoE）动作专家通过 flow matching 在 55 维的 latent 动作空间中生成 50 步动作块，再由机器人配置映射为 RoboTwin 的 14 维关节指令。PPO 只更新动作专家，Qwen3-VL 底座和动作专家的 MoE 路由器保持冻结。
 
 概览
 ----------------------------------------
 
-用 PPO 对 LingbotVLA 2.0 进行强化学习，完成 RoboTwin 2.0 的 ``click_bell`` 任务。
+用 SFT、PPO 或 GRPO 训练 LingbotVLA 2.0，完成 RoboTwin 2.0 的 ``click_bell`` 任务。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -25,7 +25,7 @@ LingbotVLA 2.0 模型强化学习
    .. grid-item-card:: 算法
       :text-align: center
 
-      PPO
+      SFT, PPO, GRPO
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -166,6 +166,8 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * **PPO（强化学习）**：``examples/embodiment/config/robotwin_click_bell_ppo_lingbotvlav2.yaml``
+* **GRPO（强化学习）**：``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvlav2.yaml``
+* **SFT（示范数据）**：``examples/sft/config/robotwin_sft_lingbotvlav2.yaml`` 和 ``examples/sft/config/model/lingbotvlav2.yaml``
 * **模型默认配置**，与独立评测共用：``examples/embodiment/config/model/lingbotvlav2.yaml``
 
 关键配置片段 (PPO)
@@ -202,6 +204,37 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
 
 每次更新前，actor 会重新为 rollout 采样的每个 SDE 步计算概率。若某个样本在 rollout 与 actor 之间的总 log-probability 差值超过 ``algorithm.max_recompute_logprob_gap``，训练会停止；``actor/rollout_train_joint_logprob_gap_max`` 记录最大差值。
 
+从示范数据训练
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+通过 SFT 的 flow matching 目标拟合示范动作块。在 ``examples/sft/config/model/lingbotvlav2.yaml`` 中填写模型和资产路径，并将 SFT 配置的 ``data.train_data_paths`` 设为一个本地 LeRobot 数据集路径。数据集的相机、状态和动作特征必须与机器人配置一致。数据加载使用与 PPO、GRPO 相同的图像预处理、机器人变换和归一化统计量。
+
+.. code-block:: bash
+
+    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+
+该命令训练动作专家，保持底座和路由器冻结。观察 ``train/flow_mse`` 与 ``train/grad_norm``，并在 RoboTwin 上评测保存的 checkpoint；示范数据上的 loss 与任务成功率需要分别衡量。
+
+用分组奖励训练
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GRPO 在每组八条 rollout 内比较回报。配置使用 ``algorithm.adv_type: grpo``、``algorithm.loss_type: actor`` 和 ``actor.model.add_value_head: false``。任务、初始模型路径、64 个训练环境、动作块长度及 actor 学习率与 PPO 对齐。
+
+.. code-block:: bash
+
+    bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvlav2
+
+执行前，先导出 `启动命令`_ 中的 RoboTwin 环境变量。检查组内 rollout 是否产生不同回报和非零 advantage：policy 更新来自组内回报的差异。比较 PPO 与 GRPO checkpoint 时，使用相同的评测 seeds 和轨迹数量。
+
+从 SFT checkpoint 开始 GRPO 时，在 GRPO 配置中将 ``runner.ckpt_path`` 设为 SFT 保存的完整权重文件。SFT 将它保存在日志路径下的 experiment 目录中：
+
+.. code-block:: yaml
+
+    runner:
+      ckpt_path: logs/<timestamp>-robotwin_sft_lingbotvlav2/robotwin_sft_lingbotvlav2/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+
+SFT 与 GRPO 都以 ``add_value_head: false`` 构建模型，因此 actor 和 rollout 均可严格加载这份权重。
+
 启动命令
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -224,12 +257,14 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
 独立评测
 ----------------------------------------
 
-通过 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``robotwin_click_bell_lingbotvlav2_eval``。在新的终端中评测前，先导出 `启动命令`_ 中的三个环境变量。如需评测 PPO checkpoint 而不是官方权重，传入其完整权重文件：
+通过 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_eval.yaml``。在新的终端中评测前，先导出 `启动命令`_ 中的三个环境变量。如需评测 PPO checkpoint 而不是官方权重，传入其完整权重文件：
 
 .. code-block:: bash
 
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
+
+评测 SFT 或 GRPO checkpoint 时，同时传入 ``rollout.model.add_value_head=false``，使严格加载使用与训练时一致的模型结构。
 
 可视化与结果
 ----------------------------------------
@@ -241,3 +276,21 @@ actor 以 fp32 保存可训练的动作专家权重，因为在当前学习率�
    tensorboard --logdir ./logs --port 6006
 
 关键指标是 ``env/success_once``。完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
+
+在四张 A100 80 GB GPU 上，所有 checkpoint 使用相同的 64 个固定环境 seeds 评测，每条轨迹最多 400 步，``rollout.model.eval_seed=0``：
+
+.. list-table:: LingbotVLA 2.0 在 RoboTwin 任务上的评测结果（n=64）
+   :header-rows: 1
+
+   * - 任务
+     - 官方权重
+     - SFT（第 600 步）
+     - RLinf-GRPO（第 100 步）
+     - RLinf-PPO（第 100 步）
+   * - ``click_bell``
+     - 76.56%
+     - 92.19%
+     - **100.00%**
+     - **100.00%**
+
+比较 checkpoint 时，保持环境 seeds、worker 放置、batch size 和 ``rollout.model.eval_seed`` 一致。评测的初始噪声由 ``eval_seed`` 决定，不受模型初始化影响。

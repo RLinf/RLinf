@@ -132,7 +132,7 @@
          <a href="embodied/lingbotvla_index.html" style="text-decoration: underline; color: blue;">
            <b>基于 LingbotVLA 模型的强化学习</b>
          </a><br>
-         支持 LingbotVLA 1.0（GRPO）与 2.0（PPO）+ RoboTwin 训练
+         支持 LingbotVLA 1.0（GRPO）与 2.0（SFT、PPO、GRPO）+ RoboTwin 训练
        </p>
      </div>
 
