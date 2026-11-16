@@ -7477,3 +7477,96 @@ def test_lingbotvlav2_grpo_smoke_config_composes(monkeypatch):
         cfg.env.eval.total_num_envs // 2
     ) % cfg.actor.model.forward_micro_batch_size == 0
     validate_embodied_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"actor.model.forward_micro_batch_size": 4}, "micro_batch_size"),
+        ({"rollout.model.forward_micro_batch_size": 1}, "rollout.model"),
+        (
+            {"actor.micro_batch_size": 3, "actor.model.forward_micro_batch_size": 3},
+            "envs per rollout worker",
+        ),
+    ],
+)
+def test_lingbotvlav2_rejects_rollout_and_replay_batch_shapes_that_differ(
+    monkeypatch, overrides, message
+):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_embodied_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("REPO_PATH", str(root))
+    monkeypatch.setenv("ROBOTWIN_ASSETS_PATH", "/explicit/asset")
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", "/explicit/lingbot-vla-v2")
+    with initialize_config_dir(
+        config_dir=str(root / "tests/e2e_tests/embodied"), version_base="1.1"
+    ):
+        cfg = compose(
+            config_name="robotwin_grpo_lingbotvlav2",
+            overrides=[f"++{key}={value}" for key, value in overrides.items()],
+        )
+    OmegaConf.resolve(cfg)
+    with pytest.raises(ValueError, match=message):
+        validate_embodied_cfg(cfg)
+
+
+def test_lingbotvlav2_sft_config_composes_and_requires_fp32_storage(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_sft_cfg
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/sft"))
+    with initialize_config_dir(
+        config_dir=str(root / "examples/sft/config"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_sft_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+    assert cfg.actor.model.model_type == "lingbotvlav2"
+    assert cfg.runner.max_steps % cfg.runner.save_interval == 0
+    validate_sft_cfg(cfg)
+
+    cfg.actor.model.precision = "bf16"
+    with pytest.raises(ValueError, match="actor.model.precision=fp32"):
+        validate_sft_cfg(cfg)
+
+
+def test_lingbotvlav2_sft_resolves_one_local_lerobot_root(tmp_path, monkeypatch):
+    from rlinf.models.embodiment.lingbotvlav2.sft_builder import _resolve_data_path
+
+    dataset = tmp_path / "click_bell"
+    (dataset / "meta").mkdir(parents=True)
+    (dataset / "meta" / "info.json").write_text("{}")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    assert _resolve_data_path("~/click_bell") == str(dataset)
+    assert _resolve_data_path(["click_bell"]) == str(dataset)
+    with pytest.raises(FileNotFoundError, match="meta/info.json"):
+        _resolve_data_path(str(tmp_path / "missing"))
+    with pytest.raises(ValueError, match="one LeRobot dataset"):
+        _resolve_data_path([str(dataset), str(dataset)])
+
+
+def test_lingbotvlav2_names_the_placeholder_path_it_cannot_find(tmp_path):
+    from rlinf.models.embodiment.lingbotvlav2.utils import check_required_paths
+
+    config = OmegaConf.create(
+        {
+            "model_path": str(tmp_path),
+            "tokenizer_path": "/path/to/Qwen3-VL-4B-Instruct",
+            "lingbotvlav2": {
+                "training_config_path": str(tmp_path),
+                "robot_config_path": str(tmp_path),
+                "stats_path": "",
+            },
+        }
+    )
+    with pytest.raises(FileNotFoundError, match="model.tokenizer_path"):
+        check_required_paths(config)
+    config.tokenizer_path = str(tmp_path)
+    with pytest.raises(FileNotFoundError, match="model.lingbotvlav2.stats_path"):
+        check_required_paths(config)
