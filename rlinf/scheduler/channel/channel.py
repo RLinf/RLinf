@@ -578,6 +578,7 @@ class Channel:
                     async_comm_work=async_comm_work,
                     query_id=query_id,
                     channel_actor=target_actor,
+                    peer=(self._channel_name, target_rank),
                 )
             else:
                 # query_id, data
@@ -711,6 +712,7 @@ class Channel:
                     async_comm_work=async_comm_work,
                     query_id=query_id,
                     channel_actor=target_actor,
+                    peer=(self._channel_name, target_rank),
                 )
             else:
                 # query_id, data

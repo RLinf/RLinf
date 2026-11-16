@@ -59,7 +59,7 @@ from rlinf.scheduler.cluster import (
     resolve_group_sizes,
     resolve_worker_names,
 )
-from rlinf.scheduler.collective import AsyncChannelWork
+from rlinf.scheduler.collective import AsyncChannelCommWork, AsyncChannelWork
 from rlinf.scheduler.worker import WorkerAddress, WorkerGroup
 
 # --- Constants ---
@@ -944,6 +944,55 @@ class TestChannel:
 
         follow_up = AsyncChannelWork("failure_channel", channel_key, actor, "ok", 42)
         assert follow_up.wait() == 42
+
+    def test_recv_failure_fails_pending_gets_of_the_same_peer(self):
+        """A worker's recvs from one channel worker are not keyed: each takes
+        the next message, and the store hands the data to the get its
+        query_id names. When one recv of a peer fails after an earlier
+        recv already delivered another get's data, every get still pending
+        on that peer fails instead of hanging, and gets on other peers are
+        untouched."""
+
+        class _ScriptedRecv:
+            """A recv double whose callback runs when the test chooses."""
+
+            def __init__(self, outcome):
+                self._outcome = outcome
+                self._callback = None
+
+            def then(self, func, *args, **kwargs):
+                self._callback = func
+
+            def wait(self):
+                if isinstance(self._outcome, BaseException):
+                    raise self._outcome
+                return self._outcome
+
+            def deliver(self):
+                self._callback()
+
+        peer = ("chan", 0)
+        other_peer = ("chan", 1)
+        # A's recv will deliver B's data (arrival order is not get order).
+        recv_a = _ScriptedRecv(("data_b", 200))
+        recv_b = _ScriptedRecv(ValueError("peer boom"))
+        work_a = AsyncChannelCommWork(recv_a, 100, None, peer=peer)
+        work_b = AsyncChannelCommWork(recv_b, 200, None, peer=peer)
+
+        # A's recv delivers B's data; B is done, A still waits.
+        recv_a.deliver()
+        assert work_b.wait() == "data_b"
+
+        # B's recv fails: A must fail with the original error, not hang.
+        recv_b.deliver()
+        with pytest.raises(ValueError, match="peer boom"):
+            asyncio.run(asyncio.wait_for(work_a.async_wait(), timeout=5))
+
+        # A get on another peer is unaffected: its data still arrives.
+        recv_c = _ScriptedRecv(("data_c", 300))
+        work_c = AsyncChannelCommWork(recv_c, 300, None, peer=other_peer)
+        recv_c.deliver()
+        assert work_c.wait() == "data_c"
 
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_remove_key_drops_items_and_keeps_the_channel_usable(
