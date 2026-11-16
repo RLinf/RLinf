@@ -39,7 +39,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
 - [2026/11] 🔥 RLinf 支持 DiffusionART，使用 OCR 奖励微调 SD3 图像生成模型和 Wan2.2 视频生成模型，达到同一奖励阈值所需时间比 NFT 减少约 30%、轨迹数减少约三分之一。文档：[DiffusionART](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/diffusion_art.html)。
 - [2026/11] 🔥 RLinf 支持 LIBERO-Mem，并为 OpenPI 提供受 MEM 启发的视觉短期记忆，用于监督微调和评测，在 LIBERO-Mem 上把严格成功率从 20.0% 提升到 35.5%。文档：[LIBERO-Mem](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark)、[OpenPI Short Memory](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0/short_memory.html)。
-- [2026/11] 🔥 RLinf 支持在 RoboLab 操作基准上评估 OpenPI π₀.₅。文档：[RoboLab 评估](docs/source-zh/rst_source/evaluations/guides/robolab.rst)。
+- [2026/11] 🔥 RLinf 支持在 RoboLab 操作基准上评估 OpenPI π₀.₅。文档：[RoboLab 评估](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/robolab.html)。
 - [2026/11] 🔥 RLinf 支持在 [GenieSim](https://github.com/AgibotTech/genie_sim) 上用 PPO 和 GRPO 对 π₀.₅ 进行强化学习。文档：[基于 GenieSim 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html)。
 - [2026/11] 🔥 RLinf 支持 RoboDojo——基于 Isaac Sim 的双臂操作类基准，覆盖 ARX-X5 等机器人，已作为 Gym 环境接入，可将官方 π₀.₅ 权重转换为 OpenPI 格式并在 55 个预设场景布局上逐场景评测。文档：[RoboDojo](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html)。
 - [2026/11] 🔥 RLinf 支持 SO-101 关节空间示范数据采集、OpenPI π₀.₅ 监督微调和本地评测。文档：[SO-101](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html)。
@@ -216,7 +216,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
-          <li><a href="docs/source-zh/rst_source/examples/embodied/robolab.rst">RoboLab（仅评估）</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robolab.html">RoboLab（仅评估）</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
