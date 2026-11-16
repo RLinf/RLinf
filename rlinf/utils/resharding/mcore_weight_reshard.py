@@ -79,7 +79,7 @@ class MegatronCoreWeightReshard:
                     continue
                 model_bucket[key] = val
 
-                if "decoder.layers" in key:
+                if torch.is_tensor(val):
                     current_capacity += val.numel() * val.element_size()
 
                 if current_capacity >= bucket_capacity:
@@ -93,7 +93,7 @@ class MegatronCoreWeightReshard:
                         continue
                     model_bucket[key] = (val, idx)
 
-                    if "decoder.layers" in key:
+                    if torch.is_tensor(val):
                         current_capacity += val.numel() * val.element_size()
 
                     if current_capacity >= bucket_capacity:
@@ -173,6 +173,8 @@ class MegatronCoreWeightReshard:
           ``("slice", dim, cat)``  slice on ``dim`` for the shard grid ``cat``
           ``("fused_glu", cat)``   tensor is [full_gate; full_up]: slice each
                                    half, then cat them back
+          ``("segments", dim, sizes, cat)`` split along dim, slice each segment
+                                   for the target, and concatenate the results
           ``("expert_filter",)``   keep only this ep rank's experts
         """
 
@@ -474,6 +476,16 @@ class MegatronCoreWeightReshard:
                         reshard_tensor_by_rank(up, 0, dst_rank, dst_world_size),
                     ],
                     dim=0,
+                )
+            elif spec[0] == "segments":
+                _, dim, sizes, cat = spec
+                dst_rank, dst_world_size = cat_to_dst[cat]
+                out[key] = torch.cat(
+                    [
+                        reshard_tensor_by_rank(part, dim, dst_rank, dst_world_size)
+                        for part in tensor.split(sizes, dim=dim)
+                    ],
+                    dim=dim,
                 )
             else:
                 # Keep only this ep rank's experts, matched on the global
