@@ -25,6 +25,7 @@ import sys
 import time
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
@@ -36,7 +37,11 @@ from rlinf.envs.sim.robolab.protocol import receive, send
 
 
 class RoboLabEnv:
-    """Own a RoboLab simulator process and expose RLinf's evaluation protocol."""
+    """Own a RoboLab simulator process and expose RLinf's evaluation protocol.
+
+    ``cfg.max_episode_steps=None`` uses only the native task's episode limit.
+    A positive value additionally limits the number of executed policy steps.
+    """
 
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         del total_num_processes, worker_info
@@ -54,9 +59,9 @@ class RoboLabEnv:
                 f"auto_reset={cfg.auto_reset}, "
                 f"ignore_terminations={cfg.ignore_terminations}"
             )
-        if cfg.max_episode_steps <= 0:
+        if cfg.max_episode_steps is not None and cfg.max_episode_steps <= 0:
             raise ValueError(
-                f"Expected max_episode_steps > 0, found {cfg.max_episode_steps}"
+                f"Expected max_episode_steps > 0 or None, found {cfg.max_episode_steps}"
             )
 
         try:
@@ -93,16 +98,33 @@ class RoboLabEnv:
         settings.update(
             num_envs=num_envs,
             seed=self.seed,
-            max_episode_steps=int(cfg.max_episode_steps),
+            max_episode_steps=cfg.max_episode_steps,
         )
         env = os.environ.copy()
         env["OMNI_KIT_ACCEPT_EULA"] = "Y"
         device = settings.get("device", "cuda:0")
         if device.startswith("cuda"):
             ordinal = int(device.split(":")[1]) if ":" in device else 0
-            visible = env.pop("CUDA_VISIBLE_DEVICES", None)
-            physical = int(visible.split(",")[ordinal]) if visible else ordinal
-            # Kit's Vulkan device indices are not remapped by CUDA_VISIBLE_DEVICES.
+            if ordinal < 0:
+                raise ValueError(f"Expected nonnegative CUDA ordinal, found {ordinal}")
+            visible = env.get("CUDA_VISIBLE_DEVICES")
+            physical = ordinal
+            if visible:
+                devices = [entry.strip() for entry in visible.split(",")]
+                if all(entry.isdigit() for entry in devices):
+                    if ordinal >= len(devices):
+                        raise ValueError(
+                            f"Device {device} is outside CUDA_VISIBLE_DEVICES={visible}"
+                        )
+                    nodes = sorted(
+                        int(path.name.removeprefix("nvidia"))
+                        for path in Path("/dev").glob("nvidia[0-9]*")
+                        if path.name.removeprefix("nvidia").isdigit()
+                    )
+                    if set(map(int, devices)).issubset(nodes):
+                        # Vulkan enumerates mounted devices, ignoring CUDA masks.
+                        physical = nodes.index(int(devices[ordinal]))
+                        env.pop("CUDA_VISIBLE_DEVICES")
             settings["device"] = f"cuda:{physical}"
             settings["kit_args"] = (
                 settings.get("kit_args", "") + f" --/renderer/activeGpu={physical}"
@@ -135,7 +157,10 @@ class RoboLabEnv:
                         )
             if self._socket is None:
                 raise TimeoutError("RoboLab simulator did not connect in 300 seconds")
-            self._request({"command": "init", "settings": settings})
+            metadata = self._request({"command": "init", "settings": settings})
+            self.task_descriptions = metadata["task_descriptions"]
+            self.max_episode_length = metadata["max_episode_length"]
+            self.action_bounds = metadata["action_bounds"]
         except BaseException:
             self.close()
             raise
@@ -194,6 +219,48 @@ class RoboLabEnv:
                 }
             ],
         )
+
+    def step(self, actions: np.ndarray | torch.Tensor) -> tuple:
+        """Execute one action per environment, returning a batched Gym tuple."""
+        if isinstance(actions, torch.Tensor):
+            actions = actions.detach().cpu().numpy()
+        observations, rewards, terminations, truncations, infos = self.chunk_step(
+            np.asarray(actions)[:, None, :]
+        )
+        return (
+            observations[-1],
+            rewards[:, 0],
+            terminations[:, 0],
+            truncations[:, 0],
+            infos[-1],
+        )
+
+    def render_camera(self, camera_name: str, env_id: int = 0) -> np.ndarray:
+        """Return the latest native RGB frame without advancing the simulation."""
+        if camera_name not in {"over_shoulder_left_camera", "wrist_cam"}:
+            raise ValueError(f"Unknown RoboLab camera: {camera_name!r}")
+        if not 0 <= env_id < self.num_envs:
+            raise ValueError(f"Expected env_id in [0, {self.num_envs}), found {env_id}")
+        return self._request(
+            {"command": "render_camera", "camera_name": camera_name, "env_id": env_id}
+        )
+
+    def get_camera_meta(self, camera_name: str, env_id: int = 0) -> dict[str, Any]:
+        """Return the camera name and native image dimensions."""
+        image = self.render_camera(camera_name, env_id)
+        return {
+            "camera_name": camera_name,
+            "height": image.shape[0],
+            "width": image.shape[1],
+        }
+
+    def get_status(self) -> list[dict[str, Any]]:
+        """Return per-env native steps/success and effective termination flags.
+
+        Success remains None until the native evaluator records a result, even
+        when RLinf's configured policy-step limit truncates the episode.
+        """
+        return self._request({"command": "get_status"})
 
     def update_reset_state_ids(self):
         """RoboLab owns its reset state selection."""

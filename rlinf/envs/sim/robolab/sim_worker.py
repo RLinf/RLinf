@@ -81,7 +81,7 @@ def main() -> None:
         timeline = omni.timeline.get_timeline_interface()
         kit_app = omni.kit.app.get_app()
         num_envs = settings["num_envs"]
-        max_steps = int(settings["max_episode_steps"])
+        max_steps = settings["max_episode_steps"]
         steps = np.zeros(num_envs, dtype=np.int32)
         finished = np.zeros(num_envs, dtype=bool)
         success = np.zeros(num_envs, dtype=np.float32)
@@ -129,13 +129,51 @@ def main() -> None:
                 "active_mask": active_mask,
             }
 
-        send(sock, {"ready": True})
+        send(
+            sock,
+            {
+                "task_descriptions": [prompt] * num_envs,
+                "max_episode_length": int(env.max_episode_length),
+                "action_bounds": {
+                    "low": np.asarray(env.single_action_space.low),
+                    "high": np.asarray(env.single_action_space.high),
+                },
+            },
+        )
         while True:
             message = receive(sock)
             command = message["command"]
             if command == "close":
                 finish_episode()
                 break
+            if command == "render_camera":
+                if last_obs is None:
+                    raise RuntimeError("Reset RoboLab before reading a camera")
+                send(
+                    sock,
+                    last_obs["image_obs"][message["camera_name"]][message["env_id"]]
+                    .detach()
+                    .cpu()
+                    .numpy(),
+                )
+                continue
+            if command == "get_status":
+                statuses = []
+                for j, result in enumerate(env.get_env_results()):
+                    native_success = result["success"]
+                    statuses.append(
+                        {
+                            "steps": int(result["step"])
+                            if native_success is not None
+                            else int(env.episode_length_buf[j].item()),
+                            "step_limit": int(env.max_episode_length),
+                            "success": native_success,
+                            "terminated": bool(finished[j] and success[j]),
+                            "truncated": bool(finished[j] and not success[j]),
+                        }
+                    )
+                send(sock, statuses)
+                continue
             if command == "reset":
                 finish_episode()
                 env.reset_eval_state()
@@ -177,7 +215,9 @@ def main() -> None:
                     if finished[j]:
                         continue
                     native_success = result["success"]
-                    if native_success is None and steps[j] < max_steps:
+                    if native_success is None and (
+                        max_steps is None or steps[j] < max_steps
+                    ):
                         continue
                     finished[j] = True
                     success[j] = float(native_success is True)
