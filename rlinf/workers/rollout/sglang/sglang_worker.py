@@ -208,7 +208,9 @@ class SGLangWorker(Worker):
             # The vision tower and optional MTP must exist before graph capture.
             load_format = "auto"
             qwen_args = {
-                "mm_enable_dp_encoder": False,
+                "mm_enable_dp_encoder": self._cfg_rollout.sglang.get(
+                    "mm_enable_dp_encoder", False
+                ),
                 # Qwen3.5 NEXTN with SGLang's no_buffer Mamba scheduler
                 # requires prefix caching to be disabled.
                 "disable_radix_cache": self._cfg_rollout.sglang.get(

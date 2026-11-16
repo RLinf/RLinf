@@ -127,14 +127,16 @@ def _gather_fused_fc1(value, tp_group, tp_gather_is_identity):
 def _apply_layer_offset(key, layer_offset):
     """Shift the decoder layer number in ``key`` by ``layer_offset``.
 
-    Only ``decoder.layers.*`` keys are shifted. A pipeline-stage offset applies
+    Only language ``decoder.layers.*`` keys, optionally under ``language_model.``, are shifted. A pipeline-stage offset applies
     to decoder layers alone; mcore leaves MTP layers un-offset, so ``mtp.*``
     keys keep their own numbering.
     """
-    if layer_offset == 0 or not key.startswith("decoder.layers."):
+    prefix = "language_model." if key.startswith("language_model.") else ""
+    name = key.removeprefix(prefix)
+    if layer_offset == 0 or not name.startswith("decoder.layers."):
         return key
-    _, _, layer_num, remaining = key.split(".", 3)
-    return f"decoder.layers.{int(layer_num) + layer_offset}.{remaining}"
+    _, _, layer_num, remaining = name.split(".", 3)
+    return f"{prefix}decoder.layers.{int(layer_num) + layer_offset}.{remaining}"
 
 
 def pp_merge_params(params, pp_group, layer_offset=0):
@@ -334,6 +336,8 @@ def tp_gather_fn_qwen3_5(
     split_fc1: bool = True,
     tp_gather_is_identity: bool = False,
     model_config=None,
+    enable_dp_attention: bool = False,
+    replicate_output_layer: bool = False,
 ) -> dict:
     """Gather Qwen3.5 language, vision, merger and MTP parameters."""
     tp_size = torch.distributed.get_world_size(tp_group)
@@ -346,6 +350,9 @@ def tp_gather_fn_qwen3_5(
     full_state_dict = {}
     for key, tensor in model_state_dict.items():
         vision = key.startswith("vision_model.")
+        target_cat = "vision" if vision else cat
+        if not vision and enable_dp_attention and ".mlp." in key:
+            target_cat = "full_tp"
         if key.endswith(
             (
                 "self_attention.in_proj.weight",
@@ -388,7 +395,23 @@ def tp_gather_fn_qwen3_5(
         )
         if key == "vision_model.pos_embed.weight":
             # Megatron replicates the table; SGLang uses VocabParallelEmbedding.
-            full_state_dict[key] = (tensor.clone(), ("slice", 0, cat))
+            full_state_dict[key] = (tensor.clone(), ("slice", 0, target_cat))
+        elif not vision and (
+            (key.endswith("word_embeddings.weight") and enable_dp_attention)
+            or (key.endswith("output_layer.weight") and replicate_output_layer)
+        ):
+            # With one rollout PP stage, a tied head aliases the DPA embedding.
+            full_state_dict[key] = (all_gather_tensor(tensor, 0, tp_group), None)
+        elif not vision and key.endswith("self_attention.linear_qkv.weight"):
+            full_state_dict[key] = (
+                all_gather_tensor(tensor, 0, tp_group),
+                (
+                    "gated_qkv",
+                    model_config.num_query_groups,
+                    model_config.num_attention_heads // model_config.num_query_groups,
+                    model_config.kv_channels,
+                ),
+            )
         elif replicated:
             full_state_dict[key] = (tensor.clone(), None)
         elif key.endswith("eh_proj.weight"):
@@ -399,7 +422,7 @@ def tp_gather_fn_qwen3_5(
             for name, value in (("gate_proj", gate), ("up_proj", up)):
                 full_state_dict[key.replace("linear_fc1", name)] = (
                     value,
-                    ("slice", 0, cat),
+                    ("slice", 0, target_cat),
                 )
         elif key.endswith(
             (
@@ -415,7 +438,7 @@ def tp_gather_fn_qwen3_5(
         ):
             full_state_dict[key] = (
                 all_gather_tensor(tensor, 0, tp_group),
-                ("slice", 0, cat),
+                ("slice", 0, target_cat),
             )
         elif key.endswith(
             (
@@ -426,7 +449,7 @@ def tp_gather_fn_qwen3_5(
         ):
             full_state_dict[key] = (
                 all_gather_tensor(tensor, 1, tp_group),
-                ("slice", 1, cat),
+                ("slice", 1, target_cat),
             )
         else:
             assert False, f"Unknown parameter: {key}"

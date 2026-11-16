@@ -571,16 +571,25 @@ class Qwen35Convertor(BaseConvertor):
         assert vision is not None, "Qwen3.5 VL conversion requires vision_config."
         sizes = (
             model.num_attention_heads,
-            model.num_query_groups,
             model.linear_num_key_heads,
             model.linear_num_value_heads,
             model.ffn_hidden_size,
+        )
+        assert tp >= 1 and all(size % tp == 0 for size in sizes), (
+            f"Qwen3.5 language head and FFN dimensions {sizes} must be divisible by target TP={tp}."
+        )
+        groups = model.num_query_groups
+        assert groups % tp == 0 or tp % groups == 0, (
+            f"Qwen3.5 KV groups={groups} and target TP={tp} must divide one another."
+        )
+        vision_tp = config.rollout_vision_tp_size
+        vision_sizes = (
             vision.num_heads,
             vision.intermediate_size,
             vision.hidden_size * vision.spatial_merge_size**2,
         )
-        assert tp >= 1 and all(size % tp == 0 for size in sizes), (
-            f"Qwen3.5 head and FFN dimensions {sizes} must be divisible by target TP={tp}."
+        assert all(size % vision_tp == 0 for size in vision_sizes), (
+            f"Qwen3.5 vision dimensions {vision_sizes} must be divisible by vision TP={vision_tp}."
         )
         super().__init__(config, strict)
 
@@ -680,7 +689,9 @@ class Qwen35Convertor(BaseConvertor):
             layer = self._LAYER.fullmatch(key)
             vision = self._VISION_QKV.fullmatch(key)
             if vision:
-                heads = self.cfg.vision_config.num_heads // self.cfg.reshard_tp_size
+                heads = (
+                    self.cfg.vision_config.num_heads // self.cfg.rollout_vision_tp_size
+                )
                 dim = (
                     self.cfg.vision_config.hidden_size
                     // self.cfg.vision_config.num_heads
@@ -713,8 +724,10 @@ class Qwen35Convertor(BaseConvertor):
 
     def _split_gated_qkv(self, prefix: str, tensor: torch.Tensor) -> dict:
         model = self.cfg.model_config
-        groups = model.num_query_groups // self.cfg.reshard_tp_size
-        heads = model.num_attention_heads // model.num_query_groups
+        groups = max(1, model.num_query_groups // self.cfg.reshard_tp_size)
+        heads = model.num_attention_heads // max(
+            model.num_query_groups, self.cfg.reshard_tp_size
+        )
         dim, hidden = model.kv_channels, model.hidden_size
         qg, k, v = tensor.reshape(groups, 2 * heads + 2, dim, hidden).split(
             [2 * heads, 1, 1], dim=1
