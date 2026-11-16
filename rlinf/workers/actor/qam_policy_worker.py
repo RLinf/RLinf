@@ -23,8 +23,10 @@ from omegaconf import OmegaConf
 
 from rlinf.algorithms.qam import qam_update
 from rlinf.data.datasets.ogbench import OGBenchDataset
+from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Cluster, Worker
+from rlinf.utils.placement import HybridComponentPlacement
 
 
 class QAMPolicyWorker(Worker):
@@ -38,6 +40,15 @@ class QAMPolicyWorker(Worker):
         self.cfg = copy.deepcopy(cfg)
         self.global_step = 0
         self.updates = 0
+        self._group_name = self.cfg.actor.group_name
+        self._rollout_group_name = self.cfg.rollout.group_name
+        self._component_placement = HybridComponentPlacement(self.cfg, Cluster())
+        self._rollout_all_ranks = list(
+            range(self._component_placement.get_world_size("rollout"))
+        )
+        self._is_weight_sender = self._rank == 0
+        self.weight_syncer = WeightSyncer.create(self.cfg.weight_syncer)
+        self._sync_weight_comm_options = self.weight_syncer.comm_options
 
     def init_worker(self):
         if self._world_size != 1:
@@ -123,7 +134,55 @@ class QAMPolicyWorker(Worker):
             )
 
     def get_policy_state_dict(self):
+        """Return the model state used by rollout weight synchronization."""
+        return {k: v.detach() for k, v in self.model.state_dict().items()}
+
+    def _checkpoint_state_dict(self):
         return {k: v.detach().cpu() for k, v in self.model.state_dict().items()}
+
+    @Worker.timer("actor/sync_model_to_rollout")
+    async def sync_model_to_rollout(self) -> None:
+        state_dict = self.get_policy_state_dict()
+        param_names_need_sync = [
+            name
+            for name in state_dict
+            if name.startswith(("actor_fast.", "actor_slow."))
+        ]
+
+        async def send_func(data):
+            if not self._is_weight_sender:
+                return
+            await self.broadcast(
+                data,
+                groups=[
+                    (self._group_name, 0),
+                    (self._rollout_group_name, self._rollout_all_ranks),
+                ],
+                src=(self._group_name, 0),
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+
+        async def recv_func():
+            return await self.recv(
+                src_group_name=self._rollout_group_name,
+                src_rank=0,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+
+        if not self.weight_syncer.sender_initialized():
+            await self.weight_syncer.init_sender(
+                state_dict=state_dict,
+                send=send_func,
+                recv=recv_func,
+                param_names_need_sync=param_names_need_sync,
+                is_sender=self._is_weight_sender,
+            )
+
+        await self.weight_syncer.sync(
+            state_dict, send_func, version=self.global_step
+        )
 
     def save_checkpoint(self, path, global_step):
         if int(global_step) != self.global_step:
@@ -131,7 +190,7 @@ class QAMPolicyWorker(Worker):
         path = Path(path) / f"seed_{self.seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "model": self.get_policy_state_dict(),
+            "model": self._checkpoint_state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "generator": self.generator.get_state(),
             "replay": self.dataset.state_dict(),

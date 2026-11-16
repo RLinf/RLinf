@@ -82,8 +82,6 @@ class OGBenchDataset:
         return {"rng": self.rng.get_state(), "size": self.size}
 
     def load_state_dict(self, state):
-        if state.get("size", state.get("offline_size")) != self.size:
+        if state["size"] != self.size:
             raise ValueError("Checkpoint and current offline dataset sizes differ")
-        if "online" in state and len(state["online"]["observations"]):
-            raise ValueError("Cannot resume an online replay in offline QAM")
         self.rng.set_state(state["rng"])

@@ -133,12 +133,6 @@ class OfflineRunner:
     def update_rollout_weights(self):
         if self.rollout is None:
             raise RuntimeError("Rollout worker group is not initialized.")
-        if self.cfg.algorithm.loss_type == "qam":
-            states = self.actor.get_policy_state_dict().wait()
-            if len(states) != 1:
-                raise RuntimeError("Offline QAM expects one actor worker per seed")
-            self.rollout.load_policy_state_dict(states[0]).wait()
-            return
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         actor_handle.wait()
