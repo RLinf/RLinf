@@ -12,6 +12,9 @@ Detailed publication pages
    * - Publication
      - Focus
      - Paper
+   * - :doc:`CEL <cel>`
+     - Collective experience learning from deployed robot fleets.
+     - `arXiv:2610.25736 <https://arxiv.org/abs/2610.25736>`__
    * - :doc:`STEAM <steam>`
      - Self-supervised temporal ensemble advantage modeling for real-world robot learning.
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
@@ -44,6 +47,7 @@ Detailed publication pages
    :hidden:
    :maxdepth: 2
 
+   CEL: Collective Experience Learning Across 96 Robots <cel>
    steam
    rlinf_user
    rlinf_vla

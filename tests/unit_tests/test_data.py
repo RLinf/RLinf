@@ -3200,6 +3200,7 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
     env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
     env.env_decoupled_mode = True
     env.train_batch_size = 32
+    env._supplied_actions = {}
     env.recv_from = Mock(return_value=torch.zeros(8, 4))
 
     env._recv_actions(None, stage_id=0)
@@ -3265,20 +3266,25 @@ def test_smooth_intervention_requires_online_lerobot_dagger():
         )
 
 
-def test_env_sends_external_request_after_intervention_continues():
+def test_env_runs_its_own_actions_after_intervention_continues():
     env = object.__new__(EnvWorker)
+    env.cfg = OmegaConf.create({"rollout": {"group_name": "rollout"}})
     env._trajectory_step = 0
     env._rank = 0
     env.train_num_envs_per_stage = 1
+    env.train_batch_size = 1
     env.n_train_chunk_steps = 2
     env.enable_online_lerobot = True
     env.env_decoupled_mode = False
+    env._policy_input_split_fn = None
+    env._supplied_actions = {}
     env.env_list = [
         SimpleNamespace(get_hold_actions=lambda fallback=None: [[1.0, 2.0]])
     ]
     env.smooth_intervene = SmoothInterveneController(1, 1, 2, 2, enabled=True)
     env._build_env_transition = Mock(return_value=EnvTransition())
-    env._send_policy_input = Mock()
+    env.send_to = Mock()
+    env.recv_from = Mock(return_value=torch.zeros(1, 2, 2))
     env_output = EnvOutput(
         obs={"states": torch.zeros(1, 4)},
         transition=EnvTransition(
@@ -3286,18 +3292,24 @@ def test_env_sends_external_request_after_intervention_continues():
             intervene_flags=torch.tensor([[False, True]]),
         ),
     )
+    hold_chunk = torch.tensor([[[1.0, 2.0], [1.0, 2.0]]])
 
     env._publish_step(Mock(), env_output, EnvTransition(), None, {}, 0, 0, 0)
 
-    policy_input = env._send_policy_input.call_args.args[1]
+    send = env.send_to.call_args.kwargs
+    policy_input = send["data"]
+    assert send["async_op"]
     assert not policy_input.requires_inference
     assert policy_input.env_parts[0] is not None
     assert policy_input.env_parts[0].next_obs is None
     assert torch.equal(policy_input.obs["states"], env_output.obs["states"])
-    assert torch.equal(
-        policy_input.external_actions,
-        torch.tensor([[[1.0, 2.0], [1.0, 2.0]]]),
-    )
+    assert torch.equal(policy_input.external_actions, hold_chunk)
+    # Rollout sends nothing back, so the next chunk starts without a receive.
+    assert torch.equal(env._recv_actions(Mock(), 0), hold_chunk)
+    env.recv_from.assert_not_called()
+    # The chunk after that waits for the policy again.
+    env._recv_actions(Mock(), 0)
+    env.recv_from.assert_called_once()
 
 
 def _publish_step_env(**overrides):
@@ -3535,7 +3547,8 @@ def test_rollout_routes_external_input_without_model_inference():
     )
     assert torch.equal(external_part.external_actions, dummy_actions)
     assert rollout._predict_rollout_actions.call_count == 1
-    assert torch.equal(rollout._send_actions.call_args_list[1].args[1], dummy_actions)
+    # Only the inferred chunk gets a reply; the env already runs its own actions.
+    rollout._send_actions.assert_called_once()
 
 
 def test_decoupled_final_completion_uses_next_bootstrap():
