@@ -25,6 +25,9 @@ independently of an RLinf task.
    * - :doc:`PhyAI <phyai>`
      - Train PI0.5 on LIBERO with an FSDP actor and PhyAI's in-process GPU rollout backend.
 
+   * - :doc:`Qwen3.5 Weight Synchronization <../qwen35_weight_sync>`
+     - Configure Megatron-to-SGLang weight synchronization, MTP, and vision parallelism.
+
 .. toctree::
    :hidden:
 
@@ -33,3 +36,4 @@ independently of an RLinf task.
    InferenceHTTPClient <../inference_http_client>
    SGLang Version Switching <../version>
    PhyAI <phyai>
+   Qwen3.5 Weight Synchronization <../qwen35_weight_sync>
