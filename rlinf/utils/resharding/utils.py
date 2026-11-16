@@ -26,6 +26,8 @@ def get_tp_gather_fn(model_type: str):
         return tp_gather_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
         return tp_gather_fn_qwen3_dense
+    elif model_type == SupportedModel.QWEN3_5:
+        return tp_gather_fn_qwen3_5
     elif model_type == SupportedModel.QWEN3_MOE:
         return tp_gather_fn_qwen3_moe
     elif model_type in (SupportedModel.DEEPSEEK_V3,):
@@ -322,6 +324,115 @@ def tp_gather_fn_qwen3_dense(
             v, dim, tp_group, cat, tp_gather_is_identity
         )
 
+    return full_state_dict
+
+
+def tp_gather_fn_qwen3_5(
+    model_state_dict: dict[str, torch.Tensor],
+    tp_group,
+    cat: str,
+    split_fc1: bool = True,
+    tp_gather_is_identity: bool = False,
+    model_config=None,
+) -> dict:
+    """Gather Qwen3.5 language, vision, merger and MTP parameters."""
+    assert model_config is not None and split_fc1 and not tp_gather_is_identity, (
+        "Qwen3.5 requires model_config, HF conversion and full TP gathering."
+    )
+    tp_size = torch.distributed.get_world_size(tp_group)
+    qk = model_config.linear_key_head_dim * model_config.linear_num_key_heads
+    v = model_config.linear_value_head_dim * model_config.linear_num_value_heads
+    heads = model_config.linear_num_value_heads
+    assert all(size % tp_size == 0 for size in (qk, v, heads)), (
+        f"Qwen3.5 GDN dimensions {(qk, v, heads)} must be divisible by actor TP={tp_size}."
+    )
+    full_state_dict = {}
+    for key, tensor in model_state_dict.items():
+        vision = key.startswith("vision_model.")
+        if key.endswith(
+            (
+                "self_attention.in_proj.weight",
+                "self_attention.conv1d.weight",
+                "self_attention.conv1d.bias",
+            )
+        ):
+            sizes = (
+                (qk, qk, v, v, heads, heads)
+                if key.endswith("in_proj.weight")
+                else (qk, qk, v)
+            )
+            parts = tensor.split([size // tp_size for size in sizes], dim=0)
+            gathered = torch.cat(
+                [all_gather_tensor(part.contiguous(), 0, tp_group) for part in parts],
+                dim=0,
+            )
+            full_state_dict[key] = (gathered, ("segments", 0, sizes, cat))
+            continue
+
+        replicated = key.endswith(
+            (
+                "layer_norm_weight",
+                "layer_norm_bias",
+                "final_layernorm.weight",
+                "q_layernorm.weight",
+                "k_layernorm.weight",
+                "out_norm.weight",
+                "enorm.weight",
+                "hnorm.weight",
+                "linear_proj.bias",
+                "linear_fc2.bias",
+            )
+        ) or (
+            vision
+            and (
+                key.startswith("vision_model.patch_embed.")
+                or key.startswith("vision_model.merger.patch_norm.")
+            )
+        )
+        if key == "vision_model.pos_embed.weight":
+            # Megatron replicates the table; SGLang uses VocabParallelEmbedding.
+            full_state_dict[key] = (tensor.clone(), ("slice", 0, cat))
+        elif replicated:
+            full_state_dict[key] = (tensor.clone(), None)
+        elif key.endswith("eh_proj.weight"):
+            # SGLang's MTP fusion projection is replicated on every draft rank.
+            full_state_dict[key] = (all_gather_tensor(tensor, 0, tp_group), None)
+        elif not vision and key.endswith("mlp.linear_fc1.weight"):
+            gate, up = _gather_fused_fc1(tensor, tp_group, False)
+            for name, value in (("gate_proj", gate), ("up_proj", up)):
+                full_state_dict[key.replace("linear_fc1", name)] = (
+                    value,
+                    ("slice", 0, cat),
+                )
+        elif key.endswith(
+            (
+                "word_embeddings.weight",
+                "output_layer.weight",
+                "linear_qkv.weight",
+                "linear_qkv.bias",
+                "linear_fc1.weight",
+                "linear_fc1.bias",
+                "self_attention.A_log",
+                "self_attention.dt_bias",
+            )
+        ):
+            full_state_dict[key] = (
+                all_gather_tensor(tensor, 0, tp_group),
+                ("slice", 0, cat),
+            )
+        elif key.endswith(
+            (
+                "linear_proj.weight",
+                "linear_fc2.weight",
+                "out_proj.weight",
+            )
+        ):
+            full_state_dict[key] = (
+                all_gather_tensor(tensor, 1, tp_group),
+                ("slice", 1, cat),
+            )
+        else:
+            assert False, f"Unknown parameter: {key}"
     return full_state_dict
 
 

@@ -33,6 +33,7 @@ from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
     PlacementMode,
 )
+from rlinf.workers.rollout.utils import DisaggRankMapper
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "../../toolkits/auto_placement")
@@ -42,6 +43,28 @@ from node import ComponentNode, MegatronNode, RolloutNode, SccNode  # noqa: E402
 from placement import ScheduleMode, ScheduleResult  # noqa: E402
 from util import init_global_config  # noqa: E402
 from workflow import Workflow, traverse_st_cuts  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "actor_tp, actor_world, rollout_tp, rollout_world, expected",
+    [
+        (1, 1, 2, 2, {0: [(0, 0), (0, 1)]}),
+        (2, 2, 1, 1, {0: [(0, 0)], 1: []}),
+        (1, 3, 2, 4, {0: [(0, 0), (0, 1)], 1: [(1, 0)], 2: [(1, 1)]}),
+        (4, 4, 2, 2, {0: [(0, 0)], 1: [(0, 1)], 2: [], 3: []}),
+        (2, 2, 4, 4, {0: [(0, 0), (0, 1)], 1: [(0, 2), (0, 3)]}),
+    ],
+)
+def test_disaggregated_weight_destinations(
+    actor_tp, actor_world, rollout_tp, rollout_world, expected
+):
+    args = (actor_tp, 1, actor_world, rollout_tp, rollout_world)
+    assert DisaggRankMapper.get_actor_rank_to_rollout_rank_map(*args) == expected
+    reverse = DisaggRankMapper.get_rollout_rank_to_actor_rank_map(*args)
+    assert len(reverse) == rollout_world
+    assert reverse == {
+        target: actor for actor, targets in expected.items() for target in targets
+    }
 
 
 class FakeCluster:

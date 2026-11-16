@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Optional
 
 from megatron.core.transformer import TransformerConfig
@@ -92,6 +93,9 @@ class ReshardConfig:
     attn TP (reshard_tp_size) != full engine TP (rollout_full_tp_size), requiring
     different gather+slice strategies per weight type (DPA three/four-way split)."""
 
+    vision_config: Optional[object] = None
+    """Vision configuration of a multimodal Megatron provider."""
+
     @property
     def split_fc1(self) -> bool:
         """Whether tp_gather_fn should split fused fc1 into gate_proj/up_proj.
@@ -117,6 +121,10 @@ class ReshardConfig:
 
         if self.tp_gather_fn is None:
             self.tp_gather_fn = get_tp_gather_fn(self.model_type)
+            if self.model_type == "qwen3_5":
+                self.tp_gather_fn = partial(
+                    self.tp_gather_fn, model_config=self.model_config
+                )
 
         # tpe_gather_fn only use in moe model parallel
         if self.model_config.num_moe_experts is not None and self.tpe_gather_fn is None:
