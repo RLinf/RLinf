@@ -1,15 +1,12 @@
 GR00T-N1.7 Supervised Fine-Tuning
 =================================
 
-Fine-tune GR00T-N1.7 on LIBERO demonstrations with RLinf, starting from the
-NVIDIA 3B checkpoint. This recipe covers dataset preparation, full-parameter
-training, and checkpoint recovery.
+Fine-tune GR00T-N1.7 on LIBERO Spatial demonstrations and save a checkpoint you can resume. This recipe starts from NVIDIA's 3B model and trains the vision encoder, language model, and action head with FSDP.
 
 Overview
 --------
 
-Use the main-camera and wrist-camera images, robot state, and task instruction
-to learn LIBERO action chunks.
+The policy learns 16-step action chunks from two camera views, robot state, and a task instruction.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -32,7 +29,7 @@ to learn LIBERO action chunks.
    .. grid-item-card:: Hardware
       :text-align: center
 
-      NVIDIA CUDA · FSDP
+      8 NVIDIA GPUs · FSDP
 
 Tasks
 ~~~~~
@@ -40,11 +37,11 @@ Tasks
 .. list-table::
    :header-rows: 1
 
-   * - Dataset
-     - Task / Suite
+   * - Suite
+     - Demonstrations
      - Config
-   * - LIBERO LeRobot
-     - Spatial
+   * - LIBERO Spatial: 10 tasks
+     - 432 episodes, 52,970 timesteps at 20 Hz
      - ``libero_sft_gr00t_n1d7``
 
 Observation and Action
@@ -54,11 +51,11 @@ Observation and Action
    :header-rows: 1
 
    * - Field
-     - Description
+     - Training Data
    * - Observation
-     - Main-camera and wrist-camera RGB images; end-effector position, orientation, and gripper state
+     - Main-camera and wrist-camera RGB images; 8-dimensional end-effector and gripper state
    * - Action
-     - 16 steps of LIBERO Cartesian displacement, rotation increment, and gripper control
+     - 16 steps of 7-dimensional Cartesian displacement, rotation increment, and gripper control
    * - Prompt
      - The demonstration's task instruction
 
@@ -67,25 +64,19 @@ Installation
 
 .. include:: _setup_common.rst
 
-Install GR00T-N1.7 and the supported simulation dependencies:
+Install the GR00T-N1.7 environment, then activate it:
 
 .. code-block:: bash
 
    bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
    source .venv/bin/activate
 
-The installer places the upstream GR00T checkout at ``.venv/gr00t``. If you reuse
-an existing checkout with ``GR00T_PATH``, copy ``examples/LIBERO/modality.json``
-from that checkout instead.
+You can also activate an existing environment installed with these model and environment options. Run the remaining commands from the RLinf repository root in that environment. The example configuration uses one node with eight NVIDIA GPUs; adjust GPU placement and batch sizes together for another allocation.
 
 Download the Model and Data
 ---------------------------
 
-Accept the access terms for `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_
-and authenticate your Hugging Face account before downloading the backbone
-configuration and tokenizer. The GR00T checkpoint contains the backbone weights.
-
-Download the model assets with the Hugging Face CLI:
+Accept the access terms for `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_, then download the GR00T weights and the backbone configuration and tokenizer:
 
 .. code-block:: bash
 
@@ -94,83 +85,80 @@ Download the model assets with the Hugging Face CLI:
    hf download nvidia/Cosmos-Reason2-2B \
      --include '*.json' '*.txt' --local-dir checkpoints/Cosmos-Reason2-2B
 
-Download the Spatial demonstrations and copy the upstream modality description
-into the dataset metadata:
+The GR00T checkpoint contains the backbone weights. The Cosmos directory supplies the configuration and tokenizer used to load them.
+
+Download the `Spatial LeRobot dataset <https://huggingface.co/datasets/IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot>`_ and copy the GR00T modality description into its metadata:
 
 .. code-block:: bash
 
    hf download IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
      --repo-type dataset --local-dir datasets/libero_spatial
-   cp .venv/gr00t/examples/LIBERO/modality.json datasets/libero_spatial/meta/modality.json
+   cp "${GR00T_PATH:-.venv/gr00t}/examples/LIBERO/modality.json" \
+     datasets/libero_spatial/meta/modality.json
 
-Keep the dataset's ``meta/``, ``data/``, and ``videos/`` directories together.
-The training processor uses the dataset statistics for normalization and saves
-them with each checkpoint. The action and state transformations follow the
-upstream GR00T LIBERO configuration.
+Keep ``meta/``, ``data/``, and ``videos/`` together. Training computes normalization statistics from this dataset and saves them with each checkpoint.
 
 Run It
 ------
 
-Set the model and dataset paths in
-``examples/sft/config/libero_sft_gr00t_n1d7.yaml``:
+Edit ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Set the three asset paths, then choose GPU placement, batch sizes, and the update budget:
 
 .. code-block:: yaml
 
+   cluster:
+     component_placement:
+       actor: 0-7
    data:
      train_data_paths:
        - /absolute/path/to/datasets/libero_spatial
+   runner:
+     max_steps: 20000
+     save_interval: 1000
    actor:
+     micro_batch_size: 1
+     global_batch_size: 32
      model:
        model_path: /absolute/path/to/checkpoints/GR00T-N1.7-3B
        backbone_model_path: /absolute/path/to/checkpoints/Cosmos-Reason2-2B
+     optim:
+       total_training_steps: 20000
 
-The example places eight actors on one node. Set ``cluster.component_placement.actor``
-for your available GPUs, then choose ``actor.global_batch_size`` and
-``actor.micro_batch_size`` so that gradient accumulation is an integer.
-The model loads in FP32. FSDP uses BF16 for the backbone and attention blocks
-and FP32 for the projection layers. The visual encoder, language model, and
-action head are trainable; gradient checkpointing is disabled.
+The global batch size must be divisible by the number of GPUs times the microbatch size. Keep ``runner.max_epochs: -1``: training samples continuously and stops at ``runner.max_steps``. Set ``actor.optim.total_training_steps`` to the intended learning-rate schedule length. The 20,000-update budget is an example, not a measured convergence target.
 
-Launch the training entry point:
+Launch a single-node run with the edited configuration. Start a local Ray instance so the run does not join another cluster on the machine:
 
 .. code-block:: bash
 
+   export RLINF_NODE_RANK=0
+   export RAY_ADDRESS=local
    bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
 
-Set the update budget with ``runner.max_steps`` and match
-``actor.optim.total_training_steps`` to your learning-rate schedule. The example
-uses 20,000 updates and saves every 1,000 updates. These are example settings,
-not a measured LIBERO convergence budget.
+The launcher writes the console log and TensorBoard events to ``logs/<timestamp>-libero_sft_gr00t_n1d7/``. Watch ``train/loss`` and the global update count; checkpoints appear under that run directory as ``libero_sft_gr00t_n1d7/checkpoints/global_step_N/``.
 
-The upstream processor pads actions to the checkpoint's action space and masks
-unused action dimensions and timesteps in its flow-matching loss.
-The data stream samples indefinitely, so use an update budget with
-``runner.max_epochs: -1``.
+Resume from a Checkpoint
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Set ``runner.resume_dir`` in the same YAML to the absolute path of a saved ``global_step_N`` directory, then rerun the launch command above. Keep the dataset, GPU topology, batch sizes, and dataloader worker count unchanged. ``runner.max_steps`` is the total update count to reach, including the updates already completed.
+
+For a short save-and-resume check, set ``runner.max_steps: 10``, ``runner.save_interval: 10``, ``actor.optim.lr_warmup_steps: 0``, and ``actor.optim.total_training_steps: 20`` for the first launch. After it finishes, set ``runner.max_steps: 20`` and ``runner.resume_dir`` to its ``global_step_10`` directory, then launch again. The second run should continue at update 10 and save ``global_step_20``. See :doc:`../../guides/resume` for checkpoint recovery details.
+
+.. note::
+
+   The dataloader restores its position by replaying the stream. Random image augmentation is not guaranteed to replay bit for bit.
 
 Visualization and Results
 -------------------------
 
-Inspect the training loss in TensorBoard under ``runner.logger.log_path``.
-Each saved actor checkpoint includes model and optimizer state, the training
-processor, normalization statistics, and dataloader recovery state. The actor
-directory contains ``processor_config.json``, ``statistics.json``,
-``embodiment_id.json``, and ``config.json``.
-For checkpoint recovery, set ``runner.resume_dir`` to the saved ``checkpoints/global_step_N`` directory
-and follow :doc:`../../guides/resume`.
-
-Resume with the same training configuration and a saved update directory:
+Open TensorBoard to inspect the run:
 
 .. code-block:: bash
 
-   export EMBODIED_PATH="$PWD/examples/sft"
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
-     runner.resume_dir=/absolute/path/to/checkpoints/global_step_1000
+   tensorboard --logdir logs
 
-The streaming dataloader resumes by fast-forwarding its iterator. Its random
-image augmentation state is not an exact replay guarantee. Keep the dataset,
-worker count, and GPU topology fixed when resuming.
+Use ``train/loss`` to track action fitting and check that the saved update directories match your budget. Each checkpoint contains model and optimizer state, training normalization and processor settings, and dataloader recovery state. Metric definitions are in :doc:`../../reference/metrics`.
 
-Training loss measures action fitting. Evaluate closed-loop task success
-separately. See :doc:`gr00t` for the LIBERO setup; exporting this SFT checkpoint
-for closed-loop evaluation requires a separate compatibility check.
+Closed-loop evaluation also requires a model directory containing the matching processor settings. See :doc:`../../evaluations/index` for the evaluation workflow and :doc:`gr00t` for LIBERO setup.
+
+.. warning::
+
+   Evaluation must use both the trained weights and the processor settings saved with them. Setting ``runner.ckpt_path`` loads weights only; the processor comes from ``rollout.model.model_path``. An SFT ``actor/`` directory is a training checkpoint, not a complete Hugging Face model directory. Prepare a model directory with the matching processor before evaluating.
