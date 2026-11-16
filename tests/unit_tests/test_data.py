@@ -22,6 +22,7 @@ import json
 import pickle
 import random
 import shutil
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -2760,7 +2761,10 @@ def test_replay_collector_skips_start_preview_and_aborted_transitions(
     collector.manual_episode_control_only = True
     logs = []
     collector.log_info = logs.append
-    collector.run()
+    collector._stop_requested = threading.Event()
+    collector._run_future = None
+    collector._resources_closed = False
+    asyncio.run(collector.run())
     assert env.index == 10
     assert collector.total_cnt == 2
     assert len(saved) == 1
@@ -2807,7 +2811,10 @@ def test_lerobot_only_collector_does_not_build_replay_trajectories(monkeypatch):
     collector.manual_episode_control_only = True
     logs = []
     collector.log_info = logs.append
-    collector.run()
+    collector._stop_requested = threading.Event()
+    collector._run_future = None
+    collector._resources_closed = False
+    asyncio.run(collector.run())
     assert collector.total_cnt == 1
     assert all("Replay buffer saved" not in message for message in logs)
 
@@ -4133,3 +4140,71 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
+
+
+@pytest.mark.parametrize("phase", ["first_reset", "step", "next_reset"])
+def test_data_collector_stop_requests_stop_and_closes_resources(monkeypatch, phase):
+    DataCollector = _load_real_data_collector(monkeypatch).DataCollector
+
+    async def run():
+        collector = object.__new__(DataCollector)
+        collector._stop_requested = threading.Event()
+        collector._resources_closed = False
+        collector._run_future = None
+        collector._preexisting_success = collector.total_cnt = 0
+        collector.num_data_episodes = 2
+        collector.action_dim = 1
+        collector._target_step_period = 60
+        collector.manual_episode_control_only = False
+        collector.log_info = Mock()
+        collector.cfg = OmegaConf.create(
+            {
+                "runner": {
+                    "record_task_description": False,
+                    "logger": {"log_path": "."},
+                },
+                "env": {"eval": {"max_episode_steps": 10}},
+            }
+        )
+        ready = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        release = threading.Event()
+        obs = {"states": torch.zeros(1, 2)}
+
+        def wait_for_stop():
+            loop.call_soon_threadsafe(ready.set)
+            assert release.wait(3), "collector stop did not interrupt Pico wait"
+
+        def reset(**kwargs):
+            if phase == "first_reset" or (phase == "next_reset" and kwargs):
+                wait_for_stop()
+                raise KeyboardInterrupt()
+            return obs, {}
+
+        def step(action):
+            if phase == "step":
+                wait_for_stop()
+            done = torch.tensor([phase == "next_reset"])
+            return obs, done.float(), done, torch.tensor([False]), {}
+
+        collector.replay_buffer = Mock()
+        collector.env = SimpleNamespace(
+            reset=reset,
+            step=step,
+            request_stop=Mock(side_effect=release.set),
+            close=Mock(),
+        )
+        task = asyncio.create_task(collector.run())
+        await asyncio.wait_for(ready.wait(), 3)
+        await asyncio.wait_for(collector.stop(), 2)
+        await task
+        await collector.stop()
+
+        assert collector.replay_buffer.add_trajectories.call_count == int(
+            phase == "next_reset"
+        )
+        collector.env.request_stop.assert_called_once_with()
+        collector.env.close.assert_called_once_with()
+        collector.replay_buffer.close.assert_called_once_with()
+
+    asyncio.run(run())

@@ -34,7 +34,10 @@ selects ``replay_buffer`` and ``lerobot_dataset``.
   LeRobot training do not read these files.
 """
 
+import asyncio
 import os
+import signal
+import threading
 import time
 
 import hydra
@@ -48,11 +51,13 @@ from rlinf.data.schema.embodied_types import (
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.real import RealWorldEnv
+from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers.collect_episode import (
     EPISODE_FORMATS,
     resolve_export_formats,
 )
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
+from rlinf.utils.logging import get_logger
 
 
 class DataCollector(Worker):
@@ -64,6 +69,9 @@ class DataCollector(Worker):
         self.cfg = cfg
         self.num_data_episodes = cfg.runner.num_data_episodes
         self.total_cnt = 0
+        self._stop_requested = threading.Event()
+        self._run_future = None
+        self._resources_closed = False
         self.replay_buffer = None
         self._export_formats = self._selected_export_formats(cfg)
         override_cfg = cfg.env.eval.get("override_cfg", {})
@@ -314,7 +322,7 @@ class DataCollector(Worker):
             return
         sleep_for = self._target_step_period - (time.perf_counter() - iter_start)
         if sleep_for > 0:
-            time.sleep(sleep_for)
+            self._stop_requested.wait(sleep_for)
 
     def _log_finished(self):
         if self.replay_buffer is None:
@@ -323,16 +331,26 @@ class DataCollector(Worker):
             f"Finished. Replay buffer saved in: {self.replay_buffer.auto_save_path}"
         )
 
-    def run(self):
+    async def run(self):
+        if self._stop_requested.is_set():
+            return
+        self._run_future = asyncio.get_running_loop().run_in_executor(
+            None, self._run_stoppable
+        )
+        try:
+            return await asyncio.shield(self._run_future)
+        except asyncio.CancelledError:
+            await self.stop()
+            raise
+
+    def _run_stoppable(self):
         try:
             return self._run_collection()
+        except KeyboardInterrupt:
+            if not self._stop_requested.is_set():
+                raise
         finally:
-            # A recorder or camera error must not leave robot outputs open.
-            try:
-                self.env.close()
-            finally:
-                if self.replay_buffer is not None:
-                    self.replay_buffer.close()
+            self._close_resources()
 
     def _run_collection(self):
         # Seed from preexisting episodes so resume bar + stop target line up.
@@ -341,6 +359,8 @@ class DataCollector(Worker):
             self.log_info(f"[resume] target {self.num_data_episodes} already met.")
             return
 
+        if self._stop_requested.is_set():
+            return
         obs, _ = self.env.reset()
         progress_bar = tqdm(
             total=self.num_data_episodes,
@@ -349,7 +369,9 @@ class DataCollector(Worker):
         )
         replay_rollout, replay_obs = self._start_replay_rollout(obs)
 
-        while success_cnt < self.num_data_episodes:
+        while (
+            success_cnt < self.num_data_episodes and not self._stop_requested.is_set()
+        ):
             iter_start = time.perf_counter()
             # Teleop wrapper overrides this via info["intervene_action"].
             action = np.zeros((1, self.action_dim))
@@ -397,6 +419,8 @@ class DataCollector(Worker):
                         f"Discarded. Total success: {success_cnt}/{self.num_data_episodes}"
                     )
 
+                if self._stop_requested.is_set():
+                    break
                 reset_options = None
                 if success_cnt >= self.num_data_episodes:
                     reset_options = {"skip_wait_for_start": True}
@@ -407,6 +431,33 @@ class DataCollector(Worker):
 
         self._log_finished()
 
+    async def stop(self) -> None:
+        """Stop collection before closing and parking the robot environment."""
+        if not self._stop_requested.is_set():
+            self._stop_requested.set()
+            if not self._resources_closed:
+                request_stop = get_env_attr(self.env, "request_stop")
+                if request_stop is not None:
+                    request_stop()
+        if self._run_future is not None:
+            await asyncio.shield(self._run_future)
+        else:
+            self._close_resources()
+
+    def _close_resources(self) -> None:
+        if self._resources_closed:
+            return
+        self._resources_closed = True
+        self.log_info(
+            "Collection stopped; parking the robot and flushing completed episodes."
+        )
+        try:
+            self.env.close()
+        finally:
+            if self.replay_buffer is not None:
+                self.replay_buffer.close()
+        self.log_info("Collection shutdown complete.")
+
 
 @hydra.main(
     version_base="1.1", config_path="config", config_name="realworld_collect_data"
@@ -415,10 +466,42 @@ def main(cfg):
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ComponentPlacement(cfg, cluster)
     env_placement = component_placement.get_strategy("env")
-    collector = DataCollector.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
+    _run_collection(
+        lambda: DataCollector.create_group(cfg).launch(
+            cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        )
     )
-    collector.run().wait()
+
+
+def _run_collection(launch):
+    # Keep the Ray owner alive until the hardware worker acknowledges shutdown.
+    # A signal during actor construction is latched before we have its handle.
+    interrupted = False
+
+    def request_stop(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    previous = signal.signal(signal.SIGINT, request_stop)
+    try:
+        collector = launch()
+        try:
+            if not interrupted:
+                handle = collector.run()
+                while not interrupted and not handle.done():
+                    time.sleep(0.05)
+                if handle.done():
+                    handle.wait()
+        finally:
+            # Dispatch and wait before writing anything to a possibly closed pipe.
+            collector.stop().wait()
+            if interrupted:
+                get_logger().info(
+                    "Collection worker acknowledged shutdown after closing the "
+                    "robot environment and replay buffer.",
+                )
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 if __name__ == "__main__":

@@ -291,6 +291,10 @@ class DualARX5Env(gym.Env):
             raise
 
     def _request_stop_signal(self, signum: int, frame: Any) -> None:
+        self.request_stop()
+
+    def request_stop(self) -> None:
+        """Interrupt control and Pico waits before the owner parks the arms."""
         self._stop_requested = True
 
     def check_stop_requested(self) -> None:
