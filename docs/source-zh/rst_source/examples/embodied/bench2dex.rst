@@ -113,6 +113,8 @@ policy 根据图像、关节位置和任务描述预测动作。
 训练 policy
 ~~~~~~~~~~~
 
+Task22 和 Task64 的 PPO 配置显式设置 ``env.train.bootstrap_non_auto_reset=true``\ ，配合 ``auto_reset=false`` 和 ``algorithm.bootstrap_type=standard`` 使用。超时结束时将末状态的折扣价值加到奖励中，且只补一次；真正终止和后续填充步骤不补值。自定义配置需要超时补偿时，也需设置 ``env.train.bootstrap_non_auto_reset=true``\ 。省略该项时默认为 ``false``\ ，其他非自动 reset 配置的奖励计算保持不变。
+
 准备好 Task22 模型和资产路径后，启动 PPO 训练：
 
 .. code-block:: bash

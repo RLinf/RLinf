@@ -51,6 +51,7 @@ from rlinf.data.schema.embodied_types import (
     EnvOutput,
     EnvPart,
     EnvTransition,
+    JointPositionTargets,
     LeRobotFrame,
     PolicyInput,
     PolicyOutput,
@@ -1210,8 +1211,9 @@ def test_infer_obs_batch_size_raises_when_unbatched():
 
 @pytest.mark.parametrize("auto_reset", [False, True])
 @pytest.mark.parametrize("has_value", [False, True])
+@pytest.mark.parametrize("bootstrap_non_auto_reset", [False, True])
 def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
-    auto_reset, has_value
+    auto_reset, has_value, bootstrap_non_auto_reset
 ):
     transition = EnvTransition(
         rewards=torch.ones(3, 2),
@@ -1227,9 +1229,10 @@ def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
         bootstrap_type="standard",
         gamma=0.5,
         previous_dones=torch.zeros(3, 2, dtype=torch.bool),
+        bootstrap_non_auto_reset=bootstrap_non_auto_reset,
     )
     expected = torch.ones(3, 2)
-    if has_value:
+    if has_value and (auto_reset or bootstrap_non_auto_reset):
         expected[0, -1] = 3.0
     assert torch.equal(rewards, expected)
     assert torch.equal(transition.rewards, torch.ones(3, 2))
@@ -1267,6 +1270,7 @@ def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding():
         bootstrap_type="standard",
         gamma=0.5,
         previous_dones=previous,
+        bootstrap_non_auto_reset=True,
     )
     expected = torch.zeros(4, 4)
     expected[0, 1], expected[1, 0] = 2.0, 3.0
@@ -2243,6 +2247,7 @@ def test_nonreset_collector_bootstraps_once_per_episode_after_reset():
         env={
             "train": {
                 "auto_reset": False,
+                "bootstrap_non_auto_reset": True,
                 "rollout_epoch": 2,
                 "max_steps_per_rollout_epoch": 3,
             }
@@ -2321,6 +2326,31 @@ def test_history_reward_assignment_matches_main_across_chunks():
 
     # Current reward: 1 + 2 * 3. History assignment adds 2 * 3 to step 0.
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
+
+
+def test_history_reward_assignment_with_explicit_nonreset_bootstrap():
+    cfg = _config(
+        env={"train": {"auto_reset": False, "bootstrap_non_auto_reset": True}},
+        reward={
+            "env_reward_weight": 1.0,
+            "history_reward_assign": True,
+            "reward_mode": "history_buffer",
+            "reward_weight": 2.0,
+        },
+    )
+    collector = _make(cfg, chunk_count=2)
+    first_key = TrajectoryKey(3, 0, 0, 0, 0)
+    second_key = TrajectoryKey(3, 0, 0, 0, 1)
+    initial = EnvTransition(dones=torch.zeros(1, 1, dtype=torch.bool))
+    first_env = _env_part(first_key, initial_transition=initial)
+    first_env.transition.dones[:] = False
+    first_env.transition.truncations[:] = False
+    second_env = _env_part(second_key)
+    second_env.transition.reward_model_output = torch.tensor([[3.0]])
+    second_env.transition.reward_assign_lengths = [2]
+    assert _collect(collector, _policy(first_key), first_env) == []
+    [(_, trajectory)] = _collect(collector, second_env, _policy(second_key))
+    assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[9.0]]]))
 
 
 @pytest.mark.parametrize("loss_type", ["rlt_ac", "rlt_td3"])
@@ -3458,7 +3488,8 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
     assert policy_input.env_parts[0].requires_inference
 
 
-def test_rollout_completes_each_epoch_through_policy_inputs():
+@pytest.mark.parametrize("named_targets", [False, True])
+def test_rollout_completes_each_epoch_through_policy_inputs(named_targets):
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
@@ -3525,10 +3556,13 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
             ),
         ]
     )
+    actions = torch.zeros(1, 1)
+    if named_targets:
+        actions = JointPositionTargets(actions, [["joint"]], "active")
     rollout._predict_rollout_actions = Mock(
         side_effect=[
-            (torch.zeros(1, 1), {"forward_inputs": {"states": torch.tensor([[1]])}}),
-            (torch.zeros(1, 1), {"forward_inputs": {"states": torch.tensor([[2]])}}),
+            (actions, {"forward_inputs": {"states": torch.tensor([[1]])}}),
+            (actions, {"forward_inputs": {"states": torch.tensor([[2]])}}),
             (
                 torch.zeros(1, 1),
                 {
@@ -3562,6 +3596,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     assert torch.equal(env_parts[1].bootstrap_values, torch.tensor([[4.0]]))
     assert torch.equal(env_parts[1].final_prev_values, torch.tensor([[4.0, 5.0]]))
     assert rollout._predict_rollout_actions.call_count == 3
+    assert rollout._send_actions.call_count == 2
+    assert all(call.args[1] is actions for call in rollout._send_actions.call_args_list)
 
 
 def test_rollout_routes_external_input_without_model_inference():

@@ -15,9 +15,10 @@
 """Bench2Dex evaluation, scene lifecycle, rewards and recipe contracts."""
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -25,6 +26,64 @@ import pytest
 from evaluations.bench2dex.run_all_channels import channel_command
 from rlinf.envs.sim.bench2dex.evaluation import configure_profile, normalize_profile
 from rlinf.envs.sim.bench2dex.rewards import StageCompletionReward
+
+
+def test_runtime_releases_contact_reader_before_scene_teardown(monkeypatch):
+    from rlinf.envs.sim.bench2dex.runtime import Bench2DexRuntime
+
+    events = []
+
+    class Reader:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            events.append(self.name)
+
+    class Stage:
+        def GetPrimAtPath(self, path):
+            return SimpleNamespace(IsValid=lambda: False)
+
+    episode_runtime = ModuleType("utils.episode_runtime")
+    episode_runtime.clear_scene_prims_preserve_robot = lambda **kwargs: events.append(
+        "scene"
+    )
+    usd_prims = ModuleType("utils.usd_prims")
+    usd_prims.get_current_stage_compat = Stage
+    usd_prims.delete_prim_compat = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "utils.episode_runtime", episode_runtime)
+    monkeypatch.setitem(sys.modules, "utils.usd_prims", usd_prims)
+
+    runtime = object.__new__(Bench2DexRuntime)
+    runtime.camera_rig = runtime.tactile_rig = None
+    runtime.contact_reader = Reader("first")
+    runtime.runtime = object()
+    runtime._closed = False
+    runtime.sim = SimpleNamespace(
+        clear_all_callbacks=lambda: events.append("callbacks"),
+        clear_instance=lambda: events.append("instance"),
+    )
+    runtime.app = Reader("app")
+
+    runtime._clear_scene()
+    runtime._clear_scene()
+    assert events == ["first", "scene"]
+    assert runtime.contact_reader is None
+
+    runtime.contact_reader = Reader("second")
+    runtime.runtime = object()
+    runtime.close()
+    runtime.close()
+    assert events == [
+        "first",
+        "scene",
+        "second",
+        "scene",
+        "callbacks",
+        "instance",
+        "app",
+    ]
+    assert runtime.contact_reader is None
 
 
 @pytest.mark.parametrize(
@@ -705,6 +764,7 @@ def test_bench2dex_recipes(
         return
     is_async = "_async_" in config_name
     is_grpo = "_grpo_" in config_name
+    assert cfg.env.train.get("bootstrap_non_auto_reset", False) is (not is_grpo)
     assert cfg.actor.enable_offload and cfg.rollout.enable_offload
     assert cfg.env.train.enable_offload is (not is_async)
     assert cfg.env.eval.enable_offload is True
@@ -744,6 +804,7 @@ def test_bench2dex_e2e_recipes(compose_bench2dex_recipe, config_name):
         == cfg.actor.global_batch_size
     )
     assert cfg.env.train.enable_offload is ("_async_" not in config_name)
+    assert cfg.env.train.bootstrap_non_auto_reset is True
 
 
 def test_bench2dex_e2e_evaluation_recipe(compose_bench2dex_recipe):
@@ -798,6 +859,9 @@ def test_bench2dex_openpi_sampling_cli_override(compose_bench2dex_recipe, asynch
         ("+rollout.model.openpi.noise_level=0.7", "noise_level"),
         ("+rollout.model.openpi.num_steps=8", "num_steps"),
         ("+rollout.model.openpi.task=eval", "task='rl'"),
+        ("env.train.bootstrap_non_auto_reset=invalid", "Expected boolean"),
+        ("env.train.auto_reset=true", "bootstrap_non_auto_reset=true requires"),
+        ("algorithm.bootstrap_type=always", "bootstrap_non_auto_reset=true requires"),
     ],
 )
 def test_bench2dex_rejects_conflicting_openpi_rollout_options(

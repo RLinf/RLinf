@@ -351,9 +351,6 @@ class Bench2DexRuntime:
             robot_state=self._read_robot_state(),
             joint_limits=self.joint_limits,
         )
-        if self.contact_reader is not None:
-            self.contact_reader.close()
-            self.contact_reader = None
         pairs = self.runtime.get("contact_pairs", [])
         if pairs:
             from collector.contact_sensor_reader import ContactSensorReader
@@ -828,7 +825,9 @@ class Bench2DexRuntime:
         if self.tactile_rig is not None:
             self.tactile_rig.close()
             self.tactile_rig = None
-        self.contact_reader = None
+        if self.contact_reader is not None:
+            self.contact_reader.close()
+            self.contact_reader = None
         if self.runtime is not None:
             self.runtime = self.objects = self.robot = self.controlled = (
                 self.targets
