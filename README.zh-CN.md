@@ -33,6 +33,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
 - [2026/11] 🔥 RLinf 支持使用 FSDP，在 LIBERO 示范数据上全参数微调 GR00T-N1.7。文档：[GR00T-N1.7 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_gr00t.html)。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
@@ -443,6 +444,7 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): 数字孪生与机器人结合的平台，利用RLinf进行大规模具身强化学习训练。
 - [Genie Sim](https://github.com/AgibotTech/genie_sim): 智元机器人开源的仿真平台，支持场景生成、数据采集与基准评测，集成RLinf以 PPO 和 GRPO 对 VLA 模型进行后训练。
 - [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): 将RLinf正式整合进IsaacLab，可在基于NVIDIA Isaac Sim的机器人环境中实现无缝衔接的强化学习工作流程。
+- [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt): NVIDIA 面向机器人策略的仿真强化学习后训练库，将 RLinf 集成为分布式 rollout 与训练运行时，并接入示范协同训练（Co-Training）。
 - [RISE](https://github.com/OpenDriveLab/RISE): 基于组合式世界模型的机器人强化学习框架，使用 RLinf 进行在线强化学习。
 
 💡 希望在此展示您的项目吗？欢迎提交拉取请求（PR），我们非常乐意将其收录其中！
