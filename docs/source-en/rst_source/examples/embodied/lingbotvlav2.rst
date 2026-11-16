@@ -337,15 +337,14 @@ Standalone Evaluation
 
 Run standalone evaluation through the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`
 with the ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_eval.yaml`` config. In a new shell, first
-export the three variables from `Environment Variables`_. The command below
-evaluates a checkpoint on the 64 fixed seeds behind the results table, with the
-rollout and the environments on one GPU:
+export the three variables from `Environment Variables`_. The config evaluates on
+the 64 fixed seeds behind the results table, with the rollout and the
+environments on one GPU:
 
 .. code-block:: bash
 
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt \
-      env.eval.total_num_envs=64 cluster.component_placement.env=0
+      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
 Leave out ``runner.ckpt_path`` to evaluate the released weights. For an SFT or
 GRPO checkpoint, also pass ``rollout.model.add_value_head=false`` so strict

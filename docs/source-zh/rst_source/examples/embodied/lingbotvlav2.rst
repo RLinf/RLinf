@@ -276,13 +276,12 @@ SFT 与 GRPO 都以 ``add_value_head: false`` 构建模型，因此 actor 和 ro
 独立评测
 ----------------------------------------
 
-通过 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_eval.yaml``。在新的终端中评测前，先导出 `环境变量`_ 中的三个变量。下面的命令在结果表所用的 64 个固定 seeds 上评测 checkpoint，rollout 与环境放在同一张 GPU 上：
+通过 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行独立评测，配置为 ``evaluations/robotwin/robotwin_click_bell_lingbotvlav2_eval.yaml``。在新的终端中评测前，先导出 `环境变量`_ 中的三个变量。该配置在结果表所用的 64 个固定 seeds 上评测，rollout 与环境放在同一张 GPU 上：
 
 .. code-block:: bash
 
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
-      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt \
-      env.eval.total_num_envs=64 cluster.component_placement.env=0
+      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
 去掉 ``runner.ckpt_path`` 即评测官方权重。评测 SFT 或 GRPO checkpoint 时，同时传入 ``rollout.model.add_value_head=false``，使严格加载使用与训练时一致的模型结构。
 

@@ -13,9 +13,11 @@ hydra:
 
 cluster:
   num_nodes: 1
+  # The 64 fixed seeds behind the reported results, with the rollout and the
+  # environments on one GPU.
   component_placement:
     rollout: 0
-    env: 1
+    env: 0
 
 runner:
   task_type: embodied_eval
@@ -37,7 +39,7 @@ env:
   group_name: EnvGroup
   eval:
     rollout_epoch: 1
-    total_num_envs: 2
+    total_num_envs: 64
     auto_reset: true
     ignore_terminations: true
     max_episode_steps: 400
