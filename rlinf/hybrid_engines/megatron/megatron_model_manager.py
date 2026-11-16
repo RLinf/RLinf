@@ -339,15 +339,11 @@ class MegatronModelManager:
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
         if _model_type == "qwen3_5":
-            text_config = getattr(provider, "hf_text_config", None)
-            assert (
-                text_config is not None
-                and getattr(provider, "vision_config", None) is not None
-            ), "Qwen3.5 weight sync requires the full Qwen35VLBridge provider."
+            text_config = provider.hf_text_config
             if self._cfg.model.get("load_mtp", True):
-                mtp_layers = getattr(text_config, "mtp_num_hidden_layers", 0)
-                assert mtp_layers == 1 and not getattr(
-                    text_config, "mtp_use_dedicated_embeddings", False
+                mtp_layers = text_config.mtp_num_hidden_layers
+                assert (
+                    mtp_layers == 1 and not text_config.mtp_use_dedicated_embeddings
                 ), "Qwen3.5 weight sync requires one MTP layer with shared embeddings."
                 provider.mtp_num_layers = mtp_layers
             else:

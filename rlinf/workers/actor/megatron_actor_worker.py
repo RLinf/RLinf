@@ -481,12 +481,6 @@ class MegatronActor(MegatronWorker):
             # PP groups, which a rank with no rollout target still belongs to.
             # Only the narrow and the send depend on having a target.
             full_sd = self.rollout_weights_reshard.gather_full_model(bucket_weight)
-            if self.rollout_weights_reshard.config.model_type == "qwen3_5":
-                self._send_qwen35_weight_bucket(
-                    full_sd, bucket_idx, len(model_bucket_list)
-                )
-                del full_sd
-                continue
             if self.num_weight_targets > 0:
                 if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
                     buffer = self.rollout_weights_reshard.narrow_to_target(
@@ -555,85 +549,6 @@ class MegatronActor(MegatronWorker):
                     offload_grad=False, offload_weight=True
                 )
                 self.is_weight_offloaded = True
-
-    def _send_qwen35_weight_bucket(
-        self,
-        full_weights: dict[str, tuple[torch.Tensor, tuple | None]],
-        index: int,
-        count: int,
-    ) -> None:
-        """Send target shards and agree on completion across all Actor ranks."""
-        collocated = self.rollout_sync_mode == RolloutSyncMode.COLLOCATED
-        targets = (
-            [self._weight_dst_rank_in_rollout]
-            if collocated
-            else self._weight_dst_rank_in_rollout
-        )
-        # Receivers agree within their TP group before acknowledging a bucket,
-        # so every target must receive it before the sender waits for any ACK.
-        for target_index, target in enumerate(targets):
-            weights = self.rollout_weights_reshard.narrow_to_target(
-                full_weights,
-                self.dst_tp_rank if collocated else self.dst_tp_rank[target_index],
-                self.dst_ep_rank if collocated else self.dst_ep_rank[target_index],
-                dst_lm_head_rank=(
-                    self.dst_lm_head_rank
-                    if collocated
-                    else self.dst_lm_head_rank[target_index]
-                ),
-                dst_shared_rank=(
-                    self.dst_shared_rank
-                    if collocated
-                    else self.dst_shared_rank[target_index]
-                ),
-            )
-            payload = (
-                {key: reduce_tensor(value) for key, value in weights.items()}
-                if collocated
-                else weights
-            )
-            if index == 0:
-                # A tensor-only dict uses the scheduler's GPU tensor transport.
-                payload["bucket_length"] = (
-                    count
-                    if collocated
-                    else torch.tensor(
-                        [count], device=self.torch_platform.current_device()
-                    )
-                )
-            self.send(payload, self.rollout_group_name, target)
-        # The colocated shard stays referenced by weights until the ACK; a
-        # disaggregated shard can be freed after its synchronous tensor send.
-        error = None
-        for target in targets:
-            result = self.recv(self.rollout_group_name, target)
-            if not isinstance(result, dict) or result.get("bucket_index") != index:
-                error = f"Invalid Qwen3.5 bucket acknowledgement: {result}"
-            elif result.get("error") is not None:
-                error = result["error"]
-        failed = torch.tensor(
-            [error is not None],
-            dtype=torch.int32,
-            device=self.torch_platform.current_device(),
-        )
-        torch.distributed.all_reduce(
-            failed,
-            op=torch.distributed.ReduceOp.MAX,
-        )
-        if failed.item() and error is None:
-            error = "Another Actor rank reported a loading failure."
-        # Ranks without targets also join the reduction. Rollout TP groups can
-        # receive from multiple Actor DP groups, which must make one decision.
-        for target in targets:
-            self.send(
-                {"bucket_index": index, "error": error},
-                self.rollout_group_name,
-                target,
-            )
-        if error is not None:
-            raise RuntimeError(
-                f"Qwen3.5 rollout failed to load bucket {index}: {error}"
-            )
 
     def model_state_offload_optimizer_and_grad(self):
         if not self.is_running:

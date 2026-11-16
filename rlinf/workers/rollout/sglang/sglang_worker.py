@@ -230,10 +230,6 @@ class SGLangWorker(Worker):
                     ),
                     speculative_draft_model_path=self._cfg_rollout.model.model_path,
                 )
-            missing = qwen_args.keys() - _SERVER_ARGS_FIELDS
-            assert not missing, (
-                f"Installed SGLang lacks Qwen3.5 arguments: {sorted(missing)}."
-            )
             version_dependent_args.update(qwen_args)
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:

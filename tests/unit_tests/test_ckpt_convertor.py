@@ -311,3 +311,202 @@ def test_sglang_native_qkv_full_and_local_weights_match_bitwise(tp, rank, fused)
     ):
         param.weight_loader(param, full)
         _assert_tensor_bits_equal(param, expected)
+
+
+@pytest.fixture
+def weight_sync_receiver(monkeypatch):
+    native = pytest.importorskip("sglang.srt.managers.scheduler")
+    from sglang.srt.model_loader.weight_utils import default_weight_loader
+
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler
+    from rlinf.scheduler import Worker
+    from rlinf.utils.placement import RolloutSyncMode
+
+    def make(expected, buckets, *, multimodal=False, header=True):
+        model = torch.nn.Module()
+        for name, value in expected.items():
+            model.register_parameter(name, torch.nn.Parameter(torch.zeros_like(value)))
+        events, replies = [], []
+
+        def load_weights(weights):
+            for name, value in weights:
+                if name.startswith("mtp."):
+                    continue
+                events.append(("load", name))
+                default_weight_loader(model.get_parameter(name), value)
+
+        model.load_weights = load_weights
+        messages = []
+        for index, bucket in enumerate(buckets):
+            payload = dict(bucket)
+            if index == 0 and header:
+                payload["bucket_length"] = torch.tensor([len(buckets)])
+            messages.append(payload)
+        pending = iter(messages)
+
+        def recv(*args, async_op=False, **kwargs):
+            payload = next(pending)
+            events.append(("recv", async_op))
+            if async_op:
+                return SimpleNamespace(wait=lambda: payload)
+            return payload
+
+        def flush_cache(self):
+            events.append(("flush", tuple(self.waiting_queue)))
+            return False
+
+        scheduler = object.__new__(Scheduler)
+        scheduler.tp_worker = SimpleNamespace(
+            worker=SimpleNamespace(model_runner=SimpleNamespace(model=model))
+        )
+        scheduler._rlinf_worker = SimpleNamespace(
+            recv=recv, send=lambda message, *args: replies.append(message)
+        )
+        scheduler._actor_group_name = "actor"
+        scheduler.actor_weight_rank = 0
+        scheduler.cfg = SimpleNamespace(rollout=SimpleNamespace(enforce_eager=False))
+        scheduler.model_config = SimpleNamespace(is_multimodal=multimodal)
+        scheduler.rollout_sync_mode = RolloutSyncMode.DISAGGREGATED
+        scheduler.weight_reload = "sync"
+        scheduler.is_weight_offloaded = False
+        scheduler.weight_norm_dict = None
+        scheduler.running_batch = SimpleNamespace(reqs=[], is_empty=lambda: True)
+        scheduler.waiting_queue = []
+        scheduler.chunked_req = None
+        scheduler.enable_overlap = False
+        scheduler._sync_draft_model = None
+        monkeypatch.setattr(native.Scheduler, "flush_cache", flush_cache)
+        monkeypatch.setattr(
+            Worker.torch_platform, "synchronize", lambda: events.append(("sync", None))
+        )
+        return scheduler, model, events, replies
+
+    return make
+
+
+@pytest.mark.parametrize("idle", [False, True])
+def test_sglang_weight_sync_loads_when_cache_flush_is_declined(
+    idle, weight_sync_receiver, monkeypatch
+):
+    from sglang.srt.managers.scheduler import Scheduler as NativeScheduler
+
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+    expected = {"weight": torch.tensor([[-0.0, 1.0], [2.0, 3.0]])}
+    scheduler, model, _, replies = weight_sync_receiver(
+        expected, [expected], multimodal=True
+    )
+    monkeypatch.setattr(NativeScheduler, "is_fully_idle", lambda self: idle)
+    scheduler.sync_hf_weight(SyncHFWeightInput())
+    _assert_tensor_bits_equal(model.weight, expected["weight"])
+    assert replies == []
+
+
+@pytest.mark.parametrize(
+    "multimodal,bucket_count,header",
+    [(False, 1, False)]
+    + [(mm, count, True) for mm in (False, True) for count in (1, 2, 4)],
+)
+@pytest.mark.parametrize("pause_mode", [None, "drain", "in_place", "retract"])
+def test_sglang_weight_sync_common_bucket_lifecycle(
+    multimodal, bucket_count, header, pause_mode, weight_sync_receiver, monkeypatch
+):
+    from sglang.srt.managers import mm_utils
+
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+    expected = {
+        f"weight_{index}": torch.tensor([[-0.0, index + 1.0], [2.0, 3.0]])
+        for index in range(bucket_count)
+    }
+    scheduler, model, events, replies = weight_sync_receiver(
+        expected,
+        [{name: value} for name, value in expected.items()],
+        multimodal=multimodal,
+        header=header,
+    )
+    embedding_cache = {"image": object()}
+    monkeypatch.setattr(mm_utils, "embedding_cache", embedding_cache)
+    if pause_mode in ("in_place", "retract"):
+        scheduler.waiting_queue.append(object())
+    waiting_queue = scheduler.waiting_queue
+    waiting_requests = list(waiting_queue)
+    scheduler.sync_hf_weight(SyncHFWeightInput(pause_mode=pause_mode))
+    for name, value in expected.items():
+        _assert_tensor_bits_equal(model.get_parameter(name), value)
+    assert events[0] == ("sync", None)
+    flush_events = [event for event in events if event[0] == "flush"]
+    if pause_mode == "in_place":
+        assert flush_events == []
+    else:
+        assert flush_events == [("flush", ())]
+        assert events.index(("flush", ())) > max(
+            i for i, event in enumerate(events) if event[0] == "load"
+        )
+    assert scheduler.waiting_queue is waiting_queue
+    assert scheduler.waiting_queue == waiting_requests
+    assert bool(embedding_cache) is (not multimodal)
+    assert replies == []
+    assert [event[1] for event in events if event[0] == "recv"] == [False] + [True] * (
+        bucket_count - 1
+    )
+
+
+def test_sglang_weight_sync_propagates_loading_failures(weight_sync_receiver):
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+    expected = {"weight": torch.tensor([[-0.0, 1.0], [2.0, 3.0]])}
+    bucket = {"weight": torch.ones(3, 2)}
+    scheduler, _, events, replies = weight_sync_receiver(
+        expected, [bucket], multimodal=True
+    )
+    with pytest.raises(AssertionError):
+        scheduler.sync_hf_weight(SyncHFWeightInput())
+    assert replies == []
+    assert not any(event[0] == "flush" for event in events)
+
+
+@pytest.mark.parametrize("shared_storage", [False, True])
+def test_sglang_weight_sync_loads_mtp_and_refreshes_shared_weights(
+    shared_storage, weight_sync_receiver
+):
+    from sglang.srt.model_loader.weight_utils import default_weight_loader
+
+    from rlinf.hybrid_engines.sglang.common.io_struct import SyncHFWeightInput
+
+    expected = {
+        "embedding": torch.tensor([[-0.0, 1.0], [2.0, 3.0]]),
+        "head": torch.tensor([[4.0, 5.0], [6.0, 7.0]]),
+    }
+    mtp_weight = torch.tensor([[8.0, 9.0], [10.0, 11.0]])
+    scheduler, target, events, replies = weight_sync_receiver(
+        expected, [{"mtp.fc": mtp_weight}, expected], multimodal=True
+    )
+    draft = torch.nn.Module()
+    draft.fc = torch.nn.Parameter(torch.zeros_like(mtp_weight))
+    for name in expected:
+        source = target.get_parameter(name)
+        draft.register_parameter(
+            name,
+            source if shared_storage else torch.nn.Parameter(torch.zeros_like(source)),
+        )
+
+    def load_draft_weights(weights):
+        for name, value in weights:
+            events.append(("draft_load", name))
+            default_weight_loader(draft.get_parameter(name.removeprefix("mtp.")), value)
+
+    target.get_embed_and_head = lambda: (target.embedding, target.head)
+    draft.get_embed_and_head = lambda: (draft.embedding, draft.head)
+    draft.load_weights = load_draft_weights
+    scheduler._sync_draft_model = draft
+    scheduler.sync_hf_weight(SyncHFWeightInput())
+
+    for model in (target, draft):
+        for name, value in expected.items():
+            _assert_tensor_bits_equal(model.get_parameter(name), value)
+    _assert_tensor_bits_equal(draft.fc, mtp_weight)
+    assert [event for event in events if event[0] == "draft_load"] == [
+        ("draft_load", "mtp.fc")
+    ]
+    assert replies == []
