@@ -8,6 +8,7 @@
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://rlinf.org/"><img src="https://img.shields.io/badge/Website-00ADEF?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSI%2BPGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjYuNSIvPjxlbGxpcHNlIGN4PSI4IiBjeT0iOCIgcng9IjMiIHJ5PSI2LjUiLz48cGF0aCBkPSJNMS41IDhoMTMiLz48L3N2Zz4%3D" alt="Website"></a>
+<a href="https://panhe1818.github.io/certificates/"><img src="https://img.shields.io/badge/Certificate-Contributor%20Certificates-2E8B57?logo=readme&amp;logoColor=white" alt="Certificate"></a>
 <br>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/WeChat%20Group-green?logo=wechat&amp"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20Channel?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack Channel"></a>
