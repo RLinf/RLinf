@@ -84,12 +84,9 @@ def prepare_lerobot_batch(
     }
     if batch.get("wrist_image") is not None:
         observations["wrist_images"] = batch["wrist_image"]
-    batch_size = raw7.shape[0]
-    modes = ["policy"] * batch_size
     vision_kwargs = {}
     if include_vision:
         vision_valid = torch.as_tensor(batch["vision_valid"], device="cpu")
-        modes = ["wam" if valid else "policy" for valid in vision_valid.tolist()]
         vision_kwargs = {
             "vision_images": batch["vision_images"],
             "vision_wrist_images": batch.get("vision_wrist_images"),
@@ -98,14 +95,6 @@ def prepare_lerobot_batch(
 
     prepared, forward_inputs = prepare_observation_batch(observations, **vision_kwargs)
     data = dict(prepared)
-    for videos, plan, raw_dim, mode in zip(
-        data[video_key],
-        data["sequence_plan"],
-        data["raw_action_dim"],
-        modes,
-        strict=True,
-    ):
-        num_frames = horizon + 1 if mode == "wam" else 1
 
     tokens = forward_inputs["tokenized_prompt"]
     token_mask = forward_inputs["tokenized_prompt_mask"]
