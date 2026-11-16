@@ -5,8 +5,8 @@ is_lora: false
 add_value_head: false
 load_to_device: false
 
-model_path: /mnt/public/rhy/dataset/Cosmos3-Edge-DCP
-wan_vae_path: /mnt/public/rhy/dataset/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+model_path: /path/to/model
+wan_vae_path: /path/to/Wan2.2_VAE.pth
 disable_cosmos_parallelism: true
 compile_enabled: false
 ema_enabled: false
@@ -23,7 +23,7 @@ guidance: 1.0
 max_prompt_length: 1024
 sft_cfg_dropout_rate: 0.1
 action_normalization: quantile_rot
-action_stats_path: /mnt/public/rhy/cosmos_dagger/RLinf/.venv/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+action_stats_path: /path/to/libero_native_frame_wise_relative_rot6d.json
 
 # The base DCP has no trained LIBERO heads; initialize them for this smoke test.
 keys_to_skip_loading:
