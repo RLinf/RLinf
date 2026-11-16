@@ -100,6 +100,7 @@ def push_trial_records(
         records.append(
             {
                 "trial": int(rows["trial"][i]),
+                "speed_index": int(rows["speed_index"][i]),
                 "speed_m_s": float(rows["speed_m_s"][i]),
                 "direction_x": float(rows["direction_x"][i]),
                 "direction_y": float(rows["direction_y"][i]),

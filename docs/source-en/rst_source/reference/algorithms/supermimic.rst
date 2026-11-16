@@ -164,6 +164,11 @@ Differences from the Paper and the Official Code
        from before the last physics substep
      - Body poses are refreshed after the last substep, before reward and
        failure are scored
+   * - Critic minibatches
+     - The official code trims the imagined rows to a multiple of 4 before
+       shuffling, so the last rows are never fitted
+     - All rows are shuffled first, then trimmed. Only a row count that is
+       not a multiple of ``critic_minibatches`` differs
    * - Parallelism
      - The official training entry is one process
      - One env, rollout, and FSDP2 actor worker per GPU

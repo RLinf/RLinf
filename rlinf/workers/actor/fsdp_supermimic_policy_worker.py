@@ -104,6 +104,19 @@ def clip_step(
         optimizer.zero_grad(set_to_none=True)
 
 
+def critic_minibatch_rows(
+    count: int, chunks: int, device: torch.device | str
+) -> torch.Tensor:
+    """Row indices ``[chunks, count // chunks]`` of ``count`` shuffled rows.
+
+    The remainder is dropped after the shuffle, so every row is equally
+    likely to be fitted.
+    """
+    return torch.randperm(count, device=device)[: count // chunks * chunks].view(
+        chunks, -1
+    )
+
+
 def keep_step_placement(optimizer: torch.optim.Optimizer, state_dict: dict) -> dict:
     """Load a checkpoint with this run's ``capturable`` and ``fused`` flags.
 
@@ -513,8 +526,9 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
 
         ``steps`` holds the critic features of the ``H`` states the policy
         acted in, ``[B, H, F]``, and ``terminal`` those of the last state.
-        The rows are fitted time-major in ``critic_minibatches`` fixed chunks,
-        ``critic_epochs`` times.
+        The rows are shuffled once into ``critic_minibatches`` equal
+        minibatches (:func:`critic_minibatch_rows`), fitted ``critic_epochs``
+        times.
         """
         self._enter_phase(CRITIC)
         batch, horizon, width = steps.shape
@@ -534,10 +548,9 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             self.lam,
         ).clamp(max=self.value_max)
         targets = targets.reshape(-1)
-        chunks = self.critic_minibatches
-        order = torch.randperm(
-            features.shape[0] // chunks * chunks, device=features.device
-        ).view(chunks, -1)
+        order = critic_minibatch_rows(
+            features.shape[0], self.critic_minibatches, features.device
+        )
         losses = []
         for _ in range(self.critic_epochs):
             for rows in order:

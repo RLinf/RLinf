@@ -250,12 +250,13 @@ def trial_plan(speeds, trials: int, direction, seed: int) -> list[dict]:
     sampled = None if fixed is not None else sample_directions(total, seed)
     rows = []
     index = 0
-    for speed in speeds:
+    for speed_index, speed in enumerate(speeds):
         for trial in range(int(trials)):
             vector = fixed if fixed is not None else sampled[index]
             rows.append(
                 {
                     "trial": index,
+                    "speed_index": speed_index,
                     "speed_m_s": float(speed),
                     "direction_x": float(vector[0]),
                     "direction_y": float(vector[1]),
@@ -462,9 +463,11 @@ def summarize_trials(rows: list[dict], speeds: list[float]) -> dict:
             "recovery_time_median_s": median,
         }
 
+    # Recorded speeds went through float32, so trials are matched to the
+    # configured speeds by index.
     by_speed = []
-    for speed in speeds:
-        group = [row for row in rows if float(row["speed_m_s"]) == float(speed)]
+    for index, speed in enumerate(speeds):
+        group = [row for row in rows if int(row["speed_index"]) == index]
         by_speed.append({"speed_m_s": float(speed), **pack(group)})
     return {"overall": pack(rows), "by_speed": by_speed}
 

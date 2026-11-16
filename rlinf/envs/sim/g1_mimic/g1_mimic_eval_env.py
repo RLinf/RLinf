@@ -213,6 +213,9 @@ class G1MimicEvalEnv:
             self.push_speed_of = torch.tensor(
                 [item["speed_m_s"] for item in self.push_plan], device=self.device
             )
+            self.push_speed_index = torch.tensor(
+                [item["speed_index"] for item in self.push_plan], device=self.device
+            )
             self.save_trajectory = bool(push.get("save_trajectory", False))
 
         self.num_jobs = len(task_ids)
@@ -621,6 +624,7 @@ class G1MimicEvalEnv:
             rows.update(
                 {
                     "push_recovery.trial": plan,
+                    "push_recovery.speed_index": self.push_speed_index[plan],
                     "push_recovery.speed_m_s": self.push_speed_of[plan],
                     "push_recovery.direction_x": self.push_directions[plan, 0],
                     "push_recovery.direction_y": self.push_directions[plan, 1],

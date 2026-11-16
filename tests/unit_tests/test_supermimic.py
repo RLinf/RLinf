@@ -84,6 +84,7 @@ from rlinf.runners.supermimic_runner import (
 )
 from rlinf.workers.actor.fsdp_supermimic_policy_worker import (
     clip_step,
+    critic_minibatch_rows,
     keep_step_placement,
 )
 
@@ -267,6 +268,22 @@ def test_evaluation_summary_requires_every_job_once(jobs, valid, complete):
         return
     with pytest.raises(RuntimeError, match="each of the 3 evaluation jobs"):
         check_job_coverage(rows, 3)
+
+
+def test_push_summary_groups_trials_by_configured_speed():
+    from rlinf.envs.sim.g1_mimic.push_recovery import summarize_trials, trial_plan
+
+    speeds = [0.7, 1.0]
+    rows = trial_plan(speeds, trials=2, direction=[1.0, 0.0], seed=0)
+    for row in rows:
+        row["speed_m_s"] = torch.tensor(row["speed_m_s"]).item()
+        row["outcome"], row["recovery_time_s"] = "recovered", 1.0
+    assert rows[0]["speed_m_s"] != 0.7
+    by_speed = summarize_trials(rows, speeds)["by_speed"]
+    assert [(group["speed_m_s"], group["trials"]) for group in by_speed] == [
+        (0.7, 2),
+        (1.0, 2),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -622,6 +639,16 @@ def test_update_spans_evaluate_at_each_boundary_and_sum_their_times(monkeypatch)
     assert [call[0] for call in calls].count("sync") == len(spans)
     assert (eval_metrics, last_step, runner.global_step) == ({"eval/r": 1.0}, 20, 21)
     assert set(durations) == {"actor_training", "sync_weights", "eval"}
+
+
+def test_critic_minibatches_can_hold_every_row():
+    torch.manual_seed(0)
+    seen = set()
+    for _ in range(50):
+        rows = critic_minibatch_rows(7, 4, CPU)
+        assert rows.shape == (4, 1) and rows.unique().numel() == 4
+        seen.update(rows.flatten().tolist())
+    assert seen == set(range(7))
 
 
 def test_clip_step_clips_the_norm_then_each_element():
