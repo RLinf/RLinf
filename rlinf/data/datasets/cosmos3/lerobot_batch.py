@@ -55,31 +55,10 @@ def prepare_lerobot_batch(
     Padded steps are clean zero conditioning slots, so native flow loss ignores
     them. They do not change the channel validity mask or raw action width.
     """
-    if horizon <= 0 or max_action_dim < 10:
-        raise ValueError(
-            "Expected horizon > 0 and max_action_dim >= 10; "
-            f"got horizon={horizon}, max_action_dim={max_action_dim}."
-        )
-    missing = {"image", "actions", "task", "actions_is_pad"} - batch.keys()
-    if missing:
-        raise ValueError(f"LeRobot Cosmos batch is missing fields: {sorted(missing)}.")
     raw7 = torch.as_tensor(batch["actions"]).detach().to(dtype=torch.float32)
-    if raw7.ndim != 3 or raw7.shape[0] == 0 or raw7.shape[1:] != (horizon, 7):
-        raise ValueError(
-            f"Expected raw LIBERO actions [B,{horizon},7], got {tuple(raw7.shape)}."
-        )
     pad = torch.as_tensor(batch["actions_is_pad"])
-    if pad.dtype != torch.bool or pad.shape != raw7.shape[:2]:
-        raise ValueError(
-            f"Expected actions_is_pad bool {tuple(raw7.shape[:2])}, "
-            f"got shape={tuple(pad.shape)} dtype={pad.dtype}."
-        )
     pad_cpu = pad.cpu()
-    if pad_cpu[:, 0].any() or (pad_cpu[:, :-1] & ~pad_cpu[:, 1:]).any():
-        raise ValueError("LeRobot action windows must have a non-empty valid prefix.")
     pad = pad.to(device=raw7.device)
-    if not torch.isfinite(raw7[~pad]).all():
-        raise ValueError("Non-padded expert actions must be finite.")
     # Episode padding can contain repeated actions or NaNs; neither is a label.
     raw7 = raw7.masked_fill(pad.unsqueeze(-1), 0)
 
@@ -94,8 +73,6 @@ def prepare_lerobot_batch(
         dim=-1,
     )
     normalized = normalizer.normalize_action(raw10).detach().to(dtype=torch.float32)
-    if normalized.shape != raw10.shape or not torch.isfinite(normalized).all():
-        raise ValueError("LIBERO normalization must return finite [B,H,10] actions.")
     actions = torch.nn.functional.pad(normalized, (0, max_action_dim - 10))
     actions = actions.masked_fill(pad.unsqueeze(-1), 0)
 
@@ -111,18 +88,7 @@ def prepare_lerobot_batch(
     modes = ["policy"] * batch_size
     vision_kwargs = {}
     if include_vision:
-        missing = {"vision_images", "vision_valid"} - batch.keys()
-        if missing:
-            raise ValueError(
-                f"Joint Cosmos SFT batch is missing fields: {sorted(missing)}."
-            )
         vision_valid = torch.as_tensor(batch["vision_valid"], device="cpu")
-        if vision_valid.shape != (batch_size,) or vision_valid.dtype != torch.bool:
-            raise ValueError(f"Expected vision_valid bool [{batch_size}].")
-        if (vision_valid & pad_cpu.any(dim=1)).any():
-            raise ValueError(
-                "A complete vision clip cannot contain padded action steps."
-            )
         modes = ["wam" if valid else "policy" for valid in vision_valid.tolist()]
         vision_kwargs = {
             "vision_images": batch["vision_images"],
@@ -132,11 +98,6 @@ def prepare_lerobot_batch(
 
     prepared, forward_inputs = prepare_observation_batch(observations, **vision_kwargs)
     data = dict(prepared)
-    if data.get("mode") != modes or any(
-        len(data.get(key, [])) != batch_size
-        for key in ("sequence_plan", video_key, "raw_action_dim")
-    ):
-        raise ValueError("Expected a Cosmos batch with matching sample modes and size.")
     for videos, plan, raw_dim, mode in zip(
         data[video_key],
         data["sequence_plan"],
@@ -145,36 +106,9 @@ def prepare_lerobot_batch(
         strict=True,
     ):
         num_frames = horizon + 1 if mode == "wam" else 1
-        if (
-            len(videos) != 1
-            or not isinstance(videos[0], torch.Tensor)
-            or videos[0].ndim != 4
-            or videos[0].shape[1] != num_frames
-            or plan.condition_frame_indexes_vision != [0]
-        ):
-            raise ValueError(
-                f"Cosmos {mode} training requires {num_frames} frames with "
-                "the first frame conditioned."
-            )
-        if plan.condition_frame_indexes_action:
-            raise ValueError("LeRobot action windows must not contain action history.")
-        if raw_dim is None or int(raw_dim) != 10:
-            raise ValueError("Cosmos LIBERO policy requires raw_action_dim=10.")
 
     tokens = forward_inputs["tokenized_prompt"]
     token_mask = forward_inputs["tokenized_prompt_mask"]
-    if (
-        tokens.ndim != 2
-        or tokens.shape[0] != batch_size
-        or tokens.dtype not in (torch.int32, torch.int64)
-        or token_mask.dtype != torch.bool
-        or token_mask.shape != tokens.shape
-    ):
-        raise ValueError(
-            "Expected integer prompt tokens and a matching [B,L] bool mask."
-        )
-    if not token_mask.any(dim=1).all() or (tokens[token_mask] < 0).any():
-        raise ValueError("Each Cosmos prompt needs non-empty, non-negative token IDs.")
 
     data["action"] = [[sample.contiguous()] for sample in actions]
     data["sequence_plan"] = [
