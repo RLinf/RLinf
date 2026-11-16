@@ -2729,16 +2729,7 @@ EOF
             create_and_sync_venv
             install_common_embodied_deps
             install_dexjoco_env
-            # LeRobot 0.4.4 and datasets 4 read LeRobot v3 data; rerun-sdk 0.22
-            # keeps NumPy 1 for OpenPI.
-            local override_file
-            override_file=$(mktemp)
-            echo "rerun-sdk==0.22.1" > "$override_file"
-            uv pip install "rlinf-openpi==0.1.1" "lerobot==0.4.4" "dm-control==1.0.36" --override "$override_file"
-            rm -f "$override_file"
-            pushd ~ >/dev/null
-            uv pip install --no-deps "datasets==4.1.1"
-            popd >/dev/null
+            install_dexjoco_lerobot "rlinf-openpi==0.1.1" "dm-control==1.0.36"
             install_flash_attn
             ;;
         *)
@@ -3590,15 +3581,7 @@ install_env_only() {
         dexjoco)
             install_common_embodied_deps
             install_dexjoco_env
-            # The CNN recipe exports the LeRobot v3 demonstrations with LeRobot 0.4.4.
-            local override_file
-            override_file=$(mktemp)
-            echo "rerun-sdk==0.22.1" > "$override_file"
-            uv pip install "lerobot==0.4.4" --override "$override_file"
-            rm -f "$override_file"
-            pushd ~ >/dev/null
-            uv pip install --no-deps "datasets==4.1.1"
-            popd >/dev/null
+            install_dexjoco_lerobot
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -4531,6 +4514,19 @@ install_dexjoco_env() {
     fi
 
     uv pip install -e "$dexjoco_dir/dexjoco"
+}
+
+install_dexjoco_lerobot() {
+    # LeRobot 0.4.4 and datasets 4 read the LeRobot v3 demonstrations;
+    # rerun-sdk 0.22 keeps NumPy 1 for OpenPI.
+    local override_file
+    override_file=$(mktemp)
+    echo "rerun-sdk==0.22.1" > "$override_file"
+    uv pip install "lerobot==0.4.4" "$@" --override "$override_file"
+    rm -f "$override_file"
+    pushd ~ >/dev/null
+    uv pip install --no-deps "datasets==4.1.1"
+    popd >/dev/null
 }
 
 #=======================AGENTIC INSTALLER=======================
