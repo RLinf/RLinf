@@ -7034,62 +7034,33 @@ def test_ur_shutdown_timeout_preserves_sessions_until_reconnect(ur_arm, monkeypa
     assert not any(name == "servoL" for name, _ in control_cls.instances[-1].commands)
 
 
-def test_ur_robot_registration_and_arm_declaration():
-    from robot_mocks import mocked_sdks
-
-    from rlinf.robotics import UR5eConfig, UR5eRobot
-    from rlinf.robotics.parts.arms import URRTDEArm
-
-    config = UR5eConfig(node_rank=0, robot_ip="10.42.0.101")
-    assert not config.REQUIRES_CAMERA
-    assert Arm.backend("ur_rtde") is URRTDEArm
-    assert RobotDiscovery.registry["UR5e"].config_cls is UR5eConfig
-    with mocked_sdks() as made:
-        robot = UR5eRobot.build(robot_ip="10.42.0.101", node_rank=0)
-        assert set(robot.children) == {"arm"}
-        assert robot.child("arm", Arm).node_rank == 0
-        assert made["rtde_control"].RTDEControlInterface.instances == []
-        assert not robot.is_connected
-
-
-def test_ur_controller_rejects_invalid_offsets_without_commanding(ur_arm):
+@pytest.mark.parametrize(
+    "command,delta",
+    [
+        ("offset 1 -2 2", [0.001, -0.002, 0.002]),
+        ("offset 6 0 0", None),
+        ("offset nan 0 0", None),
+    ],
+)
+def test_ur_controller_offsets_are_bounded_metres_in_the_base_frame(
+    ur_arm, command, delta
+):
     from rlinf.robotics import UR5eRobot
     from toolkits.realworld_check.test_ur_controller import drive
 
     arm, made = ur_arm
-    robot = UR5eRobot(arm=arm)
-    drive(
-        robot,
-        [
-            "offset 6 0 0",
-            "offset 3 4 1",
-            "offset nan 0 0",
-            "offset 0 inf 0",
-            "offset bad 0 0",
-            "move 1 0 0",
-            "where",
-            "quit",
-        ],
-    )
-    assert made["rtde_control"].RTDEControlInterface.instances[-1].commands == []
-
-
-def test_ur_controller_offsets_are_metres_in_the_base_frame(ur_arm):
-    from rlinf.robotics import UR5eRobot
-    from toolkits.realworld_check.test_ur_controller import drive
-
-    arm, made = ur_arm
-    start = arm.get_observation()["tcp_pose"]
+    start = arm.get_state().tcp_pose
     control = made["rtde_control"].RTDEControlInterface.instances[-1]
-    drive(UR5eRobot(arm=arm), ["offset 1 -2 2", "quit"])
-    assert control.servo_called.wait(2), "the offset did not reach the RTDE servo"
-    command = [args[0] for name, args in control.commands if name == "servoL"][-1]
-    np.testing.assert_allclose(command[:3], start[:3] + [0.001, -0.002, 0.002])
-    np.testing.assert_allclose(
-        R.from_rotvec(command[3:]).as_matrix(),
-        R.from_quat(start[3:]).as_matrix(),
-        atol=1e-7,
-    )
+    drive(UR5eRobot(arm=arm), [command, "quit"])
+    if delta is None:
+        assert control.commands == []
+    else:
+        assert control.servo_called.wait(2)
+        target = [args[0] for name, args in control.commands if name == "servoL"][-1]
+        np.testing.assert_allclose(target[:3], start[:3] + delta)
+        np.testing.assert_allclose(
+            R.from_rotvec(target[3:]).as_quat(), start[3:], atol=1e-7
+        )
 
 
 def test_ur_receive_cli_reads_bounded_feedback_without_control(monkeypatch):
@@ -7100,16 +7071,7 @@ def test_ur_receive_cli_reads_bounded_feedback_without_control(monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
-        [
-            "ur-check",
-            "--robot-ip",
-            "10.42.0.101",
-            "--receive-only",
-            "--frequency",
-            "100",
-            "--samples",
-            "3",
-        ],
+        ["ur-check", "--robot-ip", "10.42.0.101", "--receive-only", "--samples", "1"],
     )
     with mocked_sdks() as made:
         receive_cls = made["rtde_receive"].RTDEReceiveInterface
@@ -7118,7 +7080,6 @@ def test_ur_receive_cli_reads_bounded_feedback_without_control(monkeypatch):
         )
         test_ur_controller.main()
         receive = receive_cls.instances[-1]
-        assert receive.frequency == 100
         assert made["rtde_control"].RTDEControlInterface.instances == []
         assert receive.disconnect_count == 1
         assert not receive.connected

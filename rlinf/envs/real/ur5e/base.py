@@ -283,13 +283,21 @@ class URCollectionEnv(gym.Env):
         """Return a zero delta that holds the measured pose after motion."""
         return np.zeros(self.action_space.shape, dtype=np.float32)
 
-    def _clip_position_to_safety_box(self, pose: np.ndarray) -> np.ndarray:
-        """Apply the configured Cartesian and target-centered Euler limits."""
+    def _clip_position_to_safety_box(
+        self, pose: np.ndarray, current: np.ndarray, rotation_step: float
+    ) -> np.ndarray:
+        """Clip the destination, then bound each command from measured feedback."""
         pose = pose.copy()
         pose[:3] = np.clip(
             pose[:3],
             self.config.ee_pose_limit_min[:3],
             self.config.ee_pose_limit_max[:3],
+        )
+        # Feedback outside the box must approach its boundary without a jump.
+        pose[:3] = current[:3] + np.clip(
+            pose[:3] - current[:3],
+            -self.config.action_scale[0],
+            self.config.action_scale[0],
         )
         euler = clip_euler_to_target_window(
             R.from_quat(pose[3:]).as_euler("xyz"),
@@ -297,23 +305,16 @@ class URCollectionEnv(gym.Env):
             self.config.ee_pose_limit_min[3:],
             self.config.ee_pose_limit_max[3:],
         )
-        pose[3:] = R.from_euler("xyz", euler).as_quat()
-        return pose
-
-    def _check_current_pose(self, pose: np.ndarray) -> None:
-        """Require a measured pose inside the configured limits before moving."""
-        clipped = self._clip_position_to_safety_box(pose)
-        orientation_error = (
-            R.from_quat(clipped[3:]) * R.from_quat(pose[3:]).inv()
-        ).magnitude()
-        if (
-            not np.allclose(clipped[:3], pose[:3], atol=1e-7, rtol=0)
-            or orientation_error > 1e-7
-        ):
-            raise ValueError(
-                "Measured UR TCP is outside the configured pose limits; "
-                "reposition it before sending motion commands."
+        rotation = R.from_euler("xyz", euler)
+        current_rotation = R.from_quat(current[3:])
+        rotvec = (rotation * current_rotation.inv()).as_rotvec()
+        angle = np.linalg.norm(rotvec)
+        if angle > rotation_step:
+            rotation = (
+                R.from_rotvec(rotvec * (rotation_step / angle)) * current_rotation
             )
+        pose[3:] = rotation.as_quat()
+        return pose
 
     def step(self, action: np.ndarray) -> tuple[Any, float, bool, bool, dict[str, Any]]:
         """Apply one finite normalized delta without automatic task termination."""
@@ -331,13 +332,17 @@ class URCollectionEnv(gym.Env):
             if moving or self._arm_was_driving:
                 pose = self.get_tcp_pose().astype(np.float64)
                 if moving:
-                    self._check_current_pose(pose)
+                    current = pose.copy()
                     pose[:3] += action[:3] * self.config.action_scale[0]
-                    pose[3:] = (
-                        R.from_euler("xyz", action[3:6] * self.config.action_scale[1])
-                        * R.from_quat(pose[3:])
-                    ).as_quat()
-                    pose = self._clip_position_to_safety_box(pose)
+                    rotation = R.from_euler(
+                        "xyz", action[3:6] * self.config.action_scale[1]
+                    )
+                    pose[3:] = (rotation * R.from_quat(pose[3:])).as_quat()
+                    pose = self._clip_position_to_safety_box(
+                        pose,
+                        current,
+                        max(self.config.action_scale[1], rotation.magnitude()),
+                    )
                 self.robot.send_action({"arm": {"tcp_pose": pose.astype(np.float32)}})
             self._arm_was_driving = moving
         self._num_steps += 1
@@ -388,7 +393,6 @@ class URCollectionEnv(gym.Env):
         try:
             self._get_observation()
             start = self.get_tcp_pose().astype(np.float64)
-            self._check_current_pose(start)
             if (
                 self.config.open_gripper_on_reset
                 and self._with_gripper
@@ -397,7 +401,6 @@ class URCollectionEnv(gym.Env):
                 self._gripper_action(1.0)
                 time.sleep(0.6)
                 start = self.get_tcp_pose().astype(np.float64)
-                self._check_current_pose(start)
             target = np.concatenate(
                 [
                     self.config.reset_ee_pose[:3],
@@ -421,7 +424,9 @@ class URCollectionEnv(gym.Env):
                 orientations = quat_slerp(start[3:], target[3:], steps + 1)
                 for position, orientation in zip(positions[1:], orientations[1:]):
                     pose = self._clip_position_to_safety_box(
-                        np.concatenate([position, orientation])
+                        np.concatenate([position, orientation]),
+                        self.get_tcp_pose(),
+                        self.config.action_scale[1],
                     )
                     self.robot.send_action(
                         {"arm": {"tcp_pose": pose.astype(np.float32)}}
@@ -434,6 +439,10 @@ class URCollectionEnv(gym.Env):
                     raise TimeoutError(
                         "UR reset did not reach the configured TCP pose."
                     )
+                pose = self._clip_position_to_safety_box(
+                    target, self.get_tcp_pose(), self.config.action_scale[1]
+                )
+                self.robot.send_action({"arm": {"tcp_pose": pose.astype(np.float32)}})
                 self._get_observation()
                 if not reached():
                     time.sleep(1.0 / self.config.step_frequency)

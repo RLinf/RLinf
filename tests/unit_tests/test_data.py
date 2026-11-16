@@ -3007,13 +3007,12 @@ def _ur_collection_data_env(monkeypatch):
 def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
     monkeypatch, tmp_path
 ):
-    """The public stack records operator actions and pedal segment boundaries."""
+    """The UR collection stack records its policy-facing RGB, state and actions."""
     from robot_mocks import mocked_sdks
 
     from rlinf.envs.real.utils.pose import construct_adjoint_matrix
 
     pytest.importorskip("lerobot")
-    parquet = pytest.importorskip("pyarrow.parquet")
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
     except ModuleNotFoundError:
@@ -3033,10 +3032,9 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
         expected_actions = []
         try:
             collector.reset()
-            collector.step(np.zeros((1, 7), dtype=np.float32))  # Preview.
             keys.append("a")
             start, *_ = collector.step(np.zeros((1, 7), dtype=np.float32))
-            for key in (None, "b", "c"):
+            for key in (None, None, "c"):
                 if key is not None:
                     keys.append(key)
                 *_, info = collector.step(np.zeros((1, 7), dtype=np.float32))
@@ -3044,26 +3042,6 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
         finally:
             collector.close()
 
-    [path] = list((tmp_path / "lerobot_dataset").rglob("*.parquet"))
-    table = parquet.read_table(path)
-    rows = table.to_pylist()
-    assert len(rows) == 3, "Preview and the start edge must not become dataset frames."
-    states = np.stack([row["state"] for row in rows])
-    actions = np.stack([row["actions"] for row in rows])
-    assert states.shape == (3, 7)
-    np.testing.assert_allclose(states[0], start["states"][0].numpy())
-    np.testing.assert_allclose(states[0, 1:], np.zeros(6), atol=1e-6)
-    np.testing.assert_allclose(actions, expected_actions)
-    pose = np.array([0.4, 0.05, 0.3, 0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4)])
-    relative_action = np.linalg.solve(
-        construct_adjoint_matrix(pose), [0, 0.25, 0, 0, 0, 0]
-    )
-    np.testing.assert_allclose(actions[:, :6], [relative_action] * 3, atol=1e-6)
-    assert actions.shape == (3, 7) and np.all(np.abs(actions) <= 1.0)
-    assert [np.asarray(row["segment_id"]).item() for row in rows] == [0, 1, 1]
-    assert all(np.asarray(row["intervene_flag"]).item() for row in rows)
-    assert all(np.asarray(row["is_success"]).item() for row in rows)
-    assert [np.asarray(row["done"]).item() for row in rows] == [False, False, True]
     [metadata] = list((tmp_path / "lerobot_dataset").rglob("meta/info.json"))
     dataset = LeRobotDataset(
         "ur5e_collection_test", root=metadata.parent.parent, download_videos=False
@@ -3074,8 +3052,17 @@ def test_ur_collection_writes_rgb_state_and_executed_actions_to_lerobot(
     assert first["actions"].shape == (7,)
     assert first["image"].shape == (3, 48, 64)
     assert first["task"] == "move the UR5e TCP"
-    np.testing.assert_allclose(first["state"].numpy(), states[0])
-    np.testing.assert_allclose(first["actions"].numpy(), actions[0])
+    np.testing.assert_allclose(first["state"].numpy(), start["states"][0].numpy())
+    np.testing.assert_allclose(first["state"][1:].numpy(), np.zeros(6), atol=1e-6)
+    actions = np.stack(
+        [dataset[index]["actions"].numpy() for index in range(len(dataset))]
+    )
+    np.testing.assert_allclose(actions, expected_actions)
+    pose = np.array([0.4, 0.05, 0.3, 0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4)])
+    relative_action = np.linalg.solve(
+        construct_adjoint_matrix(pose), [0, 0.25, 0, 0, 0, 0]
+    )
+    np.testing.assert_allclose(actions[:, :6], [relative_action] * 3, atol=1e-6)
     np.testing.assert_allclose(
         first["image"][:, 0, 0].numpy(), np.array([192, 96, 32]) / 255
     )

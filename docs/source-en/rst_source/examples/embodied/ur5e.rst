@@ -64,76 +64,72 @@ This installs OpenPI together with ``ur_rtde``, Orbbec capture, SpaceMouse,
 serial Modbus, keyboard input, and LeRobot collection dependencies. Keep this environment activated for
 subsequent commands.
 
-The UR5e installer includes ``pyorbbecsdk2==2.1.2`` with ``--no-deps`` to
-preserve OpenPI's NumPy and OpenCV versions. The package imports as
-``pyorbbecsdk``. See :doc:`Orbbec camera setup <franka_orbbec>` for USB device
-permissions and the SDK's stream requirements.
+The Orbbec SDK is installed as ``pyorbbecsdk2==2.1.2`` and imports as
+``pyorbbecsdk``. Device permissions and stream checks are covered below.
 
-Check the Robot Composition
----------------------------
+Run It
+------
 
-Before opening a controller connection, run the real robot classes against
-fake SDKs:
+Check the driver before combining the arm with the collection devices. For
+simulation, use URSim e-Series configured as UR5; the integration was checked
+with ``universalrobots/ursim_e-series:5.26.3``. Follow the `official URSim Docker
+instructions <https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/master/doc/setup/ursim_docker.rst>`_
+to make the controller ports reachable from the driver computer or container.
+Replace the example address below with your controller address.
+
+You can first check robot registration and observation shapes against fake SDKs:
 
 .. code-block:: bash
 
    python -m toolkits.realworld_check.check_robot_parts UR5e --mock \
      --arg robot_ip=192.168.56.101 --arg node_rank=0
 
-This constructs the ``UR5e`` robot, connects its ``arm``, checks the declared
-observation names and shapes, and disconnects. A successful run ends with
-``OK: every part connected, observed what it declares, and let go.`` The fake
-endpoint is used only by the SDK fake. ``node_rank=0`` places the arm connection
-on node 0 through the scheduler path.
-
-Connect to URSim
-----------------
-
-After the composition check passes, start an e-Series URSim instance configured
-as UR5. Use the pinned ``universalrobots/ursim_e-series:5.26.3`` image for the
-controller version covered here; the `official URSim Docker instructions
-<https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/master/doc/setup/ursim_docker.rst>`_
-describe the container and its network configuration.
-
-Run the driver on the Linux Docker host, or attach its container to the same
-Docker bridge as URSim. A bridge address such as ``192.168.56.101`` belongs to
-that Docker host; another computer needs an explicitly configured network path
-or a controller process on the URSim host. Publishing VNC or the web interface
-alone does not expose RTDE or the script interfaces.
-
-Replace the address below with your URSim container address and first sample
-feedback without opening a control connection:
+A successful check ends with ``OK: every part connected, observed what it declares, and let go.``
+To read the controller without starting its control script, use receive-only mode:
 
 .. code-block:: bash
 
    python -m toolkits.realworld_check.test_ur_controller \
      --robot-ip 192.168.56.101 --receive-only --frequency 10 --samples 10
 
-This opens only ``RTDEReceiveInterface``, logs ten samples at a requested 10 Hz,
-then disconnects. It reads joint positions and velocities, TCP pose and speed,
-and robot and safety modes. The TCP pose in this
-output is the native six-value UR representation, ``[x, y, z, rx, ry, rz]``,
-with a rotation vector in radians. This mode does not upload, start, or stop a
-control script and does not send robot commands.
-
-For the full robot composition check, enable Remote Control in PolyScope and
-bring the simulated robot to NORMAL / RUNNING. Run the check with the real SDK:
+This logs ten feedback samples and disconnects. Its native UR TCP pose is
+``[x, y, z, rx, ry, rz]`` with a rotation vector in radians. To obtain the xyz
+Euler representation used by the reset and workspace settings, run:
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.check_robot_parts UR5e \
-     --arg robot_ip=192.168.56.101 --arg node_rank=0
+   python -m toolkits.realworld_check.test_ur_controller \
+     --robot-ip 192.168.56.101 --read-only
 
-The check uploads the SDK control script, reads the four arm observations, and
-closes both SDK connections. It sends no position target. Read the reported
-shapes before proceeding to a task or motion check.
+Record the ``TCP pose (m, xyz Euler rad)`` line for configuration. This mode
+starts the SDK control script, prints the measured state, and disconnects
+without sending a position target. It requires Remote Control and
+NORMAL / RUNNING controller state.
 
 .. warning::
 
-   Opening the control connection uploads and starts the SDK's URScript program;
-   closing it stops that program. Give this driver exclusive control of the
-   controller even for the observation check. It does not power on the robot,
-   release brakes, or recover a safety stop.
+   Give the driver exclusive controller access. Opening a control session starts
+   the SDK's URScript program; disconnecting stops it. Manage power, brakes,
+   and safety recovery through PolyScope before connecting.
+
+For an interactive motion check in URSim, omit ``--read-only`` and enter:
+
+.. code-block:: text
+
+   where
+   offset 1 0 0
+   offset -1 0 0
+   quit
+
+Each offset is in millimetres in the base frame, preserves orientation, and
+is interpolated over one second; the maximum offset length is 5 mm. Wait for
+motion to settle between commands. ``quit``, EOF, and Ctrl-C close the session.
+For a real-robot check, follow the robot's bench procedure and keep its normal
+stop controls available; closing this session is not an emergency stop.
+
+The servo loop runs on the computer that owns the arm connection. Validate its
+timing under the expected load using the `ur_rtde real-time setup guide
+<https://sdurobotics.gitlab.io/ur_rtde/pages/core_concepts/guides/realtime_setup.html>`_.
 
 Observation and Action
 ----------------------
@@ -161,139 +157,29 @@ Use the arm's named fields when building a task. Each observation is a
      - ``(6,)``
      - Joint velocities in rad/s.
 
-Send an action as ``{"arm": {"tcp_pose": pose}}`` through
-``Robot.send_action``. The pose contains absolute ``[x, y, z, qx, qy, qz, qw]``
-values; the driver normalizes the quaternion and converts it to the rotation
-vector expected by ``servoL``. The first action starts the servo loop, which
-continues to hold the latest target between task steps. Connecting or reading
-observations leaves that loop idle.
+The driver accepts an absolute TCP target ``[x, y, z, qx, qy, qz, qw]`` in
+the base frame and converts its quaternion to the rotation vector used by
+``servoL``. The local servo holds the latest target between environment steps;
+it starts on the first motion command.
 
-``URRTDEArm`` accepts ``frequency`` (default 500 Hz), ``lookahead_time``
-(default 0.1 s), and ``gain`` (default 300). These configure the local position
-servo; ``gain`` is not a Cartesian stiffness. Requests for Cartesian compliance
-are rejected rather than translated to these settings. The declared observations
-contain the four fields above; tasks must request only those capabilities.
+Set ``frequency`` (default 500 Hz), ``lookahead_time`` (0.1 s), and ``gain``
+(300) in the hardware configuration for this position servo.
 
 If the servo fails, subsequent state reads and actions report the error.
 Disconnect and resolve the controller fault before reconnecting. The
 collection environment's TCP reset is described under `Collect Demonstrations`_.
 
-Run It
-------
-
-With the connection and observation checks complete, use the interactive
-controller check to exercise the TCP action interface. Begin by reading the
-same controller through the local driver:
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_ur_controller \
-     --robot-ip 192.168.56.101 --read-only
-
-This prints measured joints in radians and the TCP pose in metres with an xyzw
-quaternion, then disconnects. The additional ``TCP pose (m, xyz Euler rad)``
-line gives the six-value representation used by ``reset_ee_pose`` and the pose
-limits. Record the reset target from this line; the rotation vector printed by
-``--receive-only`` is a different orientation representation. Like the
-composition check, it uploads the SDK control script but sends no position
-target.
-
-For a deliberate URSim motion check, omit ``--read-only`` and enter the
-following commands one at a time:
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_ur_controller \
-     --robot-ip 192.168.56.101
-
-.. code-block:: text
-
-   where
-   offset 1 0 0
-   where
-   offset -1 0 0
-   where
-   quit
-
-``offset 1 0 0`` translates the measured TCP position by 1 mm along the base
-frame's x-axis while preserving its orientation. Each offset has a maximum
-length of 5 mm and is interpolated over one second. ``where`` reads the measured
-state. Wait for each motion to settle before the next offset.
-``quit``, EOF, or Ctrl-C stops the servo session and disconnects.
-
-.. warning::
-
-   Validate the motion procedure in URSim before using it on an arm. For a
-   physical test, follow the robot's bench procedure and keep its normal stop
-   controls available. Exiting this script closes its control session; it is
-   not the robot's emergency-stop function.
-
-The servo loop runs locally on the computer that owns the arm connection,
-independently of the environment's target-update rate. Validate control-loop
-timing on that computer under its expected load using the
-`ur_rtde real-time setup guide
-<https://sdurobotics.gitlab.io/ur_rtde/pages/core_concepts/guides/realtime_setup.html>`_.
-See :doc:`Robotics Interface </rst_source/concepts/robotics>` for composition
-and placement.
-
 Check the Orbbec RGB Camera
 ---------------------------
 
-After the arm check, verify the camera stream before combining the devices for
-teleoperation. The collection template uses ``camera_type: orbbec`` and the
-installed ``pyorbbecsdk`` SDK. Connect the Femto Bolt to the controller computer
-and query its serial number:
+Follow :doc:`Orbbec camera setup <franka_orbbec>` to find the Femto Bolt serial
+number and verify standalone RGB capture. The UR installer already provides
+the SDK. The collection template requests 1280 × 720 at 15 fps with depth
+disabled. The backend supplies BGR; UR collection records RGB.
 
-.. code-block:: bash
-
-   python - <<'PY'
-   import pyorbbecsdk as ob
-
-   context = ob.Context()
-   context.enable_net_device_enumeration(False)
-   devices = context.query_devices()
-   for index in range(devices.get_count()):
-       print(devices.get_device_serial_number_by_index(index))
-   PY
-
-Record the serial of the camera you will use. In the following read, replace
-``CAMERA_SERIAL`` with that value and set ``resolution`` (width, height) and
-``fps`` to a color-stream profile supported by the device. The values shown
-match the editable collection template. ``enable_depth=False`` starts only
-the color stream:
-
-.. code-block:: bash
-
-   python - <<'PY'
-   from rlinf.robotics import Camera, CameraInfo
-
-   camera = Camera.of(CameraInfo(
-       name="main",
-       serial_number="CAMERA_SERIAL",
-       camera_type="orbbec",
-       resolution=(1280, 720),
-       fps=15,
-       enable_depth=False,
-   ))
-   try:
-       camera.connect()
-       frame = camera.get_observation()["frame"]
-       print(frame.shape, frame.dtype)
-   finally:
-       camera.disconnect()
-   PY
-
-The backend returns BGR color. The output should show ``(720, 1280, 3)`` and
-dtype ``uint8``. UR collection converts this image to RGB before recording.
-The ``finally`` block closes
-the capture stream after the read. Use the same serial, resolution, and frame
-rate in the collection hardware entry's ``camera_serials``,
-``camera_resolution``, and ``camera_fps``. Map that serial to ``main`` in
-``camera_names`` to match this view name.
-
-Keep the camera mounting, view, crop, image names, and color processing
-consistent across demonstrations and policy execution. Configure the tool's
-TCP and payload in PolyScope for the mounted gripper.
+Keep the camera mounting, view, crop, and image name consistent between
+collection and policy execution. Enter the selected serial in the collection
+configuration described below.
 
 Collect Demonstrations
 -----------------------
@@ -309,20 +195,18 @@ Fill ``reset_ee_pose``, ``ee_pose_limit_min``, and ``ee_pose_limit_max`` under
 ``override_cfg`` in ``env/realworld_ur5e_collect.yaml`` before launching. These
 fields contain ``[x, y, z, rx, ry, rz]`` in the UR base frame, in metres and
 xyz Euler radians, following Franka's pose configuration convention. Replace
-their ``null`` values with the measured reset target and task limits. Both the
-reset target and starting TCP must lie inside the limits; motion from outside
-the range is rejected. The environment clips position and orientation targets
-to this range, using a continuous window around the reset orientation. Set
-``task_description`` for the demonstrations you will record.
+their ``null`` values with the measured reset target and task limits. The reset
+target must lie inside the limits. Requested targets are clipped to the XYZ
+bounds and a continuous Euler window around the reset orientation. Each command
+limits the step from the measured pose toward the clipped target. Orientation
+steps follow the shortest rotation. Intermediate commands can lie outside the
+configured bounds. A measured pose outside the bounds does not itself stop the
+run. Set ``task_description`` for the demonstrations you will record.
 In the hardware entry, ``camera_resolution`` sets the camera output width then
-height and ``camera_fps`` requests its rate. The Orbbec backend selects the
-nearest native color resolution at that exact rate, then resizes to the output
-size. The template uses 1280 × 720 at 15 fps and captures color only. In
+height and ``camera_fps`` requests its rate. In
 ``env.eval.override_cfg``, ``image_size`` sets the recorded height then width,
 defaulting to 224 × 224 after crop and resize; ``camera_names`` and
-``camera_crop_regions`` configure the views there. The environment reads the
-arm, gripper, and camera observations through the composed robot before
-building the policy input. ``step_frequency`` and dataset ``fps`` both default to 10. Keep them
+``camera_crop_regions`` configure the views there. ``step_frequency`` and dataset ``fps`` both default to 10. Keep them
 consistent when changing the collection rate. Set
 ``env.eval.override_cfg.enable_camera_player: true`` to preview the images.
 
@@ -330,12 +214,12 @@ At startup and after a saved episode, the environment returns the TCP to
 ``reset_ee_pose``. ``open_gripper_on_reset`` defaults to ``false`` to preserve
 the gripper state. Set it to ``true`` to open a closed gripper before the TCP
 return, with a 0.6 s settling wait as in Franka's pick-and-place task.
-The TCP return takes at least ``reset_duration`` seconds; the per-step
-``action_scale`` limit can lengthen a distant return. After interpolation,
-``reset_timeout`` sets the arrival-check timeout against
-``reset_position_tolerance`` in metres and
-``reset_orientation_tolerance`` in radians. Confirm the reset path before
-starting collection.
+The return takes at least ``reset_duration`` seconds, with steps bounded by
+``action_scale`` relative to measured feedback. After interpolation, the arm
+continues toward the reset pose for up to ``reset_timeout`` seconds. Arrival
+uses ``reset_position_tolerance`` in metres and
+``reset_orientation_tolerance`` in radians; a timeout reports failure and
+attempts to hold the measured pose. Confirm the reset path before collection.
 
 Moving or rotating the SpaceMouse puck commands base-frame Cartesian
 increments with the same mapping as Franka. The left button closes the
@@ -378,33 +262,25 @@ start pose. Restore the task objects before starting the next recording.
 Check the Recorded Representation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Inspect a short recorded episode before collecting a full dataset. With the
-Robotiq gripper, policy and recorded actions have seven normalized channels,
-``[dx, dy, dz, droll, dpitch, dyaw, gripper]``. As in the single-arm Franka
-workflow, ``use_relative_frame: True`` enables the shared ``RelativeFrame``
-wrapper. It expresses Cartesian actions in the current end-effector frame and
-maps policy actions back to the base frame before the UR environment applies
-``action_scale``. The default ``[0.02, 0.1, 1]`` limits each base-frame
-translation and rotation axis to 0.02 m and 0.1 rad per full-input step.
-The gripper signal is negative for close and positive for open. SpaceMouse
-retains its base-frame mapping; the wrapper converts its recorded intervention
-actions to the same frame used by the policy.
+Inspect a short episode before collecting a full dataset. With the Robotiq
+gripper and the default ``use_relative_frame: True``, recorded and policy
+actions are seven normalized channels:
+``[dx, dy, dz, droll, dpitch, dyaw, gripper]``. Cartesian increments use the
+current end-effector frame. SpaceMouse keeps Franka's base-frame mapping;
+its recorded actions are converted to the same frame as policy actions.
+``action_scale`` defaults to ``[0.02, 0.1, 1]``; its first two values scale
+base-frame translation and Euler increments before workspace limiting. A
+negative gripper signal closes the jaws and a positive signal opens them.
 
-The driver exposes ``tcp_pose`` as absolute position and an xyzw quaternion.
-The shared wrappers convert this pose relative to the measured pose returned
-by reset, then convert the quaternion to xyz Euler angles with
-``Quat2EulerWrapper``. Immediately after reset, all six relative pose values
-are zero. ``RealWorldEnv`` sorts state keys before flattening, so with the
-gripper the recorded seven-value state is
+The recorded state is
 ``[gripper_position, x_rel, y_rel, z_rel, roll_rel, pitch_rel, yaw_rel]``.
-The gripper width and positions are in metres; angles are in radians. The
-camera supplies one RGB image under the recorded ``image`` key, selected by
-the environment's ``main`` view name.
+The pose is relative to the measured pose returned by reset, so its six pose
+values start at zero. Width and position use metres, and xyz Euler angles use
+radians. The ``main`` RGB view is recorded as ``image``.
 
-The ``pi05_ur5e`` data configuration maps this image, seven-value state,
-seven-value action, and task prompt to OpenPI. It preserves the recorded delta
-actions. Keep ``use_relative_frame``, state order, camera view, task prompt,
-collection rate, and ``action_scale`` consistent during collection and deployment.
+Use ``pi05_ur5e`` for training and deployment with this format. Keep the
+relative-frame setting, state order, camera view, task prompt, collection
+rate, and action scales consistent across both stages.
 
 Fine-Tune π₀.₅
 ---------------

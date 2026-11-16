@@ -45,48 +45,52 @@ UR5e 配置与控制
 
 该流程安装 OpenPI，以及 ``ur_rtde``、Orbbec 采集、SpaceMouse、串口 Modbus、键盘输入和 LeRobot 采集依赖。后续命令均使用这个已激活的环境。
 
-UR5e 安装流程通过 ``--no-deps`` 安装 ``pyorbbecsdk2==2.1.2``，保留 OpenPI 使用的 NumPy 和 OpenCV 版本。该包通过 ``pyorbbecsdk`` 导入。USB 设备权限和 SDK 图像流要求见 :doc:`Orbbec 相机配置 <franka_orbbec>`。
+Orbbec SDK 的安装包为 ``pyorbbecsdk2==2.1.2``，通过 ``pyorbbecsdk`` 导入。设备权限和图像流检查见下文。
 
-检查机器人组合
---------------
+运行
+----
 
-连接控制器前，先用 fake SDK 运行实际的机器人类：
+组合采集设备前，先检查驱动。使用仿真时，将 URSim e-Series 设置为 UR5；本集成使用 ``universalrobots/ursim_e-series:5.26.3`` 验证。按 `官方 URSim Docker 说明 <https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/master/doc/setup/ursim_docker.rst>`_ 配置网络，使驱动所在的计算机或容器能够访问控制器端口。将下列地址替换为你的控制器地址。
+
+可以先用 fake SDK 检查机器人注册和观测 shape：
 
 .. code-block:: bash
 
    python -m toolkits.realworld_check.check_robot_parts UR5e --mock \
      --arg robot_ip=192.168.56.101 --arg node_rank=0
 
-命令构建 ``UR5e`` 机器人、连接 ``arm``、检查观测名称与 shape，再断开连接。成功时，输出以 ``OK: every part connected, observed what it declares, and let go.`` 结束。这里的地址仅供 SDK fake 使用。``node_rank=0`` 通过 scheduler 路径将机械臂连接放置到节点 0。
-
-连接 URSim
-----------
-
-机器人组合检查通过后，启动模型设置为 UR5 的 e-Series URSim。使用固定镜像 ``universalrobots/ursim_e-series:5.26.3``，与本指南覆盖的控制器版本保持一致；容器与网络配置见 `官方 URSim Docker 说明 <https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/master/doc/setup/ursim_docker.rst>`_。
-
-驱动可以运行在 Linux Docker 宿主机上，也可以在与 URSim 连接到同一 Docker bridge 的容器中运行。``192.168.56.101`` 这类 bridge 地址属于对应的 Docker 宿主机；另一台计算机需要单独配置网络路径，或将控制进程部署到 URSim 宿主机。仅发布 VNC 或网页端口，并不会暴露 RTDE 和脚本接口。
-
-将以下地址替换为 URSim 容器地址，先仅接收反馈，不打开控制连接：
+成功时输出以 ``OK: every part connected, observed what it declares, and let go.`` 结束。随后使用纯接收模式读取控制器，不启动控制脚本：
 
 .. code-block:: bash
 
    python -m toolkits.realworld_check.test_ur_controller \
      --robot-ip 192.168.56.101 --receive-only --frequency 10 --samples 10
 
-命令仅创建 ``RTDEReceiveInterface``，按请求的 10 Hz 读取并记录十个样本，然后断开连接。输出包含关节位置与速度、TCP 位姿与速度，以及机器人和安全模式。这里的 TCP 位姿使用 UR 原生六维表示 ``[x, y, z, rx, ry, rz]``，旋转部分为以弧度表示的旋转向量。该模式不上传、启动或停止控制脚本，也不发送机器人指令。
-
-检查完整机器人组合时，在 PolyScope 中开启 Remote Control，使仿真机器人进入 NORMAL / RUNNING 状态，再使用实际 SDK 检查连接：
+命令记录十个反馈样本后断开连接。输出的 UR 原生 TCP 位姿为 ``[x, y, z, rx, ry, rz]``，姿态使用旋转向量，单位为弧度。要获取复位和工作空间配置采用的 xyz Euler 表示，运行：
 
 .. code-block:: bash
 
-   python -m toolkits.realworld_check.check_robot_parts UR5e \
-     --arg robot_ip=192.168.56.101 --arg node_rank=0
+   python -m toolkits.realworld_check.test_ur_controller \
+     --robot-ip 192.168.56.101 --read-only
 
-命令上传 SDK 控制脚本，读取四项机械臂观测，然后关闭两个 SDK 连接。检查过程不发送位置目标。确认输出中的 shape 正确，再运行任务或运动检查。
+记录 ``TCP pose (m, xyz Euler rad)`` 行用于配置。此模式启动 SDK 控制脚本，打印实测状态后断开连接，不发送位置目标；需要控制器处于 Remote Control 和 NORMAL / RUNNING 状态。
 
 .. warning::
 
-   打开控制连接时会上传并启动 SDK 的 URScript 程序，关闭连接时会停止该程序。即使只检查观测，也应确保控制器由该驱动独占。驱动不会自动上电、释放刹车或恢复安全停止。
+   驱动应独占控制器。打开控制会话会启动 SDK 的 URScript 程序，断开连接会停止该程序。连接前，在 PolyScope 中处理上电、刹车与安全状态恢复。
+
+在 URSim 中交互检查运动时，去掉 ``--read-only``，逐条输入：
+
+.. code-block:: text
+
+   where
+   offset 1 0 0
+   offset -1 0 0
+   quit
+
+每条 offset 的单位为毫米，采用基座坐标系并保持姿态，在一秒内插值发送，长度最多为 5 mm。等待运动稳定后再输入下一条命令。``quit``、EOF 和 Ctrl-C 关闭会话。连接实机检查时，按台架测试流程操作，并保持常规停止控制可用；关闭会话不等同于机械臂急停。
+
+伺服循环运行在拥有机械臂连接的计算机上。按 `ur_rtde 实时配置指南 <https://sdurobotics.gitlab.io/ur_rtde/pages/core_concepts/guides/realtime_setup.html>`_，在预期负载下验证控制周期。
 
 观测与动作
 ----------
@@ -113,102 +117,29 @@ UR5e 安装流程通过 ``--no-deps`` 安装 ``pyorbbecsdk2==2.1.2``，保留 Op
      - ``(6,)``
      - 关节速度，单位为 rad/s。
 
-通过 ``Robot.send_action`` 发送 ``{"arm": {"tcp_pose": pose}}``。位姿为绝对值 ``[x, y, z, qx, qy, qz, qw]``；驱动归一化四元数，再转换为 ``servoL`` 接受的旋转向量。首次动作启动伺服循环；在两次任务动作之间，循环持续保持最新目标。连接和读取观测时，该循环保持空闲。
+驱动接收基座坐标系下的绝对 TCP 目标 ``[x, y, z, qx, qy, qz, qw]``，并将四元数转换为 ``servoL`` 使用的旋转向量。本地伺服在环境 step 之间保持最新目标，由首条运动指令启动。
 
-``URRTDEArm`` 接受 ``frequency``\ （默认 500 Hz）、``lookahead_time``\ （默认 0.1 s）和 ``gain``\ （默认 300）。这些参数配置本地位置伺服，``gain`` 不代表笛卡尔刚度。驱动拒绝笛卡尔柔顺配置，不将其转换为上述参数。观测声明仅包含表中的四项，任务应按这些实际能力读取状态。
+在硬件配置中，通过 ``frequency``\ （默认 500 Hz）、``lookahead_time``\ （0.1 s）和 ``gain``\ （300）设置位置伺服。
 
 若伺服循环失败，后续状态读取和动作调用会报告错误。断开连接并处理控制器故障后，再重新连接。采集环境的 TCP 复位见 `采集演示`_。
-
-运行
-----
-
-连接与观测检查通过后，使用交互式控制脚本检查 TCP 动作接口。先通过本地驱动读取同一个控制器：
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_ur_controller \
-     --robot-ip 192.168.56.101 --read-only
-
-命令打印关节角（单位为弧度）与 TCP 位姿（位置单位为米，旋转为 xyzw 四元数），然后断开连接。额外输出的 ``TCP pose (m, xyz Euler rad)`` 行采用与 ``reset_ee_pose`` 和位姿边界相同的六维表示，可据此记录复位目标；``--receive-only`` 输出的旋转向量采用不同的姿态表示。与机器人组合检查一样，该命令上传 SDK 控制脚本，但不发送位置目标。
-
-在 URSim 中显式测试运动时，去掉 ``--read-only``，逐条输入以下命令：
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_ur_controller \
-     --robot-ip 192.168.56.101
-
-.. code-block:: text
-
-   where
-   offset 1 0 0
-   where
-   offset -1 0 0
-   where
-   quit
-
-``offset 1 0 0`` 以实测 TCP 位置为起点，沿基座坐标系的 x 轴平移 1 mm，并保持姿态。每条 offset 的长度最多为 5 mm，在一秒内插值发送。``where`` 读取实测状态。等待运动稳定后，再发送下一条 offset。``quit``、EOF 或 Ctrl-C 停止伺服会话并断开连接。
-
-.. warning::
-
-   先在 URSim 中验证运动流程。连接实机测试时，按机械臂的台架测试流程操作，并保持常规停止控制可用。退出脚本会关闭控制会话，不等同于机械臂急停。
-
-伺服循环在机械臂连接所在的计算机上运行，与环境提交目标的频率分开。按预期负载验证该计算机上的控制周期，参考 `ur_rtde 实时配置指南 <https://sdurobotics.gitlab.io/ur_rtde/pages/core_concepts/guides/realtime_setup.html>`_。组合与节点放置见 :doc:`机器人接口 </rst_source/concepts/robotics>`。
 
 检查 Orbbec RGB 相机
 --------------------
 
-机械臂检查完成后，先验证相机图像流，再组合设备进行遥操作。采集模板使用 ``camera_type: orbbec`` 和已安装的 ``pyorbbecsdk`` SDK。将 Femto Bolt 连接到控制主机，查询序列号：
+按 :doc:`Orbbec 相机配置 <franka_orbbec>` 查询 Femto Bolt 序列号并检查独立 RGB 采集。UR 安装流程已包含 SDK。采集模板请求 1280 × 720、15 fps 的彩色流，关闭深度；后端返回 BGR，UR 采集环境记录 RGB。
 
-.. code-block:: bash
-
-   python - <<'PY'
-   import pyorbbecsdk as ob
-
-   context = ob.Context()
-   context.enable_net_device_enumeration(False)
-   devices = context.query_devices()
-   for index in range(devices.get_count()):
-       print(devices.get_device_serial_number_by_index(index))
-   PY
-
-记录要使用的相机序列号。在以下读取示例中，将 ``CAMERA_SERIAL`` 替换为该值，并将 ``resolution`` 按宽、高顺序填写，``fps`` 设为设备支持的彩色流帧率。示例值与可编辑的采集模板一致；``enable_depth=False`` 仅启用彩色流：
-
-.. code-block:: bash
-
-   python - <<'PY'
-   from rlinf.robotics import Camera, CameraInfo
-
-   camera = Camera.of(CameraInfo(
-       name="main",
-       serial_number="CAMERA_SERIAL",
-       camera_type="orbbec",
-       resolution=(1280, 720),
-       fps=15,
-       enable_depth=False,
-   ))
-   try:
-       camera.connect()
-       frame = camera.get_observation()["frame"]
-       print(frame.shape, frame.dtype)
-   finally:
-       camera.disconnect()
-   PY
-
-后端返回 BGR 彩色图像，输出应为 ``(720, 1280, 3)``，dtype 为 ``uint8``。UR 采集环境将图像转换为 RGB 后记录。``finally`` 在读取结束后关闭图像流。将相同的序列号、分辨率和帧率填入采集硬件条目的 ``camera_serials``、``camera_resolution`` 和 ``camera_fps``，并在 ``camera_names`` 中将该序列号映射为 ``main``，与这里的视角名称一致。
-
-演示采集与 policy 执行时，应保持相机安装位置、视角、裁剪、图像名称和颜色处理一致。在 PolyScope 中，按安装的夹爪配置工具 TCP 与负载。
+采集与 policy 执行时，保持相机安装位置、视角、裁剪和图像名称一致。将选定序列号填入下述采集配置。
 
 采集演示
 --------
 
 驱动与相机检查通过后，配置 ``examples/embodiment/config/realworld_ur5e_collect_data.yaml``。该流程将机械臂、夹爪、环境相机和环境都放在节点 0。替换硬件条目中的 ``ROBOT_IP``、Robotiq 串口路径和 ``CAMERA_SERIAL``，并替换 ``env.eval.override_cfg.camera_names`` 中同一个序列号，将所选视角命名为 ``main``。``main_image_key`` 选择该名称。
 
-启动前，在 ``env/realworld_ur5e_collect.yaml`` 的 ``override_cfg`` 中填写 ``reset_ee_pose``、``ee_pose_limit_min`` 和 ``ee_pose_limit_max``。这些字段沿用 Franka 的位姿配置方式，均为 UR 基座坐标系下的 ``[x, y, z, rx, ry, rz]``，位置单位为米，姿态为 xyz Euler 角，单位为弧度。将模板中的 ``null`` 替换为实测复位目标和任务边界。复位目标与启动时的实测 TCP 均应在边界内，环境会拒绝从范围外开始运动。位置与姿态目标会裁剪到该范围，姿态使用以复位姿态为中心的连续窗口。按采集任务设置 ``task_description``。
+启动前，在 ``env/realworld_ur5e_collect.yaml`` 的 ``override_cfg`` 中填写 ``reset_ee_pose``、``ee_pose_limit_min`` 和 ``ee_pose_limit_max``。这些字段沿用 Franka 的位姿配置方式，均为 UR 基座坐标系下的 ``[x, y, z, rx, ry, rz]``，位置单位为米，姿态为 xyz Euler 角，单位为弧度。将模板中的 ``null`` 替换为实测复位目标和任务边界。复位目标必须在边界内。目标先按 XYZ 边界和以复位姿态为中心的连续 Euler 窗口裁剪，随后限制每条指令相对实测位姿的步长。姿态限步沿最短旋转路径执行，中间指令可能处于配置边界外。实测位姿越界本身不会中断运行。按采集任务设置 ``task_description``。
 
-在硬件条目中，``camera_resolution`` 按宽、高设置相机输出尺寸，``camera_fps`` 设置帧率。Orbbec 后端按指定帧率选择最接近输出尺寸的原生彩色流，再缩放到输出尺寸；模板使用 1280 × 720、15 fps，仅采集彩色图像。在 ``env.eval.override_cfg`` 中，``image_size`` 设置裁剪缩放后的记录尺寸，按高、宽排列，默认为 224 × 224；``camera_names`` 与 ``camera_crop_regions`` 配置视角。环境通过组合机器人读取机械臂、夹爪和相机观测，再构造 policy 输入。``step_frequency`` 与数据集 ``fps`` 默认均为 10，调整采集频率时应保持一致。将 ``env.eval.override_cfg.enable_camera_player`` 设为 ``true`` 可预览图像。
+在硬件条目中，``camera_resolution`` 按宽、高设置相机输出尺寸，``camera_fps`` 设置帧率。在 ``env.eval.override_cfg`` 中，``image_size`` 设置裁剪缩放后的记录尺寸，按高、宽排列，默认为 224 × 224；``camera_names`` 与 ``camera_crop_regions`` 配置视角。``step_frequency`` 与数据集 ``fps`` 默认均为 10，调整采集频率时应保持一致。将 ``env.eval.override_cfg.enable_camera_player`` 设为 ``true`` 可预览图像。
 
-启动采集和保存成功 episode 后，环境会将 TCP 返回 ``reset_ee_pose``。``open_gripper_on_reset`` 默认为 ``false``，保留夹爪状态；设为 ``true`` 后，会在 TCP 回位前打开已关闭的夹爪，并沿用 Franka 抓放任务的 0.6 秒等待。回位插值至少持续 ``reset_duration`` 秒，每一步受 ``action_scale`` 限制，因此距离较远时回位时间会增加。插值结束后，``reset_timeout`` 设置到位检查超时参数，位置与姿态容差分别由 ``reset_position_tolerance``\ （单位为米）和 ``reset_orientation_tolerance``\ （单位为弧度）设置。启动采集前，先确认该复位路径。
+启动采集和保存成功 episode 后，环境会将 TCP 返回 ``reset_ee_pose``。``open_gripper_on_reset`` 默认为 ``false``，保留夹爪状态；设为 ``true`` 后，会在 TCP 回位前打开已关闭的夹爪，并沿用 Franka 抓放任务的 0.6 秒等待。回位至少持续 ``reset_duration`` 秒，每步相对实测位姿的变化受 ``action_scale`` 限制。插值结束后，机械臂继续向复位目标推进，最多等待 ``reset_timeout`` 秒。位置与姿态到位容差分别由 ``reset_position_tolerance``\ （单位为米）和 ``reset_orientation_tolerance``\ （单位为弧度）设置；超时会报告失败，并尝试保持实测位姿。采集前先确认复位路径。
 
 推拉或旋转 SpaceMouse 摇杆按与 Franka 相同的映射，在基座坐标系中发送笛卡尔增量。左键关闭夹爪，右键打开夹爪。松开摇杆后停止添加增量，运动后的第一条零输入会保持实测位姿。
 
@@ -233,11 +164,11 @@ runner 创建带时间戳的日志目录，并将 LeRobot 数据集写入其中�
 检查记录格式
 ~~~~~~~~~~~~
 
-大量采集前，先检查一小段 episode。安装 Robotiq 夹爪时，policy 与数据集动作包含七个归一化通道 ``[dx, dy, dz, droll, dpitch, dyaw, gripper]``。与单臂 Franka 流程一致，默认的 ``use_relative_frame: True`` 启用公共 ``RelativeFrame`` wrapper，以当前末端坐标系表示笛卡尔动作，并在执行前将 policy 动作转换回基座坐标系，由 UR 环境按 ``action_scale`` 缩放。默认 ``[0.02, 0.1, 1]`` 将满输入 step 的基座系每轴平移和旋转分别限制为 0.02 m、0.1 rad。最后一个信号为负时关闭夹爪，为正时打开夹爪。SpaceMouse 保持原有基座系映射，wrapper 将记录的人工干预动作转换到与 policy 相同的坐标系。
+大量采集前，先检查一小段 episode。安装 Robotiq 夹爪并使用默认的 ``use_relative_frame: True`` 时，记录与 policy 动作均为七个归一化通道 ``[dx, dy, dz, droll, dpitch, dyaw, gripper]``，笛卡尔增量采用当前末端坐标系。SpaceMouse 保留 Franka 的基座系映射，其记录动作会转换到与 policy 相同的坐标系。``action_scale`` 默认为 ``[0.02, 0.1, 1]``，前两项在工作空间限幅前缩放基座系平移和 Euler 增量。夹爪信号为负时关闭，为正时打开。
 
-驱动暴露的 ``tcp_pose`` 仍为绝对位置与 xyzw 四元数。公共 wrapper 先将位姿转换为相对复位返回的实测位姿，再通过 ``Quat2EulerWrapper`` 将姿态转换为 xyz Euler 角；刚复位时，六个相对位姿值均为零。``RealWorldEnv`` 在展开状态前按 key 排序，因此安装夹爪时记录的七维状态为 ``[gripper_position, x_rel, y_rel, z_rel, roll_rel, pitch_rel, yaw_rel]``。夹爪开度和位置的单位为米，角度的单位为弧度。环境相机记录一张 RGB 图像，数据集中的 key 为 ``image``；环境通过视角名称 ``main`` 选择该主图像。
+记录状态为 ``[gripper_position, x_rel, y_rel, z_rel, roll_rel, pitch_rel, yaw_rel]``，位姿相对于复位返回的实测位姿，六个相对位姿值在刚复位时均为零。开度与位置的单位为米，xyz Euler 角的单位为弧度。``main`` 视角的 RGB 图像记录为 ``image``。
 
-``pi05_ur5e`` 数据配置将该图像、七维状态、七维动作和任务描述映射到 OpenPI，并保留记录的增量动作。采集与部署时，应保持 ``use_relative_frame``、状态顺序、相机视角、任务描述、采集频率和 ``action_scale`` 一致。
+训练和部署使用 ``pi05_ur5e`` 读取该格式，并保持相对坐标系设置、状态顺序、相机视角、任务描述、采集频率和动作比例一致。
 
 微调 π₀.₅
 ----------
