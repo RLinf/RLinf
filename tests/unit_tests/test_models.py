@@ -504,44 +504,6 @@ def test_openpi_flash_attention_3_configuration():
     assert metadata.backend == "flash_attention_3"
 
 
-def test_openpi_flash_attention_3_dispatch(monkeypatch):
-    from rlinf.models.embodiment.openpi.modules.flash_attention import (
-        _flash_attention_kernel,
-    )
-
-    package = ModuleType("flash_attn_3")
-    interface = ModuleType("flash_attn_3.flash_attn_interface")
-
-    def varlen(
-        q,
-        k,
-        v,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        *,
-        softmax_scale,
-        causal,
-        return_attn_probs,
-    ):
-        assert softmax_scale == 1.0
-        assert causal is False
-        assert return_attn_probs is False
-        return q
-
-    interface.flash_attn_varlen_func = varlen
-    package.flash_attn_interface = interface
-    monkeypatch.setitem(sys.modules, "flash_attn_3", package)
-    monkeypatch.setitem(sys.modules, "flash_attn_3.flash_attn_interface", interface)
-    query = torch.ones(2, 1, 4)
-    cu_seqlens = torch.tensor([0, 2], dtype=torch.int32)
-    actual = _flash_attention_kernel("flash_attention_3")(
-        query, query, query, cu_seqlens, cu_seqlens, 2, 2
-    )
-    assert actual is query
-
-
 @pytest.mark.parametrize("mode", ["joint", "prefix", "masked_prefix", "cached_suffix"])
 @pytest.mark.parametrize("backend", ["flash_attention_2", "flash_attention_3"])
 def test_openpi_flash_attention_outputs_and_gradients(mode, backend):

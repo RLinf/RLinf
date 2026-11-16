@@ -26,7 +26,7 @@ import sys
 import textwrap
 from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -48,6 +48,72 @@ from rlinf.utils.metric_utils import (
 )
 from rlinf.utils.utils import masked_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+
+
+@pytest.mark.parametrize("backend", ["flash_attention_2", "flash_attention_3"])
+def test_flash_attention_varlen_dispatch(monkeypatch, backend):
+    from rlinf.utils.flash_attention import flash_attention_varlen
+
+    query = torch.randn(3, 2, 4)
+    key = torch.randn(5, 1, 4)
+    value = torch.randn_like(key)
+    query_lengths = torch.tensor([0, 1, 3], dtype=torch.int32)
+    key_lengths = torch.tensor([0, 2, 5], dtype=torch.int32)
+    calls = []
+
+    def kernel(q, k, v, cu_q, cu_k, max_q, max_k, **kwargs):
+        assert q is query and k is key and v is value
+        assert cu_q is query_lengths and cu_k is key_lengths
+        assert (max_q, max_k) == (2, 3)
+        calls.append(kwargs)
+        return query
+
+    if backend == "flash_attention_2":
+        package = ModuleType("flash_attn")
+        package.flash_attn_varlen_func = kernel
+        monkeypatch.setitem(sys.modules, "flash_attn", package)
+        expected = {"dropout_p": 0.0}
+    else:
+        package = ModuleType("flash_attn_3")
+        interface = ModuleType("flash_attn_3.flash_attn_interface")
+        interface.flash_attn_varlen_func = kernel
+        package.flash_attn_interface = interface
+        monkeypatch.setitem(sys.modules, "flash_attn_3", package)
+        monkeypatch.setitem(sys.modules, "flash_attn_3.flash_attn_interface", interface)
+        expected = {"return_attn_probs": False}
+
+    result = flash_attention_varlen(
+        query,
+        key,
+        value,
+        query_lengths,
+        key_lengths,
+        2,
+        3,
+        backend=backend,
+        softmax_scale=0.5,
+        causal=True,
+    )
+    assert result is query
+    assert calls == [{**expected, "softmax_scale": 0.5, "causal": True}]
+
+
+def test_flash_attention_varlen_rejects_unknown_backend():
+    from rlinf.utils.flash_attention import flash_attention_varlen
+
+    query = torch.ones(2, 1, 4)
+    lengths = torch.tensor([0, 2], dtype=torch.int32)
+    with pytest.raises(ValueError, match="Unsupported FlashAttention backend"):
+        flash_attention_varlen(
+            query,
+            query,
+            query,
+            lengths,
+            lengths,
+            2,
+            2,
+            backend="unknown",
+        )
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():

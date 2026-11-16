@@ -17,10 +17,10 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
-from functools import partial
 
 import torch
+
+from rlinf.utils.flash_attention import flash_attention_varlen
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,25 +46,6 @@ class FlashAttentionMetadata:
 def _cu_seqlens(valid: torch.Tensor) -> torch.Tensor:
     counts = valid.sum(dim=-1, dtype=torch.int32)
     return torch.cat([counts.new_zeros(1), counts.cumsum(0, dtype=torch.int32)])
-
-
-def _flash_attention_kernel(backend: str) -> Callable[..., torch.Tensor]:
-    if backend == "flash_attention_2":
-        from flash_attn import flash_attn_varlen_func
-
-        return partial(
-            flash_attn_varlen_func, dropout_p=0.0, softmax_scale=1.0, causal=False
-        )
-    if backend == "flash_attention_3":
-        from flash_attn_3.flash_attn_interface import flash_attn_varlen_func
-
-        return partial(
-            flash_attn_varlen_func,
-            softmax_scale=1.0,
-            causal=False,
-            return_attn_probs=False,
-        )
-    raise ValueError(f"Unsupported FlashAttention backend {backend!r}")
 
 
 def prepare_flash_attention(
@@ -154,8 +135,6 @@ def flash_attention(
     if key.dtype != query.dtype or value.dtype != query.dtype:
         raise ValueError("FlashAttention requires matching Q/K/V dtypes")
 
-    kernel = _flash_attention_kernel(metadata.backend)
-
     batch, query_length, heads, head_dim = query.shape
     key_length, kv_heads = key.shape[1:3]
     flat_query = query.reshape(-1, heads, head_dim)
@@ -168,7 +147,7 @@ def flash_attention(
     for block in metadata.blocks:
         if block.query_indices.numel() == 0:
             continue
-        packed = kernel(
+        packed = flash_attention_varlen(
             flat_query[block.query_indices],
             flat_key[block.key_indices],
             flat_value[block.key_indices],
@@ -176,6 +155,8 @@ def flash_attention(
             block.key_cu_seqlens,
             block.max_query_length,
             block.max_key_length,
+            backend=metadata.backend,
+            softmax_scale=1.0,
         )
         output.index_copy_(0, block.query_indices, packed)
     output = output.reshape(batch, query_length, heads, head_dim)
