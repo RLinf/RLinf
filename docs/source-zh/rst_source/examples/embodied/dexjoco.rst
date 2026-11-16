@@ -70,7 +70,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
      - 22 维连续动作：末端的三维绝对位置、三维旋转向量和 16 个 Allegro 关节目标。
    * - 奖励
      - 稀疏的 0/1 成功奖励。
-   * - 提示词
+   * - 提示词（仅 π₀.₅）
      - “Grasp the watering can and apply water to the plant.”
 
 安装
@@ -243,9 +243,6 @@ PPO 使用 128 个环境、action-level log-probability、1e-5 学习率和 1600
    actor:
      model:
        model_path: /path/to/pi05_base_openpi
-       openpi:
-         max_token_len: 250
-         torch_compile: False
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 

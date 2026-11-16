@@ -29,7 +29,7 @@ The policy uses front and wrist images to grasp a watering can and water a plant
 
       SFT · PPO
 
-   .. grid-item-card:: Task
+   .. grid-item-card:: Tasks
       :text-align: center
 
       WaterPlant
@@ -72,7 +72,7 @@ Both policies use the following observations, actions, and reward:
      - 22-dim continuous action: absolute 3D end-effector position, a 3D rotation vector, and 16 Allegro joint targets.
    * - Reward
      - Sparse 0/1 success reward.
-   * - Prompt
+   * - Prompt (π₀.₅ only)
      - “Grasp the watering can and apply water to the plant.”
 
 Installation
@@ -261,9 +261,6 @@ section and set the training fields below:
    actor:
      model:
        model_path: /path/to/pi05_base_openpi
-       openpi:
-         max_token_len: 250
-         torch_compile: False
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
