@@ -13,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor: all
 
 runner:
   task_type: sft
@@ -51,6 +51,8 @@ actor:
       task: sft
       config_name: "pi05_dexjoco"
       num_images_in_input: 2
+      max_token_len: 250
+      torch_compile: False
     openpi_data:
       norm_stats_path: "/path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json"
 

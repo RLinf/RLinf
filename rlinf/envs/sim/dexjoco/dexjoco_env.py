@@ -309,8 +309,9 @@ class DexJoCoEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         for idx, seed in zip(env_idx, reset_state_ids):
-            raw_obs, _ = self.env.reset(id=[idx], seed=int(seed))
+            raw_obs, info_lists = self.env.reset(id=[idx], seed=int(seed))
             self.current_raw_obs[idx] = raw_obs[0]
+            self.current_info_list[idx] = info_lists[0]
         self._terminated[env_idx] = False
         self._truncated[env_idx] = False
         self._success[env_idx] = False

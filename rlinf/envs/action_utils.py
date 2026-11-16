@@ -332,7 +332,10 @@ def prepare_actions_for_dexjoco(
 ) -> np.ndarray:
     # the policy outputs [pos3, rotvec3, hand16] per arm, right arm first
     # DexJoCo takes all arm poses [pos3, quat_wxyz] first, then all hands
-    num_arms = raw_chunk_actions.shape[-1] // 22
+    action_dim = raw_chunk_actions.shape[-1]
+    if action_dim not in (22, 44):
+        raise ValueError(f"DexJoCo expects 22-dim or 44-dim actions, got {action_dim}.")
+    num_arms = action_dim // 22
     poses = []
     hands = []
     for arm_actions in np.split(raw_chunk_actions, num_arms, axis=-1):
