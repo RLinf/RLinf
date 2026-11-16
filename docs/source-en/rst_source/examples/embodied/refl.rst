@@ -208,16 +208,10 @@ Configure the Reward Update
 
 The actor selects a late denoising state, predicts a clean latent in one step,
 and decodes it to an image. The VAE and ImageReward parameters stay frozen,
-while gradients pass through both to the generator. The loss is
-
-.. math::
-
-   L_{\mathrm{reward}} = \lambda\,\mathbb{E}
-   [\max(0, m - r(\hat{x}_0, c))].
-
-Here ``refl_grad_scale`` sets :math:`\lambda` and ``refl_margin`` sets
-:math:`m`; samples scoring at least :math:`m` have zero reward gradient.
-These settings live under ``algorithm``:
+while gradients pass through both to the generator. The reward loss penalizes
+scores below ``refl_margin`` and scales the penalty by ``refl_grad_scale``.
+Samples at or above the margin have zero reward gradient. These settings live
+under ``algorithm``:
 
 .. list-table::
    :header-rows: 1

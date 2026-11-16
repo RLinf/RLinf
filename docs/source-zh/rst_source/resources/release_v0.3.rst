@@ -176,9 +176,9 @@ Agentic AI
 
 另有 2 篇论文被 **RSS 2026** 收录：
 
-- **USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI** （RSS 2026，即 RLinf-USER）。对应 RLinf 真机在线策略学习系统。文档：`RLinf-USER <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_user.html>`__ ｜ 论文：`arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ ｜ `RSS 论文页 <https://roboticsconference.org/program/papers/37/>`__。
+- **USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI** （RSS 2026）。对应 RLinf 真机在线策略学习系统。文档：`USER <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_user.html>`__ ｜ 论文：`arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ ｜ `RSS 论文页 <https://roboticsproceedings.org/rss22/p037.html>`__。
 
-- **RLux-VLA: A Unified and Efficient Framework for Reinforcement Learning of Vision-Language-Action Models** （RSS 2026，即 RLinf-VLA）。对应 RLinf 的 VLA+RL 统一框架。文档：`RLinf-VLA <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_vla.html>`__ ｜ 论文：`arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ ｜ `RSS 论文页 <https://roboticsconference.org/program/papers/89/>`__。
+- **RLinf-VLA: A Unified and Efficient Framework for Reinforcement Learning of Vision-Language-Action Models** （RSS 2026）。对应 RLinf 的 VLA+RL 统一框架。文档：`RLinf-VLA <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_vla.html>`__ ｜ 论文：`arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ ｜ `RSS 论文页 <https://roboticsproceedings.org/rss22/p089.html>`__。
 
 重要修复
 ^^^^^^^^^^

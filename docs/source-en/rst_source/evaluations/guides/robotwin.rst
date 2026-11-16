@@ -36,6 +36,8 @@ Before evaluation, clone the RLinf-compatible branch and download simulation ass
 By default, this script downloads assets under ``/path/to/RoboTwin/assets/``.
 After the download completes, set ``env.eval.assets_path`` to ``/path/to/RoboTwin`` (the parent folder of ``assets/``).
 
+RLinf creates RoboTwin's cameras with a 0.01 m near plane instead of RoboTwin's 0.1 m: SAPIEN 3.0.1 clips everything closer than the near plane, and 0.1 m hides the gripper fingers from the wrist cameras. Set ``env.eval.camera_near`` to change it, or to ``null`` to keep RoboTwin's own value.
+
 **Environment variables**
 
 Set these before every evaluation run:

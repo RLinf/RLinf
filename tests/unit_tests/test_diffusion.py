@@ -458,7 +458,7 @@ def test_refl_inference_returns_images(tiny_sd3, mode):
     assert output == {"prev_values": None}
 
 
-@pytest.mark.parametrize("rl_mode", ["flow-grpo", "nft"])
+@pytest.mark.parametrize("rl_mode", ["flow-grpo", "nft", "art"])
 def test_sd3_other_algorithms_keep_rollout_training_inputs(tiny_sd3, rl_mode):
     model = tiny_sd3
     model.config.rl_mode = rl_mode
@@ -466,8 +466,15 @@ def test_sd3_other_algorithms_keep_rollout_training_inputs(tiny_sd3, rl_mode):
     assert images.shape == (1, 3, 16, 16)
     assert output["prev_logprobs"].shape == (1, 3)
     inputs = output["forward_inputs"]
-    assert inputs["latents"].shape == (1, 3, 16, 8, 8)
-    assert inputs["next_latents"].shape == inputs["latents"].shape
+    if rl_mode == "art":
+        assert inputs["art_states"].shape == (1, 4, 1, 16, 8, 8)
+        assert inputs["art_sigmas"].shape == (1, 4)
+        assert inputs["art_sigmas_next"].shape == (1, 4)
+        assert inputs["art_endpoint"].shape == (1, 1, 16, 8, 8)
+        assert not {"latents", "next_latents", "timesteps"}.intersection(inputs)
+    else:
+        assert inputs["latents"].shape == (1, 3, 16, 8, 8)
+        assert inputs["next_latents"].shape == inputs["latents"].shape
     assert all(not value.requires_grad for value in inputs.values())
     if rl_mode == "nft":
         assert inputs["nft_x0"].shape == (1, 1, 16, 8, 8)

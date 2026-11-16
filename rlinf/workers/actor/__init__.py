@@ -27,6 +27,7 @@ def get_actor_worker(cfg: DictConfig) -> type[Worker]:
                 "embodied_dagger",
                 "embodied_nft",
                 "embodied_refl",
+                "embodied_art",
             }:
                 raise ValueError(
                     "runner.use_training_pipeline=True is not supported for "

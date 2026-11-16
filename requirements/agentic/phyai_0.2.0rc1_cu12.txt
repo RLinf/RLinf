@@ -1,0 +1,9 @@
+# PhyAI 0.2.0rc1 on CUDA 12 (Torch 2.11.0+cu128).
+-r phyai_0.2.0rc1_common.txt
+
+# CUDA 12 FlashInfer closure for Python 3.12 and Torch 2.11.0+cu128.
+flashinfer-python[cu12]==0.6.17
+nvidia-cudnn-frontend==1.28.0
+nvidia-cutlass-dsl==4.7.1
+cuda-tile==1.6.0
+nccl4py==0.5.0

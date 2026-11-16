@@ -114,8 +114,8 @@ actor 用当前权重逐批采样，通过可微的 ImageReward loss 更新 SD3 
 
 prompt 文件是 JSON 列表，每项包含 ``text`` 或 ``prompt`` 字段。加载器会清理首尾空白、去重，并通过 ``env.train.dataset.exclude_path`` 从训练集中排除评测 prompt。上述固定版本的文件得到 9,756 条训练 prompt 和 463 条评测 prompt。
 
-运行训练
---------
+运行
+----
 
 先运行仅使用奖励的训练，作为添加监督更新时的对照。下方命令将 actor、env 和 rollout 放在 GPU 0–3 上。
 
@@ -177,14 +177,7 @@ actor 按数据集 epoch 打乱 prompt，用当前权重为每个训练 batch �
 配置奖励更新
 ~~~~~~~~~~~~
 
-actor 从晚期去噪状态出发，一步预测干净 latent，再解码成图片。VAE 和 ImageReward 的参数保持冻结，但梯度会经过它们传回生成模型。奖励 loss 为：
-
-.. math::
-
-   L_{\mathrm{reward}} = \lambda\,\mathbb{E}
-   [\max(0, m - r(\hat{x}_0, c))].
-
-``refl_grad_scale`` 对应 :math:`\lambda`，``refl_margin`` 对应 :math:`m`；分数达到 :math:`m` 的样本，其奖励梯度为零。以下配置位于 ``algorithm`` 下：
+actor 从晚期去噪状态出发，一步预测干净 latent，再解码成图片。VAE 和 ImageReward 的参数保持冻结，但梯度会经过它们传回生成模型。奖励 loss 惩罚低于 ``refl_margin`` 的分数，并用 ``refl_grad_scale`` 缩放惩罚。分数达到阈值的样本，其奖励梯度为零。以下配置位于 ``algorithm`` 下：
 
 .. list-table::
    :header-rows: 1
@@ -211,7 +204,7 @@ actor 从晚期去噪状态出发，一步预测干净 latent，再解码成图�
 添加图文监督更新
 ~~~~~~~~~~~~~~~~
 
-要在奖励更新之外继续进行去噪训练，先准备 img2dataset ``files`` 格式的本地图文对。这个可选监督目标称为 Lpre：
+要在奖励更新之外继续训练去噪模型，先准备 img2dataset ``files`` 格式的本地图文对。这个可选监督目标称为 Lpre：
 
 .. code-block:: text
 

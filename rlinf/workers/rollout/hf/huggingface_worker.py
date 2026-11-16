@@ -42,6 +42,7 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -878,11 +879,11 @@ class MultiStepRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
-                if not policy_input.requires_inference:
-                    actions = policy_input.external_actions
-                    forward_inputs = None
-                    policy_output = None
-                else:
+                # Omit raw observations when the collector does not consume them.
+                transition_obs = (
+                    policy_input.obs if self.collect_raw_transition_obs else {}
+                )
+                if policy_input.requires_inference:
                     actions, result = self._predict_rollout_actions(
                         policy_input.obs,
                         rlt_switch_flags=policy_input.rlt_switch_flags,
@@ -890,27 +891,24 @@ class MultiStepRolloutWorker(Worker):
                     )
                     forward_inputs = result.get("forward_inputs")
                     policy_output = self._build_policy_output(actions, result)
-                self._send_actions(
-                    output_channel,
-                    actions.contiguous(),
-                    stage_id,
-                    split_sizes,
-                )
-                # Omit raw observations when the collector does not consume them.
-                transition_obs = (
-                    policy_input.obs if self.collect_raw_transition_obs else {}
-                )
-                if not policy_input.requires_inference:
-                    trajectory_part = PolicyPart(
-                        sources=policy_input.sources,
-                        obs=transition_obs,
-                        external_actions=actions,
+                    self._send_actions(
+                        output_channel,
+                        actions.contiguous(),
+                        stage_id,
+                        split_sizes,
                     )
-                else:
                     trajectory_part = PolicyPart(
                         sources=policy_input.sources,
                         obs=transition_obs,
                         output=policy_output,
+                    )
+                else:
+                    # The env runs the actions it supplied, so nothing goes back.
+                    forward_inputs = None
+                    trajectory_part = PolicyPart(
+                        sources=policy_input.sources,
+                        obs=transition_obs,
+                        external_actions=policy_input.external_actions,
                     )
                 # Publish model-owned data immediately; its environment half
                 # arrives later through an EnvPart with the same key.
@@ -1038,11 +1036,12 @@ class MultiStepRolloutWorker(Worker):
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
-        self.hf_model.to("cpu")
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to("cpu")
-        if self.expert_model is not None:
-            self.expert_model.to("cpu")
+        with pinned_offload_context():
+            self.hf_model.to("cpu")
+            if self.rlt_feature_model is not None:
+                self.rlt_feature_model.to("cpu")
+            if self.expert_model is not None:
+                self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
@@ -1112,6 +1111,8 @@ class MultiStepRolloutWorker(Worker):
                     merged[key] = torch.cat(values, dim=0)
                 elif isinstance(first_non_none, list):
                     merged[key] = [item for sublist in values for item in sublist]
+                elif isinstance(first_non_none, dict):
+                    merged[key] = _merge_obs_dicts(values)
                 else:
                     merged[key] = values
             return merged

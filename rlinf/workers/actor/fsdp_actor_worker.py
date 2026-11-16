@@ -24,6 +24,7 @@ from torch.multiprocessing.reductions import reduce_tensor
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import (
+    apply_importance_sampling_correction,
     kl_penalty,
 )
 from rlinf.config import torch_dtype_from_precision
@@ -716,11 +717,11 @@ class FSDPActor(FSDPModelManager, Worker):
                 raise ValueError(
                     "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
                 )
-            rollout_logprobs = m_batch["rollout_logprobs"]
-            recomputed_logprobs = m_batch["recomputed_logprobs"]
-            advantages = advantages * torch.clamp(
-                (recomputed_logprobs - rollout_logprobs).exp(),
-                max=self.cfg.algorithm.importance_sampling_clip,
+            advantages, _, _ = apply_importance_sampling_correction(
+                advantages,
+                m_batch["recomputed_logprobs"],
+                m_batch["rollout_logprobs"],
+                self.cfg.algorithm.importance_sampling_clip,
             )
 
         loss, mbs_metrics_data = policy_loss(

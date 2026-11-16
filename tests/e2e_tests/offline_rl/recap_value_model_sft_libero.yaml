@@ -23,7 +23,7 @@ runner:
     log_path: "/workspace/results/libero_sft_value"
     project_name: rlinf
     experiment_name: "libero_sft_value"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: -1
   max_steps: 1

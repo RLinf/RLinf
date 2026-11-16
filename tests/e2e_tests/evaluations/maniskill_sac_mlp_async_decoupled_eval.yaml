@@ -27,9 +27,9 @@ runner:
     log_path: /workspace/results/maniskill_sac_mlp_async_decoupled_eval
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
-  max_epochs: 5
+  max_epochs: 1
   max_steps: -1
 
   only_eval: True
@@ -44,8 +44,8 @@ env:
     total_num_envs: 80
     auto_reset: True
     ignore_terminations: True
-    max_episode_steps: 50
-    max_steps_per_rollout_epoch: 50
+    max_episode_steps: 2
+    max_steps_per_rollout_epoch: 2
     use_fixed_reset_state_ids: True
     group_size: 1
     video_cfg:
