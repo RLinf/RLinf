@@ -40,13 +40,14 @@ from lingbotvla.models.vla.lingbot_vla.qwen2_action_expert import (
 from lingbotvla.models.vla.lingbot_vla.qwen3vl_in_vla import (
     apply_lingbot_qwen3_vl_patch,
 )
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from safetensors.torch import load_model
 from transformers.modeling_utils import load_sharded_checkpoint
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.lingbotvlav2.utils import (
     EvalNoiseSampler,
+    check_required_paths,
     flow_matching_loss,
     is_rl_trainable,
     sample_flow_matching_inputs,
@@ -64,28 +65,11 @@ from rlinf.utils.logging import get_logger
 _COMPUTE_DTYPE = torch.bfloat16
 # Observation inputs that build the frozen VLM prefix.
 _PREFIX_KEYS = ("images", "img_masks", "lang_tokens", "lang_masks", "image_grid_thw")
-_REQUIRED_PATHS = (
-    "model_path",
-    "tokenizer_path",
-    "lingbotvlav2.training_config_path",
-    "lingbotvlav2.robot_config_path",
-    "lingbotvlav2.stats_path",
-)
-
-
-def _check_required_paths(config: DictConfig) -> None:
-    """Fail at startup when a checkpoint or asset path is unset or missing."""
-    for key in _REQUIRED_PATHS:
-        value = OmegaConf.select(config, key)
-        if not value or not Path(str(value)).expanduser().exists():
-            raise FileNotFoundError(
-                f"Expected an existing path in model.{key}, got {value!r}."
-            )
 
 
 def build_model_config(config: DictConfig):
     """Rebuild the release model config with the flags RLinf trains under."""
-    _check_required_paths(config)
+    check_required_paths(config)
     model_config = build_checkpoint_config(
         read_checkpoint_config(Path(config.model_path).expanduser()),
         config.tokenizer_path,
@@ -157,7 +141,7 @@ class LingbotVLAV2ActionModel(nn.Module, BasePolicy):
                 "Expected model.precision bf16 (rollout) or fp32 (actor), "
                 f"got {torch_dtype}."
             )
-        _check_required_paths(config)
+        check_required_paths(config)
         self.config = config
         self.num_steps = int(config.num_steps)
         self.forward_micro_batch_size = int(config.forward_micro_batch_size)

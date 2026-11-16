@@ -19,9 +19,19 @@ sample, where it draws from the flow-SDE transition. PPO scores only that step,
 as RLinf's LingBot-VLA and OpenPI policies do.
 """
 
+from pathlib import Path
 from typing import Callable, Optional
 
 import torch
+from omegaconf import DictConfig, OmegaConf
+
+_REQUIRED_PATHS = (
+    "model_path",
+    "tokenizer_path",
+    "lingbotvlav2.training_config_path",
+    "lingbotvlav2.robot_config_path",
+    "lingbotvlav2.stats_path",
+)
 
 _TRAINABLE_PARTS = (
     ".qwen_expert.",
@@ -41,6 +51,16 @@ def is_rl_trainable(name: str) -> bool:
     return any(part in name for part in _TRAINABLE_PARTS) and not any(
         part in name for part in _FROZEN_PARTS
     )
+
+
+def check_required_paths(config: DictConfig) -> None:
+    """Fail at startup when a checkpoint or asset path is unset or missing."""
+    for key in _REQUIRED_PATHS:
+        value = OmegaConf.select(config, key)
+        if not value or not Path(str(value)).expanduser().exists():
+            raise FileNotFoundError(
+                f"Expected an existing path in model.{key}, got {value!r}."
+            )
 
 
 # Maps a latent [batch, horizon, dim] and per-sample times [batch] to a velocity.
