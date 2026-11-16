@@ -345,7 +345,7 @@ class LeRobotDatasetWriter:
         )
 
     def _normalize_scalar_episode_fields(self) -> None:
-        """Normalize HF ``Value`` fields without changing frame arrays or dtypes."""
+        """Convert one-element arrays to Python scalars for HF ``Value`` fields."""
         if self.dataset is None:
             return
         from datasets.features import Value
@@ -359,7 +359,7 @@ class LeRobotDatasetWriter:
             if not isinstance(values, list):
                 continue
             episode_buffer[name] = [
-                value.reshape(-1)[0]
+                value.item()
                 if isinstance(value, np.ndarray) and value.size == 1
                 else value
                 for value in values
