@@ -1,0 +1,36 @@
+defaults:
+  - libero_sft_gr00t_n1d7
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config
+
+cluster:
+  component_placement:
+    actor: 0-1
+
+runner:
+  max_steps: 1
+  save_interval: 1
+  logger:
+    log_path: /workspace/results
+    experiment_name: libero_sft_gr00t_n1d7
+    logger_backends: null
+
+data:
+  train_data_paths:
+    - /workspace/dataset/data/sft-ci-data/gr00t-libero-spatial-episode0
+  num_workers: 0
+  shard_size: 128
+  num_shards_per_epoch: 2
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 2
+  model:
+    model_path: /workspace/dataset/GR00T-N1.7-LIBERO/libero_spatial
+    backbone_model_path: /workspace/dataset/Cosmos-Reason2-2B
+  optim:
+    lr_warmup_steps: 0
+    total_training_steps: 2

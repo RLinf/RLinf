@@ -3331,3 +3331,120 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+def test_gr00t_n1d7_sft_matches_upstream_masked_flow_loss(monkeypatch):
+    """SFT dispatch must preserve the upstream FM objective and gradient path."""
+    if isinstance(sys.modules.get("imageio"), MagicMock):
+        monkeypatch.delitem(sys.modules, "imageio")
+    pytest.importorskip("imageio")
+    config_module = pytest.importorskip("gr00t.configs.model.gr00t_n1d7")
+    upstream = pytest.importorskip("gr00t.model.gr00t_n1d7.gr00t_n1d7")
+    pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
+    from transformers.feature_extraction_utils import BatchFeature
+
+    from rlinf.models.embodiment.base_policy import ForwardType
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        FlowMatchingActionHeadForRLActionPrediction,
+        GR00T_N1_7_ForRLActionPrediction,
+    )
+
+    config = config_module.Gr00tN1d7Config(
+        backbone_embedding_dim=16,
+        hidden_size=16,
+        input_embedding_dim=16,
+        max_state_dim=8,
+        max_action_dim=8,
+        action_dim=4,
+        action_horizon=3,
+        max_num_embodiments=1,
+        state_history_length=1,
+        state_dropout_prob=0.0,
+        tune_projector=True,
+        tune_diffusion_model=True,
+        tune_vlln=True,
+        add_pos_embed=False,
+        use_alternate_vl_dit=False,
+        vl_self_attention_cfg={"num_layers": 0},
+        num_timestep_buckets=8,
+        diffusion_model_cfg={
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "attention_head_dim": 8,
+            "output_dim": 16,
+            "norm_type": "ada_norm",
+            "dropout": 0.0,
+            "final_dropout": False,
+            "positional_embeddings": None,
+            "interleave_self_attention": False,
+        },
+    )
+
+    # Replace only the external pretrained backbone; run the real upstream head.
+    class Backbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = torch.nn.Linear(16, 16)
+
+        def prepare_input(self, inputs):
+            return BatchFeature(
+                {
+                    "backbone_features": inputs["backbone_features"],
+                    "backbone_attention_mask": inputs["attention_mask"],
+                }
+            )
+
+        def forward(self, inputs):
+            return BatchFeature(
+                {
+                    "backbone_features": self.projection(inputs.backbone_features),
+                    "backbone_attention_mask": inputs.backbone_attention_mask,
+                }
+            )
+
+    model = GR00T_N1_7_ForRLActionPrediction.__new__(GR00T_N1_7_ForRLActionPrediction)
+    torch.nn.Module.__init__(model)
+    model.config = config
+    model.backbone = Backbone()
+    model.action_head = FlowMatchingActionHeadForRLActionPrediction(
+        config, {"add_value_head": False}, output_action_chunks=3
+    ).float()
+    model.train()
+    mask = torch.zeros(2, 3, 8)
+    mask[:, :, :4] = 1
+    mask[1, -1] = 0
+    inputs = {
+        "backbone_features": torch.randn(2, 5, 16),
+        "attention_mask": torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 0]]),
+        "state": torch.randn(2, 1, 8),
+        "action": torch.randn(2, 3, 8),
+        "action_mask": mask,
+        "embodiment_id": torch.zeros(2, dtype=torch.long),
+    }
+
+    torch.manual_seed(19)
+    result = model(forward_type=ForwardType.SFT, data={"inputs": inputs})
+    loss = result["loss"]
+    assert loss.ndim == 0 and torch.isfinite(loss)
+    loss.backward()
+    gradients = {
+        name: parameter.grad.clone()
+        for name, parameter in model.named_parameters()
+        if parameter.grad is not None
+    }
+    assert gradients["backbone.projection.weight"].abs().sum() > 0
+    assert any("action_decoder" in name for name in gradients)
+    assert not any("value_head" in name for name, _ in model.named_parameters())
+
+    model.zero_grad(set_to_none=True)
+    backbone_inputs, action_inputs = model.prepare_input(inputs)
+    backbone_outputs = model.backbone(backbone_inputs)
+    torch.manual_seed(19)
+    expected = upstream.Gr00tN1d7ActionHead.forward(
+        model.action_head, backbone_outputs, action_inputs
+    )["loss"]
+    torch.testing.assert_close(loss.detach(), expected.detach(), rtol=0, atol=0)
+    expected.backward()
+    for name, parameter in model.named_parameters():
+        if name in gradients:
+            torch.testing.assert_close(parameter.grad, gradients[name], rtol=0, atol=0)

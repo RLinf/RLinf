@@ -296,3 +296,48 @@ jobs:
         run: |
           ray stop || true
           rm -rf .venv .venv-sglang
+
+  sft-gr00t-n1d7-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create GR00T N1.7 environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.7/
+          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+
+      - name: Prepare real LIBERO SFT episode
+        timeout-minutes: 10
+        run: |
+          source .venv/bin/activate
+          python tests/e2e_tests/sft/prepare_gr00t_libero.py \
+            --output-dir /workspace/dataset/data/sft-ci-data/gr00t-libero-spatial-episode0 \
+            --gr00t-path /workspace/dataset/Isaac-GR00T-1.7
+
+      - name: GR00T N1.7 SFT checkpoint and resume
+        timeout-minutes: 25
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_gr00t_n1d7_ci
+          export PYTHONPATH="$REPO_PATH"
+          python examples/sft/train_vla_sft.py \
+            --config-path "$REPO_PATH/tests/e2e_tests/sft" \
+            --config-name libero_sft_gr00t_n1d7_ci \
+            runner.max_steps=2 \
+            runner.resume_dir=/workspace/results/libero_sft_gr00t_n1d7/checkpoints/global_step_1
+          test -d /workspace/results/libero_sft_gr00t_n1d7/checkpoints/global_step_2/actor
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          rm -rf /workspace/results/libero_sft_gr00t_n1d7/checkpoints

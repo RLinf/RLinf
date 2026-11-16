@@ -1,0 +1,137 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-7
+
+runner:
+  task_type: sft
+  max_epochs: -1
+  max_steps: 20000
+  resume_dir: null
+  val_check_interval: -1
+  save_interval: 1000
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: libero_sft_gr00t_n1d7
+    logger_backends:
+      - tensorboard
+
+data:
+  train_data_paths:
+    - /path/to/libero_spatial_no_noops_1.0.0_lerobot
+  val_data_paths: null
+  embodiment_tag: libero_sim
+  num_workers: 4
+  video_backend: torchcodec
+  shard_size: 1024
+  episode_sampling_rate: 1.0
+  num_shards_per_epoch: 10000
+  override_pretraining_statistics: true
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: 32
+  eval_batch_size: 1
+  seed: 0
+  model:
+    model_type: gr00t_n1d7
+    model_path: /path/to/GR00T-N1.7-3B
+    backbone_model_path: /path/to/Cosmos-Reason2-2B
+    precision: fp32
+    trust_remote_code: true
+    is_lora: false
+    training_mode: sft
+    init_backbone_from_config: true
+
+    action_dim: 7
+    num_action_chunks: 16
+    denoising_steps: 4
+    num_steps: 4
+    embodiment_tag: libero_sim
+    obs_converter_type: libero
+    add_value_head: false
+
+    sft:
+      tune_llm: true
+      tune_visual: true
+      tune_projector: true
+      tune_diffusion_model: true
+      tune_vlln: true
+
+    rl_head_config:
+      add_value_head: false
+      disable_dropout: false
+      noise_method: flow_sde
+      noise_level: 0.5
+      noise_params: [0.7, 0.3, 400]
+      noise_anneal: false
+      action_noise_scale: 0.0
+      padding_value: 570
+  optim:
+    lr: 1.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-05
+    clip_grad: 1.0
+    lr_scheduler: cosine
+    lr_warmup_steps: 1000
+    total_training_steps: 20000
+  fsdp_config:
+    strategy: fsdp
+    use_orig_params: true
+    sharding_strategy: full_shard
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: fp32
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+      cast_forward_inputs: false
+      cast_root_forward_inputs: false
+    wrap_policy:
+      transformer_layer_cls_to_wrap: []
+      module_classes_to_wrap: []
+      no_split_names: []
+    wrappers:
+      compute:
+        module_names:
+          - backbone.model
+          - action_head.model
+          - action_head.vl_self_attention
+        wrap_mode: subtree
+      projections:
+        module_names:
+          - action_head.state_encoder
+          - action_head.action_encoder
+          - action_head.action_decoder
+          - action_head.vlln
+        wrap_mode: subtree
+    mixed_precision_policies:
+      bf16_compute:
+        param_dtype: bf16
+        reduce_dtype: fp32
+        buffer_dtype: fp32
+        cast_forward_inputs: true
+      fp32_projections:
+        param_dtype: fp32
+        reduce_dtype: fp32
+        buffer_dtype: fp32
+        cast_forward_inputs: true
+    mixed_precision_rules:
+      compute: bf16_compute
+      projections: fp32_projections
+    amp_autocast:
+      enabled: false

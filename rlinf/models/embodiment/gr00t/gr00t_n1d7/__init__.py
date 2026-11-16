@@ -80,13 +80,33 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
 
     config = Gr00tN1d7Config.from_pretrained(str(model_path))
+    training_mode = cfg.get("training_mode", "rl")
+    if training_mode not in {"rl", "sft"}:
+        raise ValueError(
+            f"Expected GR00T training_mode 'rl' or 'sft', got {training_mode!r}"
+        )
+    init_backbone_from_config = cfg.get("init_backbone_from_config", False)
+    if init_backbone_from_config and training_mode != "sft":
+        raise ValueError("Config-only GR00T backbone initialization is SFT-only")
+    if training_mode == "sft":
+        if cfg.rl_head_config.add_value_head:
+            raise ValueError("GR00T SFT requires rl_head_config.add_value_head=False")
+        for name in (
+            "tune_llm",
+            "tune_visual",
+            "tune_projector",
+            "tune_diffusion_model",
+            "tune_vlln",
+        ):
+            setattr(config, name, bool(cfg.sft[name]))
+
     _action_dim = cfg.get("action_dim")
     if _action_dim is not None:
         config.action_dim = _action_dim
 
     backbone_model_path = OmegaConf.select(cfg, "backbone_model_path", default=None)
 
-    model = GR00T_N1_7_ForRLActionPrediction.from_pretrained(
+    loaded = GR00T_N1_7_ForRLActionPrediction.from_pretrained(
         config=config,
         local_model_path=str(model_path),
         pretrained_model_name_or_path=str(model_path),
@@ -97,7 +117,21 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         output_action_chunks=cfg.num_action_chunks,
         obs_converter_type=cfg.obs_converter_type,
         rl_head_config=cfg.rl_head_config,
+        init_backbone_from_config=init_backbone_from_config,
+        output_loading_info=init_backbone_from_config,
     )
+    if init_backbone_from_config:
+        model, loading_info = loaded
+        if (
+            loading_info["missing_keys"]
+            or loading_info["mismatched_keys"]
+            or loading_info["error_msgs"]
+        ):
+            raise ValueError(f"Incomplete GR00T SFT checkpoint restore: {loading_info}")
+        model.checkpoint_loading_info = loading_info
+        logger.info("GR00T SFT whole-checkpoint loading info: %s", loading_info)
+    else:
+        model = loaded
 
     model.to(torch_dtype)
     if cfg.rl_head_config.add_value_head and hasattr(model.action_head, "value_head"):

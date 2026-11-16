@@ -33,6 +33,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持使用 FSDP，在 LIBERO 示范数据上全参数微调 GR00T-N1.7。文档：[GR00T-N1.7 SFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_gr00t.html)。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
@@ -226,7 +227,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0_fast.html">π₀-FAST（LeRobot）</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html">OpenVLA-OFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅ · <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_gr00t.html">N1.7 SFT</a></li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html">LingbotVLA 1.0</a> ✅</li>

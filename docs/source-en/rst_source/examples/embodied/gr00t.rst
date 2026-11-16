@@ -21,6 +21,8 @@ SFT cold-start, PPO training, evaluation, and visualization.
    The AMD, Ascend, and MUSA instructions on this page cover N1.5 with LIBERO
    or ManiSkill; validate N1.6, N1.7, and IsaacLab separately on those backends.
 
+For GR00T-N1.7 supervised fine-tuning on demonstrations, see :doc:`sft_gr00t`.
+
 Overview
 --------
 

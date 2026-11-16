@@ -169,6 +169,8 @@ jobs:
               - '.github/scripts/ascend_ci_workspace.sh'
               - 'rlinf/models/embodiment/dreamzero/**'
               - 'rlinf/models/embodiment/fastwam/**'
+              - 'rlinf/models/embodiment/gr00t/gr00t_n1d7/**'
+              - 'rlinf/data/datasets/gr00t/**'
               - 'tests/e2e_tests/evaluations/libero_spatial_fastwam_eval.yaml'
               - 'evaluations/libero/*fastwam*'
               - 'examples/embodiment/config/model/fastwam.yaml'

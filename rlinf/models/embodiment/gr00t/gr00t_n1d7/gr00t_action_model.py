@@ -26,7 +26,11 @@ from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7, Gr00tN1d7ActionHead
 from gr00t.model.gr00t_n1d7.processing_gr00t_n1d7 import Gr00tN1d7Processor
 from torch.distributions import Normal
-from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+from transformers import (
+    Qwen3VLConfig,
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLProcessor,
+)
 from transformers.feature_extraction_utils import BatchFeature
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -46,7 +50,16 @@ logger = get_logger()
 
 
 @contextmanager
-def redirect_qwen3_backbone_to_local(canonical_name: str, local_path: str | None):
+def redirect_qwen3_backbone_to_local(
+    canonical_name: str,
+    local_path: str | None,
+    *,
+    init_backbone_from_config: bool = False,
+):
+    if init_backbone_from_config and local_path is None:
+        raise ValueError(
+            "Config-only backbone initialization requires a local backbone path"
+        )
     if local_path is None:
         yield
         return
@@ -58,11 +71,23 @@ def redirect_qwen3_backbone_to_local(canonical_name: str, local_path: str | None
     original_model_from_pretrained = Qwen3VLForConditionalGeneration.from_pretrained
     original_processor_from_pretrained = Qwen3VLProcessor.from_pretrained
 
-    def _make_local_redirect(original):
+    def _make_local_redirect(original, *, model_weights=False):
         def from_pretrained_with_local_redirect(model_name, *args, **kwargs):
             if str(model_name) == canonical_name:
                 model_name = str(local_path)
                 kwargs["local_files_only"] = True
+                if model_weights and init_backbone_from_config:
+                    config = Qwen3VLConfig.from_pretrained(
+                        model_name, local_files_only=True
+                    )
+                    construction_options = {
+                        key: kwargs[key]
+                        for key in ("torch_dtype", "dtype", "attn_implementation")
+                        if key in kwargs
+                    }
+                    return Qwen3VLForConditionalGeneration._from_config(
+                        config, **construction_options
+                    )
             return original(model_name, *args, **kwargs)
 
         return from_pretrained_with_local_redirect
@@ -74,7 +99,9 @@ def redirect_qwen3_backbone_to_local(canonical_name: str, local_path: str | None
         patch.object(
             Qwen3VLForConditionalGeneration,
             "from_pretrained",
-            side_effect=_make_local_redirect(original_model_from_pretrained),
+            side_effect=_make_local_redirect(
+                original_model_from_pretrained, model_weights=True
+            ),
         ),
         patch.object(
             Qwen3VLProcessor,
@@ -763,6 +790,7 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         denoising_steps: Optional[int] = None,
         obs_converter_type: str = "libero",
         output_action_chunks: int = 1,
+        init_backbone_from_config: bool = False,
         **kwargs,
     ):
         if isinstance(embodiment_tag, str):
@@ -786,11 +814,17 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         original_model_name = str(config.model_name)
 
         if backbone_model_path is not None:
-            logger.info(
-                "Loading backbone locally from %s with canonical model_name=%s",
-                backbone_model_path,
-                original_model_name,
-            )
+            if init_backbone_from_config:
+                logger.info(
+                    "Initializing backbone from local config %s; the GR00T checkpoint restores its weights",
+                    backbone_model_path,
+                )
+            else:
+                logger.info(
+                    "Loading backbone locally from %s with canonical model_name=%s",
+                    backbone_model_path,
+                    original_model_name,
+                )
         else:
             logger.info("Loading backbone from HuggingFace: %s", original_model_name)
 
@@ -800,7 +834,11 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         if kwargs:
             logger.warning("Ignoring unexpected kwargs: %s", sorted(kwargs))
 
-        with redirect_qwen3_backbone_to_local(original_model_name, backbone_model_path):
+        with redirect_qwen3_backbone_to_local(
+            original_model_name,
+            backbone_model_path,
+            init_backbone_from_config=init_backbone_from_config,
+        ):
             super().__init__(config, transformers_loading_kwargs=loading_kwargs)
 
             self._modality_config, self._modality_transform = (
@@ -920,8 +958,19 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        elif forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def sft_forward(self, data: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Train on the official collator output with the upstream masked FM loss."""
+        backbone_inputs, action_inputs = self.prepare_input(data["inputs"])
+        backbone_output = self.backbone(backbone_inputs)
+        output = Gr00tN1d7ActionHead.forward(
+            self.action_head, backbone_output, action_inputs
+        )
+        return {"loss": output["loss"]}
 
     def default_forward(
         self,
