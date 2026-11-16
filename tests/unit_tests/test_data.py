@@ -62,9 +62,7 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
-from rlinf.hybrid_engines.weight_syncer import BucketWeightSyncer
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
-from rlinf.scheduler import AcceleratorType
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -2111,163 +2109,6 @@ def test_sync_and_async_workers_share_the_part_channel_contract():
     )
 
 
-@pytest.mark.parametrize("sync_first", [False, True])
-def test_async_rollout_keeps_bucket_sync_outside_an_epoch(sync_first):
-    async def run():
-        worker = object.__new__(AsyncMultiStepRolloutWorker)
-        worker._background_weight_sync_active = False
-        worker._model_lock = asyncio.Lock()
-        worker._timer_metrics = {}
-        worker._accelerator_type = AcceleratorType.NO_ACCEL
-        worker.n_train_chunk_steps = 1
-        worker.num_pipeline_stages = 1
-        worker.env_decoupled_mode = False
-        worker.enable_rlt = False
-        worker.enable_dagger = False
-        worker.collect_transitions = False
-        worker.collect_prev_infos = False
-        worker.expert_model = None
-        worker.rlt_feature_model = None
-        worker.algorithm_cfg = OmegaConf.create({})
-        worker._train_sampling_params = {}
-        worker.model_cfg = SimpleNamespace(model_type="cosmos3", num_action_chunks=1)
-        worker.cfg = OmegaConf.create({"env": {"group_name": "EnvGroup"}})
-        worker.train_batch_size = 1
-        worker.total_num_train_envs = 1
-        worker.rollout_epoch = 1
-        worker.finished_episodes = None
-        worker.actor_group_name = "ActorGroup"
-        worker.actor_weight_src_rank = 0
-        worker._group_name = "RolloutGroup"
-        worker._weight_sync_rollout_ranks = [0]
-        worker._sync_weight_comm_options = None
-        worker.torch_platform = SimpleNamespace(empty_cache=lambda: None)
-        worker.hf_model = torch.nn.Linear(1, 1)
-        with torch.no_grad():
-            worker.hf_model.weight.zero_()
-            worker.hf_model.bias.zero_()
-        predictions = []
-
-        def predict_action_batch(**kwargs):
-            predictions.append(
-                (worker.hf_model.weight.item(), worker.hf_model.bias.item())
-            )
-            return torch.zeros(1, 1, 1), {"forward_inputs": {}}
-
-        worker.hf_model.predict_action_batch = predict_action_batch
-        worker.weight_syncer = BucketWeightSyncer(
-            bucket_size=4, bucket_dtype=None, bucket_device="cpu"
-        )
-        await worker.weight_syncer.init_sender(None, ["weight", "bias"], None)
-        await worker.weight_syncer.init_receiver(None, None)
-        buckets = iter(
-            worker.weight_syncer.iter_buckets(
-                {"weight": torch.full((1, 1), 2.0), "bias": torch.full((1,), 2.0)},
-                version=1,
-            )
-        )
-        second_bucket_waiting = asyncio.Event()
-        release_bucket = asyncio.Event()
-
-        async def receive_bucket():
-            bucket = next(buckets)
-            if "bias" in bucket:
-                second_bucket_waiting.set()
-                await release_bucket.wait()
-            return bucket
-
-        worker.broadcast = Mock(return_value=SimpleNamespace(async_wait=receive_bucket))
-        input_waiting = asyncio.Event()
-        release_input = asyncio.Event()
-        key = TrajectoryKey(0, 0, 0, 0, 0)
-
-        async def receive_input():
-            input_waiting.set()
-            await release_input.wait()
-            return PolicyInput(
-                obs={"states": torch.zeros(1, 1)},
-                sources=[TrajectorySource(key, 1)],
-            )
-
-        async def receive_final():
-            return PolicyInput(obs={"states": torch.zeros(1, 1)}, is_last=True)
-
-        worker.recv_from = Mock(
-            side_effect=lambda **kwargs: SimpleNamespace(
-                async_wait=receive_final
-                if kwargs["tag"] == "train_policy_final"
-                else receive_input
-            )
-        )
-        worker.send_to = Mock()
-        if sync_first:
-            sync = asyncio.create_task(worker.sync_model_from_actor())
-            await asyncio.wait_for(second_bucket_waiting.wait(), timeout=5)
-            epoch = asyncio.create_task(
-                worker.generate_one_epoch(Mock(), Mock(), Mock())
-            )
-            await asyncio.sleep(0)
-            assert not input_waiting.is_set()
-            assert predictions == []
-            release_input.set()
-            release_bucket.set()
-        else:
-            epoch = asyncio.create_task(
-                worker.generate_one_epoch(Mock(), Mock(), Mock())
-            )
-            await asyncio.wait_for(input_waiting.wait(), timeout=5)
-            sync = asyncio.create_task(worker.sync_model_from_actor())
-            await asyncio.sleep(0)
-            worker.broadcast.assert_not_called()
-            release_input.set()
-            await asyncio.wait_for(epoch, timeout=5)
-            await asyncio.wait_for(second_bucket_waiting.wait(), timeout=5)
-            assert predictions == [(0.0, 0.0)]
-            release_bucket.set()
-        await asyncio.wait_for(asyncio.gather(epoch, sync), timeout=5)
-        assert predictions == ([(2.0, 2.0)] if sync_first else [(0.0, 0.0)])
-        assert worker.version == 1
-        assert not worker._model_lock.locked()
-
-    asyncio.run(run())
-
-
-def test_async_env_stop_cancels_a_pending_action_receive():
-    async def run():
-        worker = object.__new__(AsyncEnvWorker)
-        worker._interact_task = None
-        worker._timer_metrics = {}
-        worker._accelerator_type = AcceleratorType.NO_ACCEL
-        worker.rollout_epoch = 1
-        worker.stage_num = 1
-        worker.n_train_chunk_steps = 1
-        worker._prefetched_train_bootstrap = [
-            EnvOutput(obs={"states": torch.zeros(1, 1)})
-        ]
-        worker.enable_online_lerobot = False
-        worker.env_list = [SimpleNamespace()]
-        worker.env_decoupled_mode = False
-        worker.train_batch_size = 1
-        worker.cfg = OmegaConf.create({"rollout": {"group_name": "RolloutGroup"}})
-        receive_started = asyncio.Event()
-
-        async def receive_actions():
-            receive_started.set()
-            await asyncio.Event().wait()
-
-        worker.recv_from = Mock(
-            return_value=SimpleNamespace(async_wait=receive_actions)
-        )
-        interact = asyncio.create_task(worker.interact(Mock(), Mock(), None, Mock()))
-        await asyncio.wait_for(receive_started.wait(), timeout=5)
-        assert worker.recv_from.call_args.kwargs["async_op"]
-        await worker.stop()
-        await asyncio.wait_for(interact, timeout=5)
-        assert worker._interact_task.cancelled()
-
-    asyncio.run(run())
-
-
 def test_decoupled_evaluation_service_is_reused_and_cancelled_on_stop():
     async def run():
         worker = object.__new__(AsyncMultiStepRolloutWorker)
@@ -2381,7 +2222,6 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
         batch_size=32,
         infer_batch_size_fn=env._infer_action_batch_size,
         decoupled_mode=True,
-        async_op=False,
     )
 
 

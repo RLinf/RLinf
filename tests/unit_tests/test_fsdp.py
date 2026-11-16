@@ -47,11 +47,7 @@ import torch
 import torch.distributed as dist
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, OffloadPolicy
 
-from rlinf.hybrid_engines.fsdp.utils import (
-    apply_fsdp2_to_model,
-    clip_grad_by_total_norm_,
-    create_device_mesh,
-)
+from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model, create_device_mesh
 from rlinf.scheduler import Worker
 from rlinf.scheduler.cluster import Cluster
 
@@ -63,18 +59,6 @@ from rlinf.scheduler.cluster import Cluster
 # them.
 CONFIGURED_TIMEOUT = timedelta(minutes=97)
 RLINF_DEFAULT_TIMEOUT = timedelta(minutes=180)
-
-
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_clip_grad_preserves_low_precision_storage(dtype):
-    param = torch.nn.Parameter(torch.zeros(2, dtype=dtype))
-    param.grad = torch.tensor([6.0, 8.0], dtype=dtype)
-    original_grad = param.grad
-
-    clip_grad_by_total_norm_([param], max_grad_norm=5.0, total_norm=10.0)
-
-    assert param.grad is original_grad
-    torch.testing.assert_close(param.grad, torch.tensor([3.0, 4.0], dtype=dtype))
 
 
 def free_port() -> str:

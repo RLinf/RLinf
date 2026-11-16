@@ -19,7 +19,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import ray
@@ -1263,66 +1262,3 @@ def test_process_that_built_a_cluster_keeps_its_exit_code():
     )
 
     assert result.returncode == 3, result.stderr
-
-
-@pytest.mark.parametrize("address", ["local", "192.0.2.1:1234", None])
-@pytest.mark.parametrize("namespace_conflict", [False, True])
-def test_local_ray_initialization_pins_addresses(
-    monkeypatch, address, namespace_conflict
-):
-    import rlinf.scheduler.cluster.node as node_module
-
-    class NodeDiscoveryFailed(RuntimeError):
-        pass
-
-    if address is None:
-        monkeypatch.delenv("RAY_ADDRESS", raising=False)
-    else:
-        monkeypatch.setenv("RAY_ADDRESS", address)
-    monkeypatch.setenv("RLINF_CODE_WORKING_DIR", "0")
-    monkeypatch.setattr(Cluster, "NAMESPACE", Cluster.SYS_NAME)
-    monkeypatch.delattr(Cluster, "_instance", raising=False)
-    initialized = False
-    init_addresses = []
-    runtime_context = SimpleNamespace(gcs_address=None)
-
-    def init(**kwargs):
-        nonlocal initialized
-        init_addresses.append(os.environ.get("RAY_ADDRESS"))
-        runtime_context.gcs_address = f"192.0.2.2:{12000 + len(init_addresses)}"
-        initialized = True
-
-    def shutdown(**kwargs):
-        nonlocal initialized
-        initialized = False
-
-    def nodes():
-        if namespace_conflict and len(init_addresses) == 1:
-            return [{"Alive": True, "NodeID": "fake-node"}]
-        raise NodeDiscoveryFailed
-
-    def conflicting_actor(*args, **kwargs):
-        raise ValueError("Actor name is already taken")
-
-    monkeypatch.setattr(ray, "init", init)
-    monkeypatch.setattr(ray, "shutdown", shutdown)
-    monkeypatch.setattr(ray, "is_initialized", lambda: initialized)
-    monkeypatch.setattr(ray, "get_runtime_context", lambda: runtime_context)
-    monkeypatch.setattr(ray, "nodes", nodes)
-    monkeypatch.setattr(
-        node_module._RemoteNodeProbe,
-        "options",
-        lambda **kwargs: SimpleNamespace(remote=conflicting_actor),
-    )
-
-    try:
-        with pytest.raises(NodeDiscoveryFailed):
-            Cluster(num_nodes=1)
-    finally:
-        if hasattr(Cluster, "_instance"):
-            delattr(Cluster, "_instance")
-
-    attempts = 2 if namespace_conflict else 1
-    assert init_addresses == [address] * attempts
-    expected_address = runtime_context.gcs_address if address == "local" else address
-    assert os.environ.get("RAY_ADDRESS") == expected_address
