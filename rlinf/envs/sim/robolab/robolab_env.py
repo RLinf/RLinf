@@ -116,15 +116,10 @@ class RoboLabEnv:
                         raise ValueError(
                             f"Device {device} is outside CUDA_VISIBLE_DEVICES={visible}"
                         )
-                    nodes = sorted(
-                        int(path.name.removeprefix("nvidia"))
-                        for path in Path("/dev").glob("nvidia[0-9]*")
-                        if path.name.removeprefix("nvidia").isdigit()
-                    )
-                    if set(map(int, devices)).issubset(nodes):
-                        # Vulkan enumerates mounted devices, ignoring CUDA masks.
-                        physical = nodes.index(int(devices[ordinal]))
-                        env.pop("CUDA_VISIBLE_DEVICES")
+                    # Kit's Vulkan device indices are not remapped by
+                    # CUDA_VISIBLE_DEVICES, so unmask and select the GPU directly.
+                    physical = int(devices[ordinal])
+                    env.pop("CUDA_VISIBLE_DEVICES")
             settings["device"] = f"cuda:{physical}"
             settings["kit_args"] = (
                 settings.get("kit_args", "") + f" --/renderer/activeGpu={physical}"
