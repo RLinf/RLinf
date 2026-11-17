@@ -158,6 +158,7 @@ jobs:
               - 'tests/e2e_tests/agent/**'
               - 'tests/e2e_tests/agentlightning/**'
               - 'tests/e2e_tests/reasoning/**'
+              - 'tests/unit_tests/test_ma_megatron_actor.py'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared

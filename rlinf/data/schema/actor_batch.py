@@ -36,6 +36,8 @@ class DynamicActorBatch(TypedDict, total=False):
     rollout_logprobs: TokenRows
     recomputed_logprobs: TokenRows
     ref_logprobs: TokenRows
+    values: TokenRows
+    returns: TokenRows
     advantages: TokenRows
     loss_scales: TokenRows
     prompt_lengths: torch.Tensor

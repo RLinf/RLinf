@@ -1340,14 +1340,18 @@ def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normali
         task_type="reasoning",
         adv_type="gae_dynamic",
         rewards=torch.tensor([1.0, -0.5, 1.0, -0.5]),
-        values=values,
-        loss_mask=mask,
+        values=[row[:n] for row, n in zip(values, [5, 5, 3, 2])],
+        loss_mask=[row[:n] for row, n in zip(mask, [5, 5, 3, 2])],
         idx_to_traj=[0, 1, 0, 1],
         prompt_lengths=torch.tensor([4, 3, 1, 1]),
         gamma=0.9,
         gae_lambda=0.95,
         normalize_advantages=normalize,
     )
+    advantages = torch.nn.utils.rnn.pad_sequence(advantages, batch_first=True)
+    returns = torch.nn.utils.rnn.pad_sequence(returns, batch_first=True)
+    advantages = torch.nn.functional.pad(advantages, (0, 1))
+    returns = torch.nn.functional.pad(returns, (0, 1))
     expected_advantages = torch.zeros_like(values)
     expected_returns = torch.zeros_like(values)
     episodes = [([(2, 1), (2, 2), (0, 4)], 1.0), ([(3, 1), (1, 3), (1, 4)], -0.5)]
@@ -1381,8 +1385,8 @@ def test_multiturn_gae_rejects_duplicate_prompt_lengths_in_one_episode():
             task_type="reasoning",
             adv_type="gae_dynamic",
             rewards=torch.ones(2),
-            values=torch.zeros(2, 3),
-            loss_mask=torch.tensor([[False, True, False], [False, True, False]]),
+            values=list(torch.zeros(2, 3)),
+            loss_mask=list(torch.tensor([[False, True, False], [False, True, False]])),
             idx_to_traj=[0, 0],
             prompt_lengths=torch.tensor([1, 1]),
             gamma=0.9,
@@ -1447,6 +1451,9 @@ def megatron_cpu(monkeypatch, tmp_path):
                 },
             }
         )
+        worker.cfg.actor = {"model": {"encoder_seq_length": 6}}
+        worker.role_cfg = OmegaConf.create({"model": {"encoder_seq_length": 6}})
+        worker.tokenizer = SimpleNamespace(eos_token_id=0)
         worker.transformer_config = SimpleNamespace(sequence_parallel=False)
         worker.return_loss = True
         worker.loss_agg_func = masked_mean
@@ -1485,6 +1492,9 @@ def test_valid_token_scaling_preserves_unsplit_gradient(
         "values": torch.zeros_like(mask, dtype=torch.float32),
         "returns": torch.full_like(mask, 0.7, dtype=torch.float32),
     }
+    worker.cfg.actor.model.encoder_seq_length = 4
+    worker.role_cfg.model.encoder_seq_length = 4
+    batch = {key: list(value) for key, value in batch.items()}
     forward = worker.get_forward_step_func()
     expected_model = _TokenModel(role)
     output, loss_func = forward(iter([copy.deepcopy(batch)]), expected_model)
@@ -1500,7 +1510,9 @@ def test_valid_token_scaling_preserves_unsplit_gradient(
     model = _TokenModel(role)
     for rank_rows in torch.chunk(torch.arange(len(input_ids)), dp_size):
         for rows in rank_rows.split(micro_batch_size):
-            microbatch = {key: value[rows] for key, value in batch.items()}
+            microbatch = {
+                key: [value[i] for i in rows.tolist()] for key, value in batch.items()
+            }
             output, loss_func = forward(iter([microbatch]), model)
             loss, _ = loss_func(output)
             assert loss.requires_grad and torch.isfinite(loss)
@@ -1531,24 +1543,32 @@ def test_critic_packing_preserves_values_loss_and_optimizer_update(megatron_cpu)
             dtype=torch.float32,
         ),
     )
-    batch = result.to_actor_batch(6, 0)
+    result.values = [
+        row[: len(ids)] for row, ids in zip(result.values, result.input_ids)
+    ]
+    result.returns = [
+        row[: len(ids)] for row, ids in zip(result.returns, result.input_ids)
+    ]
+    batch = result.to_actor_batch()
     frozen = copy.deepcopy(batch)
     outcomes = []
     for pack in (False, True):
         minibatch = copy.deepcopy(batch)
         if pack:
             minibatch = DynamicRolloutResult.pack_traj_batch({}, minibatch)
-        assert minibatch["input_ids"].shape[0] == (2 if pack else 3)
+        assert len(minibatch["input_ids"]) == (2 if pack else 3)
         mask = minibatch["response_mask"]
         model = _TokenModel()
         worker._setup_valid_token_scale(minibatch)
         forward = worker.get_forward_step_func()
         worker.return_loss = False
-        values, _ = forward(iter([minibatch]), model)
-        expected_values = torch.nn.functional.pad(
-            minibatch["input_ids"].float()[:, :-1] * model.weight, (1, 0)
-        )
-        torch.testing.assert_close(values, expected_values * mask)
+        output, collect = forward(iter([minibatch]), model)
+        values = collect(output)
+        expected_values = [
+            torch.nn.functional.pad(row.float()[:-1] * model.weight, (1, 0)) * m
+            for row, m in zip(minibatch["input_ids"], mask)
+        ]
+        torch.testing.assert_close(values, expected_values)
 
         worker.return_loss = True
         output, loss_func = forward(iter([minibatch]), model)
@@ -1556,7 +1576,13 @@ def test_critic_packing_preserves_values_loss_and_optimizer_update(megatron_cpu)
         loss.backward()
         assert torch.isfinite(model.weight.grad) and model.weight.grad.abs() > 0
         torch.optim.SGD(model.parameters(), lr=0.01).step()
-        outcomes.append((values[mask].detach(), loss.detach(), model.weight.detach()))
+        outcomes.append(
+            (
+                torch.cat([row[m] for row, m in zip(values, mask)]).detach(),
+                loss.detach(),
+                model.weight.detach(),
+            )
+        )
     for unpacked, packed in zip(*outcomes, strict=True):
         torch.testing.assert_close(unpacked, packed)
     for key in ("values", "returns"):
@@ -1618,6 +1644,10 @@ def _balance_groups_process(rank, counts, num_groups, init_file):
                     is_end=[True, True],
                     rewards=[float(identity), -float(identity)],
                     rollout_logprobs=[[-0.5] * (length - 3), [-0.25] * (length - 2)],
+                    group_id=identity,
+                    task_name="searchr1",
+                    version_start=[identity + 1, identity + 2],
+                    version_end=[identity + 2, identity + 2],
                     extra_fields_group={"identity": identity},
                     extra_fields_train={"idx_to_sub_traj": [0, 0]},
                 )
@@ -1631,6 +1661,13 @@ def _balance_groups_process(rank, counts, num_groups, init_file):
             if identity in local:
                 assert result is local[identity]
             length = 11 + identity * 7
+            assert result.group_id == identity
+            assert result.task_name == "searchr1"
+            assert result.version_start == [identity + 1, identity + 2]
+            assert result.version_end == [identity + 2, identity + 2]
+            metadata = result.group_metadata()
+            assert metadata.earliest_version == identity + 1
+            assert metadata.completion_version == identity + 2
             assert result.idx_to_traj == [0, 1]
             assert result.input_ids == [[identity] * length, [identity] * (length + 1)]
             assert result.rewards == [float(identity), -float(identity)]
@@ -1717,6 +1754,125 @@ def test_source_dp_loss_weights_survive_uneven_redistribution(tmp_path, redistri
     mp.spawn(
         _source_weights_process,
         args=(redistribute, str(tmp_path / "rendezvous")),
+        nprocs=2,
+        join=True,
+    )
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_critic_targets_are_fixed_real_length_rows(megatron_cpu, normalize):
+    make_worker, _ = megatron_cpu
+    worker = make_worker("critic")
+    worker.cfg.algorithm.update(
+        {
+            "adv_type": "gae_dynamic",
+            "group_size": 1,
+            "gamma": 0.9,
+            "gae_lambda": 0.95,
+            "normalize_advantages": normalize,
+        }
+    )
+    batch = {
+        "values": [
+            torch.tensor([0.0, 0.2, 0.3]),
+            torch.tensor([0.0, 0.0, 0.0, 0.0, 0.4]),
+        ],
+        "response_mask": [
+            torch.tensor([False, True, True]),
+            torch.tensor([False, False, False, False, True]),
+        ],
+        "rewards": torch.ones(2),
+        "idx_to_traj": [0, 0],
+        "prompt_lengths": torch.tensor([1, 4]),
+    }
+    worker.compute_advantages_and_returns(batch)
+    frozen = copy.deepcopy(batch)
+    assert list(map(len, batch["advantages"])) == [3, 5]
+    for target in ("advantages", "returns"):
+        for row, mask in zip(batch[target], batch["response_mask"]):
+            assert torch.count_nonzero(row[~mask]) == 0
+    for row in batch["values"]:
+        row.add_(10)
+    worker.compute_advantages_and_returns(batch)
+    for target in ("advantages", "returns"):
+        torch.testing.assert_close(batch[target], frozen[target])
+
+
+@pytest.mark.parametrize(
+    "folding_scale,with_sources",
+    [
+        (["group_level"], False),
+        ([], False),
+        ([], True),
+    ],
+)
+def test_source_dp_normalization_preserves_unredistributed_weights(
+    folding_scale, with_sources
+):
+    from rlinf.algorithms.loss_scales import restore_source_dp_normalization
+
+    rows = [
+        torch.tensor([0.0, 2.0], requires_grad=True),
+        torch.tensor([0.0, -3.0, 4.0], requires_grad=True),
+    ]
+    batch = {"advantages": rows}
+    if with_sources:
+        batch["extra:source_dp"] = torch.tensor([0, 0])
+    expected = [row.detach().clone() for row in rows]
+    # A local batch needs no process group or collective to retain its weights.
+    restore_source_dp_normalization(
+        batch, {"folding_scale": folding_scale}, None, "cpu"
+    )
+    assert batch["advantages"] is rows
+    torch.testing.assert_close(batch["advantages"], expected)
+    sum(row.sum() for row in batch["advantages"]).backward()
+    for row in rows:
+        torch.testing.assert_close(row.grad, torch.ones_like(row))
+
+
+def _empty_rollout_metrics_process(rank, empty_rank, init_file):
+    from rlinf.scheduler import Worker
+    from rlinf.utils.distributed import compute_rollout_metrics_dynamic
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    Worker.torch_platform = torch.cpu
+    try:
+        empty = rank == empty_rank
+        batch = {
+            "advantages": [] if empty else [torch.tensor([0.0, 2.0, 4.0])],
+            "response_mask": [] if empty else [torch.tensor([False, True, True])],
+            "prompt_lengths": torch.tensor([] if empty else [1], dtype=torch.int32),
+            "response_lengths": torch.tensor([] if empty else [2], dtype=torch.int32),
+            "rewards": torch.tensor([] if empty else [1.0]),
+            "is_end": torch.tensor([] if empty else [True], dtype=torch.bool),
+            "idx_to_traj": [] if empty else [0],
+        }
+        metrics, prompts, responses = compute_rollout_metrics_dynamic(
+            batch, 8, 8, dist.group.WORLD
+        )
+        assert metrics["total_num_sequence"] == 1
+        assert metrics["reward_scores_traj"] == 1.0
+        assert metrics["advantages_mean"] == 3.0
+        assert metrics["advantages_min"] == 2.0
+        assert metrics["advantages_max"] == 4.0
+        assert metrics["max_total_length"] == 3
+        assert prompts.tolist() == [1]
+        assert responses.tolist() == [2]
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("empty_rank", [0, 1])
+def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
+    mp.spawn(
+        _empty_rollout_metrics_process,
+        args=(empty_rank, str(tmp_path / "empty-metrics")),
         nprocs=2,
         join=True,
     )

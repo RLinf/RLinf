@@ -2044,12 +2044,17 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
+    expected_adv_type = (
+        "gae_dynamic"
+        if OmegaConf.select(cfg, "critic.use_critic_model", default=False)
+        else "grpo_dynamic"
+    )
     if (
         OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False)
-        and cfg.algorithm.adv_type != "grpo_dynamic"
+        and cfg.algorithm.adv_type != expected_adv_type
     ):
         raise ValueError(
-            "Multi-turn actors require algorithm.adv_type='grpo_dynamic', "
+            f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
             f"got {cfg.algorithm.adv_type!r}."
         )
     reward_cfg = cfg.get("reward", None)

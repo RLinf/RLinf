@@ -884,8 +884,8 @@ class DynamicRolloutResult:
     is_end: list[bool]
     rewards: Optional[torch.Tensor | list[float]] = None
     advantages: Optional[TokenRows] = None
-    values: Optional[torch.Tensor] = None
-    returns: Optional[torch.Tensor] = None
+    values: Optional[TokenRows] = None
+    returns: Optional[TokenRows] = None
 
     # Weight versions of the generate call that produced each sequence
     # (one entry per sequence, aligned with input_ids): the version the
@@ -971,7 +971,13 @@ class DynamicRolloutResult:
                 torch.cat((torch.zeros(p), torch.as_tensor(row, dtype=torch.float32)))
                 for p, row in zip(self.prompt_lengths, self.rollout_logprobs)
             ]
-        for key in ("recomputed_logprobs", "ref_logprobs", "advantages"):
+        for key in (
+            "recomputed_logprobs",
+            "ref_logprobs",
+            "advantages",
+            "values",
+            "returns",
+        ):
             values = getattr(self, key)
             if values is not None:
                 batch[key] = [
@@ -1153,6 +1159,8 @@ class DynamicRolloutResult:
             "rollout_logprobs",
             "ref_logprobs",
             "advantages",
+            "values",
+            "returns",
             "loss_scales",
         }
         custom_keys = [
@@ -1180,6 +1188,8 @@ class DynamicRolloutResult:
                 "recomputed_logprobs",
                 "rollout_logprobs",
                 "advantages",
+                "values",
+                "returns",
                 "loss_scales",
             ):
                 if key in split_params:
@@ -1367,7 +1377,7 @@ class DynamicRolloutResult:
                     setattr(
                         merged_result,
                         name,
-                        merge_tensor(getattr(merged_result, name), value),
+                        (getattr(merged_result, name) or []) + value,
                     )
 
             if res.advantages is not None:

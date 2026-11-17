@@ -157,8 +157,16 @@ def compute_rollout_metrics_dynamic(
     device = Worker.torch_platform.current_device()
 
     # Extract basic tensors
-    advantages = torch.cat(rollout_batch["advantages"]).to(device=device)
-    mask = torch.cat(rollout_batch["response_mask"]).to(device=device)
+    advantages = (
+        torch.cat(rollout_batch["advantages"]).to(device=device)
+        if rollout_batch["advantages"]
+        else torch.empty(0, dtype=torch.float32, device=device)
+    )
+    mask = (
+        torch.cat(rollout_batch["response_mask"]).to(device=device)
+        if rollout_batch["response_mask"]
+        else torch.empty(0, dtype=torch.bool, device=device)
+    )
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
     response_lengths = rollout_batch["response_lengths"].clone().to(device=device)
     reward_scores = rollout_batch["rewards"].clone().to(device=device)

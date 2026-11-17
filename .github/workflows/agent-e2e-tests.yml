@@ -23,6 +23,17 @@ jobs:
           bash requirements/install.sh agentic --engine sglang
           bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
 
+      - name: Megatron batch unit tests
+        timeout-minutes: 15
+        run: |
+          source .venv/bin/activate
+          uv pip install pytest
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
+          export CUDA_VISIBLE_DEVICES=""
+          export OMP_NUM_THREADS=1
+          python -c "import megatron.core; import megatron.training"
+          pytest -q tests/unit_tests/test_ma_megatron_actor.py
+
       - name: Megatron SGLang Collocated mode
         timeout-minutes: 20
         run: |

@@ -195,7 +195,7 @@ def restore_source_dp_normalization(
     device: torch.device | str,
 ) -> None:
     """Retain source-DP loss weights after group redistribution and folding."""
-    if "group_level" not in context["folding_scale"]:
+    if "group_level" not in context["folding_scale"] or "extra:source_dp" not in batch:
         return
     sources = batch["extra:source_dp"].long()
     counts = torch.bincount(

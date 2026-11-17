@@ -4293,9 +4293,18 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
         returns=torch.ones(2, 4),
     )
-    batch = result.to_actor_batch(4, 0)
-    batch["loss_scales"] = batch["response_mask"].float()
-    assert (batch["response_mask"][0] & batch["response_mask"][1]).sum() == 1
+    for key in ("values", "returns", "advantages"):
+        setattr(
+            result,
+            key,
+            [
+                row[: len(ids)]
+                for row, ids in zip(getattr(result, key), result.input_ids)
+            ],
+        )
+    batch = result.to_actor_batch()
+    batch["loss_scales"] = [mask.float() for mask in batch["response_mask"]]
+    assert (batch["response_mask"][0] & batch["response_mask"][1][:3]).sum() == 1
     packed = DynamicRolloutResult.pack_traj_batch({}, batch)
     assert packed["idx_to_traj"] == [0, 0]
     for key in (
@@ -4704,3 +4713,87 @@ def test_multi_turn_batch_preserves_real_lengths_through_merge_and_split():
         assert [len(row) for row in merged[key]] == [5, 9, 7, 11]
         assert all(row.device.type == "cpu" for row in merged[key])
     assert merged["rewards"].shape == (4,)
+
+
+@pytest.mark.parametrize(
+    "critic,adv_type", [(False, "grpo_dynamic"), (True, "gae_dynamic")]
+)
+def test_dynamic_advantage_contract_with_critic(critic, adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "critic": {"use_critic_model": critic},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    assert validate_searchr1_cfg(cfg) is cfg
+
+
+def test_dynamic_ppo_targets_survive_group_roundtrip():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = []
+    for length in (3, 7):
+        result = DynamicRolloutResult(
+            num_sequence=1,
+            group_size=1,
+            idx_to_traj=[0],
+            input_ids=[list(range(length))],
+            prompt_lengths=[1],
+            response_lengths=[length - 1],
+            is_end=[True],
+            rewards=[1.0],
+            values=[torch.arange(length).float()],
+            returns=[torch.arange(length).float() + 1],
+            advantages=[torch.arange(length).float() - 1],
+        )
+        results.append(result)
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [1, 1])
+    for original, result in zip(results, restored):
+        batch = result.to_actor_batch()
+        for key in ("values", "returns", "advantages"):
+            torch.testing.assert_close(batch[key], getattr(original, key))
+            assert len(batch[key][0]) == len(original.input_ids[0])
+
+
+@pytest.mark.parametrize("versioned", [False, True])
+def test_dynamic_versions_and_training_rows_share_merge_split_order(versioned):
+    results = []
+    for group, lengths in enumerate(([3, 6], [5])):
+        results.append(
+            DynamicRolloutResult(
+                num_sequence=len(lengths),
+                group_size=1,
+                idx_to_traj=[0] * len(lengths),
+                input_ids=[[group + i] * n for i, n in enumerate(lengths)],
+                prompt_lengths=[1] * len(lengths),
+                response_lengths=[n - 1 for n in lengths],
+                is_end=[True] * len(lengths),
+                rewards=[float(group)] * len(lengths),
+                advantages=[torch.arange(n).float() + group for n in lengths],
+                recomputed_logprobs=[torch.arange(n).float() - group for n in lengths],
+                version_start=[group + i + 5 for i in range(len(lengths))]
+                if versioned
+                else None,
+                version_end=[group + i + 6 for i in range(len(lengths))]
+                if versioned
+                else None,
+                group_id=group,
+                task_name="searchr1",
+            )
+        )
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [2, 1])
+    for actual, expected in zip(restored, results):
+        assert actual.version_start == expected.version_start
+        assert actual.version_end == expected.version_end
+        assert actual.input_ids == expected.input_ids
+        torch.testing.assert_close(actual.advantages, expected.advantages)
+        torch.testing.assert_close(
+            actual.recomputed_logprobs, expected.recomputed_logprobs
+        )
+        # Cross-group merge/split is a training operation, not buffer routing.
+        assert actual.group_id is None and actual.task_name is None

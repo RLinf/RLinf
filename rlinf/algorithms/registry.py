@@ -103,7 +103,7 @@ def calculate_adv_and_returns(
     """
     Unified entry for advantage + return computation.
     Accepts variable keyword arguments, preprocesses them, then dispatches
-    to specific algorithm via registry. ``grpo_dynamic`` returns TokenRows;
+    to specific algorithm via registry. Dynamic multi-turn algorithms return TokenRows;
     other reasoning algorithms return dense [batch, sequence] tensors.
     """
     adv_type = kwargs["adv_type"]
@@ -126,9 +126,10 @@ def calculate_adv_and_returns(
             )
     else:
         # reasoning tasks
-        if adv_type == "grpo_dynamic":
+        if adv_type in ("grpo_dynamic", "gae_dynamic"):
             # Multi-turn actors pass TokenRows and keep absolute token positions.
-            kwargs["rewards"] = kwargs["rewards"].reshape(-1, 1)
+            if adv_type == "grpo_dynamic":
+                kwargs["rewards"] = kwargs["rewards"].reshape(-1, 1)
             res = fn(**kwargs)
         else:
             kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
