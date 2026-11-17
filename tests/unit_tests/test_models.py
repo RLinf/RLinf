@@ -2188,6 +2188,47 @@ def test_phyai_eval_requires_a_nonempty_openpi_config_name(phyai_example_cfg):
         validate_embodied_cfg(phyai_example_cfg)
 
 
+def test_phyai_rejects_unknown_serving_mode(phyai_example_cfg):
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.serving_mode",
+        "worker_http",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="serving_mode"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+def test_phyai_gateway_serving_mode_requires_eval_and_url(phyai_example_cfg):
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.serving_mode",
+        "gateway",
+        force_add=True,
+    )
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.gateway_url",
+        "http://localhost:30000",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="only_eval"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+    phyai_example_cfg.runner.only_eval = True
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.gateway_url",
+        "",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="gateway_url"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
 def _cosmos3_sglang_cfg(batching_max_size=None):
     server = (
         {} if batching_max_size is None else {"batching_max_size": batching_max_size}
@@ -2489,7 +2530,7 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
 
 @pytest.fixture
 def phyai_http_worker(monkeypatch):
-    from rlinf.workers.rollout.phyai.phyai_embodied_worker import PhyaiEmbodiedWorker
+    from rlinf.workers.rollout.phyai import PhyAIGatewayRolloutWorker
 
     def init_scheduler(worker):
         worker._rank = 0
@@ -2500,7 +2541,7 @@ def phyai_http_worker(monkeypatch):
 
     monkeypatch.setattr(Worker, "__init__", init_scheduler)
     cfg = _phyai_cfg(only_eval=True)
-    return PhyaiEmbodiedWorker(cfg)
+    return PhyAIGatewayRolloutWorker(cfg)
 
 
 def test_phyai_http_request_preserves_raw_observations(phyai_http_worker):
@@ -2591,7 +2632,9 @@ def test_phyai_http_evaluate_stops_without_predicting_after_epoch_end(
         return actions, {}
 
     monkeypatch.setattr(phyai_http_worker, "recv_from", recv_from)
-    monkeypatch.setattr(phyai_http_worker, "send_to", lambda **kwargs: sent.append(kwargs))
+    monkeypatch.setattr(
+        phyai_http_worker, "send_to", lambda **kwargs: sent.append(kwargs)
+    )
     monkeypatch.setattr(phyai_http_worker, "predict", predict)
     asyncio.run(phyai_http_worker.evaluate("observations", "actions"))
     assert len(received) == 2
@@ -2609,6 +2652,44 @@ def test_phyai_http_initialization_requires_gateway_urls(phyai_http_worker):
     assert phyai_http_worker.phyai_server_url == "http://localhost:30000"
 
 
+def test_phyai_http_predict_posts_msgpack_to_actions_endpoint(phyai_http_worker):
+    """Exercise predict end to end against a fake HTTP boundary.
+
+    The other PhyAI HTTP worker tests patch predict itself, so the
+    request builder, the MessagePack POST, and the response parser are never
+    wired together. This replaces only the transport, so a regression in any
+    of those three steps fails here.
+    """
+    calls = []
+    phyai_http_worker.set_phyai_server_urls(["http://localhost:30000"])
+    asyncio.run(phyai_http_worker.init_worker())
+    phyai_http_worker.http_client = SimpleNamespace(
+        post=lambda path, body, **kwargs: (
+            calls.append((path, body, kwargs))
+            or {"actions": np.zeros((2, 5, 7), dtype=np.float32)}
+        )
+    )
+    actions, info = phyai_http_worker.predict(_phyai_env_obs(), mode="eval")
+    assert len(calls) == 1
+    path, body, kwargs = calls[0]
+    assert path == "/v1/actions/generations"
+    assert body["model"] == body["model_name"] == "pi05"
+    assert (
+        body["requested_action_horizon"]
+        == phyai_http_worker.model_cfg.num_action_chunks
+    )
+    assert body["metadata"]["batch_size"] == 2
+    assert kwargs == {
+        "msgpack": True,
+        "timeout_s": phyai_http_worker._http_timeout_s,
+        "max_retries": phyai_http_worker._http_max_retries,
+        "retry_backoff_s": phyai_http_worker._http_retry_backoff_s,
+    }
+    assert actions.shape == (2, 5, 7)
+    assert actions.dtype is torch.float32
+    assert info == {}
+
+
 def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
     from hydra import compose, initialize_config_dir
 
@@ -2622,7 +2703,8 @@ def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
         cfg = compose(config_name="libero_spatial_pi05_eval_phyai")
     validate_only_eval_rollout_model(cfg.rollout.model)
     assert cfg.rollout.model.action_dim == 7
-    assert cfg.rollout.model.action_horizon == 16
     assert cfg.rollout.model.num_action_chunks == 16
+    assert cfg.rollout.phyai.serving_mode == "gateway"
+    assert cfg.rollout.phyai.model_name == "pi05"
     assert cfg.rollout.model.openpi.task == "eval"
     assert "action_head_cfg" not in cfg.rollout.model

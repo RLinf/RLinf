@@ -1264,6 +1264,26 @@ def validate_embodied_cfg(cfg):
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
     if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
+        phyai_cfg = cfg.rollout.get("phyai", {})
+        serving_mode = phyai_cfg.get("serving_mode", "in_process")
+        assert serving_mode in {"in_process", "gateway"}, (
+            "Expected rollout.phyai.serving_mode in "
+            "('in_process', 'gateway'), "
+            f"got {serving_mode!r}."
+        )
+        model_name = phyai_cfg.get("model_name", "pi05")
+        assert isinstance(model_name, str) and model_name.strip(), (
+            f"Expected a nonempty rollout.phyai.model_name, got {model_name!r}."
+        )
+        if serving_mode == "gateway":
+            assert only_eval, (
+                "rollout.phyai.serving_mode='gateway' requires runner.only_eval=True."
+            )
+            gateway_url = phyai_cfg.get("gateway_url")
+            assert isinstance(gateway_url, str) and gateway_url.strip(), (
+                "Expected a nonempty rollout.phyai.gateway_url when "
+                f"serving_mode='gateway', got {gateway_url!r}."
+            )
         assert model_type == SupportedModel.OPENPI, (
             "Expected model_type='openpi' for rollout_backend='phyai', "
             f"got {model_cfg.model_type!r}."

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .phyai_embodied_worker import PhyAIGatewayRolloutWorker
 from .phyai_rollout_worker import PhyAIRolloutWorker
 
-__all__ = ["PhyAIRolloutWorker"]
+__all__ = ["PhyAIGatewayRolloutWorker", "PhyAIRolloutWorker"]

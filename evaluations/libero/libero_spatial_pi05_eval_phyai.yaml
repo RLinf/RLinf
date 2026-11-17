@@ -14,8 +14,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env: 4
-    rollout: 4
+    env,rollout: all
 
 runner:
   task_type: embodied_eval
@@ -59,15 +58,15 @@ rollout:
   pipeline_stage_num: 1
 
   phyai:
-    serving_mode: "worker_http"
+    serving_mode: "gateway"
     gateway_url: "http://127.0.0.1:30000"
+    model_name: "pi05"
     http_timeout_s: 600
     http_max_retries: 0
     http_retry_backoff_s: 1.0
 
   model:
     model_type: "openpi"
-    action_horizon: 16
     num_action_chunks: 16
     openpi:
       task: eval

@@ -2696,6 +2696,11 @@ PYEOF
         "phyai-kernel==${phyai_version}" \
         "phyai-ext==${phyai_version}" \
         --index https://mingti-org.github.io/phyai/simple/
+    install_engine_requirements "$SCRIPT_DIR/agentic/phyai_${phyai_version}_http.txt"
+    env -u UV_TORCH_BACKEND uv pip install --no-deps \
+        "phyai-gateway==${phyai_version}" \
+        "phyai-utils-tools==${phyai_version}" \
+        --index https://mingti-org.github.io/phyai/simple/
 
     export CUDNN_FRONTEND_CUDART_LIB_NAME="$cudart_lib"
     if grep -q '^export CUDNN_FRONTEND_CUDART_LIB_NAME=' "$VENV_DIR/bin/activate" 2>/dev/null; then
@@ -2708,6 +2713,8 @@ PYEOF
 import sys
 from importlib.metadata import version
 
+import phyai_gateway
+import phyai_utils_tools
 import torch
 import transformers
 from phyai.engine import Engine, EngineArgs
@@ -2725,11 +2732,15 @@ if transformers.__version__ != expected_transformers:
         f"{expected_transformers} -> {transformers.__version__}."
     )
 assert all((Engine, EngineArgs, PI05Args, PI05Request, PI05RolloutRequest))
+assert phyai_gateway.__name__ == "phyai_gateway"
+assert phyai_utils_tools.__name__ == "phyai_utils_tools"
 print(
     "[install.sh] PhyAI import smoke passed; "
     f"phyai={version('phyai')}, phyai-kernel={version('phyai-kernel')}, "
-    f"phyai-ext={version('phyai-ext')}, torch={torch.__version__}, "
-    f"transformers={transformers.__version__}."
+    f"phyai-ext={version('phyai-ext')}, "
+    f"phyai-gateway={version('phyai-gateway')}, "
+    f"phyai-utils-tools={version('phyai-utils-tools')}, "
+    f"torch={torch.__version__}, transformers={transformers.__version__}."
 )
 PYEOF
 }

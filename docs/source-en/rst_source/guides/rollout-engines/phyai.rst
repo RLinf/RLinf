@@ -9,8 +9,8 @@ actor, observation transforms, and weight synchronization in RLinf.
 
 The sections below install and run the in-process PPO backend. For separate
 model servers, follow :ref:`phyai-http-evaluation-en`. That evaluation-only
-path uses ``PhyaiEmbodiedWorker`` and keeps the Gateway and model server in a
-separate environment.
+path runs RLinf environment workers and an HTTP rollout worker, and keeps
+the Gateway and model server in separate processes.
 
 Prerequisites
 -------------
@@ -30,7 +30,6 @@ one virtual environment, then activate it:
 
    bash requirements/install.sh \
      --python 3.12 \
-     --torch 2.11.0 \
      --install-rlinf \
      embodied \
      --model openpi \
@@ -154,34 +153,45 @@ Evaluate Through an External Gateway
 Run this mode when model inference belongs to a separately managed service.
 The evaluation driver starts RLinf environment workers and HTTP rollout
 workers; you start the model server and Gateway first.
-``serving_mode: worker_http`` selects this evaluation-only path, while the PPO
-instructions above use the in-process ``PhyAIRolloutWorker``.
+``serving_mode: gateway`` selects this evaluation-only path; the PPO
+instructions above use the in-process backend.
 
 .. code-block:: text
 
-   RLinf EnvWorker -> PhyaiEmbodiedWorker
+   RLinf EnvWorker -> HTTP rollout worker
        -> HTTP MessagePack -> PhyAI Gateway
        -> gRPC -> PI0.5 model server
 
-Install the Evaluation Client
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Install the Evaluation Environment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Create a dedicated client environment using RLinf's existing SGLang/LIBERO
-installation route. The unchanged public ``InferenceHTTPClient`` imports the
-SGLang action protocol to encode MessagePack requests, even when their target
-is a PhyAI Gateway:
+Create one dedicated environment with the existing ``--engine phyai``
+installer. It provides the RLinf evaluation client, the PhyAI model server,
+and the Gateway, so a single installation serves both sides of the HTTP
+chain:
 
 .. code-block:: bash
 
    cd /path/to/RLinf
-   bash requirements/install.sh      --python 3.12      --venv .venv-phyai-http      --install-rlinf      embodied --model sglang --sglang 0.5.19 --env libero
-   source .venv-phyai-http/bin/activate
+   bash requirements/install.sh \
+     --python 3.12 \
+     --venv .venv-phyai \
+     --install-rlinf \
+     embodied --model openpi --env libero --engine phyai
+   source .venv-phyai/bin/activate
 
-This installs the official codec and its import dependencies without changing
-RLinf's shared HTTP client or project metadata. The script installs software;
-the only inference services started below are the PhyAI model server and
-Gateway. The HTTP client environment and serving environment remain separate
-because their SGLang, Torch, and Transformers dependencies can differ.
+The installer selects the CUDA 12/13 requirements, pins PhyAI to
+``0.2.0rc1``, adds the Gateway, its processor helpers, and the HTTP
+dependencies, and then checks that the additions preserved RLinf's Torch and
+Transformers versions. The HTTP client encodes MessagePack with
+``rlinf.utils.msgpack_codec``, which matches the Gateway wire format and does
+not require SGLang.
+
+The model server and Gateway run as separate processes, so they can also run
+on another host. Install the serving side with the same command there and
+give the evaluation host an environment built without ``--engine phyai``.
+Keep the environment's ``bin`` directory on ``PATH`` for ``ninja`` and other
+kernel-build tools; activation and the Shell e2e runner do this.
 
 .. warning::
 
@@ -189,40 +199,24 @@ because their SGLang, Torch, and Transformers dependencies can differ.
    selected dependencies; do not point it at a mixed experimental environment
    whose additional packages you need to preserve.
 
-Prepare the Serving Environment and Model
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Reuse the same ``--engine phyai`` installer as the in-process backend in a
-separate environment. It selects the CUDA 12/13 requirements, pins PhyAI to
-``0.2.0rc1``, and checks that installing PhyAI preserves RLinf's Torch and
-Transformers versions. Add only the Gateway and processor packages plus their
-HTTP-specific dependencies afterwards:
+Download the checkpoint and tokenizer:
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
-   bash requirements/install.sh      --python 3.12      --torch 2.11.0      --venv .venv-phyai-serving      --install-rlinf      embodied --model openpi --env libero --engine phyai
-   source .venv-phyai-serving/bin/activate
-   env -u UV_TORCH_BACKEND uv pip install      -r requirements/agentic/phyai_0.2.0rc1_http.txt
-   env -u UV_TORCH_BACKEND uv pip install --no-deps      "phyai-gateway==0.2.0rc1"      "phyai-utils-tools==0.2.0rc1"      --index https://mingti-org.github.io/phyai/simple/
+   export HF_ENDPOINT=https://hf-mirror.com
+   hf download lerobot/pi05_libero_finetuned_v044 \
+     --revision 7152f13e34c6c115d808aea0e5d08aca74eac14b \
+     --local-dir /path/to/lerobot-pi05-libero
+   hf download google/paligemma-3b-pt-224 \
+     --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+     --local-dir /path/to/paligemma-3b-pt-224
 
-The HTTP dependency file supplements the existing installer rather than
-maintaining a second PhyAI runtime recipe. ``--no-deps`` keeps the supplemental
-packages from replacing the validated Torch/Transformers stack. The serving
-job checks those versions before and after this step, then checks the Server
-configuration. Keep the installed environment's ``bin`` directory on ``PATH``
-for ``ninja`` and other kernel-build tools; activation and the Shell e2e runner
-do this. These additions still require a clean-install check on the A800
-runner; the in-process installation result alone does not validate HTTP
-serving or its checkpoint processor.
-
-Prepare a local LeRobot-format PI0.5 LIBERO checkpoint with its preprocessing,
-normalization, and action postprocessing files, plus a complete local
-PaliGemma tokenizer snapshot. The checkpoint must describe an eight-value
-state, seven-value actions, and an action chunk of at least 16 steps. The
-in-process RLinf/OpenPI checkpoint shown earlier uses a different format;
-confirm compatibility with ``PI05Backend`` before substituting it. Arrange
-model and tokenizer access, including any access approval, separately.
+``HF_ENDPOINT`` selects a mirror for faster downloads; unset it to reach
+``huggingface.co`` directly. The checkpoint directory carries the
+preprocessing, normalization, and action postprocessing files
+``PI05Backend`` reads, and describes an eight-value state, seven-value
+actions, and a 50-step action chunk. The in-process RLinf/OpenPI checkpoint
+shown earlier uses a different layout and cannot be substituted directly.
 
 Create ``pi05-http.yaml`` in the RLinf repository root with these settings,
 using resource paths on the model host:
@@ -231,7 +225,7 @@ using resource paths on the model host:
 
    plugin: pi05
    plugin_args:
-     checkpoint_dir: /path/to/lerobot-pi05-libero
+     checkpoint_dir: /path/to/lerobot-pi05-libero  # https://huggingface.co/lerobot/pi05_libero_finetuned_v044
      max_batch_size: 8
      inputs_image_shape:
        - [360, 360, 3]
@@ -253,7 +247,7 @@ using resource paths on the model host:
    adapter:
      factory: phyai.server.backends.pi05:PI05Backend
      args:
-       tokenizer_dir: /path/to/paligemma-tokenizer
+       tokenizer_dir: /path/to/paligemma-3b-pt-224  # https://huggingface.co/google/paligemma-3b-pt-224
        image_names: [main_images, wrist_images]
        state_dim: 8
        action_dim: 7
@@ -274,7 +268,7 @@ activate the PhyAI environment and start the model server:
 .. code-block:: bash
 
    cd /path/to/RLinf
-   source .venv-phyai-serving/bin/activate
+   source .venv-phyai/bin/activate
    export GPU_ID=0
    CUDA_VISIBLE_DEVICES="$GPU_ID" python -m phyai server pi05-http.yaml
 
@@ -285,7 +279,7 @@ activate the same environment and start the Gateway:
 .. code-block:: bash
 
    cd /path/to/RLinf
-   source .venv-phyai-serving/bin/activate
+   source .venv-phyai/bin/activate
    python -m phyai_gateway.server \
      --gateway 127.0.0.1:50111 \
      --http-host 127.0.0.1 \
@@ -316,12 +310,12 @@ model server can use a different GPU because it is a separate process.
 .. code-block:: bash
 
    cd /path/to/RLinf
-   source .venv-phyai-http/bin/activate
+   source .venv-phyai/bin/activate
    export GPU_ID=0
-   export CUDA_VISIBLE_DEVICES="$GPU_ID"
    bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
-     "cluster.component_placement.env=$GPU_ID" \
-     "cluster.component_placement.rollout=$GPU_ID" \
+     "~cluster.component_placement" \
+     "+cluster.component_placement.env=$GPU_ID" \
+     "+cluster.component_placement.rollout=$GPU_ID" \
      rollout.phyai.gateway_url=http://127.0.0.1:30000 \
      env.eval.total_num_envs=8 \
      env.eval.rollout_epoch=1 \
@@ -329,97 +323,28 @@ model server can use a different GPU because it is a separate process.
      env.eval.max_steps_per_rollout_epoch=480 \
      env.eval.video_cfg.save_video=false
 
-``run_eval.sh`` supplies the standard LIBERO/EGL defaults. The HTTP YAML
-selects ``worker_http`` and requests 16-step action chunks. These overrides
-reduce its larger workload to eight environments and one rollout epoch,
-while retaining 360x360 camera inputs. Weights and tokenizer paths belong to
-the model server YAML; this client command selects the Gateway address.
+``run_eval.sh`` supplies the standard LIBERO/EGL defaults. Leave
+``CUDA_VISIBLE_DEVICES`` unset for this command: RLinf's placement sets both
+the worker's visible GPU and its EGL rendering device from
+``cluster.component_placement``. Pre-filtering visible GPUs makes Ray
+enumerate a single device at rank 0, so any ``GPU_ID`` other than 0 fails
+with a rank assertion. The YAML defaults to ``env,rollout: all`` so it runs
+on any host; the ``component_placement`` overrides above replace that
+default and pin this evaluation to the single ``GPU_ID``. Because the YAML
+defines a composite ``env,rollout`` key, the per-component overrides first
+remove it with ``~`` and then add ``env`` and ``rollout`` separately.
+
+The HTTP YAML sets ``serving_mode: gateway`` and requests 16-step action
+chunks. ``rollout.phyai.model_name`` must match the model name the server
+registers and the Gateway routes. These overrides reduce its larger
+workload to eight environments and one rollout epoch, while retaining
+360x360 camera inputs. Weights and tokenizer paths belong to the model
+server YAML; this client command selects the Gateway address.
 
 Inspect ``success_once``, ``success_at_end``, and ``num_trajectories`` in the
-final evaluation metrics. A previous local A40 run of this HTTP chain
-completed eight trajectories with ``success_once=0.875`` and
-``success_at_end=0.75``. This is historical runtime evidence, not a new
-clean-install validation or an A800 CI result for these changes.
+final evaluation metrics.
 
 Stop the Gateway and model server with Ctrl+C in their respective terminals
 after evaluation. The `PhyAI serving guide
 <https://phyai.mintlify.app/deployment/server-gateway>`_ describes backend
 management and multi-host deployment.
-
-Run the HTTP Smoke Test
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Use the repository's Shell runner to start and stop the complete chain with
-the same evaluation YAML. Prepare the client and serving environments above,
-then pass compatible model resources and available GPU indices:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   export PHYAI_PYTHON="$PWD/.venv-phyai-serving/bin/python"
-   export RLINF_VENV="$PWD/.venv-phyai-http"
-   export PHYAI_HTTP_CHECKPOINT=/path/to/lerobot-pi05-libero
-   export PHYAI_HTTP_TOKENIZER=/path/to/paligemma-tokenizer
-   SERVER_GPU_ID=0 GPU_ID=1 NUM_ENVS=8 MIN_SUCCESS_ONCE=0.5 \
-     bash tests/e2e_tests/evaluations/run_phyai_gateway.sh
-
-The runner uses ``tests/e2e_tests/evaluations/phyai_gateway_server.yaml`` by
-default. It resolves the two resource variables into a per-run configuration,
-checks that ports are available, waits for model and Gateway readiness, and
-runs eight environments for 480 steps with video disabled. The model and
-rendering GPU can be the same if memory permits. Pass another server YAML as
-the first argument when its batch, camera, and action contract matches the
-client.
-
-The script creates a private Ray instance and connects only its evaluation
-to that address. On exit, it terminates the process groups it started; it does
-not stop pre-existing services or other Ray clusters. Logs, the resolved
-server YAML, and a successful ``result.json`` are retained under
-``logs/ci/phyai-gateway.<suffix>/``.
-
-``MIN_SUCCESS_ONCE`` defaults to zero for a chain-completion smoke test; the
-example above additionally requires at least 50 percent success. Choose the
-quality threshold with the CI maintainers for the fixed checkpoint and reset
-states. This updated runner and its new regression tests have not been
-executed as part of these edits; the earlier A40 result predates them.
-
-Enable the HTTP CI Job
-~~~~~~~~~~~~~~~~~~~~~~
-
-The ``embodied-libero-phyai-http-test`` job in
-``.github/workflows/embodied-e2e-tests.yml`` uses the same ``embodied`` runner,
-shared ``--engine phyai`` installation, and component-test-then-e2e structure
-as the in-process PhyAI job. A second environment uses the existing SGLang
-installer for the official HTTP client's codec. Only the Gateway/processor
-packages and HTTP dependencies are added to the shared PhyAI runtime recipe.
-Model inference uses GPU 0 and rendering uses GPU 1; the test runs eight
-environments for 480 steps with video off.
-
-Before enabling this job, stage the compatible LeRobot checkpoint and full
-PaliGemma tokenizer on every eligible runner. Configure these GitHub
-repository variables with their absolute paths on the runner:
-
-.. list-table:: HTTP CI Resources
-   :header-rows: 1
-
-   * - Repository variable
-     - Required value
-   * - ``PHYAI_HTTP_CHECKPOINT``
-     - Directory containing the compatible PI0.5 checkpoint and processor files.
-   * - ``PHYAI_HTTP_TOKENIZER``
-     - Directory containing the complete tokenizer snapshot.
-
-The job is skipped if either variable is unset; a skipped job is not HTTP
-coverage. With both configured, it validates the directories, runs
-``test_models.py -k phyai_http`` and calls the Shell runner with the same
-evaluation YAML used above. Its temporary Python
-environments are unique to the job and removed afterwards. The Shell runner
-owns and closes its service processes and private Ray instance; it does not
-stop other Ray clusters. Evaluation logs are uploaded even when the job fails.
-
-The default CI success threshold is zero: completed trajectories, valid
-metrics, and a zero process exit code establish chain-completion coverage.
-Set a positive ``MIN_SUCCESS_ONCE`` in the job only after agreeing on a stable
-checkpoint and quality threshold. The supplemental serving installation and this new workflow have not yet
-run on the upstream A800 runner. Maintainers must
-approve and enable the PR's CI runs under the repository's normal policy.

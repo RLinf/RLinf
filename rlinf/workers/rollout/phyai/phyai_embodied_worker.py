@@ -36,7 +36,7 @@ from rlinf.scheduler import Channel, Worker
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 
 
-class PhyaiEmbodiedWorker(Worker):
+class PhyAIGatewayRolloutWorker(Worker):
     """Run channel-based embodied evaluation through a PhyAI Gateway."""
 
     def __init__(self, config: DictConfig):
@@ -46,6 +46,9 @@ class PhyaiEmbodiedWorker(Worker):
         self.http_client = None
         self.phyai_server_url = None
         self._phyai_server_urls: list[str] = []
+        self._model_name = str(
+            config.rollout.get("phyai", {}).get("model_name", "pi05")
+        )
         only_eval = config.runner.get("only_eval", True)
         if not only_eval:
             raise ValueError(
@@ -89,7 +92,9 @@ class PhyaiEmbodiedWorker(Worker):
         )
         self._http_max_retries = int(phyai_cfg.get("http_max_retries", 5))
         self._http_retry_backoff_s = float(phyai_cfg.get("http_retry_backoff_s", 1.0))
-        self.log_info(f"PhyAI Gateway assigned: rank={self._rank} -> {self.phyai_server_url}")
+        self.log_info(
+            f"PhyAI Gateway assigned: rank={self._rank} -> {self.phyai_server_url}"
+        )
 
     def set_phyai_server_urls(self, urls: Sequence[str]) -> None:
         """Set Gateway HTTP addresses before initialization.
@@ -100,8 +105,10 @@ class PhyaiEmbodiedWorker(Worker):
         Raises:
             ValueError: If a URL is missing or empty.
         """
-        if isinstance(urls, str) or not urls or any(
-            not isinstance(url, str) or not url.strip() for url in urls
+        if (
+            isinstance(urls, str)
+            or not urls
+            or any(not isinstance(url, str) or not url.strip() for url in urls)
         ):
             raise ValueError(f"Expected nonempty Gateway URL strings, got {urls!r}.")
         self._phyai_server_urls = [url.strip().rstrip("/") for url in urls]
@@ -174,13 +181,11 @@ class PhyaiEmbodiedWorker(Worker):
             reset = bool(reset.item())
         else:
             reset = bool(reset)
-        action_horizon = self.model_cfg.get("action_horizon", None)
-        if action_horizon is None:
-            action_horizon = self.model_cfg.get("num_action_chunks", 1)
-        action_horizon = int(action_horizon)
+        action_horizon = int(self.model_cfg.num_action_chunks)
         if action_horizon <= 0:
             raise ValueError(
-                f"requested action horizon must be positive, got {action_horizon}"
+                "Expected positive rollout.model.num_action_chunks, "
+                f"got {action_horizon}."
             )
         metadata = {
             "mode": mode,
@@ -190,8 +195,8 @@ class PhyaiEmbodiedWorker(Worker):
         }
         payload = {
             "observation": observation,
-            "model_name": "pi05",
-            "model": "pi05",
+            "model_name": self._model_name,
+            "model": self._model_name,
             "metadata": metadata,
             "requested_action_horizon": action_horizon,
         }

@@ -278,29 +278,17 @@ class InferenceHTTPClient:
         """POST ``body`` to ``path`` and return the decoded response dict.
 
         JSON by default. With ``msgpack=True`` the body (including torch tensors
-        / numpy arrays) is serialized with the sglang msgpack codec and the
+        / numpy arrays) is serialized with ``rlinf.utils.msgpack_codec`` and the
         response is msgpack-decoded; transient 5xx / connection errors are then
         retried with linear backoff. Proxies are always stripped. Heavy deps
-        (sglang codec, torch, tianshou) are imported lazily so this module stays
+        (msgpack, torch, tianshou) are imported lazily so this module stays
         importable without them.
         """
         url = f"{self.base_url}{path}"
         retries = max(0, int(max_retries))
         retry_statuses = {500, 502, 503, 504}
         if msgpack:
-            # 0.5.17+: sglang renamed vla/ -> action/; support both for
-            # compatibility with older sglang forks.
-
-            try:
-                from sglang.multimodal_gen.runtime.entrypoints.action.protocol import (
-                    pack_msgpack,
-                    unpack_msgpack,
-                )
-            except ImportError:
-                from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-                    pack_msgpack,
-                    unpack_msgpack,
-                )
+            from rlinf.utils.msgpack_codec import pack_msgpack, unpack_msgpack
 
             ct = "application/msgpack"
             request_kwargs = {

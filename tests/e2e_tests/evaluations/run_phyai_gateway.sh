@@ -104,6 +104,9 @@ cleanup() {
         kill -KILL -- "-$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     done
+    if [[ -n "${RAY_TMP_DIR:-}" ]]; then
+        rm -rf -- "$RAY_TMP_DIR"
+    fi
     if (( status != 0 )); then
         for log in "$LOG_DIR"/*.log; do
             [[ -f "$log" ]] || continue
@@ -170,7 +173,7 @@ pids+=("$!")
 wait_ready 'Gateway backend healthy' backend_ready
 
 RAY_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/phyai-http.XXXXXX")"
-PATH="$RLINF_VENV/bin:$PATH" CUDA_VISIBLE_DEVICES="$GPU_ID" env -u RAY_ADDRESS setsid "$RLINF_VENV/bin/python" - "$LOG_DIR/ray-address" "$RAY_TMP_DIR" <<'PYTHON' >"$LOG_DIR/ray.log" 2>&1 &
+PATH="$RLINF_VENV/bin:$PATH" env -u CUDA_VISIBLE_DEVICES -u RAY_ADDRESS setsid "$RLINF_VENV/bin/python" - "$LOG_DIR/ray-address" "$RAY_TMP_DIR" <<'PYTHON' >"$LOG_DIR/ray.log" 2>&1 &
 from pathlib import Path
 import signal
 import sys
@@ -204,11 +207,12 @@ export RAY_ADDRESS
 
 (
     source "$RLINF_VENV/bin/activate"
-    export CUDA_VISIBLE_DEVICES="$GPU_ID"
+    unset CUDA_VISIBLE_DEVICES
     exec setsid timeout --kill-after=30s "${EVAL_TIMEOUT}s" \
         bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
-        "cluster.component_placement.env=$GPU_ID" \
-        "cluster.component_placement.rollout=$GPU_ID" \
+        "~cluster.component_placement" \
+        "+cluster.component_placement.env=$GPU_ID" \
+        "+cluster.component_placement.rollout=$GPU_ID" \
         "env.eval.total_num_envs=$NUM_ENVS" \
         env.eval.rollout_epoch=1 \
         "env.eval.max_episode_steps=$MAX_STEPS" \
@@ -217,10 +221,10 @@ export RAY_ADDRESS
         "runner.logger.log_path='$LOG_DIR/rlinf'" \
         runner.logger.logger_backends=[] \
         rollout.rollout_backend=phyai \
-        rollout.phyai.serving_mode=worker_http \
+        rollout.phyai.serving_mode=gateway \
         "rollout.phyai.gateway_url=$GATEWAY_URL" \
         rollout.phyai.http_max_retries=0 \
-        rollout.model.action_horizon=16 rollout.model.num_action_chunks=16
+        rollout.model.num_action_chunks=16
 ) >"$LOG_DIR/eval.log" 2>&1 &
 pids+=("$!")
 eval_pid=${pids[3]}
