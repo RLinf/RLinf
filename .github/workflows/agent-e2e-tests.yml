@@ -30,7 +30,12 @@ jobs:
         run: |
           source .venv/bin/activate
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-          pytest tests/unit_tests/test_session_server.py; status=$?
+          # The chat completions and agentic tokenizer tests render with a real
+          # tokenizer and skip without one; these are the model directories this
+          # runner has.
+          export RLINF_TEST_QWEN25_MODEL_DIR=/workspace/dataset/Qwen2.5-1.5B-Instruct
+          export RLINF_TEST_GLM47_MODEL_DIR=/workspace/dataset/GLM-4.7-Flash-8L
+          pytest tests/unit_tests/test_session_server.py tests/unit_tests/test_agentic_tokenizer.py; status=$?
           ray stop
           exit $status
 

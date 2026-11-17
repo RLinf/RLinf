@@ -118,6 +118,7 @@ def assemble_group_payload(
         )
         kept_lens = verdict["kept_lens"]
         continues_prev = verdict["continues_prev"]
+        dropped = verdict.get("not_training") or {}
         traj_fields = verdict.get("extra_fields_train", {})
         names = set(traj_fields)
         if declared_fields is None:
@@ -127,16 +128,17 @@ def assemble_group_payload(
             f"extra_fields_train names: {sorted(names)} vs "
             f"{sorted(declared_fields)}"
         )
+        trained_turns = [part for part in traj_parts if part.turn_index not in dropped]
         for name, values in traj_fields.items():
-            assert len(values) == len(traj_parts), (
+            assert len(values) == len(trained_turns), (
                 f"extra_fields_train {name!r} of trajectory {traj_index} in "
                 f"group {payload.group_id} covers {len(values)} turns, the "
-                f"payload holds {len(traj_parts)}"
+                f"payload holds {len(trained_turns)} non-dropped turns"
             )
             extra_fields_train.setdefault(name, []).extend(values)
         previous: PayloadPart | None = None
         previous_kept: int | None = None
-        for part in traj_parts:
+        for part in trained_turns:
             kept = kept_lens.get(part.turn_index)
             assert kept is not None, (
                 f"trajectory {traj_index} turn {part.turn_index} of group "

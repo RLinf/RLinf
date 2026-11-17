@@ -830,7 +830,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             for traj_index in range(group_size)
         ]
         try:
-            bindings_outputs = await asyncio.gather(*rollout_tasks)
+            trajectories = await asyncio.gather(*rollout_tasks)
         except (GroupDiscarded, SessionDiscardedError) as exc:
             # The discard is reported by the session server — it discarded
             # the group already, or does so on this abort. The remaining
@@ -840,49 +840,70 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             await asyncio.gather(*rollout_tasks, return_exceptions=True)
             await self.session_server_client.abort(group_id, exc.reason)
             return {}
-        task_results = [output for _, output in bindings_outputs]
-        extra_turn, extra_traj, extra_group, extra_train = self.gen_extra_fields(
-            task_results, answer
+        outputs = [output for _, output, _, _ in trajectories]
+        agent_side = [output is not None for output in outputs]
+        assert all(agent_side) or not any(agent_side), (
+            "the trajectories of one group must all produce agent-side "
+            f"outputs or none; got {agent_side}"
         )
-        assert extra_turn is None and extra_traj is None and extra_group is None, (
-            "the session server path does not support turn / traj / group "
-            f"extra fields; got turn={extra_turn!r}, traj={extra_traj!r}, "
-            f"group={extra_group!r}"
-        )
-        verify_result = (
-            self._verify_reference(
-                bindings_outputs, (extra_turn, extra_traj, extra_group, extra_train)
+        if any(agent_side):
+            task_results = outputs
+            extra_turn, extra_traj, extra_group, extra_train = self.gen_extra_fields(
+                task_results, answer
             )
-            if self._verify_assembly
-            else None
-        )
-        # extra_train values run trajectory-major then turn order; each
-        # trajectory's close carries its own slice of every field.
-        traj_fields_slices: list[dict] = []
-        start = 0
-        for output in task_results:
-            end = start + len(output.single_turn_outputs)
-            traj_fields_slices.append(
-                {
-                    name: values[start:end]
-                    for name, values in (extra_train or {}).items()
-                }
+            assert extra_turn is None and extra_traj is None and extra_group is None, (
+                "the session server path does not support turn / traj / group "
+                f"extra fields; got turn={extra_turn!r}, traj={extra_traj!r}, "
+                f"group={extra_group!r}"
             )
-            start = end
+            verify_result = (
+                self._verify_reference(
+                    [(binding, output) for binding, output, _, _ in trajectories],
+                    (extra_turn, extra_traj, extra_group, extra_train),
+                )
+                if self._verify_assembly
+                else None
+            )
+            # extra_train values run trajectory-major then turn order; each
+            # trajectory's close carries its own slice of every field.
+            traj_fields_slices: list[dict] = []
+            start = 0
+            for output in task_results:
+                end = start + len(output.single_turn_outputs)
+                traj_fields_slices.append(
+                    {
+                        name: values[start:end]
+                        for name, values in (extra_train or {}).items()
+                    }
+                )
+                start = end
+        else:
+            # An agent loop that runs its trajectories itself (over the
+            # chat completions endpoint, for example) produces no agent-side
+            # training data, so each trajectory declares its own training
+            # extra fields with its close fields instead.
+            assert not self._verify_assembly, (
+                "the assembly check needs agent-side outputs; an agent loop "
+                "that runs its own trajectories cannot provide the reference"
+            )
+            traj_fields_slices = [
+                dict(close_fields.get("extra_fields_train", {}))
+                for _, _, close_fields, _ in trajectories
+            ]
+            verify_result = None
         try:
             last_index = group_size - 1
-            for index, (binding, output) in enumerate(bindings_outputs):
-                kept_lens = self._declared_kept_lens(binding, output)
+            for index, (binding, _, close_fields, reward) in enumerate(trajectories):
                 verify = verify_result if index == last_index else None
                 await self.session_server_client.close(
                     group_id,
                     binding.session_id,
-                    kept_lens,
+                    close_fields.get("kept_lens", {}),
                     traj_fields_slices[index],
                     verify,
                 )
                 await self.session_server_client.reward(
-                    group_id, binding.session_id, self._trajectory_reward(output)
+                    group_id, binding.session_id, reward
                 )
         except SessionDiscardedError as exc:
             # The group was voided server-side (a payload write failed
@@ -913,10 +934,42 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         )
         token = self._session_binding.set(binding)
         try:
-            output = await self.run_one_query(copy.deepcopy(input_dict), answer=answer)
+            output, close_fields, reward = await self.run_session_trajectory(
+                binding, input_dict, answer
+            )
         finally:
             self._session_binding.reset(token)
-        return binding, output
+        return binding, output, close_fields, reward
+
+    async def run_session_trajectory(
+        self, binding: SessionBinding, input_dict: dict, answer: str
+    ) -> tuple[Optional[MultiAgentLoopOutput], dict, float]:
+        """Run one trajectory on its bound session (override this hook).
+
+        The group runner has already opened ``binding``'s session; an agent
+        loop that sends its own requests to the session server (to the chat
+        completions endpoint, for example) overrides this method to run the
+        task with its own client, and the runner keeps doing everything
+        else: opening sessions, closing them with these fields, reporting
+        rewards, and dropping failed groups.
+
+        Args:
+            binding: The trajectory's session: its group, index, and id.
+            input_dict: The task's input, as the rollout request carries it.
+            answer: The reference answer, for scoring.
+
+        Returns:
+            The trajectory's output, the fields its close request carries,
+            and the trajectory reward. An override returns ``None`` as the
+            output — it holds no agent-side training data — and puts what
+            the close needs in the fields: ``kept_lens`` when the override
+            truncates turns, and ``extra_fields_train``, whose every field
+            carries one value per chat response received, when
+            ``algorithm.loss_scales`` includes ``agent_level``.
+        """
+        output = await self.run_one_query(copy.deepcopy(input_dict), answer=answer)
+        close_fields = {"kept_lens": self._declared_kept_lens(binding, output)}
+        return output, close_fields, self._trajectory_reward(output)
 
     def _declared_kept_lens(
         self, binding: SessionBinding, output: MultiAgentLoopOutput

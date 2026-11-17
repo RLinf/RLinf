@@ -103,6 +103,18 @@ class MockSGLangServer:
         self.weight_version: str = "5"
         self.latency_s: float = 0.0
         self.request_log: list[dict] = []
+        # Texts returned (and detokenized) instead of the id-derived text,
+        # one per /generate call, oldest first; the last one repeats once
+        # the script runs out. Empty means every response derives its text
+        # from the ids.
+        self.scripted_texts: list[str] = []
+        # ("first turn text", "later turn text"): a request whose input is no
+        # longer than the first one seen is a conversation's opening turn and
+        # gets the first text, a longer one continues it and gets the second.
+        # Lets a test script tool-call-then-answer for every conversation.
+        self.scripted_by_turn: tuple[str, str] | None = None
+        self._scripted_first_len: int | None = None
+        self._generated_calls = 0
 
         self.app = FastAPI()
         self._server = UvicornThreadServer(self.app, self.host, self.port)
@@ -163,4 +175,29 @@ class MockSGLangServer:
             meta_info["output_token_logprobs"] = [
                 [-0.01 * index, token_id] for index, token_id in enumerate(output_ids)
             ]
-        return {"output_ids": output_ids, "meta_info": meta_info}
+        response = {"output_ids": output_ids, "meta_info": meta_info}
+        if self.scripted_by_turn is not None:
+            first_text, later_text = self.scripted_by_turn
+            input_len = len(body.get("input_ids", []))
+            if self._scripted_first_len is None:
+                self._scripted_first_len = input_len
+            text = first_text if input_len <= self._scripted_first_len else later_text
+            response["text"] = text
+            response["output_ids"] = self._ids_for_text(text, body.get("input_ids", []))
+            return response
+        if self.scripted_texts:
+            index = min(self._generated_calls, len(self.scripted_texts) - 1)
+            text = self.scripted_texts[index]
+            self._generated_calls += 1
+            response["text"] = text
+            # Keep the ids consistent with the text for callers that use
+            # them (the chat entry parses the text and reports lengths from
+            # the ids).
+            tokenizer_args = body.get("input_ids", [])
+            response["output_ids"] = self._ids_for_text(text, tokenizer_args)
+        return response
+
+    def _ids_for_text(self, text: str, input_ids: list[int]) -> list[int]:
+        """Deterministic ids for a scripted text (id per character)."""
+        seed = input_ids[0] if input_ids else 0
+        return [(seed + 1000 + ord(char)) % 30000 for char in text]

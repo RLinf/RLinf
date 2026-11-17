@@ -233,3 +233,140 @@ def test_get_agentic_tokenizer_unknown_type():
     assert "nope" in msg
     for valid in ("default", "qwen", "glm47"):
         assert valid in msg
+
+
+# ---------------------------------------------------------------------------
+# Group 4: TITO chat-template continuity (real tokenizer, optional)
+# ---------------------------------------------------------------------------
+
+# Incremental-turn token continuity against a whole-conversation render:
+# render the first turn to the generation prompt, append the assistant
+# message as the engine would emit it, then continue with
+# build_native_tool_response. Skipped unless the model dir env var names a
+# local checkout.
+_TITO_CASES = [
+    (
+        "qwen",
+        "RLINF_TEST_QWEN25_MODEL_DIR",
+        "<|im_end|>",
+    ),
+    # A tool-calling GLM turn ends at the observation marker: the template
+    # render stops at </tool_call> and the engine appends this token,
+    # which build_native_tool_response then drops as the next boundary.
+    (
+        "glm47",
+        "RLINF_TEST_GLM47_MODEL_DIR",
+        "<|observation|>",
+    ),
+]
+
+
+def _tito_messages(tool_call_parser: str) -> list[dict]:
+    """A system / user / assistant(tool_calls) / tool conversation prefix.
+
+    GLM's chat template iterates the tool-call arguments as a dict; Qwen
+    accepts the OpenAI JSON-string form.
+    """
+    if tool_call_parser == "glm47":
+        arguments = {"query": "reinforcement learning"}
+        assistant = {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "The user asks about RL; search for it.",
+            "tool_calls": [
+                {
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": arguments},
+                }
+            ],
+        }
+    else:
+        assistant = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "arguments": '{"query": "reinforcement learning"}',
+                    },
+                }
+            ],
+        }
+    return [
+        {"role": "system", "content": "You answer with a search tool."},
+        {"role": "user", "content": "What is reinforcement learning?"},
+        assistant,
+    ]
+
+
+@pytest.mark.parametrize(
+    "tokenizer_type,env_var,end_token", _TITO_CASES, ids=["qwen", "glm47"]
+)
+def test_incremental_turns_match_whole_conversation_render(
+    tokenizer_type, env_var, end_token
+):
+    import os
+
+    model_dir = os.environ.get(env_var)
+    if not model_dir:
+        pytest.skip(f"no local model dir; set {env_var} to run this test")
+    if not os.path.isdir(model_dir):
+        # A set variable that names no directory is a configuration error:
+        # skipping here would let these tests never run unnoticed.
+        pytest.fail(f"{env_var} is set to {model_dir!r}, which is not a directory")
+
+    from transformers import AutoTokenizer
+
+    hf_tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    agentic = get_agentic_tokenizer(hf_tokenizer, tokenizer_type=tokenizer_type)
+
+    tool_messages = [
+        {"role": "tool", "name": "search", "content": "Reinforcement learning is ..."}
+    ]
+    messages = _tito_messages(tokenizer_type)
+
+    # First turn: render up to the generation prompt.
+    first_prompt = agentic.apply_chat_template(
+        messages[:2], add_generation_prompt=True, tokenize=True, return_dict=False
+    )
+    # The engine's output for the assistant message: the template's own
+    # rendering of that message, minus the generation prompt that preceded
+    # it and any trailing newline the template adds after the end token.
+    whole = agentic.apply_chat_template(
+        [*messages[:2], messages[2], *tool_messages],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=False,
+    )
+    after_assistant = agentic.apply_chat_template(
+        [*messages[:2], messages[2]],
+        add_generation_prompt=False,
+        tokenize=True,
+        return_dict=False,
+    )
+    engine_output = list(after_assistant[len(first_prompt) :])
+    assert engine_output, "the assistant message rendered to no tokens"
+    if agentic.tokenizer.decode(engine_output[-1:]) == "\n":
+        engine_output = engine_output[:-1]
+    # The engine's own turn output: the template's assistant render plus
+    # the marker the engine emits when the turn ends. Qwen's template
+    # already ends at its end-of-turn token; GLM's stops at </tool_call>
+    # and the engine appends the observation marker.
+    if agentic.tokenizer.decode(engine_output[-1:]) != end_token:
+        engine_output.append(agentic.tokenizer.convert_tokens_to_ids(end_token))
+    assert agentic.tokenizer.decode(engine_output[-1:]) == end_token
+
+    incremental = agentic.build_native_tool_response(
+        list(first_prompt) + engine_output, tool_messages
+    )
+    assert incremental == whole, (
+        f"{tokenizer_type}: incremental turn build diverges from the whole "
+        f"conversation render at token "
+        f"{next(i for i, (a, b) in enumerate(zip(incremental, whole)) if a != b)}"
+        if incremental[: len(whole)] != whole
+        else f"{tokenizer_type}: incremental build is longer than the whole render"
+    )

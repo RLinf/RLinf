@@ -21,14 +21,28 @@ through this side — the session server writes it and reports the group
 itself.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import aiohttp
+
 from rlinf.utils.http_client import HTTPStatusError, InferenceHTTPClient
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 # Status the session server answers for calls on a discarded group.
 _DISCARDED_STATUS = 410
+
+# A connection the server had already closed surfaces on the next request as
+# a reset; a lifecycle call resends over a fresh connection. Only the
+# idempotent calls retry: a second create would add a session and a second
+# generate would sample the turn again.
+_CONNECT_RETRY_ATTEMPTS = 3
+_CONNECT_RETRY_INTERVAL_S = 0.5
+_CONNECT_ERRORS = (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError)
 
 
 class SessionDiscardedError(RuntimeError):
@@ -94,6 +108,8 @@ class SessionServerClient:
         keepalive_timeout_s: float,
     ):
         assert base_urls, "the session server transport needs at least one URL"
+        self._base_urls = list(base_urls)
+        self._keepalive_timeout_s = keepalive_timeout_s
         # keepalive_timeout must be shorter than the server's keep-alive
         # (session_server.keep_alive_s, computed by the runner as this
         # value plus 1) so we never reuse a connection the server is
@@ -106,6 +122,31 @@ class SessionServerClient:
 
     def _client_for(self, group_id: int) -> InferenceHTTPClient:
         return self._clients[group_id % len(self._clients)]
+
+    @property
+    def keepalive_timeout_s(self) -> float:
+        """How long any client of this transport may hold an idle connection.
+
+        One second shorter than the session server's own keep-alive, so a
+        client always drops an idle connection before the server does; an
+        agent loop that opens its own client to the same servers, such as
+        an OpenAI client for the chat completions endpoint, has to follow
+        the same rule.
+        """
+        return self._keepalive_timeout_s
+
+    def session_base_url(self, group_id: int, session_id: str) -> str:
+        """The base URL of one session's endpoints, for other clients.
+
+        An agent loop that sends requests to a session with its own client,
+        such as an OpenAI client for the chat completions endpoint, needs
+        the URL of that session's server, not a client this transport
+        holds; the group pins the server the same way here.
+        """
+        return (
+            f"{self._base_urls[group_id % len(self._base_urls)]}"
+            f"/sessions/{session_id}/v1"
+        )
 
     async def create_session(
         self, group_id: int, traj_index: int, group_size: int, task_name: str
@@ -162,19 +203,30 @@ class SessionServerClient:
             body["verdict"] = {"extra_fields_train": extra_fields_train}
         if verify_result is not None:
             body["verify_result"] = verify_result
-        await self._checked_post(group_id, f"/sessions/{session_id}/close", body)
+        await self._checked_post(
+            group_id,
+            f"/sessions/{session_id}/close",
+            body,
+            retry_connect_errors=True,
+        )
 
     async def reward(self, group_id: int, session_id: str, reward: float) -> bool:
         """Report the trajectory's score; returns whether the group is complete."""
         resp = await self._checked_post(
-            group_id, f"/sessions/{session_id}/reward", {"reward": reward}
+            group_id,
+            f"/sessions/{session_id}/reward",
+            {"reward": reward},
+            retry_connect_errors=True,
         )
         return bool(resp.get("group_complete", False))
 
     async def abort(self, group_id: int, reason: str) -> None:
         """Void the whole group; the session server reports the discard."""
         await self._checked_post(
-            group_id, f"/groups/{group_id}/abort", {"reason": reason}
+            group_id,
+            f"/groups/{group_id}/abort",
+            {"reason": reason},
+            retry_connect_errors=True,
         )
 
     async def _checked_post(
@@ -183,6 +235,7 @@ class SessionServerClient:
         path: str,
         body: dict,
         timeout_s: Optional[float] = None,
+        retry_connect_errors: bool = False,
     ) -> dict:
         """POST to the group's server and turn a 410 into a discard.
 
@@ -190,7 +243,39 @@ class SessionServerClient:
         failed after the last generate), so every route gets the same
         treatment; the discard record is already on its way to the buffer
         worker.
+
+        Args:
+            retry_connect_errors: True for the idempotent lifecycle calls
+                (close, reward, abort), which resend when the connection
+                fails. create and generate leave it False: a resent create
+                would open a second session and a resent generate would
+                sample the turn again.
         """
+        if not retry_connect_errors:
+            return await self._post_once(group_id, path, body, timeout_s)
+        for attempt in range(_CONNECT_RETRY_ATTEMPTS):
+            try:
+                return await self._post_once(group_id, path, body, timeout_s)
+            except _CONNECT_ERRORS as exc:
+                logger.warning(
+                    "POST %s for group %d failed on attempt %d/%d (%r), retrying",
+                    path,
+                    group_id,
+                    attempt + 1,
+                    _CONNECT_RETRY_ATTEMPTS + 1,
+                    exc,
+                )
+                await asyncio.sleep(_CONNECT_RETRY_INTERVAL_S * (attempt + 1))
+        return await self._post_once(group_id, path, body, timeout_s)
+
+    async def _post_once(
+        self,
+        group_id: int,
+        path: str,
+        body: dict,
+        timeout_s: Optional[float],
+    ) -> dict:
+        """One POST, with a 410 turned into a discard."""
         try:
             return await self._client_for(group_id).async_post(
                 path, body, timeout_s=timeout_s

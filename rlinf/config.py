@@ -2403,6 +2403,9 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
             if task_settings.get("generate_timeout_s", None) is None:
                 task_settings.generate_timeout_s = session_cfg.generate_timeout_s
         session_cfg.verify_assembly = bool(session_cfg.get("verify_assembly", False))
+        session_cfg.chat_template_kwargs = dict(
+            session_cfg.get("chat_template_kwargs", None) or {}
+        )
     if not cfg.session_server.enable:
         return cfg
     if cfg.session_server.type != "http":
@@ -2527,6 +2530,12 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
                 f"SGLANG_TIMEOUT_KEEP_ALIVE both take ints), found "
                 f"{cfg.session_server[name]!r}."
             )
+    if not isinstance(cfg.session_server.chat_template_kwargs, (dict, DictConfig)):
+        raise ValueError(
+            f"session_server.chat_template_kwargs must be a mapping of chat "
+            f"template arguments, found "
+            f"{cfg.session_server.chat_template_kwargs!r}."
+        )
     if cfg.session_server.keep_alive_s <= 1:
         raise ValueError(
             f"session_server.keep_alive_s must be > 1, found "

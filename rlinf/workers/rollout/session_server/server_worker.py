@@ -28,6 +28,7 @@ cover every trajectory is finalized: its payload is completed, then its
 
 import asyncio
 import copy
+import os
 import time
 import uuid
 from collections import deque
@@ -37,7 +38,7 @@ from typing import Any, Optional
 import aiohttp
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from omegaconf import DictConfig
 
 from rlinf.data.schema.reasoning_results import (
@@ -47,6 +48,10 @@ from rlinf.data.schema.reasoning_results import (
 )
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.http_client import InferenceHTTPClient
+from rlinf.workers.rollout.session_server.chat_completions import (
+    ChatCompletions,
+    ChatConversation,
+)
 from rlinf.workers.rollout.session_server.payload import (
     PayloadDiscard,
     PayloadPart,
@@ -98,7 +103,9 @@ class _SessionState:
     The last input and output token ids are kept only for the next turn's
     prefix check; logprobs never live here. ``extra_fields_train`` is the
     trajectory's slice of the training extra fields, declared at close and
-    moved into the finalize part's verdicts.
+    moved into the finalize part's verdicts. ``not_training_turns`` holds
+    turn indexes a close dropped from the training data (a rolled-back
+    retry); those turns stay in the payload but produce no sequence.
     """
 
     session_id: Optional[str]
@@ -108,6 +115,15 @@ class _SessionState:
     last_input: Optional[list[int]] = None
     last_output: Optional[list[int]] = None
     extra_fields_train: dict = field(default_factory=dict)
+    not_training_turns: set = field(default_factory=set)
+    # "chat" once this session is driven through the chat entry; None for
+    # sessions only the generate entry has served. The turn classification
+    # differs between the two entries.
+    entry: Optional[str] = None
+    # The chat entry's server-side conversation and its
+    # single-request-in-flight flag.
+    chat: Optional[ChatConversation] = None
+    chat_inflight: bool = False
 
 
 @dataclass
@@ -158,6 +174,13 @@ class SessionServerWorker(Worker):
     The runner launches one worker per session server instance (its
     ``server_index`` fixes the port), calls the resident
     :meth:`serve` and holds the returned handle for liveness monitoring.
+
+    Two entries forward generates: ``/generate`` for agents that tokenize
+    themselves, and the OpenAI chat completions route for agents that send
+    messages. Both share :meth:`_generate_core`; the chat route renders the
+    messages and parses the engine's answer with
+    :class:`~rlinf.workers.rollout.session_server.chat_completions.ChatCompletions`,
+    and owns the conversation state the two of them need.
     """
 
     def __init__(self, cfg: DictConfig, server_index: int):
@@ -213,7 +236,15 @@ class SessionServerWorker(Worker):
         self._reported_group_ids: set[int] = set()
         self._reported_group_order: deque = deque()
         self._fatal_error: Optional[RuntimeError] = None
+        self._chat_template_kwargs = dict(session_server_cfg.chat_template_kwargs)
+        # The chat route's format converter, built by _setup_chat when the
+        # config names an agentic tokenizer family; None serves the
+        # generate entry only.
+        self._chat_entry: Optional[ChatCompletions] = None
         self._metrics = {
+            "session_server/chat_tool_call_parse_failed": 0,
+            "session_server/chat_tool_call_responses": 0,
+            "session_server/chat_reasoning_responses": 0,
             "session_server/prefix_continuous": 0,
             "session_server/prefix_underreported": 0,
             "session_server/prefix_rewritten": 0,
@@ -240,13 +271,9 @@ class SessionServerWorker(Worker):
             return await self._generate(sid, body)
 
         @app.post("/sessions/{sid}/v1/chat/completions")
-        async def handle_chat_completions():
-            return JSONResponse(
-                status_code=501,
-                content={
-                    "error": "the chat-completions entry is reserved but not implemented"
-                },
-            )
+        async def handle_chat_completions(sid: str, raw_request: Request):
+            body = await raw_request.json()
+            return await self._chat_completions(sid, body)
 
         @app.post("/sessions/{sid}/close")
         async def handle_close(sid: str, raw_request: Request):
@@ -285,6 +312,45 @@ class SessionServerWorker(Worker):
             )
         )
 
+    def _setup_chat(self) -> None:
+        """Build the chat route's format converter.
+
+        Called from serve(), so a wrong model path or chat template fails at
+        startup instead of on the first chat request. A config without
+        ``agentloop.agentic_tokenizer`` serves the generate entry only;
+        chat requests then fail with 500.
+        """
+        self._chat_entry = None
+        # A config without an agentloop block (or without the family key)
+        # serves the generate entry only.
+        agentloop_cfg = self._cfg.get("agentloop", None)
+        family = (
+            agentloop_cfg.get("agentic_tokenizer", None)
+            if agentloop_cfg is not None
+            else None
+        )
+        if family is None:
+            return
+        from rlinf.agents.tokenization.agentic_tokenizer import get_agentic_tokenizer
+        from rlinf.models.tokenization.hf import hf_tokenizer
+
+        model_path = self._cfg.rollout.model.model_path
+        tokenizer = hf_tokenizer(
+            model_path,
+            trust_remote_code=self._cfg.rollout.model.get("trust_remote_code", False),
+        )
+        self._chat_entry = ChatCompletions(
+            get_agentic_tokenizer(
+                tokenizer,
+                tokenizer_type=family,
+                chat_template_kwargs=dict(self._chat_template_kwargs),
+            ),
+            os.path.basename(str(model_path)),
+        )
+        self.log_info(
+            f"Session server {self._server_index} chat entry ready (family {family})"
+        )
+
     async def serve(
         self,
         router_url: str,
@@ -309,6 +375,11 @@ class SessionServerWorker(Worker):
         """
         assert self._http_server_task is None, "serve is already running."
         assert payload_channels, "serve needs at least one payload channel."
+        # The length the actor trains on, which the chat entry enforces.
+        self._max_seq_length = int(self._cfg.runner.seq_length)
+        # Load the chat entry's tokenizer now, so a bad model path or chat
+        # template fails at startup instead of on the first chat request.
+        self._setup_chat()
         self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
         self._agent_output_channel = agent_output_channel
         self._payload_channels = list(payload_channels)
@@ -497,33 +568,38 @@ class SessionServerWorker(Worker):
 
     def _session(
         self, sid: str
-    ) -> tuple[Optional[_SessionState], Optional[JSONResponse]]:
+    ) -> tuple[Optional[_SessionState], Optional[tuple[int, str]]]:
+        """The session of this id, or the status and message to answer with."""
         session = self._sessions.get(sid)
         if session is None:
-            return None, self._error(404, f"unknown session {sid}")
+            return None, (404, f"unknown session {sid}")
         return session, None
 
     def _live_group(
         self, session: _SessionState
-    ) -> tuple[Optional[_GroupState], Optional[JSONResponse]]:
-        """The group of a session, or the error to answer with.
+    ) -> tuple[Optional[_GroupState], Optional[tuple[int, str]]]:
+        """The group of a session, or the status and message to answer with.
 
         A group discarded by an abort drops everything that arrives late; one
         discarded by a failed payload write answers generate and close with
-        an error so the caller learns its trajectory was not recorded.
+        an error so the caller learns its trajectory was not recorded. The
+        abort case carries a status below 400: the caller answers its entry's
+        success shape instead of an error — the agent's own abort asked for
+        the group to go away, so the refusal needs no message.
         """
         group = self._groups.get(session.group_id)
         if group is None:
-            return None, self._error(
-                404, f"group {session.group_id} is unknown or already finished"
+            return None, (
+                404,
+                f"group {session.group_id} is unknown or already finished",
             )
         if group.discard_reason is not None:
             if group.discard_reason == _WRITE_FAILED:
-                return None, self._error(
+                return None, (
                     410,
                     f"group {session.group_id} was discarded ({_WRITE_FAILED})",
                 )
-            return None, JSONResponse(content={})
+            return None, (200, "")
         return group, None
 
     # ------------------------------------------------------------------
@@ -532,28 +608,80 @@ class SessionServerWorker(Worker):
     async def _generate(self, sid: str, body: dict) -> JSONResponse:
         session, error = self._session(sid)
         if error is not None:
-            return error
+            return self._error(*error)
+        rlinf_block = body.get("rlinf") or {}
+        # Every other body field rides through to the engine unchanged:
+        # the request is sglang's /generate shape apart from the rlinf block.
+        passthrough = {
+            key: value
+            for key, value in body.items()
+            if key not in ("rlinf", "input_ids", "sampling_params")
+        }
+        result, error = await self._generate_core(
+            session,
+            body.get("input_ids"),
+            body.get("sampling_params"),
+            rlinf_block.get("prev_kept_len"),
+            passthrough,
+        )
+        if error is not None:
+            return self._error(*error)
+        content = {
+            "output_ids": list(result["output_ids"]),
+            "finish_reason": dict(result["finish_reason"]),
+            "weight_version": result["weight_version"],
+            "cached_tokens": result["cached_tokens"],
+        }
+        if self._verify_assembly:
+            # Only the verification needs the agent-side logprobs; normal
+            # responses keep them out of the data plane.
+            content["logprobs"] = result["logprobs"]
+        return JSONResponse(content=content)
+
+    async def _generate_core(
+        self,
+        session: _SessionState,
+        input_ids: list,
+        sampling_overrides: Any,
+        prev_kept_len: Optional[int],
+        body_fields: Optional[dict] = None,
+    ) -> tuple[Optional[dict], Optional[tuple[int, str]]]:
+        """Run one generation turn for ``session``; both entries share it.
+
+        Validates the inputs, records the prefix bookkeeping, forwards to
+        the router, checks the abort / weight-version contracts, writes the
+        payload part, and updates the metrics and versions.
+
+        Returns:
+            The engine result (``text``, ``output_ids``, ``finish_reason``,
+            ``weight_version``, ``cached_tokens``, ``logprobs``) —
+            ``logprobs`` only when the assembly check needs them — or the
+            status and message of the failure, which each entry wraps in its
+            own error shape.
+
+        Args:
+            body_fields: Extra request fields forwarded to the engine as-is
+                (the /generate entry passes everything but the rlinf block,
+                input_ids and sampling_params; the chat entry passes none).
+                ``sampling_params`` and ``return_logprob`` are always
+                overwritten by this server's merged values.
+        """
         _, error = self._live_group(session)
         if error is not None:
             # An abort-discarded group answers 410 so the agent fails its
-            # turn; other error responses pass through.
-            return (
-                error
-                if error.status_code >= 400
-                else self._error(410, f"group {session.group_id} was discarded")
-            )
-
-        input_ids = body.get("input_ids")
+            # turn; other failures pass through.
+            status, message = error
+            if status < 400:
+                status, message = 410, f"group {session.group_id} was discarded"
+            return None, (status, message)
         if not isinstance(input_ids, list) or not input_ids:
-            return self._error(400, "input_ids must be a non-empty list")
-        rlinf_block = body.get("rlinf") or {}
-        prev_kept_len = rlinf_block.get("prev_kept_len")
+            return None, (400, "input_ids must be a non-empty list")
         if prev_kept_len is not None and (
             not isinstance(prev_kept_len, int) or prev_kept_len < 0
         ):
-            return self._error(400, "rlinf.prev_kept_len must be a non-negative int")
+            return None, (400, "rlinf.prev_kept_len must be a non-negative int")
         if not self._loaded_versions:
-            return self._error(
+            return None, (
                 500,
                 "no loaded weight versions were recorded; the runner must "
                 "call set_loaded_versions before the first generate",
@@ -563,10 +691,9 @@ class SessionServerWorker(Worker):
         version_start = min(self._loaded_versions)
         turn = self._new_turn_record(session, input_ids, prev_kept_len)
 
-        forwarded = {key: value for key, value in body.items() if key != "rlinf"}
-        forwarded["sampling_params"] = self._merged_sampling_params(
-            body.get("sampling_params")
-        )
+        forwarded = dict(body_fields or {})
+        forwarded["input_ids"] = input_ids
+        forwarded["sampling_params"] = self._merged_sampling_params(sampling_overrides)
         forwarded["return_logprob"] = self._return_logprob
 
         try:
@@ -578,12 +705,12 @@ class SessionServerWorker(Worker):
                 f"Session server generate forward failed (group "
                 f"{session.group_id}, traj {session.traj_index}): {exc!r}"
             )
-            return self._error(500, f"forwarding to the router failed: {exc!r}")
+            return None, (500, f"forwarding to the router failed: {exc!r}")
 
         meta_info = result.get("meta_info") or {}
         output_ids = result.get("output_ids")
         if not isinstance(output_ids, list):
-            return self._error(
+            return None, (
                 500,
                 f"the router response has no output_ids; got keys {sorted(result)}",
             )
@@ -591,14 +718,14 @@ class SessionServerWorker(Worker):
         if finish_reason.get("type") == "abort":
             # HTTP 200 with a truncated output is how an engine-side abort
             # surfaces; half a turn must never reach the payload.
-            return self._error(
+            return None, (
                 503,
                 "the engine aborted this generation; the turn failed and "
                 "no payload was written",
             )
         weight_version = meta_info.get("weight_version")
         if weight_version == "default":
-            return self._error(
+            return None, (
                 500,
                 'the engine reported weight_version "default": it has not '
                 "been written a version yet; staleness cannot be computed",
@@ -606,7 +733,7 @@ class SessionServerWorker(Worker):
         try:
             weight_version = int(weight_version)
         except (TypeError, ValueError):
-            return self._error(
+            return None, (
                 500,
                 f"the engine reported a non-integer weight_version {weight_version!r}",
             )
@@ -619,7 +746,7 @@ class SessionServerWorker(Worker):
                 f"Dropping a generate response for discarded group "
                 f"{session.group_id} (traj {session.traj_index})."
             )
-            return self._error(410, f"group {session.group_id} was discarded")
+            return None, (410, f"group {session.group_id} was discarded")
 
         logprobs = None
         if self._return_logprob:
@@ -645,7 +772,7 @@ class SessionServerWorker(Worker):
             # an earlier one (a background task that ran during the await)
             # failed and voided the group: the turn is not recorded, so the
             # response is rejected like any other post-discard request.
-            return self._error(410, f"group {session.group_id} was discarded")
+            return None, (410, f"group {session.group_id} was discarded")
         session.turns.append(turn)
         session.last_input = list(input_ids)
         session.last_output = list(output_ids)
@@ -656,17 +783,17 @@ class SessionServerWorker(Worker):
         self._apply_version(group, version_start)
         self._apply_version(group, weight_version)
 
-        content = {
-            "output_ids": list(output_ids),
-            "finish_reason": dict(finish_reason),
-            "weight_version": weight_version,
-            "cached_tokens": meta_info.get("cached_tokens", 0),
-        }
-        if self._verify_assembly:
-            # Only the verification needs the agent-side logprobs; normal
-            # responses keep them out of the data plane.
-            content["logprobs"] = logprobs
-        return JSONResponse(content=content)
+        return (
+            {
+                "text": result.get("text"),
+                "output_ids": list(output_ids),
+                "finish_reason": dict(finish_reason),
+                "weight_version": weight_version,
+                "cached_tokens": meta_info.get("cached_tokens", 0),
+                "logprobs": logprobs if self._verify_assembly else None,
+            },
+            None,
+        )
 
     def _new_turn_record(
         self, session: _SessionState, input_ids: list[int], prev_kept_len: Optional[int]
@@ -747,6 +874,154 @@ class SessionServerWorker(Worker):
         self._metrics["session_server/forward_count"] += 1
         self._metrics["session_server/forward_time_total_s"] += elapsed
         return result
+
+    # ------------------------------------------------------------------
+    # Chat completions entry
+    # ------------------------------------------------------------------
+    async def _chat_completions(self, sid: str, body: dict) -> Response:
+        """One POST /sessions/{sid}/v1/chat/completions.
+
+        The chat entry is the one that answers an OpenAI client, so its
+        errors and its response body use the OpenAI shapes; between those
+        two ends it renders the request, forwards it through the same
+        generate core, and parses the engine's answer back into a message.
+        """
+        session, error = self._session(sid)
+        if error is not None:
+            return self._openai_error(*error, "unknown_session")
+        if self._verify_assembly:
+            # The assembly check compares against a reference the agent side
+            # assembles from token ids; a chat client holds no tokens.
+            return self._openai_error(
+                400,
+                "verify_assembly is enabled: the chat completions entry "
+                "cannot provide a reference result",
+                "verify_assembly_enabled",
+            )
+        if self._chat_entry is None:
+            return self._openai_error(
+                500,
+                "this session server has no agentic tokenizer configured "
+                "(agentloop.agentic_tokenizer); the chat entry needs one",
+                "no_agentic_tokenizer",
+            )
+        reason = self._chat_entry.check_request(
+            body, self._merged_sampling_params(None)
+        )
+        if reason is not None:
+            return self._openai_error(400, reason, "invalid_request")
+        if session.chat_inflight:
+            return self._openai_error(
+                409,
+                "this session already has a chat request in flight",
+                "session_busy",
+            )
+        session.chat_inflight = True
+        try:
+            if session.entry is None:
+                session.entry = "chat"
+            messages = body["messages"]
+            tools = body.get("tools")
+            rendered = self._chat_entry.render(
+                session.chat,
+                (session.last_input or []) + (session.last_output or []),
+                messages,
+                tools,
+            )
+            # A turn's prompt and answer together have to fit in the length
+            # the actor trains on. A chat client cannot know that limit, so
+            # the entry holds it: the answer gets whatever room the prompt
+            # leaves, and a prompt that does not fit is refused before
+            # anything is recorded.
+            max_len = self._session_max_len(session)
+            if len(rendered.input_ids) >= max_len:
+                return self._openai_error(
+                    400,
+                    f"the prompt has {len(rendered.input_ids)} tokens and the "
+                    f"training sequence length is {max_len}",
+                    "context_length_exceeded",
+                )
+            overrides = self._chat_entry.sampling_overrides(body)
+            overrides["max_new_tokens"] = min(
+                int(self._merged_sampling_params(overrides)["max_new_tokens"]),
+                max_len - len(rendered.input_ids),
+            )
+            if rendered.rollback:
+                self._roll_back_last_turn(session)
+            # Captured before the forward: this is where a later retry of
+            # this request rolls back to.
+            checkpoint = (
+                list(session.chat.messages) if session.chat is not None else [],
+                session.last_input,
+                session.last_output,
+            )
+            result, error = await self._generate_core(
+                session,
+                list(rendered.input_ids),
+                overrides,
+                None,
+            )
+            if error is not None:
+                return self._openai_error(*error, "generation_failed")
+            parsed = self._chat_entry.parse(
+                result.get("text"),
+                rendered.input_ids,
+                tools,
+                body.get("tool_choice", "auto"),
+            )
+            if parsed.has_reasoning:
+                self._metrics["session_server/chat_reasoning_responses"] += 1
+            if parsed.has_tool_calls:
+                self._metrics["session_server/chat_tool_call_responses"] += 1
+            if parsed.tool_call_parse_failed:
+                self._metrics["session_server/chat_tool_call_parse_failed"] += 1
+            session.chat = ChatConversation(
+                messages=[*messages, parsed.message], checkpoint=checkpoint
+            )
+            response = self._chat_entry.response_body(
+                body, parsed, result, rendered.input_ids
+            )
+            if body.get("stream"):
+                return Response(
+                    content=self._chat_entry.stream_body(response),
+                    status_code=200,
+                    media_type="text/event-stream",
+                    headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+                )
+            return JSONResponse(content=response)
+        finally:
+            session.chat_inflight = False
+
+    def _session_max_len(self, session: _SessionState) -> int:
+        """The longest sequence this session's turns may produce.
+
+        The one place a length limit is decided, so a task that needs its
+        own (a per-task key beside the generate timeout, for example) is
+        added here alone. Today every session gets the length the actor
+        trains on.
+        """
+        return self._max_seq_length
+
+    def _roll_back_last_turn(self, session: _SessionState) -> None:
+        """Drop the session's last turn from the training data.
+
+        The rollback happens before the forward, and a failure of the
+        retried request does not undo it: the request repeating the previous
+        one means the agent never used that turn's answer, so that turn must
+        not train whatever the retry does. The conversation and
+        ``last_input`` / ``last_output`` are restored from the checkpoint
+        here because the generate core derives the new turn's prefix match
+        from them, and the match must be taken against the kept turn, not
+        the abandoned one. The abandoned turn keeps its payload: the engine
+        already sampled it.
+        """
+        checkpoint = session.chat.checkpoint
+        session.not_training_turns.add(len(session.turns) - 1)
+        session.chat = ChatConversation(
+            messages=list(checkpoint[0]), checkpoint=checkpoint
+        )
+        session.last_input = None if checkpoint[1] is None else list(checkpoint[1])
+        session.last_output = None if checkpoint[2] is None else list(checkpoint[2])
 
     # ------------------------------------------------------------------
     # Payload writes
@@ -902,11 +1177,13 @@ class SessionServerWorker(Worker):
     async def _close_session(self, sid: str, body: dict) -> JSONResponse:
         session, error = self._session(sid)
         if error is not None:
-            return error
+            return self._error(*error)
         group, error = self._live_group(session)
         if group is None:
-            status = error.status_code
-            return error if status >= 400 else JSONResponse(content={})
+            status, message = error
+            if status < 400:
+                return JSONResponse(content={})
+            return self._error(status, message)
 
         turns = session.turns
         verdict = body.get("verdict") or {}
@@ -917,8 +1194,8 @@ class SessionServerWorker(Worker):
             return self._error(
                 400,
                 f"unsupported verdict fields {unsupported!r}: only "
-                f"extra_fields_train is supported; kept lengths are declared "
-                f"via kept_lens",
+                f"extra_fields_train is supported; kept lengths are "
+                f"declared via kept_lens",
             )
         extra_fields_train = verdict.get("extra_fields_train") or {}
         if not isinstance(extra_fields_train, dict):
@@ -927,17 +1204,18 @@ class SessionServerWorker(Worker):
                 f"verdict extra_fields_train must map a field name to a list, "
                 f"got {extra_fields_train!r}",
             )
+        trained_turn_count = len(turns) - len(session.not_training_turns)
         for name, values in extra_fields_train.items():
             if (
                 not isinstance(values, list)
-                or len(values) != len(turns)
+                or len(values) != trained_turn_count
                 or any(not isinstance(value, (bool, int, float)) for value in values)
             ):
                 return self._error(
                     400,
                     f"unsupported verdict extra_fields_train {name!r}: each field "
-                    f"must be a list of int / float / bool, one value per turn "
-                    f"of this trajectory, got {values!r}",
+                    f"must be a list of int / float / bool, one value per trained "
+                    f"turn of this trajectory, got {values!r}",
                 )
         kept_lens = body.get("kept_lens") or {}
         if not isinstance(kept_lens, dict):
@@ -998,7 +1276,9 @@ class SessionServerWorker(Worker):
         output than it declared (an under-reported truncation), and
         ``lcp < L`` rewrites history and starts a new segment. A turn whose
         input already broke inside the previous input was classified as a
-        rewrite when it arrived.
+        rewrite when it arrived. A turn dropped by the verdict's
+        ``not_training`` never pairs: it yields no sequence, and the turn
+        after it compares against the last kept turn before it.
 
         Args:
             session: The session whose turns are classified.
@@ -1016,18 +1296,36 @@ class SessionServerWorker(Worker):
         continues: list[bool] = []
         continuous = 0
         rewritten = 0
+        previous_index: Optional[int] = None
         for turn_index, turn in enumerate(turns):
-            if turn.continues_prev is not None:
-                continues.append(turn.continues_prev)
-                continue
-            if turn_index == 0:
+            if turn_index in session.not_training_turns:
+                # Dropped from the training data: it never pairs, so it
+                # neither continues nor becomes the previous turn for the
+                # turn after it. Checked before the arrive-time
+                # classification: a rewrite that arrived before the drop
+                # must not anchor the next turn either.
                 continues.append(False)
                 continue
-            previous = turns[turn_index - 1]
-            boundary = previous.input_len + kept[turn_index - 1]
+            if turn.continues_prev is not None:
+                continues.append(turn.continues_prev)
+                previous_index = turn_index
+                continue
+            if previous_index is None:
+                continues.append(False)
+                previous_index = turn_index
+                continue
+            previous = turns[previous_index]
+            boundary = previous.input_len + kept[previous_index]
             if turn.lcp >= boundary:
                 continues.append(True)
                 continuous += 1
+            elif turn.lcp >= previous.input_len and session.entry == "chat":
+                # A chat client rebuilt its history over the previous
+                # turn's output: the conversation rewrites and starts a new
+                # segment instead of failing the close. The generate entry
+                # has no such client and keeps the strict check.
+                continues.append(False)
+                rewritten += 1
             elif turn.lcp >= previous.input_len:
                 self._metrics["session_server/prefix_underreported"] += 1
                 raise ValueError(
@@ -1059,11 +1357,13 @@ class SessionServerWorker(Worker):
     async def _reward(self, sid: str, body: dict) -> JSONResponse:
         session, error = self._session(sid)
         if error is not None:
-            return error
+            return self._error(*error)
         group, error = self._live_group(session)
         if group is None:
-            status = error.status_code
-            return error if status >= 400 else JSONResponse(content={})
+            status, message = error
+            if status < 400:
+                return JSONResponse(content={})
+            return self._error(status, message)
 
         reward = body.get("reward")
         if isinstance(reward, bool) or not isinstance(reward, (int, float)):
@@ -1165,6 +1465,7 @@ class SessionServerWorker(Worker):
                 "continues_prev": [
                     turn.continues_prev is True for turn in session.turns
                 ],
+                "not_training": dict.fromkeys(session.not_training_turns, True),
                 "extra_fields_train": dict(session.extra_fields_train),
             }
             for traj_index, session in group.sessions.items()
@@ -1324,3 +1625,12 @@ class SessionServerWorker(Worker):
     @staticmethod
     def _error(status_code: int, message: str) -> JSONResponse:
         return JSONResponse(status_code=status_code, content={"error": message})
+
+    @staticmethod
+    def _openai_error(status_code: int, message: str, code: str) -> JSONResponse:
+        """An error body of the OpenAI shape, for the chat entry."""
+        error_type = "invalid_request_error" if status_code < 500 else "server_error"
+        return JSONResponse(
+            status_code=status_code,
+            content={"error": {"message": message, "type": error_type, "code": code}},
+        )
