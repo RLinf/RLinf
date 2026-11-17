@@ -1634,7 +1634,9 @@ jobs:
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
+          # isaacsim-kernel finds the Isaac Sim root with realpath(__file__); a
+          # symlinked install resolves into the uv cache, where the extensions
+          # from sibling wheels are missing. Keep uv's default link mode.
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env robolab
