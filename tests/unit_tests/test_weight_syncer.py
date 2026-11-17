@@ -2524,6 +2524,7 @@ def test_embodied_weight_sync_checks_all_server_ranks(
     scheduler.actor_weight_rank = 0
     scheduler.worker = SimpleNamespace(rank=0)
     scheduler.weight_target = target
+    scheduler.weight_syncer = None
     scheduler._sync_failed = False
     scheduler._weights_ready = True
     world = SimpleNamespace(world_size=2, cpu_group=object())

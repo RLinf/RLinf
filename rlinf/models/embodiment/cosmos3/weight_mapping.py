@@ -53,6 +53,7 @@ def native_to_diffusers_key(name: str) -> str:
 
 def actor_to_sglang_key(name: str) -> str | None:
     """Select the online transformer and map its native actor key for serving."""
+    name = name.replace("_checkpoint_wrapped_module.", "").replace("_orig_mod.", "")
     if not name.startswith("omni.net."):
         return None
     return native_to_diffusers_key(name.removeprefix("omni.net."))

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -81,6 +82,7 @@ class SGLangWeightTarget(torch.nn.Module):
         self.shapes: dict[str, tuple[int, ...]] = {}
         self._full_sync = False
         self._received_names: set[str] = set()
+        self._patch_state: dict[str, torch.Tensor] | None = None
         for path in sorted(Path(checkpoint_dir).glob("*.safetensors")):
             with safe_open(path, framework="pt", device="cpu") as reader:
                 for name in reader.keys():
@@ -89,6 +91,72 @@ class SGLangWeightTarget(torch.nn.Module):
                     self.shapes[name] = tuple(reader.get_slice(name).get_shape())
         if not self.shapes:
             raise ValueError(f"No serving safetensors found in {checkpoint_dir}")
+
+    def bind_patch_model(self, module: torch.nn.Module) -> None:
+        """Expose checkpoint-named views into resident, unsharded serving weights.
+
+        Fused linear projections are exposed as nonoverlapping slices, so sparse
+        updates preserve serving storage and do not require a second model copy.
+        """
+        from sglang.multimodal_gen.runtime.loader.utils import get_param_names_mapping
+        from torch.distributed.tensor import DTensor
+
+        mappers = [
+            get_param_names_mapping(mapping)
+            for attr in ("lora_param_names_mapping", "param_names_mapping")
+            if (mapping := getattr(module, attr, None))
+        ]
+        parameters = dict(module.named_parameters())
+        parameters.update(module.named_buffers())
+        views = {}
+        for name, shape in self.shapes.items():
+            mapped, shard = name, None
+            if name not in parameters:
+                for mapper in mappers:
+                    mapped, index, _ = mapper(mapped)
+                    if index is not None:
+                        shard = index
+            # SGLang maps checkpoint-only, unused weights to an empty name.
+            if not mapped:
+                continue
+            if mapped not in parameters:
+                raise ValueError(
+                    f"No live serving parameter for patch key {name} -> {mapped}"
+                )
+            parameter = parameters[mapped]
+            if isinstance(parameter, DTensor) or parameter.device.type == "meta":
+                raise ValueError(
+                    f"Patch target must be resident and unsharded: {mapped}"
+                )
+            value = parameter.detach()
+            if shard is not None:
+                owner = module.get_submodule(mapped.rsplit(".", 1)[0])
+                sizes = getattr(owner, "output_sizes", None)
+                dim = getattr(parameter, "output_dim", None)
+                if sizes is None or dim is None or not isinstance(shard, int):
+                    raise ValueError(
+                        f"Unsupported fused patch parameter: {name} -> {mapped}"
+                    )
+                value = value.narrow(dim, sum(sizes[:shard]), sizes[shard])
+            if tuple(value.shape) != shape or not value.is_contiguous():
+                raise ValueError(
+                    f"Patch target {name} requires a contiguous full-shape view "
+                    f"{shape}, got {tuple(value.shape)}"
+                )
+            views[name] = value
+        if not views:
+            raise ValueError("No serving parameters are available for patch sync")
+        self._patch_state = views
+
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        """Return writable serving views for PatchWeightSyncer."""
+        if self._patch_state is None:
+            raise RuntimeError("Bind a serving module before initializing patch sync")
+        if destination is None:
+            destination = OrderedDict()
+        for name, value in self._patch_state.items():
+            destination[prefix + name] = value if keep_vars else value.detach()
+        return destination
 
     def begin_sync(self, *, full: bool) -> None:
         """Start a transfer; full transfers must cover the entire serving module."""

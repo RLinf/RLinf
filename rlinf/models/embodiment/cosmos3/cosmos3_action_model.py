@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -112,6 +113,9 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         super().__init__()
         self.omni = model
         self.model_cfg = model_cfg
+        self.config = SimpleNamespace(
+            num_steps=int(self._option("num_inference_steps", 30))
+        )
         self.lr_multipliers = dict(lr_multipliers or {})
         self._ema_enabled = bool(ema_enabled) and bool(
             getattr(getattr(model, "config", None), "ema", None)
@@ -166,7 +170,74 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             return self.sft_forward(**kwargs)
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        if forward_type == ForwardType.NFT:
+            return self.nft_forward(**kwargs)
         raise NotImplementedError(f"Unsupported Cosmos3 forward type: {forward_type}")
+
+    def nft_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        nft_inputs: dict[str, torch.Tensor],
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:
+        """Predict raw action velocities on a resampled joint flow state.
+
+        The visual endpoint and noise are shared by the frozen reference and
+        training forwards. Only unpadded action dimensions contribute to NFT.
+        """
+        actions = nft_inputs["x_t"].float()
+        sigmas = nft_inputs["timesteps"].float().reshape(-1, 1)
+        n, horizon, raw_dim = actions.shape
+        self._set_device(actions.device)
+        self._ensure_vision_device_patch()
+        batch = self._build_batch(forward_inputs["images"], forward_inputs["prompts"])
+        with torch.no_grad():
+            plans, clean, cond, _, _, reference, mask, has_actions = (
+                self.omni._prepare_inference_data(batch, seed=[0] * n)
+            )
+        if not has_actions:
+            raise ValueError("Cosmos3 NFT requires an action target")
+        model_dim = int(clean.x0_tokens_action[0].shape[-1])
+        if horizon != int(self._option("num_action_chunks", 16)) or raw_dim != int(
+            self._option("raw_action_dim", 10)
+        ):
+            raise ValueError(
+                f"Invalid Cosmos3 NFT action shape: {tuple(actions.shape)}"
+            )
+        endpoint = forward_inputs["nft_joint_x0"].float()
+        noise = forward_inputs["nft_joint_noise"].float()
+        ref = torch.stack(reference).float()
+        cond_mask = torch.stack(mask).float()
+        if endpoint.shape != ref.shape or noise.shape != ref.shape:
+            raise ValueError(
+                f"Cosmos3 NFT joint state must match native shape {tuple(ref.shape)}, "
+                f"got endpoint={tuple(endpoint.shape)}, noise={tuple(noise.shape)}"
+            )
+        action_width = horizon * model_dim
+        x = (1 - sigmas) * endpoint + sigmas * noise
+        x = cond_mask * ref + (1 - cond_mask) * x
+        # Preserve the native visual layout; replace only the noisy action tail.
+        padded_actions = torch.nn.functional.pad(actions, (0, model_dim - raw_dim))
+        action_mask = cond_mask[:, -action_width:]
+        action_state = action_mask * ref[:, -action_width:] + (
+            1 - action_mask
+        ) * padded_actions.flatten(1)
+        x = torch.cat((x[:, :-action_width], action_state), dim=1)
+        velocity = torch.stack(
+            self.omni._get_velocity(
+                noise_x=list(x.unbind(0)),
+                timestep=self._velocity_timesteps(sigmas),
+                text_tokens=cond,
+                sequence_plans=plans,
+                gen_data_clean=clean,
+                has_noisy_actions=True,
+            )
+        ).float()
+        return {
+            "v_theta": velocity[:, -action_width:].reshape(n, horizon, model_dim)[
+                :, :, :raw_dim
+            ]
+        }
 
     def sft_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
         """Compute the native Cosmos flow-matching SFT loss."""
@@ -282,7 +353,12 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
 
     @torch.no_grad()
     def sample_train_actions(self, images: torch.Tensor, prompts: torch.Tensor):
-        """Sample an SDE trajectory and save one transition for GRPO replay."""
+        """Sample an SDE trajectory for GRPO replay or NFT endpoint resampling."""
+        rl_mode = self._option("rl_mode", "grpo")
+        if rl_mode not in {"grpo", "nft"}:
+            raise ValueError(
+                f"Expected Cosmos3 rl_mode='grpo' or 'nft', got {rl_mode!r}"
+            )
         self._set_device(self.device)
         self._ensure_vision_device_patch()
         batch = self._build_batch(images, prompts)
@@ -332,7 +408,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             )
             x_next = mean + std * torch.randn_like(mean)
             x_next = cond_mask * ref + (1 - cond_mask) * x_next
-            if step == selected:
+            if rl_mode == "grpo" and step == selected:
                 saved_x, saved_next = x.cpu(), x_next.cpu()
                 old_logprobs = action_transition_logprobs(
                     x_next,
@@ -347,6 +423,20 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         model_actions = x[:, -action_width:].reshape(n, horizon, model_dim)[
             :, :, :raw_dim
         ]
+        if rl_mode == "nft":
+            endpoint = x.cpu()
+            return list(model_actions.unbind(0)), {
+                "prev_logprobs": torch.zeros(n, horizon, 7),
+                "prev_values": None,
+                "forward_inputs": {
+                    "images": images,
+                    "prompts": prompts,
+                    "nft_x0": model_actions.cpu(),
+                    "nft_joint_x0": endpoint,
+                    "nft_joint_noise": torch.randn(endpoint.shape),
+                    "nft_noise_level": torch.zeros(n),
+                },
+            }
         return list(model_actions.unbind(0)), {
             "prev_logprobs": old_logprobs,
             "prev_values": torch.zeros((n, 1), dtype=torch.float32),

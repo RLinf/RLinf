@@ -3968,6 +3968,18 @@ def test_phyai_eval_requires_a_nonempty_openpi_config_name(phyai_example_cfg):
         validate_embodied_cfg(phyai_example_cfg)
 
 
+def test_cosmos3_weight_mapping_matches_wrapped_trainable_parameters():
+    from rlinf.models.embodiment.cosmos3.weight_mapping import actor_to_sglang_key
+
+    state_key = "omni.net.language_model.model.layers.0.self_attn.q_proj_moe_gen.weight"
+    wrapped_key = state_key.replace(
+        "layers.0.", "layers.0._checkpoint_wrapped_module._orig_mod."
+    )
+    assert actor_to_sglang_key(state_key) == "layers.0.self_attn.add_q_proj.weight"
+    assert actor_to_sglang_key(wrapped_key) == actor_to_sglang_key(state_key)
+    assert actor_to_sglang_key("omni.net_ema.language_model.weight") is None
+
+
 def _cosmos3_sglang_cfg(batching_max_size=None):
     server = (
         {} if batching_max_size is None else {"batching_max_size": batching_max_size}

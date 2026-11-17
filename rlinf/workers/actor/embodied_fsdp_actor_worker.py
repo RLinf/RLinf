@@ -115,6 +115,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.weight_syncer = (
             WeightSyncer.create(OmegaConf.select(cfg, "weight_syncer"))
             if self.rollout_backend == "huggingface"
+            or (
+                self.rollout_backend == "sglang"
+                and cfg.get("weight_syncer") is not None
+            )
             else None
         )
 
@@ -155,6 +159,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     rollout_dp_size=placement.rollout_dp_size,
                 )[self._rank]
             )
+            self._sglang_all_weight_targets = [
+                (instance, rank)
+                for instance in range(placement.get_world_size("rollout"))
+                for rank in range(placement.rollout_gpus_per_process)
+            ]
 
     # Built on first use: offline actors have no env.train and never read them.
     @cached_property
@@ -241,13 +250,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 for name, tensor in state_dict.items()
                 if adapter_cls.map_weight_name(name) is not None
             }
-            self.send_hf_weights(
-                serving_state,
-                self._rollout_group_name,
-                self._sglang_weight_targets,
-                cpu_offload=True,
-                version=self.version,
-            )
+            if self.weight_syncer is not None:
+                await self._sync_sglang_patch_weights(serving_state, adapter_cls)
+            else:
+                self.send_hf_weights(
+                    serving_state,
+                    self._rollout_group_name,
+                    self._sglang_weight_targets,
+                    cpu_offload=True,
+                    version=self.version,
+                )
         elif self.rollout_backend == "huggingface":
 
             async def send_func(data):
@@ -298,6 +310,65 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "weight should be offloaded in sync_model_to_rollout"
             )
             self.offload_param_and_grad(True)
+
+    async def _sync_sglang_patch_weights(
+        self, state_dict: dict[str, torch.Tensor], adapter_cls: type
+    ) -> None:
+        """Send one patch to all server ranks in serving checkpoint names."""
+        serving_state = {
+            adapter_cls.map_weight_name(name): tensor
+            for name, tensor in state_dict.items()
+        }
+        if len(serving_state) != len(state_dict):
+            raise ValueError("Actor weights must map to unique serving names")
+
+        async def send(data):
+            if self._is_weight_sender:
+                for target in self._sglang_all_weight_targets:
+                    await self.send(
+                        data,
+                        dst_group_name=self._rollout_group_name,
+                        dst_rank=list(target),
+                        async_op=True,
+                        options=self._sync_weight_comm_options,
+                    ).async_wait()
+
+        async def recv():
+            return metadata
+
+        if not self.weight_syncer.sender_initialized():
+            metadata = await self.recv(
+                src_group_name=self._rollout_group_name,
+                src_rank=[0, 0],
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
+            self._sglang_patch_keys = metadata["ordered_keys"]
+            serving_state = {key: serving_state[key] for key in self._sglang_patch_keys}
+            names = list(
+                dict.fromkeys(
+                    key
+                    for name in self.param_names_need_sync
+                    if (key := adapter_cls.map_weight_name(name)) in serving_state
+                )
+            )
+            if not names:
+                raise ValueError("SGLang patch sync found no trainable serving weights")
+            await self.weight_syncer.init_sender(
+                state_dict=serving_state,
+                param_names_need_sync=names,
+                send=send,
+                recv=recv,
+                is_sender=self._is_weight_sender,
+            )
+        else:
+            serving_state = {key: serving_state[key] for key in self._sglang_patch_keys}
+        version = (
+            self.get_rollout_sync_version()
+            if hasattr(self, "get_rollout_sync_version")
+            else self.version
+        )
+        await self.weight_syncer.sync(serving_state, send, version=version)
 
     @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:

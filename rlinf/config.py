@@ -1431,6 +1431,34 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
+def validate_embodied_sglang_weight_sync_cfg(cfg: DictConfig) -> None:
+    """Validate incremental updates to resident, unsharded serving parameters."""
+    syncer = cfg.get("weight_syncer")
+    if syncer is None:
+        return
+    if syncer.get("type") != "patch":
+        raise ValueError("Embodied SGLang weight_syncer must have type='patch'")
+    patch = syncer.get("patch", {})
+    init = patch.get("init_sync", {})
+    if not init.get("enabled", False) or init.get("prefixes") is not None:
+        raise ValueError(
+            "SGLang patch sync requires init_sync.enabled=true and prefixes=null "
+            "to establish the complete serving weight baseline"
+        )
+    server = cfg.rollout.sglang.get("server", {})
+    if server.get("quantization") is not None:
+        raise ValueError("SGLang patch sync requires unquantized serving weights")
+    if server.get("tp_size", 1) != 1:
+        raise ValueError(
+            "SGLang patch sync requires tp_size=1; omit weight_syncer to use "
+            "full weight synchronization with tensor parallelism"
+        )
+    if server.get("dit_cpu_offload", False) or server.get(
+        "dit_layerwise_offload", False
+    ):
+        raise ValueError("SGLang patch sync requires resident serving weights")
+
+
 def validate_embodied_cfg(cfg):
     with open_dict(cfg.rollout):
         cfg.rollout.rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
@@ -1448,6 +1476,8 @@ def validate_embodied_cfg(cfg):
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
+    if cfg.rollout.rollout_backend == "sglang" and not only_eval:
+        validate_embodied_sglang_weight_sync_cfg(cfg)
     if only_eval:
         validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model

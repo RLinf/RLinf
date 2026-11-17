@@ -16,6 +16,7 @@
 
 import asyncio
 
+import torch
 from fastapi import HTTPException
 from sglang.multimodal_gen.runtime.managers.scheduler import Scheduler as _Scheduler
 from sglang.multimodal_gen.runtime.pipelines_core.schedule_batch import OutputBatch
@@ -27,6 +28,7 @@ from rlinf.hybrid_engines.sglang.common.io_struct import (
     TaskMethodOutput,
 )
 from rlinf.hybrid_engines.sglang.common.weight_target import receive_hf_weights
+from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.scheduler import Worker
 
 
@@ -38,6 +40,7 @@ class Scheduler(_Scheduler):
         self._rlinf_worker = None
         self._weights_ready = True
         self._sync_failed = False
+        self.weight_syncer = None
         self.request_handlers.update(
             {
                 TaskMethodInput: self.run_task_method,
@@ -111,7 +114,46 @@ class Scheduler(_Scheduler):
         )
         self.actor_weight_rank = rank_map[(model_instance_id, rank)]
         self._actor_group_name = config.actor.group_name
+        if config.get("weight_syncer") is not None:
+            self.weight_target.bind_patch_model(
+                self.worker.pipeline.get_module(self.weight_target.target_module)
+            )
+            self.weight_syncer = WeightSyncer.create(config.weight_syncer)
+            self._actor_world_size = placement.get_world_size("actor")
+            self._patch_metadata_sender = model_instance_id == 0 and rank == 0
         self._weights_ready = False
+
+    async def _sync_patch_weights(self) -> int:
+        """Apply the actor's patch inside the process owning serving storage."""
+        options = self.weight_syncer.comm_options
+
+        async def recv():
+            return await self._rlinf_worker.recv(
+                src_group_name=self._actor_group_name,
+                src_rank=0,
+                async_op=True,
+                options=options,
+            ).async_wait()
+
+        async def send(metadata):
+            if self._patch_metadata_sender:
+                for rank in range(self._actor_world_size):
+                    await self._rlinf_worker.send(
+                        metadata,
+                        dst_group_name=self._actor_group_name,
+                        dst_rank=rank,
+                        async_op=True,
+                        options=options,
+                    ).async_wait()
+
+        with torch.inference_mode():
+            if not self.weight_syncer.receiver_initialized():
+                await self.weight_syncer.init_receiver(
+                    self.weight_target.state_dict(), recv=recv, send=send
+                )
+            version = await self.weight_syncer.apply(self.weight_target, recv)
+        Worker.torch_platform.current_stream().synchronize()
+        return version
 
     def _load_weights(self, module: str, named_tensors: list) -> None:
         from sglang.multimodal_gen.runtime.post_training.weights_updater import (
@@ -140,14 +182,17 @@ class Scheduler(_Scheduler):
         version = None
         error = None
         try:
-            self.weight_target.begin_sync(full=True)
-            version = receive_hf_weights(
-                self._rlinf_worker,
-                self._actor_group_name,
-                self.actor_weight_rank,
-                self.weight_target.load_state_dict,
-            )
-            self.weight_target.finish_sync()
+            if self.weight_syncer is not None:
+                version = asyncio.run(self._sync_patch_weights())
+            else:
+                self.weight_target.begin_sync(full=True)
+                version = receive_hf_weights(
+                    self._rlinf_worker,
+                    self._actor_group_name,
+                    self.actor_weight_rank,
+                    self.weight_target.load_state_dict,
+                )
+                self.weight_target.finish_sync()
             if version is None:
                 raise ValueError(
                     "Embodied actor weight buckets must include weight_version"
