@@ -19,6 +19,7 @@ fi
 export HYDRA_FULL_ERROR=1
 export EMBODIED_PATH=${REPO_PATH}/examples/embodiment
 export EVALUATIONS_PATH=${REPO_PATH}/evaluations
+source "${REPO_PATH}/ray_utils/isaac_runtime_paths.sh"
 
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
 if [ "$LIBERO_TYPE" == "pro" ]; then

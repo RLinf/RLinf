@@ -17,10 +17,7 @@ export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATASET_PATH:-$OMNIGIBSON_DATA_PATH/
 export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson.key}
 export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
 export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
-# Base path to Isaac Sim, only required when running the behavior experiment.
-export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
-export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
-export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
+source "${REPO_PATH}/ray_utils/isaac_runtime_paths.sh"
 
 if [ -z "$1" ]; then
     CONFIG_NAME="maniskill_sac_mlp_async"

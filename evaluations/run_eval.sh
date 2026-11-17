@@ -19,9 +19,7 @@ setup_sim_env() {
     export OMNIGIBSON_KEY_PATH="${OMNIGIBSON_KEY_PATH:-${OMNIGIBSON_DATA_PATH}/omnigibson.key}"
     export OMNIGIBSON_ASSET_PATH="${OMNIGIBSON_ASSET_PATH:-${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/}"
     export OMNIGIBSON_HEADLESS="${OMNIGIBSON_HEADLESS:-1}"
-    export ISAAC_PATH="${ISAAC_PATH:-/path/to/isaac-sim}"
-    export EXP_PATH="${EXP_PATH:-$ISAAC_PATH/apps}"
-    export CARB_APP_PATH="${CARB_APP_PATH:-$ISAAC_PATH/kit}"
+    source "${REPO_PATH}/ray_utils/isaac_runtime_paths.sh"
 
     # POLARIS dataset
     export POLARIS_DATA_PATH="${POLARIS_DATA_PATH:-/path/to/dataset/PolaRiS-Hub}"
@@ -39,6 +37,7 @@ infer_benchmark() {
     local config_name="$1"
     case "${config_name}" in
         behavior_*|behavior-* ) echo "behavior" ;;
+        bench2dex_*|bench2dex-* ) echo "bench2dex" ;;
         libero_*|libero-* ) echo "libero" ;;
         robotwin_*|robotwin-* ) echo "robotwin" ;;
         robodojo_*|robodojo-* ) echo "robodojo" ;;

@@ -124,7 +124,9 @@ class Pi0Eval(EnvIO, Pi0):
         self._require_rlt()
         observation = self.env_obs_to_observation(env_obs)
 
-        prepared_observation = preprocess_observation(observation, train=False)
+        prepared_observation = preprocess_observation(
+            observation, train=False, image_keys=self.image_keys
+        )
         prefix_output, prefix_mask, kv_cache = self.build_prefix_cache(
             prepared_observation
         )

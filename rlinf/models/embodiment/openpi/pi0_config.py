@@ -33,6 +33,7 @@ class Pi0Config:
     action_dim: int = 32
     action_horizon: int = 50
     max_token_len: int = 48
+    image_keys: tuple[str, ...] = model.IMAGE_KEYS
 
     pi05: bool = False
     discrete_state_input: bool | None = None
@@ -44,6 +45,10 @@ class Pi0Config:
     short_memory_drop_history_layer: int = 15
 
     def __post_init__(self):
+        if not self.image_keys or len(set(self.image_keys)) != len(self.image_keys):
+            raise ValueError(
+                f"image_keys must be nonempty and unique, got {self.image_keys}"
+            )
         if self.pi05 and self.max_token_len == 48:
             object.__setattr__(self, "max_token_len", 200)
         if self.discrete_state_input is None:
@@ -56,16 +61,8 @@ class Pi0Config:
             image = image[:, None]
             image_mask = image_mask[:, None]
         return model.Observation(
-            images={
-                "base_0_rgb": image,
-                "left_wrist_0_rgb": image,
-                "right_wrist_0_rgb": image,
-            },
-            image_masks={
-                "base_0_rgb": image_mask,
-                "left_wrist_0_rgb": image_mask,
-                "right_wrist_0_rgb": image_mask,
-            },
+            images=dict.fromkeys(self.image_keys, image),
+            image_masks=dict.fromkeys(self.image_keys, image_mask),
             state=torch.ones(batch_size, self.action_dim),
             tokenized_prompt=torch.ones(
                 batch_size, self.max_token_len, dtype=torch.long

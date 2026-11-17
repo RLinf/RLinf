@@ -12,11 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+import math
+from collections.abc import Mapping
+from typing import Any, Optional
 
 import torch
 
 from rlinf.utils.utils import masked_mean
+
+
+def resolve_ppo_clip_ratio_c(
+    algorithm: Mapping[str, Any], *, default_enabled: bool
+) -> Optional[float]:
+    """Resolve an explicit Dual-Clip opt-in while preserving caller defaults.
+
+    ``use_dual_clip`` overrides the caller's historical default. When enabled,
+    ``clip_ratio_c`` must be finite and greater than one; null disables it.
+    """
+    enabled = algorithm.get("use_dual_clip", default_enabled)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"Expected boolean use_dual_clip, got {enabled!r}")
+    if not enabled:
+        return None
+    coefficient = algorithm.get("clip_ratio_c", 3.0)
+    if coefficient is None:
+        return None
+    coefficient = float(coefficient)
+    if not math.isfinite(coefficient) or coefficient <= 1.0:
+        raise ValueError(f"Expected finite clip_ratio_c > 1, got {coefficient}")
+    return coefficient
 
 
 def apply_importance_sampling_correction(

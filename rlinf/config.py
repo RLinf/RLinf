@@ -1145,7 +1145,8 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     """Require per-step observations when online LeRobot collection is enabled.
 
     The collector stores one observation/action pair per environment step.
-    RoboTwin, LIBERO, and Behavior share ``env.train.skip_intermediate_renders``;
+    RoboTwin, LIBERO, Behavior, and Bench2Dex share
+    ``env.train.skip_intermediate_renders``;
     online LeRobot requires it to be false. Eval does not write the dataset.
     """
     enabled = bool(
@@ -1167,6 +1168,7 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
         SupportedEnvType.ROBOTWIN: True,
         SupportedEnvType.LIBERO: False,
         SupportedEnvType.BEHAVIOR: False,
+        SupportedEnvType.BENCH2DEX: False,
     }
     env_type = SupportedEnvType(train_env.env_type)
     if env_type not in skip_intermediate_renders_default:
@@ -1182,6 +1184,223 @@ def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
         f"env.train.skip_intermediate_renders=False for env_type {env_type.value!r}. "
         "Skipped intermediate renders drop the observation for each action."
     )
+
+
+def validate_bench2dex_cfg(
+    cfg,
+    model_cfg,
+    env_world_size: int,
+    only_eval: bool,
+    *,
+    actor_world_size: int | None = None,
+) -> None:
+    """Check Bench2Dex model/scene contracts before workers launch Isaac Sim."""
+    for split in ("eval",) if only_eval else ("train", "eval"):
+        env_cfg = cfg.env.get(split)
+        if (
+            env_cfg is None
+            or env_cfg.get("env_type") != SupportedEnvType.BENCH2DEX.value
+        ):
+            continue
+        from rlinf.envs.sim.bench2dex.spec import Bench2DexSpec
+
+        spec = Bench2DexSpec.from_config(
+            OmegaConf.to_container(env_cfg.init_params, resolve=True)
+        )
+        if cfg.rollout.pipeline_stage_num != 1:
+            raise ValueError("Bench2Dex requires pipeline_stage_num=1")
+        if (
+            env_world_size < 1
+            or env_cfg.total_num_envs < 1
+            or env_cfg.total_num_envs % env_world_size
+        ):
+            raise ValueError(
+                "Bench2Dex total_num_envs must be positive and divisible by "
+                f"env worker count {env_world_size}, got {env_cfg.total_num_envs}"
+            )
+        if cfg.env.get("enable_offload", False):
+            raise ValueError(
+                "Set Bench2Dex offload per split with env.train.enable_offload "
+                "or env.eval.enable_offload, not env.enable_offload"
+            )
+        if env_cfg.get("enable_offload", False):
+            if env_cfg.auto_reset or (
+                env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+            ):
+                raise ValueError(
+                    "Bench2Dex offload requires auto_reset=false and a rollout "
+                    "budget covering the full episode"
+                )
+            if split == "train" and (
+                cfg.runner.get("use_training_pipeline", False)
+                or cfg.runner.get("enable_decoupled_mode", False)
+                or cfg.algorithm.get("loss_type") == "decoupled_actor_critic"
+            ):
+                raise ValueError(
+                    "Bench2Dex environment offload requires synchronous, "
+                    "non-pipelined training without bootstrap prefetch"
+                )
+        if env_cfg.get("ignore_terminations", False):
+            raise ValueError(
+                "Bench2Dex uses ignore_terminations=false; select early_stop in init_params"
+            )
+        if env_cfg.get("skip_intermediate_renders", False):
+            needs_per_action_observations = (
+                OmegaConf.select(env_cfg, "video_cfg.save_video", default=False)
+                or OmegaConf.select(env_cfg, "data_collection.enabled", default=False)
+                or OmegaConf.select(
+                    env_cfg, "init_params.tactile.enabled", default=False
+                )
+                or (
+                    cfg.get("reward", {}).get("use_reward_model", False)
+                    and not cfg.get("reward", {}).get("standalone_realworld", False)
+                )
+            )
+            if needs_per_action_observations:
+                raise ValueError(
+                    "Bench2Dex video, data collection, tactile sensors and external "
+                    "reward models require skip_intermediate_renders=false"
+                )
+        if split == "train":
+            group_size = int(env_cfg.get("group_size", 1))
+            if group_size != int(cfg.algorithm.group_size) or group_size < 1:
+                raise ValueError(
+                    "Expected positive matching Bench2Dex env/algorithm "
+                    f"group_size, got {group_size}/{cfg.algorithm.group_size}"
+                )
+            if group_size > 1:
+                if not env_cfg.use_fixed_reset_state_ids or env_cfg.auto_reset:
+                    raise ValueError(
+                        "Grouped Bench2Dex training requires "
+                        "use_fixed_reset_state_ids=true and auto_reset=false"
+                    )
+                for name, world_size in (
+                    ("env", env_world_size),
+                    ("actor", actor_world_size),
+                ):
+                    if (
+                        world_size is None
+                        or world_size < 1
+                        or env_cfg.total_num_envs % (world_size * group_size)
+                    ):
+                        raise ValueError(
+                            "Expected complete Bench2Dex groups per "
+                            f"{name} worker, got total_num_envs="
+                            f"{env_cfg.total_num_envs}, {name}_world_size="
+                            f"{world_size}, group_size={group_size}"
+                        )
+            if (
+                cfg.algorithm.adv_type == "grpo"
+                and env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+            ):
+                raise ValueError(
+                    "Bench2Dex GRPO rollout must cover the task control-step budget"
+                )
+        if int(model_cfg.action_dim) != spec.action_dim:
+            raise ValueError(
+                f"{spec.robot_key} needs {spec.action_dim} active joint coordinates, model declares {model_cfg.action_dim}"
+            )
+        if int(env_cfg.max_episode_steps) != spec.max_control_steps:
+            raise ValueError(
+                "env.max_episode_steps must match the Bench2Dex task control-step budget"
+            )
+        if (
+            env_cfg.max_steps_per_rollout_epoch < spec.max_control_steps
+            and split == "eval"
+        ):
+            raise ValueError(
+                "Bench2Dex evaluation rollout must cover the task control-step budget"
+            )
+        chunk_length = int(model_cfg.num_action_chunks)
+        if chunk_length < 1:
+            raise ValueError(
+                f"Expected positive Bench2Dex action chunk length, got {chunk_length}"
+            )
+        if split == "train" and chunk_length > 1:
+            if env_cfg.auto_reset:
+                raise ValueError(
+                    "Bench2Dex chunk training requires auto_reset=false so "
+                    "the actor masks transitions after episode termination"
+                )
+            if (
+                cfg.algorithm.reward_type != "chunk_level"
+                or cfg.algorithm.logprob_type != "chunk_level"
+            ):
+                raise ValueError(
+                    "Bench2Dex chunk training requires chunk_level reward_type "
+                    "and logprob_type"
+                )
+        if model_cfg.model_type == "openpi":
+            horizon = model_cfg.openpi.get("action_horizon")
+            if horizon is not None and chunk_length > int(horizon):
+                raise ValueError(
+                    f"Expected Bench2Dex execution chunk <= action_horizon "
+                    f"{horizon}, got {chunk_length}"
+                )
+            if model_cfg.openpi.config_name != "pi05_bench2dex":
+                raise ValueError("Bench2Dex OpenPI requires config_name=pi05_bench2dex")
+            if int(model_cfg.openpi.model_action_dim) < spec.action_dim:
+                raise ValueError(
+                    "openpi.model_action_dim must cover the robot's active DOFs"
+                )
+            expected_keys = (
+                "base_0_rgb",
+                "base_1_rgb",
+                "left_wrist_0_rgb",
+                "right_wrist_0_rgb",
+            )
+            if tuple(model_cfg.openpi.get("image_keys", ())) != expected_keys:
+                raise ValueError(f"Bench2Dex pi05 requires image_keys={expected_keys}")
+            if len(spec.extra_cameras) != 1 or len(spec.wrist_cameras) != 2:
+                raise ValueError("Bench2Dex pi05 uses two stereo and two wrist images")
+
+
+def validate_openpi_rl_cfg(
+    model_cfg: DictConfig, rollout_override: Optional[DictConfig] = None
+) -> None:
+    """Validate OpenPI RL options and matching training-time rollout settings."""
+    from rlinf.models.embodiment.openpi import resolve_num_steps
+    from rlinf.models.embodiment.openpi.rl_config import Pi0RLConfig
+
+    if model_cfg.openpi.get("task", "sft") != "rl":
+        return
+    actor = Pi0RLConfig.from_model_config(model_cfg)
+    num_steps = resolve_num_steps(model_cfg)
+    actor.validate(num_steps)
+    if rollout_override is None:
+        return
+    rollout_cfg = OmegaConf.merge(model_cfg, rollout_override)
+    rollout = Pi0RLConfig.from_model_config(rollout_cfg)
+    if (
+        actor.stochastic_step_range is None
+        and rollout.stochastic_step_range is None
+        and actor.frozen_vision_mode == rollout.frozen_vision_mode == "follow_model"
+    ):
+        return
+    rollout_steps = resolve_num_steps(rollout_cfg)
+    rollout.validate(rollout_steps)
+    if rollout_cfg.openpi.get("task", "sft") != "rl" or rollout_steps != num_steps:
+        raise ValueError(
+            "Expected matching actor/rollout OpenPI task='rl' and num_steps "
+            "when stochastic_step_range or frozen_vision_mode is configured"
+        )
+    for field in (
+        "stochastic_step_range",
+        "frozen_vision_mode",
+        "noise_method",
+        "noise_level",
+        "joint_logprob",
+        "ignore_last",
+        "is_nft",
+        "train_expert_only",
+    ):
+        actor_value = getattr(actor, field)
+        rollout_value = getattr(rollout, field)
+        if actor_value != rollout_value:
+            raise ValueError(
+                f"Expected matching actor/rollout openpi.{field}, "
+                f"got {actor_value!r} and {rollout_value!r}"
+            )
 
 
 def validate_embodied_cfg(cfg):
@@ -1200,6 +1419,7 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     if model_type == SupportedModel.OPENPI:
+        validate_openpi_rl_cfg(model_cfg, None if only_eval else cfg.rollout.model)
         if only_eval and model_cfg.openpi.get("short_memory", False):
             assert cfg.env.eval.get("short_memory") is not None, (
                 "rollout.model.openpi.short_memory=True requires env.eval.short_memory; "
@@ -1677,6 +1897,16 @@ def validate_embodied_cfg(cfg):
         assert stage_num == 1, (
             "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
         )
+
+    validate_bench2dex_cfg(
+        cfg,
+        model_cfg,
+        env_world_size,
+        only_eval,
+        actor_world_size=(
+            component_placement.get_world_size("actor") if not only_eval else None
+        ),
+    )
 
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (

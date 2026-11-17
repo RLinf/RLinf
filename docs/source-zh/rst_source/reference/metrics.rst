@@ -1,18 +1,12 @@
 训练指标
 ========
 
-RLinf 通过 :doc:`MetricLogger <../guides/logger>` 在若干命名空间下记录指标——``train/``、``rollout/``、
-``env/`` 与 ``time/``。本页统一给出它们的定义；示例页面直接链接到此处，而不再重复说明。
+本页按训练、rollout 和回合统计列出指标。标准差均指总体标准差。日志后端配置见 :doc:`日志 <../guides/logger>`\ 。
 
-.. tip::
+训练指标
+--------
 
-   对具身任务而言，最有用的单一指标是 **``env/success_once``** —— 未归一化的回合成功率。在稀疏
-   奖励下，其他 ``env/*`` 指标往往难以直接解读（见下文）。
-
-训练指标 —— ``train/``
-----------------------
-
-策略与价值优化的统计量，每次 actor 更新时记录。
+``train/`` 命名空间记录 policy 和价值函数的训练指标。
 
 .. list-table::
    :header-rows: 1
@@ -21,32 +15,34 @@ RLinf 通过 :doc:`MetricLogger <../guides/logger>` 在若干命名空间下记�
    * - 指标
      - 含义
    * - ``train/actor/approx_kl``
-     - 新旧策略之间的近似 KL 散度。
+     - 新旧 policy 之间的近似 KL 散度。
    * - ``train/actor/clip_fraction``
-     - 概率比被裁剪的更新比例。
+     - 有效元素中受 PPO 裁剪影响的比例。
+   * - ``train/actor/dual_clip_fraction``
+     - 有效元素中受 Dual-Clip 限制的比例；关闭时为 0。
    * - ``train/actor/clipped_ratio``
-     - 被裁剪后概率比的均值。
+     - 裁剪后的概率比均值。
    * - ``train/actor/grad_norm``
      - actor 的梯度范数。
    * - ``train/actor/lr``
-     - 当前学习率。
+     - 学习率。
    * - ``train/actor/policy_loss``
-     - PPO / GRPO 策略损失。
+     - policy 损失。
    * - ``train/critic/value_loss``
      - 价值函数损失。
    * - ``train/critic/value_clip_ratio``
-     - 价值目标更新被裁剪的比例。
+     - 价值更新中受裁剪影响的比例。
    * - ``train/critic/explained_variance``
-     - 价值预测的可解释方差（越接近 1 越好）。
+     - 价值预测的可解释方差。
    * - ``train/entropy_loss``
-     - 策略熵。
+     - policy 熵。
    * - ``train/loss``
-     - 训练总损失（actor + critic + 熵正则）。
+     - 训练总损失。
 
-Rollout 指标 —— ``rollout/``
-----------------------------
+Rollout 指标
+------------
 
-rollout 阶段收集的优势与奖励统计量。
+``rollout/`` 命名空间统计有效训练样本。GAE return 用作价值函数训练目标，回合总回报见下方的环境指标。
 
 .. list-table::
    :header-rows: 1
@@ -55,18 +51,32 @@ rollout 阶段收集的优势与奖励统计量。
    * - 指标
      - 含义
    * - ``rollout/advantages_max``
-     - 该批次中优势的最大值。
+     - 训练优势的最大值。
    * - ``rollout/advantages_mean``
-     - 该批次中优势的均值。
+     - 训练优势的均值。
    * - ``rollout/advantages_min``
-     - 该批次中优势的最小值。
+     - 训练优势的最小值。
+   * - ``rollout/advantages_std``
+     - 训练优势的标准差。
    * - ``rollout/rewards``
-     - 一个 rollout chunk 的奖励。
+     - 按动作统计的奖励均值。
+   * - ``rollout/rewards_mean``\ 、``rollout/rewards_std``
+     - 按配置的奖励粒度统计的均值和标准差。
+   * - ``rollout/returns_mean``\ 、``rollout/returns_std``
+     - 价值函数训练目标的均值和标准差。
+   * - ``rollout/returns_min``\ 、``rollout/returns_max``
+     - 价值函数训练目标的最小值和最大值。
+   * - ``rollout/values_mean``\ 、``rollout/values_std``
+     - 采样状态的价值预测均值和标准差。
+   * - ``rollout/advantages_raw_mean``\ 、``rollout/advantages_raw_std``
+     - 未归一化 GAE 优势的均值和标准差，仅在关闭 return 归一化时提供。
+   * - ``rollout/loss_mask_fraction``
+     - 参与训练的 rollout 元素比例。
 
-环境指标 —— ``env/``
---------------------
+回合指标
+--------
 
-来自模拟器的任务级信号。
+环境通过 ``env/`` 命名空间记录已结束回合的统计量。独立评测在 ``eval/`` 命名空间下记录同样的指标。
 
 .. list-table::
    :header-rows: 1
@@ -75,13 +85,31 @@ rollout 阶段收集的优势与奖励统计量。
    * - 指标
      - 含义
    * - ``env/success_once``
-     - **推荐。** 未归一化的回合成功率——最能反映真实任务表现。
+     - 至少一次达到成功条件的回合比例。
    * - ``env/episode_len``
-     - 回合中实际经历的环境步数。
-   * - ``env/return``
-     - 回合总回报。稀疏奖励下在成功结束前几乎为 0，训练过程中参考价值有限。
+     - 平均回合长度，单位为环境步数。
+   * - ``env/return``\ 、``env/return_mean``
+     - 回合总回报的均值。
+   * - ``env/return_std``
+     - 回合总回报的标准差。
    * - ``env/reward``
-     - step 级奖励（中间步为 ``0``，成功时为 ``1``）。日志值按回合步数归一化，难以直接反映真实表现。
+     - 每个环境步的平均奖励。
 
-如何选择日志后端（TensorBoard、Weights & Biases、SwanLab）以及配置 ``runner.logger``，参见
-:doc:`日志 <../guides/logger>` 教程。
+Dual-Clip 配置
+--------------
+
+以下选项控制具身 PPO 的 Dual-Clip。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 15 55
+
+   * - 选项
+     - 类型
+     - 默认值与含义
+   * - ``algorithm.use_dual_clip``
+     - 布尔值
+     - 未设置时使用 actor 的默认值。``false`` 表示关闭 Dual-Clip。
+   * - ``algorithm.clip_ratio_c``
+     - 浮点数或 null
+     - 启用时默认为 3.0，接受大于 1 的有限值；null 表示关闭此限制。

@@ -20,6 +20,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - BEHAVIOR-1K
      - ``behavior_r1pro``
      - ``behavior/behavior_openpi_pi05_eval.yaml``
+   * - :doc:`Bench2Dex <../examples/embodied/bench2dex>`
+     - Task64，双 Panda/Allegro
+     - ``bench2dex/bench2dex_task64_openpi_pi05_eval.yaml``
    * - LIBERO
      - ``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``
      - ``libero/libero_spatial_openpi_pi05_eval.yaml``、``libero/libero_spatial_dreamzero_eval_sglang.yaml`` 等
