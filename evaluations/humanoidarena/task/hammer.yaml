@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 2000
+    max_steps_per_rollout_epoch: 2058
+    chunk_size: 14
+    task_id: Isaac-Move-PickPlace-DoubleDesk-G129-Dex3-Wholebody
+    env_config: tasks/common_test_config/base_test/doubledesk_sonic_test.yaml
+    prompt: Put the hammer from the right table into the basket on the left table.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/hammer
+    num_action_chunks: 14
+    wbwam:
+      weight_file: step_019150.pt
+      instruction_key: '0'
+      prompt: Put the hammer from the right table into the basket on the left table.
+      denoise_steps: 40

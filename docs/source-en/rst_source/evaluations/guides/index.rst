@@ -32,6 +32,10 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
      - Whole-body humanoid evaluation with Psi0
      - :doc:`simple`
 
+   * - HumanoidArena
+     - Whole-body WB-WAM evaluation with seven tasks
+     - :doc:`humanoidarena`
+
 .. note::
 
    Benchmarks such as IsaacLab and MetaWorld do not yet have example configs under ``evaluations/``. For evaluation, refer to the corresponding training docs in :doc:`../../examples/simulators_index` and use the config fallback mechanism with YAMLs under ``examples/embodiment/config/``.
@@ -47,3 +51,4 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    polaris
    robotwin
    simple
+   HumanoidArena <humanoidarena>

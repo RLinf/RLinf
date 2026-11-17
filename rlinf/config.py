@@ -95,6 +95,7 @@ SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
+SupportedModel.WBWAM = SupportedModel.register("wbwam", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
@@ -144,6 +145,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
         SupportedModel.PSI0,
+        SupportedModel.WBWAM,
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
@@ -1194,6 +1196,13 @@ def validate_embodied_cfg(cfg):
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
+    if model_type == SupportedModel.WBWAM or any(
+        (cfg.get("env", {}).get(phase) or {}).get("env_type") == "humanoidarena"
+        for phase in ("train", "eval")
+    ):
+        from rlinf.envs.sim.humanoidarena.config import validate_humanoidarena_cfg
+
+        validate_humanoidarena_cfg(cfg, model_cfg, only_eval)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "

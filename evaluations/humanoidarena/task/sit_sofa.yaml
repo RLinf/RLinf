@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 2000
+    max_steps_per_rollout_epoch: 2060
+    chunk_size: 20
+    task_id: Isaac-Move-Sit-Sofa-G129-Dex3-Wholebody
+    env_config: tasks/common_test_config/base_test/sit_sofa_sonic_test.yaml
+    prompt: Sit on the sofa.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/sit_sofa
+    num_action_chunks: 20
+    wbwam:
+      weight_file: step_013300.pt
+      instruction_key: '6'
+      prompt: Sit on the sofa.
+      denoise_steps: 20

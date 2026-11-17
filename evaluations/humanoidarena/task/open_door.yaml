@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 1800
+    max_steps_per_rollout_epoch: 1860
+    chunk_size: 20
+    task_id: Isaac-Move-Open-Door-G129-Dex3-Wholebody
+    env_config: tasks/common_test_config/base_test/open_door_sonic_test.yaml
+    prompt: Open the door.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/open_door
+    num_action_chunks: 20
+    wbwam:
+      weight_file: step_015550.pt
+      instruction_key: '5'
+      prompt: Open the door.
+      denoise_steps: 40

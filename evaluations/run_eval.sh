@@ -52,6 +52,7 @@ infer_benchmark() {
         polaris_*|polaris-* ) echo "polaris" ;;
         geniesim_*|geniesim-* ) echo "geniesim" ;;
         simple_*|simple-* ) echo "simple" ;;
+        humanoidarena_*|humanoidarena-* ) echo "humanoidarena" ;;
         * )
             echo "unknown"
             ;;

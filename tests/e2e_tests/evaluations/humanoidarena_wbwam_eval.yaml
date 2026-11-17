@@ -1,0 +1,18 @@
+defaults:
+  - /humanoidarena/humanoidarena_wbwam_eval@_global_
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/evaluations
+
+runner:
+  logger:
+    experiment_name: humanoidarena-wbwam-smoke
+
+env:
+  eval:
+    max_episode_steps: 40
+    max_steps_per_rollout_epoch: 40
+    native_record_video: false
+    native_post_termination_steps: 0

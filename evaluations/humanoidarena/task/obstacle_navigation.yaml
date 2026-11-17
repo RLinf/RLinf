@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 1800
+    max_steps_per_rollout_epoch: 1862
+    chunk_size: 14
+    task_id: Isaac-Move-SmallWarehouse-VisionNavigation-G129-Dex3-Wholebody
+    env_config: tasks/common_test_config/base_test/vision_navi_sonic_test.yaml
+    prompt: Avoid obstacles and move to the yellow marked area.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/obstacle_navigation
+    num_action_chunks: 14
+    wbwam:
+      weight_file: step_020450.pt
+      instruction_key: '7'
+      prompt: Avoid obstacles and move to the yellow marked area.
+      denoise_steps: 40

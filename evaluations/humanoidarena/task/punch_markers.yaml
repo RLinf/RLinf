@@ -1,0 +1,19 @@
+# @package _global_
+
+env:
+  eval:
+    max_episode_steps: 900
+    max_steps_per_rollout_epoch: 960
+    chunk_size: 20
+    task_id: Isaac-Move-Boxing-Bag-G129-Dex3-Wholebody
+    env_config: tasks/common_test_config/base_test/boxing_sonic_test.yaml
+    prompt: Strike the green markers on the punching bag.
+rollout:
+  model:
+    model_path: /path/to/checkpoints/humanoid_arena_native50/punch_markers
+    num_action_chunks: 20
+    wbwam:
+      weight_file: step_010500.pt
+      instruction_key: '4'
+      prompt: Strike the green markers on the punching bag.
+      denoise_steps: 40

@@ -464,6 +464,10 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.HUMANOIDARENA:
+        from rlinf.envs.sim.humanoidarena.runtime import validate_actions
+
+        chunk_actions = validate_actions(raw_chunk_actions, num_action_chunks)
     elif env_type == SupportedEnvType.SIMPLE:
         chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
     else:
