@@ -262,6 +262,9 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
          type: sft
        - dataset_path: /path/to/rollout_dataset
          type: rollout
+     eval_data_paths:          # must cover Step 2's eval_data_paths
+       - dataset_path: /path/to/eval_dataset
+         type: rollout
 
      gamma: 1.0              # discount factor
      failure_reward: -300.0   # terminal reward for failed trajectories
@@ -283,6 +286,9 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
    * - ``data.failure_reward``
      - ``-300.0``
      - Penalty for failed trajectory terminal steps. Larger magnitude increases separation between success and failure returns
+   * - ``data.eval_data_paths``
+     - ``[]``
+     - Eval datasets; must include every dataset in Step 2's ``data.eval_data_paths``
    * - ``data.tag``
      - ``null``
      - Output file tag, generates ``meta/returns_{tag}.parquet``

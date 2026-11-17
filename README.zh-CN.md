@@ -8,6 +8,7 @@
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://rlinf.org/zh/"><img src="https://img.shields.io/badge/RLinf%20%E5%AE%98%E7%BD%91-00ADEF?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSI%2BPGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjYuNSIvPjxlbGxpcHNlIGN4PSI4IiBjeT0iOCIgcng9IjMiIHJ5PSI2LjUiLz48cGF0aCBkPSJNMS41IDhoMTMiLz48L3N2Zz4%3D" alt="RLinf 官网"></a>
+<a href="https://rlinf.github.io/misc/certificates/"><img src="https://img.shields.io/badge/%E8%B4%A1%E7%8C%AE%E8%80%85%E8%AF%81%E4%B9%A6-2E8B57?logo=readme&amp;logoColor=white" alt="证书"></a>
 <br>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/微信交流群-green?logo=wechat&amp"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20%E9%A2%91%E9%81%93?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack 频道"></a>
@@ -33,6 +34,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
@@ -442,6 +444,7 @@ RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同�
 - [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin): 数字孪生与机器人结合的平台，利用RLinf进行大规模具身强化学习训练。
 - [Genie Sim](https://github.com/AgibotTech/genie_sim): 智元机器人开源的仿真平台，支持场景生成、数据采集与基准评测，集成RLinf以 PPO 和 GRPO 对 VLA 模型进行后训练。
 - [IsaacLab](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/concepts/reinforcement_learning.html#rlinf-vla-post-training): 将RLinf正式整合进IsaacLab，可在基于NVIDIA Isaac Sim的机器人环境中实现无缝衔接的强化学习工作流程。
+- [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt): NVIDIA 面向机器人策略的仿真强化学习后训练库，将 RLinf 集成为分布式 rollout 与训练运行时，并接入示范协同训练（Co-Training）。
 - [RISE](https://github.com/OpenDriveLab/RISE): 基于组合式世界模型的机器人强化学习框架，使用 RLinf 进行在线强化学习。
 
 💡 希望在此展示您的项目吗？欢迎提交拉取请求（PR），我们非常乐意将其收录其中！
