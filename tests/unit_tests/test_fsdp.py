@@ -401,6 +401,34 @@ def test_strategy_passes_wrapper_overrides_and_root_cast_options(
     assert plan[model[1]]["mixed_precision"].param_dtype == torch.float32
 
 
+def test_fsdp2_preserves_buffer_dtypes_with_mixed_precision(monkeypatch):
+    from rlinf.hybrid_engines.fsdp.strategy import fsdp2 as strategy_module
+
+    model = nn.Linear(2, 2)
+    model.register_buffer("floating", torch.ones(2, dtype=torch.float32))
+    model.register_buffer("integer", torch.ones(2, dtype=torch.int64))
+    actor = OmegaConf.create(
+        {
+            "fsdp_config": {
+                "mixed_precision": {
+                    "param_dtype": "bf16",
+                    "reduce_dtype": "bf16",
+                    "buffer_dtype": "bf16",
+                },
+                "cpu_offload": False,
+                "reshard_after_forward": True,
+            }
+        }
+    )
+    monkeypatch.setattr(
+        strategy_module, "apply_fsdp2_to_model", lambda module, **kwargs: module
+    )
+    wrapped = strategy_module.FSDP2Strategy(actor, 1).wrap_model(model, object())
+    assert wrapped.floating.dtype == torch.float32
+    assert wrapped.integer.dtype == torch.int64
+    assert wrapped.weight.dtype == torch.float32
+
+
 def config(selector="module_names", targets=None, wrap_mode="individual", **kwargs):
     return OmegaConf.create(
         {

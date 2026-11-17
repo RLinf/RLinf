@@ -1963,6 +1963,20 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
 
             cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
 
+        elif SupportedModel(model_type) == SupportedModel.GR00T_N1D7:
+            if cfg.data.get("val_data_paths") is not None:
+                raise ValueError("GR00T SFT does not support validation datasets")
+            max_steps = cfg.runner.get("max_steps", -1)
+            if max_steps <= 0:
+                raise ValueError("GR00T SFT requires runner.max_steps > 0")
+            optim_cfg = cfg.actor.get("optim")
+            if (
+                optim_cfg is not None
+                and "total_training_steps" in optim_cfg
+                and optim_cfg.total_training_steps is None
+            ):
+                optim_cfg.total_training_steps = max_steps
+
         elif SupportedModel(model_type) == SupportedModel.COSMOS3:
             from rlinf.models.embodiment.cosmos3.cosmos3_config import (
                 validate_cosmos3_sft_model_cfg,

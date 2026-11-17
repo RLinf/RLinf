@@ -32,6 +32,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_openpi_pi05_eval.yaml``
      - Spatial
      - π₀.₅
+   * - ``libero_spatial_gr00t_n1d7_eval.yaml``
+     - Spatial
+     - GR00T N1.7 SFT
    * - ``libero_spatial_starvla_eval.yaml``
      - Spatial
      - StarVLA
@@ -146,6 +149,20 @@ transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理�
 ``[B,10,32]`` noise tensor。
 默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测
 10 个 reset state，共 100 条轨迹。
+
+评测 GR00T N1.7 SFT checkpoint
+----------------------------------------
+
+将 rollout 模型路径指向 ``toolkits/gr00t/export_sft.py`` 导出的 Hugging Face 目录，并指定本地 Cosmos backbone 路径。在昆仑 XPU 上使用 OSMesa 在 CPU 上运行仿真。
+
+.. code-block:: bash
+
+   export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+   bash evaluations/run_eval.sh libero libero_spatial_gr00t_n1d7_eval \
+     rollout.model.model_path=/path/to/exported/GR00T-N1.7-SFT \
+     rollout.model.backbone_model_path=/path/to/Cosmos-Reason2-2B
+
+默认评测 Spatial 的全部 10 个任务，每个任务使用前 20 个固定初始状态，共 200 条轨迹。每条轨迹运行 240 个环境步，每次推理执行 8 个动作。``eval/success_once`` 统计轨迹中至少成功一次的比例，日志包含每条轨迹的任务编号、初始状态编号和成败。将 ``cluster.component_placement.env`` 和 ``cluster.component_placement.rollout`` 设为分配到的设备。按默认轨迹数运行时，环境 worker 数必须整除 40。
 
 .. _libero-eval-config:
 

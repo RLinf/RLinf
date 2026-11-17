@@ -4305,3 +4305,80 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
+
+
+@pytest.mark.parametrize("num_workers", [0, 2])
+@pytest.mark.parametrize("rank", [0, 1])
+def test_gr00t_shard_cursor_resumes_consumed_samples(num_workers, rank):
+    pytest.importorskip("gr00t")
+    from gr00t.data.dataset.sharded_mixture_dataset import ShardedMixtureDataset
+    from torch.utils.data import DataLoader
+
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.sft_builder import (
+        Gr00tSftDataLoader,
+        Gr00tShardedDataset,
+    )
+
+    class Shards:
+        dataset_path = "synthetic"
+        shard_size = 4
+        episode_sampling_rate = 0.1
+
+        def __init__(self):
+            self.reads = 0
+
+        def __len__(self):
+            return 5
+
+        def get_shard_length(self, index):
+            return 3 + index
+
+        def get_shard(self, index):
+            self.reads += 1
+            return [index * 100 + i for i in range(self.get_shard_length(index))]
+
+    def make_stream():
+        stream = ShardedMixtureDataset.__new__(ShardedMixtureDataset)
+        stream.datasets = [Shards()]
+        stream.weights = [1.0]
+        stream.seed = 23
+        stream.epoch = 0
+        stream.training = True
+        stream.num_shards_per_epoch = 12
+        stream.rank = rank
+        stream.world_size = 2
+        stream.worker_id = None
+        stream.num_workers = None
+        stream.shard_sampling_schedule = stream.generate_shard_sampling_schedule()
+        return stream
+
+    options = {
+        "batch_size": 2,
+        "num_workers": num_workers,
+        "persistent_workers": num_workers > 0,
+        "multiprocessing_context": "fork" if num_workers else None,
+    }
+
+    def make_loader(stream):
+        return Gr00tSftDataLoader(Gr00tShardedDataset(stream, batch_size=2), **options)
+
+    upstream = DataLoader(make_stream(), **options)
+    actual = make_loader(make_stream())
+    upstream_iter, actual_iter = iter(upstream), iter(actual)
+    for steps in (2, 21):
+        for _ in range(steps):
+            torch.testing.assert_close(next(actual_iter), next(upstream_iter))
+
+        state = copy.deepcopy(actual.state_dict())
+        restored_stream = make_stream()
+        restored = make_loader(restored_stream)
+        restored.load_state_dict(state)
+        resumed = iter(restored)
+        for index in range(20):
+            batch = next(actual_iter)
+            torch.testing.assert_close(batch, next(upstream_iter))
+            torch.testing.assert_close(next(resumed), batch)
+            if index == 0 and num_workers == 0:
+                # At most the current shard and next prefetch are read on resume.
+                assert restored_stream.datasets[0].reads <= 2
+        del resumed, restored

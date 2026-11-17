@@ -21,6 +21,15 @@ from rlinf.utils.logging import get_logger
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
+    """Build the GR00T N1.7 model for the configured SFT or RL task."""
+    task = cfg.task if "task" in cfg else cfg.get("training_mode", "rl")
+    if task == "sft":
+        return build_sft_model(cfg)
+
+    if task != "rl":
+        raise ValueError(
+            f"Unsupported GR00T N1.7 task {task!r}; expected 'sft' or 'rl'"
+        )
     from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
     from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7
     from transformers import AutoConfig, AutoModel
@@ -106,4 +115,72 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     if cfg.rl_head_config.disable_dropout:
         replace_dropout_with_identity(model)
 
+    return model
+
+
+def build_sft_model(cfg: DictConfig):
+    """Load official weights without the PPO action head or dropout changes."""
+    # Isaac-GR00T reseeds when it creates the Trainer after model setup.
+    # RLinf starts training from the RNG state left by worker initialization.
+    from rlinf.config import torch_dtype_from_precision
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        GR00T_N1_7_ForRLActionPrediction,
+        redirect_qwen3_backbone_to_local,
+    )
+
+    if torch_dtype_from_precision(cfg.precision) != torch.float32:
+        raise ValueError(
+            "GR00T SFT requires FP32 master parameters (actor.model.precision=fp32)"
+        )
+    rope_buffer_dtype = torch_dtype_from_precision(cfg.get("rope_buffer_dtype"))
+    options = OmegaConf.to_container(cfg.gr00t_sft, resolve=True)
+    model_options = {
+        key: options[key]
+        for key in (
+            "tune_llm",
+            "tune_visual",
+            "tune_projector",
+            "tune_diffusion_model",
+            "tune_vlln",
+            "state_dropout_prob",
+            "use_flash_attention",
+        )
+    }
+    model_options.update(load_bf16=False, backbone_trainable_params_fp32=True)
+    with redirect_qwen3_backbone_to_local(
+        "nvidia/Cosmos-Reason2-2B", cfg.backbone_model_path
+    ):
+        model, info = GR00T_N1_7_ForRLActionPrediction.from_pretrained(
+            cfg.model_path,
+            sft_mode=True,
+            **model_options,
+            transformers_loading_kwargs={"local_files_only": True},
+            local_files_only=True,
+            output_loading_info=True,
+        )
+    missing = info.get("missing_keys", [])
+    if any("mask_token" in name for name in missing):
+        with torch.no_grad():
+            model.action_head.mask_token.copy_(
+                0.02 * torch.randn_like(model.action_head.mask_token)
+            )
+    errors = {
+        key: value
+        for key, value in info.items()
+        if value
+        and (key != "missing_keys" or any("mask_token" not in name for name in value))
+    }
+    if errors:
+        raise RuntimeError(
+            f"GR00T checkpoint mismatch at {Path(cfg.model_path)}: {errors}"
+        )
+
+    if rope_buffer_dtype is not None:
+        # Match NVIDIA's cast after Qwen3-VL generates its frequencies in FP32.
+        backbone = model.backbone.model.model
+        for rotary_embedding in (
+            backbone.visual.rotary_pos_emb,
+            backbone.language_model.rotary_emb,
+        ):
+            rotary_embedding.inv_freq = rotary_embedding.inv_freq.to(rope_buffer_dtype)
     return model

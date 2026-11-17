@@ -691,6 +691,45 @@ Set ``rollout.model.model_path`` to the same checkpoint, then launch the saved
 config with ``run_embodiment.sh``. Match the environment's action shape and
 normalization statistics to the checkpoint metadata.
 
+N1.7 Spatial SFT on Kunlun
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The example selects the supervised action head with ``actor.model.task: sft``. When ``task`` is omitted, GR00T N1.7 accepts ``training_mode`` from older configurations and defaults to ``rl`` if neither field is set.
+
+Train GR00T N1.7 on the LIBERO Spatial dataset using the official processor, shard sampler, relative-action normalization, and masked flow-matching loss. The example uses FSDP2 with FP32 master parameters and BF16 compute and communication. The language and vision backbone are frozen; the configured action head components are trainable.
+
+The example sets ``actor.model.rope_buffer_dtype: bf16`` to match the reference training path. GR00T SFT casts the vision and language ``inv_freq`` buffers after Qwen3-VL generates them in FP32. For older GR00T SFT configurations, move the dtype from ``actor.fsdp_config.mixed_precision.buffer_dtype`` to this model option.
+
+Set shared SFT options such as ``state_dropout_prob`` once under ``actor.model.gr00t_sft``. The model and processor use the same defaults and overrides. Processor settings such as ``color_jitter_params`` also go in this mapping. GR00T SFT requires ``load_bf16: false`` and ``backbone_trainable_params_fp32: true`` to keep the trainable master parameters in FP32.
+
+Install ``gr00t_n1d7`` for Kunlun and set the three model and dataset paths in ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Copy Isaac-GR00T's ``examples/LIBERO/modality.json`` into the dataset's ``meta`` directory. Set actor placement to the allocated physical device ranks and adjust the batch sizes to the available cards. For XPU, select OSMesa for CPU rendering while keeping training on XPU:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+   bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
+
+The configuration sets 20,000 updates and saves every 1,000 steps. RLinf AdamW applies the configured weight decay to trainable parameters; the official Trainer excludes bias and matching normalization parameters. The update therefore differs from the official optimizer. For a short check, pass overrides such as ``runner.max_steps=2 actor.global_batch_size=2 actor.micro_batch_size=1 runner.save_interval=1``.
+
+For a fresh run, RLinf starts training from the RNG state left by worker initialization. Isaac-GR00T sets the seed again when it constructs the Trainer after model setup, so the two runs can draw different random values even with the same data seed. The shard sampling order uses ``data.gr00t.seed``.
+
+Set a positive ``runner.max_steps`` to stop training after that many optimizer updates and use ``runner.max_epochs: -1`` for the continuous GR00T data stream.
+
+Each ``checkpoints/global_step_<N>/actor`` directory contains the distributed training checkpoint, per-rank data cursors in ``data.pt``, and per-rank training RNG state in ``rng.pt``. Set ``runner.resume_dir`` to the ``global_step_<N>`` directory to resume. Use a checkpoint from this loader with the same dataset, sampling configuration, rank count, data worker count, and microbatch size. RLinf resumes at the next unconsumed sample in each rank's stream. Isaac-GR00T builds a new sampling schedule from the original data seed plus the restored step. RLinf recreates prefetched data, so random augmentation can differ on resumed samples. Full-weight saving adds ``model_state_dict/full_weights.pt``. The training processor and statistics are stored under ``<log_path>/<experiment_name>/gr00t/rank_0/processor``. Checkpoints are retained until you remove them.
+
+To create a Hugging Face checkpoint for inference or RL, export the full weights with the processor from the same training run. The output directory must not already exist:
+
+.. code-block:: bash
+
+   python toolkits/gr00t/export_sft.py \\
+     --weights /path/to/actor/model_state_dict/full_weights.pt \\
+     --base-model /path/to/GR00T-N1.7-3B \\
+     --processor /path/to/gr00t/rank_0/processor \\
+     --output /path/to/new-hf-checkpoint
+
+For fixed-batch loss and gradient comparison, run ``PYTHONPATH=. python toolkits/gr00t/verify_sft.py`` with ``--batch``, ``--model-path``, ``--backbone-model-path``, and ``--output``. Its update comparison uses RLinf's weight decay rule. Closed-loop LIBERO evaluation is a separate check.
+
 Visualization and Results
 -------------------------
 
