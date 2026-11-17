@@ -158,6 +158,9 @@ actor:
     clip_grad: 1.0
 
   # Override the default values in hybrid_engines/fsdp
+  # On >=80 GB GPUs, you can set `enable_offload: False` on rollout/actor,
+  # `sharding_strategy: "no_shard"` (~89% of backbone parameters are frozen),
+  # and `gradient_checkpointing: False` for higher training throughput.
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

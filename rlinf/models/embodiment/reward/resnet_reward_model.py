@@ -123,8 +123,8 @@ class ResNetRewardModel(BaseRewardModel):
         if images.dtype == torch.uint8:
             images = images.float() / 255.0
         elif torch.is_floating_point(images):
-            min_val = float(images.min().detach().item())
-            max_val = float(images.max().detach().item())
+            min_tensor, max_tensor = torch.aminmax(images.detach())
+            min_val, max_val = torch.stack((min_tensor, max_tensor)).cpu().tolist()
             if min_val < 0.0 or max_val > 1.0:
                 raise ValueError(
                     "ResNetRewardModel expects floating-point images in [0, 1]. "

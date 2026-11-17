@@ -126,6 +126,9 @@ actor:
     clip_grad: 1.0
     critic_warmup_steps: 10
 
+  # On >=80 GB GPUs, since >96% of abot_m0 parameters are frozen, you can set
+  # `sharding_strategy: "no_shard"` and `gradient_checkpointing: false` to avoid
+  # per-step frozen-backbone AllGather and activation recomputation.
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: true

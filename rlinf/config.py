@@ -565,12 +565,13 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "forward_prefetch", False
         )
         cfg.fsdp_config.limit_all_gathers = cfg.fsdp_config.get(
-            "limit_all_gathers", False
+            "limit_all_gathers", True
         )
         cfg.fsdp_config.backward_prefetch = cfg.fsdp_config.get(
             "backward_prefetch", None
         )
         cfg.fsdp_config.use_orig_params = cfg.fsdp_config.get("use_orig_params", False)
+        is_lora = bool(OmegaConf.select(cfg, "model.is_lora", default=False))
         if (
             model_type is not None
             and str(model_type) == SupportedModel.OPENPI.value
@@ -586,6 +587,23 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
                 "openpi requires actor.fsdp_config.use_orig_params=True "
                 "because dual-expert Gemma Block mixes frozen and trainable "
                 "parameters. Overriding use_orig_params=False to True."
+            )
+            cfg.fsdp_config.use_orig_params = True
+        elif (
+            cfg.fsdp_config.strategy == "fsdp"
+            and not cfg.fsdp_config.use_orig_params
+            and (
+                is_lora
+                or (
+                    model_type is not None
+                    and str(model_type) == SupportedModel.PI0_FAST.value
+                )
+            )
+        ):
+            logging.info(
+                "Enabling actor.fsdp_config.use_orig_params=True so FSDP1 "
+                "can wrap frozen base weights and trainable adapter parameters "
+                "at transformer-layer granularity."
             )
             cfg.fsdp_config.use_orig_params = True
         cfg.fsdp_config.use_liger_kernel = cfg.fsdp_config.get(
@@ -1476,6 +1494,15 @@ def validate_embodied_cfg(cfg):
             "algorithm.adv_type only supports 'gae' now"
             "when runner.use_training_pipeline is True."
         )
+        rollout_epoch = cfg.env.train.get("rollout_epoch", 1)
+        pipeline_stage_num = cfg.rollout.get("pipeline_stage_num", 1)
+        if rollout_epoch < 2 or pipeline_stage_num < 2:
+            logging.warning(
+                f"runner.use_training_pipeline=True with env.train.rollout_epoch={rollout_epoch!r} "
+                f"and rollout.pipeline_stage_num={pipeline_stage_num!r} cannot overlap "
+                "multi-stage rollout with actor updates and may increase step latency; "
+                "set both >= 2 for pipelined training."
+            )
 
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
