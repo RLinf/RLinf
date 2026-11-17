@@ -9,7 +9,8 @@ Fine-Tune SD3 with ImageReward
 
 Fine-tune Stable Diffusion 3.5 Medium with Reward Feedback Learning (ReFL) to
 improve ImageReward scores. Training uses text prompts, with optional
-image-caption pairs for supervised updates.
+image-caption pairs for supervised updates. With Lpre weight ``0.01``, the
+50-step run below reaches a mean evaluation ImageReward of ``1.1980``.
 
 Overview
 --------
@@ -159,7 +160,11 @@ for eight reward updates:
 The default ``algorithm.refl_pre_loss_weight=0.0`` trains with the reward loss
 alone. The run evaluates and saves a checkpoint every 10 steps, and reports
 ``eval/image_reward`` as the evaluation score. Logs and checkpoints go under
-``logs/<timestamp>-sd3_refl_imagereward/``.
+``logs/<timestamp>-sd3_refl_imagereward/``. Each actor checkpoint occupies about
+9.4 GiB at
+``<experiment_name>/checkpoints/global_step_<N>/actor/`` within that directory.
+Set ``runner.resume_dir`` to the parent ``global_step_<N>`` directory to restore
+the training state, including data positions and sampling RNGs.
 
 Configure Reward Updates
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -217,14 +222,14 @@ of ``0.1`` and ``0.01``:
    done
 
 Each step has eight supervised updates and eight reward updates. Start with
-Lpre weight ``0.01``, which gives higher evaluation scores in the results below.
+Lpre weight ``0.01``, which scores higher than ``0.1`` in the results below.
 
 Expected Results
 ----------------
 
 The experiments use four NVIDIA A800 80 GB GPUs, SD3.5 Medium, LoRA (rank ``32``,
-alpha ``64``), FSDP2, and BF16. Training runs for 50 steps with learning rate
-``1e-4``, seed ``42``, and 512 samples per step.
+alpha ``64``), FSDP2, and BF16, with learning rate ``1e-4``, seed ``42``, and
+512 samples per step. All three runs train for 50 steps.
 
 Images are 512 × 512, with 10 training denoising steps and 40 evaluation steps.
 Evaluation uses guidance scale ``4.5`` and generates 512 images from 463 prompts.
@@ -240,6 +245,12 @@ The table reports the mean ImageReward score.
      - Step 30
      - Step 40
      - Step 50
+   * - ``0`` (reward-only)
+     - 0.9331
+     - 1.0391
+     - 1.1059
+     - 1.1123
+     - 1.1692
    * - ``0.1``
      - 0.1973
      - 0.6263

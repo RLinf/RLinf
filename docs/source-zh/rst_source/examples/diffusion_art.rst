@@ -157,9 +157,9 @@ ART 使用 ``wan22_ti2v_5b_art_video_ocr`` 配置，NFT 使用 ``wan22_ti2v_5b_n
      - 0.7565 ± 0.0544
      - 11.29 ± 0.52
 
-相同采样预算下，ART 的奖励提高 **13.5%**，训练耗时减少 **11.3%**。
+在这组配置下，生成 40,320 条轨迹后，ART 的训练奖励比 NFT 均值高 **13.5%**，训练耗时少 **11.3%**。耗时取训练循环的计时结果。
 
-第二组实验中，两种方法的每轮轨迹数和学习率相同，均使用 ``video_level`` 奖励，各运行一次。
+第二组实验中，两种方法的每轮轨迹数和学习率相同，均使用 ``video_level`` 奖励，各运行一次。表中比较两次运行的前 29 轮。
 
 .. list-table:: 生成 33,408 条轨迹时的 Wan 视频 OCR 结果
    :header-rows: 1
@@ -180,3 +180,71 @@ ART 使用 ``wan22_ti2v_5b_art_video_ocr`` 配置，NFT 使用 ``wan22_ti2v_5b_n
      - 1e-4
      - 0.1076
      - 8.23
+
+复现实验时，在对应配置中设置模型与数据目录，并使用以下共用设置：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       actor,env,rollout: "0-3"
+   algorithm:
+     group_size: 8
+   actor:
+     seed: 42
+     model:
+       wan22_ti2v_5b:
+         max_generation_batch_size: 2
+         compile_transformer_forward: True
+         offload_auxiliary_modules: True
+   env:
+     train:
+       total_num_envs: 96
+       seed: 42
+       reward:
+         use_gpu: False
+     eval:
+       seed: 42
+       reward:
+         use_gpu: False
+   runner:
+     val_check_interval: -1
+
+各组实验的 batch 和训练步数设置如下。两组 NFT 均使用 ``algorithm.nft_tau=[1.0,0.01,0,70]``。
+
+.. list-table:: 分组训练配置
+   :header-rows: 1
+   :widths: 46 18 18 18
+
+   * - 参数
+     - ART，1152 条/轮
+     - NFT，576 条/轮
+     - NFT，1152 条/轮
+   * - ``env.train.rollout_epoch``
+     - 12
+     - 6
+     - 12
+   * - ``actor.global_batch_size``
+     - 576
+     - 288
+     - 576
+   * - ``actor.micro_batch_size``
+     - 2
+     - 1
+     - 2
+   * - ``actor.optim.lr``
+     - 1e-4
+     - 4e-4
+     - 1e-4
+   * - ``env.train.reward.reward_type``
+     - ``video_level``
+     - ``frame_level``
+     - ``video_level``
+   * - ``runner.max_epochs`` / ``runner.max_steps``
+     - 70
+     - 70
+     - 200
+   * - ``runner.save_interval``
+     - 10
+     - -1
+     - 10

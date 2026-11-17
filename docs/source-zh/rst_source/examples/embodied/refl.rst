@@ -7,7 +7,7 @@
 
    ImageReward 概览，图片来自作者的官方仓库。
 
-使用奖励反馈学习（ReFL）微调 Stable Diffusion 3.5 Medium，让模型生成的图像获得更高的 ImageReward 分数。训练使用文本提示词，也可以加入图文对做监督训练。
+使用奖励反馈学习（ReFL）微调 Stable Diffusion 3.5 Medium，让模型生成的图像获得更高的 ImageReward 分数。训练使用文本提示词，也可以加入图文对做监督训练。下方实验的 Lpre 权重为 ``0.01``，训练 50 步后，ImageReward 评估均值为 ``1.1980``。
 
 概览
 ----
@@ -145,7 +145,7 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
      "${REFL_ARGS[@]}" \
      runner.logger.experiment_name=sd3_refl_reward_only
 
-默认 ``algorithm.refl_pre_loss_weight=0.0``，只使用奖励损失。每 10 步评估并保存一次 checkpoint，评估分数记录为 ``eval/image_reward``。日志和 checkpoint 写入 ``logs/<timestamp>-sd3_refl_imagereward/``。
+默认 ``algorithm.refl_pre_loss_weight=0.0``，只使用奖励损失。每 10 步评估并保存一次 checkpoint，评估分数记录为 ``eval/image_reward``。日志和 checkpoint 写入 ``logs/<timestamp>-sd3_refl_imagereward/``。actor checkpoint 位于其中的 ``<experiment_name>/checkpoints/global_step_<N>/actor/``，每份约占 9.4 GiB。将 ``runner.resume_dir`` 设为上一级 ``global_step_<N>`` 目录，即可恢复训练状态，包括数据位置和采样随机状态。
 
 配置奖励更新
 ~~~~~~~~~~~~
@@ -197,12 +197,12 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
        runner.logger.experiment_name="sd3_refl_pre${WEIGHT}"
    done
 
-每步包含 8 次监督更新和 8 次奖励更新。建议使用 Lpre 权重 ``0.01``，下方实验中这一设置的评估分数更高。
+每步包含 8 次监督更新和 8 次奖励更新。建议使用 Lpre 权重 ``0.01``，下方实验中它的评估分数高于 ``0.1``。
 
 预期实验结果
 ------------
 
-实验使用 4 张 NVIDIA A800 80 GB GPU、SD3.5 Medium、LoRA（rank 为 ``32``，alpha 为 ``64``）、FSDP2 和 BF16。学习率为 ``1e-4``，seed 为 ``42``，每步训练 512 个样本，共训练 50 步。
+实验使用 4 张 NVIDIA A800 80 GB GPU、SD3.5 Medium、LoRA（rank 为 ``32``，alpha 为 ``64``）、FSDP2 和 BF16。学习率为 ``1e-4``，seed 为 ``42``，每步训练 512 个样本。三组实验各训练 50 步。
 
 图像分辨率为 512 × 512，训练去噪 10 步，评估去噪 40 步，评估 guidance scale 为 ``4.5``。每次评估从 463 条提示词生成 512 张图像，报告平均 ImageReward 分数。
 
@@ -216,6 +216,12 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
      - Step 30
      - Step 40
      - Step 50
+   * - ``0`` （reward-only）
+     - 0.9331
+     - 1.0391
+     - 1.1059
+     - 1.1123
+     - 1.1692
    * - ``0.1``
      - 0.1973
      - 0.6263

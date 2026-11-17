@@ -184,11 +184,13 @@ rewards for NFT.
      - 0.7565 ± 0.0544
      - 11.29 ± 0.52
 
-At the same sample budget, ART achieves **13.5% higher reward** with
-**11.3% less training time**.
+With these configurations, ART's training reward at 40,320 trajectories is
+**13.5% higher** and its training time **11.3% shorter** than the NFT averages. Training time comes
+from the training-loop timer.
 
 The second comparison matches trajectories per round and learning rate.
-Both methods use ``video_level`` rewards, with one run each.
+Both methods use ``video_level`` rewards, with one run each. The table compares
+the first 29 rounds of each run.
 
 .. list-table:: Wan Video OCR at 33,408 Generated Trajectories
    :header-rows: 1
@@ -209,3 +211,73 @@ Both methods use ``video_level`` rewards, with one run each.
      - 1e-4
      - 0.1076
      - 8.23
+
+To reproduce the experiments, set the model and data paths in the chosen
+config and apply these shared settings:
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       actor,env,rollout: "0-3"
+   algorithm:
+     group_size: 8
+   actor:
+     seed: 42
+     model:
+       wan22_ti2v_5b:
+         max_generation_batch_size: 2
+         compile_transformer_forward: True
+         offload_auxiliary_modules: True
+   env:
+     train:
+       total_num_envs: 96
+       seed: 42
+       reward:
+         use_gpu: False
+     eval:
+       seed: 42
+       reward:
+         use_gpu: False
+   runner:
+     val_check_interval: -1
+
+The batch and step settings for each configuration are below. Both NFT
+configurations use ``algorithm.nft_tau=[1.0,0.01,0,70]``.
+
+.. list-table:: Training Configurations
+   :header-rows: 1
+   :widths: 46 18 18 18
+
+   * - Setting
+     - ART, 1152/Round
+     - NFT, 576/Round
+     - NFT, 1152/Round
+   * - ``env.train.rollout_epoch``
+     - 12
+     - 6
+     - 12
+   * - ``actor.global_batch_size``
+     - 576
+     - 288
+     - 576
+   * - ``actor.micro_batch_size``
+     - 2
+     - 1
+     - 2
+   * - ``actor.optim.lr``
+     - 1e-4
+     - 4e-4
+     - 1e-4
+   * - ``env.train.reward.reward_type``
+     - ``video_level``
+     - ``frame_level``
+     - ``video_level``
+   * - ``runner.max_epochs`` / ``runner.max_steps``
+     - 70
+     - 70
+     - 200
+   * - ``runner.save_interval``
+     - 10
+     - -1
+     - 10

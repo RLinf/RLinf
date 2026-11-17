@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -61,6 +62,14 @@ class ImageTextDataset(Dataset):
             resolution=int(cfg_require(cfg, "resolution")),
             caption_prefix=str(cfg_get(cfg, "caption_prefix", "")),
         )
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return the augmentation RNG state for checkpointed data workers."""
+        return {"rng": torch.get_rng_state()}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Restore the augmentation RNG state before loading the next image."""
+        torch.set_rng_state(state["rng"])
 
     def __len__(self) -> int:
         return len(self.paths)

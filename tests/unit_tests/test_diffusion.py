@@ -1013,3 +1013,135 @@ def test_refl_actor_seeds_model_initialization_and_rank_sampling(tmp_path):
     torch.testing.assert_close(weights[0], weights[2])
     torch.testing.assert_close(noises[0], noises[1])
     assert not torch.equal(noises[0], noises[2])
+
+
+@pytest.mark.parametrize("pre_weight,num_workers", [(0.0, 0), (0.1, 0), (0.1, 2)])
+@pytest.mark.parametrize("rank", [0, 1])
+def test_refl_checkpoint_restores_data_and_rng(
+    tmp_path, monkeypatch, pre_weight, num_workers, rank
+):
+    import random
+
+    from rlinf.hybrid_engines.fsdp.strategy.fsdp2 import FSDP2Strategy
+    from rlinf.scheduler import Worker
+    from rlinf.utils.logging import get_logger
+    from rlinf.utils.utils import seed_everything
+    from rlinf.workers.actor.fsdp_refl_policy_worker import EmbodiedReFLFSDPPolicy
+
+    monkeypatch.setattr(
+        Worker,
+        "torch_platform",
+        SimpleNamespace(
+            is_available=lambda: False,
+            empty_cache=lambda: None,
+            synchronize=lambda: None,
+            ipc_collect=lambda: None,
+        ),
+    )
+    prompts = tmp_path / "train.json"
+    prompts.write_text(json.dumps([{"text": f"prompt {i}"} for i in range(12)]))
+    images = tmp_path / "pairs"
+    images.mkdir()
+    for i in range(8):
+        pixels = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3) + i
+        Image.fromarray(pixels).save(images / f"{i}.png")
+        (images / f"{i}.txt").write_text(f"caption {i}")
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "seed": 42,
+                "micro_batch_size": 1,
+                "global_batch_size": 2,
+                "refl_samples_per_step": 2,
+                "refl_data": {"type": "visual.prompt_dataset", "path": str(prompts)},
+                "refl_pre_data": {
+                    "type": "visual.image_text_dataset",
+                    "path": str(images),
+                    "resolution": 8,
+                    "num_workers": num_workers,
+                },
+                "fsdp_config": {"save_full_model_weights": False},
+            }
+        }
+    )
+
+    def make_actor():
+        actor = EmbodiedReFLFSDPPolicy.__new__(EmbodiedReFLFSDPPolicy)
+        actor.cfg, actor._cfg = cfg, cfg.actor
+        actor._rank, actor._world_size = rank, 2
+        actor._logger, actor._stacklevel = get_logger(), 1
+        actor.is_weight_offloaded = actor.is_optimizer_offloaded = False
+        actor.refl_pre_loss_weight = pre_weight
+        actor.gradient_accumulation = 1
+        actor.model = torch.nn.Linear(4, 1)
+        actor.optimizer = torch.optim.AdamW(actor.model.parameters(), lr=0.01)
+        actor.lr_scheduler = torch.optim.lr_scheduler.StepLR(actor.optimizer, 1)
+        actor._strategy = FSDP2Strategy(cfg.actor, world_size=1)
+        actor._build_prompt_data_loader()
+        if pre_weight:
+            actor._build_pre_data_loader()
+        return actor
+
+    def advance(actor):
+        batch = next(actor._training_batches())[0]
+        prompt = batch["forward_inputs"]["prompts"]
+        pre = actor._next_pre_micro_batches()[0] if pre_weight else None
+        noise = torch.randn(1, 4)
+        target = random.random() + np.random.rand()
+        actor.optimizer.zero_grad()
+        loss = (actor.model(noise) - target).square().mean()
+        if pre is not None:
+            loss = (
+                loss
+                + pre_weight * actor.model(pre["images"].flatten()[:4]).square().mean()
+            )
+        loss.backward()
+        actor.optimizer.step()
+        actor.lr_scheduler.step()
+        return prompt, pre, noise, loss.detach()
+
+    torch.distributed.init_process_group(
+        "gloo", init_method=f"file://{tmp_path}/gloo", rank=0, world_size=1
+    )
+    try:
+        seed_everything(42 + rank)
+        actor = make_actor()
+        for _ in range(5):
+            advance(actor)
+        checkpoint = tmp_path / "checkpoint"
+        actor.save_checkpoint(str(checkpoint), step=5)
+        assert (checkpoint / f"refl_data_rank_{rank}.pt").is_file()
+        expected = [advance(actor) for _ in range(8)]
+        expected_weights = {
+            name: value.clone() for name, value in actor.model.state_dict().items()
+        }
+        expected_lr = actor.lr_scheduler.state_dict()
+
+        seed_everything(987)
+        resumed = make_actor()
+        resumed.load_checkpoint(str(checkpoint))
+        actual = [advance(resumed) for _ in range(8)]
+        for (prompt_a, pre_a, noise_a, loss_a), (
+            prompt_b,
+            pre_b,
+            noise_b,
+            loss_b,
+        ) in zip(expected, actual):
+            assert prompt_a == prompt_b
+            if pre_weight:
+                assert pre_a["prompts"] == pre_b["prompts"]
+                torch.testing.assert_close(
+                    pre_a["images"], pre_b["images"], rtol=0, atol=0
+                )
+            torch.testing.assert_close(noise_a, noise_b, rtol=0, atol=0)
+            torch.testing.assert_close(loss_a, loss_b, rtol=0, atol=0)
+        for name, value in resumed.model.state_dict().items():
+            torch.testing.assert_close(value, expected_weights[name], rtol=0, atol=0)
+        assert resumed.lr_scheduler.state_dict() == expected_lr
+
+        (checkpoint / f"refl_data_rank_{rank}.pt").unlink()
+        legacy = make_actor()
+        legacy.load_checkpoint(str(checkpoint))
+        assert legacy.prompt_data_iter.epoch == 0
+    finally:
+        torch.distributed.destroy_process_group()
