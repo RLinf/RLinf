@@ -25,6 +25,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         super().__init__(cfg)
         self._generate_task: asyncio.Task = None
         self._evaluate_task: asyncio.Task = None
+        self._model_lock = asyncio.Lock()
         self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
         assert not self.enable_offload, (
             "Offload not supported in AsyncMultiStepRolloutWorker"
@@ -85,6 +86,38 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             metric_channel.put(
                 {"rank": self._rank, "time": rollout_metrics}, async_op=True
             )
+
+    async def generate_one_epoch(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        actor_channel: Channel,
+    ) -> None:
+        if self._background_weight_sync_active or self.enable_dagger:
+            return await super().generate_one_epoch(
+                input_channel, output_channel, actor_channel
+            )
+        # Bucket sync applies parameters across multiple awaits. Keep an epoch
+        # on one complete model while its environment requests are in flight.
+        async with self._model_lock:
+            return await super().generate_one_epoch(
+                input_channel, output_channel, actor_channel
+            )
+
+    async def _wait_for_model_sync(self) -> None:
+        if not self.enable_dagger or self._background_weight_sync_active:
+            return
+        # Let the sync RPC acquire the lock even with queued policy requests.
+        await asyncio.sleep(0)
+        # The caller processes the request synchronously after this gate.
+        async with self._model_lock:
+            pass
+
+    async def sync_model_from_actor(self):
+        if self._background_weight_sync_active:
+            return await super().sync_model_from_actor()
+        async with self._model_lock:
+            return await super().sync_model_from_actor()
 
     async def wait_if_stale(self) -> None:
         if self.staleness_threshold is None:

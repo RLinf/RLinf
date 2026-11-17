@@ -145,8 +145,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model = super().model_provider_func()
 
         if self.cfg.runner.get("ckpt_path", None):
-            model_dict = torch.load(self.cfg.runner.ckpt_path)
-            model.load_state_dict(model_dict)
+            if (
+                str(self.cfg.actor.model.model_type).lower() == "cosmos3"
+                and self.cfg.algorithm.get("loss_type") == "embodied_dagger"
+            ):
+                from rlinf.models.embodiment.cosmos3 import (
+                    load_inference_checkpoint,
+                )
+
+                load_inference_checkpoint(model, self.cfg.runner.ckpt_path)
+            else:
+                model_dict = torch.load(self.cfg.runner.ckpt_path)
+                model.load_state_dict(model_dict)
 
         return model
 

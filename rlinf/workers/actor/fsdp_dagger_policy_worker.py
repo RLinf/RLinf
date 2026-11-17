@@ -76,16 +76,31 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             raise ValueError(
                 "algorithm.dagger.online_lerobot.lerobot_num_workers must be non-negative."
             )
+        training_action_horizon = online_lerobot_cfg.get(
+            "training_action_horizon", self.cfg.actor.model.num_action_chunks
+        )
+        joint_vision_sft = (
+            self.cfg.actor.model.model_type == "cosmos3"
+            and self.cfg.actor.model.get("sft_objective") == "joint"
+        )
+        window_size = online_lerobot_cfg.get("rolling_lerobot_window_size", None)
+        require_all_intervene = self.cfg.algorithm.dagger.get("only_save_expert", False)
         self.dataset = RollingLeRobotDataset(
             root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
-            chunk_size=self.cfg.actor.model.num_action_chunks,
+            chunk_size=training_action_horizon,
+            vision_horizon=training_action_horizon if joint_vision_sft else 0,
+            require_full_window=joint_vision_sft,
             min_frames=online_lerobot_cfg.get("min_frames", 1),
             wait_interval_s=online_lerobot_cfg.get("wait_interval_s", 10.0),
-            require_all_intervene=self.cfg.algorithm.dagger.get(
-                "only_save_expert", False
-            ),
-            window_size=online_lerobot_cfg.get("rolling_lerobot_window_size", None),
+            require_all_intervene=require_all_intervene,
+            window_size=window_size,
             in_memory_mode=True,
+            keep_uint8_images=(
+                joint_vision_sft
+                and not require_all_intervene
+                and window_size is not None
+                and int(window_size) > 0
+            ),
             fps=int(
                 OmegaConf.select(
                     self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
@@ -112,6 +127,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 shard_id = int(child.name.removeprefix("id_"))
             except ValueError:
                 continue
+            # An incomplete archive still occupies its directory name.
+            self._next_lerobot_archive_id = max(
+                self._next_lerobot_archive_id, shard_id + 1
+            )
             shard_info = self.dataset.archived_shard_info(child)
             if shard_info is None:
                 self.log_info(f"Skipping invalid LeRobot resume shard: {child}")
@@ -439,6 +458,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             writer.add_episode(ep_frames)
         writer.finalize()
 
+    @Worker.timer("prepare_sft_inputs")
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
         if not self.enable_online_lerobot:
@@ -460,6 +480,46 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             data=data,
             use_action_chunk_loss=use_action_chunk_loss,
         )
+
+    @staticmethod
+    def _sft_loss_and_metrics(output) -> tuple[torch.Tensor, dict[str, float]]:
+        """Keep the policy loss graph and detach scalar reporting metrics."""
+        metrics = {}
+        loss = output
+        if isinstance(output, dict):
+            loss = output["loss"]
+            for key, value in output.items():
+                if key != "loss" and torch.is_tensor(value) and value.numel() == 1:
+                    metrics[f"dagger/{key}"] = value.detach().float().item()
+        return loss, metrics
+
+    def _finish_sft_update(self, metrics, actor_losses) -> dict[str, float]:
+        """Apply the manager's scaler/strategy step and advance successful updates."""
+        grad_norm, _ = self.optimizer_step()
+        successful = bool(torch.isfinite(torch.as_tensor(grad_norm)).all())
+        if successful:
+            self.lr_scheduler.step()
+            self.update_step += 1
+            if self.cfg.actor.model.model_type == "cosmos3":
+                self.model.set_global_step(self.update_step)
+        self.optimizer.zero_grad(set_to_none=True)
+        result = {key: float(np.mean(values)) for key, values in metrics.items()}
+        result.update(
+            {
+                "dagger/actor_loss": float(np.mean(actor_losses)),
+                "actor/lr": self.optimizer.param_groups[0]["lr"],
+                "actor/grad_norm": grad_norm,
+                "dagger/update_skipped": float(not successful),
+            }
+        )
+        return result
+
+    def set_global_step(self, global_step: int) -> None:
+        """Keep rollout versions separate from Cosmos optimizer/EMA iterations."""
+        if self.cfg.actor.model.model_type != "cosmos3":
+            return super().set_global_step(global_step)
+        self.version = global_step
+        self.model.set_global_step(self.update_step, update_ema=False)
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
@@ -490,33 +550,30 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         self.optimizer.zero_grad()
         gbs_actor_loss = []
+        metrics = {}
         for mb_idx, batch in enumerate(train_micro_batch_list):
             backward_ctx = self.before_micro_batch(
                 self.model,
                 is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
             )
-            with self.amp_context:
-                actor_loss = self.forward_actor(batch["forward_inputs"])
-            actor_loss = actor_loss / self.gradient_accumulation
             with backward_ctx:
+                with self.amp_context:
+                    actor_loss, step_metrics = self._sft_loss_and_metrics(
+                        self.forward_actor(batch["forward_inputs"])
+                    )
+                actor_loss = actor_loss / self.gradient_accumulation
                 self.grad_scaler.scale(actor_loss).backward()
             gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
+            append_to_dict(metrics, step_metrics)
 
-        actor_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.optim.clip_grad
-        )
-        self.optimizer.step()
-        self.lr_scheduler.step()
-
-        return {
-            "dagger/actor_loss": np.mean(gbs_actor_loss),
-            "actor/lr": self.optimizer.param_groups[0]["lr"],
-            "actor/grad_norm": actor_grad_norm,
-        }
+        return self._finish_sft_update(metrics, gbs_actor_loss)
 
     def update_lerobot_one_epoch(self):
         """Run one LeRobot update epoch."""
 
+        cosmos3_batch = (
+            self.cfg.actor.model.model_type == "cosmos3" and not self.enable_drq
+        )
         with self.worker_timer("prepare_micro_batches"):
             with self._lerobot_loader_lock:
                 num_batches = len(self._lerobot_loader)
@@ -524,6 +581,33 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     next(self._lerobot_iter) for _ in range(num_batches)
                 ]
             for idx, batch in enumerate(train_micro_batch_list):
+                if cosmos3_batch:
+                    # Leave pixels on the host until Cosmos builds its video batch.
+                    prepared = {
+                        key: batch[key]
+                        for key in (
+                            "task",
+                            "image",
+                            "wrist_image",
+                            "vision_images",
+                            "vision_wrist_images",
+                            "vision_valid",
+                        )
+                        if key in batch
+                    }
+                    prepared.update(
+                        put_tensor_device(
+                            {
+                                key: batch[key]
+                                for key in ("actions", "actions_is_pad")
+                                if key in batch
+                            },
+                            device=self.device,
+                        )
+                    )
+                    train_micro_batch_list[idx] = prepared
+                    continue
+
                 batch = put_tensor_device(batch, device=self.device)
                 if self.enable_drq:
                     drq.apply_drq(batch["curr_obs"], pad=4)
@@ -531,6 +615,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         self.optimizer.zero_grad()
         gbs_actor_loss = []
+        metrics = {}
 
         for idx, batch in enumerate(train_micro_batch_list):
             # set the gradient accumulation backward_ctx
@@ -539,30 +624,24 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 is_last_micro_batch=(idx + 1) == num_batches,
             )
 
-            with self.amp_context:
-                actor_loss = self.forward_actor(batch)
-
-            actor_loss = actor_loss / num_batches
             with backward_ctx:
+                with self.amp_context:
+                    actor_loss, step_metrics = self._sft_loss_and_metrics(
+                        self.forward_actor(batch)
+                    )
+                actor_loss = actor_loss / num_batches
                 self.grad_scaler.scale(actor_loss).backward()
             gbs_actor_loss.append(actor_loss.item() * num_batches)
+            append_to_dict(metrics, step_metrics)
 
-        actor_grad_norm = self.model.clip_grad_norm_(
-            max_norm=self.cfg.actor.optim.clip_grad
-        )
-        self.optimizer.step()
-        self.lr_scheduler.step()
+        result = self._finish_sft_update(metrics, gbs_actor_loss)
 
         with self._lerobot_loader_lock:
             self._data_epoch += 1
             if hasattr(self._lerobot_loader.sampler, "set_epoch"):
                 self._lerobot_loader.sampler.set_epoch(self._data_epoch)
             self._lerobot_iter = iter(self._lerobot_loader)
-        return {
-            "dagger/actor_loss": np.mean(gbs_actor_loss),
-            "actor/lr": self.optimizer.param_groups[0]["lr"],
-            "actor/grad_norm": actor_grad_norm,
-        }
+        return result
 
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
@@ -662,11 +741,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         for _ in range(update_epoch):
             metrics_data = self.update_one_epoch()
             append_to_dict(metrics, metrics_data)
-            self.update_step += 1
 
-        torch.cuda.synchronize()
+        self.torch_platform.synchronize()
         torch.distributed.barrier()
-        torch.cuda.empty_cache()
+        self.torch_platform.empty_cache()
         return self.process_train_metrics(metrics)
 
     @Worker.timer("actor/compute_adv")
@@ -710,6 +788,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
         )
+        if self.cfg.actor.model.model_type == "cosmos3":
+            # The scheduler is checkpointed and advances once per successful update.
+            self.update_step = max(0, int(self.lr_scheduler.last_epoch))
+            self.optimizer_steps = self.update_step
+            self.model.set_global_step(self.update_step, update_ema=False)
 
         if not self.enable_online_lerobot:
             buffer_load_path = os.path.join(

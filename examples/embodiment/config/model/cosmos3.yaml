@@ -1,0 +1,48 @@
+# Native Cosmos3 LIBERO policy; model_path accepts the converted base DCP.
+model_type: cosmos3
+precision: bf16
+is_lora: false
+add_value_head: false
+load_to_device: false
+
+model_path: /path/to/model
+wan_vae_path: /path/to/Wan2.2_VAE.pth
+disable_cosmos_parallelism: true
+compile_enabled: false
+ema_enabled: false
+inference_seed: 123
+
+# Model actions are normalized rot6d; env actions have seven channels.
+action_dim: 7
+num_action_chunks: 10
+num_frames: 17
+image_size: 256
+fps: 20
+num_inference_steps: 2
+guidance: 1.0
+max_prompt_length: 1024
+sft_cfg_dropout_rate: 0.1
+action_normalization: quantile_rot
+action_stats_path: /path/to/libero_native_frame_wise_relative_rot6d.json
+
+# The base DCP has no trained LIBERO heads; initialize them for this smoke test.
+keys_to_skip_loading:
+  - net_ema.
+  - action2llm
+  - llm2action
+  - action_modality_embed
+  - action_pos_embed
+
+keys_to_select:
+  - moe_gen
+  - time_embedder
+  - vae2llm
+  - llm2vae
+  - action2llm
+  - llm2action
+  - action_modality_embed
+
+lr_multipliers:
+  action2llm: 5.0
+  llm2action: 5.0
+  action_modality_embed: 5.0
