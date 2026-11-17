@@ -64,9 +64,13 @@ update 6000 of the run in the SuperMimic guide, with its ``RUN_DIR``:
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0,env:0,rollout:0}'
 
-A MaxCoord checkpoint also needs ``actor.model.representation=maxcoord``.
+The last two lines keep the evaluation on GPU 0; without them it uses every
+GPU on the machine. A MaxCoord checkpoint also needs
+``actor.model.representation=maxcoord``.
 The protocol, the output files, and push recovery are in
 :doc:`../../examples/embodied/supermimic_eval`.
 

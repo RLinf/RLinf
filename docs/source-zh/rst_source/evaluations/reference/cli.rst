@@ -61,9 +61,11 @@ SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0,env:0,rollout:0}'
 
-MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。评测协议、输出文件和推力恢复见 :doc:`../../examples/embodied/supermimic_eval`。
+最后两行让评测只用 0 号 GPU，不加时会用上机器上的所有 GPU。MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。评测协议、输出文件和推力恢复见 :doc:`../../examples/embodied/supermimic_eval`。
 
 配置回退
 --------

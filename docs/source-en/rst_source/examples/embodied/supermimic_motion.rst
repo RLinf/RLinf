@@ -67,6 +67,14 @@ Write each clip in the format below, put them in one folder, and train with
 ``env.train.num_clips=null`` (and ``env.eval.num_clips=null`` for
 evaluation), which loads every clip in the folder.
 
+Evaluation plays each clip in its own environment and is sized for the 40
+LAFAN1 clips. With more clips, ``env.eval.num_clips=null`` alone fails a
+capacity check at startup. Also raise ``env.eval.total_num_envs``, or
+``env.eval.rollout_epoch`` to play the clips in several rounds, so that
+their product covers the clip count. If a clip runs longer than
+``env.eval.max_steps_per_rollout_epoch`` control steps (13656 by default),
+raise that as well.
+
 Clip File Format
 ----------------
 

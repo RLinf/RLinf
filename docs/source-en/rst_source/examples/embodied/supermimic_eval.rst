@@ -33,9 +33,13 @@ This evaluates update 6000 of the run in the main guide:
    export MUJOCO_GL=disabled
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0,env:0,rollout:0}'
 
-Replace ``6000`` in both paths to evaluate another checkpoint, such as
+The last two lines run the evaluation on GPU 0. Without them it inherits
+the training config's placement and uses every GPU on the machine. Replace
+``6000`` in both paths to evaluate another checkpoint, such as
 update 2000 or 4000. Each clip plays once from frame 0 and the policy action
 is applied as is. The 40 clips run in parallel in 40 environments, and the
 evaluation takes about 7 minutes.
@@ -43,8 +47,9 @@ evaluation takes about 7 minutes.
 Standing Push Recovery
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The robot holds mjlab's knees-bent standing pose. After one second, its
-root's horizontal velocity is set to 0.5, 1, 2, or 4 m/s, four trials each.
+The robot holds mjlab's knees-bent standing pose. After one second, a
+horizontal push of 0.5, 1, 2, or 4 m/s in a random direction is added to
+its root's current horizontal velocity, four trials each.
 A fall is detected with the same failure test as in training. The paper's Section 4.3 protocol starts from
 a T-pose, which this config does not implement.
 
@@ -52,14 +57,18 @@ a T-pose, which this config does not implement.
 
    bash evaluations/run_eval.sh supermimic_push_recovery \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/push_6000
+       runner.eval_export.output_dir=$RUN_DIR/push_6000 \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0,env:0,rollout:0}'
 
 Visualization and Results
 -------------------------
 
 Results go to ``runner.eval_export.output_dir``, or to
 ``<log_path>/<experiment_name>/eval_results/`` when it is unset. The folder
-holds ``summary.json``, ``per_clip.csv``, and the resolved ``config.yaml``.
+holds ``summary.json``, the resolved ``config.yaml``, and one table:
+``per_clip.csv`` for motion tracking, with one row per clip, or
+``per_trial.csv`` for push recovery, with one row per trial.
 The same metrics are logged with an ``eval/`` prefix.
 
 The motion-tracking metrics in ``summary.json`` are:

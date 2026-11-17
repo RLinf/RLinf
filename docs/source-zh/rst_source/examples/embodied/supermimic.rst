@@ -130,7 +130,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
 运行
 ----
 
-在启动训练和评测的终端里先设置下面几项，后文的所有路径都由 ``RUN_DIR`` 推出：
+每打开一个新终端，都先在仓库根目录执行下面这段，再训练、续训或评测。后文的所有路径都由 ``RUN_DIR`` 推出：
 
 .. code-block:: bash
 
@@ -138,28 +138,31 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export MUJOCO_GL=disabled
    export RUN_DIR=/data/runs/supermimic_gencoord
-
-训练
-~~~~
-
-已报告的运行是单卡 GenCoord，使用配置默认值：4096 个环境，每次更新的世界模型批次是 2048 个窗口，想象 rollout 是 4096 条。命令在此之上设定 6000 次更新、CUDA 图回放和固定的 GPU。矩阵乘用 TF32，权重保持 float32。
-
-.. code-block:: bash
-
+   GPU_PLACEMENT=('~cluster.component_placement'
+       '+cluster.component_placement={actor:0,env:0,rollout:0}')
    TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
        runner.max_epochs=6000
        actor.cuda_graph=True
        runner.logger.log_path=$RUN_DIR
-       '~cluster.component_placement'
-       '+cluster.component_placement={actor:0,env:0,rollout:0}')
+       "${GPU_PLACEMENT[@]}")
+
+``GPU_PLACEMENT`` 把 env、rollout 和 actor worker 都放到 0 号 GPU，训练和评测都用它；要换卡就把 ``0`` 改成对应序号。不加它时，训练和评测都会用上机器上的所有 GPU。
+
+训练
+~~~~
+
+已报告的运行是单卡 GenCoord，使用配置默认值：4096 个环境，每次更新的世界模型批次是 2048 个窗口，想象 rollout 是 4096 条。``TRAIN_ARGS`` 在此之上设定 6000 次更新和 CUDA 图回放。矩阵乘用 TF32，权重保持 float32。
+
+.. code-block:: bash
+
    python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
 
-最后两行把 env、rollout 和 actor worker 都放到 0 号 GPU；要换卡就把 ``0`` 改成对应序号。在一张 A800 上训练略超过一小时。最初几次更新之后，日志会出现 ``Recorded the SuperMimic update as a CUDA graph.``；之后每 100 次更新打印一张指标表，开头是 ``Global Step:``，后面跟当前更新数和 ``/6000``。每 2000 次更新写一个 checkpoint，位置是 ``$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_<N>``。
+在一张 A800 上训练略超过一小时。最初几次更新之后，日志会出现 ``Recorded the SuperMimic update as a CUDA graph.``；之后每 100 次更新打印一张指标表，开头是 ``Global Step:``，后面跟当前更新数和 ``/6000``。每 2000 次更新写一个 checkpoint，位置是 ``$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_<N>``。
 
 续训
 ~~~~
 
-训练中断后，在同一条命令后加上 ``runner.resume_dir=auto`` 重新运行：
+训练中断后，如果是新终端，先执行 `运行`_ 里的准备代码，再在训练命令后加上 ``runner.resume_dir=auto`` 重新运行：
 
 .. code-block:: bash
 
@@ -177,25 +180,21 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
+       "${GPU_PLACEMENT[@]}"
 
 评测约 7 分钟。``$RUN_DIR/eval_6000/summary.json`` 里有下表报告的 ``normalized_return``、``fail_rate`` 和 ``body_pos_err``；``per_clip.csv`` 每条片段一行。指标定义见 :doc:`supermimic_eval`。
 
 多卡训练
 ~~~~~~~~
 
-环境数、世界模型批量和想象批量都是所有 GPU 的总和，增加 GPU 只是把同一次更新分到多张卡上。换一个新的 ``RUN_DIR``，在 placement 里列出这些 GPU。两张卡时：
+环境数、世界模型批量和想象批量都是所有 GPU 的总和，增加 GPU 只是把同一次更新分到多张卡上。在 `运行`_ 的准备代码里换一个新的 ``RUN_DIR``，并在 ``GPU_PLACEMENT`` 里列出这些 GPU。两张卡时改成下面两项，重新执行整段准备代码，再运行训练命令：
 
 .. code-block:: bash
 
    export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
-   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
-       runner.max_epochs=6000
-       actor.cuda_graph=True
-       runner.logger.log_path=$RUN_DIR
-       '~cluster.component_placement'
+   GPU_PLACEMENT=('~cluster.component_placement'
        '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}')
-   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
 
 .. list-table::
    :header-rows: 1
@@ -218,7 +217,7 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
      - 2048
      - 1024
 
-四张卡时把 placement 里的 ``0-1`` 改成 ``0-3``。每张 GPU 上各有一个 env、一个 rollout 和一个 actor worker。学习率和更新次数不随 GPU 数变化。续训和评测的做法同上，只是换成新的 ``RUN_DIR``。多节点和 Slurm 启动还没有用这个配方验证过。
+四张卡时把 placement 里的 ``0-1`` 改成 ``0-3``。每张 GPU 上各有一个 env、一个 rollout 和一个 actor worker。学习率和更新次数不随 GPU 数变化。续训时先执行改过的准备代码，再运行续训命令。要像 `评测`_ 那样单卡评测，把 ``GPU_PLACEMENT`` 改回 0 号 GPU，``RUN_DIR`` 保持新的值。多节点和 Slurm 启动还没有用这个配方验证过。
 
 MaxCoord
 ~~~~~~~~

@@ -43,6 +43,8 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
 
 按下面的格式写出每条片段，放进同一个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``），加载目录里的全部片段。
 
+评测时每条片段占一个环境，默认规模按 40 条 LAFAN1 片段设定。片段更多时，只设 ``env.eval.num_clips=null`` 会在启动时的容量校验里报错，还要增大 ``env.eval.total_num_envs``，或增大 ``env.eval.rollout_epoch`` 分几轮播放，让两者的乘积不少于片段数。如果有片段超过 ``env.eval.max_steps_per_rollout_epoch`` 个控制步（默认 13656），也要相应调大。
+
 片段文件格式
 ------------
 

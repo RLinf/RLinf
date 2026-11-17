@@ -194,8 +194,9 @@ mjlab, so export it on the training machine first.
 Run It
 ------
 
-Set these once in the shell that launches training and evaluation. Every
-path below follows from ``RUN_DIR``:
+Run this block from the repository root in every new shell, before
+training, resuming, or evaluating. Every path below follows from
+``RUN_DIR``:
 
 .. code-block:: bash
 
@@ -203,27 +204,31 @@ path below follows from ``RUN_DIR``:
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export MUJOCO_GL=disabled
    export RUN_DIR=/data/runs/supermimic_gencoord
+   GPU_PLACEMENT=('~cluster.component_placement'
+       '+cluster.component_placement={actor:0,env:0,rollout:0}')
+   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
+       runner.max_epochs=6000
+       actor.cuda_graph=True
+       runner.logger.log_path=$RUN_DIR
+       "${GPU_PLACEMENT[@]}")
+
+``GPU_PLACEMENT`` puts the env, rollout, and actor workers on GPU 0, for
+training and evaluation alike; change ``0`` to use another GPU. Without it,
+both use every GPU on the machine.
 
 Train
 ~~~~~
 
 The reported run is GenCoord on one GPU with the config defaults: 4096
 environments, world-model batches of 2048 windows, and 4096 imagined
-rollouts per update. The command sets 6000 updates, CUDA graph replay, and
-a fixed GPU. Matmuls use TF32 and weights stay float32.
+rollouts per update. ``TRAIN_ARGS`` sets 6000 updates and CUDA graph
+replay. Matmuls use TF32 and weights stay float32.
 
 .. code-block:: bash
 
-   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
-       runner.max_epochs=6000
-       actor.cuda_graph=True
-       runner.logger.log_path=$RUN_DIR
-       '~cluster.component_placement'
-       '+cluster.component_placement={actor:0,env:0,rollout:0}')
    python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
 
-The two placement lines put the env, rollout, and actor workers on GPU 0;
-change ``0`` to use another GPU. The run takes a little over an hour on one
+The run takes a little over an hour on one
 A800. The log shows ``Recorded the SuperMimic update as a CUDA graph.``
 after the first few updates, and a metrics table every 100 updates that
 starts with ``Global Step:`` followed by the update count and ``/6000``.
@@ -233,7 +238,8 @@ Training writes a checkpoint every 2000 updates, under
 Resume
 ~~~~~~
 
-If training stops, rerun the same command with ``runner.resume_dir=auto``:
+If training stops, run the setup block in `Run It`_ first when the shell is
+new, then rerun the training command with ``runner.resume_dir=auto``:
 
 .. code-block:: bash
 
@@ -262,7 +268,8 @@ Evaluate the final weights on the 40 clips. Each clip plays once from frame
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
+       "${GPU_PLACEMENT[@]}"
 
 The evaluation takes about 7 minutes. ``$RUN_DIR/eval_6000/summary.json``
 holds ``normalized_return``, ``fail_rate``, and ``body_pos_err``, which the
@@ -273,19 +280,16 @@ Train on Several GPUs
 ~~~~~~~~~~~~~~~~~~~~~
 
 The environment count, the world-model batch, and the imagination batch are
-totals over all GPUs, so adding GPUs splits the same update across them. Use a new ``RUN_DIR`` and list the
-GPUs in the placement. With two GPUs:
+totals over all GPUs, so adding GPUs splits the same update across them. In
+the setup block in `Run It`_, use a new ``RUN_DIR`` and list the GPUs in
+``GPU_PLACEMENT``. With two GPUs, change these two lines and run the whole
+block again, then run the training command:
 
 .. code-block:: bash
 
    export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
-   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
-       runner.max_epochs=6000
-       actor.cuda_graph=True
-       runner.logger.log_path=$RUN_DIR
-       '~cluster.component_placement'
+   GPU_PLACEMENT=('~cluster.component_placement'
        '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}')
-   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
 
 .. list-table::
    :header-rows: 1
@@ -310,8 +314,9 @@ GPUs in the placement. With two GPUs:
 
 For four GPUs, use ``0-3`` in the placement. Each GPU hosts one env, one
 rollout, and one actor worker. The learning rate and the number of updates
-do not change with the GPU count. Resume and evaluation work as above with
-the new ``RUN_DIR``. Multi-node and Slurm launches of this recipe have not
+do not change with the GPU count. A resume runs the changed block, then the
+resume command. To evaluate on one GPU as in `Evaluate`_, set
+``GPU_PLACEMENT`` back to GPU 0 and keep the new ``RUN_DIR``. Multi-node and Slurm launches of this recipe have not
 been validated.
 
 MaxCoord

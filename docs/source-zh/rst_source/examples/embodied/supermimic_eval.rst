@@ -24,25 +24,29 @@ SuperMimic 评测
    export MUJOCO_GL=disabled
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0,env:0,rollout:0}'
 
-把两个路径里的 ``6000`` 换成 2000 或 4000，就评测对应的 checkpoint。每条片段从第 0 帧播放一遍，直接执行 policy 动作。40 条片段在 40 个环境里并行播放，评测约 7 分钟。
+最后两行让评测只用 0 号 GPU。不加时会沿用训练配置的 placement，用上机器上的所有 GPU。把两个路径里的 ``6000`` 换成 2000 或 4000，就评测对应的 checkpoint。每条片段从第 0 帧播放一遍，直接执行 policy 动作。40 条片段在 40 个环境里并行播放，评测约 7 分钟。
 
 站立推力恢复
 ~~~~~~~~~~~~
 
-机器人保持 mjlab 的屈膝站立姿态，1 秒后把根的水平速度改成 0.5、1、2 或 4 m/s，每种 4 次。跌倒沿用训练的失败判据。论文 §4.3 从 T-pose 出发，这个配置没有实现那个姿态。
+机器人保持 mjlab 的屈膝站立姿态，1 秒后沿随机水平方向推一下：在根当前的水平速度上叠加 0.5、1、2 或 4 m/s，每种 4 次。跌倒沿用训练的失败判据。论文 §4.3 从 T-pose 出发，这个配置没有实现那个姿态。
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh supermimic_push_recovery \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/push_6000
+       runner.eval_export.output_dir=$RUN_DIR/push_6000 \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0,env:0,rollout:0}'
 
 可视化与结果
 ------------
 
-结果写到 ``runner.eval_export.output_dir``，不设置时写到 ``<log_path>/<experiment_name>/eval_results/``。目录里有 ``summary.json``、``per_clip.csv`` 和这次评测的 ``config.yaml``。同样的指标以 ``eval/`` 为前缀写进日志。
+结果写到 ``runner.eval_export.output_dir``，不设置时写到 ``<log_path>/<experiment_name>/eval_results/``。目录里有 ``summary.json``、这次评测的 ``config.yaml`` 和一张表：动作跟踪写 ``per_clip.csv``，每条片段一行；推力恢复写 ``per_trial.csv``，每次试验一行。同样的指标以 ``eval/`` 为前缀写进日志。
 
 ``summary.json`` 里的动作跟踪指标：
 
