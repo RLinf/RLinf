@@ -146,12 +146,13 @@ class Observation:
 
         # Convert uint8 images to [-1, 1] float32
         for key in images:
-            if images[key].dtype == torch.uint8:
-                images[key] = images[key].to(torch.float32) / 255.0 * 2.0 - 1.0
-            elif images[key].dtype == np.uint8:
-                images[key] = (
-                    torch.from_numpy(images[key].astype(np.float32)) / 255.0 * 2.0 - 1.0
-                )
+            image = images[key]
+            if isinstance(image, np.ndarray) and image.dtype == np.uint8:
+                image = torch.from_numpy(image)
+            if torch.is_tensor(image) and image.dtype == torch.uint8:
+                image = image.to(torch.float32)
+                # A tensor divisor keeps CUDA bit-exact with CPU; a scalar does not.
+                images[key] = image / image.new_tensor(255.0) * 2.0 - 1.0
 
         return cls(
             images=images,
