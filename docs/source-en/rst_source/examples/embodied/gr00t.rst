@@ -710,7 +710,18 @@ Install ``gr00t_n1d7`` for Kunlun and set the three model and dataset paths in `
    export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
    bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
 
-The configuration sets 20,000 updates and saves every 1,000 steps. RLinf AdamW applies the configured weight decay to trainable parameters; the official Trainer excludes bias and matching normalization parameters. The update therefore differs from the official optimizer. For a short check, pass overrides such as ``runner.max_steps=2 actor.global_batch_size=2 actor.micro_batch_size=1 runner.save_interval=1``.
+The configuration sets 20,000 updates and saves every 1,000 steps. RLinf AdamW applies the configured weight decay to trainable parameters; the official Trainer excludes bias and matching normalization parameters. The update therefore differs from the official optimizer.
+
+For a two-step smoke test, set the three environment variables above and run the command below. It saves a checkpoint after each step.
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
+     runner.max_steps=2 runner.save_interval=1 \
+     actor.global_batch_size=2 actor.micro_batch_size=1 \
+     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
 
 For a fresh run, RLinf starts training from the RNG state left by worker initialization. Isaac-GR00T sets the seed again when it constructs the Trainer after model setup, so the two runs can draw different random values even with the same data seed. The shard sampling order uses ``data.gr00t.seed``.
 

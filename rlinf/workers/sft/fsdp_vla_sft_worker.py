@@ -119,11 +119,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                     step_metrics[key] = value
         return loss, step_metrics
 
-    def _should_checkpoint_rng(self) -> bool:
-        return isinstance(self.data_loader, StatefulDataLoader) or self.cfg.data.get(
-            "save_rng_state", False
-        )
-
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
         self._save_data_checkpoint(save_path)
@@ -142,7 +137,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
             torch.distributed.barrier()
 
-        if self._should_checkpoint_rng():
             rng_state = get_rng_state()
             all_rng_states = [None] * self._world_size
             torch.distributed.all_gather_object(all_rng_states, rng_state)
@@ -172,13 +166,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             self.data_loader.load_state_dict(state)
             self.data_iter = iter(self.data_loader)
 
-        if self._should_checkpoint_rng():
             rng_path = os.path.join(load_path, "rng.pt")
             if os.path.exists(rng_path):
                 all_rng_states = torch.load(rng_path, weights_only=False)
                 set_rng_state(all_rng_states[self._rank])
-            elif self.cfg.data.get("save_rng_state", False):
-                raise FileNotFoundError(f"RNG checkpoint is missing: {rng_path}")
+
             torch.distributed.barrier()
 
     def get_max_steps_per_epoch(self) -> int | None:

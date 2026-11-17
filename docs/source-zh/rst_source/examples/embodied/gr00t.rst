@@ -686,7 +686,18 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
    export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
    bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
 
-示例配置执行 20,000 次更新，每 1,000 次保存一次。RLinf AdamW 对可训练参数应用配置的 weight decay；官方 Trainer 会排除 bias 和符合规则的 normalization 参数，因此参数更新与官方优化器不同。短程检查可追加 ``runner.max_steps=2 actor.global_batch_size=2 actor.micro_batch_size=1 runner.save_interval=1`` 等参数。
+示例配置执行 20,000 次更新，每 1,000 次保存一次。RLinf AdamW 对可训练参数应用配置的 weight decay；官方 Trainer 会排除 bias 和符合规则的 normalization 参数，因此参数更新与官方优化器不同。
+
+设置上面列出的 3 个环境变量，再运行下面的命令。训练执行 2 步，每步保存一个 checkpoint。
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
+     runner.max_steps=2 runner.save_interval=1 \
+     actor.global_batch_size=2 actor.micro_batch_size=1 \
+     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
 
 从头训练时，RLinf 使用 worker 初始化结束时的 RNG 状态。Isaac-GR00T 在构建模型后创建 Trainer 时会再设一次 seed，因此即使数据 seed 相同，两边在训练中抽取的随机数也可能不同。数据分片的采样顺序由 ``data.gr00t.seed`` 决定。
 
