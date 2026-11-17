@@ -143,6 +143,8 @@ def _run_sglang_server(
 
             server_args_kwargs["master_port"] = dist_port
             server_args = ServerArgs.from_kwargs(**server_args_kwargs)
+            server_args.scheduler_ports = server_args_kwargs["scheduler_ports"]
+            server_args.scheduler_port = server_args.scheduler_ports[0]
             set_global_server_args(server_args)
             from rlinf.hybrid_engines.sglang.common import embodied_scheduler
 
@@ -329,6 +331,12 @@ class SGLangServerProcess:
         server_kwargs = dict(self._server_args_kwargs)
         server_kwargs["host"] = self._bind_host
         server_kwargs["port"] = http_port
+        if self._server_type == "embodied":
+            server_kwargs["scheduler_ports"] = [
+                self._acquire_free_port()
+                for _ in range(server_kwargs.get("dp_size") or 1)
+            ]
+            server_kwargs["scheduler_port"] = server_kwargs["scheduler_ports"][0]
         if self._nnodes > 1:
             # Only multi-node injects these; nnodes=1 passes no
             # multi-node kwargs at all.
@@ -339,6 +347,7 @@ class SGLangServerProcess:
             f"Launching sglang server (version={sglang_version}, "
             f"server_type={self._server_type}): "
             f"http=:{http_port}, dist_port={dist_port}, "
+            f"scheduler_ports={server_kwargs.get('scheduler_ports')}, "
             f"dist_init_addr={self._dist_init_addr}, "
             f"node_rank={self._node_rank}/{self._nnodes}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
