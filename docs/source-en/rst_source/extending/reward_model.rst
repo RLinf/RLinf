@@ -676,6 +676,54 @@ Launch:
      --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
      runner.ckpt_path="${POLICY_CHECKPOINT}"
 
+3.4.3 ManiSkill Training and Validation Results
+...............................................
+
+In a ManiSkill PickCube3View run, PPO trained the MLP policy with the fine-tuned
+VLM Trend reward served by RLinf-managed SGLang. The run started from the
+warmup76 policy checkpoint and used the training recipe from
+`PR #1723 <https://github.com/RLinf/RLinf/pull/1723>`__. It completed 23 PPO updates.
+Checkpoints were saved and evaluated every three updates. Each independent
+evaluation used 1,024 complete episodes of 50 steps in a fresh process.
+In-training validation matched the independent ``success_at_end`` at each
+evaluated checkpoint.
+
+.. list-table:: Independent success rate at the end of an episode
+   :header-rows: 1
+   :widths: 1 1
+
+   * - PPO update
+     - Success rate
+   * - 0
+     - 58.89%
+   * - 3
+     - 68.65%
+   * - 6
+     - 77.25%
+   * - 9
+     - 78.32%
+   * - 12
+     - 78.91%
+   * - 15
+     - 79.79%
+   * - 18
+     - 80.76%
+   * - 21
+     - 81.25%
+
+The reference run with a custom SGLang server also reached 81.25% at update 21.
+
+- **Video inputs.** With frame sampling enabled and disabled, SFT, Hugging Face,
+  and managed SGLang agreed on token IDs, pixels, video grids, and multimodal
+  rotary position indices. A matched set of 64 video windows produced identical
+  labels and rewards through the managed server and the reference server.
+- **Terminal rewards.** Successful terminal steps with an empty video history
+  returned the configured bonus of 20. All 1,172 online comparisons matched the
+  reference ground-truth reward calculation.
+- **Fixed evaluation resets.** Four PickCube3View environments repeated three
+  resets to fixed initial states, with 50 actions between resets. The maximum
+  difference between the initial states was zero.
+
 4. Summary
 ^^^^^^^^^^
 

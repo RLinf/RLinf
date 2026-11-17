@@ -635,6 +635,40 @@ SGLang 路径额外说明：
      --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
      runner.ckpt_path="${POLICY_CHECKPOINT}"
 
+3.4.3 ManiSkill 训练与验证结果
+................................
+
+ManiSkill PickCube3View 实验从 warmup76 policy checkpoint 开始，按 `PR #1723 <https://github.com/RLinf/RLinf/pull/1723>`__ 的训练配置，用 PPO 更新 MLP policy。微调后的 VLM Trend 奖励由 RLinf 托管的 SGLang 提供。训练共完成 23 次更新，每 3 次更新保存 checkpoint 并评估。独立评估在新进程中运行 1,024 个完整回合，每回合 50 步。每个评估点的训练中验证和独立评估得出的 ``success_at_end`` 一致。
+
+.. list-table:: 独立评估的回合结束成功率
+   :header-rows: 1
+   :widths: 1 1
+
+   * - PPO 更新次数
+     - 成功率
+   * - 0
+     - 58.89%
+   * - 3
+     - 68.65%
+   * - 6
+     - 77.25%
+   * - 9
+     - 78.32%
+   * - 12
+     - 78.91%
+   * - 15
+     - 79.79%
+   * - 18
+     - 80.76%
+   * - 21
+     - 81.25%
+
+使用自定义 SGLang 服务的参考实验在第 21 次更新也达到了 81.25%。
+
+- **视频输入。** 分别启用和关闭帧采样后，SFT、Hugging Face 和托管 SGLang 的 token ID、像素、视频 grid 和多模态旋转位置索引一致。对同一组 64 个视频窗口，托管服务与参考服务给出的标签和奖励一致。
+- **终止步奖励。** 环境在终止步报告成功时，即使视频历史为空，也会返回配置的额外奖励 20。训练中的 1,172 次在线比对均与参考奖励计算一致。
+- **固定评估初始状态。** 4 个 PickCube3View 环境执行了 3 次固定初始状态的重置，相邻重置之间执行 50 次动作。各次重置得到的初始状态最大差值为零。
+
 4. 总结
 ^^^^^^^^^^^^
 
