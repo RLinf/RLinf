@@ -235,6 +235,9 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
    * - ``verify_assembly``
      - ``False``
      - 把每个组与默认路径的装配结果逐项比对；见 `检查正确性`_。
+   * - ``chat_template_kwargs``
+     - ``{}``
+     - chat completions 接口使用的 chat 模板参数，例如 GLM 的 ``clear_thinking``。请求中给出其他值会被拒绝。
 
 ``rollout.router``\ （与 :doc:`SGLang Server & Router <sglang_server>` 中的 ``router_server_args`` 相互独立）：
 
@@ -264,17 +267,87 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
      - ``True``
      - 禁止 router 重发请求。
 
+使用 OpenAI chat completions 接口
+---------------------------------
+
+每个 session server 也在 ``/sessions/<session id>/v1/chat/completions`` 提供 OpenAI chat completions 接口。基于 OpenAI API 编写的 agent 可以向它发送消息，不必发送 token id。session server 用 ``agentloop.agentic_tokenizer`` 指定的模型族的 chat 模板把消息渲染成 token id，再像 ``generate`` 请求那样发给引擎。返回时用 OpenAI 的 ``chat.completion`` 格式，推理与工具调用分别解析到 ``reasoning_content`` 和 ``tool_calls``。只有词表里带推理标记的模型（Qwen3、GLM-4.7 等）才拆分推理内容。
+
+使用时，写一个自行执行每条轨迹的 agent loop，写法见下面的示例。创建和关闭 session、上报 reward、丢弃失败的组仍由 agent loop 负责，你的代码只需在已经打开的 session 上执行一条轨迹：
+
+.. code-block:: python
+
+   from openai import AsyncOpenAI
+
+   from rlinf.workers.agent.agent_loop import AgentLoopWorker
+
+
+   class MyChatAgentLoopWorker(AgentLoopWorker):
+       async def run_session_trajectory(self, binding, input_dict, answer):
+           client = AsyncOpenAI(
+               base_url=self.session_server_client.session_base_url(
+                   binding.group_id, binding.session_id
+               ),
+               api_key="EMPTY",
+               max_retries=0,  # a retried request is sampled again
+           )
+           messages = build_messages(input_dict)  # your prompt
+           num_responses = 0
+           for _ in range(MAX_TURNS):
+               response = await client.chat.completions.create(
+                   model="policy", messages=messages, tools=TOOLS
+               )
+               num_responses += 1
+               message = response.choices[0].message
+               messages.append(message.model_dump(exclude_none=True))
+               if not message.tool_calls:
+                   break
+               for call in message.tool_calls:
+                   result = await run_tool(call)  # your tool
+                   messages.append(
+                       {"role": "tool", "tool_call_id": call.id, "content": result}
+                   )
+           reward = score(message.content, answer)  # your reward
+           close_fields = {
+               # One value per response received: one agent per trajectory.
+               "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
+           }
+           return None, close_fields, reward
+
+在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
+
+客户端要设置 ``max_retries=0``：重发的请求会被重新采样，两次回答只有一次参与训练。
+
+session server 会复用之前各轮的 token：一轮的 prompt 是上一轮的 prompt 加上输出 token，再接上新消息；这些输出 token 与引擎生成的完全一致。如果按文本重新渲染历史，得到的 token 可能不同。session server 按以下三种情况处理请求：
+
+- **接续**：请求以已保存的对话开头，后面追加 tool 或 user 消息。只渲染新消息，因此前缀缓存仍能命中。如果 ``clear_thinking`` 为 true，新增 user 消息时会重新渲染整段对话，因为此时模板会去掉之前各轮的思考内容。
+- **重发**：请求与上一次请求相同，说明 agent 没有用到上一轮的回答。session server 把对话回退到那一轮之前。被放弃的那一轮仍留在 payload 中，但不参与训练。
+- **改写**：其他请求按其中的完整消息重新渲染。``prefix_rewritten`` 会统计这类请求，它们的数据照常参与训练。
+
+session server 保存一份自己的对话记录。每个请求都与这份记录比对，请求内容不会覆盖这份记录。如果请求里 assistant 消息的 ``reasoning_content`` 缺失或为空，session server 沿用自己记录中的内容。因此，即使客户端从历史中去掉了思考内容，对话也能接续。
+
+一轮的 prompt 和答案加起来必须放得进 ``runner.seq_length``，也就是 actor 训练的长度。接口会把 ``max_tokens`` 降到剩余长度；prompt 本身放不下时返回 400，错误码是 ``context_length_exceeded``。
+
+以下情况也会返回 400 和 OpenAI 格式的错误：
+
+- ``n`` 大于 1
+- ``temperature``、``top_p`` 或 ``top_k`` 与配置值不同
+- ``tool_choice`` 不是 ``auto`` 或 ``none``
+- 给出了 ``response_format``
+- ``chat_template_kwargs`` 与配置不一致
+
+一个 session 同一时间只处理一个请求。上一个请求还没返回时再发请求，会得到 409。
+
 在其他 runner 上使用
 --------------------
 
 session server 本身不依赖异步训练，目前只有异步 runner 接入了它。其他 runner（比如同步的 agent runner）要接入，需要完成以下工作：
 
-- 启动 router 和 session server，并注册各引擎。agent runner 已为此留好启动钩子。钩子返回 session server 的 URL 后，agent loop 改走这条路径。
+- 启动 router 和 session server，并注册各引擎。agent runner 已为此留好启动钩子。钩子返回 session server 的 URL 后，agent loop 改为向 session server 发请求。
 - 监视 session server，出错时结束 run。
 - 每次权重同步后，把各引擎加载的版本发给 session server。
 - 每一步收集一次 session server 的指标。
 - 把 payload channel 传给 actor。
-- 把每个组的元数据转成 actor 可以取数的交付对象，并删除被丢弃组的数据。
+- 每个组完成后，告诉 actor 到哪里取这个组的数据，并删除被丢弃组的数据。
 
 在异步路径上，最后一项由 buffer worker 完成。同步 runner 不应使用 buffer worker：buffer worker 会超量投放，让生成领先于训练，而同步训练不允许这样。还要去掉配置校验中要求 ``runner.async_mode`` 的检查。这些改动都没有在异步 runner 之外测试过。
 
@@ -282,7 +355,10 @@ session server 本身不依赖异步训练，目前只有异步 runner 接入了
 ----
 
 - 要求异步 runner、Megatron actor、SGLang server 后端和 Search-R1 agent。
-- agent 可以附带 ``extra_fields_train``。按轮、按轨迹或按组附带的其他额外字段，session server 一律拒绝。
-- ``agentloop.print_outputs`` 只在开启 ``verify_assembly`` 时生效。agent loop 在装配时打印，而在这条路径上只有检查时才装配。
+- chat completions 接口不支持真正的流式输出。``stream: true`` 时，整轮结果在一个 chunk 中返回，随后是 ``[DONE]``。
+- chat completions 接口不支持 ``tool_choice: required``、指定函数和 ``response_format``，并忽略 ``seed``。
+- ``session_server.verify_assembly`` 只适用于发送 token id 的 agent loop。开启它时，chat completions 接口会拒绝所有请求。
+- agent 可以附带 ``extra_fields_train``；其他按轮、按轨迹或按组的额外字段，session server 一律拒绝。
+- ``agentloop.print_outputs`` 只在开启 ``verify_assembly`` 时生效：agent loop 在装配训练数据时打印，而使用 session server 时，只有开启这项检查才会在 agent loop 里装配。
 - 只支持 HTTP（``session_server.type: http``）。
 - session server 退出时 run 会结束，不会自动重启。

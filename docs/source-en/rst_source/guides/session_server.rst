@@ -27,7 +27,7 @@ Add two blocks to an asynchronous agentic config:
 .. code-block:: yaml
 
    session_server:
-     enable: true          # agents talk to session servers
+     enable: true          # agents send generate requests to session servers
      num_servers: 1        # session servers, spread over the rollout nodes
      payload_shards: 1     # trajectory stores per session server
 
@@ -39,7 +39,8 @@ Only ``enable`` is required; the other values above are the defaults.
 
 At launch, the entry script starts three components on the rollout nodes:
 
-- the **session servers**, HTTP services that the agent loop talks to;
+- the **session servers**, HTTP services that the agent loop sends its
+  requests to;
 - one **payload channel** per shard, the store that holds the recorded
   trajectories;
 - one **SGLang router**, which every engine registers with.
@@ -308,6 +309,10 @@ Configuration Reference
      - ``False``
      - Checks each group against the default-path assembly; see
        `Check Correctness`_.
+   * - ``chat_template_kwargs``
+     - ``{}``
+     - Chat template arguments for the chat completions endpoint, such as
+       GLM's ``clear_thinking``. Requests with other values are rejected.
 
 ``rollout.router`` (separate from the ``router_server_args`` block in
 :doc:`SGLang Server & Router <sglang_server>`):
@@ -340,6 +345,112 @@ Configuration Reference
      - ``True``
      - Stops the router from resending requests.
 
+Use the OpenAI Chat Completions Endpoint
+----------------------------------------
+
+Each session server also serves the OpenAI chat completions API at
+``/sessions/<session id>/v1/chat/completions``. Agents built on the OpenAI
+API can send it messages instead of token ids. The session server renders
+the messages into token ids with the chat template of the model family set
+by ``agentloop.agentic_tokenizer``. It sends them to the engine the same way
+as a ``generate`` request and returns an OpenAI ``chat.completion``
+response, with reasoning and tool calls parsed into ``reasoning_content``
+and ``tool_calls``. Reasoning is split out only for models whose tokenizer
+has reasoning markers, such as Qwen3 and GLM-4.7.
+
+To use it, write an agent loop that runs each trajectory itself, as in the
+example below. The agent loop still opens and closes the sessions, reports
+rewards, and drops failed groups; your code only runs one trajectory on a
+session that is already open:
+
+.. code-block:: python
+
+   from openai import AsyncOpenAI
+
+   from rlinf.workers.agent.agent_loop import AgentLoopWorker
+
+
+   class MyChatAgentLoopWorker(AgentLoopWorker):
+       async def run_session_trajectory(self, binding, input_dict, answer):
+           client = AsyncOpenAI(
+               base_url=self.session_server_client.session_base_url(
+                   binding.group_id, binding.session_id
+               ),
+               api_key="EMPTY",
+               max_retries=0,  # a retried request is sampled again
+           )
+           messages = build_messages(input_dict)  # your prompt
+           num_responses = 0
+           for _ in range(MAX_TURNS):
+               response = await client.chat.completions.create(
+                   model="policy", messages=messages, tools=TOOLS
+               )
+               num_responses += 1
+               message = response.choices[0].message
+               messages.append(message.model_dump(exclude_none=True))
+               if not message.tool_calls:
+                   break
+               for call in message.tool_calls:
+                   result = await run_tool(call)  # your tool
+                   messages.append(
+                       {"role": "tool", "tool_call_id": call.id, "content": result}
+                   )
+           reward = score(message.content, answer)  # your reward
+           close_fields = {
+               # One value per response received: one agent per trajectory.
+               "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
+           }
+           return None, close_fields, reward
+
+Launch this class in your entry script instead of the agent loop that sends
+token ids, the way ``examples/agent/searchr1/train.py`` launches the Search-R1
+agent loop.
+``idx_to_sub_traj`` is needed when ``algorithm.loss_scales`` includes
+``agent_level``.
+
+Set ``max_retries=0`` on the client. A retried request is sampled again,
+and only one of the two answers is trained.
+
+The session server reuses the tokens of earlier turns. A turn's prompt is the
+previous turn's prompt and output tokens, exactly as the engine produced
+them, followed by the new messages. Rendering the history again from text
+could give different tokens. The session server handles a request in one of
+three ways:
+
+- **Continue.** The request starts with the stored conversation and adds tool
+  or user messages. Only the new messages are rendered, so the prefix cache
+  still hits. With ``clear_thinking: true``, a new user message makes the
+  server render the whole conversation, because the template then drops
+  earlier reasoning.
+- **Retry.** The request repeats the previous request, so the agent never
+  used the previous answer. The server rolls the conversation back to before
+  that turn. The abandoned turn stays in the payload but is not trained.
+- **Rewrite.** Any other request is rendered in full from its messages.
+  ``prefix_rewritten`` counts these requests, and their data is trained as
+  usual.
+
+The session server keeps its own copy of the conversation. It compares each
+request with this copy and never overwrites the copy with the request. If a
+request leaves out an assistant's ``reasoning_content`` or sends it empty,
+the server keeps its own. A client that drops reasoning from its history
+therefore still continues the conversation.
+
+A turn's prompt and answer together must fit in ``runner.seq_length``, the
+length the actor trains on. The endpoint lowers ``max_tokens`` to the remaining
+length, and rejects a request whose prompt alone does not fit with a 400 and
+the code ``context_length_exceeded``.
+
+The endpoint also rejects the following with a 400 and an OpenAI error body:
+
+- ``n`` above 1;
+- ``temperature``, ``top_p``, or ``top_k`` different from the config;
+- ``tool_choice`` other than ``auto`` or ``none``;
+- ``response_format``;
+- ``chat_template_kwargs`` different from the config.
+
+A session handles one request at a time. A request sent while another one is
+still running gets a 409.
+
 Use It from Another Runner
 --------------------------
 
@@ -349,12 +460,13 @@ agent runner, must:
 
 - launch the router and the session servers, and register the engines.
   The agent runner has a startup hook for this. When the hook returns the
-  session server URLs, the agent loop switches to this path;
+  session server URLs, the agent loop sends its requests to the session
+  servers;
 - watch the session servers, so a failure ends the run;
 - send the session servers the loaded weight versions after each sync;
 - collect the session server metrics every step;
 - pass the payload channels to the actor;
-- turn each group's metadata into a delivery the actor can fetch, and delete
+- for each finished group, tell the actor where to fetch its data, and delete
   the data of every group it drops.
 
 On the asynchronous path, the buffer worker does the last item. A
@@ -367,10 +479,17 @@ Limitations
 
 - Requires the asynchronous runner, a Megatron actor, the SGLang server
   backend, and the Search-R1 agent.
+- The chat completions endpoint has no real streaming. With
+  ``stream: true``, the whole turn comes back in one chunk, followed by
+  ``[DONE]``.
+- The chat completions endpoint does not support ``tool_choice: required``,
+  named functions, or ``response_format``, and it ignores ``seed``.
+- ``session_server.verify_assembly`` works only with agent loops that send
+  token ids. With it on, the chat completions endpoint rejects every request.
 - Agents can attach ``extra_fields_train``. Other per-turn, per-trajectory,
   and per-group extra fields are rejected.
 - ``agentloop.print_outputs`` works only with ``verify_assembly`` on. The
-  agent loop prints while it assembles, which on this path happens only for
-  the check.
+  agent loop prints while it assembles training data, and with the session
+  server it assembles only for that check.
 - HTTP is the only transport (``session_server.type: http``).
 - If a session server dies, the run ends. Nothing restarts it.
