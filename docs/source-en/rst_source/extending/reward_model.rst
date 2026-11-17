@@ -692,17 +692,6 @@ At update 21, both the managed SGLang run and the custom SGLang reference
 reached 81.25%. In-training validation matched the independent
 ``success_at_end`` at each evaluated checkpoint.
 
-- **Video inputs.** With frame sampling enabled and disabled, SFT, Hugging Face,
-  and managed SGLang agreed on token IDs, pixels, video grids, and multimodal
-  rotary position indices. A matched set of 64 video windows produced identical
-  labels and rewards through the managed server and the reference server.
-- **Terminal rewards.** Successful terminal steps with an empty video history
-  returned the configured bonus of 20. All 1,172 online comparisons matched the
-  reference ground-truth reward calculation.
-- **Fixed evaluation resets.** Four PickCube3View environments repeated three
-  resets to fixed initial states, with 50 actions between resets. The maximum
-  difference between the initial states was zero.
-
 4. Summary
 ^^^^^^^^^^
 
