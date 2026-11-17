@@ -183,7 +183,6 @@ class DexJoCoEnv(gym.Env):
         self._terminated = np.zeros(self.num_envs, dtype=bool)
         self._truncated = np.zeros(self.num_envs, dtype=bool)
         self._success = np.zeros(self.num_envs, dtype=bool)
-        self._camera_images = {}
         self._image_obs = {}
 
         self.video_cfg = cfg.video_cfg
@@ -267,29 +266,20 @@ class DexJoCoEnv(gym.Env):
         infos["episode"] = to_tensor(episode_info)
         return infos
 
-    def _update_images(self, env_idx: np.ndarray) -> None:
+    def _update_images(self) -> None:
         def images(camera: str) -> torch.Tensor:
-            frames = torch.from_numpy(
-                np.stack([self.current_raw_obs[idx][camera] for idx in env_idx])
+            return torch.from_numpy(
+                np.stack([obs[camera] for obs in self.current_raw_obs])
             )
-            if camera not in self._camera_images:
-                return frames
-            # Copy so observations returned earlier keep their frames.
-            batch = self._camera_images[camera].clone()
-            batch[env_idx] = frames
-            return batch
 
-        self._camera_images = {
-            camera: images(camera) for camera in self.cfg.camera_names
-        }
-        cameras = [self._camera_images[camera] for camera in self.cfg.camera_names]
+        # Fresh batches preserve the frames in observations returned earlier.
+        cameras = [images(camera) for camera in self.cfg.camera_names]
         self._image_obs = {"main_images": cameras[0]}
         if len(cameras) > 1:
             # wrist_images feeds the OpenPI transforms, extra_view_images the CNN encoders.
-            self._image_obs["wrist_images"] = (
-                torch.stack(cameras[1:], dim=1) if self.dual_arm else cameras[1]
-            )
-            self._image_obs["extra_view_images"] = torch.stack(cameras[1:], dim=1)
+            wrists = torch.stack(cameras[1:], dim=1)
+            self._image_obs["wrist_images"] = wrists if self.dual_arm else cameras[1]
+            self._image_obs["extra_view_images"] = wrists
 
     def _wrap_obs(self, obs_list: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -323,14 +313,11 @@ class DexJoCoEnv(gym.Env):
             num_reset_states = len(env_idx)
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
-        # Start every reset before collecting any, so the subprocesses run together.
-        for idx, seed in zip(env_idx, reset_state_ids):
-            self.env.workers[idx].send(None, seed=int(seed))
-        for idx in env_idx:
-            raw_obs, info = self.env.workers[idx].recv()
-            self.current_raw_obs[idx] = raw_obs
-            self.current_info_list[idx] = info
-        self._update_images(env_idx)
+        raw_obs, info_lists = self.env.reset(id=env_idx, seed=reset_state_ids.tolist())
+        for i, idx in enumerate(env_idx):
+            self.current_raw_obs[idx] = raw_obs[i]
+            self.current_info_list[idx] = info_lists[i]
+        self._update_images()
         self._terminated[env_idx] = False
         self._truncated[env_idx] = False
         self._success[env_idx] = False
@@ -356,15 +343,12 @@ class DexJoCoEnv(gym.Env):
             raw_obs, reward, terminated, truncated, info_lists = self.env.step(
                 actions[active], id=active
             )
-            refreshed = []
             for i, idx in enumerate(active):
                 # Reuse cached frames between image refreshes.
                 self.current_raw_obs[idx] = {**self.current_raw_obs[idx], **raw_obs[i]}
                 self.current_info_list[idx] = info_lists[i]
-                if self.cfg.camera_names[0] in raw_obs[i]:
-                    refreshed.append(idx)
-            if refreshed:
-                self._update_images(np.array(refreshed))
+            if any(self.cfg.camera_names[0] in obs for obs in raw_obs):
+                self._update_images()
             self._elapsed_steps[active] += 1
             self._terminated[active] = terminated
             self._truncated[active] = truncated | (
