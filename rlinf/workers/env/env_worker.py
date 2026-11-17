@@ -63,6 +63,8 @@ class EnvWorker(Worker):
 
         self.env_list = []
         self.eval_env_list = []
+        self._world_model_server_urls: list[str] | None = None
+        self._envs_built = False
 
         self.last_obs_list = []
         self.last_intervened_info_list = []
@@ -213,6 +215,15 @@ class EnvWorker(Worker):
         """Set the trajectory step used to correlate distributed events."""
         self._trajectory_step = global_step
 
+    def set_world_model_server_urls(self, urls) -> None:
+        """Receive the world-model server URLs from the driver; call before ``init_worker``."""
+        if self._envs_built:
+            raise RuntimeError(
+                "world-model server URLs cannot change after init_worker: the envs "
+                f"already hold their address; got {list(urls)}"
+            )
+        self._world_model_server_urls = list(urls)
+
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
@@ -222,6 +233,18 @@ class EnvWorker(Worker):
         )
 
         self.update_env_cfg()
+
+        if (
+            self.enable_train
+            and self.cfg.env.train.get("backend") == "remote"
+            and not self._world_model_server_urls
+        ):
+            raise RuntimeError(
+                "env.train.backend is remote, so the driver must call "
+                "env_group.set_world_model_server_urls(urls) before init_workers(); "
+                f"got {self._world_model_server_urls}"
+            )
+        self._envs_built = True
 
         if self.enable_train:
             train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
@@ -334,6 +357,11 @@ class EnvWorker(Worker):
 
     def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
         env_list = []
+        # Same rule as SGLangEmbodiedWorker: every stage of a worker shares one server.
+        server_kwargs = {}
+        if env_cfg.get("backend") == "remote":
+            urls = self._world_model_server_urls
+            server_kwargs["server_url"] = urls[self._rank % len(urls)]
 
         for stage_id in range(self.stage_num):
             env = env_cls(
@@ -342,6 +370,7 @@ class EnvWorker(Worker):
                 seed_offset=self._rank * self.stage_num + stage_id,
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
+                **server_kwargs,
             )
             if (
                 self.cfg.env.get("delay_sampler", None)
@@ -1380,3 +1409,16 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return eval_metrics
+
+
+def push_world_model_server_urls(cfg: DictConfig, env_group) -> None:
+    """Hand ``env.train.remote.server_urls`` to every env worker before ``init_workers``.
+
+    The driver owns the addresses, so a later launcher can start the servers here
+    and push their URLs instead without the env workers changing.
+    """
+    train_cfg = cfg.env.get("train", None)
+    if train_cfg is None or train_cfg.get("backend") != "remote":
+        return
+    urls = list(train_cfg.remote.server_urls)
+    env_group.set_world_model_server_urls(urls).wait()

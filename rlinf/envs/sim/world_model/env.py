@@ -54,6 +54,7 @@ class WorldModelEnv:
         total_num_processes,
         record_metrics=True,
         worker_info: Optional[WorkerInfo] = None,
+        server_url: Optional[str] = None,
     ):
         backend = cfg.get("backend", None) or get_backend_name(
             getattr(cfg, "env_type", None)
@@ -136,9 +137,13 @@ class WorldModelEnv:
         self.update_reset_state_ids()
 
         # Generation geometry is a property of the model, so it comes from the backend.
-        self.backend: WorldModelBackend = self._backend_cls(
-            self.cfg, self._get_runtime_device()
-        )
+        # Only a served backend takes an address; local backends keep (cfg, device).
+        if server_url is not None:
+            self.backend: WorldModelBackend = self._backend_cls(
+                self.cfg, self._get_runtime_device(), server_url=server_url
+            )
+        else:
+            self.backend = self._backend_cls(self.cfg, self._get_runtime_device())
         self.chunk = self.backend.chunk  # Ta
         self.condition_frame_length = self.backend.condition_frame_length  # To
         self.image_size = self.backend.image_size

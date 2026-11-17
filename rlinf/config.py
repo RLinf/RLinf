@@ -1220,6 +1220,23 @@ def validate_embodied_cfg(cfg):
                     f"Expected env.{split}.{env_key} to equal the policy's "
                     f"{model_key} ({model_value}), got {env_value}."
                 )
+        if env_cfg.get("backend") != "remote":
+            continue
+        if split == "eval":
+            raise ValueError(
+                "Expected a local world-model backend for env.eval; "
+                "backend=remote is only supported for env.train, got 'remote'."
+            )
+        urls = OmegaConf.select(env_cfg, "remote.server_urls", default=None)
+        if (
+            not urls
+            or isinstance(urls, str)
+            or not all(isinstance(url, str) and url.strip() for url in urls)
+        ):
+            raise ValueError(
+                "Expected env.train.remote.server_urls to be a non-empty list of "
+                f"URL strings for backend=remote, got {urls!r}."
+            )
     if model_type == SupportedModel.PSI0:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "Psi0 SIMPLE requires rollout.pipeline_stage_num=1: "

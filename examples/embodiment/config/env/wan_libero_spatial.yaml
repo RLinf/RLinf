@@ -53,16 +53,16 @@ num_frames: 13               # total number of frames to encode = condition_fram
 
 # Read when backend: remote
 remote:
-  server_url: null
+  adapter: videos_sync         # registered name; vllm-omni's /v1/videos/sync
+  server_urls: []              # the driver hands these out; env worker `rank` uses server_urls[rank % len]
   model: null                  # the served model id, as the endpoint spells it
-  transport: videos_sync
   num_inference_steps: 50
   fps: 24
   prompt: ""
   request_timeout_s: 300
-  warmup_timeout_s: 1800       # first request per output shape only; it pays a kernel build
+  warmup_timeout_s: 1800       # first request only; it pays a kernel build
   max_retries: 2
-  step_budget_s: 900           # wall-clock bound on a step, retry count is not enough
+  retry_backoff_s: 1.0
 
 reward_model:
   type: ResnetRewModel

@@ -16,11 +16,20 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
+import uuid
+from pathlib import Path
+
 import numpy as np
+import pytest
 import torch
 from omegaconf import OmegaConf
 
+import rlinf.workers.env.env_worker as env_worker_module
 from rlinf.envs.sim.world_model import registry
+from rlinf.envs.sim.world_model.backend.remote import RemoteWorldModelBackend
+from rlinf.workers.env.env_worker import EnvWorker, push_world_model_server_urls
 
 
 class _ConstantRewardModel(torch.nn.Module):
@@ -263,3 +272,459 @@ def test_bwm_backend_rolls_its_condition_window(monkeypatch):
     assert second["action"][0, 0].eq(0.0).all()
     assert second["action"][0, 1:9].eq(0.5).all()
     assert second["action"][0, 9:].eq(1.0).all()
+
+
+# mp4 is lossy, so uniform gray levels are compared within this tolerance.
+_GRAY_ATOL = 4.0
+
+
+def _remote_cfg(chunk=8, max_retries=1, adapter="videos_sync"):
+    return OmegaConf.create(
+        {
+            "chunk": chunk,
+            "condition_frame_length": 5,
+            "num_frames": 5 + chunk,
+            "image_size": [64, 64],
+            "retain_action": True,
+            "remote": {
+                "adapter": adapter,
+                "model": "bwm",
+                "prompt": "",
+                "num_inference_steps": 4,
+                "fps": 24,
+                "request_timeout_s": 30,
+                "warmup_timeout_s": 30,
+                "max_retries": max_retries,
+                "retry_backoff_s": 0.0,
+            },
+        }
+    )
+
+
+def _gray_mp4(levels):
+    import io
+
+    import imageio.v2 as imageio
+
+    buf = io.BytesIO()
+    writer = imageio.get_writer(buf, format="mp4", fps=24, quality=8)
+    for level in levels:
+        writer.append_data(np.full((64, 64, 3), level, dtype=np.uint8))
+    writer.close()
+    return buf.getvalue()
+
+
+def _gray_levels(mp4: bytes) -> np.ndarray:
+    import io
+
+    import imageio.v3 as iio
+
+    frames = iio.imread(io.BytesIO(mp4), extension=".mp4", plugin="pyav")
+    return np.asarray(frames, dtype=np.float32).mean(axis=(1, 2, 3))
+
+
+_SERVED = [15 * t + 10 for t in range(13)]
+
+
+def _open_sample_session(backend):
+    window = [torch.full((3, 1, 64, 64), 40 * k / 255 * 2 - 1) for k in range(5)]
+    history = torch.stack([torch.full((7,), 0.1 * i) for i in range(5)])
+    backend.open_session([0], [window], history[None], seeds=[7])
+
+
+def _chunk(length):
+    return torch.stack([torch.full((7,), 1.0 + j) for j in range(length)])[None]
+
+
+def test_remote_backend_sends_the_sample_request_and_rolls_forward():
+    import json
+
+    from _fake_http_server import FakeHTTPServer, parse_multipart
+
+    with FakeHTTPServer([(200, "video/mp4", _gray_mp4(_SERVED))]) as server:
+        backend = RemoteWorldModelBackend(
+            _remote_cfg(), torch.device("cpu"), server.url
+        )
+        _open_sample_session(backend)
+        frames = backend.generate([0], _chunk(8))
+
+    (request,) = server.requests
+    assert request["path"] == "/v1/videos/sync"
+    fields, files = parse_multipart(request["content_type"], request["body"])
+    assert {k: fields[k] for k in ("num_frames", "seed", "size", "fps", "model")} == {
+        "num_frames": "13",
+        "seed": "7",
+        "size": "64x64",
+        "fps": "24",
+        "model": "bwm",
+    }
+    assert fields["guidance_scale"] == "1.0"
+    action = np.array(json.loads(fields["extra_params"])["action"])
+    assert action.shape == (13, 7)
+    np.testing.assert_allclose(action[:5, 0], [0.0, 0.1, 0.2, 0.3, 0.4], atol=1e-6)
+    np.testing.assert_allclose(action[5:, 0], np.arange(1, 9))
+    filename, content, content_type = files["input_reference"]
+    assert (filename, content_type) == ("history.mp4", "video/mp4")
+    np.testing.assert_allclose(
+        _gray_levels(content), [0, 40, 80, 120, 160], atol=_GRAY_ATOL
+    )
+
+    assert frames.shape == (1, 3, 8, 64, 64)
+    got = ((frames[0].mean(dim=(0, 2, 3)) + 1) / 2 * 255).numpy()
+    np.testing.assert_allclose(got, _SERVED[5:], atol=_GRAY_ATOL)
+    session = backend._sessions[0]
+    window = [frame.astype(np.float32).mean() for frame in session["frames"]]
+    np.testing.assert_allclose(window, [0] + _SERVED[9:], atol=_GRAY_ATOL)
+    assert session["actions"][0].eq(0.0).all()
+    np.testing.assert_allclose(session["actions"][1:, 0], [5, 6, 7, 8])
+    assert session["step_id"] == 1
+
+
+def test_remote_backend_pads_actions_to_the_latent_grid():
+    import json
+
+    from _fake_http_server import FakeHTTPServer, parse_multipart
+
+    with FakeHTTPServer([(200, "video/mp4", _gray_mp4(_SERVED))]) as server:
+        backend = RemoteWorldModelBackend(
+            _remote_cfg(chunk=6), torch.device("cpu"), server.url
+        )
+        _open_sample_session(backend)
+        frames = backend.generate([0], _chunk(6))
+
+    (request,) = server.requests
+    fields, _ = parse_multipart(request["content_type"], request["body"])
+    assert fields["num_frames"] == "13"
+    action = np.array(json.loads(fields["extra_params"])["action"])
+    assert action.shape == (13, 7)
+    np.testing.assert_allclose(action[11:], np.full((2, 7), 6.0))
+    # The frames of the two padded actions are not part of the chunk.
+    got = ((frames[0].mean(dim=(0, 2, 3)) + 1) / 2 * 255).numpy()
+    np.testing.assert_allclose(got, _SERVED[5:11], atol=_GRAY_ATOL)
+
+
+def test_remote_backend_retry_resends_the_same_step_once():
+    from _fake_http_server import FakeHTTPServer, parse_multipart
+
+    responses = [(503, "text/plain", b"busy"), (200, "video/mp4", _gray_mp4(_SERVED))]
+    with FakeHTTPServer(responses) as server:
+        backend = RemoteWorldModelBackend(
+            _remote_cfg(), torch.device("cpu"), server.url
+        )
+        _open_sample_session(backend)
+        backend.generate([0], _chunk(8))
+
+    first, second = (
+        parse_multipart(r["content_type"], r["body"]) for r in server.requests
+    )
+    assert first == second
+    assert backend._sessions[0]["step_id"] == 1
+
+
+def test_remote_backend_exhausted_retries_leave_the_session_unchanged():
+    from _fake_http_server import FakeHTTPServer
+
+    with FakeHTTPServer([(503, "text/plain", b"busy")]) as server:
+        backend = RemoteWorldModelBackend(
+            _remote_cfg(), torch.device("cpu"), server.url
+        )
+        _open_sample_session(backend)
+        before = backend._sessions[0]
+        frames = [f.copy() for f in before["frames"]]
+        actions = before["actions"].clone()
+        with pytest.raises(RuntimeError, match="503"):
+            backend.generate([0], _chunk(8))
+
+    assert len(server.requests) == 2
+    after = backend._sessions[0]
+    assert all(np.array_equal(a, b) for a, b in zip(after["frames"], frames))
+    assert torch.equal(after["actions"], actions)
+    assert after["step_id"] == 0
+
+
+def test_remote_backend_rejects_an_unregistered_adapter():
+    cfg = _remote_cfg(adapter="nope")
+    with pytest.raises(ValueError, match=r"available: \['videos_sync'\]"):
+        RemoteWorldModelBackend(cfg, torch.device("cpu"), "http://127.0.0.1:1")
+
+
+class _ServedBackend(RemoteWorldModelBackend):
+    """The remote backend with a constant scorer, so no reward checkpoint is needed."""
+
+    @staticmethod
+    def load_reward_model(cfg):
+        return _ConstantRewardModel(0.0)
+
+    def reward_instructions(self, env):
+        return None
+
+
+def _served_env_cfg(data_dir) -> dict:
+    """A world-model env on the remote backend: chunk 2 after a 5-frame window."""
+    frame = {
+        "image": np.zeros((64, 64, 3), dtype=np.uint8),
+        "task": "adjust the bottle",
+        "delta_action": np.zeros(14, dtype=np.float32),
+    }
+    for episode in range(2):
+        np.save(Path(data_dir) / f"episode_{episode}.npy", np.array([frame, frame]))
+    return {
+        "env_type": "world_model",
+        "backend": "remote",
+        "wm_env_type": "robotwin",
+        "seed": 0,
+        "auto_reset": True,
+        "ignore_terminations": True,
+        "max_episode_steps": 4,
+        "chunk": 2,
+        "action_dim": 14,
+        "reward_coef": 1.0,
+        "initial_image_path": str(data_dir),
+        "enable_kir": False,
+        "use_fixed_reset_state_ids": True,
+        "group_size": 1,
+        "video_cfg": {"save_video": False},
+        "condition_frame_length": 5,
+        "num_frames": 7,
+        "image_size": [64, 64],
+        "remote": {
+            "adapter": "videos_sync",
+            "model": "bwm",
+            "request_timeout_s": 30,
+            "warmup_timeout_s": 30,
+            "max_retries": 0,
+        },
+    }
+
+
+# 7 frames lie off the 4n+1 grid, so the adapter asks for 9.
+_SERVED_9 = _gray_mp4([15 * t + 10 for t in range(9)])
+
+
+class _ConstructorRecordingBackend(_BlankFrameBackend):
+    def __init__(self, cfg, device, **kwargs):
+        super().__init__(cfg, device)
+        self.kwargs = kwargs
+
+
+@pytest.mark.parametrize("server_url", [None, "http://wm-1:8091"])
+def test_world_model_env_passes_a_remote_server_url_only_when_given(
+    tmp_path, monkeypatch, server_url
+):
+    from rlinf.envs.sim.world_model.env import WorldModelEnv
+
+    monkeypatch.setitem(
+        registry._REGISTRY, "unit_test_recording", _ConstructorRecordingBackend
+    )
+    cfg = OmegaConf.create(
+        {
+            **_served_env_cfg(tmp_path),
+            "backend": "unit_test_recording",
+            "unit_test_reward": 0.0,
+        }
+    )
+    env = WorldModelEnv(
+        cfg, num_envs=1, seed_offset=0, total_num_processes=1, server_url=server_url
+    )
+
+    expected = {} if server_url is None else {"server_url": server_url}
+    assert env.backend.kwargs == expected
+
+
+def test_world_model_env_steps_against_the_remote_server_it_was_given(
+    tmp_path, monkeypatch
+):
+    from _fake_http_server import FakeHTTPServer
+
+    from rlinf.envs.sim.world_model.env import WorldModelEnv
+
+    monkeypatch.setitem(registry._REGISTRY, "remote", _ServedBackend)
+    cfg = OmegaConf.create(_served_env_cfg(tmp_path))
+    with FakeHTTPServer([(200, "video/mp4", _SERVED_9)]) as server:
+        env = WorldModelEnv(
+            cfg, num_envs=1, seed_offset=0, total_num_processes=1, server_url=server.url
+        )
+        env.reset()
+        env.chunk_step(torch.zeros(1, 2, 14))
+
+    assert [r["path"] for r in server.requests] == ["/v1/videos/sync"]
+
+
+class _RecordingEnv:
+    """Stands in for an env class and keeps the keywords it was built with."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = {
+            k: kwargs[k] for k in ("seed_offset", "server_url") if k in kwargs
+        }
+
+
+class _PlacementEnvWorker(EnvWorker):
+    """A real EnvWorker whose env classes are swapped inside the worker process."""
+
+    def __init__(self, cfg, served_env: bool = False):
+        super().__init__(cfg)
+        if served_env:
+            registry._REGISTRY["remote"] = _ServedBackend
+        else:
+            env_worker_module.get_env_cls = lambda env_type, env_cfg=None: _RecordingEnv
+
+    def env_kwargs(self) -> dict:
+        return {
+            "train": [env.kwargs for env in self.env_list],
+            "eval": [env.kwargs for env in self.eval_env_list],
+        }
+
+    def step_once(self) -> None:
+        self.env_list[0].chunk_step(torch.zeros(1, 2, 14))
+
+
+def _env_worker_cfg(train: dict, eval_: dict | None = None, *, workers, stages):
+    split = {
+        "total_num_envs": workers * stages,
+        "rollout_epoch": 1,
+        "max_steps_per_rollout_epoch": 2,
+    }
+    env = {"train": {**train, **split}}
+    if eval_ is not None:
+        env["eval"] = {**eval_, **split}
+    return OmegaConf.create(
+        {
+            "cluster": {
+                "num_nodes": 1,
+                "component_placement": {"env": f"0:0-{workers - 1}"},
+            },
+            "runner": {"only_eval": False, "val_check_interval": 1 if eval_ else -1},
+            "rollout": {"pipeline_stage_num": stages},
+            "actor": {"model": {"num_action_chunks": 2}},
+            "env": env,
+        }
+    )
+
+
+def _fake_split(backend: str) -> dict:
+    return {
+        "env_type": "world_model",
+        "backend": backend,
+        "auto_reset": False,
+        "video_cfg": {"save_video": False},
+    }
+
+
+@pytest.fixture(scope="module")
+def placement_cluster():
+    from rlinf.scheduler import Cluster
+
+    # Worker processes unpickle the test worker class by importing this module.
+    tests_root = str(Path(__file__).resolve().parent)
+    previous = os.environ.get("PYTHONPATH")
+    os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [tests_root, previous]))
+    yield Cluster(num_nodes=1)
+    if previous is None:
+        os.environ.pop("PYTHONPATH")
+    else:
+        os.environ["PYTHONPATH"] = previous
+
+
+@contextlib.contextmanager
+def _env_group(cluster, cfg, workers, served_env=False):
+    from rlinf.scheduler import NodePlacementStrategy
+
+    group = _PlacementEnvWorker.create_group(cfg, served_env).launch(
+        cluster,
+        name=f"EnvGroup-{uuid.uuid4().hex[:8]}",
+        placement_strategy=NodePlacementStrategy([0] * workers),
+    )
+    try:
+        yield group
+    finally:
+        group._close()
+
+
+def _call_each_rank(group, method: str, *args):
+    """Call a worker method with plain ``ray.get`` so a raise reaches the test.
+
+    A failed ``WorkerGroup`` call signals the driver to shut the cluster down.
+    """
+    import ray
+
+    return ray.get(
+        [getattr(w.worker, method).remote(*args) for w in group.worker_info_list]
+    )
+
+
+@pytest.mark.placement
+def test_remote_server_urls_reach_every_stage_of_each_env_worker(placement_cluster):
+    cfg = _env_worker_cfg(
+        _fake_split("remote"), _fake_split("wan"), workers=3, stages=2
+    )
+    cfg.env.train.remote = {"server_urls": ["http://url0", "http://url1"]}
+    with _env_group(placement_cluster, cfg, workers=3) as group:
+        push_world_model_server_urls(cfg, group)
+        group.init_worker().wait()
+        kwargs = group.env_kwargs().wait()
+
+    urls = [[env["server_url"] for env in rank["train"]] for rank in kwargs]
+    assert urls == [["http://url0"] * 2, ["http://url1"] * 2, ["http://url0"] * 2]
+    assert all("server_url" not in env for rank in kwargs for env in rank["eval"])
+
+
+@pytest.mark.placement
+def test_local_world_model_envs_get_no_remote_server_url(placement_cluster):
+    cfg = _env_worker_cfg(_fake_split("wan"), _fake_split("wan"), workers=2, stages=1)
+    with _env_group(placement_cluster, cfg, workers=2) as group:
+        push_world_model_server_urls(cfg, group)
+        group.init_worker().wait()
+        kwargs = group.env_kwargs().wait()
+
+    assert all(
+        "server_url" not in env
+        for rank in kwargs
+        for split in rank.values()
+        for env in split
+    )
+
+
+@pytest.mark.placement
+def test_remote_server_urls_must_arrive_before_init_worker(placement_cluster):
+    cfg = _env_worker_cfg(_fake_split("remote"), workers=2, stages=1)
+    with _env_group(placement_cluster, cfg, workers=2) as group:
+        with pytest.raises(RuntimeError, match="set_world_model_server_urls"):
+            _call_each_rank(group, "init_worker")
+
+
+@pytest.mark.placement
+def test_remote_server_urls_are_fixed_once_init_worker_ran(placement_cluster):
+    cfg = _env_worker_cfg(_fake_split("remote"), workers=2, stages=1)
+    with _env_group(placement_cluster, cfg, workers=2) as group:
+        group.set_world_model_server_urls(["http://stale"]).wait()
+        group.set_world_model_server_urls(["http://a", "http://b"]).wait()
+        group.init_worker().wait()
+        with pytest.raises(RuntimeError, match="cannot change"):
+            _call_each_rank(group, "set_world_model_server_urls", ["http://late"])
+        kwargs = group.env_kwargs().wait()
+
+    assert [rank["train"][0]["server_url"] for rank in kwargs] == [
+        "http://a",
+        "http://b",
+    ]
+
+
+@pytest.mark.placement
+def test_an_env_worker_steps_against_the_remote_server_at_its_rank(
+    placement_cluster, tmp_path
+):
+    from _fake_http_server import FakeHTTPServer
+
+    cfg = _env_worker_cfg(_served_env_cfg(tmp_path), workers=2, stages=1)
+    with (
+        FakeHTTPServer([(200, "video/mp4", _SERVED_9)]) as s0,
+        FakeHTTPServer([(200, "video/mp4", _SERVED_9)]) as s1,
+    ):
+        cfg.env.train.remote.server_urls = [s0.url, s1.url]
+        with _env_group(placement_cluster, cfg, workers=2, served_env=True) as group:
+            push_world_model_server_urls(cfg, group)
+            group.init_worker().wait()
+            group.execute_on(1).step_once().wait()
+
+    assert (len(s0.requests), len(s1.requests)) == (0, 1)
