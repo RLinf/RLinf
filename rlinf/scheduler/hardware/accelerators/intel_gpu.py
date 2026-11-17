@@ -241,25 +241,18 @@ class IntelGPUManager(AcceleratorManager):
     @staticmethod
     def _torch_xpu_device_count() -> int:
         """Return the XPU count reported by PyTorch, or zero if unavailable."""
-        try:
-            import torch
+        import torch
 
-            if hasattr(torch, "xpu") and torch.xpu.is_available():
-                return torch.xpu.device_count()
-        except Exception as exc:
-            logger.debug("PyTorch XPU device discovery failed: %s", exc)
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return torch.xpu.device_count()
         return 0
 
     @staticmethod
     def get_num_devices() -> int:
         """Get the number of Intel GPU devices on the node."""
-        try:
-            num_devices = IntelGPUAcceleratorManager.get_current_node_num_accelerators()
-            if num_devices > 0:
-                return num_devices
-        except Exception as exc:
-            logger.debug("Ray Intel GPU device discovery failed: %s", exc)
-
+        num_devices = IntelGPUAcceleratorManager.get_current_node_num_accelerators()
+        if num_devices > 0:
+            return num_devices
         return IntelGPUManager._torch_xpu_device_count()
 
     @staticmethod
@@ -270,20 +263,14 @@ class IntelGPUManager(AcceleratorManager):
     @staticmethod
     def get_accelerator_model() -> str:
         """Get the model of the Intel GPU."""
-        try:
-            model = IntelGPUAcceleratorManager.get_current_node_accelerator_type()
-            if model:
-                return model
-        except Exception as exc:
-            logger.debug("Ray Intel GPU model discovery failed: %s", exc)
+        model = IntelGPUAcceleratorManager.get_current_node_accelerator_type()
+        if model:
+            return model
 
-        try:
-            import torch
+        import torch
 
-            if hasattr(torch, "xpu") and torch.xpu.is_available():
-                return torch.xpu.get_device_name(0)
-        except Exception as exc:
-            logger.debug("PyTorch XPU model discovery failed: %s", exc)
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return torch.xpu.get_device_name(0)
 
         return "Intel-GPU"
 
@@ -314,6 +301,7 @@ class IntelGPUManager(AcceleratorManager):
         if local_rank is not None and local_size is not None:
             # Ray is not an MPI launcher. Without this topology oneCCL can try
             # MPI discovery and hang while inferring local_idx/local_count.
+            env_vars["CCL_PROCESS_LAUNCHER"] = "none"
             env_vars["CCL_LOCAL_RANK"] = local_rank
             env_vars["CCL_LOCAL_SIZE"] = local_size
 
