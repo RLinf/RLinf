@@ -217,7 +217,18 @@ When ``--pico-zmq-addr`` is omitted, the script reads ``R2_PICO_ZMQ_ADDR`` and f
 - **Left and right thumbsticks**: command planar chassis translation (forward/back, left/right strafe) and yaw rotation when the base is enabled.
 - **Menu button**: recalibrate the headset yaw reference; **Ctrl-C** stops the base and exits teleoperation cleanly.
 
-If a recoverable arm fault occurs during teleoperation, the script recovers the controller, holds the arms at their measured positions, and waits until you release and re-squeeze the controller grips before resuming tracking. For configuring ``teleop: pico`` in rollout YAML files, see :doc:`Teleoperation </rst_source/guides/teleoperation>`.
+An arm starts tracking when its grip reaches 0.85 and stops only when the grip drops below 0.75, so a grip held around 0.85 does not switch tracking on and off. If a controller stops sending data or the headset loses track of it, an arm you are not driving stays at the pose where you released it. If you let go of the grip while the controller is lost, the arm follows again as soon as the controller is back; otherwise, release the grip and squeeze it again.
+
+If a recoverable arm fault occurs during teleoperation, the script recovers the arms from the fault, holds them at their measured positions, and resumes tracking only after you release and squeeze the grips again.
+
+To set up ``teleop: pico`` in a rollout YAML, see :doc:`Teleoperation </rst_source/guides/teleoperation>`. In a rollout YAML, the lower release point and the hold when a controller is lost are both off by default. To match the script, set these keys in its ``pico`` block:
+
+.. code-block:: yaml
+
+   pico:
+     control_threshold: 0.85
+     control_release_margin: 0.10    # stop tracking below 0.75
+     pause_on_controller_loss: true
 
 Cluster and Environment Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

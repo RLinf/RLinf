@@ -466,6 +466,8 @@ def _run_pico_teleop(
         "zmq_addr": addr,
         "control_trigger": "grip",
         "control_threshold": 0.85,
+        "control_release_margin": 0.10,
+        "pause_on_controller_loss": True,
         "gripper_trigger": "trigger",
         "gripper_while_idle": True,
         "gripper_close_threshold": 0.5,

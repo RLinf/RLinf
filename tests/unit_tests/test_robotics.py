@@ -3024,6 +3024,46 @@ def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
             pico.disconnect()
 
 
+@pytest.mark.parametrize("pause", [False, True])
+def test_a_pico_arm_pauses_through_a_controller_loss_only_when_enabled(pause):
+    """Unset, losing tracking latches the arm at its measured joints.
+
+    Set, an idle arm keeps the pose it was released at, and a release reported
+    during the loss lets the arm drive as soon as tracking returns.
+    """
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+    sagged = {"joint_positions": np.array([0.29, 0.0, 0.19, 0.0, 0.0, 0.0, 1.0])}
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        pico = _pico_joint(FreeToolKinematics(), pause_on_controller_loss=pause)
+        pico.connect()
+        try:
+            released = _settle(zmq, pico, pico_packet(), lambda r: r["calibrated"])
+            assert not pico.action(released, context).driving
+            assert pico.fault is None
+
+            untracked = pico_packet(right={"orientation": [0.0, 0.0, 0.0, 0.0]})
+            reading = _settle(zmq, pico, untracked, lambda r: r.get("invalid_pose"))
+            hold = pico.action(reading, sagged)
+            assert pico.fault == "right:unavailable" and not hold.driving
+            kept = context if pause else sagged
+            assert np.allclose(hold.parts["arm"], kept["joint_positions"][:6])
+
+            held = pico_packet(right={"grip": 1.0})
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert pico.action(reading, context).driving == pause
+            assert (pico.fault is None) == pause
+        finally:
+            pico.disconnect()
+
+
 def test_pico_gripper_buttons_drive_an_idle_arm_only_when_enabled():
     """Released, the gripper follows its measured opening unless told otherwise."""
     import numpy as np
@@ -3430,6 +3470,30 @@ def test_pico_default_gripper_buttons_remain_independent(
     reading = reader.get_reading()
     expected = (open_, close) if invert else (close, open_)
     assert (reading["grip_close"], reading["grip_open"]) == expected
+
+
+@pytest.mark.parametrize(
+    "margin,held",
+    [
+        (0.0, [True, False, False, False, False]),
+        (0.10, [True, True, True, False, False]),
+    ],
+)
+def test_an_engaged_pico_grip_holds_until_it_falls_below_its_margin(margin, held):
+    """The margin lowers only the release threshold; engaging still needs 0.85."""
+    reader = _pico_reader(control_release_margin=margin)
+    readings = []
+    for grip in (0.90, 0.84, 0.76, 0.74, 0.80):
+        packet = _pico_packet(0, 0, 0, 0, grip=grip)
+        reader._snapshot = lambda packet=packet: packet
+        readings.append(reader.get_reading()["held"])
+    assert readings == held
+
+
+@pytest.mark.parametrize("margin", [-0.1, 0.85])
+def test_a_pico_release_margin_must_leave_a_positive_release_threshold(margin):
+    with pytest.raises(ValueError, match="control_release_margin"):
+        _pico_reader(control_release_margin=margin)
 
 
 def test_pico_bax_reward_profile_uses_the_front_trigger_for_gripper(monkeypatch):
@@ -8717,6 +8781,7 @@ def test_r2_kinematics_adapter_and_pico_joint():
             zmq_addr="tcp://x:1",
             gripper_trigger="trigger",
             gripper_while_idle=True,
+            pause_on_controller_loss=True,
             calibration={
                 "enabled": True,
                 "auto_calibrate_on_start": True,

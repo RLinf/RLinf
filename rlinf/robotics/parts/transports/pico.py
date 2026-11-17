@@ -101,6 +101,9 @@ class PicoExpert:
         hand: str = "right",
         control_trigger: str = "grip",
         control_threshold: float = 0.9,
+        # How far below control_threshold an engaged control must fall to
+        # release, so a grip resting near the threshold does not flicker.
+        control_release_margin: float = 0.0,
         # An analog control that closes the gripper while squeezed and opens it
         # on release; off unless a config names one, such as "trigger".
         gripper_trigger: Optional[str] = None,
@@ -133,6 +136,13 @@ class PicoExpert:
         self.hand = hand
         self.control_trigger = control_trigger
         self.control_threshold = float(control_threshold)
+        self.control_release_margin = float(control_release_margin)
+        if not 0.0 <= self.control_release_margin < self.control_threshold:
+            raise ValueError(
+                "pico.control_release_margin must be at least 0 and below "
+                f"control_threshold={self.control_threshold}, but got "
+                f"{self.control_release_margin}."
+            )
         self.gripper_trigger = gripper_trigger
         self.gripper_close_threshold = float(gripper_close_threshold)
         if gripper_close_button is None and not gripper_trigger:
@@ -349,8 +359,9 @@ class PicoExpert:
             }
             return self._last_reading
 
-        release_threshold = max(0.05, self.control_threshold - 0.10)
-        threshold = release_threshold if self._active else self.control_threshold
+        threshold = self.control_threshold
+        if self._active:
+            threshold -= self.control_release_margin
         held = control_value >= threshold
         if (
             held

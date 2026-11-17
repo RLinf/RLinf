@@ -519,6 +519,13 @@ class PicoJoint(Pico):
         gripper_while_idle: Let the close and open buttons also drive the
             gripper while the arm is idle, released or held after a fault.
             Unset, an idle gripper follows its measured opening.
+        pause_on_controller_loss: Treat a stale link, lost tracking, or a
+            missing calibration as a pause rather than a fault. An idle arm
+            keeps the pose it was released at, and a grip the controller
+            reports released during the loss counts as the release, so the
+            arm drives as soon as the controller returns. Unset, the arm holds
+            its measured joints and drives again only after the grip is
+            released once the controller is back.
         gripper: Whether this arm's action carries a gripper channel.
         side: Which arm this controller drives.
         hold_current_when_inactive: Command the held pose while the grip is
@@ -547,6 +554,7 @@ class PicoJoint(Pico):
         hold_current_when_inactive: bool = True,
         max_joint_lead: Optional[float] = None,
         gripper_while_idle: bool = False,
+        pause_on_controller_loss: bool = False,
         **pico_config: Any,
     ) -> None:
         super().__init__(gripper=gripper, side=side, **pico_config)
@@ -577,6 +585,7 @@ class PicoJoint(Pico):
             )
         self.max_joint_lead = None if max_joint_lead is None else float(max_joint_lead)
         self.gripper_while_idle = bool(gripper_while_idle)
+        self.pause_on_controller_loss = bool(pause_on_controller_loss)
         #: An idle arm keeps its held pose only when it holds one.
         self.APPLIES_WHILE_IDLE = self.hold_current_when_inactive
         self._hand = str(pico_config.get("hand", "right"))
@@ -644,7 +653,7 @@ class PicoJoint(Pico):
         self._preserve = False
         self._held_from = None
         self._held_epoch = None
-        if not reason.endswith(":unavailable"):
+        if not (self.pause_on_controller_loss and reason.endswith(":unavailable")):
             self._idle_joints = None
         self._command = None
 
@@ -701,7 +710,7 @@ class PicoJoint(Pico):
             or reading.get("invalid_pose", False)
         ):
             self.hold_until_released(f"{self._hand}:unavailable")
-            if grip_released_now:
+            if grip_released_now and self.pause_on_controller_loss:
                 self._fault_grip_released = True
         elif self._fault is not None and (
             not reading.get("held", False) or self._fault_grip_released
