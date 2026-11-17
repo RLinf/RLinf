@@ -47,7 +47,7 @@ from rlinf.scheduler import (
     WorkerAddress,
 )
 from rlinf.scheduler.cluster.utils import DistributedRayLogCollector
-from rlinf.scheduler.hardware import AcceleratorType, AcceleratorUtil
+from rlinf.scheduler.hardware import AcceleratorUtil
 from rlinf.scheduler.hardware.accelerators.intel_gpu import IntelGPUManager
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
 from rlinf.scheduler.manager.coll_manager import CollectiveManager
