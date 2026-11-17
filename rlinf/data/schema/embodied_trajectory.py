@@ -447,9 +447,7 @@ class AccumulatorOutput(TrajectoryOutput):
             bootstrap_type=self._cfg.algorithm.get("bootstrap_type", "standard"),
             gamma=self._cfg.algorithm.get("gamma", 1.0),
             previous_dones=previous_dones,
-            bootstrap_non_auto_reset=self._cfg.env.train.get(
-                "bootstrap_non_auto_reset", False
-            ),
+            env_type=self._cfg.env.train.get("env_type"),
         )
         step = TrajectoryStep.from_parts(
             chunk.policy,

@@ -1412,24 +1412,6 @@ def validate_embodied_cfg(cfg):
         validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
-    if not only_eval:
-        train_env_cfg = cfg.get("env", {}).get("train", {})
-        bootstrap_non_auto_reset = train_env_cfg.get("bootstrap_non_auto_reset", False)
-        if not isinstance(bootstrap_non_auto_reset, bool):
-            raise ValueError(
-                "Expected boolean env.train.bootstrap_non_auto_reset, "
-                f"got {bootstrap_non_auto_reset!r}."
-            )
-        if bootstrap_non_auto_reset and (
-            train_env_cfg.get("auto_reset", False)
-            or algorithm_cfg.get("bootstrap_type", "standard") != "standard"
-        ):
-            raise ValueError(
-                "env.train.bootstrap_non_auto_reset=true requires "
-                "auto_reset=false and algorithm.bootstrap_type=standard; "
-                f"got auto_reset={train_env_cfg.get('auto_reset', False)!r}, "
-                f"bootstrap_type={algorithm_cfg.get('bootstrap_type', 'standard')!r}."
-            )
     model_type = SupportedModel(model_cfg.model_type)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "

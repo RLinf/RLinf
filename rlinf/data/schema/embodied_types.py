@@ -314,12 +314,12 @@ class EnvTransition:
         bootstrap_type: str,
         gamma: float,
         previous_dones: torch.Tensor | None = None,
-        bootstrap_non_auto_reset: bool = False,
+        env_type: str | None = None,
     ) -> torch.Tensor | None:
         """Build the reward tensor consumed by trajectory training.
 
         Reward-model scores are weighted into environment rewards first.
-        Truncations receive bootstrap once with auto-reset or explicit opt-in.
+        Bench2Dex also bootstraps standard truncations without auto-reset.
 
         The result has independent storage for later in-place reward updates.
         """
@@ -339,7 +339,7 @@ class EnvTransition:
         terminal = self.truncations if bootstrap_type == "standard" else self.dones
         if not auto_reset:
             if (
-                not bootstrap_non_auto_reset
+                env_type != "bench2dex"
                 or bootstrap_type != "standard"
                 or terminal is None
             ):
@@ -669,7 +669,7 @@ class EnvPart:
         bootstrap_type: str,
         gamma: float,
         previous_dones: torch.Tensor | None = None,
-        bootstrap_non_auto_reset: bool = False,
+        env_type: str | None = None,
     ) -> torch.Tensor | None:
         """Return the training rewards represented by this environment part."""
         return self.transition.compute_rewards(
@@ -680,7 +680,7 @@ class EnvPart:
             bootstrap_type=bootstrap_type,
             gamma=gamma,
             previous_dones=previous_dones,
-            bootstrap_non_auto_reset=bootstrap_non_auto_reset,
+            env_type=env_type,
         )
 
 

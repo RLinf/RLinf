@@ -122,13 +122,11 @@ Run It
 Train a Policy
 ~~~~~~~~~~~~~~
 
-The Task22 and Task64 PPO recipes set
-``env.train.bootstrap_non_auto_reset=true`` with ``auto_reset=false`` and
-``algorithm.bootstrap_type=standard``. A timeout adds the discounted value of
-the final observation to the reward once; terminal transitions and later padding receive
-no bootstrap. Custom configs that use this timeout correction must also set
-``env.train.bootstrap_non_auto_reset=true``. The option defaults to ``false``
-when omitted, leaving reward computation unchanged in other non-auto-reset recipes.
+For ``env_type: bench2dex``, ``auto_reset=false`` with
+``algorithm.bootstrap_type=standard`` adds the discounted value of the final
+observation to the reward at the first timeout action. Terminal transitions and
+later padding receive no bootstrap. This applies automatically to Bench2Dex.
+Bootstrap behavior remains unchanged for other environments and auto-reset runs.
 
 With the Task22 model and asset paths set, start PPO training:
 

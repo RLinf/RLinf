@@ -70,6 +70,7 @@ from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.compat import index_episode_subset_by_id
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.envs import SupportedEnvType
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
@@ -1211,9 +1212,9 @@ def test_infer_obs_batch_size_raises_when_unbatched():
 
 @pytest.mark.parametrize("auto_reset", [False, True])
 @pytest.mark.parametrize("has_value", [False, True])
-@pytest.mark.parametrize("bootstrap_non_auto_reset", [False, True])
+@pytest.mark.parametrize("env_type", [None, *[env.value for env in SupportedEnvType]])
 def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
-    auto_reset, has_value, bootstrap_non_auto_reset
+    auto_reset, has_value, env_type
 ):
     transition = EnvTransition(
         rewards=torch.ones(3, 2),
@@ -1229,16 +1230,17 @@ def test_standard_bootstrap_preserves_terminal_and_nonterminal_rewards(
         bootstrap_type="standard",
         gamma=0.5,
         previous_dones=torch.zeros(3, 2, dtype=torch.bool),
-        bootstrap_non_auto_reset=bootstrap_non_auto_reset,
+        env_type=env_type,
     )
     expected = torch.ones(3, 2)
-    if has_value and (auto_reset or bootstrap_non_auto_reset):
+    if has_value and (auto_reset or env_type == "bench2dex"):
         expected[0, -1] = 3.0
     assert torch.equal(rewards, expected)
     assert torch.equal(transition.rewards, torch.ones(3, 2))
 
 
-def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding():
+@pytest.mark.parametrize("env_type", [None, "bench2dex", "geniesim", "robotwin"])
+def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding(env_type):
     truncations = torch.tensor(
         [
             [False, True, True, True],
@@ -1270,10 +1272,11 @@ def test_nonreset_bootstrap_uses_first_terminal_action_and_skips_padding():
         bootstrap_type="standard",
         gamma=0.5,
         previous_dones=previous,
-        bootstrap_non_auto_reset=True,
+        env_type=env_type,
     )
     expected = torch.zeros(4, 4)
-    expected[0, 1], expected[1, 0] = 2.0, 3.0
+    if env_type == "bench2dex":
+        expected[0, 1], expected[1, 0] = 2.0, 3.0
     assert torch.equal(rewards, expected)
 
 
@@ -2242,12 +2245,13 @@ def test_rollout_materializes_each_epoch_boundary_and_final_value_in_order():
     )
 
 
-def test_nonreset_collector_bootstraps_once_per_episode_after_reset():
+@pytest.mark.parametrize("env_type", [None, "bench2dex", "geniesim", "robotwin"])
+def test_nonreset_collector_bootstraps_once_per_episode_after_reset(env_type):
     cfg = _config(
         env={
             "train": {
                 "auto_reset": False,
-                "bootstrap_non_auto_reset": True,
+                "env_type": env_type,
                 "rollout_epoch": 2,
                 "max_steps_per_rollout_epoch": 3,
             }
@@ -2268,8 +2272,10 @@ def test_nonreset_collector_bootstraps_once_per_episode_after_reset():
             env.bootstrap_values = torch.tensor([[4.0 if chunk == 1 else 9.0]])
             outputs.extend(_collect(collector, _policy(key), env))
     [(_, trajectory)] = outputs
+    terminal_reward = 4.0 if env_type == "bench2dex" else 2.0
     assert torch.equal(
-        trajectory.rewards[:, 0, 0], torch.tensor([1.0, 4.0, 0.0, 1.0, 4.0, 0.0])
+        trajectory.rewards[:, 0, 0],
+        torch.tensor([1.0, terminal_reward, 0.0, 1.0, terminal_reward, 0.0]),
     )
 
 
@@ -2328,9 +2334,9 @@ def test_history_reward_assignment_matches_main_across_chunks():
     assert torch.equal(trajectory.rewards, torch.tensor([[[7.0]], [[7.0]]]))
 
 
-def test_history_reward_assignment_with_explicit_nonreset_bootstrap():
+def test_bench2dex_history_reward_assignment_includes_timeout_bootstrap():
     cfg = _config(
-        env={"train": {"auto_reset": False, "bootstrap_non_auto_reset": True}},
+        env={"train": {"auto_reset": False, "env_type": "bench2dex"}},
         reward={
             "env_reward_weight": 1.0,
             "history_reward_assign": True,

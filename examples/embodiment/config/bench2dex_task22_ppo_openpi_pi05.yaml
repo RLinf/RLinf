@@ -67,7 +67,6 @@ env:
     rollout_epoch: 8
     total_num_envs: 16
     auto_reset: false
-    bootstrap_non_auto_reset: true
     ignore_terminations: false
     skip_intermediate_renders: true
     seed: 0
