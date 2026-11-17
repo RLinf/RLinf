@@ -57,18 +57,18 @@ SuperMimic Evaluation
 
 SuperMimic configs run through ``eval_embodied_agent.py`` like the other
 benchmarks. Pass the checkpoint's ``full_weights.pt`` as ``runner.ckpt_path``;
-``runner.eval_export.output_dir`` chooses where the result tables go. For the
-main training recipe, run:
+``runner.eval_export.output_dir`` chooses where the result tables go. For
+update 6000 of the run in the SuperMimic guide, with its ``RUN_DIR``:
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
+       runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
 A MaxCoord checkpoint also needs ``actor.model.representation=maxcoord``.
-The protocol is in the Evaluate section of
-:doc:`SuperMimic <../../examples/embodied/supermimic>`.
+The protocol, the output files, and push recovery are in
+:doc:`../../examples/embodied/supermimic_eval`.
 
 Config Fallback
 ---------------
@@ -83,7 +83,7 @@ Full launch examples per benchmark:
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/realworld`
 - :doc:`../guides/polaris`
-- :doc:`SuperMimic <../../examples/embodied/supermimic>` (the Evaluate section)
+- :doc:`SuperMimic <../../examples/embodied/supermimic_eval>`
 
 Direct Python Invocation
 ------------------------

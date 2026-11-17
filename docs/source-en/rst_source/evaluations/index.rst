@@ -85,11 +85,10 @@ End-to-end evaluation workflows per benchmark (setup → config → launch → r
      - PolaRiS tabletop manipulation.
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin bimanual manipulation.
-   * - :doc:`SuperMimic <../examples/embodied/supermimic>`
+   * - :doc:`SuperMimic <../examples/embodied/supermimic_eval>`
      - G1 motion tracking (GenCoord and MaxCoord) and knees-bent
-       standing push recovery. Follow the Evaluate section for the
-       checkpoint, the representation override, commands and result
-       interpretation.
+       standing push recovery: the checkpoint to load, the representation
+       override, commands, and the metrics.
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 whole-body humanoid evaluation.
 

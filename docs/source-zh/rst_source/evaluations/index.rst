@@ -85,8 +85,8 @@ Benchmark 指南
      - PolaRiS 桌面操作。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
-   * - :doc:`SuperMimic <../examples/embodied/supermimic>`
-     - G1 动作跟踪（GenCoord 与 MaxCoord）和屈膝站立推力恢复；检查点、表示覆盖项、命令及结果含义见该页“评测”一节。
+   * - :doc:`SuperMimic <../examples/embodied/supermimic_eval>`
+     - G1 动作跟踪（GenCoord 与 MaxCoord）和屈膝站立推力恢复：要加载的检查点、表示覆盖项、命令和指标含义。
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 人形机器人全身评测。
 

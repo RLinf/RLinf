@@ -1,13 +1,15 @@
 SuperMimic: G1 Motion Tracking with a Differentiable World Model
 ================================================================
 
-This guide trains and evaluates a Unitree G1 whole-body motion-tracking
-policy with SuperMimic in MuJoCo Warp: install the environment, prepare
-reference motion, choose GenCoord or MaxCoord, train on one or more GPUs,
-resume, and evaluate. The algorithm and where it departs from the paper are
-in :doc:`../../reference/algorithms/supermimic`. On a first run, follow
-`Run It`_. Clip sources other than LAFAN1 and the clip file format are in
-:doc:`supermimic_motion`; evaluation metrics and push recovery are in
+This guide reproduces the reported SuperMimic result for Unitree G1 whole-body
+motion tracking in MuJoCo Warp. You install the environment, prepare the 40
+LAFAN1 clips, train the GenCoord recipe for 6000 updates on one GPU, resume
+it if it stops, evaluate the final checkpoint, and compare the numbers with
+`Visualization and Results`_. Every step uses the same run directory, so the
+checkpoint you evaluate is the one your training wrote. The algorithm and
+where it departs from the paper are in
+:doc:`../../reference/algorithms/supermimic`; other clip sources are in
+:doc:`supermimic_motion`, and evaluation metrics and push recovery in
 :doc:`supermimic_eval`.
 
 .. toctree::
@@ -30,27 +32,27 @@ Overview
 
       SuperMimic: 32-step backpropagation through a world model, plus a GAE critic
 
-   .. grid-item-card:: Model
+   .. grid-item-card:: Models
       :text-align: center
 
       World model, motion policy, and critic; Muon on hidden matrices, fused Adam on the rest
 
-   .. grid-item-card:: Environment
+   .. grid-item-card:: Environments / Data
       :text-align: center
 
-      MuJoCo Warp G1 (mjlab); LAFAN1 and BONES-SEED
+      MuJoCo Warp G1 (mjlab); LAFAN1, experimental BONES-SEED
 
    .. grid-item-card:: Training
       :text-align: center
 
       One env, rollout, and FSDP actor worker on each GPU
 
-| **You'll do:** install a dedicated environment -> prepare the LAFAN1 clips
-  -> run a small train, resume, and eval -> train GenCoord or MaxCoord.
-| **Prerequisites:** an NVIDIA GPU, or the experimental AMD MI300X path
-  (see `Installation`_); the RLinf repository
-  (:doc:`installation <../../start/installation>`); LAFAN1 G1 clips
-  (see `Prepare Reference Motion`_).
+| **You'll do:** install -> prepare LAFAN1 -> train 6000 updates -> resume
+  if needed -> evaluate update 6000 -> compare with the reported table.
+| **Prerequisites:** one NVIDIA GPU (the reported runs use an A800), or the
+  experimental AMD MI300X path; the RLinf repository
+  (:doc:`installation <../../start/installation>`); network access to
+  Hugging Face for the clips.
 
 .. list-table::
    :header-rows: 1
@@ -64,7 +66,7 @@ Overview
        degrees of freedom, the control rate is 50 Hz, and each control step
        is four 5 ms physics steps.
    * - Task
-     - Track reference clips retargeted to the G1 (LAFAN1 or BONES-SEED).
+     - Track reference clips retargeted to the G1.
    * - State
      - ``gencoord`` is the 71-d simulator state, encoded in 68 dimensions.
        ``maxcoord`` is the pose and twist of the 14 tracked bodies, encoded
@@ -72,50 +74,30 @@ Overview
        was trained with.
    * - Action
      - 29 joint setpoints, followed by a low-gain PD controller. Training
-       action noise has standard deviation 0.1.
+       adds action noise with standard deviation 0.1; evaluation applies the
+       policy action as is.
    * - Goal
      - Ten reference frames, five control steps apart, held at the last frame
-       of the clip. The actor goal is 640-d: joint positions, joint
-       velocities, and a 6-d rotation of each frame's root relative to the
-       current root. The world-model goal also appends the relative root
-       position and is 670-d.
-   * - Entry points
-     - Train with ``examples/embodiment/train_embodied_agent.py``. Evaluate
-       with ``evaluations/run_eval.sh supermimic_lafan1_eval``, which calls
-       ``evaluations/eval_embodied_agent.py``.
+       of the clip.
 
 How SuperMimic Works
 --------------------
 
 SuperMimic repeats three steps. It steps every environment once in MuJoCo
-Warp and writes the transitions to the replay. At the update-to-data ratio
-it fits the world model on ``k = 8`` step windows from the replay. It then
-rolls the world model out for ``H = 32`` steps from replay states,
-backpropagates the return through that model to update the actor, and fits
-the critic to GAE targets. When an environment ends, returns stored in 0.2 s
-bins along the motion decide where it restarts, so low-return segments are
-drawn more often. Equations are on the
+Warp and stores the transitions. When enough data has been collected, it
+fits a world model on short windows of those transitions. It then rolls the
+world model forward 32 steps, backpropagates the tracking return through it
+to improve the policy, and fits a critic to the imagined returns. Episodes
+restart more often in the parts of each clip where the policy earns little
+return. In RLinf every GPU runs one simulation worker, one worker that serves
+policy actions, and one FSDP training worker. The equations and the
+differences from the official code are on the
 :doc:`algorithm page <../../reference/algorithms/supermimic>`.
-
-In RLinf the three steps run on three worker groups, with one worker of each
-group on every GPU:
-
-* ``SuperMimicEnvWorker`` owns that GPU's environments, the reset sampler,
-  and the reward.
-* ``SuperMimicRolloutWorker`` holds a copy of the policy and returns
-  actions.
-* ``EmbodiedSuperMimicFSDPPolicy`` is the FSDP2 actor. It owns the replay,
-  the world model, the actor, the critic, and their optimizers.
-
-``SuperMimicRunner`` is the control plane. It decides how many control steps
-to collect before the next update is owed, runs those steps, runs the owed
-updates, and sends the new weights to the rollout workers. It also handles
-logging, evaluation, and checkpoints.
 
 Installation
 ------------
 
-The default NVIDIA path runs simulation through MuJoCo Warp. From the RLinf
+The NVIDIA path runs simulation through MuJoCo Warp. From the RLinf
 repository root, create a dedicated virtual environment:
 
 .. code-block:: bash
@@ -127,13 +109,10 @@ repository root, create a dedicated virtual environment:
 In every new shell, return to the repository root and run
 ``source .venv-supermimic/bin/activate`` first.
 
-The NVIDIA environment uses torch 2.14.0. With a CUDA 12 torch, the script
-pins ``warp-lang`` 1.18.0+cu12; otherwise ``warp-lang`` resolves within the
-range in ``requirements/embodied/envs/supermimic.txt``. Keep it separate from other
-RLinf environments because these requirements upgrade torch.
-``docker/Dockerfile`` also provides an ``embodied-supermimic-image`` target.
-The G1 model, joint order, actuator gains, and standing keyframe come from
-mjlab.
+The environment uses torch 2.14.0. With a CUDA 12 torch, the script pins
+``warp-lang`` 1.18.0+cu12. Keep this environment separate from other RLinf
+environments, because its requirements upgrade torch. ``docker/Dockerfile`` also
+provides an ``embodied-supermimic-image`` target.
 
 AMD MI300X (Experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -153,145 +132,210 @@ for an environment recipe. From the repository root:
 The script installs torch 2.9.1 and torchvision 0.24.0 from AMD's Radeon
 wheel index (use a recent uv that supports flat indexes), builds ROCm Warp
 ``1.13.0+rocm.0`` at the commit linked above, and installs mjlab 1.2.0,
-MuJoCo 3.8.1, and mujoco-warp 3.8.1 from
-``requirements/embodied/envs/supermimic_amd.txt``. ``SUPERMIMIC_WARP_PATH``
-sets the Warp checkout (default ``../warp-rocm`` beside the repository) and
-``SUPERMIMIC_HIP_ARCH`` the compile target (default ``gfx942``). Data
-preparation, training, and evaluation then work as below.
+MuJoCo 3.8.1, and mujoco-warp 3.8.1. ``SUPERMIMIC_WARP_PATH`` sets the Warp
+checkout (default ``../warp-rocm`` beside the repository) and
+``SUPERMIMIC_HIP_ARCH`` the compile target (default ``gfx942``). The steps
+below then apply unchanged.
 
-The AMD installer has not been validated through a full training run. The
-numbers under `Reported Tracking Results`_ are LAFAN1 checkpoint evaluations
-on NVIDIA A800 GPUs, not an AMD run.
+This installer has not been validated through a full training run.
 
-Prepare Reference Motion
-------------------------
+Prepare LAFAN1
+--------------
 
-Motion data is not part of the repository. This guide uses the paper's 40
-LAFAN1 clips; BONES-SEED and clips of your own are in
-:doc:`supermimic_motion`.
-
-The clips are the ``g1/`` folder of the
-Hugging Face dataset
+The clips are the ``g1/`` folder of the Hugging Face dataset
 `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_.
-The script pins revision ``ce1572906efe6157840e8474d5a0d7aa87481e74``, checks
-every CSV's size and SHA-256, and writes ``manifest.json``. The dataset card
+The script downloads the 40 CSVs at pinned revision
+``ce1572906efe6157840e8474d5a0d7aa87481e74``, checks every file's size and
+SHA-256, converts them, and writes ``manifest.json``. The dataset card
 declares no license; the retargets derive from Ubisoft La Forge
 `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_,
 released under CC BY-NC-ND 4.0 (non-commercial, no derivatives). Read those
 terms before passing ``--accept-license``.
 
+On the training machine:
+
 .. code-block:: bash
 
-   source .venv-supermimic/bin/activate
    python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 --accept-license
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
 
-The converter reads G1's default joint pose ``q0`` through mjlab. To convert
-on a machine without mjlab, export the pose in the training environment and
-pass it with ``--q0-file``:
+The last line reads ``wrote 40 clips, 2.45 h``. The folder holds
+``clip_000.pt`` to ``clip_039.pt``, ``manifest.json``, and the downloaded
+CSVs under ``csv/``. With the manifest present, the loader refuses a clip
+whose SHA-256 differs or that the manifest does not list, so do not rename,
+add, remove, or edit the prepared files.
 
-.. code-block:: bash
+Converting on Another Machine
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-   python -c "import torch; from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state; torch.save(asset_default_state()[7:36].clone(), 'g1_q0.pt')"
-   python toolkits/supermimic/prepare_lafan1.py \
-       --source-dir /data/lafan1_csv --out /data/lafan1_g1 \
-       --q0-file ./g1_q0.pt --accept-license
+If the training machine cannot reach Hugging Face, convert on a machine that
+can. That machine needs an RLinf checkout and Python with torch, numpy, and
+omegaconf, but not mjlab. The converter reads G1's default joint pose from
+mjlab, so export it on the training machine first.
 
-Copy the whole output folder, including ``manifest.json``, to the training
-machine. The 40 clips are 2.45 h of motion. With the manifest present, the
-loader refuses a clip whose SHA-256 differs or that the manifest does not
-list, so do not rename, add, remove, or edit the prepared files. The loader
-resamples 30 Hz clips to 50 Hz.
+1. On the training machine, with the SuperMimic environment active, write
+   the pose to ``g1_q0.pt``:
+
+   .. code-block:: bash
+
+      python -c "import torch; from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state; torch.save(asset_default_state()[7:36].clone(), 'g1_q0.pt')"
+
+2. Copy ``g1_q0.pt`` to the conversion machine.
+3. On the conversion machine, from its RLinf checkout, download and convert
+   with that pose:
+
+   .. code-block:: bash
+
+      python toolkits/supermimic/prepare_lafan1.py --out /data/lafan1_g1 \
+          --q0-file /path/to/g1_q0.pt --accept-license
+
+4. Copy the whole ``/data/lafan1_g1`` folder, including ``manifest.json``,
+   to the training machine at the same path.
 
 Run It
 ------
 
-Shrink the GenCoord recipe to 8 environments and 3 updates to check
-training, saving, resuming, and evaluation. Checkpoints, logs, and results
-share ``RUN_DIR``. This checks the workflow, not tracking quality.
+Set these once in the shell that launches training and evaluation. Every
+path below follows from ``RUN_DIR``:
 
 .. code-block:: bash
 
    export PYTHONPATH=$PWD:$PYTHONPATH
    export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export MUJOCO_GL=disabled
-   export RUN_DIR=/data/runs/smoke
-   SMOKE_ARGS=(env.train.total_num_envs=8 algorithm.replay_length=64
-       algorithm.wm_window_batch=64 algorithm.imagine_batch=8
-       runner.save_interval=1
-       runner.logger.experiment_name=smoke runner.logger.log_path=$RUN_DIR)
+   export RUN_DIR=/data/runs/supermimic_gencoord
 
-   # Train 3 updates, then resume from update 3 and continue to update 5.
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord "${SMOKE_ARGS[@]}" runner.max_epochs=3
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord "${SMOKE_ARGS[@]}" runner.max_epochs=5 \
+Train
+~~~~~
+
+The reported run is GenCoord on one GPU with the config defaults: 4096
+environments, world-model batches of 2048 windows, and 4096 imagined
+rollouts per update. The command sets 6000 updates, CUDA graph replay, and
+a fixed GPU. Matmuls use TF32 and weights stay float32.
+
+.. code-block:: bash
+
+   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
+       runner.max_epochs=6000
+       actor.cuda_graph=True
+       runner.logger.log_path=$RUN_DIR
+       '~cluster.component_placement'
+       '+cluster.component_placement={actor:0,env:0,rollout:0}')
+   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
+
+The two placement lines put the env, rollout, and actor workers on GPU 0;
+change ``0`` to use another GPU. The run takes a little over an hour on one
+A800. The log shows ``Recorded the SuperMimic update as a CUDA graph.``
+after the first few updates, and a metrics table every 100 updates that
+starts with ``Global Step:`` followed by the update count and ``/6000``.
+Training writes a checkpoint every 2000 updates, under
+``$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_<N>``.
+
+Resume
+~~~~~~
+
+If training stops, rerun the same command with ``runner.resume_dir=auto``:
+
+.. code-block:: bash
+
+   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}" \
        runner.resume_dir=auto
 
-   # Evaluate the last checkpoint.
+``auto`` picks the latest complete checkpoint under
+``$RUN_DIR/supermimic_lafan1_gencoord/checkpoints``. A checkpoint is
+complete when it contains ``runner_state.json``, which is written last. The
+checkpoint also holds the sharded networks, optimizers, and random state under
+``actor/``, the reset statistics under ``env/``, and
+``actor/model_state_dict/full_weights.pt`` for evaluation. Check that the log
+contains ``Resuming from`` and the ``global_step_<N>`` you expect. If it says
+``resume_dir=auto found no complete checkpoint``, the run started from
+scratch: check ``RUN_DIR`` and the config name. The replay is not saved, so
+a resumed run collects for a few seconds before its next update. Resume
+with the same number of GPUs.
+
+Evaluate
+~~~~~~~~
+
+Evaluate the final weights on the 40 clips. Each clip plays once from frame
+0 and the policy action is applied as is:
+
+.. code-block:: bash
+
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=$RUN_DIR/smoke/checkpoints/global_step_5/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval
-   tensorboard --logdir $RUN_DIR/tensorboard
+       runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
-The resume log should contain ``Resuming from`` and ``global_step_3``. If it
-instead says ``resume_dir=auto found no complete checkpoint``, check
-``runner.logger.log_path``, ``runner.logger.experiment_name``, and whether
-the first run saved. Checkpoints live in
-``$RUN_DIR/smoke/checkpoints/global_step_<N>``, TensorBoard files in
-``$RUN_DIR/tensorboard``, and evaluation tables in ``$RUN_DIR/eval``. A
-policy after 3 to 5 updates is not expected to track motion.
+The evaluation takes about 7 minutes. ``$RUN_DIR/eval_6000/summary.json``
+holds ``normalized_return``, ``fail_rate``, and ``body_pos_err``, which the
+table below reports; ``per_clip.csv`` has one row per clip. The metrics are
+defined in :doc:`supermimic_eval`.
 
-For MaxCoord, change ``--config-name`` to ``supermimic_lafan1_maxcoord``.
-Evaluating a MaxCoord checkpoint also needs
-``actor.model.representation=maxcoord``.
+Train on Several GPUs
+~~~~~~~~~~~~~~~~~~~~~
 
-Configurations
---------------
+The environment count, the world-model batch, and the imagination batch are
+totals over all GPUs, so adding GPUs splits the same update across them. Use a new ``RUN_DIR`` and list the
+GPUs in the placement. With two GPUs:
 
-Two training YAMLs differ only in the state representation. The two
-evaluation configs inherit GenCoord and change evaluation settings.
-Environment counts and batch sizes are global.
+.. code-block:: bash
+
+   export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
+   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
+       runner.max_epochs=6000
+       actor.cuda_graph=True
+       runner.logger.log_path=$RUN_DIR
+       '~cluster.component_placement'
+       '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}')
+   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
 
 .. list-table::
    :header-rows: 1
-   :widths: 42 58
+   :widths: 40 20 20 20
 
-   * - File
-     - Role
-   * - ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``
-     - GenCoord training. Defaults are 4096 environments, 40 clips,
-       ``runner.max_epochs=400000``, and a checkpoint every 2000 updates.
-       `Reported Tracking Results`_ trains 6000 updates.
-   * - ``examples/embodiment/config/supermimic_lafan1_maxcoord.yaml``
-     - Inherits the previous file and sets
-       ``actor.model.representation`` to ``maxcoord``.
-   * - ``evaluations/supermimic/supermimic_lafan1_eval.yaml``
-     - Motion-tracking evaluation on the 40 clips.
-   * - ``evaluations/supermimic/supermimic_push_recovery.yaml``
-     - Pushes applied to the knees-bent standing pose. This is not the
-       paper's Section 4.3 T-pose protocol.
+   * - Per update
+     - Total
+     - Per GPU, 2 GPUs
+     - Per GPU, 4 GPUs
+   * - Environments
+     - 4096
+     - 2048
+     - 1024
+   * - World-model windows per batch (10 batches)
+     - 2048
+     - 1024
+     - 512
+   * - Imagined rollouts
+     - 4096
+     - 2048
+     - 1024
 
-The seed is 0. Network weights stay float32 and matmuls use TF32.
-``actor.fsdp_config.amp_autocast.enabled`` defaults to ``False``. Setting it
-to ``True`` casts matmuls inside the networks to ``precision`` (bf16 by
-default); kinematics, rewards, losses, and optimizer state stay float32.
-That is not the paper's TF32 setting. Hidden matrices use Muon
-(``adjust_lr_fn: match_rms_adamw``); the remaining parameters use fused
-Adam. The gradient norm stays on device for the clip, so an optimizer step
-does not wait on the host.
+For four GPUs, use ``0-3`` in the placement. Each GPU hosts one env, one
+rollout, and one actor worker. The learning rate and the number of updates
+do not change with the GPU count. Resume and evaluation work as above with
+the new ``RUN_DIR``. Multi-node and Slurm launches of this recipe have not
+been validated.
 
-For LAFAN1, ``env.train.motion_on_cpu=true`` (``env.eval.motion_on_cpu``
-for evaluation) keeps a large library and its FK cache in host memory and
-moves only the queried rows to the GPU. The actor worker holds a second copy
-for imagination.
+MaxCoord
+~~~~~~~~
 
-Common Keys
-~~~~~~~~~~~
+To train the MaxCoord representation, use a new ``RUN_DIR`` and change
+``--config-name`` to ``supermimic_lafan1_maxcoord``. Its checkpoints are under
+``$RUN_DIR/supermimic_lafan1_maxcoord/checkpoints``, and evaluation needs
+``actor.model.representation=maxcoord``. MaxCoord has no reported numbers
+yet.
 
-These are the keys most often changed to set the scale and length of a run.
-Defaults come from ``supermimic_lafan1_gencoord.yaml``. Each can be passed
-as a Hydra override.
+Configuration
+-------------
+
+The two training configs differ only in the state representation, and the
+evaluation configs inherit GenCoord:
+
+* ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml`` and
+  ``supermimic_lafan1_maxcoord.yaml`` for training;
+* ``evaluations/supermimic/supermimic_lafan1_eval.yaml`` for motion tracking
+  and ``supermimic_push_recovery.yaml`` for standing push recovery.
+
+These are the keys most often changed. Each can be passed as a Hydra
+override.
 
 .. list-table::
    :header-rows: 1
@@ -305,301 +349,183 @@ as a Hydra override.
      - Global updates. The reported runs set 6000.
    * - ``runner.save_interval``
      - 2000
-     - Write a checkpoint every this many updates, and after the last one.
-   * - ``runner.val_check_interval``
-     - -1
-     - Do not evaluate during training. Evaluate with the commands in
-       `Evaluate`_.
+     - Updates between checkpoints. The last update also writes one.
    * - ``env.train.total_num_envs``
      - 4096
      - Environments across all GPUs. Must divide evenly by the GPU count.
    * - ``env.train.num_clips``
      - 40
-     - Clips to load. ``null`` loads every clip in the directory.
+     - Clips to load. ``null`` loads every clip in the folder.
    * - ``algorithm.replay_ratio``
      - 16
-     - How many times each transition is drawn by the world model on
-       average. With the batches below this is 0.4 global updates per
-       control step.
-   * - ``algorithm.wm_batches``
-     - 10
-     - World-model batches in one update.
+     - How many times each collected step is reused for the world model.
+       At the defaults this is 0.4 updates per control step, so 6000
+       updates collect about 15,000 control steps.
    * - ``algorithm.wm_window_batch``
      - 2048
-     - Windows in one world-model batch, summed over GPUs.
+     - World-model windows per batch, summed over GPUs.
    * - ``algorithm.imagine_batch``
      - 4096
-     - Imagined rollouts, summed over GPUs.
-   * - ``algorithm.k`` / ``algorithm.H``
-     - 8 / 32
-     - World-model window and imagination horizon.
-   * - ``actor.optim.lr``
-     - 2.0e-4
-     - Learning rate shared by the three phases. The schedule is constant.
-   * - ``actor.optim.clip_grad``
-     - 1.0
-     - Global gradient-norm cap. The actor then clamps each element to
-       ``clip_grad_value`` 0.1.
-   * - ``actor.optim.fused``
-     - True
-     - Fused Adam for parameters that are not updated by Muon. The world
-       model and the critic use the same flag.
-   * - ``actor.fsdp_config.amp_autocast.enabled``
-     - False
-     - When true, network matmuls use ``precision`` (bf16). Weights stay
-       float32.
+     - Imagined rollouts per update, summed over GPUs.
    * - ``actor.cuda_graph``
      - False
-     - When true, each update after the first three is replayed as one
-       CUDA graph. See `CUDA Graph Updates`_.
-   * - ``env.train.action_noise_std``
-     - 0.1
-     - Training action noise. Evaluation applies the policy action as is.
+     - Replay each update after the first three as one CUDA graph. The
+       reported runs set ``True``. It requires a constant learning rate.
+   * - ``actor.fsdp_config.amp_autocast.enabled``
+     - False
+     - Run network matmuls in bf16. Weights, losses, and optimizer state
+       stay float32. This is not the paper's TF32 setting.
 
-**Updates versus simulator steps.** At the default scale each control step
-owes 0.4 updates, so ``runner.max_epochs=16000`` is 40,000 control steps.
-The global step counts updates and ``env/env_steps`` counts control steps.
-``env.train.total_num_envs``, ``algorithm.wm_window_batch``, and
-``algorithm.imagine_batch`` are totals over all GPUs and must divide evenly
-by the GPU count. Adding GPUs without changing them keeps the same training
-mathematics.
-
-CUDA Graph Updates
-~~~~~~~~~~~~~~~~~~
-
-``actor.cuda_graph=True`` runs the first three updates eagerly, records the
-fourth as one CUDA graph, and replays it for every later update. Replay
-removes most kernel-launch and host overhead from the world-model, actor, and
-critic phases. Replay data is still drawn outside the graph, so every update
-trains on fresh samples.
-
-- The graph fixes the learning rates it was recorded with. Validation
-  requires ``lr_scheduler: constant`` with no warmup for every optimizer.
-- The Adam optimizers are built with ``capturable=True``, which the config
-  sets from ``actor.cuda_graph``.
-- The per-phase timers only time the recording. ``run_updates`` times the
-  whole replayed update.
-- Loading a checkpoint drops the graph. The next updates run eagerly and
-  record it again.
-- The single-GPU unit test checks that graph and eager updates match
-  exactly, in float32 and in bf16. On two GPUs the graph is checked by the
-  full training runs in `Reported Tracking Results`_, not by an exact
-  comparison.
-
-Train on One GPU
-----------------
-
-The recipe puts one env, one rollout, and one actor worker on every GPU
-that RLinf sees (``cluster.component_placement`` maps ``actor,env,rollout``
-to ``all``). On a machine with one GPU:
-
-.. code-block:: bash
-
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-   export MUJOCO_GL=disabled
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       runner.max_epochs=16000 \
-       runner.logger.log_path=/data/runs/gencoord
-
-MaxCoord:
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_maxcoord \
-       runner.max_epochs=16000 \
-       runner.logger.log_path=/data/runs/maxcoord
-
-Training does not render. To use one GPU of a larger machine, remove the
-combined placement and point all three workers at the same device index
-(index 0 below):
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       runner.max_epochs=16000 \
-       runner.logger.log_path=/data/runs/gencoord \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
-
-Multiple GPUs
--------------
-
-Every GPU in the placement hosts one env, one rollout, and one actor
-worker, and the three groups have the same size. Env rank :math:`r` exchanges
-data only with rollout and actor rank :math:`r`. The actor workers are one
-FSDP2 group: parameters, gradients, and optimizer state are sharded. The
-world model, the actor, and the critic are separate FSDP units, and each
-training phase gathers only the networks it reads. Reset-bin statistics are
-reduced across env ranks.
-
-Leaving the config unchanged and adding GPUs keeps the global batch, the
-learning rate, and the update ratio, and splits each batch across ranks.
-Multi-node and Slurm launches of this recipe have not been validated.
-
-Checkpoints and Resume
-----------------------
-
-``runner.save_interval`` writes
-``<log_path>/<experiment_name>/checkpoints/global_step_<N>`` every N updates
-and after the last update. A checkpoint contains:
-
-* ``actor/``: the FSDP checkpoint. ``dcp_checkpoint/`` stores the sharded
-  networks, each phase's optimizer and learning-rate schedule, and each
-  rank's RNG. ``model_state_dict/full_weights.pt`` is the full weight file
-  used for evaluation. ``supermimic_counters.json`` stores each phase's
-  optimizer-step count.
-* ``env/env_rank_<r>.pt``: reset-bin statistics and that env rank's RNG.
-* ``runner_state.json``: the fractional update debt and the control-step
-  count. It is written last, so a checkpoint without it is incomplete.
-
-Resume with the same config name, ``log_path``, and ``experiment_name``:
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name supermimic_lafan1_gencoord \
-       runner.max_epochs=16000 \
-       runner.logger.log_path=/data/runs/gencoord \
-       runner.resume_dir=auto
-
-``runner.resume_dir=auto`` picks the latest complete checkpoint. If none
-exists it does not raise; it logs a line and starts from scratch, so check
-that the log contains ``Resuming from .../global_step_<N>``. GenCoord and
-MaxCoord weights have different shapes and cannot be loaded into each
-other. The replay and the simulator state are not saved, so a resumed run
-refills the replay before it trains. Resuming on a different GPU count has
-not been tested.
-
-Evaluate
---------
-
-Evaluate a checkpoint's ``full_weights.pt`` on the 40 LAFAN1 clips:
-
-.. code-block:: bash
-
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
-   export MUJOCO_GL=disabled
-   bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
-
-Add ``actor.model.representation=maxcoord`` for a MaxCoord checkpoint. The
-metrics, the output files, and standing push recovery are in
-:doc:`supermimic_eval`.
-
-Logs and Results
-----------------
-
-Logs go through RLinf's ``MetricLogger``. The recipe writes TensorBoard
-events under ``<log_path>/tensorboard/``. Training metrics are averaged
-across actor ranks. The usual keys are:
-
-* ``env/env_steps``, ``env/sim/reward_mean``, ``env/sim/terminal_rate``.
-* ``train/world_model/*_loss`` and ``train/world_model/grad_norm``: per-channel
-  world-model errors, and the mean pre-clip gradient norm of that phase's
-  optimizer steps.
-* ``train/actor/reward``, ``train/actor/grad_norm``.
-* ``train/critic/loss``, ``train/critic/value_mean``, ``train/critic/target_mean``.
-* ``train/imagination/survival``, ``train/imagination/termination_prob``,
-  ``train/imagination/step_reward``.
-* ``train/world_model_optimizer_steps``, ``train/actor_optimizer_steps``,
-  ``train/critic_optimizer_steps``.
-* ``time/*``: host timers for the runner and the workers. GPU work is
-  asynchronous, so one phase's time can include kernels queued by the
-  previous phase.
-
-When a batch of updates finishes and the metrics are copied to the host, a
-non-finite value stops training. That check is not a sync on every optimizer
-step.
-
-Reported Tracking Results
+Visualization and Results
 -------------------------
 
-GenCoord on the 40 LAFAN1 clips with 4096 environments and otherwise the
-config defaults, trained for 6000 updates (about 15000 control steps) with
-the GenCoord command in `Train on One GPU`_ plus ``runner.max_epochs=6000``.
-Each checkpoint is evaluated as in `Evaluate`_: every clip starts at frame 0
-and the policy action is applied as is. All runs use NVIDIA A800 GPUs, and the
-official row is the official SuperMimic code on the same machines. The
-RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
-``actor.fsdp_config.amp_autocast.enabled=True``.
+TensorBoard events go to ``$RUN_DIR/tensorboard``:
+
+.. code-block:: bash
+
+   tensorboard --logdir $RUN_DIR/tensorboard
+
+The x-axis is the update count. ``env/sim/reward_mean`` and
+``env/sim/terminal_rate`` show simulated tracking, ``train/actor/reward``
+the imagined reward, and ``train/world_model/state_loss`` the world-model
+fit. :doc:`../../reference/metrics` explains the shared metric names.
+
+Reported Tracking Results
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GenCoord on the 40 LAFAN1 clips with 4096 environments and seed 0, trained
+with the commands in `Run It`_ and evaluated as in `Evaluate`_, on NVIDIA
+A800 GPUs. RLinf runs use CUDA graph replay; the bf16 rows also set
+``actor.fsdp_config.amp_autocast.enabled=True``. The official row is the
+official SuperMimic code, which the authors of this integration ran on the
+same cluster. Every run is evaluated at update 6000, about 15,000 control
+steps.
 
 .. list-table::
    :header-rows: 1
-   :widths: 14 8 12 12 20 14 20
+   :widths: 14 8 10 10 20 14 20
 
    * - Run
      - GPUs
      - Matmuls
-     - s/update
+     - Updates
      - ``normalized_return``
      - ``fail_rate``
-     - ``body_pos_err``
+     - ``body_pos_err`` (m)
    * - Official
      - 1
      - TF32
-     - 0.515
+     - 6000
      - 0.830
      - 0.025
      - 0.027
    * - RLinf
      - 1
      - TF32
-     - 0.603
+     - 6000
      - 0.846
      - 0
      - 0.024
    * - RLinf
      - 1
      - bf16
-     - 0.515
+     - 6000
      - 0.857
      - 0
      - 0.023
    * - RLinf
      - 2
      - TF32
-     - 0.486
+     - 6000
      - 0.843
      - 0.025
      - 0.023
    * - RLinf
      - 2
      - bf16
-     - 0.449
+     - 6000
      - 0.833
      - 0.05
      - 0.023
 
-* For RLinf, ``s/update`` is the mean of the per-update ``time/step`` timer
-  over 1000 updates after 200 warm-up updates, from a separate run with the
-  GPUs to itself. It covers collection, the update, and the weight sync, but
-  not logging. It includes a pause of about 2 s that recurs once a minute on
-  the rollout side, about 4% of the time. The official time is the wall
-  clock between two checkpoints of a MaxCoord run, a timing reference; the
-  other official columns are GenCoord.
-* With TF32 matmuls, two GPUs take 0.486 s per update against 0.603 s on
-  one, about 19% less. Four GPUs take 0.421 s, or 0.407 s with bf16.
-* A ``fail_rate`` of 0.025 is one fall in 40 clips, and 0.05 is two. Both
-  one-GPU RLinf checkpoints reach the end of all 40 clips.
-* Each row is one seed. Earlier checkpoints vary more between runs: across
-  the four RLinf runs, ``normalized_return`` ranges from 0.672 to 0.732 at
-  update 2000 and from 0.765 to 0.794 at update 4000.
-* The paper reports a normalized return of 0.82 on these 40 clips. One
-  evaluation takes about 7 minutes.
+* These runs predate the current version, which splits the three networks
+  into separate FSDP units and changes how replay windows and critic
+  minibatches are drawn. The current version has not yet been rerun at this
+  scale, so these numbers are not yet confirmed for it.
+* Each row is one seed. A ``fail_rate`` of 0.025 is one fall in 40 clips.
+  Earlier checkpoints vary more between runs: across the four RLinf runs,
+  ``normalized_return`` ranges from 0.672 to 0.732 at update 2000 and from
+  0.765 to 0.794 at update 4000.
+* The paper reports a normalized return of 0.82 on these 40 clips.
+
+Training Speed
+~~~~~~~~~~~~~~
+
+Seconds per update for the same GenCoord recipe on A800 GPUs, with CUDA
+graph replay. Each RLinf run had its GPUs to itself and ran 1200 updates;
+the numbers cover the last 1000. ``time/step`` is the mean of the logged
+per-update timer, which covers collection, the update, and the weight sync.
+Wall clock divides the elapsed time of those 1000 updates by 1000 and also
+covers logging. The runs used the same earlier version as the table above;
+the current version has not been timed yet.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 10 12 22 22
+
+   * - Run
+     - GPUs
+     - Matmuls
+     - ``time/step`` (s)
+     - Wall clock (s)
+   * - Official
+     - 1
+     - TF32
+     - --
+     - 0.515
+   * - RLinf
+     - 1
+     - TF32
+     - 0.603
+     - 0.637
+   * - RLinf
+     - 1
+     - bf16
+     - 0.515
+     - 0.548
+   * - RLinf
+     - 2
+     - TF32
+     - 0.486
+     - 0.521
+   * - RLinf
+     - 2
+     - bf16
+     - 0.449
+     - 0.483
+   * - RLinf
+     - 4
+     - TF32
+     - 0.421
+     - 0.456
+   * - RLinf
+     - 4
+     - bf16
+     - 0.407
+     - 0.442
+
+The authors of this integration measured the official time on the same
+cluster, as the wall clock between two checkpoints of an official MaxCoord
+run.
+About 4% of RLinf's time is a pause of about 2 s that recurs once a minute
+on the rollout side.
 
 Scope
 -----
 
-Numerical checks live in ``tests/unit_tests/test_supermimic.py``. The CI
-configs ``tests/e2e_tests/embodied/g1_mimic_supermimic.yaml``,
-``g1_mimic_supermimic_maxcoord.yaml``, and
-``tests/e2e_tests/evaluations/g1_mimic_supermimic_eval.yaml`` cover a
-small training run, resume, and tracking evaluation. The table above
-evaluates GenCoord at update 6000 on the 40 LAFAN1 clips. MaxCoord
-accuracy, runs longer than 6000 updates, multi-node, Slurm, training on
-real BONES-SEED, and the paper's Section 4.3 T-pose recovery do not have
-numbers here.
+CI runs the unit tests in ``tests/unit_tests/test_supermimic.py``, a short
+GenCoord training run with a resume and a standalone evaluation, and a short
+two-GPU MaxCoord run, all on a generated standing clip. The tables above
+evaluate GenCoord at update 6000 on the 40 LAFAN1 clips. MaxCoord accuracy,
+runs longer than 6000 updates, multi-node, Slurm, training on BONES-SEED,
+and the paper's Section 4.3 T-pose recovery have no numbers here.

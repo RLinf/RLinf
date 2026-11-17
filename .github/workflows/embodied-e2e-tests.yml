@@ -495,7 +495,8 @@ jobs:
           after = read(5, "actor", "supermimic_counters.json")["optimizer_steps"]
           # The 3-to-5 ratio also holds for a fresh run to step 5, because that
           # run saves at both steps. The metrics log is what shows the resume:
-          # its first table for this run is step 4 of 5, so step 1 of 5 is absent.
+          # one table per iteration, and a fresh run would print a step of 5
+          # at or below 3 before reaching 5.
           for phase, steps in before.items():
               assert steps > 0 and steps % 3 == 0, (phase, before)
               assert after[phase] == steps // 3 * 5, (phase, before, after)
@@ -503,8 +504,8 @@ jobs:
           assert env_steps[1] > env_steps[0] > 0, env_steps
           with open(os.path.join(log_root, "metrics.log")) as file:
               metrics = file.read()
-          assert re.search(r"Global Step:\s+4/5", metrics), metrics
-          assert not re.search(r"Global Step:\s+1/5", metrics), metrics
+          logged = [int(n) for n in re.findall(r"Global Step:\s+(\d+)/5\b", metrics)]
+          assert logged and min(logged) > 3 and max(logged) == 5, logged
           EOF
 
       - name: SuperMimic MaxCoord test on two GPUs

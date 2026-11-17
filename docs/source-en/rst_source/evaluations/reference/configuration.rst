@@ -11,8 +11,8 @@ Configuration Reference
    checkpoint; a MaxCoord checkpoint needs ``maxcoord``. The weights come
    from ``runner.ckpt_path`` (a ``full_weights.pt``) rather than
    ``rollout.model.model_path``, ``env.eval.eval_tasks`` selects the tasks,
-   and ``runner.eval_export`` controls the result files. See the Evaluate
-   section of :doc:`../../examples/embodied/supermimic`.
+   and ``runner.eval_export`` controls the result files. See
+   :doc:`../../examples/embodied/supermimic_eval`.
 
 Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core structure (using ``libero_spatial_openpi_pi05_eval.yaml`` as an example):
 

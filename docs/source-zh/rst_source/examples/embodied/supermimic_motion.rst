@@ -1,12 +1,20 @@
 SuperMimic 动作数据
 ===================
 
-主指南 :doc:`supermimic` 用论文的 40 条 LAFAN1 片段训练。本页讲其他来源：实验性的 BONES-SEED 转换，以及自备片段要遵守的文件格式。所有命令都在 RLinf 仓库根目录执行，并且已经激活 SuperMimic 环境。
+主指南 :doc:`supermimic` 用论文的 40 条 LAFAN1 片段训练。本页介绍如何用其他动作数据训练：实验性的 BONES-SEED 转换，以及自备片段要遵守的文件格式。
 
-一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载），可以再放一个 ``manifest.json``。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段；没有清单时只检查格式。把 ``SUPERMIMIC_MOTION_PATH`` 指到这个目录。
+安装
+----
+
+沿用 :doc:`supermimic` 里的环境。所有命令都在 RLinf 仓库根目录执行，并且已经激活这个环境。
+
+运行
+----
+
+一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载），可以再放一个 ``manifest.json``。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段；没有清单时只检查格式。把 ``SUPERMIMIC_MOTION_PATH`` 指到这个目录，再用主指南里的训练和评测命令，加上下面的覆盖项。
 
 BONES-SEED（实验性）
---------------------
+~~~~~~~~~~~~~~~~~~~~
 
 官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。先读数据包里的 ``LICENSE.md``；脚本不下载数据。表头约定沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_：120 Hz；``root_translateX/Y/Z`` 单位厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个 ``<关节名>_dof`` 列单位度，名字对应 mjlab 的 G1 关节。这个约定还没有拿官方 CSV 核对过。
 
@@ -30,6 +38,11 @@ BONES-SEED（实验性）
 
 BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传到 GPU。
 
+自备片段
+~~~~~~~~
+
+按下面的格式写出每条片段，放进同一个目录，训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``），加载目录里的全部片段。
+
 片段文件格式
 ------------
 
@@ -42,7 +55,7 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
    * - 键
      - 内容
    * - ``fps``
-     - 50，或 30。30 Hz 的片段会重采样到 50 Hz 控制网格，速度用中心差分重新计算；50 Hz 的片段按原样使用，**速度列必须自己填对**。其他帧率会被拒绝。
+     - 50，或 30。30 Hz 的片段会重采样到 50 Hz 控制网格，速度用中心差分重新计算；50 Hz 的片段按原样使用，**速度列必须自己填对**。不支持其他帧率。
    * - ``joint_names``
      - 29 个关节名，必须与 ``rlinf.envs.sim.g1_mimic.constants.G1_JOINT_NAMES`` 的顺序完全相同（它就是 mjlab G1 的关节顺序）。
    * - ``q0``
@@ -78,7 +91,7 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
      - 关节速度
      - rad/s
 
-下面的最小示例写出一条原地站立 5 s 的片段，并用加载器同样的检查验证它：
+下面的最小示例写出一条原地站立 5 s 的片段，并用加载器自带的检查验证这条片段：
 
 .. code-block:: python
 
@@ -104,5 +117,3 @@ BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传
    out = Path("/data/my_clips")
    out.mkdir(parents=True, exist_ok=True)
    torch.save(payload, out / "clip_000.pt")
-
-用这样的目录训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``），加载目录里的全部片段。

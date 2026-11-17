@@ -55,15 +55,15 @@ CLI 参考
 SuperMimic 评测
 ---------------
 
-SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运行。用 ``runner.ckpt_path`` 指定检查点中的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果表格的目录。评测主训练配置时运行：
+SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运行。用 ``runner.ckpt_path`` 指定检查点中的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果表格的目录。评测 SuperMimic 指南里那次训练的第 6000 次更新（沿用其中的 ``RUN_DIR``）：
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
+       runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
-MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。协议见 :doc:`SuperMimic <../../examples/embodied/supermimic>` 的“评测”一节。
+MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。评测协议、输出文件和推力恢复见 :doc:`../../examples/embodied/supermimic_eval`。
 
 配置回退
 --------
@@ -78,7 +78,7 @@ MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。协议见 
 - :doc:`../guides/maniskill_ood`
 - :doc:`../guides/realworld`
 - :doc:`../guides/polaris`
-- :doc:`SuperMimic <../../examples/embodied/supermimic>`\ （“评测”一节）
+- :doc:`SuperMimic <../../examples/embodied/supermimic_eval>`
 
 直接调用 Python
 ---------------

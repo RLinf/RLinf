@@ -2,24 +2,33 @@ SuperMimic Motion Data
 ======================
 
 The main guide, :doc:`supermimic`, trains on the paper's 40 LAFAN1 clips.
-This page covers the other sources: the experimental BONES-SEED converter
-and the clip file format for clips of your own. Every command runs from the
-RLinf repository root with the SuperMimic environment activated.
+This page covers training on other motion data: the experimental BONES-SEED
+converter, and the clip file format for clips of your own.
+
+Installation
+------------
+
+Use the environment from :doc:`supermimic`. Every command runs from the
+RLinf repository root with that environment activated.
+
+Run It
+------
 
 A clip folder holds ``clip_*.pt`` files, loaded in file-name order, and
 optionally a ``manifest.json``. With the manifest present, the loader
 refuses a clip whose SHA-256 differs or that the manifest does not list.
 Without it, the loader checks the format only. Point
-``SUPERMIMIC_MOTION_PATH`` at the folder.
+``SUPERMIMIC_MOTION_PATH`` at the folder, then train and evaluate with the
+commands in the main guide plus the overrides below.
 
 BONES-SEED (Experimental)
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The official release is
 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_ on
 Hugging Face, with G1 trajectories in ``g1/csv/{date}/{motion}.csv``. Read
 ``LICENSE.md`` in the download first; the script does not download the data.
-It follows the public header in NVIDIA ProtoMotions'
+The converter follows the public header in NVIDIA ProtoMotions'
 `SEED G1 CSV preparation <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_:
 120 Hz, ``root_translateX/Y/Z`` in centimeters, ``root_rotateX/Y/Z`` as
 extrinsic XYZ Euler angles in degrees, and 29 ``<joint>_dof`` columns in
@@ -50,6 +59,13 @@ evaluation launch:
 
 The BONES-SEED loader keeps the library in host memory and moves only the
 queried rows to the GPU.
+
+Clips of Your Own
+~~~~~~~~~~~~~~~~~
+
+Write each clip in the format below, put them in one folder, and train with
+``env.train.num_clips=null`` (and ``env.eval.num_clips=null`` for
+evaluation), which loads every clip in the folder.
 
 Clip File Format
 ----------------
@@ -133,6 +149,3 @@ checks on it:
    out = Path("/data/my_clips")
    out.mkdir(parents=True, exist_ok=True)
    torch.save(payload, out / "clip_000.pt")
-
-A folder of such clips trains with ``env.train.num_clips=null`` (and
-``env.eval.num_clips=null`` for evaluation), which loads every clip in it.
