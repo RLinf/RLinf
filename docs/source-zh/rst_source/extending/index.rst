@@ -60,6 +60,12 @@
 
       添加 Megatron-Bridge 与权重同步工作流。
 
+   .. grid-item-card:: 量化模型
+      :link: quantization
+      :link-type: doc
+
+      使用单次注册接入模型的量化投影与采样约束。
+
 .. toctree::
    :hidden:
 
@@ -72,3 +78,4 @@
    SGLang 具身模型 <sglang_embodied_model>
    新 SFT 模型 <new_model_sft>
    高级集成 <advanced-integrations/index>
+   量化模型 <quantization>

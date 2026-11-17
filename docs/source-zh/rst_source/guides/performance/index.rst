@@ -28,6 +28,9 @@
    * - :doc:`异步 agentic RL <../async_agentic>`
      - 让多轮 agent rollout 与训练重叠，用两个准入上限约束训练数据的新旧程度。
 
+   * - :doc:`量化训练 <../quantization>`
+     - 配置 INT8/NVFP4 actor 与原生 rollout 的统一量化配方。
+
 .. toctree::
    :hidden:
 
@@ -40,3 +43,4 @@
    Profiling <../profile>
    5D 并行 <../5D>
    异步 agentic RL <../async_agentic>
+   量化训练 <../quantization>

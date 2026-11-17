@@ -64,6 +64,12 @@ SFT, then use Advanced Integrations for backend integration and weight transport
 
       Add Megatron-Bridge and weight synchronization workflows.
 
+   .. grid-item-card:: Quantization Model Adapters
+      :link: quantization
+      :link-type: doc
+
+      Register model projections and sampling constraints for QAT.
+
 .. toctree::
    :hidden:
 
@@ -76,3 +82,4 @@ SFT, then use Advanced Integrations for backend integration and weight transport
    SGLang Embodied Model <sglang_embodied_model>
    New SFT Model <new_model_sft>
    Advanced Integrations <advanced-integrations/index>
+   Quantization Model Adapters <quantization>

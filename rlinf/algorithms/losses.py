@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Callable, Optional
 
 import torch
@@ -40,6 +41,7 @@ def compute_decoupled_ppo_actor_loss(
     loss_mask_sum: Optional[torch.Tensor] = None,
     critic_warmup: Optional[bool] = False,
     behave_weight_threshold: Optional[float] = None,
+    behave_weight_clip_max: Optional[float] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """Compute actor loss for decoupled PPO with optional proximal policy anchor."""
@@ -92,9 +94,10 @@ def compute_decoupled_ppo_actor_loss(
         "proximal_logprobs must be float32 to keep numerical stability"
     )
 
-    proximal_ratio = torch.where(
-        loss_mask, torch.exp(logprobs - proximal_logprobs), 0.0
-    )
+    proximal_logprobs = proximal_logprobs.detach()
+    # Mask before exp so excluded overflows cannot produce NaN gradients.
+    proximal_log_ratio = torch.where(loss_mask, logprobs - proximal_logprobs, 0.0)
+    proximal_ratio = torch.where(loss_mask, torch.exp(proximal_log_ratio), 0.0)
     clipped_proximal_ratio = torch.clamp(
         proximal_ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
     )
@@ -111,11 +114,28 @@ def compute_decoupled_ppo_actor_loss(
     else:
         dual_clip_mask = torch.zeros_like(pg_loss, dtype=torch.bool)
 
-    behav_weight = torch.exp(proximal_logprobs - old_logprobs)
+    behavior_log_ratio = (proximal_logprobs - old_logprobs).detach()
+    if behave_weight_threshold is not None and (
+        not math.isfinite(behave_weight_threshold) or behave_weight_threshold <= 0
+    ):
+        raise ValueError("behave_weight_threshold must be finite and positive")
+    if behave_weight_clip_max is not None and (
+        not math.isfinite(behave_weight_clip_max) or behave_weight_clip_max <= 0
+    ):
+        raise ValueError("behave_weight_clip_max must be finite and positive")
     behav_mask = (
-        (behav_weight <= behave_weight_threshold).logical_and(loss_mask)
+        (behavior_log_ratio <= math.log(behave_weight_threshold)).logical_and(loss_mask)
         if behave_weight_threshold is not None
         else loss_mask
+    )
+    capped_log_ratio = (
+        behavior_log_ratio.clamp(max=math.log(behave_weight_clip_max))
+        if behave_weight_clip_max is not None
+        else behavior_log_ratio
+    )
+    # Excluded events must be zero before aggregation (infinity * zero is NaN).
+    behav_weight = torch.where(
+        behav_mask, torch.exp(torch.where(behav_mask, capped_log_ratio, 0.0)), 0.0
     )
 
     pg_loss = loss_agg_func(pg_loss * behav_weight, behav_mask, loss_mask_ratio)

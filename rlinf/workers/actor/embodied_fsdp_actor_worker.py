@@ -28,6 +28,11 @@ from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.quantization.algorithms.correction import (
+    correction_loss_kwargs,
+    parse_correction_spec,
+)
+from rlinf.quantization.runtime import configure_quantized_policy
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.distributed import (
     all_reduce_dict,
@@ -100,6 +105,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
+        self.quantization_runtime = None
+        self.qat_correction = parse_correction_spec(
+            OmegaConf.select(cfg, "qat.correction")
+            if OmegaConf.select(cfg, "qat.enabled", default=False)
+            else None
+        )
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
@@ -147,6 +158,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             model.load_state_dict(model_dict)
+
+        if OmegaConf.select(self.cfg, "qat.enabled", default=False):
+            self.quantization_runtime = configure_quantized_policy(
+                model, self.cfg, stage="actor", device=self.device
+            )
 
         return model
 
@@ -424,6 +440,40 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         teacher_model.to("cpu")
         clear_memory()
 
+    def compute_actor_logprobs(
+        self,
+        batch_size_per_rank: int,
+        *,
+        output_dtype: torch.dtype | None = None,
+        **forward_kwargs,
+    ) -> torch.Tensor:
+        """Score stored samples, optionally casting before transfer to CPU."""
+        rollout_size = self.rollout_batch["prev_logprobs"].shape[0]
+        scores = []
+        with torch.no_grad():
+            for global_batch in split_dict_to_chunk(
+                self.rollout_batch, rollout_size // batch_size_per_rank
+            ):
+                for micro_batch in split_dict_to_chunk(
+                    global_batch,
+                    batch_size_per_rank // self.cfg.actor.micro_batch_size,
+                ):
+                    micro_batch = put_tensor_device(micro_batch, self.device)
+                    with self.amp_context:
+                        output = self.model(
+                            forward_inputs=micro_batch["forward_inputs"],
+                            compute_logprobs=True,
+                            compute_entropy=False,
+                            compute_values=False,
+                            use_cache=False,
+                            **forward_kwargs,
+                        )
+                    score = output["logprobs"].detach()
+                    if output_dtype is not None:
+                        score = score.to(output_dtype)
+                    scores.append(score.cpu())
+        return torch.cat(scores, dim=0)
+
     @Worker.timer("actor/recompute_logprobs")
     def recompute_prev_logprobs(self, batch_size_per_rank: int) -> dict[str, float]:
         """
@@ -449,7 +499,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         rollout_logprobs = self.rollout_batch["prev_logprobs"]
-        rollout_size = rollout_logprobs.shape[0]
         kwargs = {}
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
@@ -460,30 +509,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "top_k": self.cfg.rollout.sampling_params.top_k,
             }
 
-        recomputed_logprobs = []
-        with torch.no_grad():
-            for global_batch in split_dict_to_chunk(
-                self.rollout_batch, rollout_size // batch_size_per_rank
-            ):
-                for micro_batch in split_dict_to_chunk(
-                    global_batch,
-                    batch_size_per_rank // self.cfg.actor.micro_batch_size,
-                ):
-                    micro_batch = put_tensor_device(micro_batch, self.device)
-                    with self.amp_context:
-                        output = self.model(
-                            forward_inputs=micro_batch["forward_inputs"],
-                            compute_logprobs=True,
-                            compute_entropy=False,
-                            compute_values=False,
-                            use_cache=False,
-                            **kwargs,
-                        )
-                    recomputed_logprobs.append(output["logprobs"].detach().cpu())
-
-        recomputed_logprobs = torch.cat(recomputed_logprobs, dim=0).to(
-            rollout_logprobs.dtype
-        )
+        recomputed_logprobs = self.compute_actor_logprobs(
+            batch_size_per_rank, **kwargs
+        ).to(rollout_logprobs.dtype)
         assert recomputed_logprobs.shape == rollout_logprobs.shape, (
             f"recomputed logprobs shape {recomputed_logprobs.shape} must match "
             f"rollout logprobs shape {rollout_logprobs.shape}."
@@ -523,6 +551,22 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.rollout_batch["rollout_logprobs"] = rollout_logprobs
         self.rollout_batch["prev_logprobs"] = recomputed_logprobs
         return metrics
+
+    @Worker.timer("actor/freeze_qat_logprobs")
+    def freeze_qat_logprobs(self, batch_size_per_rank: int) -> None:
+        """Freeze the old actor scores while preserving original rollout scores."""
+        behavior = self.rollout_batch["prev_logprobs"]
+        versions = self.rollout_batch.get("versions")
+        if versions is not None and not (versions == self.version).all():
+            raise ValueError("rollout version must match the frozen actor")
+        anchor = self.compute_actor_logprobs(
+            batch_size_per_rank, output_dtype=torch.float32
+        )
+        if anchor.shape != behavior.shape:
+            raise ValueError(
+                "frozen actor and rollout logprobs must have matching shapes"
+            )
+        self.rollout_batch["proximal_logprobs"] = anchor
 
     def _get_opd_teacher_model(self):
         if self._opd_teacher_model is None:
@@ -665,6 +709,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             f"{rollout_size} is not divisible by {batch_size_per_rank}"
         )
         metrics = {}
+        if self.quantization_runtime is not None:
+            self.freeze_qat_logprobs(batch_size_per_rank)
         if self.cfg.algorithm.get("recompute_logprobs", False):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
@@ -841,6 +887,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     self.cfg.algorithm.clip_log_ratio_max
                 )
 
+        if self.quantization_runtime is not None:
+            loss_kwargs.update(correction_loss_kwargs(micro_batch, self.qat_correction))
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if compute_entropy and not loss_kwargs["critic_warmup"]:

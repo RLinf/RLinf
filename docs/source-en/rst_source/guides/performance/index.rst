@@ -29,6 +29,9 @@ training efficiency becomes the bottleneck.
    * - :doc:`Asynchronous Agentic RL <../async_agentic>`
      - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
 
+   * - :doc:`Quantization-aware Training <../quantization>`
+     - Configure one INT8/NVFP4 recipe for the actor and native rollout.
+
 .. toctree::
    :hidden:
 
@@ -41,3 +44,4 @@ training efficiency becomes the bottleneck.
    Profiling <../profile>
    5D Parallelism <../5D>
    Asynchronous Agentic RL <../async_agentic>
+   Quantization-aware Training <../quantization>

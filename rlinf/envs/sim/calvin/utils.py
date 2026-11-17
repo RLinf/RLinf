@@ -57,7 +57,7 @@ def get_sequences(num_sequences=1000, num_workers=None):
 
     with temp_seed(0):
         num_workers = (
-            multiprocessing.cpu_count() if num_workers is None else num_workers
+            min(4, multiprocessing.cpu_count()) if num_workers is None else num_workers
         )
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             results = flatten(

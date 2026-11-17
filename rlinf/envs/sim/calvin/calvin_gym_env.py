@@ -24,7 +24,10 @@ import torch
 
 from rlinf.envs.sim.calvin import CalvinBenchmark, make_env
 from rlinf.envs.sim.calvin.venv import ReconfigureSubprocEnv
-from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
+from rlinf.envs.utils import (
+    list_of_dict_to_dict_of_list,
+    to_tensor,
+)
 
 
 class CalvinEnv(gym.Env):
@@ -77,7 +80,9 @@ class CalvinEnv(gym.Env):
         for env_fn_param in env_fn_params:
 
             def env_fn(params=env_fn_param):
-                os.environ["EGL_VISIBLE_DEVICES"] = str(self.seed_offset)
+                os.environ["EGL_VISIBLE_DEVICES"] = os.environ.get(
+                    "EGL_DEVICE_ID", str(self.worker_info.accelerator_rank)
+                )
                 env = make_env(**params)
                 return env
 
@@ -259,8 +264,8 @@ class CalvinEnv(gym.Env):
         return infos
 
     def _extract_image_and_state(self, obs):
-        img = obs["rgb_obs"]["rgb_static"]
-        wrist_img = obs["rgb_obs"]["rgb_gripper"]
+        img = np.ascontiguousarray(obs["rgb_obs"]["rgb_static"], dtype=np.uint8)
+        wrist_img = np.ascontiguousarray(obs["rgb_obs"]["rgb_gripper"], dtype=np.uint8)
         state = obs["robot_obs"][:7]
 
         return {
