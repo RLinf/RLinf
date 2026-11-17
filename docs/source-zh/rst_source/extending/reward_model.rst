@@ -640,7 +640,7 @@ SGLang 路径额外说明：
 
 ManiSkill PickCube3View 实验从独立评估成功率为 58.89% 的 policy checkpoint 开始训练。
 
-.. figure:: https://raw.githubusercontent.com/zhoutianxing7B/RLinf/af6ab7968d9484791737e05b77fec7bfc19d561d/success_rate_steps_0_20.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/maniskill_vlm_trend_success_rate.png
    :alt: ManiSkill PickCube3View 成功率随 PPO 更新次数的变化
 
    独立评估的成功率在第 18 次 PPO 更新时达到 80.76%。每个数据点均在新进程中评估 1,024 个完整回合，每回合 50 步。
