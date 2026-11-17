@@ -29,6 +29,7 @@ from omegaconf.dictconfig import DictConfig
 import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
+from rlinf.scheduler.hardware import AcceleratorType
 from rlinf.utils.fsdp_config import validate_fsdp_wrapper_config
 from rlinf.utils.placement import (
     HybridComponentPlacement,
@@ -2568,6 +2569,39 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
+
+    for component in ("actor", "critic"):
+        component_cfg = cfg.get(component)
+        if component_cfg is None or (
+            component == "critic" and not component_cfg.use_critic_model
+        ):
+            continue
+        if component_cfg.model.get("attn_implementation") != "ascend_fusion":
+            continue
+        if (
+            component_cfg.training_backend != "fsdp"
+            or component_cfg.fsdp_config.strategy != "fsdp2"
+        ):
+            raise ValueError(
+                f"{component}.model.attn_implementation=ascend_fusion requires "
+                f"{component}.training_backend=fsdp and {component}.fsdp_config.strategy=fsdp2."
+            )
+        if not (
+            component_cfg.model.get("variable_seq_lengths", False)
+            or cfg.runner.get("enable_dynamic_batch_size", False)
+        ):
+            raise ValueError(
+                "ascend_fusion requires packed inputs: enable "
+                f"{component}.model.variable_seq_lengths or runner.enable_dynamic_batch_size."
+            )
+        placement = HybridComponentPlacement(cfg, Cluster()).get_strategy(component)
+        if any(
+            worker.accelerator_type != AcceleratorType.NPU
+            for worker in placement.get_placement(Cluster())
+        ):
+            raise ValueError(
+                f"ascend_fusion requires every {component} worker to run on an NPU."
+            )
 
     if cfg.runner.task_type == "reasoning":
         cfg = validate_searchr1_cfg(cfg)

@@ -3,6 +3,8 @@
 # Install into the SGLang 0.5.12.post1 / Torch 2.8 Ascend environment.
 torch==2.8.0
 agentlightning==0.3.0
+# AutoGen declares protobuf 5.x; the NPU overrides retain RLinf/Ray
+# protobuf 6.x, so a package metadata conflict remains.
 autogen-agentchat==0.7.5
 autogen-ext[openai,mcp]==0.7.5
 mcp==1.12.4

@@ -89,6 +89,8 @@ Start training:
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
 
+For FSDP training on NVIDIA GPUs, use ``qwen2.5-1.5b-enginehttp-multiturn-fsdp`` with the same launch script and model and dataset paths.
+
 You can also keep the config file unchanged and pass Hydra overrides on the
 command line:
 
@@ -145,8 +147,6 @@ Install the calculator dependencies while preserving the Ascend package versions
    uv --no-config pip install --torch-backend cpu \
      --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
      -r requirements/agentic/agentlightning_npu.txt
-
-The pins keep the OpenAI SDK and audio dependencies compatible with SGLang, preserve AgentOps' ``packaging<25`` requirement, and retain the Pydantic interface used by MCP. The protobuf override retains RLinf's 6.x runtime despite AutoGen 0.7.5 declaring a 5.x requirement; this remains a package metadata conflict even when the Calc-X workflow passes.
 
 Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
 

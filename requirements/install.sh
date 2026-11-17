@@ -1246,13 +1246,13 @@ EOF
     # torch-npu imports a few packages at runtime (`yaml`, `decorator`) but
     # doesn't declare them in its wheel metadata, so install them explicitly.
     uv pip install pyyaml decorator
-    if [ "$TARGET" = "agentic" ] && [ "$(effective_engine)" = "sglang" ]; then
-        torch_ver="${torch_ver}.post2"
+    # Agentic SGLang installs its torch-npu pin with the engine requirements.
+    if [ "$TARGET" != "agentic" ] || [ "$(effective_engine)" != "sglang" ]; then
+        echo "[install.sh] Installing torch-npu==${torch_ver} to match torch"
+        uv pip install "torch-npu==${torch_ver}" \
+            || (echo "[install.sh] Pinned torch-npu==${torch_ver} failed; falling back to latest compatible build." >&2 \
+                && uv pip install torch-npu)
     fi
-    echo "[install.sh] Installing torch-npu==${torch_ver} to match torch"
-    uv pip install "torch-npu==${torch_ver}" \
-        || (echo "[install.sh] Pinned torch-npu==${torch_ver} failed; falling back to latest compatible build." >&2 \
-            && uv pip install torch-npu)
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
         echo "source /usr/local/Ascend/ascend-toolkit/set_env.sh" >> "$VENV_DIR/bin/activate"
     fi
@@ -4644,6 +4644,7 @@ install_sglang_npu() {
         -r "$(agentic_requirements_file sglang "$version")" -e "$source_dir/python"
 
     # This release matches Triton Ascend 3.2.0; post3 needs extra.cann.
+    # Both releases report kernel version 2026.5.1; the release URL identifies the build.
     chip="${ASCEND_CHIP:-910b}"
     case "$chip" in
         910b|a3) ;;

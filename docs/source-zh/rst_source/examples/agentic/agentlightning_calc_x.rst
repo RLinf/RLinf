@@ -82,6 +82,8 @@ AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
 
+在 NVIDIA GPU 上使用 FSDP 训练时，选择 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp`` 配置，沿用上述启动脚本和模型、数据路径。
+
 也可以不修改配置文件，直接通过命令行传入 Hydra overrides：
 
 .. code-block:: bash
@@ -137,8 +139,6 @@ Huawei Ascend CANN
    uv --no-config pip install --torch-backend cpu \
      --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
      -r requirements/agentic/agentlightning_npu.txt
-
-这些版本约束使 OpenAI SDK 和音频依赖与 SGLang 保持兼容，满足 AgentOps 的 ``packaging<25`` 要求，并保留 MCP 使用的 Pydantic 接口。protobuf override 保留 RLinf 的 6.x runtime，而 AutoGen 0.7.5 声明依赖 5.x；即使 Calc-X 流程通过，包元数据中的这一冲突仍然存在。
 
 准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
 

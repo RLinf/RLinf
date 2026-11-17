@@ -266,12 +266,7 @@ jobs:
 
       - name: Create Ascend Agentic environment
         run: |
-          unset PYTHONPATH
-          unset UV_DEFAULT_INDEX
-          export UV_PATH=/workspace/dataset/.uv
-          export UV_LINK_MODE=symlink
-          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
-          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          source .github/scripts/ascend_ci_workspace.sh setup
           bash requirements/install.sh --platform ascend agentic
 
       - name: Train SearchR1 with SGLang MA-FSDP on Ascend
@@ -281,6 +276,7 @@ jobs:
           HCCL_NPU_SOCKET_PORT_RANGE: 61000-61050
           RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES: 1
         run: |
+          cd "$ASCEND_WORK_DIR"
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
@@ -289,8 +285,7 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          ray stop --force 2>/dev/null || true
-          rm -rf .venv
+          bash "$GITHUB_WORKSPACE/.github/scripts/ascend_ci_workspace.sh" cleanup
 
   searchr1-qwen-grpo-test:
     runs-on: reason

@@ -28,27 +28,13 @@ from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
+from rlinf.workers.actor import get_ma_actor_worker
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
-
-
-def get_ma_actor_worker(cfg):
-    """Select the multi-agent actor worker based on training backend."""
-    if cfg.actor.training_backend == "fsdp":
-        from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
-
-        return MAFSDPActor
-    if cfg.actor.training_backend == "megatron":
-        from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
-
-        return MAMegatronActor
-    raise ValueError(
-        f"Unsupported training backend for Search-R1 actor: {cfg.actor.training_backend}"
-    )
 
 
 @hydra.main(version_base="1.1")

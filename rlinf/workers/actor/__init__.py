@@ -44,3 +44,16 @@ def get_actor_worker(cfg: DictConfig) -> type[Worker]:
         return MegatronActor
     else:
         raise ValueError(f"Unsupported training backend: {cfg.actor.training_backend}")
+
+
+def get_ma_actor_worker(cfg: DictConfig) -> type[Worker]:
+    """Select the multi-agent actor for the configured training backend."""
+    if cfg.actor.training_backend == "fsdp":
+        from .ma_fsdp_actor_worker import MAFSDPActor
+
+        return MAFSDPActor
+    if cfg.actor.training_backend == "megatron":
+        from .ma_megatron_actor_worker import MAMegatronActor
+
+        return MAMegatronActor
+    raise ValueError(f"Unsupported training backend: {cfg.actor.training_backend}")

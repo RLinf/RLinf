@@ -271,6 +271,11 @@
 运行于不同硬件后端
 ------------------
 
+NVIDIA CUDA
+~~~~~~~~~~~
+
+在 NVIDIA GPU 上使用 FSDP 运行离线 LLM judge 训练时，选择 ``qwen2.5-1.5b-grpo-llm_judge-fsdp`` 配置，通过 ``run_main_coding_rl_llm_judge.sh`` 启动，并沿用上述模型、数据和 judge 服务设置。
+
 Huawei Ascend CANN
 ~~~~~~~~~~~~~~~~~~
 

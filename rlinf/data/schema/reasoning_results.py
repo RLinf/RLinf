@@ -582,46 +582,31 @@ class RolloutResult:
 
         # when do_down_sample is enabled, there might be no valid rewards
         if self.rewards is not None and self.rewards.numel() == 0:
+            device = get_current_device()
             batch = {
-                "input_ids": torch.zeros(0, dtype=torch.long).to(
-                    Worker.torch_device_type
-                ),
-                "attention_mask": torch.zeros(0, dtype=torch.bool).to(
-                    Worker.torch_device_type
-                ),
-                "response_mask": torch.zeros(0, dtype=torch.bool).to(
-                    Worker.torch_device_type
-                ),
-                "is_end": torch.zeros(0, dtype=torch.bool).to(Worker.torch_device_type),
-                "position_ids": torch.zeros(0, dtype=torch.long).to(
-                    Worker.torch_device_type
-                ),
-                "prompt_lengths": torch.zeros(0, dtype=torch.long).to(
-                    Worker.torch_device_type
-                ),
-                "response_lengths": torch.zeros(0, dtype=torch.long).to(
-                    Worker.torch_device_type
-                ),
+                "input_ids": torch.zeros(0, dtype=torch.long, device=device),
+                "attention_mask": torch.zeros(0, dtype=torch.bool, device=device),
+                "response_mask": torch.zeros(0, dtype=torch.bool, device=device),
+                "is_end": torch.zeros(0, dtype=torch.bool, device=device),
+                "position_ids": torch.zeros(0, dtype=torch.long, device=device),
+                "prompt_lengths": torch.zeros(0, dtype=torch.long, device=device),
+                "response_lengths": torch.zeros(0, dtype=torch.long, device=device),
             }
             if self.advantages is not None:
-                batch["advantages"] = torch.zeros(0, dtype=torch.float32).to(
-                    Worker.torch_device_type
-                )
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32, device=device)
             if self.recomputed_logprobs is not None:
-                batch["recomputed_logprobs"] = torch.zeros(0, dtype=torch.float32).to(
-                    Worker.torch_device_type
+                batch["recomputed_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32, device=device
                 )
             if self.ref_logprobs is not None:
-                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).to(
-                    Worker.torch_device_type
+                batch["ref_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32, device=device
                 )
             if self.rewards is not None:
-                batch["rewards"] = torch.zeros(0, dtype=torch.float32).to(
-                    Worker.torch_device_type
-                )
+                batch["rewards"] = torch.zeros(0, dtype=torch.float32, device=device)
             if self.rollout_logprobs is not None:
-                batch["rollout_logprobs"] = torch.zeros(0, dtype=torch.float32).to(
-                    Worker.torch_device_type
+                batch["rollout_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32, device=device
                 )
             return batch
 

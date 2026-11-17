@@ -271,6 +271,11 @@ Use this setup as the online loop: Continue sends requests, RLinf collects feedb
 Run on Different Hardware Backends
 ----------------------------------
 
+NVIDIA CUDA
+~~~~~~~~~~~
+
+For offline LLM-judge training with FSDP on NVIDIA GPUs, use ``qwen2.5-1.5b-grpo-llm_judge-fsdp`` with ``run_main_coding_rl_llm_judge.sh`` and the same model, data, and judge-service settings.
+
 Huawei Ascend CANN
 ~~~~~~~~~~~~~~~~~~
 
