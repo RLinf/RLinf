@@ -182,7 +182,7 @@ Evaluate Task22 on all four channels, with 32 episodes per channel on eight GPUs
 
 .. code-block:: bash
 
-   JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
+   python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task22_openpi_pi05_eval --output-root "<evaluation_output>" \
      --gpu-id 0,1,2,3,4,5,6,7 --num-envs 32 --num-episodes 32 \
      "rollout.model.model_path=<model_path>" \
