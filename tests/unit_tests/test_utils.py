@@ -1348,3 +1348,87 @@ def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
         result = source.to("cpu")
     assert not result.is_pinned()
     torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+_MULTIPART_FIELDS = {"model": "bwm", "num_frames": 13, "extra_params": '{"a": [1]}'}
+_MULTIPART_FILES = {
+    "input_reference": ("history.mp4", bytes(range(256)) * 4, "video/mp4")
+}
+
+
+def test_post_without_multipart_sends_and_returns_json():
+    import json
+
+    from _fake_http_server import FakeHTTPServer
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    body = {"text": "hi", "sampling_params": {"max_new_tokens": 4}}
+    with FakeHTTPServer([(200, "application/json", b'{"ok": [1, 2]}')]) as server:
+        out = InferenceHTTPClient(server.url).post("/generate", body)
+    assert out == {"ok": [1, 2]}
+    (request,) = server.requests
+    assert request["content_type"] == "application/json"
+    assert json.loads(request["body"]) == body
+
+
+def test_post_multipart_delivers_fields_and_file_bytes():
+    import hashlib
+
+    from _fake_http_server import FakeHTTPServer, parse_multipart
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    with FakeHTTPServer([(200, "application/json", b"{}")]) as server:
+        InferenceHTTPClient(server.url).post(
+            "/v1/videos/sync", _MULTIPART_FIELDS, files=_MULTIPART_FILES
+        )
+    (request,) = server.requests
+    fields, files = parse_multipart(request["content_type"], request["body"])
+    assert fields == {k: str(v) for k, v in _MULTIPART_FIELDS.items()}
+    filename, content, content_type = files["input_reference"]
+    assert (filename, content_type) == ("history.mp4", "video/mp4")
+    sent = _MULTIPART_FILES["input_reference"][1]
+    assert hashlib.sha256(content).digest() == hashlib.sha256(sent).digest()
+
+
+def test_post_multipart_retry_resends_the_same_parts():
+    from _fake_http_server import FakeHTTPServer, parse_multipart
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    responses = [(503, "text/plain", b"busy"), (200, "application/json", b"{}")]
+    with FakeHTTPServer(responses) as server:
+        InferenceHTTPClient(server.url).post(
+            "/v1/videos/sync", _MULTIPART_FIELDS, files=_MULTIPART_FILES, max_retries=1
+        )
+    first, second = (
+        parse_multipart(r["content_type"], r["body"]) for r in server.requests
+    )
+    assert first == second
+    assert first[1]["input_reference"][1] == _MULTIPART_FILES["input_reference"][1]
+
+
+def test_post_multipart_raw_response_returns_bytes():
+    from _fake_http_server import FakeHTTPServer
+
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    payload = b"\x00\x00\x00\x18ftypmp42" + bytes(64)
+    with FakeHTTPServer([(200, "video/mp4", payload)]) as server:
+        out = InferenceHTTPClient(server.url).post(
+            "/v1/videos/sync",
+            _MULTIPART_FIELDS,
+            files=_MULTIPART_FILES,
+            raw_response=True,
+        )
+    assert out == payload
+
+
+def test_post_multipart_with_msgpack_is_rejected():
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        InferenceHTTPClient("http://127.0.0.1:1").post(
+            "/x", {}, files=_MULTIPART_FILES, msgpack=True
+        )
