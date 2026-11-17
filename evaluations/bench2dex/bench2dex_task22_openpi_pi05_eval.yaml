@@ -14,7 +14,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env, rollout: 0
+    env, rollout: 0-7
 
 runner:
   task_type: embodied_eval
@@ -35,8 +35,8 @@ env:
   group_name: EnvGroup
   enable_offload: false
   eval:
-    rollout_epoch: 50
-    total_num_envs: 1
+    rollout_epoch: 1
+    total_num_envs: 32
     is_eval: true
     max_episode_steps: 681
     # Scheduling rounds to C=20; the simulator stops at 681.
