@@ -3911,6 +3911,9 @@ install_robolab_env() {
     pushd "$robolab_dir" >/dev/null
     uv pip install -e ".[isaac50]"
     popd >/dev/null
+    # Isaac Sim resolves sibling extensions relative to realpath(__file__).
+    materialize_package_files isaacsim-kernel
+    materialize_package_files omniverse-kit
     uv pip install openpi-client
 }
 
