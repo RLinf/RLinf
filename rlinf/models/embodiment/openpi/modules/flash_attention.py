@@ -40,6 +40,8 @@ class FlashAttentionMetadata:
     blocks: tuple[_Block, ...]
     valid_queries: torch.Tensor
     has_invalid_queries: bool
+    # One block covers every query in its original order.
+    full_query: bool
     backend: str = "flash_attention_2"
 
 
@@ -121,6 +123,7 @@ def prepare_flash_attention(
         tuple(blocks),
         valid_queries,
         query_count != valid_queries.numel(),
+        len(blocks) == 1 and query_count == valid_queries.numel(),
         backend,
     )
 
@@ -149,7 +152,7 @@ def flash_attention(
     flat_query = query.reshape(-1, heads, head_dim)
     flat_key = key.reshape(-1, kv_heads, head_dim)
     flat_value = value.reshape(-1, kv_heads, head_dim)
-    output = torch.zeros_like(flat_query)
+    output = None if metadata.full_query else torch.zeros_like(flat_query)
     if not any(block.query_indices.numel() for block in metadata.blocks):
         # Eager still materializes zero Q/K gradients for a fully masked batch.
         output = flat_query * 0 + flat_key.sum(dtype=torch.float32).to(query.dtype) * 0
@@ -157,7 +160,7 @@ def flash_attention(
         if block.query_indices.numel() == 0:
             continue
         packed = flash_attention_varlen(
-            flat_query[block.query_indices],
+            flat_query if metadata.full_query else flat_query[block.query_indices],
             flat_key[block.key_indices],
             flat_value[block.key_indices],
             block.query_cu_seqlens,
@@ -167,6 +170,8 @@ def flash_attention(
             backend=metadata.backend,
             softmax_scale=1.0,
         )
+        if metadata.full_query:
+            return packed.reshape(batch, query_length, heads, head_dim)
         output.index_copy_(0, block.query_indices, packed)
     output = output.reshape(batch, query_length, heads, head_dim)
     if not metadata.has_invalid_queries:
