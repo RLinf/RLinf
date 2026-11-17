@@ -482,8 +482,10 @@ jobs:
           python - <<'EOF'
           import json
           import os
+          import re
 
-          root = "/workspace/results/g1_mimic_supermimic/ci-test/checkpoints"
+          log_root = "/workspace/results/g1_mimic_supermimic"
+          root = os.path.join(log_root, "ci-test/checkpoints")
 
           def read(step, *parts):
               with open(os.path.join(root, f"global_step_{step}", *parts)) as file:
@@ -491,13 +493,18 @@ jobs:
 
           before = read(3, "actor", "supermimic_counters.json")["optimizer_steps"]
           after = read(5, "actor", "supermimic_counters.json")["optimizer_steps"]
-          # Each phase steps equally often per update, so a restored run counts
-          # on from update 3; a fresh one would hold two updates' worth.
+          # The 3-to-5 ratio also holds for a fresh run to step 5, because that
+          # run saves at both steps. The metrics log is what shows the resume:
+          # its first table for this run is step 4 of 5, so step 1 of 5 is absent.
           for phase, steps in before.items():
               assert steps > 0 and steps % 3 == 0, (phase, before)
               assert after[phase] == steps // 3 * 5, (phase, before, after)
           env_steps = [read(step, "runner_state.json")["env_steps"] for step in (3, 5)]
           assert env_steps[1] > env_steps[0] > 0, env_steps
+          with open(os.path.join(log_root, "metrics.log")) as file:
+              metrics = file.read()
+          assert re.search(r"Global Step:\s+4/5", metrics), metrics
+          assert not re.search(r"Global Step:\s+1/5", metrics), metrics
           EOF
 
       - name: SuperMimic MaxCoord test on two GPUs
