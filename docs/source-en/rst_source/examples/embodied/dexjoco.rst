@@ -379,6 +379,6 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
    * - CNN + PPO (NLL SFT)
      - Iteration 0: 42/64 (65.6%); iteration 200: 59/64 (92.2%); peak (iteration 163): 64/64 (100%).
    * - π₀.₅ + SFT
-     - Step 5000: 44/64 (68.75%).
+     - Step 5000: 50/64 (78.1%).
    * - π₀.₅ + PPO
      - Iteration 150: 63/64 (98.44%); peak (iteration 120): 64/64 (100%).
