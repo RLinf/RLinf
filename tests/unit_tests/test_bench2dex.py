@@ -661,6 +661,7 @@ def compose_bench2dex_recipe(monkeypatch):
         "BENCH2DEX_ASSETS_PATH": "/assets",
         "BENCH2DEX_PI05_PATH": "/model",
         "BENCH2DEX_ANCHOR_DIR": "/anchors",
+        "BENCH2DEX_WARMUP10_PATH": "/warmup10/full_weights.pt",
     }.items():
         monkeypatch.setenv(key, value)
 
@@ -784,15 +785,35 @@ def test_bench2dex_recipes(
     assert samples % cfg.actor.global_batch_size == 0
     assert cfg.actor.global_batch_size % (4 * cfg.actor.micro_batch_size) == 0
     if action_dim == 40:
+        assert cfg.cluster.component_placement["actor,env,rollout"] == "0-7"
+        assert cfg.runner.ckpt_path == "/warmup10/full_weights.pt"
+        assert cfg.runner.resume_dir is None
+        assert cfg.actor.optim.critic_warmup_steps == 0
+        assert cfg.env.train.total_num_envs == 32
+        assert cfg.env.train.rollout_epoch == 4
         assert samples == 4480
+        assert cfg.actor.global_batch_size == 2240
+        assert cfg.actor.micro_batch_size == 4
+        assert cfg.actor.global_batch_size // (8 * cfg.actor.micro_batch_size) == 70
+        assert samples // cfg.actor.global_batch_size * cfg.algorithm.update_epoch == 6
+        assert cfg.actor.optim.lr == 2e-6
+        assert cfg.actor.optim.value_lr == 2e-5
+        assert cfg.actor.optim.get("lr_scheduler", "constant") == "constant"
         assert cfg.runner.val_check_interval == 10
         assert cfg.runner.save_interval == 2
-        assert cfg.env.eval.total_num_envs * cfg.env.eval.rollout_epoch == 32
-        assert cfg.env.train.init_params.generalization_profile == "none"
+        assert cfg.env.eval.total_num_envs == 32
+        assert cfg.env.eval.rollout_epoch == 1
+        for split in ("train", "eval"):
+            params = cfg.env[split].init_params
+            assert params.generalization_profile == "none"
+            assert params.anchor_dir is params.anchor_hdf5 is None
+            assert params.episode_manifest == [
+                {"anchor_hdf5": "/anchors/episode_000001.hdf5", "seed": 2200001}
+            ]
         assert cfg.actor.model.openpi.noise_level == 0.3
         assert cfg.actor.model.openpi.stochastic_step_range == [0, 5]
         assert cfg.actor.model.openpi.frozen_vision_mode == "eval"
-        assert cfg.algorithm.use_dual_clip is False
+        assert cfg.algorithm.use_dual_clip is True
     else:
         rl_cfg = Pi0RLConfig.from_model_config(model)
         assert rl_cfg.stochastic_step_range is None
@@ -806,6 +827,8 @@ def test_bench2dex_e2e_recipes(compose_bench2dex_recipe, config_name):
     from rlinf.utils.runner_utils import check_progress
 
     cfg = compose_bench2dex_recipe("tests/e2e_tests/embodied", config_name)
+    assert cfg.cluster.component_placement["actor,env,rollout"] == "0-1"
+    assert cfg.runner.ckpt_path is None
     assert cfg.runner.max_steps == cfg.runner.save_interval == 2
     assert check_progress(
         step=2,
@@ -819,6 +842,41 @@ def test_bench2dex_e2e_recipes(compose_bench2dex_recipe, config_name):
         == cfg.actor.global_batch_size
     )
     assert cfg.env.train.enable_offload is ("_async_" not in config_name)
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_bench2dex_seeded_episode_manifest(tmp_path, monkeypatch, inline):
+    from rlinf.envs.sim.bench2dex.spec import Bench2DexEpisode, load_episodes
+
+    anchor = tmp_path / "episode_000001.hdf5"
+    anchor.touch()
+    entries = [{"anchor_hdf5": anchor.name, "seed": 2200001}]
+    if inline:
+        monkeypatch.chdir(tmp_path)
+        manifest = entries
+    else:
+        manifest = tmp_path / "fixed-scene.json"
+        manifest.write_text(json.dumps(entries))
+    episodes = load_episodes({"episode_manifest": manifest})
+    assert episodes == [Bench2DexEpisode(anchor, 2200001)]
+
+
+def test_bench2dex_task22_recipe_loads_single_scene(
+    compose_bench2dex_recipe, monkeypatch, tmp_path
+):
+    from omegaconf import OmegaConf
+
+    from rlinf.envs.sim.bench2dex.spec import Bench2DexEpisode, load_episodes
+
+    anchor = tmp_path / "episode_000001.hdf5"
+    anchor.touch()
+    monkeypatch.setenv("BENCH2DEX_ANCHOR_DIR", str(tmp_path))
+    cfg = compose_bench2dex_recipe(
+        "examples/embodiment/config", "bench2dex_task22_ppo_openpi_pi05"
+    )
+    for split in ("train", "eval"):
+        episodes = load_episodes(OmegaConf.to_container(cfg.env[split].init_params))
+        assert episodes == [Bench2DexEpisode(anchor, 2200001)]
 
 
 def test_bench2dex_e2e_evaluation_recipe(compose_bench2dex_recipe):

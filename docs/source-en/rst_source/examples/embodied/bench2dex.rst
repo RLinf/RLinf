@@ -28,7 +28,7 @@ Overview
    .. grid-item-card:: Hardware
       :text-align: center
 
-      NVIDIA GPUs: 4 for training examples, 1 for evaluation
+      8 × NVIDIA A800 for Task22
 
 Tasks
 ~~~~~
@@ -128,11 +128,26 @@ observation to the reward at the first timeout action. Terminal transitions and
 later padding receive no bootstrap. This applies automatically to Bench2Dex.
 Bootstrap behavior remains unchanged for other environments and auto-reset runs.
 
+Task22 training starts from the full model weights saved after ten critic-only
+warmup epochs. Set ``BENCH2DEX_WARMUP10_PATH`` to that ``full_weights.pt`` file.
+The run initializes fresh optimizer and scheduler states and trains for 190
+additional epochs with ``critic_warmup_steps: 0``.
+
 With the Task22 model and asset paths set, start PPO training:
 
 .. code-block:: bash
 
+   export BENCH2DEX_WARMUP10_PATH="<warmup10_full_weights.pt>"
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
+
+Task22 uses the selected white-background scene: anchor
+``episode_000001.hdf5`` with seed ``2200001``. Training and periodic evaluation
+use this same scene with ``generalization_profile: none``. Eight GPUs run 32 environments in parallel. Four rollouts per environment collect 128 trajectories per
+epoch; evaluation collects 32 trajectories. Each training epoch makes six
+optimizer updates: three passes over 4,480 action chunks with a global batch
+size of 2,240 and a micro batch size of 4 per GPU. Actor and critic learning
+rates stay fixed at ``2e-6`` and ``2e-5``, respectively. Dual clipping is enabled
+with a coefficient of 3, and the reward is success-only.
 
 Task22 evaluates every ten epochs and saves a checkpoint every two epochs.
 At the end of training, evaluation and checkpointing each run if enabled. Task64 disables

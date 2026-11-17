@@ -6,11 +6,16 @@ hydra:
   searchpath:
     - file://${oc.env:REPO_PATH}/examples/embodiment/config
 
+cluster:
+  component_placement:
+    actor,env,rollout: 0-1
+
 runner:
   max_epochs: 2
   max_steps: 2
   val_check_interval: -1
   save_interval: 2
+  ckpt_path: null
   logger:
     log_path: ${oc.env:RUNNER_TEMP,/tmp}/bench2dex-async
     experiment_name: bench2dex_async_ppo_openpi_pi05

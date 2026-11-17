@@ -27,7 +27,7 @@ Bench2Dex
    .. grid-item-card:: 硬件
       :text-align: center
 
-      NVIDIA GPU：训练示例使用 4 张，评测使用 1 张
+      Task22：8 张 NVIDIA A800
 
 任务
 ~~~~
@@ -115,11 +115,16 @@ policy 根据图像、关节位置和任务描述预测动作。
 
 ``env_type: bench2dex`` 配合 ``auto_reset=false`` 和 ``algorithm.bootstrap_type=standard`` 时，会将末状态的折扣价值加到首个超时动作的奖励中，且只加一次；真正终止和后续填充步骤不补值。Bench2Dex 自动使用这一行为，无需额外配置。其他环境及原有自动 reset 补值逻辑保持不变。
 
+Task22 从 critic 单独预热 10 轮后保存的完整模型权重开始。将 ``BENCH2DEX_WARMUP10_PATH`` 指向该模型的 ``full_weights.pt`` 文件。训练会新建优化器和 scheduler，设置 ``critic_warmup_steps: 0``，继续训练 190 轮。
+
 准备好 Task22 模型和资产路径后，启动 PPO 训练：
 
 .. code-block:: bash
 
+   export BENCH2DEX_WARMUP10_PATH="<warmup10_full_weights.pt>"
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
+
+Task22 固定使用选定的白底场景，对应 ``episode_000001.hdf5`` 和 seed ``2200001``。训练和周期性评测都使用该场景，设置 ``generalization_profile: none``。8 张 GPU 运行 32 个并行环境，每个环境采样 4 次，每轮共 128 条轨迹；每次评测采样 32 条轨迹。每轮训练包含 4,480 个动作 chunk，以 global batch 2,240、每卡 micro batch 4 遍历 3 次，共执行 6 次优化器更新。Actor 和 critic 学习率分别固定为 ``2e-6`` 和 ``2e-5``；启用系数为 3 的 dual clip，仅使用成功奖励。
 
 Task22 每 10 轮评测一次，每 2 轮保存一次 checkpoint。训练结束时，评测和 checkpoint 保存按各自的启用状态执行。Task64 默认关闭周期性评测。使用下方的独立评测命令统计四个通道的基准成功率。
 

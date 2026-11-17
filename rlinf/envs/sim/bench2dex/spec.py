@@ -183,7 +183,7 @@ def _anchor_pool(anchor_dir: str) -> list[Bench2DexEpisode]:
 
 
 def load_episodes(config: dict) -> list[Bench2DexEpisode]:
-    """Resolve the official anchor pool or an explicitly seeded episode manifest.
+    """Resolve the official anchor pool or a file/inline seeded episode manifest.
 
     Directory anchors follow the native main-0-24 and variant-25+ ordering.
     The fully resampled channel uses no anchor. All returned paths are absolute.
@@ -194,7 +194,10 @@ def load_episodes(config: dict) -> list[Bench2DexEpisode]:
     if config.get("anchor_dir"):
         return _anchor_pool(config["anchor_dir"])
     manifest = config.get("episode_manifest")
-    if manifest:
+    if isinstance(manifest, list):
+        entries = manifest
+        base = Path.cwd()
+    elif manifest:
         path = Path(manifest).expanduser().resolve()
         with path.open() as stream:
             entries = json.load(stream)
