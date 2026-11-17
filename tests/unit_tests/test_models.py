@@ -3587,8 +3587,8 @@ def test_gr00t_libero_stats(gr00t_libero_parquet):
 
     reader = LiberoEpisodeLoader(gr00t_libero_parquet, ["pick up bowl"])
     frames = [reader[index] for index in range(len(reader.episodes))]
-    cache = gr00t_libero_parquet / "cache/statistics.json"
-    reader.prepare_statistics(cache)
+    cache_base = gr00t_libero_parquet / "cache/statistics.json"
+    cache = reader.prepare_statistics(cache_base)
     statistics = reader.load_statistics(cache)
     assert frames[0]["state.gripper"].iloc[0].shape == (2,)
     np.testing.assert_array_equal(
@@ -3606,8 +3606,33 @@ def test_gr00t_libero_stats(gr00t_libero_parquet):
             np.testing.assert_allclose(stats["q01"], np.quantile(values, 0.01, axis=0))
             np.testing.assert_allclose(stats["q99"], np.quantile(values, 0.99, axis=0))
     modified_at = cache.stat().st_mtime_ns
-    reader.prepare_statistics(cache)
+    reader.prepare_statistics(cache_base)
     assert cache.stat().st_mtime_ns == modified_at
+
+
+def test_gr00t_libero_statistics_isolated(gr00t_libero_parquet):
+    import json
+    import shutil
+
+    from rlinf.data.datasets.gr00t.libero import LiberoEpisodeLoader
+
+    other_path = gr00t_libero_parquet.with_name(gr00t_libero_parquet.name + "_other")
+    shutil.copytree(gr00t_libero_parquet, other_path)
+    episodes_path = other_path / "meta/episodes.jsonl"
+    episodes = [json.loads(line) for line in episodes_path.read_text().splitlines()]
+    episodes[0]["tasks"] = ["other task"]
+    episodes_path.write_text("".join(json.dumps(row) + "\n" for row in episodes))
+
+    readers = [
+        LiberoEpisodeLoader(gr00t_libero_parquet, None),
+        LiberoEpisodeLoader(other_path, None),
+        LiberoEpisodeLoader(other_path, ["pick up bowl"]),
+    ]
+    cache_base = gr00t_libero_parquet / "cache/statistics.json"
+    caches = [reader.prepare_statistics(cache_base) for reader in readers]
+    assert len(set(caches)) == len(readers)
+    for reader, cache in zip(readers, caches, strict=True):
+        assert reader.load_statistics(cache) == reader.compute_statistics()
 
 
 @pytest.mark.parametrize("seed,sampling_rate", [(0, 1.0), (19, 1.0), (0, 0.5)])

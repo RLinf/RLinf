@@ -123,7 +123,7 @@ GR00T checkpoint 包含 backbone 权重，Cosmos 目录用于提供加载所需�
      optim:
        total_training_steps: 20000
 
-保留配置中已有的 Spatial 任务列表。``data.statistics_path`` 指向可写的统计缓存文件，归一化统计也会随 checkpoint 保存。
+保留配置中已有的 Spatial 任务列表。``data.statistics_path`` 指定缓存目录和文件名前缀，每个数据集和 episode 选择分别生成带哈希后缀的缓存文件。归一化统计也会随 checkpoint 保存。
 
 全局 batch size 必须能被 GPU 数与 microbatch size 的乘积整除。保留 ``runner.max_epochs: -1``，训练持续采样，到 ``runner.max_steps`` 指定的更新次数后停止。``actor.optim.total_training_steps`` 决定学习率计划长度。20,000 次更新是示例预算，不代表已经测得的收敛目标。
 
@@ -159,8 +159,40 @@ GR00T checkpoint 包含 backbone 权重，Cosmos 目录用于提供加载所需�
 
 用 ``train/loss`` 观察动作拟合情况，并确认保存的更新目录与预算一致。checkpoint 包含模型、优化器、训练归一化统计、processor 设置和 dataloader 恢复状态。指标定义见 :doc:`../../reference/metrics`。
 
-闭环评测还需要准备包含匹配 processor 设置的模型目录。评测流程见 :doc:`../../evaluations/index`，LIBERO 环境准备见 :doc:`gr00t`。
+准备训练模型并评测
+~~~~~~~~~~~~~~~~~~
 
-.. warning::
+将训练保存的模型配置和 processor 放入评测模型目录。先把 ``SFT_ACTOR`` 设为待评测更新对应的 ``actor/`` 目录：
 
-   评测必须配套使用训练权重和随 checkpoint 保存的 processor 设置。``runner.ckpt_path`` 只加载权重，processor 则从 ``rollout.model.model_path`` 读取。SFT 的 ``actor/`` 目录是训练 checkpoint，不是完整的 Hugging Face 模型目录；评测前需准备带有匹配 processor 的模型目录。
+.. code-block:: bash
+
+   BASE_MODEL="$(realpath checkpoints/GR00T-N1.7-3B)"
+   SFT_ACTOR=/absolute/path/to/global_step_N/actor
+   EVAL_MODEL="$(realpath -m checkpoints/GR00T-N1.7-SFT)"
+   mkdir -p "$EVAL_MODEL"
+   ln -s "$BASE_MODEL"/model*.safetensors "$EVAL_MODEL/"
+   cp "$BASE_MODEL/model.safetensors.index.json" "$EVAL_MODEL/"
+   cp "$SFT_ACTOR"/{config.json,processor_config.json,statistics.json,embodiment_id.json} "$EVAL_MODEL/"
+
+评测目录用基座权重的符号链接构建模型，并使用 SFT 保存的 processor。请保留基座目录。下面的评测命令从同一个 SFT checkpoint 加载训练权重。
+
+评测先加载 Cosmos backbone，再恢复 GR00T 权重。将完整的 Cosmos checkpoint 下载到 ``checkpoints/Cosmos-Reason2-2B``：
+
+.. code-block:: bash
+
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+
+复用现有 LIBERO Spatial 配置，只启动评测。将完整模型配置传给 rollout，并关闭 value head：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero_spatial_ppo_gr00t_n1d7 \
+     runner.only_eval=True \
+     'rollout.model=${actor.model}' \
+     actor.model.model_path="$EVAL_MODEL" \
+     actor.model.backbone_model_path="$(realpath checkpoints/Cosmos-Reason2-2B)" \
+     actor.model.add_value_head=False \
+     runner.ckpt_path="$SFT_ACTOR/model_state_dict/full_weights.pt" \
+     env.eval.ignore_terminations=False
+
+``rollout.model.model_path`` 选择训练保存的 processor，``runner.ckpt_path`` 指向配套的训练权重。命令沿用原配置的 GPU 分配和 rollout 预算，按评测协议调整这两项。评测设置见 :doc:`../../evaluations/index`，LIBERO 环境准备见 :doc:`gr00t`。

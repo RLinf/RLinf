@@ -123,7 +123,7 @@ Edit ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Set the dataset and mod
      optim:
        total_training_steps: 20000
 
-Keep the Spatial task list supplied in the configuration. ``data.statistics_path`` is a writable cache file for the selected data; normalization statistics are also saved with each checkpoint.
+Keep the Spatial task list supplied in the configuration. ``data.statistics_path`` supplies the cache directory and filename stem. Each dataset and episode selection gets a separate hashed cache file; normalization statistics are also saved with each checkpoint.
 
 The global batch size must be divisible by the number of GPUs times the microbatch size. Keep ``runner.max_epochs: -1``: training samples continuously and stops at ``runner.max_steps``. Set ``actor.optim.total_training_steps`` to the intended learning-rate schedule length. The 20,000-update budget is an example, not a measured convergence target.
 
@@ -159,8 +159,40 @@ Open TensorBoard to inspect the run:
 
 Use ``train/loss`` to track action fitting and check that the saved update directories match your budget. Each checkpoint contains model and optimizer state, training normalization and processor settings, and dataloader recovery state. Metric definitions are in :doc:`../../reference/metrics`.
 
-Closed-loop evaluation also requires a model directory containing the matching processor settings. See :doc:`../../evaluations/index` for the evaluation workflow and :doc:`gr00t` for LIBERO setup.
+Prepare the Trained Model for Evaluation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. warning::
+Create an evaluation model directory using the saved model configuration and processor. Set ``SFT_ACTOR`` to the ``actor/`` directory of the update you want to evaluate:
 
-   Evaluation must use both the trained weights and the processor settings saved with them. Setting ``runner.ckpt_path`` loads weights only; the processor comes from ``rollout.model.model_path``. An SFT ``actor/`` directory is a training checkpoint, not a complete Hugging Face model directory. Prepare a model directory with the matching processor before evaluating.
+.. code-block:: bash
+
+   BASE_MODEL="$(realpath checkpoints/GR00T-N1.7-3B)"
+   SFT_ACTOR=/absolute/path/to/global_step_N/actor
+   EVAL_MODEL="$(realpath -m checkpoints/GR00T-N1.7-SFT)"
+   mkdir -p "$EVAL_MODEL"
+   ln -s "$BASE_MODEL"/model*.safetensors "$EVAL_MODEL/"
+   cp "$BASE_MODEL/model.safetensors.index.json" "$EVAL_MODEL/"
+   cp "$SFT_ACTOR"/{config.json,processor_config.json,statistics.json,embodiment_id.json} "$EVAL_MODEL/"
+
+The directory links to the base weight files for model construction and uses the processor saved by SFT. Keep the base directory available. The evaluation command below then loads the trained weights from the same SFT checkpoint.
+
+Evaluation loads the Cosmos backbone before restoring the GR00T weights. Download its full checkpoint to ``checkpoints/Cosmos-Reason2-2B``:
+
+.. code-block:: bash
+
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+
+Run the existing LIBERO Spatial recipe in evaluation-only mode, using a complete rollout model configuration with the value head disabled:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero_spatial_ppo_gr00t_n1d7 \
+     runner.only_eval=True \
+     'rollout.model=${actor.model}' \
+     actor.model.model_path="$EVAL_MODEL" \
+     actor.model.backbone_model_path="$(realpath checkpoints/Cosmos-Reason2-2B)" \
+     actor.model.add_value_head=False \
+     runner.ckpt_path="$SFT_ACTOR/model_state_dict/full_weights.pt" \
+     env.eval.ignore_terminations=False
+
+``rollout.model.model_path`` selects the saved processor, while ``runner.ckpt_path`` selects the matching trained weights. The command uses the recipe's placement and rollout budget; adjust those for your evaluation protocol. See :doc:`../../evaluations/index` for evaluation settings and :doc:`gr00t` for LIBERO setup.

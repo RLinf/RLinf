@@ -70,9 +70,10 @@ def build_gr00t_sft_dataloader(
 
             task_names = data_cfg.get("task_names")
             reader = LiberoEpisodeLoader(Path(path), task_names)
-            statistics_path = Path(data_cfg.statistics_path)
+            cache_path = Path(data_cfg.statistics_path)
+            statistics_path = reader.statistics_cache_path(cache_path)
             if rank == 0:
-                reader.prepare_statistics(statistics_path)
+                reader.prepare_statistics(cache_path)
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
             statistics = reader.load_statistics(statistics_path)

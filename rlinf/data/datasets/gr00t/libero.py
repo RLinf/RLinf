@@ -13,6 +13,7 @@
 # limitations under the License.
 """Read the OpenPi LIBERO image-Parquet dataset for the GR00T processor."""
 
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -105,8 +106,18 @@ class LiberoEpisodeLoader:
             }
         return result
 
-    def prepare_statistics(self, cache_path: Path) -> None:
+    def statistics_cache_path(self, cache_path: Path) -> Path:
+        """Cache entry for this dataset and selected episodes under a base name."""
+        identity = [
+            str(self.path.resolve()),
+            [episode["episode_index"] for episode in self.episodes],
+        ]
+        digest = hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:16]
+        return cache_path.with_name(f"{cache_path.stem}-{digest}{cache_path.suffix}")
+
+    def prepare_statistics(self, cache_path: Path) -> Path:
         """Refresh cached statistics when the selected episode files change."""
+        cache_path = self.statistics_cache_path(cache_path)
         sources = []
         for index, episode in enumerate(self.episodes):
             stat = self.episode_path(index).stat()
@@ -118,7 +129,7 @@ class LiberoEpisodeLoader:
             and cached.get("dataset_path") == dataset_path
             and cached["sources"] == sources
         ):
-            return
+            return cache_path
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(
             json.dumps(
@@ -129,6 +140,7 @@ class LiberoEpisodeLoader:
                 }
             )
         )
+        return cache_path
 
     @staticmethod
     def load_statistics(cache_path: Path) -> dict:
