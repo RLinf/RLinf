@@ -20,7 +20,7 @@ from megatron.training.training import unwrap_model
 from megatron.training.utils import average_losses_across_data_parallel_group
 from omegaconf import DictConfig
 
-from rlinf.algorithms.losses import compute_ppo_critic_loss
+from rlinf.algorithms.registry import critic_loss
 from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.megatron_worker import MegatronWorker
@@ -96,11 +96,12 @@ class MegatronCritic(MegatronWorker):
         batch: dict[str, torch.Tensor],
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Compute clipped value loss and reduce metrics across data parallel ranks."""
-        loss, metrics_data = compute_ppo_critic_loss(
+        """Compute value loss and reduce metrics across data parallel ranks."""
+        loss, metrics_data = critic_loss(
+            loss_type=self.cfg.algorithm.critic_loss_type,
             values=values,
             returns=batch["returns"],
-            prev_values=batch["values"],
+            prev_values=batch.get("values"),
             value_clip=self.value_clip,
             huber_delta=10000,
             loss_agg_func=self.loss_agg_func,

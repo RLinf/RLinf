@@ -316,3 +316,61 @@ Limitations
   (``algorithm.recompute_logprobs: False``).
 - With ``reject_equal_reward`` enabled the drop rate can be high; check
   ``rollout/buffer/dropped_groups`` before committing to a long run.
+
+
+.. _searchr1-sao:
+
+Run SAO on Shared GPUs
+----------------------
+
+Use ``examples/agent/searchr1/config/train_qwen2.5_sao.yaml`` to train
+Qwen2.5 with SAO on one 8-GPU node. This config inherits the synchronous PPO
+recipe's model, data, and optimizer settings. Actor, critic, and rollout share
+the GPUs; unfinished trajectories continue across learner updates.
+
+Fill in ``rollout.model.model_path``, ``data.train_data_paths``, and
+``tools.search.server_addr`` in the SAO config as described in :doc:`qwen2.5`.
+With the Wiki server running, launch:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao
+
+With one minibatch per batch (the default), training updates the critic twice,
+then the actor once. The critic
+uses mean squared error (``algorithm.critic_loss_type=mse``) and computes policy
+advantages after its updates (``critic.compute_advantages_after_update=true``).
+``critic.update_epochs`` controls how many times the critic trains on all minibatches.
+
+SAO uses the log probabilities recorded during rollout. Keep
+``algorithm.recompute_logprobs=false`` and ``agentloop.truncate_response=false``.
+The policy loss uses double-sided importance sampling, and its advantage
+estimator adapts to trajectory length. Critic targets remain unnormalized. See the
+`SAO paper <https://arxiv.org/abs/2607.07508>`__ for the algorithm.
+This recipe does not include offline critic pretraining.
+
+``critic_update/critic/*`` records metrics for each critic update; actor metrics
+are logged by learner step. Shared GPUs alternate generation and training, so
+throughput depends on rollout lengths and the cost of switching models.
+
+Compare PPO and SAO
+~~~~~~~~~~~~~~~~~~~
+
+The Search-R1 experiment below compares synchronous PPO with full-parameter
+SAO on Qwen3-4B. Both runs used the same eight A100 80 GB GPUs, BF16, a 16k
+context limit, five tool turns, seed 1234, and 1024 trajectories per learner
+step. Each run completed 150 steps with one minibatch per step. PPO updated
+the critic once per step; SAO updated it twice.
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen3_4b_searchr1_ppo_sao_reward.png" alt="Qwen3-4B Search-R1 training reward: synchronous PPO and asynchronous SAO" style="width: 100%; background-color: white;"/>
+     <p><em>Training EM reward by learner step and wall-clock time, including checkpoint saves. Faint lines show raw values; solid lines show a 10-step trailing mean.</em></p>
+   </div>
+
+Over the last ten steps, mean training EM reward was 31.06% for PPO and
+36.57% for SAO. The runs took 11.11 and 8.11 hours, respectively, including
+checkpoint saves and excluding initialization. These are single-seed training
+measurements. The launch recipe above uses Qwen2.5; the figure reports the
+separate Qwen3-4B experiment.

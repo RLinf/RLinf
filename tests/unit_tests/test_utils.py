@@ -1209,6 +1209,7 @@ def megatron_cpu(monkeypatch, tmp_path):
                 "runner": {"task_type": "reasoning"},
                 "algorithm": {
                     "loss_type": "actor",
+                    "critic_loss_type": "critic",
                     "use_valid_token_scale": valid_token_scale,
                     "sampling_params": {"temperature": 1.0},
                     "early_stop_imp_ratio": None,
@@ -1348,3 +1349,200 @@ def test_pinned_offload_skips_pinning_for_musa_tensors(monkeypatch):
         result = source.to("cpu")
     assert not result.is_pinned()
     torch.testing.assert_close(result.as_subclass(torch.Tensor), torch.ones(2))
+
+
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_dis_masks_both_sides_and_detaches_behavior_weights(sign):
+    ratios = torch.tensor([0.2, 0.7, 0.8, 1.0, 5.0, 6.0, 10.0, 1.0])
+    logprobs = ratios.log().requires_grad_()
+    behavior = torch.zeros_like(logprobs, requires_grad=True)
+    advantages = torch.full_like(logprobs, sign, requires_grad=True)
+    mask = torch.tensor([True] * 7 + [False])
+    loss, metrics = policy_loss(
+        task_type="reasoning",
+        loss_type="dis",
+        logprobs=logprobs,
+        old_logprobs=behavior,
+        advantages=advantages,
+        clip_ratio_low=0.3,
+        clip_ratio_high=5.0,
+        loss_mask=mask,
+    )
+    loss.backward()
+    expected = torch.zeros_like(logprobs)
+    expected[2:5] = -sign * ratios[2:5] / 7
+    torch.testing.assert_close(logprobs.grad, expected)
+    assert behavior.grad is None and advantages.grad is None
+    torch.testing.assert_close(metrics["actor/clip_fraction"], torch.tensor(4 / 7))
+
+
+def test_dis_rejects_nonfinite_and_all_divergent_tokens_without_nan_gradients():
+    logprobs = torch.tensor(
+        [float("nan"), float("inf"), -float("inf"), 20.0], requires_grad=True
+    )
+    loss, _ = policy_loss(
+        task_type="reasoning",
+        loss_type="dis",
+        logprobs=logprobs,
+        old_logprobs=torch.zeros_like(logprobs),
+        advantages=torch.ones_like(logprobs),
+        clip_ratio_low=0.3,
+        clip_ratio_high=5.0,
+        loss_mask=torch.ones_like(logprobs, dtype=torch.bool),
+    )
+    assert loss == 0 and torch.isfinite(loss)
+    loss.backward()
+    torch.testing.assert_close(logprobs.grad, torch.zeros_like(logprobs))
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+def test_sao_gae_uses_episode_action_length_and_independent_returns(normalize):
+    values = torch.full((4, 6), 99.0)
+    mask = torch.zeros_like(values, dtype=torch.bool)
+    mask[0, 4] = mask[3, 1] = True
+    mask[1, 3:5] = mask[2, 1:3] = True
+    values[mask] = torch.tensor([0.4, 0.5, 0.6, 0.2, 0.3, 0.1])
+    kwargs = {
+        "task_type": "reasoning",
+        "adv_type": "sao_gae",
+        "rewards": torch.tensor([1.0, -0.5, 1.0, -0.5]),
+        "loss_mask": mask,
+        "idx_to_traj": [0, 1, 0, 1],
+        "prompt_lengths": torch.tensor([4, 3, 1, 1]),
+        "gamma": 0.9,
+        "gae_lambda_alpha": 1.5,
+        "normalize_advantages": normalize,
+    }
+    advantages, returns = calculate_adv_and_returns(values=values, **kwargs)
+    expected_advantages = torch.zeros_like(values)
+    expected_returns = torch.zeros_like(values)
+    for actions, reward in [
+        ([(2, 1), (2, 2), (0, 4)], 1.0),
+        ([(3, 1), (1, 3), (1, 4)], -0.5),
+    ]:
+        gae, next_value = 0.0, 0.0
+        lam = 1 - 1 / (1.5 * len(actions))
+        for step in reversed(range(len(actions))):
+            row, token = actions[step]
+            delta = (
+                (reward if step == len(actions) - 1 else 0.0)
+                + 0.9 * next_value
+                - values[row, token]
+            )
+            gae = delta + 0.9 * lam * gae
+            expected_advantages[row, token] = gae
+            expected_returns[row, token] = reward * 0.9 ** (len(actions) - 1 - step)
+            next_value = values[row, token]
+    if normalize:
+        valid = expected_advantages[mask]
+        expected_advantages[mask] = (valid - valid.mean()) / valid.std(unbiased=False)
+    torch.testing.assert_close(advantages, expected_advantages)
+    torch.testing.assert_close(returns, expected_returns)
+    _, no_value_returns = calculate_adv_and_returns(values=None, **kwargs)
+    torch.testing.assert_close(no_value_returns, returns)
+
+
+def test_sao_gae_adapts_lambda_separately_for_different_action_lengths():
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type="sao_gae",
+        rewards=torch.ones(2),
+        values=torch.zeros(2, 4),
+        loss_mask=torch.tensor(
+            [[False, True, False, False], [False, True, True, True]]
+        ),
+        idx_to_traj=[0, 1],
+        prompt_lengths=torch.ones(2, dtype=torch.long),
+        gae_lambda_alpha=1.5,
+        normalize_advantages=False,
+    )
+    torch.testing.assert_close(advantages[0, 1], torch.tensor(1.0))
+    torch.testing.assert_close(
+        advantages[1, 1:4], torch.tensor([(1 - 1 / 4.5) ** 2, 1 - 1 / 4.5, 1.0])
+    )
+    torch.testing.assert_close(
+        returns, torch.tensor([[0, 1, 0, 0], [0, 1, 1, 1]], dtype=torch.float32)
+    )
+
+
+@pytest.mark.parametrize("loss_type", ["actor", "dis"])
+def test_sao_actor_valid_token_scaling_matches_unsplit_gradient(
+    megatron_cpu, monkeypatch, loss_type
+):
+    make_worker, parallel_state = megatron_cpu
+    worker = make_worker("actor")
+    worker.cfg.algorithm.loss_type = loss_type
+    if loss_type == "dis":
+        worker.clip_ratio_low, worker.clip_ratio_high = 0.3, 5.0
+    input_ids = torch.arange(64).reshape(16, 4) % 7 + 1
+    positions = torch.arange(4).expand_as(input_ids).clone()
+    mask = positions > 0
+    mask[::3] = False
+    batch = {
+        "input_ids": input_ids,
+        "attention_mask": torch.ones_like(mask),
+        "position_ids": positions,
+        "response_mask": mask,
+        "loss_scales": mask.float(),
+        "advantages": input_ids.float() / 7 - 0.5,
+        "rollout_logprobs": torch.full_like(input_ids, -2.0, dtype=torch.float32),
+    }
+    forward = worker.get_forward_step_func()
+    expected = _TokenModel("actor")
+    output, loss_func = forward(iter([copy.deepcopy(batch)]), expected)
+    loss, _ = loss_func(output)
+    loss.backward()
+    worker.cfg.algorithm.use_valid_token_scale = True
+    worker._setup_valid_token_scale(batch)
+    worker.num_microbatches = 2
+    monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: 4)
+    model = _TokenModel("actor")
+    for rows in torch.arange(16).split(2):
+        output, loss_func = forward(
+            iter([{key: value[rows] for key, value in batch.items()}]), model
+        )
+        loss, _ = loss_func(output)
+        (loss / 8).backward()
+    torch.testing.assert_close(
+        model.weight.grad, expected.weight.grad, rtol=1e-5, atol=1e-7
+    )
+
+
+def test_mse_critic_regresses_unclipped_returns():
+    from rlinf.algorithms.losses import compute_mse_critic_loss
+
+    values = torch.tensor([0.2, 10.0, float("nan")], requires_grad=True)
+    returns = torch.tensor([1.0, -1.0, 0.0])
+    loss, _ = compute_mse_critic_loss(
+        values, returns, torch.tensor([True, True, False])
+    )
+    torch.testing.assert_close(loss, torch.tensor((0.8**2 + 11.0**2) / 2))
+    loss.backward()
+    torch.testing.assert_close(values.grad, torch.tensor([-0.8, 11.0, 0.0]))
+
+
+@pytest.mark.parametrize("loss_type,scale", [("critic", 0.5), ("mse", 1.0)])
+def test_registered_critic_loss_values_and_gradients(loss_type, scale):
+    from rlinf.algorithms.registry import critic_loss
+
+    values = torch.tensor([0.2, 2.0, 42.0], requires_grad=True)
+    loss, metrics = critic_loss(
+        loss_type=loss_type,
+        values=values,
+        returns=torch.tensor([1.0, -1.0, 0.0]),
+        prev_values=torch.zeros(3),
+        value_clip=0.5,
+        huber_delta=10000,
+        loss_mask=torch.tensor([True, True, False]),
+    )
+    torch.testing.assert_close(loss, torch.tensor((0.8**2 + 3.0**2) / 2 * scale))
+    loss.backward()
+    torch.testing.assert_close(values.grad, torch.tensor([-0.8, 3.0, 0.0]) * scale)
+    torch.testing.assert_close(metrics["critic/value_loss"], loss.detach())
+
+
+def test_unknown_critic_loss_is_rejected():
+    from rlinf.algorithms.registry import get_critic_loss
+
+    with pytest.raises(ValueError, match="not registered"):
+        get_critic_loss("unknown_critic_loss")

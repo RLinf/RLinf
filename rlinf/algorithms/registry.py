@@ -92,6 +92,38 @@ def policy_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     return loss, metrics_data
 
 
+CRITIC_LOSS_REGISTRY: dict[str, Callable] = {}
+
+
+def register_critic_loss(name: str):
+    """Register a value loss independently of the policy loss registry."""
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            return fn(*args, **kwargs)
+
+        CRITIC_LOSS_REGISTRY[name.lower()] = wrapper
+        return wrapper
+
+    return decorator
+
+
+def get_critic_loss(name: str) -> Callable:
+    """Retrieve a registered critic loss by name."""
+    if name not in CRITIC_LOSS_REGISTRY:
+        raise ValueError(
+            f"Critic loss {name!r} not registered. Available: {list(CRITIC_LOSS_REGISTRY)}"
+        )
+    return CRITIC_LOSS_REGISTRY[name]
+
+
+def critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
+    """Compute the value objective selected by loss_type."""
+    loss_fn = get_critic_loss(kwargs["loss_type"])
+    return loss_fn(**kwargs)
+
+
 def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Unified entry for advantage + return computation.

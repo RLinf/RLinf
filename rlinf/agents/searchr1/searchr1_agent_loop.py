@@ -47,8 +47,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             self.tokenizer, self.cfg.agentloop.get("agentic_tokenizer", "default")
         )
         self.max_prompt_len = int(self.cfg.data.max_prompt_length)
-        max_total_len = int(self.cfg.runner.seq_length)
-        self.max_resp_len = max(1, max_total_len - self.max_prompt_len)
+        self.max_total_len = int(self.cfg.runner.seq_length)
         self.truncate_response = self.cfg.agentloop.get("truncate_response", True)
 
         assert self.toolcall_parser is not None, (
@@ -117,9 +116,7 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
             return False, None, None, llm_output
 
         # Generate response from LLM
-        max_resp_len = self.max_resp_len - (
-            len(turn_prompt_ids) - len(problem_prompt_ids)
-        )
+        max_resp_len = self.max_total_len - len(turn_prompt_ids)
 
         if max_resp_len <= 0:
             return False, None, None, llm_output
@@ -215,8 +212,8 @@ class Searchr1AgentLoopWorker(MultiAgentLoopWorker):
         # Tokenize tool responses
         # Plain-text encode (model-agnostic); returns only the appended ids.
         tool_response_ids = self.agentic_tokenizer.append_tool_response(tool_messages)
-        max_tool_resp_len = self.max_resp_len - (
-            len(turn_prompt_ids) + len(llm_response_ids) - len(problem_prompt_ids)
+        max_tool_resp_len = (
+            self.max_total_len - len(turn_prompt_ids) - len(llm_response_ids)
         )
         if len(tool_response_ids) > max_tool_resp_len:
             return False, None

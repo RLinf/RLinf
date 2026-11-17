@@ -12,12 +12,11 @@ needs changing and you want to know which one and why.
 Turning It On
 -------------
 
-Asynchronous training is a runner switch on top of an agentic configuration,
-plus two requirements on how the job is deployed. The actor and the rollout
-must sit on separate GPUs, because both run at the same time, and the rollout
-must use the SGLang server backend, because the weight sync pauses and resumes
-generation through the server's HTTP routes. Starting from a synchronous
-Search-R1 configuration, these are the lines that change:
+Asynchronous training requires a Megatron actor and the SGLang server backend.
+Put actor and rollout on separate GPU sets to overlap generation and training,
+or on the same GPU set to retain unfinished trajectories while alternating
+between generation and training. Starting from a synchronous Search-R1
+configuration, the separate-GPU example changes these settings:
 
 .. code-block:: yaml
 
@@ -41,6 +40,24 @@ The ``reward`` entry is there because ``component_placement`` always expects
 one; Search-R1 computes its rewards inside the agent loop and launches no
 reward worker. A configuration that misses one of these requirements is
 rejected when the configuration is validated, before any worker starts.
+
+Share GPUs
+~~~~~~~~~~
+
+For a shared-GPU run, place actor and rollout on the same GPUs, enable the
+actor's weight, gradient, and optimizer offload, and set
+``rollout.pause_mode=retract``. Generation pauses after a full training batch
+has been dispatched. Unfinished requests retain their generated tokens and
+behavior logprobs while their GPU memory is released. After training and
+weight synchronization, rollout processes the retained token prefixes again
+under the updated weights, then resumes generation.
+Tool calls can finish while the GPU models train.
+
+SAO adds a critic on the same GPU set with the same offload settings. It updates
+the critic twice, computes policy advantages using the updated values, and
+updates the actor once. Use :ref:`searchr1-sao`
+for the Qwen2.5 SAO run command and critic options.
+The overlap measurements below use separate GPUs.
 
 Everything else has a default. The settings below are the ones you are most
 likely to touch; the rest of the page explains when.
@@ -92,10 +109,10 @@ it is ready for the next step.
 The measured effect is close to an ideal overlap. On the reference run (steps
 2–19, TensorBoard), the synchronous run's ``time/step`` of 278.6 s splits into
 ``time/rollout`` 181.9 + ``time/training`` 93.3 + ``time/sync_weights`` 1.4.
-The asynchronous run's ``time/step`` of 139.0 s splits into ``time/training``
-91.7 + ``time/wait_data`` 46.0 + ``time/sync_weights`` 1.3. Training takes
-almost the same time in both; what disappears is the time each side spent
-waiting for the other.
+The asynchronous run records 139.0 s per step, with 91.7 s of training and
+1.3 s of weight synchronization. The remaining 46.0 s covers data waiting and
+other scheduling overhead. Training takes almost the same time in both runs;
+overlap reduces the time each side spends waiting for the other.
 
 How It Fits Together
 --------------------
@@ -257,9 +274,9 @@ rollout, giving the rollout more capacity or generating with a smaller model.
 Limitations
 -----------
 
-Asynchronous agentic RL runs only on the combination it was built for: a
-Megatron actor, the multi-turn agent loop, the SGLang server backend, and a
-disaggregated placement of actor and rollout. There is no off-policy
-correction: the rollout logprob is used directly as the PPO old logprob, so
-the staleness bounds described above are what keeps the training data close to
-the current policy.
+Asynchronous agentic RL uses a Megatron actor, the multi-turn agent loop, and
+the SGLang server backend. Shared GPUs require retraction and model offload;
+generation and backpropagation alternate. Separate GPU sets run both at once.
+The GRPO recipe uses behavior-policy log probabilities recorded during rollout.
+SAO uses the same log probabilities for its double-sided importance mask and
+requires actor, critic, and rollout to share the GPU set, with TP=PP=CP=1.

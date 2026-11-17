@@ -37,6 +37,100 @@ from rlinf.workers.agent.agent_loop import (
 )
 
 
+def test_shared_sglang_retraction_retains_prefix_logprobs_and_late_requests(
+    monkeypatch,
+):
+    pytest.importorskip("sglang")
+    from sglang.srt.managers.schedule_batch import Req
+    from sglang.srt.sampling.sampling_params import SamplingParams
+
+    from rlinf.hybrid_engines.sglang.common.sgl_scheduler import Scheduler, _Scheduler
+
+    class VendorBatch:
+        def __init__(self, reqs):
+            self.reqs = reqs
+
+        def filter_batch(self, keep_indices):
+            self.reqs = [self.reqs[i] for i in keep_indices]
+
+    req = Req(
+        "active", "", [1, 2], SamplingParams(max_new_tokens=20), return_logprob=True
+    )
+    req.output_ids = [3, 4]
+    req.output_token_logprobs_val = [-0.2, -0.3]
+    req.logprob_start_len = 2
+    late = Req(
+        "late", "", [5, 6], SamplingParams(max_new_tokens=20), return_logprob=True
+    )
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler._parked_requests = None
+    scheduler.waiting_queue = []
+    scheduler.running_batch = VendorBatch([req])
+    scheduler.last_batch = scheduler.cur_batch = scheduler.chunked_req = None
+    scheduler.enable_overlap = False
+    scheduler._engine_paused = True
+    scheduler.offloaded_tags = dict.fromkeys(
+        ["weights", "kv_cache", "cuda_graph"], False
+    )
+    scheduler.is_weight_offloaded = False
+    scheduler.weight_reload = "sync"
+    scheduler._rlinf_worker = SimpleNamespace(
+        torch_platform=SimpleNamespace(synchronize=lambda: None)
+    )
+
+    def retract(self, request):
+        for req in list(self.running_batch.reqs):
+            req.reset_for_retract()
+            self._add_request_to_queue(req)
+        self.running_batch.filter_batch(keep_indices=[])
+
+    monkeypatch.setattr(_Scheduler, "pause_generation", retract)
+    monkeypatch.setattr(
+        _Scheduler,
+        "flush_cache",
+        lambda self: not self.waiting_queue
+        and not self.running_batch.reqs
+        and self.chunked_req is None,
+    )
+    monkeypatch.setattr(
+        _Scheduler,
+        "_add_request_to_queue",
+        lambda self, request, is_retracted=False: self.waiting_queue.append(request),
+    )
+    monkeypatch.setattr(
+        _Scheduler,
+        "is_fully_idle",
+        lambda self: not self.waiting_queue and not self.running_batch.reqs,
+    )
+
+    def release_memory(self, request):
+        assert self.is_fully_idle()
+
+    monkeypatch.setattr(_Scheduler, "release_memory_occupation", release_memory)
+    monkeypatch.setattr(
+        _Scheduler, "resume_memory_occupation", lambda self, request: None
+    )
+    for cycle in range(2):
+        prefix, logprobs = list(req.output_ids), list(req.output_token_logprobs_val)
+        scheduler.release_memory_occupation(
+            SimpleNamespace(tags=["weights", "kv_cache", "cuda_graph"])
+        )
+        assert scheduler.waiting_queue == [] and scheduler.running_batch.reqs == []
+        assert req.is_retracted and req.req_pool_idx is None
+        assert req.logprob_start_len == -1
+        scheduler._add_request_to_queue(late)
+        assert set(scheduler._parked_requests) == {"active", "late"}
+        scheduler.resume_memory_occupation(SimpleNamespace(tags=["weights"]))
+        assert scheduler.waiting_queue == []
+        scheduler.resume_memory_occupation(
+            SimpleNamespace(tags=["kv_cache", "cuda_graph"])
+        )
+        assert scheduler.waiting_queue == [req, late]
+        assert req.output_ids == prefix and req.output_token_logprobs_val == logprobs
+        req.output_ids.append(7 + cycle)
+        req.output_token_logprobs_val.append(-0.4 - cycle)
+
+
 class _QueueChannel:
     """Channel double whose get() waits when empty, like a real Channel."""
 
@@ -554,14 +648,14 @@ class TestGroupDiscarded:
 class TestRunnerConstruction:
     """The runner's placement requirement at construction."""
 
-    def test_collocated_placement_rejected(self):
-        """A non-disaggregated placement fails construction."""
+    def test_unsupported_placement_rejected(self):
+        """Placements other than shared or separate GPU sets fail construction."""
         pytest.importorskip("megatron.core")
         from omegaconf import DictConfig
 
         from rlinf.runners.async_agent_runner import AsyncAgentRunner
 
-        placement = SimpleNamespace(is_disaggregated=False)
+        placement = SimpleNamespace(is_disaggregated=False, is_collocated=False)
         cfg = DictConfig({"algorithm": {"recompute_logprobs": False}})
         try:
             AsyncAgentRunner(
@@ -904,3 +998,83 @@ class TestTaskNamePassthrough:
             assert seen == [(None, None), (None, None)]
 
         asyncio.run(run())
+
+
+@pytest.mark.parametrize("infer_after_update", [False, True])
+def test_critic_inference_order_and_epoch_metrics(infer_after_update):
+    pytest.importorskip("megatron.core")
+    import torch
+
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+    from rlinf.runners.agent_ppo_runner import AgentPPORunner
+
+    class RemoteResult:
+        def __init__(self, value):
+            self.value = value
+
+        def wait(self):
+            return self.value
+
+        def consume_duration(self, **kwargs):
+            return 0.1
+
+    mask = torch.tensor([[False, True, True]])
+
+    def advantages(value):
+        return calculate_adv_and_returns(
+            task_type="reasoning",
+            adv_type="sao_gae",
+            rewards=torch.tensor([1.0]),
+            loss_mask=mask,
+            values=torch.full((1, 3), value),
+            idx_to_traj=[0],
+            prompt_lengths=torch.tensor([1]),
+            group_size=1,
+            normalize_advantages=False,
+        )[0]
+
+    epochs = 2 if infer_after_update else 1
+
+    class CriticGroup:
+        value = 0.0
+
+        def run_inference(self, input_channel, output_channel, **kwargs):
+            output_channel.advantages = advantages(self.value)
+            return RemoteResult(None)
+
+        def run_training(self, input_channel, output_channel, **kwargs):
+            output_channel.advantages = input_channel.advantages
+            self.value += epochs
+            return RemoteResult(
+                [(None, [{"critic/value_loss": float(i + 1)} for i in range(epochs)])]
+            )
+
+    class ActorGroup:
+        def run_training(self, input_channel, version):
+            assert version == 7
+            self.advantages = input_channel.advantages
+            return RemoteResult([(None, [{"actor/policy_loss": 0.0}])])
+
+    runner = AgentPPORunner.__new__(AgentPPORunner)
+    runner.cfg = OmegaConf.create(
+        {"critic": {"compute_advantages_after_update": infer_after_update}}
+    )
+    runner.critic, runner.actor = CriticGroup(), ActorGroup()
+    runner.rollout_channel = SimpleNamespace(advantages=None)
+    runner.value_channel = SimpleNamespace(advantages=None)
+    runner.critic_output_channel = SimpleNamespace(advantages=None)
+    runner.recompute_logprobs = False
+    runner.global_steps = 7
+    metrics = []
+    runner.metric_logger = SimpleNamespace(
+        log=lambda values, step: metrics.append((step, values))
+    )
+    _, actor_metrics, _ = runner._run_training(None, version=7)
+    torch.testing.assert_close(
+        runner.actor.advantages, advantages(2.0 if infer_after_update else 0.0)
+    )
+    assert [step for step, _ in metrics] == list(range(7 * epochs, 8 * epochs))
+    assert [values["critic_update/critic/value_loss"] for _, values in metrics] == [
+        float(i + 1) for i in range(epochs)
+    ]
+    assert actor_metrics[0]["critic/value_loss"] == float(epochs)

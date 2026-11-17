@@ -221,3 +221,37 @@ rollout buffer worker 会把 dataloader 位置存进 checkpoint（``data/data.pt
 - 异步训练基于 Megatron actor 与 Search-R1 使用的多轮 agent loop 实现。
 - rollout 的 logprob 直接作为 PPO 的 old logprob（``algorithm.recompute_logprobs: False``）。
 - 开启 ``reject_equal_reward`` 后丢弃率可能很高；长跑之前先看 ``rollout/buffer/dropped_groups``。
+
+
+.. _searchr1-sao:
+
+在共享 GPU 上运行 SAO
+---------------------
+
+使用 ``examples/agent/searchr1/config/train_qwen2.5_sao.yaml``，在单个节点的 8 张 GPU 上用 SAO 训练 Qwen2.5。配置继承同步 PPO 的模型、数据和 optimizer 设置，actor、critic 和 rollout 共用 GPU。每次 learner 更新后，未完成的轨迹会继续生成。
+
+按 :doc:`qwen2.5` 的说明，在 SAO 配置中填写 ``rollout.model.model_path``、``data.train_data_paths`` 和 ``tools.search.server_addr``\ 。启动 Wiki 服务后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_sao
+
+默认每批只有一个 minibatch，先更新两次 critic，再更新一次 actor。critic 使用均方误差（``algorithm.critic_loss_type=mse``），并在更新后计算 policy advantage（``critic.compute_advantages_after_update=true``）。``critic.update_epochs`` 控制 critic 遍历全部 minibatch 的轮数。
+
+SAO 使用 rollout 记录的 logprob，保留 ``algorithm.recompute_logprobs=false`` 和 ``agentloop.truncate_response=false``\ 。policy loss 使用双侧 importance sampling，advantage 估计按轨迹长度调整，critic target 不做归一化。算法说明见 `SAO 论文 <https://arxiv.org/abs/2607.07508>`__\ 。本配置不包含离线 critic 预训练。
+
+查看 ``critic_update/critic/*`` 中每次 critic 更新的指标。actor 指标按 learner step 记录。共享 GPU 交替执行生成和训练，吞吐取决于轨迹长度与模型切换开销。
+
+对比 PPO 与 SAO
+~~~~~~~~~~~~~~~
+
+Qwen3-4B 的 Search-R1 实验比较了同步 PPO 与全参数 SAO。两组在同一台机器的 8 张 A100 80 GB GPU 上训练，均使用 BF16 精度。上下文上限为 16k，最多调用 5 轮工具，随机种子为 1234。每步使用 1024 条轨迹和一个 minibatch，共训练 150 步。PPO 每步更新一次 critic，SAO 更新两次。
+
+.. raw:: html
+
+   <div style="text-align: center;">
+     <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen3_4b_searchr1_ppo_sao_reward.png" alt="Qwen3-4B Search-R1 训练 reward：同步 PPO 与异步 SAO" style="width: 100%; background-color: white;"/>
+     <p><em>训练 EM reward 随 learner step 和墙钟时间的变化，耗时包含 checkpoint 保存。浅色线为原始值，实线为最近 10 步均值。</em></p>
+   </div>
+
+最后 10 步的训练 EM reward 均值分别为 PPO 31.06%、SAO 36.57%。两组耗时分别为 11.11 小时和 8.11 小时，包含 checkpoint 保存，不含初始化。这些指标均在训练集上测得，每组只使用一个随机种子。上面的启动示例使用 Qwen2.5，图中结果来自单独的 Qwen3-4B 实验。
