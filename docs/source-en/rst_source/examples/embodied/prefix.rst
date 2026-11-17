@@ -1,20 +1,16 @@
 Prefix Fine-Tune: Train Online from an Existing VLA
 ===================================================
 
-A vision-language-action model (VLA) reads camera images, a language instruction, and the robot state, and outputs an action. Image understanding, language, and action generation live in one large model.
+A vision-language-action model (VLA) reads camera images, a language instruction, and the robot state, and outputs an action. Image understanding, language, and action generation live in one large model. RL Token (RLT) uses that pretrained model in two stages. Stage 1 trains the VLA with a token transformer on demonstrations and compresses the vision-language features into a compact representation. Stage 2 freezes the feature model and trains two small networks from that representation, the robot state, and the VLA reference action: the actor outputs actions, and the critic estimates later return. Online updates run only through those two networks. The large model runs forward only.
 
-RL Token (RLT) uses that pretrained model in two stages. Stage 1 trains the VLA with a token transformer on demonstrations and compresses the vision-language features into a compact representation. Stage 2 freezes the feature model and trains two small networks from that representation, the robot state, and the VLA reference action: the actor outputs actions, and the critic estimates later return. Online updates run only through those two networks. The large model runs forward only.
+The Prefix framework builds on that Stage 2 loop. You choose the feature source, the network, and the algorithm in the config, while data collection and the parameter update stay on one path. Features can come from RLT tokens or from pooling the frozen VLA vision-language features. Those features are the prefix. A policy is the model that turns an observation into an action. During training the feature model stays frozen. The actor reads the prefix, the robot state, and the reference action, and outputs the action to execute. After the environment executes that action, the run writes the features, the action, the reward, and the termination into the replay buffer. Updates sample that buffer, and backpropagation goes through the actor and the critic. The VLA keeps supplying features and reference actions, and its weights stay unchanged.
 
-The Prefix framework builds on that Stage 2 loop. The feature source, the network, and the algorithm are configurable, and data collection and the parameter update stay on one path. Features can come from RLT tokens or from pooling the frozen VLA vision-language features. Those features are the prefix. A policy is the model that turns an observation into an action.
-
-During training the feature model stays frozen. The actor reads the prefix, the robot state, and the reference action, and outputs the action to execute. After the environment executes that action, the run writes the features, the action, the reward, and the termination into the replay buffer. Updates sample that buffer, and backpropagation goes through the actor and the critic. The VLA keeps supplying features and reference actions, and its weights stay unchanged.
-
-This page runs that loop on ManiSkill peg insertion from published OpenPI checkpoints. OpenPI is the VLA connected today. Another VLA needs an adapter, covered in :doc:`Prefix components <../../extending/prefix>`. If you already trained an RL Token representation, the Stage 2 configs on :doc:`RL Token <rlt>` use the same update path.
+This page shows Stage 2 training on ManiSkill peg insertion with published OpenPI checkpoints and the ready-made config. OpenPI is the VLA connected today. Another VLA needs an adapter, covered in :doc:`Prefix components <../../extending/prefix>`. If you already trained an RL Token representation, the Stage 2 configs on :doc:`RL Token <rlt>` use the same update path.
 
 Overview
 --------
 
-Run the pooled-feature preset first. It already selects TD3 and the STEAM stage switch. A preset names the environment, models, algorithm, and device placement; you select it by the config file name.
+The example run uses pooled features. It already selects TD3 and the STEAM stage switch. The config also names the environment, models, algorithm, and device placement; you select it by the config file name.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -39,45 +35,15 @@ Run the pooled-feature preset first. It already selects TD3 and the STEAM stage 
 
       Online rollout · replay · STEAM routing
 
-How Training Works
-------------------
+How Online Training Works
+-------------------------
 
-One decision starts from the environment observation. The frozen VLA encodes images and language into prefix features and also emits a reference action chunk, which is the action the existing model would have taken. The small actor reads those features, the robot's current joint state (proprioception), and the reference chunk, and outputs the action to execute. The critic estimates the return that action may lead to. The actor emits several control steps at once; that block is an action chunk. This example uses 10 steps per chunk and 8 numbers per step. Those numbers follow the robot's control mode.
-
-After the environment executes the chunk, the run stores the extracted features, the action that was sent, the reward, and the termination. That store is the replay buffer. Updates sample it repeatedly and backpropagate only through the small network. The VLA stays in the loop for feature extraction and reference actions, and its weights are not updated.
-
-RLinf calls environment interaction and action collection rollout, and calls the parameter update training. The two alternate, and the updated policy is synced back to the rollout side. The checkpoint you keep from online training is the small policy. The frozen VLA checkpoint stays the one you downloaded.
+One decision starts from the environment observation. The frozen VLA encodes images and language into prefix features and also emits a reference action. The small actor reads those features, the robot's current joint state (proprioception), and the reference action, and outputs the action to execute. The critic estimates the return that action may lead to. The actor emits several control steps at once; that block is an action chunk. This example uses 10 steps per chunk and 8 numbers per step. Those numbers follow the robot's control mode. After the environment executes the chunk, the run stores the extracted features, the action that was sent, the reward, and the termination in the replay buffer. Updates sample it repeatedly and backpropagate only through the small network. The VLA stays in the loop for feature extraction and reference actions, and its weights are not updated. RLinf calls environment interaction and action collection rollout, and calls the parameter update training. The two alternate, and the updated policy is synced back to the rollout side. The checkpoint you keep from online training is the small policy. The frozen VLA checkpoint stays the one you downloaded.
 
 The example also uses STEAM to judge task progress from images at different times. The VLA reference action controls the robot at the start. After the training warmup finishes and STEAM marks a critical phase, the actor is allowed to take over. That choice of action source is routing. STEAM decides when to switch; the actor learns how to move. You can change the two settings separately.
 
-Choose a Starting Configuration
--------------------------------
-
-Pooled features can come from a base VLA or from one already supervised-finetuned (SFT) on demonstrations. RLT is the other representation: Stage 1 trains a small network that compresses VLA features, and Stage 2 freezes it and trains the actor and critic. Both routes share the update loop below.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 55 45
-
-   * - Experiment
-     - Config under ``examples/embodiment/config/``
-   * - Pooled VLM features, TD3, and STEAM stage switching
-     - ``maniskill_prefix_stage2_td3_mlp_steam.yaml``
-   * - RLT token features and TD3
-     - ``maniskill_rlt_stage2_td3_mlp.yaml``
-   * - RLT token features and AC
-     - ``maniskill_rlt_stage2_ac_mlp.yaml``
-   * - Collect STEAM calibration traces
-     - ``maniskill_prefix_stage2_td3_mlp_steam_calibration.yaml``
-
-The steps below use the first config. Use the RLT configs after that flow runs and you want to compare representations or algorithms; their Stage 1 preparation is on the :doc:`RL Token <rlt>` page. Use the calibration config when you need to refit the stage decision for a new task, camera, or controller.
-
 Installation
 ------------
-
-These steps target a Linux machine with an NVIDIA GPU, access to GitHub and Hugging Face, and disk space for the models, dependencies, logs, and training checkpoints. The GPU has to hold the VLA, the STEAM model, and the small network at the same time. The example runs 64 training environments, so the simulator adds to that memory use.
-
-The example starts online training from published checkpoints. ManiSkill generates the interaction data during the run, and the downloaded checkpoints include the normalization statistics that put robot state and actions on the scale the VLA was trained with.
 
 Clone the repository:
 
@@ -122,9 +88,7 @@ The install script prepares the embodied stack, the OpenPI model, and the ManiSk
 Download the Models
 -------------------
 
-The settings for this run live in ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``. Keep the network and algorithm values, fill in the model paths, then check routing and logging before you launch.
-
-The example loads four models. The feature VLA produces the representation and the reference action. The expert VLA is a second trained model, available if you later enable takeover. The STEAM value model scores progress from images. The phase head is the small classifier that decides whether the task has entered the critical phase. The first run uses all four with the preset settings.
+The example loads four sets of model weights. The feature VLA produces the representation and the reference action. The expert VLA is a second trained model, used when online training takes over. The STEAM value model scores progress from images. The phase head is the small classifier that decides whether the task has entered the critical phase.
 
 .. list-table::
    :header-rows: 1
@@ -146,12 +110,13 @@ The example loads four models. The feature VLA produces the representation and t
      - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
      - ``rollout.routing_gate.actor_switch.phase_head_path``
 
-Download the four repositories into ``data/steam_peg``, and also download the SigLIP and Gemma backbones STEAM uses for images and language. For hf-mirror, first run ``export HF_ENDPOINT=https://hf-mirror.com``.
+Download the four sets of weights into ``data/steam_peg``, and also download the SigLIP and Gemma backbones STEAM uses for images and language.
 
 .. code:: bash
 
    CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
-
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
    hf download ChikaYokoyama/maniskill_rlt_1000_new \
      --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
      --exclude '*/dcp_checkpoint/*'
@@ -169,12 +134,12 @@ Download the four repositories into ``data/steam_peg``, and also download the Si
    hf download google/gemma-3-270m \
      --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
 
-The first two repositories already contain ``global_step_1000/actor`` and ``global_step_3000/actor``, so they share one ``checkpoints`` directory. The STEAM repository stores the actor files at its root, so its download target includes ``global_step_5000/actor``. The commands skip distributed training state and keep the inference weights, normalization statistics, and processor files.
+The first two weight sets already contain ``global_step_1000/actor`` and ``global_step_3000/actor``, so they share one ``checkpoints`` directory. The STEAM repository stores the actor files at its root, so its download target includes ``global_step_5000/actor``. The commands skip distributed training state and keep the inference weights, normalization statistics, and processor files.
 
 Set the Model Paths
 -------------------
 
-Open ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml`` and replace the four checkpoint fields with absolute paths under the directory from the previous section. ``<CHECKPOINT_ROOT>`` below means that expanded absolute path. Do not leave the angle-bracket text in the file.
+The settings for this example run live in ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``. Replace the four checkpoint fields with absolute paths under the directory from the previous section. ``<CHECKPOINT_ROOT>`` below means that expanded absolute path. Do not leave the angle-bracket text in the file.
 
 .. list-table::
    :header-rows: 1
@@ -211,45 +176,6 @@ The tokenizer and image-processor files stay in that same ``actor`` directory. T
 Run Training
 ------------
 
-With the paths filled in, keep the example routing, check devices and logging, and start from the repository root.
-
-Keep the Example Routing
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-The run has to choose an action from the VLA, the actor, or the expert. STEAM's stage and takeover decisions are gate signals. With the block below, the actor switch is applied, and the expert stays in shadow mode: the decision is recorded and the expert action is not executed.
-
-.. code:: yaml
-
-   rollout:
-     routing_gate:
-       actor_switch:
-         enable: True
-         mode: active
-         enter_threshold: null
-         patience_chunks: null
-       expert_takeover:
-         enable: True
-         mode: shadow
-         warmup_chunks: null
-         patience_chunks: null
-         enter_threshold: null
-
-This is a fragment of the full config. Do not replace the file with it. ``enter_threshold`` is the score that triggers a decision, ``patience_chunks`` is how many consecutive chunks must agree, and ``warmup_chunks`` is how many chunks to wait before checking expert takeover. ``null`` uses the values saved in the phase-head file. A number overrides that saved value.
-
-.. warning::
-
-   The published expert threshold did not trigger takeover on its calibration validation split, so it is not a reason to enable automatic takeover. Keep shadow mode for the first run. Collect traces from episodes the actor actually controlled, check the new threshold, and only then consider ``expert_takeover.mode: active``.
-
-Check Devices and Logging
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``cluster.component_placement`` in the preset puts the actor on GPU 0 and the environment and rollout workers on every device (``all``). Before launching, confirm those IDs exist on the machine. ``env.train.total_num_envs`` is the number of parallel training environments. The example uses 64; change it together with the GPU memory and simulator load.
-
-The example logs metrics to Weights & Biases. Finish that account setup in the same environment before you launch. To read metrics on the machine instead, set ``runner.logger.logger_backends`` to ``["tensorboard"]``. The calibration preset already uses that local backend.
-
-Start Training
-~~~~~~~~~~~~~~
-
 From the repository root, with the environment activated:
 
 .. code:: bash
@@ -266,7 +192,7 @@ After launch, confirm that data collection and parameter updates are moving, the
 Training Progress
 ~~~~~~~~~~~~~~~~~
 
-The run first fills the replay buffer and finishes the warmup updates. The example waits for 10,000 replay records and 30,000 warmup updates before the actor may take over. STEAM still decides whether the task is in the critical phase. Seeing the robot continue to follow the VLA reference action does not mean training has stopped.
+The run first fills the replay buffer and finishes the warmup updates. The example waits for 10,00 replay records and 30,00 warmup updates before the actor may take over. STEAM still decides whether the task is in the critical phase. Seeing the robot continue to follow the VLA reference action does not mean training has stopped.
 
 In the logger you selected, the progress keys are prefixed with ``train/prefix/``:
 

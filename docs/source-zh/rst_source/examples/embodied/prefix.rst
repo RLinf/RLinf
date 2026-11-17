@@ -1,19 +1,16 @@
 Prefix Fine-Tune：从已有 VLA 开始在线训练
 =========================================
-视觉语言动作模型（VLA）读取相机图像、语言指令和机器人状态，输出动作。图像理解、语言理解和动作生成都在同一份大模型里。
 
-RL Token（RLT）分两个阶段使用这份预训练能力。Stage 1 用示范数据联合训练 VLA 和 token transformer，把视觉语言特征压成紧凑表示。Stage 2 冻结特征模型，用这个表示、机器人状态和 VLA 参考动作训练两个轻量网络：actor 输出动作，critic 估计后续回报。在线更新只经过这两个网络，大模型只做前向计算。
+视觉语言动作模型（VLA）读取相机图像、语言指令和机器人状态，输出动作。图像理解、语言理解和动作生成都在同一份大模型里。RL Token（RLT）分两个阶段使用这份预训练能力。Stage 1 用示范数据联合训练 VLA 和 token transformer，把视觉语言特征压成紧凑表示。Stage 2 冻结特征模型，用这个表示、机器人状态和 VLA 参考动作训练两个轻量网络：actor 输出动作，critic 估计后续回报。在线更新只经过这两个网络，大模型只做前向计算。
 
-Prefix 框架在此基础上用配置选择特征来源、网络和算法，采集和参数更新仍走同一套流程。特征可以来自 RLT token，也可以直接池化冻结 VLA 的视觉语言特征，这段特征称为 prefix。policy 指根据观测生成动作的模型。
+Prefix 框架在此基础上用配置选择特征来源、网络和算法，采集和参数更新仍走同一套流程。特征可以来自 RLT token，也可以直接池化冻结 VLA 的视觉语言特征，这段特征称为 prefix。policy 指根据观测生成动作的模型。训练时特征模型保持冻结。actor 读取 prefix 特征、机器人状态和参考动作，给出要执行的动作。环境执行后，系统把特征、动作、奖励和终止写入 replay，更新时反复采样，反向传播只经过 actor 和 critic。VLA 继续提供特征和参考动作，权重保持不变。
 
-训练时特征模型保持冻结。actor 读取 prefix 特征、机器人状态和参考动作，给出要执行的动作。环境执行后，系统把特征、动作、奖励和终止写入 replay，更新时反复采样，反向传播只经过 actor 和 critic。VLA 继续提供特征和参考动作，权重保持不变。
-
-本页使用已发布的 OpenPI checkpoint 和配好的 ManiSkill 插接配置，先把这条流程跑通。当前接入的 VLA 是 OpenPI；其他 VLA 需要适配器，步骤见 :doc:`Prefix 组件扩展 <../../extending/prefix>`。如果已经训练过 RL Token 表示，:doc:`RL Token <rlt>` 上的 Stage 2 配置走同一套更新流程。
+本页展示使用已发布的 OpenPI checkpoint 和配好的 ManiSkill 插接配置进行 Stage 2 训练。当前已接入的 VLA 是 OpenPI；其他 VLA 需要适配器，步骤见 :doc:`Prefix 组件扩展 <../../extending/prefix>`。如果已经训练过 RL Token 表示，:doc:`RL Token <rlt>` 上的 Stage 2 配置走同一套更新流程。
 
 概览
 ----
 
-第一次运行使用特征池化这条 preset。它已经选好 TD3 和 STEAM 阶段切换。一份 preset 同时指定环境、模型、算法和设备分配，运行时用配置文件名选择。
+示例运行使用特征池化，它已经选好 TD3 和 STEAM 阶段切换。同时指定环境、模型、算法和设备分配，运行时用配置文件名选择。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -38,45 +35,15 @@ Prefix 框架在此基础上用配置选择特征来源、网络和算法，采�
 
       在线 rollout · replay · STEAM 路由
 
-训练怎样工作
-------------
+在线训练怎样工作
+----------------
 
-一次控制从环境观测开始。冻结的 VLA 把图像和语言编码成 prefix 特征，并给出一段参考动作，也就是已有模型会执行的动作。小型 actor 读取这些特征、机器人当前关节状态（本体状态）和参考动作，输出要执行的动作。critic 估计该动作可能带来的后续回报。actor 一次输出连续若干步，这一段称为动作块。本例每块 10 步，每步 8 个数值，含义由机器人控制方式决定。
-
-环境执行动作块之后，系统保存提取出的特征、实际发出的动作、奖励和终止信息。这个存储区是经验回放缓冲区（replay buffer）。更新会反复从中采样，反向传播只经过小网络。VLA 继续负责特征提取和参考动作，它的权重不会被更新。
-
-RLinf 把环境交互和动作采集称为 rollout，把参数更新称为训练。两者交替进行，更新后的 policy 会同步回采集端。在线训练留下的 checkpoint 是轻量 policy；冻结的 VLA 仍是下载的那一份。
+一次控制从环境观测开始。冻结的 VLA 把图像和语言编码成 prefix 特征，并给出一段参考动作。小型 actor 读取这些特征、机器人当前关节状态（本体状态）和参考动作，输出要执行的动作。critic 估计该动作可能带来的后续回报。actor 一次输出连续若干步，这一段称为动作块。本例每块 10 步，每步 8 个数值，含义由机器人控制方式决定。环境执行动作块之后，系统保存提取出的特征、实际发出的动作、奖励和终止信息放入经验回放缓冲区（replay buffer）中。更新会反复从中采样，反向传播只经过小网络。VLA 继续负责特征提取和参考动作，它的权重不会被更新。RLinf 把环境交互和动作采集称为 rollout，把参数更新称为训练。两者交替进行，更新后的 policy 会同步回采集端。在线训练留下的 checkpoint 是轻量 policy；冻结的 VLA 仍是下载的那一份。
 
 示例还用 STEAM 根据不同时刻的图像判断任务进度。开始时由 VLA 参考动作控制。训练预热完成，并且 STEAM 判断任务进入关键阶段之后，actor 才可以接管。这种动作来源的选择称为路由。STEAM 决定何时切换，actor 学习如何动作，两边的设置可以分开改。
 
-选择起始配置
-------------
-
-普通特征池化可以使用基座 VLA，也可以使用已经用示范动作做过监督微调（SFT）的模型。另一条表示是 RLT：Stage 1 训练一个压缩 VLA 特征的小网络，Stage 2 冻结它并训练 actor 和 critic。两条路线共用下面的更新流程。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 55 45
-
-   * - 要完成的实验
-     - 配置文件，位于 ``examples/embodiment/config/``
-   * - VLM 特征池化、TD3 与 STEAM 阶段切换
-     - ``maniskill_prefix_stage2_td3_mlp_steam.yaml``
-   * - RLT token 表示与 TD3
-     - ``maniskill_rlt_stage2_td3_mlp.yaml``
-   * - RLT token 表示与 AC
-     - ``maniskill_rlt_stage2_ac_mlp.yaml``
-   * - 为 STEAM 收集校准数据
-     - ``maniskill_prefix_stage2_td3_mlp_steam_calibration.yaml``
-
-下面的步骤使用第一项。这条流程跑通后，再用 RLT 配置比较表示或算法；Stage 1 的准备见 :doc:`RL Token <rlt>`。任务、相机或控制器变了，需要重新拟合阶段判断时，使用校准配置。
-
 安装
 ----
-
-以下流程面向有 NVIDIA GPU 的 Linux 机器。需要能访问 GitHub 和 Hugging Face，并留出存放模型、依赖、日志和训练 checkpoint 的磁盘。显存里要同时放下 VLA、STEAM 和轻量网络。示例并行运行 64 个训练环境，仿真本身也会占用显存。
-
-示例用已发布 checkpoint 启动在线训练。交互数据由 ManiSkill 在运行中产生，下载的 checkpoint 里带有归一化统计量，用来把机器人状态和动作变到 VLA 训练时的数值尺度。
 
 克隆仓库：
 
@@ -121,9 +88,7 @@ RLinf 把环境交互和动作采集称为 rollout，把参数更新称为训练
 下载模型
 --------
 
-这次运行的设置集中在 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``。先保留网络和算法参数，填好模型路径，再检查路由和日志，然后启动。
-
-示例加载四组模型。特征 VLA 生成表示和参考动作。Expert VLA 是另一份已训练模型，供以后启用接管时使用。STEAM value model 从图像判断进度。phase head 是配套的小型分类模型，用来判断是否进入关键阶段。第一次运行沿用这四组和 preset 里的设置。
+示例加载四组模型权重。特征 VLA 生成表示和参考动作。Expert VLA 是另一份已训练模型，供在线训练接管时使用。STEAM value model 从图像判断进度。Phase head 是配套的小型分类模型，用来判断是否进入关键阶段。
 
 .. list-table::
    :header-rows: 1
@@ -145,12 +110,13 @@ RLinf 把环境交互和动作采集称为 rollout，把参数更新称为训练
      - `ChikaYokoyama/rlt_steam_phase_head <https://huggingface.co/ChikaYokoyama/rlt_steam_phase_head>`_
      - ``rollout.routing_gate.actor_switch.phase_head_path``
 
-把四个仓库下载到 ``data/steam_peg``，同时下载 STEAM 处理图像和语言所用的 SigLIP 与 Gemma backbone。使用 hf-mirror 时，先执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
+把四份权重下载到 ``data/steam_peg``，同时下载 STEAM 处理图像和语言所用的 SigLIP 与 Gemma backbone。
 
 .. code:: bash
 
    CHECKPOINT_ROOT="$(pwd)/data/steam_peg"
-
+   # 为提高国内下载速度，可以使用：
+   # export HF_ENDPOINT=https://hf-mirror.com
    hf download ChikaYokoyama/maniskill_rlt_1000_new \
      --local-dir "$CHECKPOINT_ROOT/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints" \
      --exclude '*/dcp_checkpoint/*'
@@ -168,12 +134,12 @@ RLinf 把环境交互和动作采集称为 rollout，把参数更新称为训练
    hf download google/gemma-3-270m \
      --local-dir "$CHECKPOINT_ROOT/gemma-3-270m"
 
-前两个仓库已经包含 ``global_step_1000/actor`` 和 ``global_step_3000/actor``，所以下载到同一个 ``checkpoints`` 目录。STEAM 仓库的根目录直接存放 actor 文件，因此下载目标要带上 ``global_step_5000/actor``。这些命令跳过分布式训练状态，保留推理权重、归一化统计量和 processor 文件。
+前两份权重已经包含 ``global_step_1000/actor`` 和 ``global_step_3000/actor``，所以下载到同一个 ``checkpoints`` 目录。STEAM 仓库的根目录直接存放 actor 文件，因此下载目标要带上 ``global_step_5000/actor``。这些命令跳过分布式训练状态，保留推理权重、归一化统计量和 processor 文件。
 
 填写模型路径
 ------------
 
-打开 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``，把四个 checkpoint 字段改成上一节目录下的绝对路径。下面的 ``<CHECKPOINT_ROOT>`` 表示展开后的绝对路径，不要把尖括号里的文字留在文件中。
+这次运行示例的设置集中在 ``examples/embodiment/config/maniskill_prefix_stage2_td3_mlp_steam.yaml``。把四个 checkpoint 字段改成上一节目录下的绝对路径。下面的 ``<CHECKPOINT_ROOT>`` 表示展开后的绝对路径，不要把尖括号里的文字留在文件中。
 
 .. list-table::
    :header-rows: 1
@@ -210,45 +176,6 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
 运行训练
 --------
 
-路径填好之后，保留示例的路由，检查设备和日志，再从仓库根目录启动。
-
-保留示例的路由设置
-~~~~~~~~~~~~~~~~~~
-
-运行时要在 VLA、actor 和 expert 的动作之间选择。STEAM 给出的阶段或接管判断称为 gate 信号。保留下面这段配置时，actor 切换会实际生效；expert 使用 shadow 模式，只记录判断，不执行接管。
-
-.. code:: yaml
-
-   rollout:
-     routing_gate:
-       actor_switch:
-         enable: True
-         mode: active
-         enter_threshold: null
-         patience_chunks: null
-       expert_takeover:
-         enable: True
-         mode: shadow
-         warmup_chunks: null
-         patience_chunks: null
-         enter_threshold: null
-
-这是完整配置里的一段，不要用它替换整个文件。``enter_threshold`` 是触发判断的门限，``patience_chunks`` 是判断需要连续满足的动作块数，``warmup_chunks`` 是开始检查 expert 接管前等待的动作块数。它们保持 ``null`` 时，使用 phase head 文件里保存的校准值；写成具体数字则会覆盖保存值。
-
-.. warning::
-
-   当前发布的 expert 门限在校准验证集中没有触发接管，因此不能据此打开自动接管。第一次运行保留 shadow。用 actor 实际控制的 episode 重新采集并核对门限之后，再考虑把 ``expert_takeover.mode`` 改成 ``active``。
-
-检查设备与日志
-~~~~~~~~~~~~~~
-
-preset 里的 ``cluster.component_placement`` 把 actor 放在 GPU 0，把环境和 rollout 放在全部设备（``all``）上。启动前确认这些编号在本机存在。``env.train.total_num_envs`` 是并行训练环境数，示例为 64；更换硬件时结合显存和仿真负载一起调整。
-
-示例默认把指标记到 Weights & Biases。使用这个后端时，先在同一个运行环境里完成账号配置。如果要在本机查看指标，把 ``runner.logger.logger_backends`` 设为 ``["tensorboard"]``。校准 preset 已经使用这个本机后端。
-
-启动训练
-~~~~~~~~
-
 在已激活环境的仓库根目录执行：
 
 .. code:: bash
@@ -265,7 +192,7 @@ preset 里的 ``cluster.component_placement`` 把 actor 放在 GPU 0，把环境
 训练进度
 ~~~~~~~~
 
-训练先收集数据，再完成预热更新。示例要求 replay 至少积累 10,000 条记录，并完成 30,000 次预热更新，之后才允许 actor 接管。是否进入关键阶段仍由 STEAM 判断。看到机器人继续执行 VLA 参考动作，只说明接管还没发生，不说明训练停了。
+训练先收集数据，再完成预热更新。示例要求 replay 至少积累 10,00 条记录，并完成 30,00 次预热更新，之后才允许 actor 接管。是否进入关键阶段仍由 STEAM 判断。看到机器人继续执行 VLA 参考动作，只说明接管还没发生，不说明训练停了。
 
 在所选日志后端里，进度指标带有 ``train/prefix/`` 前缀：
 
