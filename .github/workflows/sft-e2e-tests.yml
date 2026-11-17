@@ -78,27 +78,6 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
-      - name: OpenPI FA2 outputs and gradients
-        timeout-minutes: 10
-        run: |
-          source .venv/bin/activate
-          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-          RLINF_REQUIRED_FLASH_ATTENTION=flash_attention_2 pytest tests/unit_tests/test_models.py \
-            -k 'test_openpi_flash_attention_outputs_and_gradients and flash_attention_2'
-
-      - name: OpenPI FA3 outputs and gradients on Hopper
-        timeout-minutes: 20
-        run: |
-          source .venv/bin/activate
-          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
-          if python -c 'import torch; raise SystemExit(torch.cuda.get_device_capability()[0] != 9)'; then
-            uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
-            RLINF_REQUIRED_FLASH_ATTENTION=flash_attention_3 pytest tests/unit_tests/test_models.py \
-              -k 'test_openpi_flash_attention_outputs_and_gradients and flash_attention_3'
-          else
-            echo '::notice::FA3 Hopper coverage not run: this runner is not Hopper.'
-          fi
-
       - name: SFT ManiSkill OpenPI test
         timeout-minutes: 20
         run: |

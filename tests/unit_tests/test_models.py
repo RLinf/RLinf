@@ -422,8 +422,8 @@ def test_openpi_reuses_prepared_attention():
     with torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU]
     ) as profile:
-        first, _ = module(embedded, positions, metadata)
-        second, _ = module(embedded, positions, metadata)
+        first, _ = module(embedded, positions, None, flash_attention_metadata=metadata)
+        second, _ = module(embedded, positions, None, flash_attention_metadata=metadata)
     operators = {event.key for event in profile.key_averages()}
     assert "aten::equal" not in operators
     assert "aten::nonzero" not in operators
@@ -494,9 +494,10 @@ def test_openpi_prepares_attention_layout(pi05, backend, mode):
                 attention.mask.numel() * attention.mask.element_size()
             )
     else:
-        assert isinstance(attention.mask, FlashAttentionMetadata)
+        assert attention.mask is None
+        assert isinstance(attention.flash_attention_metadata, FlashAttentionMetadata)
         torch.testing.assert_close(
-            attention.mask.valid_queries, expected_mask.any(dim=-1)
+            attention.flash_attention_metadata.valid_queries, expected_mask.any(dim=-1)
         )
         dense_shape = list(expected_mask.shape)
         assert all(dense_shape not in event.input_shapes for event in profile.events())
@@ -607,7 +608,8 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
             outputs, cache = attention(
                 [inputs[0], None],
                 positions[:, :prefix],
-                metadata if use_flash else mask[:, None, :prefix, :prefix],
+                None if use_flash else mask[:, None, :prefix, :prefix],
+                flash_attention_metadata=metadata,
             )
             if mode in ("prefix", "masked_prefix"):
                 return outputs
@@ -619,7 +621,8 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
             suffix_outputs, _ = attention(
                 [None, inputs[1]],
                 positions[:, prefix:],
-                metadata if use_flash else mask[:, None, prefix:],
+                None if use_flash else mask[:, None, prefix:],
+                flash_attention_metadata=metadata,
                 kv_cache=cache,
             )
             return [outputs[0], suffix_outputs[1]]
@@ -627,7 +630,12 @@ def test_openpi_flash_attention_outputs_and_gradients(mode, backend):
             metadata = prepare_flash_attention(
                 valid[:, :prefix], suffix, backend=backend
             )
-        return attention(inputs, positions, metadata if use_flash else mask[:, None])[0]
+        return attention(
+            inputs,
+            positions,
+            None if use_flash else mask[:, None],
+            flash_attention_metadata=metadata,
+        )[0]
 
     was_compiled = torch_compile_enabled()
     set_torch_compile(False)
@@ -742,7 +750,9 @@ def test_openpi_flash_attention_outputs_and_gradients_module(backend, checkpoint
     set_torch_compile(False)
     try:
         expected, _ = reference(expected_inputs, positions, dense_mask)
-        result, _ = actual(actual_inputs, positions, metadata)
+        result, _ = actual(
+            actual_inputs, positions, None, flash_attention_metadata=metadata
+        )
         for outputs in (expected, result):
             sum(
                 (output.float() * weight.float()).mean()

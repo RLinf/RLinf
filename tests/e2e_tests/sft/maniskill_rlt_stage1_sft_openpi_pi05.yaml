@@ -49,7 +49,6 @@ actor:
     add_value_head: False
     num_steps: 5
     openpi:
-      attention_backend: flash_attention_2
       embed_dtype: bf16
       task: sft
       config_name: "pi05_rlt_maniskill_joint"

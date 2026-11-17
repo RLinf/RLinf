@@ -45,8 +45,9 @@ from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 class AttentionInputs:
     """Visibility and positions prepared by the policy for its transformer."""
 
-    mask: torch.Tensor | FlashAttentionMetadata
+    mask: torch.Tensor | None
     positions: torch.Tensor
+    flash_attention_metadata: FlashAttentionMetadata | None = None
 
 
 def make_attn_mask(
@@ -405,6 +406,7 @@ class Pi0(model.BaseModel):
             [prefix_tokens, suffix_tokens],
             positions=attention.positions,
             mask=attention.mask,
+            flash_attention_metadata=attention.flash_attention_metadata,
             adarms_cond=[None, adarms_cond],
             return_prefix=False,
         )[0]
@@ -434,6 +436,7 @@ class Pi0(model.BaseModel):
             [prefix_tokens, None],
             positions=attention.positions,
             mask=attention.mask,
+            flash_attention_metadata=attention.flash_attention_metadata,
         )
         return outputs[0], prefix_mask, kv_cache
 
@@ -449,8 +452,10 @@ class Pi0(model.BaseModel):
         suffix_mask = prefix_mask.new_ones((prefix_mask.shape[0], suffix_len))
         valid = torch.cat([prefix_mask, suffix_mask], dim=-1)
         positions = valid.int().cumsum(dim=-1) - 1
+        mask = None
+        metadata = None
         if self._config.attention_backend != "eager":
-            mask = prepare_flash_attention(
+            metadata = prepare_flash_attention(
                 prefix_mask,
                 suffix_len,
                 cached=cached,
@@ -466,7 +471,7 @@ class Pi0(model.BaseModel):
             )
         if cached:
             positions = positions[:, prefix_mask.shape[-1] :]
-        return AttentionInputs(mask, positions)
+        return AttentionInputs(mask, positions, metadata)
 
     def prepare_suffix_attention(self, prefix_mask: torch.Tensor) -> AttentionInputs:
         """Prepare attention once for all denoising steps of a prefix cache."""
@@ -494,6 +499,7 @@ class Pi0(model.BaseModel):
             [None, suffix_tokens],
             positions=attention.positions,
             mask=attention.mask,
+            flash_attention_metadata=attention.flash_attention_metadata,
             kv_cache=kv_cache,
             adarms_cond=[None, adarms_cond],
         )
@@ -841,6 +847,7 @@ class Pi0(model.BaseModel):
             [prefix_tokens, suffix_tokens],
             positions=attention.positions,
             mask=attention.mask,
+            flash_attention_metadata=attention.flash_attention_metadata,
             adarms_cond=[None, adarms_cond],
             prefix_requires_grad=False,
         )[0]
