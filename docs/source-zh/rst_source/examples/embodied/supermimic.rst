@@ -280,6 +280,12 @@ TensorBoard 事件写在 ``$RUN_DIR/tensorboard``：
 
 横轴是更新次数。``env/sim/reward_mean`` 和 ``env/sim/terminal_rate`` 反映仿真里的跟踪情况，``train/actor/reward`` 是想象中的奖励，``train/world_model/state_loss`` 反映世界模型的拟合。通用指标的含义见 :doc:`../../reference/metrics`。
 
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_gencoord_curves.png
+   :align: center
+   :width: 100%
+
+   `已报告的跟踪结果`_ 里单卡 TF32 那次运行的训练曲线：GenCoord，40 条 LAFAN1 片段，4096 个环境，一张 A800，打开 CUDA 图回放，种子 0。横轴是更新次数。想象回报（每秒）包含每条想象 rollout 末端的 critic 价值，所以会超过仿真奖励本身每秒最多 5 的上限。
+
 已报告的跟踪结果
 ~~~~~~~~~~~~~~~~
 

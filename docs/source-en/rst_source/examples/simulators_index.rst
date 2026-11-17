@@ -215,6 +215,16 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/supermimic.html" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #eef2f7; color: #333; text-decoration: none; font-size: 22px;"><b>G1 MuJoCo Warp</b></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/supermimic.html" style="text-decoration: underline; color: blue;">
+           <b>G1 Motion Tracking with MuJoCo Warp</b>
+         </a><br>
+         Train a G1 whole-body tracking policy with SuperMimic on LAFAN1 clips
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -239,4 +249,5 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    MuJoCo Warp <embodied/mujoco_warp>
+   G1 MuJoCo Warp <embodied/supermimic>
    Real-World Simulator <embodied/real_simulator>

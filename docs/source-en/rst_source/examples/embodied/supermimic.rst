@@ -395,6 +395,16 @@ The x-axis is the update count. ``env/sim/reward_mean`` and
 the imagined reward, and ``train/world_model/state_loss`` the world-model
 fit. :doc:`../../reference/metrics` explains the shared metric names.
 
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/supermimic_gencoord_curves.png
+   :align: center
+   :width: 100%
+
+   Training curves of the one-GPU TF32 run in `Reported Tracking Results`_:
+   GenCoord, 40 LAFAN1 clips, 4096 environments, one A800, CUDA graph replay,
+   seed 0. The x-axis is the update count. The imagined return per second
+   includes the critic's value at the end of each imagined rollout, so it
+   exceeds the 5 per second that the simulated reward alone can reach.
+
 Reported Tracking Results
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
