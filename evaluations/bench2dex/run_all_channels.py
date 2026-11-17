@@ -43,6 +43,7 @@ def channel_command(
     overrides: list[str],
     *,
     num_envs: int = 1,
+    num_gpus: int = 1,
 ) -> list[str]:
     """Build one single-channel run with explicit official episode semantics."""
     if num_envs < 1 or episodes < 1 or episodes % num_envs:
@@ -56,6 +57,9 @@ def channel_command(
         "bench2dex",
         config,
         *overrides,
+        r"cluster.component_placement={env\, rollout:"
+        + ("0" if num_gpus == 1 else f"0-{num_gpus - 1}")
+        + "}",
         f"runner.logger.log_path={output}",
         f"env.eval.rollout_epoch={episodes // num_envs}",
         f"env.eval.total_num_envs={num_envs}",
@@ -140,6 +144,7 @@ def evaluate_channel(
             args.generalization_split,
             overrides,
             num_envs=num_envs,
+            num_gpus=len(str(args.gpu_id).split(",")),
         )
         result = subprocess.run(command, env=env, check=False)
         if (directory / "summary.json").is_file():
@@ -179,7 +184,7 @@ def main() -> None:
     )
     parser.add_argument("--num-episodes", default=50, type=int)
     parser.add_argument("--num-envs", default=1, type=int)
-    parser.add_argument("--gpu-id", default=0, type=int)
+    parser.add_argument("--gpu-id", default="0", help="Comma-separated GPU IDs")
     parser.add_argument("--seed", default=100_000_000, type=int)
     parser.add_argument("--inv-cov-seed", default=200_000_000, type=int)
     parser.add_argument(

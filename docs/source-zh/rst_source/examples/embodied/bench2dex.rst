@@ -170,12 +170,13 @@ Task64 配置需要对应任务的模型和锚点。在 ``examples/embodiment/co
 评测 policy
 ~~~~~~~~~~~
 
-在四个通道上评测 Task22，每个通道运行 50 回合：
+在四个通道上评测 Task22，使用八卡，每个通道运行 32 回合：
 
 .. code-block:: bash
 
    JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task22_openpi_pi05_eval --output-root "<evaluation_output>" \
+     --gpu-id 0,1,2,3,4,5,6,7 --num-envs 32 --num-episodes 32 \
      "rollout.model.model_path=<model_path>" \
      "+rollout.model.openpi_data.norm_stats_path=$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
 
@@ -195,7 +196,7 @@ Task64 配置需要对应任务的模型和锚点。在 ``examples/embodiment/co
    * - ``inv_cov``
      - 组合变化，并使用未见过的资产。
 
-用 ``--gpu-id`` 选择 GPU，``--num-envs`` 设置并行环境数。
+用 ``--gpu-id`` 指定以逗号分隔的 GPU 编号，``--num-envs`` 设置并行环境数。
 
 可视化与结果
 ------------

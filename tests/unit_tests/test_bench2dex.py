@@ -123,7 +123,10 @@ def test_evaluation_rejects_unknown_channel():
         normalize_profile("unknown")
 
 
-def test_parallel_evaluation_command_keeps_episode_and_seed_contract():
+@pytest.mark.parametrize("num_gpus", [1, 8])
+def test_parallel_evaluation_command_keeps_episode_and_seed_contract(
+    num_gpus, compose_bench2dex_recipe
+):
     command = channel_command(
         Path("/repo"),
         "example",
@@ -137,7 +140,18 @@ def test_parallel_evaluation_command_keeps_episode_and_seed_contract():
         "unseen",
         [],
         num_envs=3,
+        num_gpus=num_gpus,
     )
+    placement = "0" if num_gpus == 1 else "0-7"
+    assert r"cluster.component_placement={env\, rollout:" + placement + "}" in command
+    cfg = compose_bench2dex_recipe(
+        "evaluations/bench2dex",
+        "bench2dex_task22_openpi_pi05_eval",
+        overrides=[value for value in command if "=" in value],
+    )
+    assert dict(cfg.cluster.component_placement) == {
+        "env, rollout": 0 if num_gpus == 1 else "0-7"
+    }
     assert "env.eval.rollout_epoch=4" in command
     assert "env.eval.total_num_envs=3" in command
     assert "env.eval.auto_reset=false" in command

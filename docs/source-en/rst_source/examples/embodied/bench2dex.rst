@@ -206,12 +206,13 @@ settings in the selected YAML under ``examples/embodiment/config/``. See
 Evaluate a Policy
 ~~~~~~~~~~~~~~~~~
 
-Evaluate Task22 on all four channels, with 50 episodes per channel:
+Evaluate Task22 on all four channels, with 32 episodes per channel on eight GPUs:
 
 .. code-block:: bash
 
    JAX_PLATFORMS=cpu python -m evaluations.bench2dex.run_all_channels \
      bench2dex_task22_openpi_pi05_eval --output-root "<evaluation_output>" \
+     --gpu-id 0,1,2,3,4,5,6,7 --num-envs 32 --num-episodes 32 \
      "rollout.model.model_path=<model_path>" \
      "+rollout.model.openpi_data.norm_stats_path=$BENCH2DEX_PI05_PATH/assets/dex2bench/norm_stats.json"
 
@@ -234,7 +235,7 @@ to the converted model directory or a trained checkpoint's
    * - ``inv_cov``
      - Combined variations with unseen assets.
 
-Use ``--gpu-id`` to select a GPU and ``--num-envs`` to set parallel environments.
+Use ``--gpu-id`` to select comma-separated GPU IDs and ``--num-envs`` to set parallel environments.
 
 Visualization and Results
 -------------------------
