@@ -21,12 +21,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from ..discovery import RobotConfig, RobotDiscovery
-from ..parts.arms.r2 import R2_MODE_SERVOJ
 from ..parts.base import PartGroup, RobotPart
 from ..robot import Robot
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..parts.arms.r2 import R2Connection
+
+#: ServoJ streaming run mode in ``r2_motion_msgs/srv/SwitchMode``.
+R2_MODE_SERVOJ = 2
 
 
 class R2Robot(Robot):
