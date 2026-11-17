@@ -672,9 +672,8 @@ class EnvWorker(Worker):
                     flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
                     if callable(flush_video):
                         flush_video()
-                if (
-                    not self.cfg.env.eval.auto_reset
-                    and not self.cfg.env.eval.use_fixed_reset_state_ids
+                if not self.cfg.env.eval.auto_reset and not self.cfg.env.eval.get(
+                    "use_fixed_reset_state_ids", False
                 ):
                     self.eval_env_list[i].update_reset_state_ids()
 

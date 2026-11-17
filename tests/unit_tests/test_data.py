@@ -1259,6 +1259,34 @@ def test_env_output_preserves_nested_observations():
         )
 
 
+@pytest.mark.parametrize(
+    "reset_config, expected_updates",
+    [({}, 1), ({"use_fixed_reset_state_ids": True}, 0)],
+    ids=["optional-setting-absent", "fixed-reset-ids"],
+)
+def test_env_worker_finishes_eval_with_optional_fixed_reset_ids(
+    reset_config, expected_updates
+):
+    class EvalEnv:
+        reset_updates = 0
+
+        def update_reset_state_ids(self):
+            self.reset_updates += 1
+
+    worker = object.__new__(EnvWorker)
+    worker.stage_num = 1
+    worker.eval_env_list = [EvalEnv()]
+    worker.cfg = OmegaConf.create(
+        {"env": {"eval": {"auto_reset": False, "video_cfg": {"save_video": False}}}}
+    )
+    worker.cfg.env.eval.update(reset_config)
+    OmegaConf.set_struct(worker.cfg, True)
+
+    worker.finish_rollout(mode="eval")
+
+    assert worker.eval_env_list[0].reset_updates == expected_updates
+
+
 @pytest.mark.parametrize("array_type", [torch.tensor, np.array])
 @pytest.mark.parametrize("later_reset", [False, True])
 def test_env_worker_restores_terminal_observations(array_type, later_reset):

@@ -491,8 +491,12 @@ Both local VLM Trend paths use history-window reward inputs. The standard path u
    reward worker **every step**. When ``min_history_size`` is not met,
    the reward worker returns ``interval_reward`` instead of skipping the RPC.
 
-Set ``gt_success_bonus`` to add a bonus for each successful step. Set
-``env.eval.use_fixed_reset_state_ids: true`` to reuse initial states across
+Set ``gt_success_bonus`` to add a fixed amount to the VLM reward whenever the
+environment reports task success. This provides a reward signal from the
+simulator alongside the VLM's prediction. On a step that ends with an automatic
+reset, the bonus uses the success status of the episode that just ended.
+
+Set ``env.eval.use_fixed_reset_state_ids: true`` to reuse initial states across
 evaluation rounds. Compare ``eval/success_at_end`` (success at the end of an
 episode) with ``eval/success_once`` (success at any point in the episode).
 
