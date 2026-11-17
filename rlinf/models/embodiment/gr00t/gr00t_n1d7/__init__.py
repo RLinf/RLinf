@@ -28,6 +28,12 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     AutoConfig.register("Gr00tN1d7", Gr00tN1d7Config)
     AutoModel.register(Gr00tN1d7Config, Gr00tN1d7)
 
+    # PPO rollout and actor use different batch sizes. BF16 reduced-precision
+    # GEMM reductions can change frozen backbone features and policy densities.
+    # This process-wide setting persists for all CUDA BF16 GEMMs in the worker.
+    if torch_dtype == torch.bfloat16:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+
     logger = get_logger()
     logger.info(
         "Successfully registered custom architecture Gr00tN1d7, authentication passed!"

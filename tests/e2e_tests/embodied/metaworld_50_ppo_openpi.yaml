@@ -26,7 +26,7 @@ runner:
     log_path: "../results/metaworld_50_ppo_openpi"
     project_name: rlinf
     experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 1
   max_steps: -1
@@ -45,7 +45,7 @@ algorithm:
   logprob_type: chunk_level
   entropy_type: token_level
 
-  update_epoch: 4
+  update_epoch: 1
   adv_type: gae
   loss_type: actor_critic
   loss_agg_func: "token-mean" 

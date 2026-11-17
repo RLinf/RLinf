@@ -187,6 +187,24 @@ class AcceleratorManager:
         raise NotImplementedError
 
     @staticmethod
+    def get_worker_local_env_var(visible_accelerators: list[int]) -> dict[str, str]:
+        """Get the environment variables a worker resolves on its own node.
+
+        ``get_accelerator_env_var`` runs in the driver process, which may be on
+        another node. Values that depend on the hardware layout of the worker's
+        node are resolved here instead, inside the worker process before it
+        initializes any device or renderer.
+
+        Args:
+            visible_accelerators (List[int]): The worker's accelerator IDs.
+
+        Returns:
+            Dict[str, str]: The environment variables to set in the worker
+            process. Empty unless an accelerator overrides this.
+        """
+        return {}
+
+    @staticmethod
     def get_visible_devices() -> list[int]:
         """Get the visible device IDs.
 
@@ -391,6 +409,25 @@ class AcceleratorUtil:
         if accelerator_type in AcceleratorManager.manager_register:
             manager = AcceleratorManager.manager_register[accelerator_type]
             env_vars = manager.get_accelerator_env_var(visible_accelerators)
+        return env_vars
+
+    @staticmethod
+    def get_worker_local_env_var(
+        accelerator_type: AcceleratorType, visible_accelerators: list[int]
+    ) -> dict[str, str]:
+        """Get the environment variables a worker resolves on its own node.
+
+        Args:
+            accelerator_type (AcceleratorType): The type of the accelerator.
+            visible_accelerators (List[int]): The worker's accelerator IDs.
+
+        Returns:
+            Dict[str, str]: The environment variables to set in the worker process.
+        """
+        env_vars = {}
+        if accelerator_type in AcceleratorManager.manager_register:
+            manager = AcceleratorManager.manager_register[accelerator_type]
+            env_vars = manager.get_worker_local_env_var(visible_accelerators)
         return env_vars
 
     @staticmethod

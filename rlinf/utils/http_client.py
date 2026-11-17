@@ -211,6 +211,14 @@ class InferenceHTTPClient:
         """Abort all in-flight generations via HTTP."""
         await self._apost("/rlinf/abort_generation", _b64_payload(obj))
 
+    async def async_pause_generation(self, mode: str) -> dict:
+        """Pause generation via sglang's native route (in_place / retract)."""
+        return await self._apost("/pause_generation", {"mode": mode})
+
+    async def async_continue_generation(self) -> dict:
+        """Continue generation via sglang's native route."""
+        return await self._apost("/continue_generation", {})
+
     # ------------------------------------------------------------------
     # Session management
     # ------------------------------------------------------------------
