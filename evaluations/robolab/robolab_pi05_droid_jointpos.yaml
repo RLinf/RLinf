@@ -1,0 +1,82 @@
+defaults:
+  - env/robolab_droid@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: ./logs/robolab
+    project_name: rlinf
+    experiment_name: pi05_droid_jointpos
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  max_steps: -1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 10
+    # Use the task's max_steps from the exported RoboLab task metadata.
+    max_episode_steps: 300
+    # Cover max_episode_steps with complete 15-action chunks.
+    max_steps_per_rollout_epoch: 300
+    auto_reset: false
+    ignore_terminations: false
+    is_eval: true
+    seed: 0
+    init_params:
+      task: BowlStackingLeftOnRightTask
+      output_dir: ./logs/robolab/BowlStackingLeftOnRightTask
+    video_cfg:
+      save_video: false
+      video_base_dir: ./logs/robolab/video
+
+rollout:
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  rollout_backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_path: /path/to/model/RLinf-Pi05-RoboLab-droid-jointpos
+    model_type: openpi
+    action_dim: 8
+    num_action_chunks: 15
+    num_steps: 10
+    add_value_head: false
+    openpi:
+      task: eval
+      config_name: pi05_droid_robolab
+      num_images_in_input: 2
+      action_chunk: 15
+      action_env_dim: 8
+      num_steps: 10
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      pytorch_numerics: true
+      eval_batch_size: 1
+      eval_seed: 0
+      sample_compile: false
+      torch_compile: false

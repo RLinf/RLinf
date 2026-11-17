@@ -372,6 +372,10 @@ def prepare_actions(
                 raw_chunk_actions=raw_chunk_actions,
                 model_type=model_type,
             )
+        elif wm_env_type == "robotwin":
+            # Joint angles, as the simulator takes them; a backend trained on another
+            # action space converts them itself.
+            chunk_actions = raw_chunk_actions
         else:
             raise NotImplementedError(f"Env type {wm_env_type} not implemented")
     elif (
@@ -439,6 +443,10 @@ def prepare_actions(
             action_dim=action_dim,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.MUJOCO_WARP:
+        # Continuous locomotion actions; the env clamps them to the actuator
+        # control range.
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.ROBOVERSE:
         chunk_actions = prepare_actions_for_roboverse(
             raw_chunk_actions=raw_chunk_actions,
@@ -456,6 +464,10 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.ROBOLAB:
+        chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32).copy()
+        if _is_openpi_family(model_type):
+            chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).astype(np.float32)
     elif env_type == SupportedEnvType.SIMPLE:
         chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
     else:

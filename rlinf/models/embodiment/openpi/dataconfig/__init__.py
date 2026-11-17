@@ -138,6 +138,20 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
     TrainConfig(
+        name="pi05_libero_mem",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id="CollisionCode/libero_mem_lerobot_v2.1",
+            base_config=DataConfig(prompt_from_task=True),
+            image_key="observation.images.image",
+            wrist_image_key="observation.images.wrist_image",
+            state_key="observation.state",
+            action_key="action",
+        ),
+    ),
+    TrainConfig(
         name="pi05_geniesim_g2_ah10",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=10, discrete_state_input=True
@@ -623,6 +637,20 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="assets/droid"),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
+    ),
+    TrainConfig(
+        name="pi05_droid_robolab",
+        model=pi0_config.Pi0Config(
+            action_horizon=15,
+            pi05=True,
+            max_token_len=200,
+        ),
+        data=LeRobotPolarisDroidDataConfig(
+            repo_id="physical-intelligence/droid",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="assets/droid"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_droid_robolab",
     ),
     TrainConfig(
         name="pi05_yam_joint",

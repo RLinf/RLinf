@@ -12,18 +12,16 @@ RL with LIBERO Benchmarks
 
    An overview of the LIBERO benchmark (image: `LIBERO project <https://libero-project.github.io>`__).
 
-`LIBERO <https://libero-project.github.io>`__ is a benchmark for **lifelong robot
-learning**: a 7-DoF Franka arm performs language-conditioned manipulation —
-pick-and-place, stacking, opening drawers, spatial rearrangement — in
-`robosuite <https://robosuite.ai>`__ / MuJoCo. RLinf uses LIBERO to RL-fine-tune
-vision-language-action (VLA) policies and push task success toward saturation.
-
-This page covers two families of LIBERO recipes:
+Use this page to install and configure LIBERO suites for VLA training and
+evaluation in RLinf. A 7-DoF Franka arm performs language-conditioned
+manipulation in `robosuite <https://robosuite.ai>`__ / MuJoCo. Choose the
+suite below, then follow its installation and configuration steps:
 
 - :ref:`Original LIBERO suites <libero-benchmark>` — train OpenVLA-OFT and other VLAs with PPO/GRPO.
 - :ref:`LIBERO-Pro / LIBERO-Plus <liberopro-plus-benchmark>` — harder suites that stress generalization with anti-memorization perturbations.
+- :ref:`LIBERO-Mem <libero-mem-benchmark>` — ordered manipulation tasks with explicit observation history for OpenPI short memory.
 
-For backend setup, open the model instructions: :ref:`OpenVLA-OFT on AMD / Ascend <openvla-oft-hardware>`, :ref:`GR00T N1.5 on Ascend <gr00t-hardware>`, or :ref:`π₀.₅ on Moore Threads MUSA <pi0-hardware>`. These combinations cover standard LIBERO suites; LIBERO-Pro and LIBERO-Plus require separate validation.
+For backend setup, open the model instructions: :ref:`OpenVLA-OFT on AMD / Ascend <openvla-oft-hardware>`, :ref:`GR00T N1.5 on Ascend <gr00t-hardware>`, or :ref:`π₀.₅ on Moore Threads MUSA <pi0-hardware>`. These combinations cover standard LIBERO suites; LIBERO-Pro, LIBERO-Plus, and LIBERO-Mem require separate validation.
 
 Overview
 --------
@@ -422,3 +420,150 @@ guide.
 
 See :doc:`Training metrics <../../reference/metrics>` for the metrics
 logged during training and evaluation.
+
+
+.. _libero-mem-benchmark:
+
+LIBERO-Mem
+----------
+
+Use LIBERO-Mem to evaluate tasks whose ordered subgoals require remembering
+previous interactions. It contains 10 tasks and reuses RLinf's ``libero``
+environment, camera observations, and 7-dimensional action space. The OpenPI
+recipe uses a 700-control-step episode limit.
+LIBERO-Mem reads task instructions from BDDL and vertically flips both cameras
+to match its demonstrations. Standard LIBERO keeps its existing camera convention.
+
+Installation
+~~~~~~~~~~~~
+
+Use the OpenPI environment, then replace its standard LIBERO package
+with the `LIBERO-Mem fork <https://github.com/libero-mem/libero-mem>`__. Both
+packages use the ``libero.libero`` Python namespace. The installer option
+``--env libero`` supplies the standard dependencies; install the fork separately:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model openpi --env libero
+   source .venv/bin/activate
+   git clone https://github.com/libero-mem/libero-mem.git ../LIBERO-Mem
+   git -C ../LIBERO-Mem checkout 0eee0defa4024e51511b6e15a79f30e9620209de
+   uv pip uninstall rlinf-libero
+   uv pip install --no-deps -e ../LIBERO-Mem
+   export LIBERO_TYPE=standard
+   export LIBERO_CONFIG_PATH="$PWD/.libero-mem"
+   python -c "import libero.libero"
+
+This installs the pinned fork into the default ``.venv`` environment. Keep
+``LIBERO_CONFIG_PATH`` and ``LIBERO_TYPE`` in the launch environment so worker
+processes resolve the same package and configuration. The last command initializes
+the fork's configuration before launching workers; answer ``N`` to use its
+default dataset path when prompted.
+
+Download the complete initial-state set: 10 tasks with 20 states per task.
+These states come from demonstrations 101–120, in order, in the public
+`LIBERO-Mem-Raw dataset <https://huggingface.co/datasets/libero-mem/LIBERO-Mem-Raw>`__.
+Install the files into the fork and verify their checksums:
+
+.. code-block:: bash
+
+   INIT_URL=https://raw.githubusercontent.com/anHappyDog/RLinf/8d0f7cffcd5d315182faa104adb31b9ca52de9e4/evaluations/libero/init_states/libero_mem
+   INIT_DIR=../LIBERO-Mem/libero/libero/init_files/libero_mem
+   mkdir -p "$INIT_DIR"
+   curl -fL "$INIT_URL/SHA256SUMS" -o "$INIT_DIR/SHA256SUMS"
+   while read -r checksum filename; do
+     curl -fL "$INIT_URL/$filename" -o "$INIT_DIR/$filename"
+   done < "$INIT_DIR/SHA256SUMS"
+   (cd "$INIT_DIR" && sha256sum -c SHA256SUMS)
+
+This downloads a fixed version of the 200 initial states. Keep these files and
+the task/trial selection unchanged when comparing checkpoints. Source details
+and the license are in ``evaluations/libero/init_states/libero_mem/``.
+
+On PyTorch 2.6 and later, enable loading the NumPy objects in trusted benchmark
+initial-state files in this evaluation shell:
+
+.. code-block:: bash
+
+   export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+
+The pinned fork calls ``torch.load`` without specifying ``weights_only``. This
+setting enables its initial-state format; keep it scoped to the LIBERO-Mem
+launch environment.
+
+Configure the Environment
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Select the memory task suite through the existing environment type. The shared
+configuration ``examples/embodiment/config/env/libero_mem.yaml`` contains:
+
+.. code-block:: yaml
+
+   env_type: libero
+   task_suite_name: libero_mem
+   max_episode_steps: 700
+   max_steps_per_rollout_epoch: 700
+   short_memory:
+     num_frames: 8
+     stride: 70
+     fps: 20.0
+
+The environment type selects RLinf's LIBERO adapter; ``task_suite_name`` selects
+the fork's memory benchmark. For OpenPI evaluation, start from
+``evaluations/libero/libero_mem_openpi_pi05_eval.yaml``. It uses
+``ignore_terminations: True`` to continue until the episode limit and report the
+final state. Checkpoint paths and launch commands are covered in
+:doc:`OpenPI Short Memory </rst_source/examples/embodied/pi0/short_memory>`.
+
+Observation History
+~~~~~~~~~~~~~~~~~~~
+
+The environment records both cameras after every control step, including each
+step inside an action chunk. ``num_frames`` includes the current frame;
+``stride`` counts control steps between sampled frames. ``fps`` converts these
+step offsets to seconds and must match the control frequency. With the defaults,
+eight frames span up to 490 steps, or 24.5 seconds. Frame count is configurable.
+
+History runs from oldest to current. Before enough frames exist, the environment
+pads on the left with zero images and marks those slots invalid. Resetting an
+environment clears only its history. Keep ``skip_intermediate_renders: False``
+when history is enabled so the intermediate camera observations are available.
+
+The observation groups past frames under ``history``, alongside the current
+images, state, and task description. Here ``B`` is the number of environments
+and ``K`` is ``num_frames``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 20 45
+
+   * - Field
+     - Shape
+     - Meaning
+   * - ``history.main_images``
+     - ``[B, K, H, W, 3]``
+     - Third-person RGB frames.
+   * - ``history.wrist_images``
+     - ``[B, K, H, W, 3]``
+     - Wrist RGB frames.
+   * - ``history.frame_mask``
+     - ``[B, K]``
+     - ``True`` for observed frames; ``False`` for padding.
+   * - ``history.time_offsets``
+     - ``[B, K]``
+     - Seconds relative to the current frame, whose offset is zero. Padding also uses zero and is excluded by the mask.
+
+Interpret Success
+~~~~~~~~~~~~~~~~~
+
+For an ordered task, completing the sequence and retaining the final goal are
+both required. ``strict_success`` reports that condition at the current step,
+including the fork's overshoot check. Per-task evaluation statistics use
+``strict_success`` at episode completion; ``success_at_end`` records the same
+condition. ``success_once`` remains latched after any successful step, so it can
+stay true even if the final condition is later lost.
+
+For diagnostics, inspect ``subgoals_completed``, ``subgoals_total``,
+``subgoal_progress`` (completed / total), and ``overshot`` in episode info.
+Progress advances once per control step. Episode reset clears progress and the
+overshoot flag, and reset settling steps do not count toward the sequence.

@@ -10,30 +10,8 @@ export SRC_FILE="${EVALUATIONS_PATH}/eval_embodied_agent.py"
 export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
 
-setup_sim_env() {
-    export MUJOCO_GL="${MUJOCO_GL:-egl}"
-    export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
-
-    export OMNIGIBSON_DATA_PATH="${OMNIGIBSON_DATA_PATH:-}"
-    export OMNIGIBSON_DATASET_PATH="${OMNIGIBSON_DATASET_PATH:-${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/}"
-    export OMNIGIBSON_KEY_PATH="${OMNIGIBSON_KEY_PATH:-${OMNIGIBSON_DATA_PATH}/omnigibson.key}"
-    export OMNIGIBSON_ASSET_PATH="${OMNIGIBSON_ASSET_PATH:-${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/}"
-    export OMNIGIBSON_HEADLESS="${OMNIGIBSON_HEADLESS:-1}"
-    export ISAAC_PATH="${ISAAC_PATH:-/path/to/isaac-sim}"
-    export EXP_PATH="${EXP_PATH:-$ISAAC_PATH/apps}"
-    export CARB_APP_PATH="${CARB_APP_PATH:-$ISAAC_PATH/kit}"
-
-    # POLARIS dataset
-    export POLARIS_DATA_PATH="${POLARIS_DATA_PATH:-/path/to/dataset/PolaRiS-Hub}"
-
-    export ROBOTWIN_PATH="${ROBOTWIN_PATH:-/path/to/RoboTwin}"
-    export PYTHONPATH="${REPO_PATH}:${ROBOTWIN_PATH}:${PYTHONPATH}"
-
-    export DREAMZERO_PATH="${DREAMZERO_PATH:-/path/to/DreamZero}"
-    export PYTHONPATH="${DREAMZERO_PATH}:${PYTHONPATH}"
-
-    export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-}
+# setup_sim_env is defined in sim_env.sh.
+source "${EMBODIED_PATH}/sim_env.sh"
 
 infer_benchmark() {
     local config_name="$1"
@@ -50,6 +28,7 @@ infer_benchmark() {
         robocasa_*|robocasa-* ) echo "robocasa" ;;
         roboverse_*|roboverse-* ) echo "roboverse" ;;
         polaris_*|polaris-* ) echo "polaris" ;;
+        robolab_*|robolab-* ) echo "robolab" ;;
         geniesim_*|geniesim-* ) echo "geniesim" ;;
         simple_*|simple-* ) echo "simple" ;;
         * )
