@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from typing import Any, Mapping, Optional
 
 import numpy as np
@@ -104,8 +105,8 @@ class PicoExpert:
         # on release; off unless a config names one, such as "trigger".
         gripper_trigger: Optional[str] = None,
         gripper_close_threshold: float = 0.5,
-        gripper_close_button: str = "A",
-        gripper_open_button: str = "B",
+        gripper_close_button: Optional[str] = None,
+        gripper_open_button: Optional[str] = None,
         gripper_invert: bool = False,
         position_scale: float = 1.0,
         rotation_scale: float = 1.0,
@@ -134,6 +135,10 @@ class PicoExpert:
         self.control_threshold = float(control_threshold)
         self.gripper_trigger = gripper_trigger
         self.gripper_close_threshold = float(gripper_close_threshold)
+        if gripper_close_button is None and not gripper_trigger:
+            gripper_close_button = "A"
+        if gripper_open_button is None and not gripper_trigger:
+            gripper_open_button = "B"
         self.gripper_close_button = gripper_close_button
         self.gripper_open_button = gripper_open_button
         self.gripper_invert = bool(gripper_invert)
@@ -185,6 +190,8 @@ class PicoExpert:
         self._latest_data: Optional[dict[str, Any]] = None
         self._last_update_time = 0.0
         self._last_timestamp_ns: Optional[int] = None
+        self._button_events: deque[str] = deque(maxlen=64)
+        self._previous_buttons: dict[str, bool] = {}
 
         self._context = None
         self._socket = None
@@ -301,24 +308,6 @@ class PicoExpert:
             axis = np.zeros(2, dtype=np.float64)
         trigger_val = float(controller.get("trigger", 0.0))
 
-        close_pressed = self._control_pressed(
-            data, self.hand, self.gripper_close_button, self.gripper_close_threshold
-        )
-        open_pressed = self._control_pressed(
-            data, self.hand, self.gripper_open_button, self.gripper_close_threshold
-        )
-        if self.gripper_trigger:
-            trig_closed = self._control_pressed(
-                data, self.hand, self.gripper_trigger, self.gripper_close_threshold
-            )
-            if trig_closed:
-                close_pressed = True
-            elif self._prev_gripper_trigger_closed:
-                open_pressed = True
-            self._prev_gripper_trigger_closed = trig_closed
-        if self.gripper_invert:
-            close_pressed, open_pressed = open_pressed, close_pressed
-
         self._maybe_update_calibration(data)
         control_value = self._control_value(data, self.hand, self.control_trigger)
         calibrated = (
@@ -328,6 +317,7 @@ class PicoExpert:
         )
         if not calibrated:
             self._deactivate()
+            close_pressed, open_pressed = self._gripper_state(data, held=False)
             self._last_reading = {
                 **idle,
                 "ready": True,
@@ -344,6 +334,7 @@ class PicoExpert:
         pose = self._controller_pose(data, self.hand)
         if not _is_valid_pose(pose):
             self._deactivate()
+            close_pressed, open_pressed = self._gripper_state(data, held=False)
             self._last_reading = {
                 **idle,
                 "ready": True,
@@ -376,6 +367,7 @@ class PicoExpert:
             self._deactivate()
         self._active = held
 
+        close_pressed, open_pressed = self._gripper_state(data, held=held)
         reading = {
             **idle,
             "held": held,
@@ -422,7 +414,17 @@ class PicoExpert:
                 raw_ts = data.get("timestamp_ns")
                 ts_ns = int(raw_ts) if isinstance(raw_ts, (int, float)) else None
                 now = time.time()
+                buttons = data.get("buttons", {})
+                if not isinstance(buttons, Mapping):
+                    buttons = {}
+                current_buttons = {
+                    str(name): bool(pressed) for name, pressed in buttons.items()
+                }
                 with self._lock:
+                    for name, pressed in current_buttons.items():
+                        if pressed and not self._previous_buttons.get(name, False):
+                            self._button_events.append(name)
+                    self._previous_buttons = current_buttons
                     self._latest_data = data
                     if ts_ns is None or ts_ns != self._last_timestamp_ns:
                         self._last_timestamp_ns = ts_ns
@@ -434,6 +436,17 @@ class PicoExpert:
                     break
                 logger.warning("Error receiving PICO data: %s", exc)
                 time.sleep(self.reconnect_interval_s)
+
+    def pop_button_presses(self) -> list[str]:
+        """Return rising-edge button presses since the previous poll.
+
+        The receiver runs faster than the environment loop, so short Pico
+        button taps are retained instead of being lost between ``env.step`` calls.
+        """
+        with self._lock:
+            presses = list(self._button_events)
+            self._button_events.clear()
+        return presses
 
     def _snapshot(self) -> Optional[dict[str, Any]]:
         with self._lock:
@@ -596,6 +609,33 @@ class PicoExpert:
         if not name:
             return False
         return self._control_value(data, side, str(name)) >= float(threshold)
+
+    def _gripper_state(
+        self, data: Mapping[str, Any], *, held: bool
+    ) -> tuple[bool, bool]:
+        """Read configured gripper buttons and optional analog trigger."""
+        close_pressed = self._control_pressed(
+            data, self.hand, self.gripper_close_button, self.gripper_close_threshold
+        )
+        open_pressed = self._control_pressed(
+            data, self.hand, self.gripper_open_button, self.gripper_close_threshold
+        )
+        if self.gripper_trigger:
+            trig_closed = self._control_pressed(
+                data, self.hand, self.gripper_trigger, self.gripper_close_threshold
+            )
+            if trig_closed:
+                close_pressed = True
+            elif self._prev_gripper_trigger_closed or (
+                held
+                and self.gripper_close_button is None
+                and self.gripper_open_button is None
+            ):
+                open_pressed = True
+            self._prev_gripper_trigger_closed = trig_closed
+        if self.gripper_invert:
+            close_pressed, open_pressed = open_pressed, close_pressed
+        return close_pressed, open_pressed
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
         try:

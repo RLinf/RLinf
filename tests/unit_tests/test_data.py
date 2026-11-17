@@ -64,6 +64,7 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
     split_episode_data,
 )
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.compat import index_episode_subset_by_id
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
@@ -1528,6 +1529,7 @@ def test_external_policy_input_split_merge_preserves_actions():
 def test_online_lerobot_payload_survives_source_routing():
     episode_data = {
         "chunk_actions": torch.arange(12).reshape(3, 2, 2),
+        "initial_observation": {"images": torch.arange(6).reshape(3, 2)},
         "obs_list": [
             {"images": torch.arange(6).reshape(3, 2)},
             {"images": torch.arange(6, 12).reshape(3, 2)},
@@ -1544,6 +1546,10 @@ def test_online_lerobot_payload_survives_source_routing():
 
     assert merged_data is not None
     assert torch.equal(merged_data["chunk_actions"], episode_data["chunk_actions"])
+    assert torch.equal(
+        merged_data["initial_observation"]["images"],
+        episode_data["initial_observation"]["images"],
+    )
     assert torch.equal(
         merged_data["obs_list"][1]["images"],
         episode_data["obs_list"][1]["images"],
@@ -1618,6 +1624,7 @@ def test_merging_conflicting_scalar_batch_values_is_rejected():
 def test_episode_data_round_trip_keeps_scalar_info_flags_intact():
     episode_data = {
         "chunk_actions": torch.arange(8, dtype=torch.float32).reshape(4, 2),
+        "initial_observation": {"states": torch.arange(4).reshape(4, 1)},
         "obs_list": [{"states": torch.arange(4).reshape(4, 1)}],
         "terminations": torch.zeros(4, 1, dtype=torch.bool),
         "truncations": torch.zeros(4, 1, dtype=torch.bool),
@@ -1851,6 +1858,7 @@ def _env_part(
 def _episode_data():
     return {
         "chunk_actions": torch.zeros(1, 1, 1),
+        "initial_observation": {"states": torch.zeros(1, 1)},
         "obs_list": [{"states": torch.zeros(1, 1)}],
         "terminations": torch.zeros(1, 1, dtype=torch.bool),
         "truncations": torch.zeros(1, 1, dtype=torch.bool),
@@ -2384,6 +2392,10 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0, 2.0]]]),
+        initial_observation={
+            "states": torch.tensor([[-1.0, -1.0]]),
+            "task_descriptions": ["pick"],
+        },
         obs_list=[
             {
                 "states": torch.tensor([[0.0, 0.0]]),
@@ -2404,6 +2416,9 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     assert torch.equal(
         torch.from_numpy(episode[0]["actions"]), torch.tensor([9.0, 8.0])
     )
+    assert torch.equal(
+        torch.from_numpy(episode[0]["state"]), torch.tensor([-1.0, -1.0])
+    )
 
 
 def test_online_lerobot_accumulator_preserves_auto_reset_observation():
@@ -2416,6 +2431,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0]]]),
+        initial_observation={"states": torch.tensor([[5.0]])},
         obs_list=[{"states": torch.tensor([[100.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2429,6 +2445,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[2.0]]]),
+        initial_observation={"states": torch.tensor([[100.0]])},
         obs_list=[{"states": torch.tensor([[20.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2436,7 +2453,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     )
 
     first, second = accumulator.drain_episodes()
-    assert first[0]["state"].item() == 10.0
+    assert first[0]["state"].item() == 5.0
     assert first[0]["is_success"].item()
     assert second[0]["state"].item() == 100.0
 
@@ -2457,6 +2474,7 @@ def test_online_lerobot_accumulator_filters_unsuccessful_episodes():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[1.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
             obs_list=[{"states": torch.tensor([[1.0]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[truncated]]),
@@ -2478,6 +2496,7 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0], [2.0]], [[3.0], [4.0]]]),
+        initial_observation={"states": torch.tensor([[0.0], [20.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0], [30.0]])},
             {"states": torch.tensor([[20.0], [40.0]])},
@@ -2491,6 +2510,8 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     assert len(episodes) == 2
     assert [frame["actions"].item() for frame in episodes[0]] == [1.0, 2.0]
     assert [frame["actions"].item() for frame in episodes[1]] == [3.0, 4.0]
+    assert [frame["state"].item() for frame in episodes[0]] == [0.0, 10.0]
+    assert [frame["state"].item() for frame in episodes[1]] == [20.0, 30.0]
 
 
 def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
@@ -2508,6 +2529,7 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     accumulator.append_chunk_episode_data(
         policy_output=policy_output,
         chunk_actions=chunk_actions,
+        initial_observation={"states": torch.tensor([[0.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0]])},
             {"states": torch.tensor([[20.0]])},
@@ -2520,6 +2542,37 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     [episode] = accumulator.drain_episodes()
     assert [frame["actions"].item() for frame in episode] == [1.0, 8.0]
     assert [frame["intervene_flag"].item() for frame in episode] == [False, True]
+    assert [frame["state"].item() for frame in episode] == [0.0, 10.0]
+
+
+def test_online_lerobot_accumulator_filters_by_intervention_step_count():
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1,
+        intervene_step_filter=2,
+        num_action_chunks=2,
+        action_dim=1,
+    )
+
+    for flags in ([True, False], [True, True]):
+        policy_output = PolicyOutput(
+            forward_inputs={"action": torch.tensor([[[1.0], [2.0]]])},
+            intervene_flags=torch.tensor([flags]),
+        )
+        accumulator.append_chunk_episode_data(
+            policy_output=policy_output,
+            chunk_actions=torch.tensor([[[1.0], [2.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
+            obs_list=[
+                {"states": torch.tensor([[10.0]])},
+                {"states": torch.tensor([[20.0]])},
+            ],
+            terminations=torch.tensor([[False, True]]),
+            truncations=torch.zeros(1, 2, dtype=torch.bool),
+            infos_list=[{}, {}],
+        )
+
+    [episode] = accumulator.drain_episodes()
+    assert [frame["intervene_flag"].item() for frame in episode] == [True, True]
 
 
 def test_online_lerobot_accumulator_applies_recording_controls():
@@ -2537,6 +2590,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[action]]]),
+            initial_observation={"states": torch.tensor([[state - 10.0]])},
             obs_list=[{"states": torch.tensor([[state]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[False]]),
@@ -2545,7 +2599,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
 
     [episode] = accumulator.drain_episodes()
     assert len(episode) == 1
-    assert episode[0]["state"].item() == 10.0
+    assert episode[0]["state"].item() == 20.0
     assert episode[0]["actions"].item() == 3.0
     assert episode[0]["segment_id"].item() == 1
 
@@ -3146,6 +3200,7 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
     env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
     env.env_decoupled_mode = True
     env.train_batch_size = 32
+    env._supplied_actions = {}
     env.recv_from = Mock(return_value=torch.zeros(8, 4))
 
     env._recv_actions(None, stage_id=0)
@@ -3211,20 +3266,25 @@ def test_smooth_intervention_requires_online_lerobot_dagger():
         )
 
 
-def test_env_sends_external_request_after_intervention_continues():
+def test_env_runs_its_own_actions_after_intervention_continues():
     env = object.__new__(EnvWorker)
+    env.cfg = OmegaConf.create({"rollout": {"group_name": "rollout"}})
     env._trajectory_step = 0
     env._rank = 0
     env.train_num_envs_per_stage = 1
+    env.train_batch_size = 1
     env.n_train_chunk_steps = 2
     env.enable_online_lerobot = True
     env.env_decoupled_mode = False
+    env._policy_input_split_fn = None
+    env._supplied_actions = {}
     env.env_list = [
         SimpleNamespace(get_hold_actions=lambda fallback=None: [[1.0, 2.0]])
     ]
     env.smooth_intervene = SmoothInterveneController(1, 1, 2, 2, enabled=True)
     env._build_env_transition = Mock(return_value=EnvTransition())
-    env._send_policy_input = Mock()
+    env.send_to = Mock()
+    env.recv_from = Mock(return_value=torch.zeros(1, 2, 2))
     env_output = EnvOutput(
         obs={"states": torch.zeros(1, 4)},
         transition=EnvTransition(
@@ -3232,18 +3292,24 @@ def test_env_sends_external_request_after_intervention_continues():
             intervene_flags=torch.tensor([[False, True]]),
         ),
     )
+    hold_chunk = torch.tensor([[[1.0, 2.0], [1.0, 2.0]]])
 
     env._publish_step(Mock(), env_output, EnvTransition(), None, {}, 0, 0, 0)
 
-    policy_input = env._send_policy_input.call_args.args[1]
+    send = env.send_to.call_args.kwargs
+    policy_input = send["data"]
+    assert send["async_op"]
     assert not policy_input.requires_inference
     assert policy_input.env_parts[0] is not None
     assert policy_input.env_parts[0].next_obs is None
     assert torch.equal(policy_input.obs["states"], env_output.obs["states"])
-    assert torch.equal(
-        policy_input.external_actions,
-        torch.tensor([[[1.0, 2.0], [1.0, 2.0]]]),
-    )
+    assert torch.equal(policy_input.external_actions, hold_chunk)
+    # Rollout sends nothing back, so the next chunk starts without a receive.
+    assert torch.equal(env._recv_actions(Mock(), 0), hold_chunk)
+    env.recv_from.assert_not_called()
+    # The chunk after that waits for the policy again.
+    env._recv_actions(Mock(), 0)
+    env.recv_from.assert_called_once()
 
 
 def _publish_step_env(**overrides):
@@ -3481,7 +3547,8 @@ def test_rollout_routes_external_input_without_model_inference():
     )
     assert torch.equal(external_part.external_actions, dummy_actions)
     assert rollout._predict_rollout_actions.call_count == 1
-    assert torch.equal(rollout._send_actions.call_args_list[1].args[1], dummy_actions)
+    # Only the inferred chunk gets a reply; the env already runs its own actions.
+    rollout._send_actions.assert_called_once()
 
 
 def test_decoupled_final_completion_uses_next_bootstrap():
@@ -4044,6 +4111,164 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+class TestVersionFieldPreservation:
+    """merge_result_list and split_results keep version fields aligned."""
+
+    @staticmethod
+    def _dynamic_result(
+        num_sequence: int = 2,
+        group_size: int = 1,
+        version_start: list[int] | None = None,
+        version_end: list[int] | None = None,
+        rewards: list[float] | None = None,
+    ):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=group_size,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence if rewards is None else rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_merge_concatenates_versions(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(version_start=[1, 2], version_end=[1, 3]),
+                self._dynamic_result(version_start=[4], version_end=[5]),
+            ]
+        )
+        assert merged.version_start == [1, 2, 4]
+        assert merged.version_end == [1, 3, 5]
+
+    def test_merge_without_versions_stays_none(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [self._dynamic_result(), self._dynamic_result()]
+        )
+        assert merged.version_start is None
+        assert merged.version_end is None
+
+    def test_merge_mixed_versions_asserts(self):
+        with pytest.raises(AssertionError, match="mix"):
+            DynamicRolloutResult.merge_result_list(
+                [
+                    self._dynamic_result(version_start=[1], version_end=[1]),
+                    self._dynamic_result(),
+                ]
+            )
+
+    def test_split_slices_versions(self):
+        result = self._dynamic_result(
+            num_sequence=3, version_start=[1, 2, 3], version_end=[1, 2, 3]
+        )
+        splits = DynamicRolloutResult.split_results(result, [1, 2])
+        assert [s.version_start for s in splits] == [[1], [2, 3]]
+        assert [s.version_end for s in splits] == [[1], [2, 3]]
+
+    def test_split_without_versions_stays_none(self):
+        result = self._dynamic_result(num_sequence=2)
+        splits = DynamicRolloutResult.split_results(result, [1, 1])
+        assert all(s.version_start is None for s in splits)
+        assert all(s.version_end is None for s in splits)
+
+
+class TestGroupMetadataView:
+    """DynamicRolloutResult.group_metadata over real results."""
+
+    @staticmethod
+    def _dynamic_result(
+        rewards=None,
+        version_start=None,
+        version_end=None,
+        idx_to_traj=None,
+        response_lengths=None,
+        is_end=None,
+    ):
+        from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+        num_sequence = len(idx_to_traj) if idx_to_traj else 2
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=2,
+            idx_to_traj=idx_to_traj or [0, 1],
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=response_lengths or [1] * num_sequence,
+            is_end=is_end or [True] * num_sequence,
+            rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_metadata_summarizes_rewards_versions_tokens_calls(self):
+        result = self._dynamic_result(
+            rewards=[1.0, 0.0, 1.0, 0.0],
+            version_start=[1, 1, 2, 3],
+            version_end=[1, 2, 3, 3],
+            idx_to_traj=[0, 0, 1, 1],
+            response_lengths=[2, 3, 4, 5],
+        )
+        metadata = result.group_metadata()
+        assert metadata.group_id is None
+        assert metadata.rewards == [1.0, 1.0]
+        assert metadata.earliest_version == 1
+        assert metadata.completion_version == 3
+        assert metadata.num_gen_tokens == 14
+        # One generate call per sequence, is_end is irrelevant.
+        assert metadata.num_generate_calls == 4
+
+    def test_metadata_without_versions_or_rewards(self):
+        result = self._dynamic_result(rewards=None, is_end=[False, False])
+        metadata = result.group_metadata()
+        assert metadata.rewards == [None, None]
+        assert metadata.earliest_version is None
+        assert metadata.completion_version is None
+        assert metadata.num_generate_calls == 2
+
+
+class TestTaskNameField:
+    """task_name rides on results like group_id: single-group only."""
+
+    @staticmethod
+    def _dynamic_result(num_sequence: int = 2, task_name: str | None = None):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=num_sequence,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence,
+            task_name=task_name,
+        )
+
+    def test_merge_drops_task_name(self):
+        """A merged result spans several groups, so it carries None."""
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(task_name="searchr1"),
+                self._dynamic_result(task_name="searchr1"),
+            ]
+        )
+        assert merged.task_name is None
+
+    def test_split_drops_task_name(self):
+        """Split results are rebuilt without the field, so it is None."""
+        split = DynamicRolloutResult.split_results(
+            self._dynamic_result(task_name="searchr1"), [1, 1]
+        )
+        assert all(result.task_name is None for result in split)
+
+    def test_group_metadata_carries_task_name(self):
+        result = self._dynamic_result(task_name="searchr1")
+        assert result.group_metadata().task_name == "searchr1"
 
 
 def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
