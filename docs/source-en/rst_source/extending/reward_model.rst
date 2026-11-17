@@ -682,7 +682,7 @@ Launch:
 Training on ManiSkill PickCube3View started from a policy checkpoint with a
 58.89% success rate in independent evaluation.
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/maniskill_vlm_trend_success_rate.png
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pickcube3view_vlm_trend_ppo_success_rate.png
    :alt: ManiSkill PickCube3View success rate by PPO update
 
    Independent success rate reached 80.76% at PPO update 18. Each point uses
