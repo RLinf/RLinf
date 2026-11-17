@@ -134,9 +134,10 @@ With the Task22 model and asset paths set, start PPO training:
 
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-The training recipes disable periodic evaluation by default. Task22 saves a checkpoint
-every two epochs. Use the separate evaluation command below to measure benchmark
-success rates.
+Task22 evaluates every ten epochs and saves a checkpoint every two epochs.
+At the end of training, evaluation and checkpointing each run if enabled. Task64 disables
+periodic evaluation by default. Use the separate evaluation command below to
+measure benchmark success rates across all four channels.
 
 Task22 PPO selects one stochastic denoising step from the first five of ten
 steps. The frozen vision encoder stays in evaluation mode. Edit these

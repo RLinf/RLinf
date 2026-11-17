@@ -73,6 +73,7 @@ from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -3170,6 +3171,53 @@ def test_decoupled_evaluation_service_is_reused_and_cancelled_on_stop():
         assert first_task.cancelled()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("runner_cls", [EmbodiedRunner, AsyncEmbodiedRunner])
+def test_embodied_eval_every_ten_steps_and_save_every_two_steps(runner_cls):
+    runner = object.__new__(runner_cls)
+    runner.cfg = OmegaConf.create(
+        {"runner": {"val_check_interval": 10, "save_interval": 2}}
+    )
+    runner.max_steps = 37
+    evaluations, checkpoints = [], []
+    for step in range(1, 38):
+        runner.global_step = step
+        run_val, save_model, is_train_end = runner._check_progress()
+        if run_val:
+            evaluations.append(step)
+        if save_model:
+            checkpoints.append(step)
+        assert is_train_end is (step == 37)
+    assert evaluations == [10, 20, 30, 37]
+    assert checkpoints == [*range(2, 37, 2), 37]
+
+
+@pytest.mark.parametrize("runner_cls", [EmbodiedRunner, AsyncEmbodiedRunner])
+@pytest.mark.parametrize(
+    "eval_interval,save_interval",
+    [(10, 10), (5, 10), (-1, 2), (10, -1), (0, 0), (-1, -1), (2, 6)],
+)
+def test_embodied_progress_preserves_existing_schedules(
+    runner_cls, eval_interval, save_interval
+):
+    from rlinf.utils.runner_utils import check_progress
+
+    runner = object.__new__(runner_cls)
+    runner.cfg = OmegaConf.create(
+        {
+            "runner": {
+                "val_check_interval": eval_interval,
+                "save_interval": save_interval,
+            }
+        }
+    )
+    runner.max_steps = 37
+    for step in range(1, 38):
+        runner.global_step = step
+        assert runner._check_progress() == check_progress(
+            step, 37, eval_interval, save_interval, 1.0
+        )
 
 
 def test_async_runner_reuses_decoupled_evaluation_service_across_validations():

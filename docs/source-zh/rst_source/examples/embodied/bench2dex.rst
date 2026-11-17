@@ -121,7 +121,7 @@ policy 根据图像、关节位置和任务描述预测动作。
 
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-训练配置默认关闭周期性评测。Task22 每 2 轮保存一次 checkpoint。使用下方的独立评测命令统计基准成功率。
+Task22 每 10 轮评测一次，每 2 轮保存一次 checkpoint。训练结束时，评测和 checkpoint 保存按各自的启用状态执行。Task64 默认关闭周期性评测。使用下方的独立评测命令统计四个通道的基准成功率。
 
 Task22 PPO 在 10 个去噪步骤中，从前 5 步选取一步作为随机步骤。冻结的视觉编码器保持 eval 模式。在训练 YAML 中修改以下配置：
 

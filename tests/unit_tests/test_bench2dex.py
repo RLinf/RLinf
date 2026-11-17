@@ -762,15 +762,13 @@ def test_bench2dex_recipes(
         assert "noise_rng" not in model.openpi
         assert cfg.env.eval.skip_intermediate_renders is False
         return
-    from rlinf.utils.runner_utils import check_progress
+    from rlinf.runners.embodied_runner import EmbodiedRunner
 
-    run_val, save_model, _ = check_progress(
-        step=cfg.runner.save_interval,
-        max_steps=cfg.runner.max_epochs,
-        val_check_interval=cfg.runner.val_check_interval,
-        save_interval=cfg.runner.save_interval,
-        limit_val_batches=None,
-    )
+    runner = object.__new__(EmbodiedRunner)
+    runner.cfg = cfg
+    runner.global_step = cfg.runner.save_interval
+    runner.max_steps = cfg.runner.max_epochs
+    run_val, save_model, _ = runner._check_progress()
     assert save_model and not run_val
     is_async = "_async_" in config_name
     is_grpo = "_grpo_" in config_name
@@ -787,7 +785,7 @@ def test_bench2dex_recipes(
     assert cfg.actor.global_batch_size % (4 * cfg.actor.micro_batch_size) == 0
     if action_dim == 40:
         assert samples == 4480
-        assert cfg.runner.val_check_interval == -1
+        assert cfg.runner.val_check_interval == 10
         assert cfg.runner.save_interval == 2
         assert cfg.env.eval.total_num_envs * cfg.env.eval.rollout_epoch == 32
         assert cfg.env.train.init_params.generalization_profile == "none"

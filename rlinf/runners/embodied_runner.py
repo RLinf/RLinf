@@ -320,15 +320,28 @@ class EmbodiedRunner:
         training_metrics = [result.get("training_metrics", {}) for result in results]
         return rollout_metrics, training_metrics
 
-    def _maybe_eval_and_checkpoint(self, step: int) -> dict:
-        run_val, save_model, _ = check_progress(
+    def _check_progress(self) -> tuple[bool, bool, bool]:
+        """Schedule evaluation and checkpointing independently."""
+        run_val, _, is_train_end = check_progress(
             self.global_step,
             self.max_steps,
             self.cfg.runner.val_check_interval,
+            -1,
+            1.0,
+            run_time_exceeded=False,
+        )
+        _, save_model, _ = check_progress(
+            self.global_step,
+            self.max_steps,
+            -1,
             self.cfg.runner.save_interval,
             1.0,
             run_time_exceeded=False,
         )
+        return run_val, save_model, is_train_end
+
+    def _maybe_eval_and_checkpoint(self, step: int) -> dict:
+        run_val, save_model, _ = self._check_progress()
 
         eval_metrics = {}
         if run_val:
