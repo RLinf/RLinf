@@ -151,27 +151,40 @@ that bare handle numerically equal to ApxInf's own policy path. Set
 The default 10 environments x 10 rollout epochs evaluate 10 reset states for
 each LIBERO-10 task (100 trajectories total).
 
+.. _libero-gr00t-n1d7-sft-eval:
+
 Evaluate a GR00T N1.7 SFT Checkpoint
 ----------------------------------------
 
-Point the rollout model at the Hugging Face directory produced by
-``toolkits/gr00t/export_sft.py`` and set the local Cosmos backbone path.
-On Kunlun XPU, use OSMesa for CPU simulation.
+Run the RLinf evaluator against the exported Hugging Face directory and set
+the path to the local Cosmos backbone. On NVIDIA GPUs, use EGL. On Kunlun
+XPU, set ``MUJOCO_GL=osmesa`` and ``PYOPENGL_PLATFORM=osmesa`` for CPU simulation.
 
 .. code-block:: bash
 
-   export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl ROBOT_PLATFORM=LIBERO
    bash evaluations/run_eval.sh libero libero_spatial_gr00t_n1d7_eval \
      rollout.model.model_path=/path/to/exported/GR00T-N1.7-SFT \
      rollout.model.backbone_model_path=/path/to/Cosmos-Reason2-2B
 
-The default runs 200 trajectories, using the first 20 fixed initial states
-of each of the 10 Spatial tasks. It runs each trajectory for 240 environment
-steps, executes eight actions per policy query, and reports
-``eval/success_once``. The evaluation log includes each task ID, trial ID,
-and success flag. Set both ``cluster.component_placement.env`` and
-``cluster.component_placement.rollout`` to the assigned devices. For the
-default trajectory count, the number of environment workers must divide 40.
+The default evaluates 200 trajectories with the first 20 fixed initial
+states of each Spatial task. Each trajectory runs for 240 environment steps.
+The policy executes eight actions per query, uses four denoising steps, and
+pads text inputs to 570 tokens. Read ``eval/success_once`` as the fraction of
+trajectories that succeeded at any point. The log includes each task ID,
+initial-state ID, and success flag. Set both ``cluster.component_placement.env`` and
+``cluster.component_placement.rollout`` to the assigned devices. The number
+of environment workers must divide 40 for the default run.
+
+To check that an export loads and runs, append the following overrides to
+the evaluation command. The smoke test runs two trajectories of eight
+steps each. When reporting benchmark scores, record the evaluation command,
+checkpoint, and how you selected the initial states.
+
+.. code-block:: text
+
+   env.eval.total_num_envs=2 env.eval.rollout_epoch=1 \
+   env.eval.max_episode_steps=8 env.eval.max_steps_per_rollout_epoch=8
 
 .. _libero-eval-config:
 

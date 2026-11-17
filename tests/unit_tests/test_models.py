@@ -3439,30 +3439,92 @@ def test_gr00t_sft_forward_dispatches_to_official_objective(monkeypatch):
         model(forward_type=ForwardType.SFT, data={"inputs": inputs})
 
 
-@pytest.mark.parametrize(
-    ("updates", "message"),
-    [
-        ({"runner": {"max_steps": 0}}, "max_steps"),
-        ({"data": {"val_data_paths": "/validation"}}, "validation"),
-    ],
-)
-def test_gr00t_sft_config_rejects_unsupported_settings(updates, message):
+@pytest.fixture
+def gr00t_sft_cfg(tmp_path, monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/sft/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    monkeypatch.chdir(tmp_path)
+    for directory, files in {
+        "model": ("config.json",),
+        "backbone": ("config.json",),
+        "dataset/meta": ("info.json", "modality.json"),
+    }.items():
+        path = tmp_path / directory
+        path.mkdir(parents=True)
+        for name in files:
+            (path / name).write_text("{}")
+
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        return compose(
+            config_name="libero_sft_gr00t_n1d7",
+            overrides=[
+                "actor.model.model_path=./model",
+                f"actor.model.backbone_model_path={tmp_path / 'backbone'}",
+                "data.train_data_paths=./dataset",
+            ],
+        )
+
+
+def test_gr00t_sft_config_composes(gr00t_sft_cfg, tmp_path):
     from rlinf.config import validate_sft_cfg
 
-    cfg = OmegaConf.create(
-        {
-            "actor": {
-                "global_batch_size": 2,
-                "micro_batch_size": 1,
-                "model": {"model_type": "gr00t_n1d7", "precision": "fp32"},
-            },
-            "runner": {"max_steps": 1, "max_epochs": -1},
-            "data": {"train_data_paths": "/train"},
-        }
-    )
-    cfg = OmegaConf.merge(cfg, updates)
-    with pytest.raises(ValueError, match=message):
-        validate_sft_cfg(cfg)
+    backbone = os.path.relpath(tmp_path / "backbone", Path.home())
+    gr00t_sft_cfg.actor.model.backbone_model_path = f"~/{backbone}"
+    gr00t_sft_cfg.data.train_data_paths = ["./dataset", str(tmp_path / "dataset")]
+    cfg = validate_sft_cfg(gr00t_sft_cfg)
+    assert cfg.actor.fsdp_config.strategy == "fsdp2"
+    assert Path(cfg.actor.model.model_path).resolve() == tmp_path / "model"
+    assert Path(cfg.actor.model.backbone_model_path).resolve() == tmp_path / "backbone"
+    assert [Path(path).resolve() for path in cfg.data.train_data_paths] == [
+        tmp_path / "dataset",
+        tmp_path / "dataset",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "error", "message"),
+    [
+        ("runner.max_steps", 0, ValueError, "runner.max_steps"),
+        ("data.val_data_paths", "/validation", ValueError, "validation datasets"),
+        ("actor.model.precision", "bf16", ValueError, "actor.model.precision"),
+        ("actor.model.model_path", "", ValueError, "actor.model.model_path"),
+        (
+            "actor.model.backbone_model_path",
+            "/path/to/cosmos",
+            FileNotFoundError,
+            "actor.model.backbone_model_path",
+        ),
+        ("data.train_data_paths", None, ValueError, "data.train_data_paths"),
+        ("data.train_data_paths", [], ValueError, "data.train_data_paths"),
+        (
+            "data.train_data_paths",
+            ["dataset", "missing"],
+            FileNotFoundError,
+            r"data.train_data_paths\[1\]",
+        ),
+    ],
+)
+def test_gr00t_sft_config_rejects_unsupported_settings(
+    gr00t_sft_cfg, key, value, error, message
+):
+    from rlinf.config import validate_sft_cfg
+
+    OmegaConf.update(gr00t_sft_cfg, key, value, force_add=True)
+    with pytest.raises(error, match=message):
+        validate_sft_cfg(gr00t_sft_cfg)
+
+
+@pytest.mark.parametrize("filename", ["info.json", "modality.json"])
+def test_gr00t_sft_config_requires_dataset_metadata(gr00t_sft_cfg, tmp_path, filename):
+    from rlinf.config import validate_sft_cfg
+
+    (tmp_path / "dataset" / "meta" / filename).unlink()
+    with pytest.raises(
+        FileNotFoundError, match=f"data.train_data_paths.*meta/{filename}"
+    ):
+        validate_sft_cfg(gr00t_sft_cfg)
 
 
 @pytest.mark.parametrize(
@@ -3473,22 +3535,12 @@ def test_gr00t_sft_config_rejects_unsupported_settings(updates, message):
         ({"total_training_steps": 20}, {"total_training_steps": 20}),
     ],
 )
-def test_gr00t_sft_config_resolves_scheduler_steps(optim, expected):
+def test_gr00t_sft_config_resolves_scheduler_steps(gr00t_sft_cfg, optim, expected):
     from rlinf.config import validate_sft_cfg
 
-    cfg = OmegaConf.create(
-        {
-            "runner": {"max_steps": 12, "max_epochs": -1},
-            "data": {"train_data_paths": "/data"},
-            "actor": {
-                "model": {"model_type": "gr00t_n1d7"},
-                "global_batch_size": 2,
-                "micro_batch_size": 1,
-                "optim": optim,
-            },
-        }
-    )
-    assert validate_sft_cfg(cfg).actor.optim == expected
+    gr00t_sft_cfg.runner.max_steps = 12
+    gr00t_sft_cfg.actor.optim = optim
+    assert validate_sft_cfg(gr00t_sft_cfg).actor.optim == expected
 
 
 def test_gr00t_sft_rejects_unsupported_master_precision(monkeypatch):

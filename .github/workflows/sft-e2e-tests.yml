@@ -100,6 +100,46 @@ jobs:
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
 
+  sft-gr00t-n1d7-libero-test:
+    runs-on: embodied
+    env:
+      GR00T_PATH: /workspace/dataset/Isaac-GR00T-1.7
+      GR00T_SFT_MODEL_PATH: /workspace/dataset/GR00T-N1.7-3B
+      GR00T_SFT_BACKBONE_PATH: /workspace/dataset/Cosmos-Reason2-2B
+      GR00T_SFT_DATA_PATH: /workspace/dataset/data/sft-ci-data/gr00t-n1d7-libero/libero_spatial_no_noops_1.0.0_lerobot
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create GR00T N1.7 environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+
+      - name: Test GR00T shard cursor restoration with zero and two data workers
+        timeout-minutes: 10
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH="$PWD:$PWD/tests/unit_tests"
+          python -c 'from gr00t.data.dataset.sharded_mixture_dataset import ShardedMixtureDataset'
+          python -m pytest tests/unit_tests/test_data.py -k gr00t_shard_cursor
+
+      - name: Train, resume, export, and evaluate GR00T N1.7 SFT
+        timeout-minutes: 40
+        run: |
+          source .venv/bin/activate
+          export TMPDIR=/workspace/results
+          mkdir -p "$TMPDIR"
+          bash tests/e2e_tests/sft/run_gr00t_n1d7_resume.sh libero_sft_gr00t_n1d7
+
+      - name: Clean up
+        if: always()
+        run: rm -rf .venv
+
   sft-fastwam-libero-test:
     runs-on: embodied
     steps:

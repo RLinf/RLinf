@@ -35,9 +35,9 @@ data:
   gr00t:
     seed: 42
     video_backend: torchcodec
-    shard_size: 1024
+    shard_size: 64
     episode_sampling_rate: 0.1
-    num_shards_per_epoch: 100000
+    num_shards_per_epoch: 16
     override_pretraining_statistics: true
 
 actor:
@@ -79,8 +79,8 @@ actor:
     weight_decay: 1.0e-5
     clip_grad: 1.0
     lr_scheduler: cosine
-    lr_warmup_steps: 1000
-    total_training_steps: 20000
+    lr_warmup_steps: 0
+    total_training_steps: 2
   fsdp_config:
     strategy: fsdp2
     sharding_strategy: full_shard

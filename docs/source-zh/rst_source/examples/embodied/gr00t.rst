@@ -667,7 +667,7 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
 
 将 ``rollout.model.model_path`` 指向同一 checkpoint，再通过 ``run_embodiment.sh`` 启动保存后的配置。环境的 action shape 与 normalization statistics 必须和 checkpoint metadata 一致。
 
-在昆仑 XPU 上训练 N1.7 Spatial SFT
+用 LIBERO Spatial 数据微调 GR00T N1.7
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 示例通过 ``actor.model.task: sft`` 选择监督训练的 action head。省略 ``task`` 时，GR00T N1.7 兼容旧配置中的 ``training_mode``，两个字段均未设置时默认使用 ``rl``。
@@ -678,6 +678,55 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
 
 ``state_dropout_prob`` 等共享选项只需在 ``actor.model.gr00t_sft`` 中设置一次，模型和 processor 使用相同的默认值与覆盖值。``color_jitter_params`` 等 processor 选项也在此处配置。GR00T SFT 要求 ``load_bf16: false`` 和 ``backbone_trainable_params_fp32: true``，使可训练的主参数保持 FP32。
 
+**NVIDIA CUDA**
+
+在 RLinf 仓库根目录启动 N1.7 PPO 示例使用的镜像。镜像内置 Isaac-GR00T ``23ace64``\ 。挂载仓库目录后，训练日志和检查点会写入宿主机。
+
+.. code-block:: bash
+
+   docker run --rm -it --gpus all --shm-size=20g --network host \
+     -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
+     rlinf/rlinf:agentic-rlinf0.4-maniskill_libero@sha256:b5563d95f681478555c4af63ca988b19d1a113306dbdee15a79fff47d320b5cb bash
+
+下载 backbone 前，先在 Hugging Face 接受 `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ 的访问条款。
+
+进入容器后切换到 GR00T N1.7 环境，登录 Hugging Face 并下载基础权重、Cosmos backbone 和 LeRobot v2.1 格式的 LIBERO Spatial 示范数据。将下列命令指定版本的 Isaac-GR00T 模态映射复制到数据集的 ``meta`` 目录。
+
+.. code-block:: bash
+
+   source switch_env gr00t_n1d7
+   hf auth login
+   export GR00T_SFT_MODEL_PATH="$PWD/checkpoints/GR00T-N1.7-3B"
+   export GR00T_SFT_BACKBONE_PATH="$PWD/checkpoints/Cosmos-Reason2-2B"
+   export GR00T_SFT_DATA_PATH="$PWD/datasets/libero_spatial_no_noops_1.0.0_lerobot"
+   hf download nvidia/GR00T-N1.7-3B --local-dir "$GR00T_SFT_MODEL_PATH"
+   hf download nvidia/Cosmos-Reason2-2B --local-dir "$GR00T_SFT_BACKBONE_PATH"
+   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+     --local-dir "$GR00T_SFT_DATA_PATH"
+   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
+     -o "$GR00T_SFT_DATA_PATH/meta/modality.json"
+
+使用两张可见的 NVIDIA GPU 训练两步，每步保存一次。
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$PWD/examples/sft"
+   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+   export CUDA_VISIBLE_DEVICES=0,1 RAY_ADDRESS=local
+   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
+     actor.model.model_path="$GR00T_SFT_MODEL_PATH" \
+     actor.model.backbone_model_path="$GR00T_SFT_BACKBONE_PATH" \
+     data.train_data_paths="$GR00T_SFT_DATA_PATH" \
+     runner.logger.log_path="$PWD/sft-smoke" \
+     runner.max_steps=2 runner.save_interval=1 \
+     actor.global_batch_size=2 actor.micro_batch_size=1 \
+     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
+
+正式训练时保留数据和权重路径，去掉短测的步数、保存间隔和优化器覆盖项，换一个日志目录，再按显存设置 batch size。完整配置训练 20,000 步，每 1,000 步保存一次。
+
+**昆仑 XPU**
+
 为昆仑平台安装 ``gr00t_n1d7``，并在 ``examples/sft/config/libero_sft_gr00t_n1d7.yaml`` 中设置模型和数据集的三个路径。将 Isaac-GR00T 的 ``examples/LIBERO/modality.json`` 复制到数据集的 ``meta`` 目录。把 actor placement 改为分配到的物理卡号，并按卡数调整 batch size。在 XPU 上运行时，使用 OSMesa 在 CPU 上渲染，训练在 XPU 上执行：
 
 .. code-block:: bash
@@ -686,7 +735,7 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
    export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
    bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
 
-示例配置执行 20,000 次更新，每 1,000 次保存一次。RLinf AdamW 对可训练参数应用配置的 weight decay；官方 Trainer 会排除 bias 和符合规则的 normalization 参数，因此参数更新与官方优化器不同。
+RLinf AdamW 对所有可训练参数应用权重衰减。Isaac-GR00T 会排除偏置和部分归一化参数。
 
 设置上面列出的 3 个环境变量，再运行下面的命令。训练执行 2 步，每步保存一个 checkpoint。
 
@@ -709,11 +758,13 @@ GR00T 持续读取数据分片。将 ``runner.max_steps`` 设为正数，以优�
 
 .. code-block:: bash
 
-   python toolkits/gr00t/export_sft.py \\
-     --weights /path/to/actor/model_state_dict/full_weights.pt \\
-     --base-model /path/to/GR00T-N1.7-3B \\
-     --processor /path/to/gr00t/rank_0/processor \\
+   python toolkits/gr00t/export_sft.py \
+     --weights /path/to/actor/model_state_dict/full_weights.pt \
+     --base-model /path/to/GR00T-N1.7-3B \
+     --processor /path/to/gr00t/rank_0/processor \
      --output /path/to/new-hf-checkpoint
+
+导出后，使用该目录运行 :ref:`LIBERO 闭环评测 <libero-gr00t-n1d7-sft-eval>`\ 。
 
 固定 batch 的 loss 和梯度对照可运行 ``PYTHONPATH=. python toolkits/gr00t/verify_sft.py``，传入 ``--batch``、``--model-path``、``--backbone-model-path`` 和 ``--output``。该工具按 RLinf 的 weight decay 规则比较单步更新。LIBERO 闭环评估需要另行执行。
 
