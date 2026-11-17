@@ -1,0 +1,108 @@
+SuperMimic 动作数据
+===================
+
+主指南 :doc:`supermimic` 用论文的 40 条 LAFAN1 片段训练。本页讲其他来源：实验性的 BONES-SEED 转换，以及自备片段要遵守的文件格式。所有命令都在 RLinf 仓库根目录执行，并且已经激活 SuperMimic 环境。
+
+一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载），可以再放一个 ``manifest.json``。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段；没有清单时只检查格式。把 ``SUPERMIMIC_MOTION_PATH`` 指到这个目录。
+
+BONES-SEED（实验性）
+--------------------
+
+官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。先读数据包里的 ``LICENSE.md``；脚本不下载数据。表头约定沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_：120 Hz；``root_translateX/Y/Z`` 单位厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个 ``<关节名>_dof`` 列单位度，名字对应 mjlab 的 G1 关节。这个约定还没有拿官方 CSV 核对过。
+
+.. code-block:: bash
+
+   python toolkits/supermimic/convert_bones_seed.py \
+       --input /data/bones-seed/g1/csv \
+       --output /data/bones_g1
+   python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
+       --out /data/bones_g1_filtered
+   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_filtered
+
+``--input`` 可以是单个 CSV 或递归扫描的目录。片段重采样到 50 Hz，已有输出默认不覆盖（``--overwrite`` 除外），单个损坏的 CSV 会报告原因而不影响其他文件。转换器只在合成 CSV 上测试过。
+
+用过滤后的片段训练或评测时，在启动命令后追加：
+
+.. code-block:: bash
+
+   env.train.motion_format=bones_seed env.train.num_clips=null \
+       env.eval.motion_format=bones_seed env.eval.num_clips=null
+
+BONES-SEED 的加载器把动作库放在主机内存，只把查询到的行传到 GPU。
+
+片段文件格式
+------------
+
+每个 ``clip_*.pt`` 是用 ``torch.save`` 保存的字典：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
+
+   * - 键
+     - 内容
+   * - ``fps``
+     - 50，或 30。30 Hz 的片段会重采样到 50 Hz 控制网格，速度用中心差分重新计算；50 Hz 的片段按原样使用，**速度列必须自己填对**。其他帧率会被拒绝。
+   * - ``joint_names``
+     - 29 个关节名，必须与 ``rlinf.envs.sim.g1_mimic.constants.G1_JOINT_NAMES`` 的顺序完全相同（它就是 mjlab G1 的关节顺序）。
+   * - ``q0``
+     - 29 维默认关节姿态（rad），必须等于 mjlab 的默认关节姿态，即 ``asset_default_state()[7:36]``。
+   * - ``state``
+     - ``[T, 71]`` 的浮点张量，列布局见下表，不能有 NaN 或 Inf，根四元数要归一化。
+   * - ``name``
+     - 可选，BONES-SEED 转换会写入。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 52 30
+
+   * - 列
+     - 内容
+     - 单位
+   * - ``0:3``
+     - 根（pelvis）位置，世界系
+     - m
+   * - ``3:7``
+     - 根四元数，顺序 wxyz
+     - —
+   * - ``7:36``
+     - 关节角，顺序同 ``joint_names``
+     - rad
+   * - ``36:39``
+     - 根线速度，世界系
+     - m/s
+   * - ``39:42``
+     - 根角速度，根坐标系
+     - rad/s
+   * - ``42:71``
+     - 关节速度
+     - rad/s
+
+下面的最小示例写出一条原地站立 5 s 的片段，并用加载器同样的检查验证它：
+
+.. code-block:: python
+
+   from pathlib import Path
+
+   import torch
+
+   from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES
+   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+   from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
+
+   default = asset_default_state().float()  # mjlab 站立关键帧，[71]
+   T = 250                                  # 50 Hz 下 5 s
+   state = torch.zeros(T, 71)
+   state[:, :36] = default[:36]             # 根位置、根四元数、关节角；速度保持 0
+   payload = {
+       "fps": 50,
+       "joint_names": list(G1_JOINT_NAMES),
+       "q0": default[7:36],
+       "state": state,
+   }
+   decode_motion_payload(payload, "clip_000.pt")  # 不合格时抛出 ValueError
+   out = Path("/data/my_clips")
+   out.mkdir(parents=True, exist_ok=True)
+   torch.save(payload, out / "clip_000.pt")
+
+用这样的目录训练时加 ``env.train.num_clips=null``\ （评测加 ``env.eval.num_clips=null``），加载目录里的全部片段。

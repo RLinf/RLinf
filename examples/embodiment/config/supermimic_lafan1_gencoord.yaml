@@ -146,8 +146,9 @@ actor:
 
   fsdp_config:
     strategy: fsdp2
+    # One FSDP unit per network; each phase gathers only the networks it reads.
     wrap_policy:
-      module_classes_to_wrap: []
+      module_classes_to_wrap: [Dynamics, MotionPolicy, Critic]
     amp_autocast:
       enabled: False
       precision: bf16

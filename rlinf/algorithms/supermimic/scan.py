@@ -22,6 +22,10 @@ minutes; an unrolled horizon took over an hour.
 
 On a CUDA batch of at least 256 rows each piece is compiled once. A cache
 built with ``enabled=False`` keeps every piece eager.
+
+The networks are called through ``forward``: the caller gathers their FSDP
+units for the whole scan, and FSDP's per-call hooks would break the compiled
+step into pieces.
 """
 
 from __future__ import annotations
@@ -73,7 +77,7 @@ def make_world_model_rollout(
     call = _caller(compile_name, compile_cache)
 
     def step(dynamics, root, enc, action, context):
-        return representation.advance(root, enc, dynamics(enc, action, context))
+        return representation.advance(root, enc, dynamics.forward(enc, action, context))
 
     def score(roots, encs, true_roots, true_encs):
         return world_model_loss(
@@ -121,8 +125,10 @@ def make_imagination(
 
     def step(actor, dynamics, root, enc, context, content, target_pos, target_rot):
         world_goal, actor_goal = root_goals(root, content, target_pos, target_rot)
-        action = actor(enc, actor_goal)
-        root, enc = representation.advance(root, enc, dynamics(enc, action, context))
+        action = actor.forward(enc, actor_goal)
+        root, enc = representation.advance(
+            root, enc, dynamics.forward(enc, action, context)
+        )
         return action, root, enc, world_goal
 
     def score(
@@ -160,7 +166,7 @@ def make_imagination(
         )
         last_goal, _ = root_goals(roots[:, -1], *last_window)
         terminal = torch.cat((encs[:, -1], last_goal, context), dim=-1)
-        value = critic(terminal).clamp(max=value_max)
+        value = critic.forward(terminal).clamp(max=value_max)
         ret = imagined_return(rewards, term_prob, value, gamma)
         steps = torch.cat(
             (

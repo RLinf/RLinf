@@ -297,7 +297,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
                 self.optimizer_steps[phase] += steps
             for scheduler in self.all_schedulers:
                 scheduler.step()
-        self.model.reshard()
+        self._reshard()
         # Checkpoint loading drops the optimizer state of frozen parameters.
         self.model.requires_grad_(True)
         names = [name for name, value in metrics.items() if torch.is_tensor(value)]
@@ -350,10 +350,12 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         imagination inputs.
 
         The replay is fixed during an update, so drawing all batches first
-        draws them from the same distribution as drawing each before its step.
+        draws them from the same distribution as drawing each before its step,
+        and one set of legal window starts serves every batch.
         """
+        legal = self.replay.windows(self.k)
         windows = [
-            self.replay.sample(self.k, self.wm_window_batch)
+            self.replay.draw(legal, self.wm_window_batch)
             for _ in range(self.wm_batches)
         ]
         starts = self.replay.sample(1, self.imagine_batch)
@@ -426,11 +428,17 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         """Freeze every parameter outside one phase and clear stale gradients.
 
         FSDP copies ``requires_grad`` from the sharded parameters when it
-        gathers them, so the model is resharded before the switch.
+        gathers them, so every unit is resharded before the switch.
         """
-        self.model.reshard()
+        self._reshard()
         self.model.zero_grad(set_to_none=True)
         self.model.set_trainable(forward_type)
+
+    def _reshard(self) -> None:
+        """Free every gathered network; ``FSDPModule.reshard`` is per unit."""
+        for module in self.model.modules():
+            if isinstance(module, FSDPModule):
+                module.reshard()
 
     def _optimizer_step(self, phase: str) -> torch.Tensor:
         """Clip and step one phase's optimizers; returns the pre-clip norm.
@@ -537,7 +545,6 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
             values = self.model(
                 forward_type=CRITIC, features=torch.cat((features, terminal))
             )["values"]
-        self.model.reshard()
         values, last_value = values[:-batch].view(horizon, batch), values[-batch:]
         targets = lambda_returns(
             values,
@@ -569,7 +576,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
     # ------------------------------------------------------- weights and state
 
     def get_rollout_state_dict(self) -> dict:
-        self.model.reshard()
+        self._reshard()
         return super().get_rollout_state_dict()
 
     def save_checkpoint(self, save_base_path: str, step: int = 0) -> None:
@@ -577,7 +584,7 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
 
         The replay is not saved; a resumed run refills it before training.
         """
-        self.model.reshard()
+        self._reshard()
         self._strategy.save_checkpoint(
             model=self.model,
             optimizers=self.all_optimizers,

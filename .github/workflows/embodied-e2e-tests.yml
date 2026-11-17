@@ -476,6 +476,30 @@ jobs:
             runner.max_epochs=5 \
             runner.resume_dir=/workspace/results/g1_mimic_supermimic/ci-test/checkpoints/global_step_3
 
+      - name: Check the resumed training state
+        run: |
+          source .venv/bin/activate
+          python - <<'EOF'
+          import json
+          import os
+
+          root = "/workspace/results/g1_mimic_supermimic/ci-test/checkpoints"
+
+          def read(step, *parts):
+              with open(os.path.join(root, f"global_step_{step}", *parts)) as file:
+                  return json.load(file)
+
+          before = read(3, "actor", "supermimic_counters.json")["optimizer_steps"]
+          after = read(5, "actor", "supermimic_counters.json")["optimizer_steps"]
+          # Each phase steps equally often per update, so a restored run counts
+          # on from update 3; a fresh one would hold two updates' worth.
+          for phase, steps in before.items():
+              assert steps > 0 and steps % 3 == 0, (phase, before)
+              assert after[phase] == steps // 3 * 5, (phase, before, after)
+          env_steps = [read(step, "runner_state.json")["env_steps"] for step in (3, 5)]
+          assert env_steps[1] > env_steps[0] > 0, env_steps
+          EOF
+
       - name: SuperMimic MaxCoord test on two GPUs
         timeout-minutes: 20
         run: |

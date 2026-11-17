@@ -6,7 +6,15 @@ policy with SuperMimic in MuJoCo Warp: install the environment, prepare
 reference motion, choose GenCoord or MaxCoord, train on one or more GPUs,
 resume, and evaluate. The algorithm and where it departs from the paper are
 in :doc:`../../reference/algorithms/supermimic`. On a first run, follow
-`Run It`_.
+`Run It`_. Clip sources other than LAFAN1 and the clip file format are in
+:doc:`supermimic_motion`; evaluation metrics and push recovery are in
+:doc:`supermimic_eval`.
+
+.. toctree::
+   :hidden:
+
+   Motion data <supermimic_motion>
+   Evaluation <supermimic_eval>
 
 Unless stated otherwise, every command on this page runs from the RLinf
 repository root with the SuperMimic environment below activated.
@@ -158,11 +166,11 @@ on NVIDIA A800 GPUs, not an AMD run.
 Prepare Reference Motion
 ------------------------
 
-Motion data is not part of the repository. A clip folder holds ``clip_*.pt``
-files (loaded in file-name order) and optionally a ``manifest.json``. The
-format is in `Clip File Format`_.
+Motion data is not part of the repository. This guide uses the paper's 40
+LAFAN1 clips; BONES-SEED and clips of your own are in
+:doc:`supermimic_motion`.
 
-**LAFAN1 (the paper's 40 clips).** The clips are the ``g1/`` folder of the
+The clips are the ``g1/`` folder of the
 Hugging Face dataset
 `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_.
 The script pins revision ``ce1572906efe6157840e8474d5a0d7aa87481e74``, checks
@@ -194,118 +202,6 @@ machine. The 40 clips are 2.45 h of motion. With the manifest present, the
 loader refuses a clip whose SHA-256 differs or that the manifest does not
 list, so do not rename, add, remove, or edit the prepared files. The loader
 resamples 30 Hz clips to 50 Hz.
-
-**BONES-SEED (experimental).** The official release is
-`bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_ on
-Hugging Face, with G1 trajectories in ``g1/csv/{date}/{motion}.csv``. Read
-``LICENSE.md`` in the download first; the script does not download the data.
-It follows the public header in NVIDIA ProtoMotions'
-`SEED G1 CSV preparation <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_:
-120 Hz, ``root_translateX/Y/Z`` in centimeters, ``root_rotateX/Y/Z`` as
-extrinsic XYZ Euler angles in degrees, and 29 ``<joint>_dof`` columns in
-degrees named after the mjlab G1 joints. This convention has not been checked
-against an official CSV.
-
-.. code-block:: bash
-
-   python toolkits/supermimic/convert_bones_seed.py \
-       --input /data/bones-seed/g1/csv \
-       --output /data/bones_g1
-   python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
-       --out /data/bones_g1_filtered
-   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_filtered
-
-``--input`` is one CSV or a directory scanned recursively. Clips are
-resampled to 50 Hz, existing outputs are kept unless ``--overwrite`` is set,
-and a broken CSV is reported without stopping the rest. To train, add the
-BONES-SEED overrides from `Configurations`_. The converter is tested on
-synthetic CSVs only.
-
-Clip File Format
-~~~~~~~~~~~~~~~~
-
-Each ``clip_*.pt`` is a dictionary saved with ``torch.save``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 82
-
-   * - Key
-     - Contents
-   * - ``fps``
-     - 50 or 30. A 30 Hz clip is resampled onto the 50 Hz control grid and
-       its velocities are recomputed by central difference. A 50 Hz clip is
-       used as stored, so **its velocity columns must be correct**. Other
-       rates are refused.
-   * - ``joint_names``
-     - 29 joint names, in the same order as
-       ``rlinf.envs.sim.g1_mimic.constants.G1_JOINT_NAMES`` (the mjlab G1
-       order).
-   * - ``q0``
-     - The 29-d default joint pose in radians. It must equal mjlab's default,
-       ``asset_default_state()[7:36]``.
-   * - ``state``
-     - A float tensor ``[T, 71]`` with the columns below. No NaN or Inf, and
-       the root quaternion is normalized.
-   * - ``name``
-     - Optional. The BONES-SEED converter writes it.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 52 30
-
-   * - Columns
-     - Contents
-     - Unit
-   * - ``0:3``
-     - Root (pelvis) position, world frame
-     - m
-   * - ``3:7``
-     - Root quaternion, wxyz
-     - --
-   * - ``7:36``
-     - Joint positions, in ``joint_names`` order
-     - rad
-   * - ``36:39``
-     - Root linear velocity, world frame
-     - m/s
-   * - ``39:42``
-     - Root angular velocity, root frame
-     - rad/s
-   * - ``42:71``
-     - Joint velocities
-     - rad/s
-
-This example writes a 5 s clip of standing still and runs the loader's own
-checks on it:
-
-.. code-block:: python
-
-   from pathlib import Path
-
-   import torch
-
-   from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES
-   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-   from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
-
-   default = asset_default_state().float()  # mjlab standing keyframe, [71]
-   T = 250                                  # 5 s at 50 Hz
-   state = torch.zeros(T, 71)
-   state[:, :36] = default[:36]             # root pose and joint positions
-   payload = {
-       "fps": 50,
-       "joint_names": list(G1_JOINT_NAMES),
-       "q0": default[7:36],
-       "state": state,
-   }
-   decode_motion_payload(payload, "clip_000.pt")  # raises ValueError if invalid
-   out = Path("/data/my_clips")
-   out.mkdir(parents=True, exist_ok=True)
-   torch.save(payload, out / "clip_000.pt")
-
-Without ``manifest.json`` the loader checks the format only, not the file
-contents.
 
 Run It
 ------
@@ -387,17 +283,8 @@ does not wait on the host.
 
 For LAFAN1, ``env.train.motion_on_cpu=true`` (``env.eval.motion_on_cpu``
 for evaluation) keeps a large library and its FK cache in host memory and
-moves only the queried rows to the GPU. The BONES-SEED loader always keeps
-the library in host memory. The actor worker holds a second copy for
-imagination.
-
-Append this to a BONES-SEED launch, and point ``SUPERMIMIC_MOTION_PATH`` at
-the filtered directory:
-
-.. code-block:: bash
-
-   env.train.motion_format=bones_seed env.train.num_clips=null \
-       env.eval.motion_format=bones_seed env.eval.num_clips=null
+moves only the queried rows to the GPU. The actor worker holds a second copy
+for imagination.
 
 Common Keys
 ~~~~~~~~~~~
@@ -543,8 +430,10 @@ Multiple GPUs
 Every GPU in the placement hosts one env, one rollout, and one actor
 worker, and the three groups have the same size. Env rank :math:`r` exchanges
 data only with rollout and actor rank :math:`r`. The actor workers are one
-FSDP2 group: parameters, gradients, and optimizer state are sharded. Reset-bin
-statistics are reduced across env ranks.
+FSDP2 group: parameters, gradients, and optimizer state are sharded. The
+world model, the actor, and the critic are separate FSDP units, and each
+training phase gathers only the networks it reads. Reset-bin statistics are
+reduced across env ranks.
 
 Leaving the config unchanged and adding GPUs keeps the global batch, the
 learning rate, and the update ratio, and splits each batch across ranks.
@@ -587,10 +476,7 @@ not been tested.
 Evaluate
 --------
 
-Evaluation uses ``evaluations/eval_embodied_agent.py``. ``evaluations/run_eval.sh``
-reads ``evaluations/supermimic/<config>.yaml`` when the config name starts
-with ``supermimic_``. ``runner.ckpt_path`` is the checkpoint's
-``full_weights.pt``.
+Evaluate a checkpoint's ``full_weights.pt`` on the 40 LAFAN1 clips:
 
 .. code-block:: bash
 
@@ -600,39 +486,9 @@ with ``supermimic_``. ``runner.ckpt_path`` is the checkpoint's
        runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
-Add ``actor.model.representation=maxcoord`` for a MaxCoord checkpoint and
-point ``runner.ckpt_path`` at that run. Replacing ``global_step_2000`` and
-the output directory with ``global_step_4000`` evaluates update 4000.
-`Reported Tracking Results`_ evaluates GenCoord at update 6000, trained with
-the GenCoord command in `Train on One GPU`_ plus ``runner.max_epochs=6000``
-and ``actor.cuda_graph=True``.
-``env.eval.eval_tasks`` is ``[tracking]`` or ``[push_recovery]``. The 40
-LAFAN1 clips fit in ``env.eval.total_num_envs=40``.
-``max_steps_per_rollout_epoch=13656`` covers the longest clip (8194 frames
-at 30 fps, resampled to 50 Hz).
-
-**Output.** ``runner.eval_export.enabled`` is on in the evaluation configs.
-Results go to ``runner.eval_export.output_dir``, or to
-``<log_path>/<experiment_name>/eval_results/`` when that is unset. The
-directory contains ``summary.json``, ``per_clip.csv``, and the resolved
-``config.yaml``. The same metrics are logged with an ``eval/`` prefix.
-
-**Motion tracking** plays each clip once from frame 0. Clip :math:`i`'s
-normalized return is the sum of the rewards actually executed, divided by
-:math:`0.1 \times T_i`, where :math:`T_i` is the clip length on the 50 Hz
-grid and 0.1 is the per-step reward ceiling. Steps that were never played
-because the clip failed stay in the denominator. ``normalized_return`` is
-the unweighted mean over the 40 clips. ``fail_rate`` is the fraction of
-clips that fell, and ``clip_end_rate`` is the fraction that reached the last
-frame. ``fail_step`` and ``fail_time_s`` are averaged only over the clips
-that fell.
-
-**Standing push recovery** uses ``supermimic_push_recovery``. It loads a
-tracking checkpoint, holds mjlab's knees-bent standing pose, and after one
-second sets the root's horizontal velocity to 0.5, 1, 2, or 4 m/s, four
-trials each. A fall uses the training failure test. The paper's Section 4.3
-protocol is a T-pose; this config does not implement that pose. A MaxCoord
-checkpoint still needs ``actor.model.representation=maxcoord``.
+Add ``actor.model.representation=maxcoord`` for a MaxCoord checkpoint. The
+metrics, the output files, and standing push recovery are in
+:doc:`supermimic_eval`.
 
 Logs and Results
 ----------------
@@ -663,9 +519,10 @@ Reported Tracking Results
 -------------------------
 
 GenCoord on the 40 LAFAN1 clips with 4096 environments and otherwise the
-config defaults, trained for 6000 updates (about 15000 control steps). Each
-checkpoint is evaluated as in `Evaluate`_: every clip starts at frame 0 and
-the policy action is applied as is. All runs use NVIDIA A800 GPUs, and the
+config defaults, trained for 6000 updates (about 15000 control steps) with
+the GenCoord command in `Train on One GPU`_ plus ``runner.max_epochs=6000``.
+Each checkpoint is evaluated as in `Evaluate`_: every clip starts at frame 0
+and the policy action is applied as is. All runs use NVIDIA A800 GPUs, and the
 official row is the official SuperMimic code on the same machines. The
 RLinf runs set ``actor.cuda_graph=True``; the bf16 rows also set
 ``actor.fsdp_config.amp_autocast.enabled=True``.

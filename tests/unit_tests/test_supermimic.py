@@ -514,6 +514,18 @@ def test_replay_windows_come_only_from_envs_with_long_episodes():
         short.sample(8, 4)
 
 
+def test_replay_draws_reuse_one_set_of_window_starts():
+    ring = _ring_ending_every_third_step([True, False])
+    torch.manual_seed(0)
+    sampled = [ring.sample(8, 16) for _ in range(3)]
+    torch.manual_seed(0)
+    starts = ring.windows(8)
+    drawn = [ring.draw(starts, 16) for _ in range(3)]
+    for one, other in zip(sampled, drawn, strict=True):
+        for name in one:
+            assert torch.equal(one[name], other[name])
+
+
 class _Done:
     def __init__(self, value=None):
         self.value = value
@@ -878,8 +890,8 @@ def test_each_training_phase_reaches_only_its_network(name):
 def _small_actor(cfg, mesh, motion):
     """The SuperMimic actor of ``cfg`` on one rank, without Ray, over a replay
     of four envs that follow ``motion``'s two clips."""
-    from torch.distributed.fsdp import fully_shard
-
+    from rlinf.hybrid_engines.fsdp import MixedPrecisionPolicy, OffloadPolicy
+    from rlinf.hybrid_engines.fsdp.utils import apply_fsdp2_to_model
     from rlinf.models.embodiment.supermimic.supermimic_policy import (
         SuperMimicPolicy,
     )
@@ -896,7 +908,14 @@ def _small_actor(cfg, mesh, motion):
     actor.device = "cuda:0"
     actor._device_mesh, actor._dp_group = mesh, mesh["fsdp"].get_group()
     actor._strategy = SimpleNamespace(
-        wrap_model=lambda model, device_mesh: fully_shard(model, mesh=device_mesh)
+        wrap_model=lambda model, device_mesh: apply_fsdp2_to_model(
+            model,
+            cfg.actor.fsdp_config,
+            device_mesh,
+            MixedPrecisionPolicy(),
+            OffloadPolicy(),
+            reshard_after_forward=True,
+        )
     )
     actor.model_provider_func = lambda: SuperMimicPolicy.from_config(cfg.actor.model)
     actor.setup_model_and_optimizer()
@@ -928,6 +947,7 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
     from torch.distributed.device_mesh import init_device_mesh
 
     from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+    from rlinf.hybrid_engines.fsdp import FSDPModule
 
     dist.init_process_group(
         "nccl", init_method=f"tcp://127.0.0.1:{port}", rank=rank, world_size=1
@@ -971,7 +991,18 @@ def _update_with_and_without_graph(rank: int, port: int, out: str, amp: bool) ->
                 for name, param in actor.model.named_parameters()
             }
             recorded = actor.update_graphs is not None
-            results[graph] = (metrics, params, dict(actor.optimizer_steps), recorded)
+            units = {
+                name
+                for name, module in actor.model.named_children()
+                if isinstance(module, FSDPModule)
+            }
+            results[graph] = (
+                metrics,
+                params,
+                dict(actor.optimizer_steps),
+                recorded,
+                units,
+            )
         torch.save(results, f"{out}/updates.pt")
     finally:
         dist.destroy_process_group()
@@ -993,6 +1024,7 @@ def test_recorded_update_replays_the_eager_update(tmp_path, amp):
     results = torch.load(tmp_path / "updates.pt")
     eager, replayed = results[False], results[True]
     assert not eager[3] and replayed[3]
+    assert eager[4] == replayed[4] == {"dynamics", "actor", "critic"}
     assert eager[2] == replayed[2] == {"world_model": 12, "actor": 6, "critic": 24}
     assert eager[0] == replayed[0]
     for name, param in eager[1].items():

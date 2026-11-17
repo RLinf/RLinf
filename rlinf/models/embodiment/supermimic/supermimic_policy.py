@@ -14,11 +14,12 @@
 
 """SuperMimic policy: motion tracking with a learned world model.
 
-One module holds every network so that a single FSDP unit shards them and a
-single weight sync ships the motion policy to the rollout worker, which only
-calls :meth:`SuperMimicPolicy.act`, :meth:`SuperMimicPolicy.fold_policy_stats`
-and :meth:`predict_action_batch`. The actor worker calls :meth:`forward` with
-one ``ForwardType`` per training phase.
+One module holds every network so that a single weight sync ships the motion
+policy to the rollout worker, which only calls :meth:`SuperMimicPolicy.act`,
+:meth:`SuperMimicPolicy.fold_policy_stats` and :meth:`predict_action_batch`.
+The actor worker calls :meth:`forward` with one ``ForwardType`` per training
+phase. Under FSDP each network is its own unit, and a phase's forward gathers
+the networks it reads once for all of its steps.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from rlinf.algorithms.supermimic.scan import make_imagination, make_world_model_
 from rlinf.envs.sim.g1_mimic.compile_cache import CompileCache
 from rlinf.envs.sim.g1_mimic.constants import ACTOR_GOAL_DIM
 from rlinf.envs.sim.g1_mimic.g1_fk import set_kinematics_compile, soft_joint_limits
+from rlinf.hybrid_engines.fsdp import FSDPModule
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.supermimic.networks import Critic, Dynamics, MotionPolicy
 
@@ -40,6 +42,12 @@ from rlinf.models.embodiment.supermimic.networks import Critic, Dynamics, Motion
 PHASE_MODULES = {
     ForwardType.SUPERMIMIC_WORLD_MODEL: ("dynamics",),
     ForwardType.SUPERMIMIC_ACTOR: ("actor",),
+    ForwardType.SUPERMIMIC_CRITIC: ("critic",),
+}
+# Submodules each training phase reads.
+PHASE_INPUTS = {
+    ForwardType.SUPERMIMIC_WORLD_MODEL: ("dynamics",),
+    ForwardType.SUPERMIMIC_ACTOR: ("actor", "dynamics", "critic"),
     ForwardType.SUPERMIMIC_CRITIC: ("critic",),
 }
 
@@ -166,7 +174,24 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         handler = handlers.get(forward_type)
         if handler is None:
             return super().forward(forward_type, **kwargs)
+        self._gather(PHASE_INPUTS[forward_type])
         return handler(**kwargs)
+
+    def _gather(self, names: tuple[str, ...]) -> None:
+        """All-gather the FSDP units of ``names`` together.
+
+        The phases call the networks through ``forward``, so FSDP's per-call
+        hooks never run inside the compiled scans; each unit stays gathered
+        until its backward or the worker reshards it. FSDP initializes its
+        root state in the first root forward, so this runs there.
+        """
+        handles = [
+            network.unshard(async_op=True)
+            for network in (getattr(self, name) for name in names)
+            if isinstance(network, FSDPModule)
+        ]
+        for handle in handles:
+            handle.wait()
 
     def _world_model_forward(
         self, states: torch.Tensor, actions: torch.Tensor, context: torch.Tensor
@@ -210,7 +235,7 @@ class SuperMimicPolicy(nn.Module, BasePolicy):
         self, features: torch.Tensor, targets: torch.Tensor | None = None
     ) -> dict[str, torch.Tensor]:
         """Values of critic features, and the squared error to ``targets``."""
-        values = self.critic(features)
+        values = self.critic.forward(features)
         out = {"values": values}
         if targets is not None:
             out["loss"] = (targets - values).square().mean()

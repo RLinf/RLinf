@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import torch
 
 from rlinf.envs.sim.g1_mimic.constants import ACTION_DIM, SIM_CONTEXT_DIM
@@ -29,6 +31,19 @@ TRANSITION_FIELDS = {
     "truncated": (0, torch.bool),
     "sim_context": (SIM_CONTEXT_DIM, torch.float32),
 }
+
+
+class WindowStarts(NamedTuple):
+    """Legal window starts of one window length, from :meth:`TransitionRing.windows`.
+
+    ``cumulative[e, a]`` counts env ``e``'s legal starts up to age ``a``,
+    ``per_env`` is its last column and ``oldest`` the ring column of age 0.
+    """
+
+    length: int
+    oldest: int
+    cumulative: torch.Tensor
+    per_env: torch.Tensor
 
 
 class TransitionRing:
@@ -104,22 +119,38 @@ class TransitionRing:
         """Whether some env holds a legal ``length``-step window."""
         return bool(self._legal_starts(length)[0].any())
 
-    def sample(self, length: int, batch: int) -> dict[str, torch.Tensor]:
-        """``batch`` windows of ``length`` consecutive steps, ``[batch, length, ...]``.
+    def windows(self, length: int) -> WindowStarts:
+        """The legal ``length``-step window starts, checked once.
 
-        Envs with at least one legal window are drawn uniformly, then a
-        uniform legal start within the env.
+        Valid until the next :meth:`add`; :meth:`draw` reuses it for every
+        batch drawn in between.
         """
         legal, oldest = self._legal_starts(length)
         cumulative = legal.cumsum(1)
         per_env = cumulative[:, -1]
         if not bool((per_env > 0).any()):
             raise RuntimeError(f"no legal {length}-step window among {self.size} steps")
-        env = torch.multinomial((per_env > 0).float(), batch, replacement=True)
-        pick = (torch.rand(batch, device=self.device) * per_env[env].float()).long()
-        start = torch.searchsorted(cumulative[env], pick.unsqueeze(-1), right=True)
-        cols = (oldest + start + torch.arange(length, device=self.device)) % (
-            self.capacity
+        return WindowStarts(length, oldest, cumulative, per_env)
+
+    def draw(self, starts: WindowStarts, batch: int) -> dict[str, torch.Tensor]:
+        """``batch`` windows from ``starts``, ``[batch, length, ...]``.
+
+        Envs with at least one legal window are drawn uniformly, then a
+        uniform legal start within the env.
+        """
+        env = torch.multinomial((starts.per_env > 0).float(), batch, replacement=True)
+        pick = (
+            torch.rand(batch, device=self.device) * starts.per_env[env].float()
+        ).long()
+        start = torch.searchsorted(
+            starts.cumulative[env], pick.unsqueeze(-1), right=True
         )
+        cols = (
+            starts.oldest + start + torch.arange(starts.length, device=self.device)
+        ) % self.capacity
         rows = env.unsqueeze(-1)
         return {name: value[rows, cols] for name, value in self.storage.items()}
+
+    def sample(self, length: int, batch: int) -> dict[str, torch.Tensor]:
+        """``batch`` windows of ``length`` consecutive steps; see :meth:`draw`."""
+        return self.draw(self.windows(length), batch)

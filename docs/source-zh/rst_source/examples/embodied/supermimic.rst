@@ -1,7 +1,13 @@
 SuperMimic：用可微世界模型训练 G1 动作跟踪
 ==========================================
 
-本指南在 MuJoCo Warp 里用 SuperMimic 训练并评测 Unitree G1 的全身动作跟踪 policy：安装环境、准备参考动作、选择 GenCoord 或 MaxCoord、在一张或多张 GPU 上训练、恢复训练、评测。算法以及和论文的差别见 :doc:`../../reference/algorithms/supermimic`。第一次使用可以直接照 `运行`_ 一节走一遍。
+本指南在 MuJoCo Warp 里用 SuperMimic 训练并评测 Unitree G1 的全身动作跟踪 policy：安装环境、准备参考动作、选择 GenCoord 或 MaxCoord、在一张或多张 GPU 上训练、恢复训练、评测。算法以及和论文的差别见 :doc:`../../reference/algorithms/supermimic`。第一次使用可以直接照 `运行`_ 一节走一遍。LAFAN1 以外的动作来源和片段文件格式见 :doc:`supermimic_motion`，评测指标和推力恢复见 :doc:`supermimic_eval`。
+
+.. toctree::
+   :hidden:
+
+   动作数据 <supermimic_motion>
+   评测 <supermimic_eval>
 
 除非另有说明，本页所有命令都在 RLinf 仓库根目录执行，并且已经激活了下面安装的 SuperMimic 环境。
 
@@ -100,9 +106,9 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
 准备参考动作
 ------------
 
-动作数据不放进仓库。一个片段目录里放若干 ``clip_*.pt``\ （按文件名排序加载），可以再放一个 ``manifest.json``。格式见下面的 `片段文件格式`_。
+动作数据不放进仓库。本指南使用论文的 40 条 LAFAN1 片段；BONES-SEED 和自备片段见 :doc:`supermimic_motion`。
 
-**LAFAN1（论文的 40 条）。** 片段是 Hugging Face 数据集 `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_ 的 ``g1/`` 目录。脚本固定修订版 ``ce1572906efe6157840e8474d5a0d7aa87481e74``，逐个核对 CSV 的大小和 SHA-256，并写出 ``manifest.json``。数据集卡片没有声明许可证；这些重定向数据来自 Ubisoft La Forge 的 `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_，后者使用 CC BY-NC-ND 4.0（非商业、禁止演绎）。传 ``--accept-license`` 之前请先读这些条款。
+片段是 Hugging Face 数据集 `lvhaidong/LAFAN1_Retargeting_Dataset <https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset>`_ 的 ``g1/`` 目录。脚本固定修订版 ``ce1572906efe6157840e8474d5a0d7aa87481e74``，逐个核对 CSV 的大小和 SHA-256，并写出 ``manifest.json``。数据集卡片没有声明许可证；这些重定向数据来自 Ubisoft La Forge 的 `LAFAN1 <https://github.com/ubisoft/ubisoft-laforge-animation-dataset>`_，后者使用 CC BY-NC-ND 4.0（非商业、禁止演绎）。传 ``--accept-license`` 之前请先读这些条款。
 
 .. code-block:: bash
 
@@ -120,96 +126,6 @@ AMD 路径使用 ROCm Warp。先准备 Linux x86_64、ROCm 7.2 SDK（含 ``hipcc
        --q0-file ./g1_q0.pt --accept-license
 
 将包含 ``manifest.json`` 的整个输出目录复制到训练机器。40 条片段共 2.45 小时。有清单时，加载器会拒绝 SHA-256 对不上或清单里没有的片段，所以不要改名、增删或修改准备好的文件。加载器把 30 Hz 的片段重采样到 50 Hz。
-
-**BONES-SEED（实验性）。** 官方数据在 Hugging Face 的 `bones-studio/seed <https://huggingface.co/datasets/bones-studio/seed>`_，G1 轨迹位于 ``g1/csv/{日期}/{动作名}.csv``。先读数据包里的 ``LICENSE.md``；脚本不下载数据。表头约定沿用 NVIDIA ProtoMotions 的 `SEED G1 CSV 说明 <https://github.com/NVlabs/ProtoMotions/blob/main/docs/source/getting_started/seed_g1_csv_preparation.rst>`_：120 Hz；``root_translateX/Y/Z`` 单位厘米；``root_rotateX/Y/Z`` 是外旋 XYZ 欧拉角、单位度；29 个 ``<关节名>_dof`` 列单位度，名字对应 mjlab 的 G1 关节。这个约定还没有拿官方 CSV 核对过。
-
-.. code-block:: bash
-
-   python toolkits/supermimic/convert_bones_seed.py \
-       --input /data/bones-seed/g1/csv \
-       --output /data/bones_g1
-   python toolkits/supermimic/bones_feasibility.py --clips /data/bones_g1 \
-       --out /data/bones_g1_filtered
-   export SUPERMIMIC_MOTION_PATH=/data/bones_g1_filtered
-
-``--input`` 可以是单个 CSV 或递归扫描的目录。片段重采样到 50 Hz，已有输出默认不覆盖（``--overwrite`` 除外），单个损坏的 CSV 会报告原因而不影响其他文件。训练时加上 `配置`_ 里的 BONES-SEED 覆盖项。转换器只在合成 CSV 上测试过。
-
-片段文件格式
-~~~~~~~~~~~~
-
-每个 ``clip_*.pt`` 是用 ``torch.save`` 保存的字典：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 82
-
-   * - 键
-     - 内容
-   * - ``fps``
-     - 50，或 30。30 Hz 的片段会重采样到 50 Hz 控制网格，速度用中心差分重新计算；50 Hz 的片段按原样使用，**速度列必须自己填对**。其他帧率会被拒绝。
-   * - ``joint_names``
-     - 29 个关节名，必须与 ``rlinf.envs.sim.g1_mimic.constants.G1_JOINT_NAMES`` 的顺序完全相同（它就是 mjlab G1 的关节顺序）。
-   * - ``q0``
-     - 29 维默认关节姿态（rad），必须等于 mjlab 的默认关节姿态，即 ``asset_default_state()[7:36]``。
-   * - ``state``
-     - ``[T, 71]`` 的浮点张量，列布局见下表，不能有 NaN 或 Inf，根四元数要归一化。
-   * - ``name``
-     - 可选，BONES-SEED 转换会写入。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 52 30
-
-   * - 列
-     - 内容
-     - 单位
-   * - ``0:3``
-     - 根（pelvis）位置，世界系
-     - m
-   * - ``3:7``
-     - 根四元数，顺序 wxyz
-     - —
-   * - ``7:36``
-     - 关节角，顺序同 ``joint_names``
-     - rad
-   * - ``36:39``
-     - 根线速度，世界系
-     - m/s
-   * - ``39:42``
-     - 根角速度，根坐标系
-     - rad/s
-   * - ``42:71``
-     - 关节速度
-     - rad/s
-
-下面的最小示例写出一条原地站立 5 s 的片段，并用加载器同样的检查验证它：
-
-.. code-block:: python
-
-   from pathlib import Path
-
-   import torch
-
-   from rlinf.envs.sim.g1_mimic.constants import G1_JOINT_NAMES
-   from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-   from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
-
-   default = asset_default_state().float()  # mjlab 站立关键帧，[71]
-   T = 250                                  # 50 Hz 下 5 s
-   state = torch.zeros(T, 71)
-   state[:, :36] = default[:36]             # 根位置、根四元数、关节角；速度保持 0
-   payload = {
-       "fps": 50,
-       "joint_names": list(G1_JOINT_NAMES),
-       "q0": default[7:36],
-       "state": state,
-   }
-   decode_motion_payload(payload, "clip_000.pt")  # 不合格时抛出 ValueError
-   out = Path("/data/my_clips")
-   out.mkdir(parents=True, exist_ok=True)
-   torch.save(payload, out / "clip_000.pt")
-
-没有 ``manifest.json`` 时，加载器只检查格式，不核对文件内容。
 
 运行
 ----
@@ -266,16 +182,7 @@ MaxCoord 把 ``--config-name`` 换成 ``supermimic_lafan1_maxcoord``。评测 Ma
 
 种子为 0。网络权重保持 float32，矩阵乘用 TF32。``actor.fsdp_config.amp_autocast.enabled`` 默认为 ``False``；设为 ``True`` 时，只有网络里的矩阵乘走 ``precision``\ （默认 bf16），运动学、奖励、损失和优化器状态仍是 float32。这和论文的 TF32 不同。隐藏层矩阵用 Muon（``adjust_lr_fn: match_rms_adamw``），其余参数用 fused Adam。梯度范数留在设备上裁剪，优化器步不等待主机。
 
-LAFAN1 可以用 ``env.train.motion_on_cpu=true``\ （评测用 ``env.eval.motion_on_cpu``）把较大的动作库和 FK 缓存放在主机内存，只把查询到的行传到 GPU。BONES-SEED 的加载器始终把动作库放在主机内存。actor worker 为想象 rollout 另持有一份动作库。
-
-BONES-SEED 训练在启动命令后追加：
-
-.. code-block:: bash
-
-   env.train.motion_format=bones_seed env.train.num_clips=null \
-       env.eval.motion_format=bones_seed env.eval.num_clips=null
-
-并把 ``SUPERMIMIC_MOTION_PATH`` 指到过滤后的目录。
+LAFAN1 可以用 ``env.train.motion_on_cpu=true``\ （评测用 ``env.eval.motion_on_cpu``）把较大的动作库和 FK 缓存放在主机内存，只把查询到的行传到 GPU。actor worker 为想象 rollout 另持有一份动作库。
 
 常用配置键
 ~~~~~~~~~~
@@ -388,7 +295,7 @@ MaxCoord：
 多卡训练
 --------
 
-placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker，三组的大小必须相同。rank :math:`r` 的 env worker 只和 rank :math:`r` 的 rollout、actor worker 交换数据。actor worker 组成一个 FSDP2 组：参数、梯度和优化器状态在组内分片。重置分箱统计在所有 env rank 之间合并。
+placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker，三组的大小必须相同。rank :math:`r` 的 env worker 只和 rank :math:`r` 的 rollout、actor worker 交换数据。actor worker 组成一个 FSDP2 组：参数、梯度和优化器状态在组内分片。世界模型、actor 和 critic 各是一个 FSDP 单元，每个训练阶段只聚合它要读的网络。重置分箱统计在所有 env rank 之间合并。
 
 配置不变、只增加 GPU 时，全局批量、学习率和更新数据比都和单卡相同，每个 rank 分一份。多节点和 Slurm 尚未用这个配方验证。
 
@@ -416,7 +323,7 @@ placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker
 评测
 ----
 
-评测走 ``evaluations/eval_embodied_agent.py``。``evaluations/run_eval.sh`` 看到 ``supermimic_`` 开头的配置名，就读取 ``evaluations/supermimic/<配置名>.yaml``。``runner.ckpt_path`` 是检查点里的 ``full_weights.pt``。
+用下面的命令在 40 条 LAFAN1 片段上评测检查点里的 ``full_weights.pt``：
 
 .. code-block:: bash
 
@@ -426,13 +333,7 @@ placement 中每张 GPU 上有一个 env、一个 rollout 和一个 actor worker
        runner.ckpt_path=/data/runs/gencoord/supermimic_lafan1_gencoord/checkpoints/global_step_2000/actor/model_state_dict/full_weights.pt \
        runner.eval_export.output_dir=/data/runs/gencoord/eval_2000
 
-MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检查点路径。把上面命令里的 ``global_step_2000`` 和输出目录换成 ``global_step_4000``，就是第 4000 次更新的评测。`已报告的跟踪结果`_ 评的是 GenCoord 第 6000 次更新，训练用 `单卡训练`_ 里的 GenCoord 命令，加上 ``runner.max_epochs=6000`` 和 ``actor.cuda_graph=True``。``env.eval.eval_tasks`` 只能是 ``[tracking]`` 或 ``[push_recovery]``。40 条 LAFAN1 片段由 ``env.eval.total_num_envs=40`` 一次放完；``max_steps_per_rollout_epoch=13656`` 覆盖最长片段（30 fps 下 8194 帧，重采样到 50 Hz）。
-
-**输出。** ``runner.eval_export.enabled`` 在评测配置里默认打开。结果写到 ``runner.eval_export.output_dir``，不设置时写到 ``<log_path>/<experiment_name>/eval_results/``。目录里有 ``summary.json``、``per_clip.csv`` 和这次评测的 ``config.yaml``。同样的指标以 ``eval/`` 为前缀写进日志。
-
-**动作跟踪** 把每条片段从第 0 帧播放一次。片段 :math:`i` 的归一化回报是实际奖励之和除以 :math:`0.1 \times T_i`，其中 :math:`T_i` 是片段在 50 Hz 上的帧数，0.1 是单步奖励上限。提前失败时没播放的步仍留在分母里。``normalized_return`` 是 40 条片段的不加权平均。``fail_rate`` 是摔倒片段的比例，``clip_end_rate`` 是播到片段末帧的比例。``fail_step`` 和 ``fail_time_s`` 只对摔倒的片段取平均。
-
-**站立姿态推力恢复** 使用 ``supermimic_push_recovery``。它加载跟踪检查点，以 mjlab 的屈膝站立姿态作为静止参考，在 1 秒后把根的水平速度改成 0.5、1、2 或 4 m/s，每种 4 次。跌倒沿用训练的失败判据。论文 §4.3 写的是 T-pose，这里没有实现那个姿态。MaxCoord 检查点同样要加 ``actor.model.representation=maxcoord``。
+MaxCoord 检查点加上 ``actor.model.representation=maxcoord``。评测指标、输出文件和站立推力恢复见 :doc:`supermimic_eval`。
 
 可视化与结果
 ------------
@@ -452,7 +353,7 @@ MaxCoord 加上 ``actor.model.representation=maxcoord``，并换上对应的检�
 已报告的跟踪结果
 ----------------
 
-GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，训练 6000 次更新（约 15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，直接执行策略动作。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
+GenCoord，40 条 LAFAN1 片段、4096 个环境，其余取配置默认值，用 `单卡训练`_ 里的 GenCoord 命令加 ``runner.max_epochs=6000`` 训练 6000 次更新（约 15000 个控制步）。检查点按 `评测`_ 的方式评测：每条片段从第 0 帧播放，直接执行策略动作。所有运行都用 NVIDIA A800；官方一行是官方 SuperMimic 代码在同一批机器上的结果。RLinf 的运行都设了 ``actor.cuda_graph=True``，bf16 的几行另设 ``actor.fsdp_config.amp_autocast.enabled=True``。
 
 .. list-table::
    :header-rows: 1
