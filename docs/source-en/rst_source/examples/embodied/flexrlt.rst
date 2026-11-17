@@ -1,11 +1,11 @@
-Prefix Fine-Tune: Train Online from an Existing VLA
-===================================================
+FlexRLT: Train Online from an Existing VLA
+==========================================
 
 A vision-language-action model (VLA) reads camera images, a language instruction, and the robot state, and outputs an action. Image understanding, language, and action generation live in one large model. RL Token (RLT) uses that pretrained model in two stages. Stage 1 trains the VLA with a token transformer on demonstrations and compresses the vision-language features into a compact representation. Stage 2 freezes the feature model and trains two small networks from that representation, the robot state, and the VLA reference action: the actor outputs actions, and the critic estimates later return. Online updates run only through those two networks. The large model runs forward only.
 
-The Prefix framework builds on that Stage 2 loop. You choose the feature source, the network, and the algorithm in the config, while data collection and the parameter update stay on one path. Features can come from RLT tokens or from pooling the frozen VLA vision-language features. Those features are the prefix. A policy is the model that turns an observation into an action. During training the feature model stays frozen. The actor reads the prefix, the robot state, and the reference action, and outputs the action to execute. After the environment executes that action, the run writes the features, the action, the reward, and the termination into the replay buffer. Updates sample that buffer, and backpropagation goes through the actor and the critic. The VLA keeps supplying features and reference actions, and its weights stay unchanged.
+FlexRLT builds on that Stage 2 loop. You choose the feature source, the network, and the algorithm in the config, while data collection and the parameter update stay on one path. Features can come from RLT tokens or from pooling the frozen VLA vision-language features. Those features are the prefix. A policy is the model that turns an observation into an action. During training the feature model stays frozen. The actor reads the prefix, the robot state, and the reference action, and outputs the action to execute. After the environment executes that action, the run writes the features, the action, the reward, and the termination into the replay buffer. Updates sample that buffer, and backpropagation goes through the actor and the critic. The VLA keeps supplying features and reference actions, and its weights stay unchanged.
 
-This page shows Stage 2 training on ManiSkill peg insertion with published OpenPI checkpoints and the ready-made config. OpenPI is the VLA connected today. Another VLA needs an adapter, covered in :doc:`Prefix components <../../extending/prefix>`. If you already trained an RL Token representation, the Stage 2 configs on :doc:`RL Token <rlt>` use the same update path.
+This page shows Stage 2 training on ManiSkill peg insertion with published OpenPI checkpoints and the ready-made config. OpenPI is the VLA connected today. Another VLA needs an adapter, covered in :doc:`FlexRLT components <../../extending/flexrlt>`. If you already trained an RL Token representation, the Stage 2 configs on :doc:`RL Token <rlt>` use the same update path.
 
 Overview
 --------
@@ -258,7 +258,7 @@ Three groups of fields cover the usual edits. ``rollout.prefix_feature_model`` s
 Switch the VLA Checkpoint and Feature
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To use another checkpoint of the same OpenPI setup, change ``rollout.prefix_feature_model.model_path`` and check that the task config and normalization statistics match. A different VLA architecture needs an adapter. OpenPI is connected; the registration steps are in :doc:`Prefix components <../../extending/prefix>`.
+To use another checkpoint of the same OpenPI setup, change ``rollout.prefix_feature_model.model_path`` and check that the task config and normalization statistics match. A different VLA architecture needs an adapter. OpenPI is connected; the registration steps are in :doc:`FlexRLT components <../../extending/flexrlt>`.
 
 The VLA emits one vector per image patch and language token. The policy needs a fixed-length input, so those vectors are reduced to one vector. That reduction is pooling. Padding and other invalid positions are marked by a mask. ``masked_mean`` skips the masked positions. Set the reduction with ``rollout.prefix_feature_model.prefix.pool``:
 
@@ -396,7 +396,7 @@ You can stay inside this page to use the published models, change feature poolin
 
 Another VLA has to turn observations into ``z_rl``, ``proprio``, and ``ref_chunk``, with action units, range, and chunk length that match the environment. A new network has to read that same feature and return an action or a value. A new algorithm has to define the actor and critic training targets. After that registration, you still select the component in the config and keep the same collection and update flow.
 
-When you need that adapter code, use the implementation and registration examples in :doc:`Prefix components <../../extending/prefix>`. Running this example and editing the existing components does not require those interfaces first.
+When you need that adapter code, use the implementation and registration examples in :doc:`FlexRLT components <../../extending/flexrlt>`. Running this example and editing the existing components does not require those interfaces first.
 
 Common Problems
 ---------------

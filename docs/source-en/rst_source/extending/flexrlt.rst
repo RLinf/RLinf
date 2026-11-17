@@ -1,7 +1,7 @@
-Prefix Fine-Tune: Frozen VLA Features and Pluggable Policies
-============================================================
+FlexRLT: Frozen VLA Features and Pluggable Policies
+===================================================
 
-Add a feature model, policy head, or update rule to Prefix Fine-Tune. Download the checkpoints, launch ManiSkill training, and calibrate STEAM from :doc:`Prefix Fine-Tune <../examples/embodied/prefix>`. This page starts from that running config and shows the observation contract and the registration points you change.
+Add a feature model, policy head, or update rule to FlexRLT. Download the checkpoints, launch ManiSkill training, and calibrate STEAM from :doc:`FlexRLT <../examples/embodied/flexrlt>`. This page starts from that running config and shows the observation contract and the registration points you change.
 
 Here, *prefix* means the image and language hidden states that the VLA computes before generating actions. The VLA stays frozen during online RL. A separate actor learns to use those features, the robot state, and the VLA's reference actions to produce an action chunk.
 
@@ -17,7 +17,7 @@ The RLT-specific AC and TD3 policy/worker implementations are replaced by one ``
 Run the Example
 ---------------
 
-The ManiSkill peg-insertion preset, checkpoint layout, routing settings, and STEAM calibration commands are documented in :doc:`Prefix Fine-Tune <../examples/embodied/prefix>`. Use that page to launch ``maniskill_prefix_stage2_td3_mlp_steam``. The sections below explain the data the run stores and the code you change to add a component.
+The ManiSkill peg-insertion preset, checkpoint layout, routing settings, and STEAM calibration commands are documented in :doc:`FlexRLT <../examples/embodied/flexrlt>`. Use that page to launch ``maniskill_prefix_stage2_td3_mlp_steam``. The sections below explain the data the run stores and the code you change to add a component.
 
 Replay and Updates
 ------------------
@@ -329,8 +329,8 @@ Import in-tree heads from the registry's ``_load_builtin_heads`` so each worker 
 
 This replaces the two networks while retaining the feature model and training worker. Both AC and TD3 can use ``multi_q_mlp`` when its Q-head count meets their requirements.
 
-Extending the Prefix Algorithm
-------------------------------
+Extending the FlexRLT Algorithm
+-------------------------------
 
 Change the algorithm when the actor objective, critic target, or next-action rule changes. The three entry points are ``critic_loss``, ``actor_loss``, and ``target_actions``. The base ``critic_loss`` already handles chunk-discounted Bellman targets and critic MSE; inherit it unless those rules differ. Declare the required head behavior in ``requirements`` and register the subclass.
 

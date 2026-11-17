@@ -99,10 +99,10 @@ RL
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/prefix.html" style="display: flex; align-items: center; justify-content: center; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #f4f1ea; color: #1f2933; font-weight: 600; text-decoration: none;">Prefix Fine-Tune</a>
+       <a href="embodied/flexrlt.html" style="display: flex; align-items: center; justify-content: center; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #f4f1ea; color: #1f2933; font-weight: 600; text-decoration: none;">FlexRLT</a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/prefix.html" style="text-decoration: underline; color: blue;">
-           <b>Prefix Fine-Tune</b>
+         <a href="embodied/flexrlt.html" style="text-decoration: underline; color: blue;">
+           <b>FlexRLT</b>
          </a><br>
          从冻结的 VLA 出发在线训练轻量 policy，并用 STEAM 做阶段路由
        </p>
@@ -122,4 +122,4 @@ RL
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RL Token <embodied/rlt>
-   Prefix <embodied/prefix>
+   FlexRLT <embodied/flexrlt>

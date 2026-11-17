@@ -1,7 +1,7 @@
-Prefix Fine-Tune：冻结 VLA 特征与可插拔 Policy
-==============================================
+FlexRLT：冻结 VLA 特征与可插拔 Policy
+=====================================
 
-为 Prefix Fine-Tune 增加特征模型、policy head 或更新规则。ManiSkill 的 checkpoint 下载、训练启动和 STEAM 校准见 :doc:`Prefix Fine-Tune <../examples/embodied/prefix>`。本页从那份已经能运行的配置出发，说明观测约定以及注册新组件时要改的位置。
+为 FlexRLT 增加特征模型、policy head 或更新规则。ManiSkill 的 checkpoint 下载、训练启动和 STEAM 校准见 :doc:`FlexRLT <../examples/embodied/flexrlt>`。本页从那份已经能运行的配置出发，说明观测约定以及注册新组件时要改的位置。
 
 这里的 prefix 指 VLA 生成动作之前计算出的图像、语言 hidden states。在线 RL 期间，VLA 保持冻结；另一个 actor 读取这些特征、机器人状态和 VLA 生成的 reference action，输出要执行的 action chunk。
 
@@ -12,12 +12,12 @@ Prefix Fine-Tune：冻结 VLA 特征与可插拔 Policy
 
 在线更新只训练 actor 和 critic head，梯度不回传到 VLA。replay 保存 ``{z_rl, proprio, ref_chunk}`` 而不是图像，learner 可以复用采集时提取的特征。但 rollout 仍然要运行 VLA，提取特征并生成 reference action；冻结模型并不意味着省掉这部分推理。
 
-与 RLT 专属的 AC、TD3 policy 和 worker 相比，Prefix 使用同一个 ``prefix_policy`` 模型和 ``prefix_off_policy`` worker，在配置中分别选择 actor head、critic head 和算法。chunk reward 折扣、BC target 和权重 schedule 由 AC、TD3 共用。比较新的特征或 head 时，可以保留训练循环，只替换对应组件。pooling 和 RLT token 的任务效果仍需在相同设置下比较。
+与 RLT 专属的 AC、TD3 policy 和 worker 相比，FlexRLT 使用同一个 ``prefix_policy`` 模型和 ``prefix_off_policy`` worker，在配置中分别选择 actor head、critic head 和算法。chunk reward 折扣、BC target 和权重 schedule 由 AC、TD3 共用。比较新的特征或 head 时，可以保留训练循环，只替换对应组件。pooling 和 RLT token 的任务效果仍需在相同设置下比较。
 
 运行示例
 --------
 
-ManiSkill 插接 preset、checkpoint 目录、路由设置和 STEAM 校准命令见 :doc:`Prefix Fine-Tune <../examples/embodied/prefix>`。用那一页启动 ``maniskill_prefix_stage2_td3_mlp_steam``。下面说明这次运行保存的数据，以及增加组件时要修改的代码。
+ManiSkill 插接 preset、checkpoint 目录、路由设置和 STEAM 校准命令见 :doc:`FlexRLT <../examples/embodied/flexrlt>`。用那一页启动 ``maniskill_prefix_stage2_td3_mlp_steam``。下面说明这次运行保存的数据，以及增加组件时要修改的代码。
 
 Replay 与更新
 -------------
@@ -329,8 +329,8 @@ critic 需要声明 ``CriticHeadCapabilities`` 和 ``num_q_heads``。下面的�
 
 这会替换两个网络，保留特征模型和训练 worker。只要 Q head 数量满足要求，AC 和 TD3 都可以使用 ``multi_q_mlp``。
 
-扩展 Prefix Algorithm
----------------------
+扩展 FlexRLT Algorithm
+----------------------
 
 actor objective、critic target 或下一动作的生成规则发生变化时，扩展算法。三个入口分别是 ``critic_loss``、``actor_loss`` 和 ``target_actions``。基类的 ``critic_loss`` 已实现 chunk 折扣的 Bellman target 和 critic MSE；只有这些规则不同时才需要覆盖。用 ``requirements`` 声明所需的 head 行为，再注册子类。
 

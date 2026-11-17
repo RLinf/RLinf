@@ -58,11 +58,11 @@ SFT, then use Advanced Integrations for backend integration and weight transport
 
       Plug a new model into the SFT training flow.
 
-   .. grid-item-card:: Prefix Policy and Pluggable Components
-      :link: prefix
+   .. grid-item-card:: FlexRLT and Pluggable Components
+      :link: flexrlt
       :link-type: doc
 
-      Register another VLA, actor or critic head, or update rule. The ManiSkill run is the Prefix Fine-Tune example.
+      Register another VLA, actor or critic head, or update rule. The ManiSkill run is the FlexRLT example.
 
    .. grid-item-card:: Advanced Integrations
       :link: advanced-integrations/index
@@ -81,5 +81,5 @@ SFT, then use Advanced Integrations for backend integration and weight transport
    New Model with Megatron <new_model_megatron>
    SGLang Embodied Model <sglang_embodied_model>
    New SFT Model <new_model_sft>
-   Prefix Policy and Pluggable Components <prefix>
+   FlexRLT and Pluggable Components <flexrlt>
    Advanced Integrations <advanced-integrations/index>

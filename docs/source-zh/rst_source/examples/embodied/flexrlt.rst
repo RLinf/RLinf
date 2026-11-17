@@ -1,11 +1,11 @@
-Prefix Fine-Tune：从已有 VLA 开始在线训练
-=========================================
+FlexRLT：从已有 VLA 开始在线训练
+================================
 
 视觉语言动作模型（VLA）读取相机图像、语言指令和机器人状态，输出动作。图像理解、语言理解和动作生成都在同一份大模型里。RL Token（RLT）分两个阶段使用这份预训练能力。Stage 1 用示范数据联合训练 VLA 和 token transformer，把视觉语言特征压成紧凑表示。Stage 2 冻结特征模型，用这个表示、机器人状态和 VLA 参考动作训练两个轻量网络：actor 输出动作，critic 估计后续回报。在线更新只经过这两个网络，大模型只做前向计算。
 
-Prefix 框架在此基础上用配置选择特征来源、网络和算法，采集和参数更新仍走同一套流程。特征可以来自 RLT token，也可以直接池化冻结 VLA 的视觉语言特征，这段特征称为 prefix。policy 指根据观测生成动作的模型。训练时特征模型保持冻结。actor 读取 prefix 特征、机器人状态和参考动作，给出要执行的动作。环境执行后，系统把特征、动作、奖励和终止写入 replay，更新时反复采样，反向传播只经过 actor 和 critic。VLA 继续提供特征和参考动作，权重保持不变。
+FlexRLT 在此基础上用配置选择特征来源、网络和算法，采集和参数更新仍走同一套流程。特征可以来自 RLT token，也可以直接池化冻结 VLA 的视觉语言特征，这段特征称为 prefix。policy 指根据观测生成动作的模型。训练时特征模型保持冻结。actor 读取 prefix 特征、机器人状态和参考动作，给出要执行的动作。环境执行后，系统把特征、动作、奖励和终止写入 replay，更新时反复采样，反向传播只经过 actor 和 critic。VLA 继续提供特征和参考动作，权重保持不变。
 
-本页展示使用已发布的 OpenPI checkpoint 和配好的 ManiSkill 插接配置进行 Stage 2 训练。当前已接入的 VLA 是 OpenPI；其他 VLA 需要适配器，步骤见 :doc:`Prefix 组件扩展 <../../extending/prefix>`。如果已经训练过 RL Token 表示，:doc:`RL Token <rlt>` 上的 Stage 2 配置走同一套更新流程。
+本页展示使用已发布的 OpenPI checkpoint 和配好的 ManiSkill 插接配置进行 Stage 2 训练。当前已接入的 VLA 是 OpenPI；其他 VLA 需要适配器，步骤见 :doc:`FlexRLT 组件 <../../extending/flexrlt>`。如果已经训练过 RL Token 表示，:doc:`RL Token <rlt>` 上的 Stage 2 配置走同一套更新流程。
 
 概览
 ----
@@ -258,7 +258,7 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
 切换 VLA checkpoint 与特征表示
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-更换同一套 OpenPI 配置所兼容的 checkpoint 时，修改 ``rollout.prefix_feature_model.model_path``，并检查任务配置和归一化统计量是否匹配。更换 VLA 架构则需要适配器。当前接入的是 OpenPI，注册步骤见 :doc:`Prefix 组件扩展 <../../extending/prefix>`。
+更换同一套 OpenPI 配置所兼容的 checkpoint 时，修改 ``rollout.prefix_feature_model.model_path``，并检查任务配置和归一化统计量是否匹配。更换 VLA 架构则需要适配器。当前接入的是 OpenPI，注册步骤见 :doc:`FlexRLT 组件 <../../extending/flexrlt>`。
 
 VLA 为图像块和语言 token 各产生一个向量。policy 需要固定长度的输入，因此要把这些向量收成一个向量，这一步称为池化。填充和其他无效位置由 mask 标出。``masked_mean`` 会跳过被 mask 的位置。用 ``rollout.prefix_feature_model.prefix.pool`` 选择聚合方式：
 
@@ -396,7 +396,7 @@ critic 会考虑动作块内的奖励，以及动作块执行后状态的预计�
 
 其他 VLA 需要把观测转换成 ``z_rl``、``proprio`` 和 ``ref_chunk``，并让动作的单位、范围和长度与环境一致。新网络要读取同一组特征，并输出动作或价值。新算法要定义 actor 和 critic 的训练目标。注册完成之后，仍然在配置里选择这些组件，并继续使用现有的采集和更新流程。
 
-需要编写适配代码时，再看 :doc:`Prefix 组件扩展 <../../extending/prefix>` 里的实现和注册示例。运行本页示例、调整已有组件，不必先读这些内部接口。
+需要编写适配代码时，再看 :doc:`FlexRLT 组件 <../../extending/flexrlt>` 里的实现和注册示例。运行本页示例、调整已有组件，不必先读这些内部接口。
 
 常见问题
 --------

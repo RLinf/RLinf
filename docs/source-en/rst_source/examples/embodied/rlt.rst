@@ -3,7 +3,7 @@ RL Token: Online Reinforcement Learning with a Compressed VLA Representation
 
 Train an RL Token (RLT) representation from demonstrations, then use it to train a small actor-critic online. This recipe covers Stage 1 SFT and Stage 2 execution for Franka peg insertion and ManiSkill ``PegInsertionSideWideClearance-v1`` joint-control simulation.
 
-RLT learns a compact token representation from the VLA's image and language features. Stage 2 freezes that representation and trains the actor and critic through the Prefix runtime. If you want to start directly from an existing VLA checkpoint without token-transformer training, follow the pooling route in :doc:`Prefix Fine-Tune <prefix>`. To add another feature model, head, or algorithm in code, see :doc:`../../extending/prefix`.
+RLT learns a compact token representation from the VLA's image and language features. Stage 2 freezes that representation and trains the actor and critic through FlexRLT. If you want to start directly from an existing VLA checkpoint without token-transformer training, follow the pooling route in :doc:`FlexRLT <flexrlt>`. To add another feature model, head, or algorithm in code, see :doc:`../../extending/flexrlt`.
 
 The method is described in **RL Token: Bootstrapping Online RL with Vision-Language-Action Models**. Official project page: `Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_. When adapting this recipe, align the demonstration fields, environment actions, robot state, and OpenPI data config.
 
@@ -38,7 +38,7 @@ Stage 1 jointly trains the VLA and token transformer on demonstrations. Its comp
 Provided Configuration Files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Choose the Stage 1 and Stage 2 configs for your environment. The STEAM preset uses pooled VLA features rather than the RLT token transformer; its weights and calibration steps are documented in :doc:`Prefix Fine-Tune <prefix>`.
+Choose the Stage 1 and Stage 2 configs for your environment. The STEAM preset uses pooled VLA features rather than the RLT token transformer; its weights and calibration steps are documented in :doc:`FlexRLT <flexrlt>`.
 
 .. list-table::
    :header-rows: 1
@@ -200,7 +200,7 @@ Stage 2: Train the RLT Actor-Critic
 
 Load the Stage 1 ``actor`` checkpoint, including ``rlt_module``, as the frozen feature model. It returns ``{z_rl, proprio, ref_chunk}`` for the trainable ``prefix_policy``. Set ``algorithm.loss_type: prefix_off_policy`` and choose AC or TD3 with ``algorithm.name``; both use chunk-reward TD targets and a weighted Q/BC actor objective.
 
-Action routing is separate from those updates. ``rlt_policy_switch`` selects the VLA or actor chunk, and expert takeover can replace it with an intervention. The STEAM variant uses a learned gate for these decisions; the common feature and policy interfaces are described in :doc:`../../extending/prefix`.
+Action routing is separate from those updates. ``rlt_policy_switch`` selects the VLA or actor chunk, and expert takeover can replace it with an intervention. The STEAM variant uses a learned gate for these decisions; the common feature and policy interfaces are described in :doc:`../../extending/flexrlt`.
 
 During rollout:
 
@@ -664,13 +664,13 @@ This variant is currently configured only for ManiSkill simulation. It keeps
 the frozen Stage 1 features and transition replay path, while replacing the
 Stage 2 policy and update objective with a direct TD3 actor and twin-Q critic.
 
-For pooled features instead of a learned RLT representation, use ``maniskill_prefix_stage2_td3_mlp_steam.yaml``. It sets ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``, so it can use an existing SFT VLA without a trained ``rlt_module``. Download the feature, expert, STEAM value-model, and phase-head checkpoints following :doc:`Prefix Fine-Tune <prefix>`, set their local paths, then launch:
+For pooled features instead of a learned RLT representation, use ``maniskill_prefix_stage2_td3_mlp_steam.yaml``. It sets ``prefix.pool: masked_mean``, ``prefix.image_only: true``, and ``use_rlt: false``, so it can use an existing SFT VLA without a trained ``rlt_module``. Download the feature, expert, STEAM value-model, and phase-head checkpoints following :doc:`FlexRLT <flexrlt>`, set their local paths, then launch:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. :doc:`Prefix Fine-Tune <prefix>` explains the published threshold's validation limits and how to collect calibration traces.
+The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. :doc:`FlexRLT <flexrlt>` explains the published threshold's validation limits and how to collect calibration traces.
 
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
 freezes ``rollout.prefix_feature_model`` and only synchronizes the Stage 2 MLP
@@ -819,7 +819,7 @@ Useful RLT signals:
   - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
 
-  Prefix schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
+  FlexRLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
 
   - ``train/prefix/ready_for_online``: whether learner ``update_step`` has passed ``warmup_post_collect_updates``.
   - ``train/prefix/actor_updates_run``, ``train/prefix/critic_updates_run``, and ``train/prefix/pending_update_budget``: actor/critic updates executed in the step and remaining learner backlog.
@@ -860,4 +860,4 @@ Practical Notes
   ``loss_type: prefix_off_policy`` and the appropriate frozen feature-model
   block, then replace the real-robot phase-switching logic with
   simulator-appropriate routing.
-- Read :doc:`../../extending/prefix` for Prefix pooling, feature-model, MLP-head, and algorithm extensions.
+- Read :doc:`../../extending/flexrlt` for Prefix pooling, feature-model, MLP-head, and algorithm extensions.
