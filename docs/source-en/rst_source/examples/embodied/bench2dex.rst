@@ -122,16 +122,10 @@ Run It
 Train a Policy
 ~~~~~~~~~~~~~~
 
-For ``env_type: bench2dex``, ``auto_reset=false`` with
-``algorithm.bootstrap_type=standard`` adds the discounted value of the final
-observation to the reward at the first timeout action. Terminal transitions and
-later padding receive no bootstrap. This applies automatically to Bench2Dex.
-Bootstrap behavior remains unchanged for other environments and auto-reset runs.
-
 Task22 training starts from the full model weights saved after ten critic-only
 warmup epochs. Set ``BENCH2DEX_WARMUP10_PATH`` to that ``full_weights.pt`` file.
 The run initializes fresh optimizer and scheduler states and trains for 190
-additional epochs with ``critic_warmup_steps: 0``.
+additional epochs without repeating critic warmup.
 
 With the Task22 model and asset paths set, start PPO training:
 
@@ -140,36 +134,14 @@ With the Task22 model and asset paths set, start PPO training:
    export BENCH2DEX_WARMUP10_PATH="<warmup10_full_weights.pt>"
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-Task22 uses the selected white-background scene: anchor
-``episode_000001.hdf5`` with seed ``2200001``. Training and periodic evaluation
-use this same scene with ``generalization_profile: none``. Eight GPUs run 32 environments in parallel. Four rollouts per environment collect 128 trajectories per
-epoch; evaluation collects 32 trajectories. Each training epoch makes six
-optimizer updates: three passes over 4,480 action chunks with a global batch
-size of 2,240 and a micro batch size of 4 per GPU. Actor and critic learning
-rates stay fixed at ``2e-6`` and ``2e-5``, respectively. Dual clipping is enabled
-with a coefficient of 3, and the reward is success-only.
+Task22 trains on one fixed white-background scene using eight GPUs and 128
+trajectories per epoch. It evaluates every ten epochs and saves a checkpoint every two
+epochs. Task64 disables periodic evaluation by default.
 
-Task22 evaluates every ten epochs and saves a checkpoint every two epochs.
-At the end of training, evaluation and checkpointing each run if enabled. Task64 disables
-periodic evaluation by default. Use the separate evaluation command below to
-measure benchmark success rates across all four channels.
-
-Task22 PPO selects one stochastic denoising step from the first five of ten
-steps. The frozen vision encoder stays in evaluation mode. Edit these
-settings in the training YAML:
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       openpi:
-         stochastic_step_range: [0, 5]
-         frozen_vision_mode: eval
-
-``stochastic_step_range`` uses zero-based ``[start, end)`` bounds. Set it to
-``null`` to remove this range restriction. ``frozen_vision_mode: eval``
-requires ``train_expert_only: true``. Set ``frozen_vision_mode`` to
-``follow_model`` to follow the policy's training mode.
+The Task22 recipe selects one stochastic step from the first five denoising
+steps and keeps the frozen vision encoder in evaluation mode. These settings
+are controlled by ``stochastic_step_range`` and ``frozen_vision_mode`` under
+``actor.model.openpi``. Other training parameters are in the selected YAML.
 
 For another training configuration, replace the final argument with a name
 from this table. Asynchronous PPO uses ``examples/embodiment/run_async.sh``.

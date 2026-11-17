@@ -113,9 +113,7 @@ policy 根据图像、关节位置和任务描述预测动作。
 训练 policy
 ~~~~~~~~~~~
 
-``env_type: bench2dex`` 配合 ``auto_reset=false`` 和 ``algorithm.bootstrap_type=standard`` 时，会将末状态的折扣价值加到首个超时动作的奖励中，且只加一次；真正终止和后续填充步骤不补值。Bench2Dex 自动使用这一行为，无需额外配置。其他环境及原有自动 reset 补值逻辑保持不变。
-
-Task22 从 critic 单独预热 10 轮后保存的完整模型权重开始。将 ``BENCH2DEX_WARMUP10_PATH`` 指向该模型的 ``full_weights.pt`` 文件。训练会新建优化器和 scheduler，设置 ``critic_warmup_steps: 0``，继续训练 190 轮。
+Task22 从 critic 单独预热 10 轮后保存的完整模型权重开始训练。将 ``BENCH2DEX_WARMUP10_PATH`` 指向该模型的 ``full_weights.pt`` 文件。训练重新初始化优化器和 scheduler 状态，继续训练 190 轮，不重复 critic 预热。
 
 准备好 Task22 模型和资产路径后，启动 PPO 训练：
 
@@ -124,21 +122,9 @@ Task22 从 critic 单独预热 10 轮后保存的完整模型权重开始。将 
    export BENCH2DEX_WARMUP10_PATH="<warmup10_full_weights.pt>"
    bash examples/embodiment/run_embodiment.sh bench2dex_task22_ppo_openpi_pi05
 
-Task22 固定使用选定的白底场景，对应 ``episode_000001.hdf5`` 和 seed ``2200001``。训练和周期性评测都使用该场景，设置 ``generalization_profile: none``。8 张 GPU 运行 32 个并行环境，每个环境采样 4 次，每轮共 128 条轨迹；每次评测采样 32 条轨迹。每轮训练包含 4,480 个动作 chunk，以 global batch 2,240、每卡 micro batch 4 遍历 3 次，共执行 6 次优化器更新。Actor 和 critic 学习率分别固定为 ``2e-6`` 和 ``2e-5``；启用系数为 3 的 dual clip，仅使用成功奖励。
+Task22 使用 8 张 GPU，在一个固定的白底场景上训练，每轮采样 128 条轨迹。每 10 轮评测一次，每 2 轮保存一次 checkpoint。Task64 默认关闭周期性评测。
 
-Task22 每 10 轮评测一次，每 2 轮保存一次 checkpoint。训练结束时，评测和 checkpoint 保存按各自的启用状态执行。Task64 默认关闭周期性评测。使用下方的独立评测命令统计四个通道的基准成功率。
-
-Task22 PPO 在 10 个去噪步骤中，从前 5 步选取一步作为随机步骤。冻结的视觉编码器保持 eval 模式。在训练 YAML 中修改以下配置：
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       openpi:
-         stochastic_step_range: [0, 5]
-         frozen_vision_mode: eval
-
-``stochastic_step_range`` 的索引从 0 开始，区间为左闭右开的 ``[start, end)``\ 。设为 ``null`` 可取消这一区间限制。使用 ``frozen_vision_mode: eval`` 时，必须设置 ``train_expert_only: true``\ 。将 ``frozen_vision_mode`` 设为 ``follow_model``，视觉编码器就会跟随 policy 的训练模式。
+Task22 从前 5 个去噪步骤中选取一个随机步骤，冻结的视觉编码器保持 eval 模式。这两项由 ``actor.model.openpi`` 下的 ``stochastic_step_range`` 和 ``frozen_vision_mode`` 控制，其他训练参数见对应 YAML。
 
 其他训练配置见下表，将命令最后的配置名替换为对应项。异步 PPO 使用 ``examples/embodiment/run_async.sh`` 启动。
 
