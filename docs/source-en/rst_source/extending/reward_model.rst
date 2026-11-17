@@ -679,39 +679,18 @@ Launch:
 3.4.3 ManiSkill Training and Validation Results
 ...............................................
 
-In a ManiSkill PickCube3View run, PPO trained the MLP policy with the fine-tuned
-VLM Trend reward served by RLinf-managed SGLang. The run started from the
-warmup76 policy checkpoint and used the training recipe from
-`PR #1723 <https://github.com/RLinf/RLinf/pull/1723>`__. It completed 23 PPO updates.
-Checkpoints were saved and evaluated every three updates. Each independent
-evaluation used 1,024 complete episodes of 50 steps in a fresh process.
-In-training validation matched the independent ``success_at_end`` at each
-evaluated checkpoint.
+Training on ManiSkill PickCube3View started from a policy checkpoint with a
+58.89% success rate in independent evaluation.
 
-.. list-table:: Independent success rate at the end of an episode
-   :header-rows: 1
-   :widths: 1 1
+.. figure:: https://raw.githubusercontent.com/zhoutianxing7B/RLinf/af6ab7968d9484791737e05b77fec7bfc19d561d/success_rate_steps_0_20.png
+   :alt: ManiSkill PickCube3View success rate by PPO update
 
-   * - PPO update
-     - Success rate
-   * - 0
-     - 58.89%
-   * - 3
-     - 68.65%
-   * - 6
-     - 77.25%
-   * - 9
-     - 78.32%
-   * - 12
-     - 78.91%
-   * - 15
-     - 79.79%
-   * - 18
-     - 80.76%
-   * - 21
-     - 81.25%
+   Independent success rate reached 80.76% at PPO update 18. Each point uses
+   1,024 complete 50-step episodes evaluated in a fresh process.
 
-The reference run with a custom SGLang server also reached 81.25% at update 21.
+At update 21, both the managed SGLang run and the custom SGLang reference
+reached 81.25%. In-training validation matched the independent
+``success_at_end`` at each evaluated checkpoint.
 
 - **Video inputs.** With frame sampling enabled and disabled, SFT, Hugging Face,
   and managed SGLang agreed on token IDs, pixels, video grids, and multimodal
