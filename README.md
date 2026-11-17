@@ -8,6 +8,7 @@
 <a href="https://rlinf.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Purple?color=8A2BE2&logo=readthedocs"></a>
 <a href="https://rlinf.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-red?logo=readthedocs"></a>
 <a href="https://rlinf.org/"><img src="https://img.shields.io/badge/Website-00ADEF?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSI%2BPGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjYuNSIvPjxlbGxpcHNlIGN4PSI4IiBjeT0iOCIgcng9IjMiIHJ5PSI2LjUiLz48cGF0aCBkPSJNMS41IDhoMTMiLz48L3N2Zz4%3D" alt="Website"></a>
+<a href="https://rlinf.github.io/misc/certificates/"><img src="https://img.shields.io/badge/Contributor%20Certificates-2E8B57?logo=readme&amp;logoColor=white" alt="Certificate"></a>
 <br>
 <a href="https://github.com/RLinf/misc/blob/main/pic/wechat.jpg?raw=true"><img src="https://img.shields.io/badge/WeChat%20Group-green?logo=wechat&amp"></a>
 <a href="https://github.com/RLinf/misc/blob/main/pic/slack.jpg?raw=true"><img src="https://badgen.net/badge/icon/Slack%20Channel?icon=slack&amp;label&amp;color=4A154B&amp;labelColor=4A154B" alt="Slack Channel"></a>
@@ -43,6 +44,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/11] 🔥 RLinf supports dual-arm ARX X5 data collection with Pico teleoperation. Doc: [ARX X5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/arx5.html).
 - [2026/11] 🔥 RLinf supports DiffusionART fine-tuning for SD3 image generation and Wan2.2 video generation with OCR rewards, reaching the same reward threshold in about 30% less wall-clock time and a third fewer trajectories than NFT on Wan2.2. Doc: [DiffusionART](https://rlinf.readthedocs.io/en/latest/rst_source/examples/diffusion_art.html).
 - [2026/11] 🔥 RLinf supports LIBERO-Mem and MEM-inspired visual short memory for OpenPI SFT and evaluation, raising strict LIBERO-Mem success from 20.0% to 35.5% over the current-frame baseline. Docs: [LIBERO-Mem](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#libero-mem-benchmark), [OpenPI Short Memory](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0/short_memory.html).
+- [2026/11] 🔥 RLinf supports evaluating OpenPI π₀.₅ on the RoboLab manipulation benchmark. Doc: [RoboLab evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/robolab.html).
 - [2026/11] 🔥 RLinf supports RL on π₀.₅ in [GenieSim](https://github.com/AgibotTech/genie_sim) with PPO and GRPO. Doc: [RL with GenieSim](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html).
 - [2026/11] 🔥 RLinf supports RoboDojo, an Isaac Sim-based dual-arm manipulation benchmark for ARX-X5, exposed as a Gym environment for VLA policy evaluation: the official π₀.₅ checkpoint can be converted to OpenPI format and evaluated over 55 predefined scene layouts. Doc: [RoboDojo](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html).
 - [2026/11] 🔥 RLinf supports SO-101 joint-space demonstration collection, OpenPI π₀.₅ supervised fine-tuning, and local evaluation. Doc: [SO-101](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/so101.html).
@@ -217,6 +219,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/geniesim.html">GenieSim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robodojo.html">RoboDojo</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/guides/simple.html">SIMPLE</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robolab.html">RoboLab (evaluation only)</a> ✅</li>
           <li>More...</li>
         </ul>
       </td>
