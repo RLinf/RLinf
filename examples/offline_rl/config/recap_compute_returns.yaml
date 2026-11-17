@@ -8,6 +8,11 @@ data:
       type: sft
     - dataset_path: /path/to/rollout_dataset
       type: rollout
+  # Must list every dataset in Step 2's data.eval_data_paths; otherwise Step 2
+  # fails with "Returns sidecar not found". Use type: rollout if it has failures.
+  eval_data_paths:
+    - dataset_path: /path/to/eval_dataset
+      type: rollout
 
   dataset_type: "sft"
   gamma: 1.0
