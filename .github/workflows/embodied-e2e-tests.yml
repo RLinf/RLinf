@@ -970,7 +970,7 @@ jobs:
       SERVER_GPU_ID: '0'
       GPU_ID: '1'
       NUM_ENVS: '8'
-      MAX_STEPS: '480'
+      MAX_STEPS: '240'
       MIN_SUCCESS_ONCE: '0'
       UV_PATH: /workspace/dataset/.uv
       UV_LINK_MODE: symlink

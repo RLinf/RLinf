@@ -319,8 +319,8 @@ model server can use a different GPU because it is a separate process.
      rollout.phyai.gateway_url=http://127.0.0.1:30000 \
      env.eval.total_num_envs=8 \
      env.eval.rollout_epoch=1 \
-     env.eval.max_episode_steps=480 \
-     env.eval.max_steps_per_rollout_epoch=480 \
+     env.eval.max_episode_steps=240 \
+     env.eval.max_steps_per_rollout_epoch=240 \
      env.eval.video_cfg.save_video=false
 
 ``run_eval.sh`` supplies the standard LIBERO/EGL defaults. Leave

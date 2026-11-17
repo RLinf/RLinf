@@ -10,7 +10,7 @@ RLINF_VENV="${RLINF_VENV:-$REPO_PATH/.venv}"
 GPU_ID="${GPU_ID:?Set GPU_ID to an available rendering GPU index}"
 SERVER_GPU_ID="${SERVER_GPU_ID:-$GPU_ID}"
 NUM_ENVS="${NUM_ENVS:-8}"
-MAX_STEPS="${MAX_STEPS:-480}"
+MAX_STEPS="${MAX_STEPS:-240}"
 GATEWAY_PORT="${GATEWAY_PORT:-50111}"
 HTTP_PORT="${HTTP_PORT:-30000}"
 READY_TIMEOUT="${READY_TIMEOUT:-900}"
@@ -173,8 +173,14 @@ pids+=("$!")
 wait_ready 'Gateway backend healthy' backend_ready
 
 RAY_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/phyai-http.XXXXXX")"
+# Ray 2.60+ enables token auth for a new local cluster but only exports
+# RAY_AUTH_MODE inside the ray.init() process, so the evaluation process
+# below cannot authenticate (InvalidAuthToken). Both processes read the
+# same token file, so opt in explicitly. Ray <2.60 ignores this variable.
+export RAY_AUTH_MODE="${RAY_AUTH_MODE:-token}"
 PATH="$RLINF_VENV/bin:$PATH" env -u CUDA_VISIBLE_DEVICES -u RAY_ADDRESS setsid "$RLINF_VENV/bin/python" - "$LOG_DIR/ray-address" "$RAY_TMP_DIR" <<'PYTHON' >"$LOG_DIR/ray.log" 2>&1 &
 from pathlib import Path
+import os
 import signal
 import sys
 import time
@@ -189,8 +195,34 @@ def stop(signum, frame):
     stopping = True
 
 
+def ray_cpu_hint():
+    """Cap Ray's CPU detection to the Slurm allocation when one exists.
+
+    Ray ignores cgroup limits and pre-starts one Python worker per detected
+    CPU, which is 192 on a full Slurm node. Only apply the hint outside CI,
+    where the runner environment is not under our control.
+    """
+    explicit = os.environ.get("PHYAI_RAY_CPUS")
+    if explicit:
+        return int(explicit)
+    if os.environ.get("CI"):
+        return None
+    if not os.environ.get("SLURM_JOB_ID"):
+        return None
+    value = os.environ.get("SLURM_CPUS_PER_TASK")
+    return int(value) if value else None
+
+
 try:
-    context = ray.init(address="local", _temp_dir=sys.argv[2], include_dashboard=False)
+    cpu_hint = ray_cpu_hint()
+    print(f"Ray num_cpus hint: {cpu_hint}", file=sys.stderr)
+    ray_kwargs = {"num_cpus": cpu_hint} if cpu_hint else {}
+    context = ray.init(
+        address="local",
+        _temp_dir=sys.argv[2],
+        include_dashboard=False,
+        **ray_kwargs,
+    )
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     Path(sys.argv[1]).write_text(context.address_info["gcs_address"])

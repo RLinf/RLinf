@@ -227,8 +227,8 @@ Gateway 主动调用已登记 Server 的 ``CheckHealth``。等待 ``pi05``、``1
      rollout.phyai.gateway_url=http://127.0.0.1:30000 \
      env.eval.total_num_envs=8 \
      env.eval.rollout_epoch=1 \
-     env.eval.max_episode_steps=480 \
-     env.eval.max_steps_per_rollout_epoch=480 \
+     env.eval.max_episode_steps=240 \
+     env.eval.max_steps_per_rollout_epoch=240 \
      env.eval.video_cfg.save_video=false
 
 ``run_eval.sh`` 提供标准 LIBERO/EGL 默认环境变量。运行此命令时不要设置 ``CUDA_VISIBLE_DEVICES``：RLinf placement 会根据 ``cluster.component_placement`` 同时设置 worker 的可见 GPU 和 EGL 渲染设备。预先过滤可见 GPU 会让 Ray 只枚举到一个 rank 0 设备，任何非 0 的 ``GPU_ID`` 都会触发 rank 断言失败。YAML 默认使用 ``env,rollout: all``，可在任意机器上运行；上面的 ``component_placement`` 覆盖会替换该默认值，把本次评估固定到单个 ``GPU_ID``。由于 YAML 用的是复合键 ``env,rollout``，逐组件覆盖需要先用 ``~`` 删除它，再分别添加 ``env`` 和 ``rollout``。HTTP YAML 设置 ``serving_mode: gateway`` 并请求 16 步动作块；``rollout.phyai.model_name`` 必须与 Server 注册并供 Gateway 路由的模型名一致。这里把原配置的较大评估规模覆盖为 8 个环境、1 轮 rollout，保留 360x360 相机输入。权重和 tokenizer 路径由模型 Server YAML 管理，客户端命令只选择 Gateway 地址。
