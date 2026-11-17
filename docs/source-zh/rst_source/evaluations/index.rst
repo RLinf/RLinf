@@ -38,6 +38,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - SIMPLE
      - ``G1WholebodyOpenOvenTeleop-v0``
      - ``simple/simple_psi0_eval.yaml``
+   * - LADDER
+     - ``ladder_simpler``、``ladder_robot_arena``、``ladder_robolab``
+     - ``ladder/ladder_simpler_starvla_eval.yaml``、``ladder/ladder_robot_arena_starvla_eval.yaml``、``ladder/ladder_robolab_openpi_pi05_eval.yaml``
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 
@@ -84,6 +87,8 @@ Benchmark 指南
      - RoboTwin 双臂操作。
    * - :doc:`SIMPLE <guides/simple>`
      - Psi0 人形机器人全身评测。
+   * - :doc:`LADDER <guides/ladder>`
+     - 长程机器人操作评测（SimplerEnv-Long、RobotArena-∞-Long、RoboLab-Long）。
 
 参考
 ----
