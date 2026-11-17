@@ -76,6 +76,11 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Extra entries (full PEP 508 specifiers) inserted into the pyproject.toml
+# `constraint-dependencies` array by apply_torch_override. Unlike
+# PLATFORM_EXTRA_OVERRIDES, constraints intersect with constituent package
+# bounds rather than replacing them. Set per-platform by configure_<platform>.
+PLATFORM_EXTRA_CONSTRAINTS=()
 # Package names inserted into the pyproject.toml `exclude-dependencies` array
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
@@ -934,8 +939,11 @@ EOF
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_TORCHCODEC_SPEC=""
-    # The vendor torch builds are compiled against numpy 1.x.
+    # The vendor torch builds are compiled against numpy 1.x. Overriding numpy
+    # hides ml-dtypes>=0.6's numpy>=2 requirement (0.7+ links the NumPy 2.0
+    # C-API), while overriding ml-dtypes would replace TensorFlow 2.15's ~=0.2.0.
     PLATFORM_EXTRA_OVERRIDES=("numpy<2")
+    PLATFORM_EXTRA_CONSTRAINTS=("ml-dtypes<0.6")
     # Either vendor builds that only exist in the image, or CUDA-only kernels:
     # resolve them, never write them into the venv.
     PLATFORM_UV_SYNC_ARGS=("--inexact")
@@ -1725,6 +1733,7 @@ apply_torch_override() {
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
         && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#PLATFORM_EXTRA_CONSTRAINTS[@]} -eq 0 ] \
         && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
@@ -1757,6 +1766,24 @@ apply_torch_override() {
             sed -i "/^override-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
         done
         echo "[install.sh] Added override-dependencies entries: ${extra_overrides[*]}"
+    fi
+
+    if [ ${#PLATFORM_EXTRA_CONSTRAINTS[@]} -gt 0 ]; then
+        if grep -q '^constraint-dependencies = \[' "$PYPROJECT_FILE"; then
+            local k
+            for (( k=${#PLATFORM_EXTRA_CONSTRAINTS[@]}-1; k>=0; k-- )); do
+                local entry="${PLATFORM_EXTRA_CONSTRAINTS[k]}"
+                sed -i "/^constraint-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
+            done
+        else
+            local joined=""
+            local entry
+            for entry in "${PLATFORM_EXTRA_CONSTRAINTS[@]}"; do
+                joined="${joined}${joined:+, }\"${entry}\""
+            done
+            sed -i "/^override-dependencies = \\[\$/i constraint-dependencies = [${joined}]" "$PYPROJECT_FILE"
+        fi
+        echo "[install.sh] Added constraint-dependencies entries: ${PLATFORM_EXTRA_CONSTRAINTS[*]}"
     fi
 
     if [ ${#PLATFORM_EXCLUDE_DEPS[@]} -gt 0 ]; then
