@@ -336,6 +336,10 @@ class RealWorldEnv(gym.Env):
             timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         if not self.manual_episode_control_only:
             truncations = timeout_truncations
+        if "fault_truncated" in infos:
+            truncations = np.logical_or(
+                truncations, np.asarray(infos["fault_truncated"], dtype=bool)
+            )
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)
