@@ -571,3 +571,7 @@ class RoboDojoEnv(gym.Env):
                 ray.kill(process, no_restart=True)
             except ray.exceptions.RayActorError:
                 pass
+
+    def close(self) -> None:
+        """Release simulator resources using Gymnasium's lifecycle convention."""
+        self.offload()

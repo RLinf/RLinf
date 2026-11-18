@@ -2043,6 +2043,17 @@ def validate_embodied_cfg(cfg):
             env_cfg.get("enable_offload", False) for env_cfg in train_env_cfgs.values()
         )
         eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+        terminal_offload_envs = {
+            SupportedEnvType.ROBODOJO,
+            SupportedEnvType.ROBOLAB,
+        }
+        for env_path, env_cfg in {**train_env_cfgs, **eval_env_cfgs}.items():
+            env_type = SupportedEnvType(env_cfg.env_type)
+            if env_type in terminal_offload_envs:
+                assert not env_cfg.get("enable_offload", False), (
+                    f"{env_path}.enable_offload must be false for {env_type.value}; "
+                    "its Isaac simulator lifecycle does not support suspend/resume."
+                )
         for env_cfg in eval_env_cfgs.values():
             if SupportedEnvType(env_cfg.env_type) == SupportedEnvType.MANISKILL:
                 with open_dict(env_cfg):

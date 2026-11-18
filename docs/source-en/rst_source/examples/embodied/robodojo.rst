@@ -1,11 +1,10 @@
-RoboDojo Benchmark Evaluation
-=============================
+RoboDojo Benchmark Training and Evaluation
+===========================================
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ is an Isaac Sim-based
 benchmark for dual-arm manipulation. It includes tabletop rearrangement,
 pick-and-place, and tool-use tasks for robots such as ARX-X5. RLinf exposes
-RoboDojo as a Gym environment for evaluating VLA policies; RL training is not
-supported yet.
+RoboDojo as a Gym environment for RL training and VLA policy evaluation.
 
 Overview
 --------
@@ -24,7 +23,7 @@ environment interface.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      Evaluation (π₀.₅)
+      PPO and evaluation (π₀.₅)
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -37,7 +36,7 @@ environment interface.
       1 node · 1+ GPU
 
 | **You'll do:** install → download scene assets and the Pi_05 checkpoint →
-  convert the checkpoint → verify the installation → run the evaluation.
+  convert the checkpoint → verify the installation → run training or evaluation.
 | **Prerequisites:** :doc:`Base installation </rst_source/start/installation>` ·
   an NVIDIA CUDA GPU · at least 120 GB of free disk space.
 
@@ -313,6 +312,23 @@ The evaluation configuration extends this environment preset:
 
 The policy's ``action_dim`` must equal the sum of ``action_dims``. The example
 uses ``[6, 6, 1, 1]``, which is a 14-dimensional action.
+
+**Train with PPO**
+
+The training recipe uses random training layouts, automatic per-slot reset, and
+fixed saved layouts for validation:
+
+.. code-block:: bash
+
+   export REPO_PATH=/path/to/RLinf
+   export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
+   export EMBODIED_PATH=$REPO_PATH/examples/embodiment
+   python examples/embodiment/train_embodied_agent.py \
+     --config-name robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
+     actor.model.model_path=/path/to/converted/pi05_robodojo_arx_x5
+
+Keep ``env.train.enable_offload=false``. RoboDojo releases Isaac resources on
+``close``/``offload`` but does not suspend and resume a live simulator.
 
 **Evaluate a Pi_05 checkpoint**
 

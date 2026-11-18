@@ -91,7 +91,12 @@ class Pi0RL(EnvIO, Pi0):
             hidden = (1024, 512, 256) if rl_cfg.value_after_vlm else (512, 256, 128)
             if any(
                 name in rl_cfg.config_name
-                for name in ("pi05_maniskill", "pi05_libero", "pi05_droid_polaris")
+                for name in (
+                    "pi05_maniskill",
+                    "pi05_libero",
+                    "pi05_droid_polaris",
+                    "pi05_droid_robolab",
+                )
             ):
                 hidden = (1024, 512, 256)
             if rl_cfg.value_head_hidden_sizes is not None:
@@ -513,8 +518,24 @@ class Pi0RL(EnvIO, Pi0):
 
         entropy = torch.stack(step_entropy, dim=1)
         entropy = entropy[:, :, : self.action_chunk, : self.action_env_dim]
+        executed_mask = forward_inputs.get("executed_mask")
+        if executed_mask is not None:
+            executed_mask = executed_mask.to(device=device, dtype=torch.bool)
+            if log_probs.shape[:2] != executed_mask.shape:
+                raise ValueError(
+                    "executed_mask must match OpenPI logprobs [B, C], got "
+                    f"{tuple(executed_mask.shape)} vs {tuple(log_probs.shape[:2])}."
+                )
+            log_probs = log_probs * executed_mask[..., None]
         if rl_cfg.noise_method == "flow_noise":
-            entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
+            if executed_mask is None:
+                entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
+            else:
+                entropy_mask = executed_mask[:, None, :, None].expand_as(entropy)
+                entropy = (
+                    (entropy * entropy_mask).sum(dim=[1, 2, 3])
+                    / entropy_mask.sum(dim=[1, 2, 3]).clamp_min(1)
+                )[:, None]
         else:
             entropy = torch.zeros((B, 1), device=device, dtype=torch.float32)
         return {
@@ -538,6 +559,15 @@ class Pi0RL(EnvIO, Pi0):
         suffix_act = self.run_suffix(observation, x_t, t, kv_cache, prefix_mask)
         v_theta = self.velocity_from_suffix(suffix_act)
         v_theta = v_theta[:, : self.action_chunk, :]
+        executed_mask = forward_inputs.get("executed_mask")
+        if executed_mask is not None:
+            executed_mask = executed_mask.to(device=device, dtype=torch.bool)
+            if v_theta.shape[:2] != executed_mask.shape:
+                raise ValueError(
+                    "executed_mask must match OpenPI NFT output [B, C], got "
+                    f"{tuple(executed_mask.shape)} vs {tuple(v_theta.shape[:2])}."
+                )
+            v_theta = v_theta * executed_mask[..., None]
         result: dict[str, Any] = {"v_theta": v_theta, "x_t": x_t, "timesteps": t}
         if kwargs.get("compute_values") and self.rl_cfg.add_value_head:
             if self.rl_cfg.value_after_vlm:

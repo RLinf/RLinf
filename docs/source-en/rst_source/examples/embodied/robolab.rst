@@ -1,5 +1,5 @@
-Evaluation on RoboLab
-=====================
+Training and Evaluation on RoboLab
+==================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robolab.png
    :align: center
@@ -8,7 +8,7 @@ Evaluation on RoboLab
 
    RoboLab (`NVlabs/RoboLab <https://github.com/NVlabs/RoboLab>`__).
 
-RoboLab is a manipulation benchmark built on Isaac Sim, with 120 tasks covering procedural, relational, and visual capabilities across three difficulty levels. RLinf supports evaluating the OpenPI π₀.₅ policy on its DROID joint-position tasks.
+RoboLab is a manipulation benchmark built on Isaac Sim, with 120 tasks covering procedural, relational, and visual capabilities across three difficulty levels. RLinf supports PPO training and evaluation of the OpenPI π₀.₅ policy on its DROID joint-position tasks.
 
 Overview
 --------
@@ -26,7 +26,7 @@ Evaluate from two RGB views, robot state, and a natural-language instruction.
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      Evaluation only
+      PPO and evaluation
 
    .. grid-item-card:: Tasks
       :text-align: center
@@ -78,6 +78,20 @@ Run It
 ------
 
 Follow the :doc:`evaluation guide <../../evaluations/guides/robolab>` to install the environment, download the checkpoint, configure tasks, and run the evaluation.
+
+For PPO training, set the checkpoint path in
+``examples/embodiment/config/robolab_banana_in_bowl_ppo_openpi_pi05.yaml`` and
+run:
+
+.. code-block:: bash
+
+   export EMBODIED_PATH=/path/to/RLinf/examples/embodiment
+   python examples/embodiment/train_embodied_agent.py \
+     --config-name robolab_banana_in_bowl_ppo_openpi_pi05
+
+Training uses per-environment auto-reset and masks unexecuted actions when a
+slot completes before the end of a 15-action chunk. Keep environment offload
+disabled: every environment worker owns a live Isaac Sim Ray actor.
 
 Visualization and Results
 -------------------------

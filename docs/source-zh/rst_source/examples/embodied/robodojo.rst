@@ -1,9 +1,9 @@
-RoboDojo 基准评估
+RoboDojo 基准训练与评估
 ========================================
 
 `RoboDojo <https://robodojo-benchmark.github.io/>`__ 是基于 Isaac Sim 的双臂\
 操作基准，面向 ARX-X5 等机器人提供桌面整理、抓取、放置和工具使用任务。RLinf \
-将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 rollout 和评估。
+将 RoboDojo 接入为 Gym 环境，可以直接用于 VLA 策略的 RL 训练、rollout 和评估。
 
 概览
 ----------------------------------------
@@ -21,7 +21,7 @@ RoboDojo 基准评估
    .. grid-item-card:: 算法
       :text-align: center
 
-      评估（π₀.₅）
+      PPO 与评估（π₀.₅）
 
    .. grid-item-card:: 任务
       :text-align: center
@@ -33,7 +33,7 @@ RoboDojo 基准评估
 
       1 节点 · 1+ GPU
 
-| **你将完成：** 安装环境 → 下载场景资产和 Pi_05 检查点 → 转换检查点 → 验证安装 → 运行评估。
+| **你将完成：** 安装环境 → 下载场景资产和 Pi_05 检查点 → 转换检查点 → 验证安装 → 运行训练或评估。
 | **前置条件：** :doc:`基础安装 </rst_source/start/installation>` · NVIDIA CUDA GPU · 至少 120 GB 可用磁盘空间。
 
 任务
@@ -287,6 +287,22 @@ step 和 close 后，再提高 ``env.eval.total_num_envs``。
    examples/embodiment/config/env/robodojo_put_bottles_into_dustbin.yaml
 
 策略的 ``action_dim`` 应与 ``action_dims`` 的总和一致。示例配置使用 ``[6, 6, 1, 1]``，即 14 维动作。
+
+**使用 PPO 训练**
+
+训练配置对训练环境启用随机布局和逐槽自动重置，并使用固定布局进行验证：
+
+.. code-block:: bash
+
+   export REPO_PATH=/path/to/RLinf
+   export ROBODOJO_ASSETS_ROOT=/path/to/robodojo
+   export EMBODIED_PATH=$REPO_PATH/examples/embodiment
+   python examples/embodiment/train_embodied_agent.py \
+     --config-name robodojo_put_bottles_into_dustbin_ppo_openpi_pi05 \
+     actor.model.model_path=/path/to/converted/pi05_robodojo_arx_x5
+
+请保持 ``env.train.enable_offload=false``。RoboDojo 的 ``close``/``offload``
+会释放 Isaac 资源，但不能挂起后再恢复同一个模拟器。
 
 **用 Pi_05 检查点做策略评估**
 
