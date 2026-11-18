@@ -448,6 +448,87 @@ def test_remote_backend_rejects_an_unregistered_adapter():
         RemoteWorldModelBackend(cfg, torch.device("cpu"), "http://127.0.0.1:1")
 
 
+def _bridged_remote_backend(monkeypatch, url):
+    from rlinf.envs.sim.world_model.backend import remote
+
+    monkeypatch.setattr(remote, "RobotwinActionBridge", _HalfActionBridge)
+    cfg = _remote_cfg()
+    cfg.rest_action = [2.0] * 7
+    cfg.action_bridge = {
+        "urdf_path": "",
+        "srdf_path": "",
+        "stat_path": "",
+        "robot_pose": [0.0] * 7,
+    }
+    return RemoteWorldModelBackend(cfg, torch.device("cpu"), url)
+
+
+def _sent_actions(request) -> np.ndarray:
+    import json
+
+    from _fake_http_server import parse_multipart
+
+    fields, _ = parse_multipart(request["content_type"], request["body"])
+    return np.array(json.loads(fields["extra_params"])["action"])
+
+
+def test_remote_backend_bridges_actions_and_fills_history_with_the_rest_pose(
+    monkeypatch,
+):
+    from _fake_http_server import FakeHTTPServer
+
+    with FakeHTTPServer([(200, "video/mp4", _gray_mp4(_SERVED))]) as server:
+        backend = _bridged_remote_backend(monkeypatch, server.url)
+        _open_sample_session(backend)
+        backend.generate([0], _chunk(8))
+
+    (request,) = server.requests
+    action = _sent_actions(request)
+    assert action.shape == (13, 7)
+    # The joint-space init_actions are ignored; the history is the bridged rest pose.
+    np.testing.assert_allclose(action[:5], np.full((5, 7), 1.0))
+    np.testing.assert_allclose(action[5:, 0], 0.5 * np.arange(1, 9))
+
+
+def test_remote_backend_keeps_the_bridged_history_across_steps(monkeypatch):
+    from _fake_http_server import FakeHTTPServer
+
+    responses = [(200, "video/mp4", _gray_mp4(_SERVED))] * 2
+    with FakeHTTPServer(responses) as server:
+        backend = _bridged_remote_backend(monkeypatch, server.url)
+        _open_sample_session(backend)
+        backend.generate([0], _chunk(8))
+        backend.generate([0], _chunk(8) + 10)
+
+    second = _sent_actions(server.requests[1])
+    np.testing.assert_allclose(second[0], np.full(7, 1.0))
+    np.testing.assert_allclose(second[1:5, 0], 0.5 * np.array([5, 6, 7, 8]))
+    np.testing.assert_allclose(second[5:, 0], 0.5 * np.arange(11, 19))
+
+
+def test_remote_backend_borrows_the_scorer_of_the_named_backend(monkeypatch):
+    from rlinf.envs.sim.world_model.backend import bwm
+
+    scorer = _ConstantRewardModel(0.0)
+    monkeypatch.setattr(
+        bwm.BwmBackend, "load_reward_model", staticmethod(lambda cfg: scorer)
+    )
+    cfg = _remote_cfg()
+    cfg.remote.reward_backend = "bwm"
+    assert RemoteWorldModelBackend.load_reward_model(cfg) is scorer
+
+    backend = RemoteWorldModelBackend(cfg, torch.device("cpu"), "http://127.0.0.1:1")
+    env = type("Env", (), {"num_envs": 2, "task_descriptions": ["a", "b"]})()
+    assert backend.reward_instructions(env) == ["a"] * 8 + ["b"] * 8
+
+
+def test_remote_backend_rejects_an_unregistered_reward_backend():
+    cfg = _remote_cfg()
+    cfg.remote.reward_backend = "nope"
+    with pytest.raises(KeyError, match="'nope' is not registered"):
+        RemoteWorldModelBackend.load_reward_model(cfg)
+
+
 class _ServedBackend(RemoteWorldModelBackend):
     """The remote backend with a constant scorer, so no reward checkpoint is needed."""
 

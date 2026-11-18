@@ -36,10 +36,11 @@ from typing import Any, Callable, Optional, Sequence
 import numpy as np
 import torch
 
-from rlinf.envs.sim.world_model.registry import register_backend
+from rlinf.envs.sim.world_model.registry import get_backend, register_backend
 from rlinf.utils.http_client import InferenceHTTPClient
 
 from . import FrameQueue
+from .robotwin_action_bridge import RobotwinActionBridge
 
 __all__ = ["RemoteWorldModelBackend", "get_wm_adapter_cls", "register_wm_adapter"]
 
@@ -80,6 +81,11 @@ def get_wm_adapter_cls(name: str) -> type:
 class RemoteWorldModelBackend:
     """Advances frames on a served world model.
 
+    The benchmark's conventions stay on this side, as they do for the local backends: with
+    ``action_bridge`` set, actions and the rest-pose history are converted the way
+    :class:`~rlinf.envs.sim.world_model.backend.bwm.BwmBackend` converts them, and
+    ``remote.reward_backend`` names the local backend whose scorer to use.
+
     Args:
         cfg: The env config. Generation geometry comes from the usual keys; everything about
             the served model lives under ``world_model.remote``.
@@ -116,6 +122,26 @@ class RemoteWorldModelBackend:
         self._warm = False
         self._sessions: dict[int, dict[str, Any]] = {}
 
+        self._bridge = None
+        self._rest_history = None
+        bridge = cfg.get("action_bridge", None)
+        if bridge is not None:
+            self._bridge = RobotwinActionBridge(
+                urdf_path=bridge.urdf_path,
+                srdf_path=bridge.srdf_path,
+                stat_path=bridge.stat_path,
+                robot_pose=bridge.robot_pose,
+            )
+            rest = self._bridge(np.asarray(cfg.rest_action, dtype=np.float32))
+            self._rest_history = torch.from_numpy(rest)[None].repeat(
+                self.condition_frame_length, 1
+            )
+
+    @staticmethod
+    def _reward_backend(cfg) -> Optional[type]:
+        name = cfg.remote.get("reward_backend", None)
+        return get_backend(name) if name else None
+
     @staticmethod
     def load_reward_model(cfg):
         """The scorer runs here, not on the server, so it is the benchmark's own.
@@ -123,6 +149,9 @@ class RemoteWorldModelBackend:
         Imported inside the call: selecting this backend should not require the
         generation stack that happens to ship the reward models.
         """
+        borrowed = RemoteWorldModelBackend._reward_backend(cfg)
+        if borrowed is not None:
+            return borrowed.load_reward_model(cfg)
         from diffsynth.models.reward_model import (
             ResnetRewModel,
             TaskEmbedResnetRewModel,
@@ -138,6 +167,9 @@ class RemoteWorldModelBackend:
         raise ValueError(f"Unknown reward model type: {cfg.reward_model.type}")
 
     def reward_instructions(self, env) -> Optional[list[str]]:
+        borrowed = self._reward_backend(self.cfg)
+        if borrowed is not None:
+            return borrowed.reward_instructions(self, env)
         if env.cfg.reward_model.type != "TaskEmbedResnetRewModel":
             return None
         # One instruction per scored frame, so each description repeats over its chunk
@@ -162,10 +194,15 @@ class RemoteWorldModelBackend:
         seeds: Sequence[int],
     ) -> None:
         for row, (env_id, seed) in enumerate(zip(env_ids, seeds)):
+            if self._rest_history is not None:
+                # init_actions are joint-space; a zero pose is mid-workspace after the bridge.
+                history = self._rest_history.clone()
+            else:
+                history = init_actions[row].detach().cpu().clone()
             self._sessions[int(env_id)] = {
                 "seed": int(seed),
                 "frames": [self._to_uint8(f) for f in init_frames[row]],
-                "actions": init_actions[row].detach().cpu().clone(),
+                "actions": history,
                 "step_id": 0,
             }
 
@@ -227,6 +264,8 @@ class RemoteWorldModelBackend:
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
         actions = actions.detach().cpu().float()
+        if self._bridge is not None:
+            actions = torch.from_numpy(self._bridge(actions.numpy())).float()
         if actions.shape[0] != len(env_ids):
             raise ValueError(
                 f"env_ids and actions must describe the same batch rows; got "
