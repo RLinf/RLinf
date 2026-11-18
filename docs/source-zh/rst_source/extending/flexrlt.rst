@@ -372,7 +372,13 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
 
 可选的 ``_actor_loss`` helper 为 AC、TD3 复用 intervention-aware BC target、BC/Q weight schedule 和 Q 聚合。其他 objective 可以直接实现 ``actor_loss``。在 registry 的 ``_load_builtin_algorithms`` 中导入模块后，设置 ``algorithm.name: my_algorithm``，继续使用 ``loss_type: prefix_off_policy``。
 
-内置 ``ac`` 用在线 stochastic actor 生成下一动作，要求 ``algorithm.actor_agg_q: q1``。``td3`` 的 target action 不加噪声，也不使用 target policy smoothing；rollout 保留探索噪声，actor 更新时是否加噪声由 ``algorithm.actor_update_action_noise`` 单独控制。actor Q 聚合支持 ``min``、``q1``、``mean``。两种算法的 critic target 都取前两个 Q head 的最小值；``multi_q_mlp`` 的其余 head 回归到同一个 target，因此应省略 ``algorithm.agg_q`` 字段或将它设为 ``min``。两者都要求 ``algorithm.entropy_tuning.alpha_type: fixed_alpha``，不训练 entropy temperature。构建算法时会校验这些设置。
+内置 ``ac`` 用在线 actor 采样的下一步动作计算 bootstrap，并要求 ``algorithm.actor_agg_q: q1``。``td3`` 保留 `RLT 论文 <https://arxiv.org/html/2604.23073>`_ 第 IV-B 节公式（4）、（5）的固定方差高斯策略：actor 更新默认采样动作，Q 目标和 BC 使用同一个样本。actor 优化 Q1，critic target 取前两个 Q head 的较小值。设置 ``algorithm.actor_update_action_noise: false`` 可改用均值动作更新 actor。
+
+计算 target 动作时，先取 target actor 的均值，再加入一次截断高斯噪声，最后把动作限制在 [-1, 1]。``algorithm.target_policy_noise`` 默认跟随 actor head 的 ``noise_sigma``，``deterministic_mlp`` 的默认值是 0.1；``algorithm.target_noise_clip`` 默认是 0.5。preset 将两处采样标准差都设为 0.1，论文只写了较小的固定标准差，没有给出数值。target actor head 不会再额外采样一份噪声。任一 target noise 参数设为 0 都会关闭 smoothing。
+
+每完成 ``algorithm.critic_actor_ratio`` 次 critic 更新，actor 和两个 target 网络一起更新。默认比例为 2，首次更新在第二次 critic 更新后，更新比例遵循 RLT，target 更新时机遵循 `TD3 官方实现 <https://github.com/sfujim/TD3/blob/master/TD3.py>`_。禁止 actor 训练时，TD3 的两个 target 也保持不变。显式设置的 ``algorithm.target_update_freq`` 必须等于 ``critic_actor_ratio``，``algorithm.target_update_type`` 必须为 ``all``。BC、reference dropout 和 BC/Q 权重 schedule 仍与 AC 复用。
+
+两种算法的 critic target 都取前两个 Q head 的最小值；``multi_q_mlp`` 的其余 head 回归到同一个 target，因此应省略 ``algorithm.agg_q`` 字段或将它设为 ``min``。两者都要求 ``algorithm.entropy_tuning.alpha_type: fixed_alpha``，不训练 entropy temperature。构建算法时会校验这些设置。
 
 实现位置与检查点
 ----------------

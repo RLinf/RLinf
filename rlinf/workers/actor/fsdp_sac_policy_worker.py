@@ -604,7 +604,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             **all_critic_metrics,
         }
 
-        if self.update_step % self.critic_actor_ratio == 0 and train_actor:
+        update_actor, update_targets = self._get_update_flags(train_actor=train_actor)
+        if update_actor:
             self.optimizer.zero_grad()
             self.before_actor_update()
             gbs_actor_loss = []
@@ -663,13 +664,17 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 }
             )
         # Soft update target network
-        if (
-            self.target_model_initialized
-            and self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0
-        ):
+        if self.target_model_initialized and update_targets:
             self.soft_update_target_model()
 
         return metrics_data
+
+    def _get_update_flags(self, *, train_actor: bool) -> tuple[bool, bool]:
+        """Return whether this critic step also updates the actor and targets."""
+        return (
+            train_actor and self.update_step % self.critic_actor_ratio == 0,
+            self.update_step % self.cfg.algorithm.get("target_update_freq", 1) == 0,
+        )
 
     def clip_optimizer_grad_norm(self, optimizer, max_norm):
         """Clip training gradients using the wrapped model's distributed norm."""

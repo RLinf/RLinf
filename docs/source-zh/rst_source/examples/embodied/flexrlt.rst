@@ -310,12 +310,12 @@ AC 和 TD3 是两种更新 actor 与 critic 的算法，它们使用的动作生
      - ``deterministic_mlp``
    * - ``algorithm.actor_agg_q``
      - ``q1``
-     - ``min``、``q1`` 或 ``mean``
+     - ``q1``
    * - ``actor.model.critic_head.name``
      - ``multi_q_mlp``，``num_q_heads: 2``
      - ``twin_q_mlp``
 
-AC 使用随机 actor，preset 里的 ``fixed_std: 0.002`` 是固定标准差。TD3 使用带动作噪声的确定性 actor，preset 里的 ``noise_sigma: 0.1`` 是噪声尺度。切换时从对应 preset 复制整个 head 配置，包括这些尺度。
+AC 使用随机 actor，preset 里的 ``fixed_std: 0.002`` 是固定标准差。TD3 preset 按 `RLT 论文 <https://arxiv.org/html/2604.23073>`_ 使用固定方差高斯策略，rollout 和 actor 更新都采样动作，标准差为 ``noise_sigma: 0.1``。actor 优化 Q1，保留 BC 和 reference dropout。target policy smoothing 只加入一次截断高斯噪声，配置为 ``algorithm.target_policy_noise: 0.1``、``algorithm.target_noise_clip: 0.5``。actor 和两个 target 网络每两次 critic 更新一起更新一次。切换时从对应 preset 复制整个 head 配置，包括这些尺度。
 
 两种算法都保留 ``algorithm.entropy_tuning.alpha_type: fixed_alpha``，熵温度使用配置值，不再另外学习。critic 训练目标取前两个 Q 估计中的较小值，因此省略 ``algorithm.agg_q``，或把它设为 ``min``。``actor_agg_q`` 管的是另一件事：actor 更新时如何合并 Q 值。AC 只接受 ``q1``。
 
@@ -378,7 +378,7 @@ critic 会考虑动作块内的奖励，以及动作块执行后状态的预计�
 
 该 preset 使用环境几何 gate 做路由，打开 ``collect_phase_features`` 和 ``algorithm.rlt_gate_calibration.enable``，把特征、几何标签和诊断信息写到 ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``。每次运行的 ``<run_log_dir>`` 位于 ``logs/`` 下。
 
-这 20 个 step 用来检查采集是否走通。出现正负几何标签后可以拟合初版 phase head，但这次短运行完不成训练 preset 的 3,000 次预热更新，也不能据此验证 expert 接管。把下面的 ``/path/to/run_log_dir`` 换成这次启动的日志目录。``CHECKPOINT_ROOT`` 仍是下载模型时的目录。
+这 20 个 step 用来检查采集是否走通。出现正负几何标签后可以拟合初版 phase head。校准 preset 采用环境几何 gate，expert gate 保持 shadow 模式。拟合后需用训练 preset 检查 phase head 切换和 expert 实际接管。把下面的 ``/path/to/run_log_dir`` 换成这次启动的日志目录。``CHECKPOINT_ROOT`` 仍是下载模型时的目录。
 
 .. code:: bash
 

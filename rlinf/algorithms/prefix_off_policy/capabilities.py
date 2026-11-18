@@ -18,9 +18,10 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class PrefixAlgorithmRequirements:
-    """Head capabilities required by an off-policy algorithm component."""
+    """Head capabilities and update constraints required by an algorithm."""
 
     actor_distribution: Literal["stochastic", "deterministic"]
     min_q_heads: int = 2
     requires_action_noise: bool = False
     uses_target_actor: bool = False
+    delayed_policy_updates: bool = False

@@ -52,16 +52,18 @@ algorithm:
   name: td3
   loss_agg_func: "token-mean"
 
-  actor_agg_q: min
+  actor_agg_q: q1
   enable_drq: False
   bootstrap_type: standard
   gamma: 0.99
   tau: 0.005
 
-  # TD3 actor objective: -q_weight * Q + bc_weight * BC.
+  # RLT samples fixed-variance actions for both Q maximization and BC.
   q_weight: 1.0
   bc_weight: 1.0
   actor_update_action_noise: True
+  target_policy_noise: 0.1
+  target_noise_clip: 0.5
   reference_dropout_prob: 0.5
   # Schedule for the BC/Q weights in the actor objective. Disable it to use
   # the fixed bc_weight and q_weight above for the entire run.
@@ -90,7 +92,7 @@ algorithm:
     min_buffer_size: 1000
     auto_save: False
 
-  target_update_freq: 1
+  target_update_freq: 2
   target_update_type: all
   train_actor_steps: 1000
   critic_actor_ratio: 2

@@ -3313,6 +3313,73 @@ def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
         assert all(p.grad is None for p in raw_model.q_head.parameters())
         assert torch.stack([p.grad.norm() for p in actor_params]).norm() <= 0.01001
         assert all(m.steps.item() == 1 for m in renorms)
+
+        from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
+        from rlinf.workers.actor.fsdp_prefix_off_policy_worker import (
+            PrefixOffPolicyFSDPPolicy,
+        )
+
+        worker = object.__new__(PrefixOffPolicyFSDPPolicy)
+        worker.cfg = context.cfg
+        worker.cfg.actor.global_batch_size = worker.cfg.actor.micro_batch_size = 3
+        worker.cfg.actor.optim = worker.cfg.actor.critic_optim = {"clip_grad": 10.0}
+        worker.cfg.algorithm.critic_actor_ratio = 2
+        worker.cfg.algorithm.target_update_freq = 2 if algorithm_name == "td3" else 1
+        worker.cfg.algorithm.tau = 0.5
+        worker.algorithm_component = algorithm
+        worker.model, worker.target_model = context.model, context.target_model
+        worker.device = torch.device("cpu")
+        worker.torch_dtype = torch.float32
+        worker._world_size = worker.gradient_accumulation = 1
+        worker._accelerator_type = AcceleratorType.NO_ACCEL
+        worker._timer_metrics = {}
+        worker.enable_drq = False
+        worker.target_model_initialized = True
+        worker.target_update_type = "all"
+        worker.critic_actor_ratio = 2
+        worker.alpha_optimizer = None
+        worker.entropy_temp = SimpleNamespace(alpha=0.0)
+        worker.optimizer = torch.optim.SGD(raw_model.actor_head.parameters(), lr=0.01)
+        worker.qf_optimizer = torch.optim.SGD(raw_model.q_head.parameters(), lr=0.01)
+        worker.lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            worker.optimizer, factor=1.0
+        )
+        worker.qf_lr_scheduler = torch.optim.lr_scheduler.ConstantLR(
+            worker.qf_optimizer, factor=1.0
+        )
+        worker.buffer_dataloader_iter = iter([batch] * 6)
+        for step, train_actor in enumerate([True, True, True, False, True, True]):
+            worker.update_step = step
+            actor_before = [
+                p.detach().clone() for p in raw_model.actor_head.parameters()
+            ]
+            target_before = [
+                p.detach().clone() for p in worker.target_model.parameters()
+            ]
+            metrics = worker.update_one_epoch(train_actor=train_actor)
+            if algorithm_name == "td3":
+                update_actor = train_actor and (step + 1) % 2 == 0
+                update_targets = update_actor
+            else:
+                update_actor = train_actor and step % 2 == 0
+                update_targets = True
+            assert ("sac/actor_loss" in metrics) == update_actor
+            assert (
+                any(
+                    not torch.equal(before, after)
+                    for before, after in zip(
+                        actor_before, raw_model.actor_head.parameters()
+                    )
+                )
+                == update_actor
+            )
+            for before, online, target in zip(
+                target_before,
+                worker.model.parameters(),
+                worker.target_model.parameters(),
+            ):
+                expected = (before + online.detach()) / 2 if update_targets else before
+                torch.testing.assert_close(target, expected, rtol=0, atol=0)
     finally:
         dist.destroy_process_group()
 
@@ -3341,6 +3408,11 @@ def test_prefix_algorithms_enforce_declared_actor_capabilities(
         ("td3", "algorithm.actor_agg_q", "max", "actor_agg_q"),
         ("ac", "algorithm.actor_agg_q", "min", "actor_agg_q"),
         ("td3", "algorithm.agg_q", "mean", "agg_q='min'"),
+        ("td3", "algorithm.target_policy_noise", -0.1, "target_policy_noise"),
+        ("td3", "algorithm.target_noise_clip", float("inf"), "target_noise_clip"),
+        ("td3", "algorithm.critic_actor_ratio", 0, "positive integer"),
+        ("td3", "algorithm.target_update_freq", 1, "target_update_freq"),
+        ("td3", "algorithm.target_update_type", "q_head_only", "target_update_type"),
     ],
 )
 def test_prefix_algorithms_reject_unsupported_config_at_build(
@@ -4212,22 +4284,73 @@ def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm
     assert torch.equal(torch.get_rng_state(), rng_after_dropout)
 
 
-def test_prefix_td3_target_actions_are_noise_free():
-    from rlinf.models.embodiment.prefix import PrefixForwardType
-
+@pytest.mark.parametrize(
+    "noise_sigma,noise_clip", [(0.2, 0.5), (1.0, 0.2), (0.0, 0.5), (0.2, 0.0)]
+)
+def test_prefix_td3_target_policy_smoothing(noise_sigma, noise_clip):
     algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
+    context.cfg.algorithm.target_policy_noise = noise_sigma
+    context.cfg.algorithm.target_noise_clip = noise_clip
+    algorithm = build_prefix_off_policy_algorithm(context.cfg)
+    with torch.no_grad():
+        for parameter in context.target_model.actor_head.parameters():
+            parameter.zero_()
+        linears = [
+            module
+            for module in context.target_model.actor_head.mlp.modules()
+            if isinstance(module, torch.nn.Linear)
+        ]
+        linears[-1].bias.copy_(torch.tensor([-0.95, 0.0, 0.0, 0.95]))
+        actions, _, _ = context.target_model(
+            forward_type=PrefixForwardType.ACTOR,
+            obs=batch["next_obs"],
+            deterministic=True,
+            apply_action_noise=False,
+        )
+    torch.manual_seed(0)
     rng_state = torch.get_rng_state().clone()
-    first = algorithm.target_actions(context, batch["next_obs"])
-    second = algorithm.target_actions(context, batch["next_obs"])
-    expected, _, _ = context.target_model(
+    if noise_sigma > 0 and noise_clip > 0:
+        noise = (torch.randn_like(actions) * noise_sigma).clamp(-noise_clip, noise_clip)
+        expected = (actions + noise).clamp(-1, 1)
+        if noise_sigma > noise_clip:
+            assert (noise.abs() == noise_clip).any()
+        assert (expected.abs() == 1).any()
+    else:
+        expected = actions
+    torch.set_rng_state(rng_state)
+    actual = algorithm.target_actions(context, batch["next_obs"])
+    torch.testing.assert_close(actual, expected)
+    if noise_sigma == 0 or noise_clip == 0:
+        assert torch.equal(torch.get_rng_state(), rng_state)
+
+
+@pytest.mark.parametrize("sample_actions", [True, False])
+def test_prefix_td3_actor_uses_q1_with_optional_rlt_sampling(sample_actions):
+    algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
+    context.cfg.algorithm.reference_dropout_prob = 0.0
+    if not sample_actions:
+        context.cfg.algorithm.actor_update_action_noise = False
+    context.cfg.algorithm.actor_weight_schedule.enable = False
+    context.cfg.algorithm.bc_weight = 0.0
+    context.cfg.algorithm.q_weight = 1.0
+    rng_state = torch.get_rng_state().clone()
+    loss, _, _ = algorithm.actor_loss(context, batch)
+    rng_after_loss = torch.get_rng_state().clone()
+    torch.set_rng_state(rng_state)
+    actions, _, _ = context.model(
         forward_type=PrefixForwardType.ACTOR,
-        obs=batch["next_obs"],
-        deterministic=True,
-        apply_action_noise=False,
+        obs=batch["curr_obs"],
+        apply_action_noise=sample_actions,
+        apply_reference_dropout=False,
     )
-    torch.testing.assert_close(first, expected)
-    torch.testing.assert_close(second, expected)
-    assert torch.equal(torch.get_rng_state(), rng_state)
+    q_values, _ = context.model(
+        forward_type=PrefixForwardType.CRITIC,
+        obs=batch["curr_obs"],
+        actions=actions,
+    )
+    torch.testing.assert_close(loss, -q_values[..., 0].mean())
+    assert torch.equal(torch.get_rng_state(), rng_after_loss)
+    assert torch.equal(rng_after_loss, rng_state) is (not sample_actions)
 
 
 @pytest.mark.parametrize("raw", [-1.2, 1.2])

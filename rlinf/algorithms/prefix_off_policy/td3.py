@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Any
 
 import torch
@@ -31,17 +32,53 @@ from rlinf.models.embodiment.prefix.types import PrefixForwardType
 
 @register_prefix_off_policy_algorithm("td3")
 class PrefixTD3Algorithm(PrefixOffPolicyAlgorithm):
-    """TD3 semantics over a configurable prefix policy."""
+    """RLT fixed-variance policy learning with TD3 critics and delayed updates."""
 
     requirements = PrefixAlgorithmRequirements(
         actor_distribution="deterministic",
         requires_action_noise=True,
         uses_target_actor=True,
+        delayed_policy_updates=True,
     )
 
     def __init__(self, cfg: Any) -> None:
         super().__init__(cfg)
-        self.actor_agg_q = self._configured_actor_agg_q(default="min")
+        self.actor_agg_q = self._configured_actor_agg_q(default="q1")
+        self.target_policy_noise = float(
+            cfg.algorithm.get(
+                "target_policy_noise",
+                cfg.actor.model.actor_head.get("noise_sigma", 0.1),
+            )
+        )
+        self.target_noise_clip = float(cfg.algorithm.get("target_noise_clip", 0.5))
+        for name, value in (
+            ("target_policy_noise", self.target_policy_noise),
+            ("target_noise_clip", self.target_noise_clip),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(
+                    f"algorithm.{name} must be finite and nonnegative, got {value}."
+                )
+
+        policy_delay = cfg.algorithm.get("critic_actor_ratio", 2)
+        if policy_delay < 1 or int(policy_delay) != policy_delay:
+            raise ValueError(
+                "algorithm.critic_actor_ratio must be a positive integer, "
+                f"got {policy_delay}."
+            )
+        target_update_freq = cfg.algorithm.get("target_update_freq", policy_delay)
+        if target_update_freq != policy_delay:
+            raise ValueError(
+                "TD3 updates targets with the delayed actor; expected "
+                "algorithm.target_update_freq to equal critic_actor_ratio="
+                f"{policy_delay}, got {target_update_freq}."
+            )
+        target_update_type = cfg.algorithm.get("target_update_type", "all")
+        if target_update_type != "all":
+            raise ValueError(
+                "TD3 updates both target networks; expected "
+                f"algorithm.target_update_type='all', got {target_update_type!r}."
+            )
 
     def actor_loss(
         self,
@@ -66,11 +103,16 @@ class PrefixTD3Algorithm(PrefixOffPolicyAlgorithm):
         context: PrefixOffPolicyContext,
         next_obs: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        """Return noise-free next-state actions from the target actor."""
+        """Return target-actor actions with clipped target policy smoothing."""
         actions, _, _ = context.target_model(
             forward_type=PrefixForwardType.ACTOR,
             obs=next_obs,
             deterministic=True,
             apply_action_noise=False,
         )
+        if self.target_policy_noise > 0 and self.target_noise_clip > 0:
+            noise = (torch.randn_like(actions) * self.target_policy_noise).clamp(
+                -self.target_noise_clip, self.target_noise_clip
+            )
+            actions = (actions + noise).clamp(-1.0, 1.0)
         return actions

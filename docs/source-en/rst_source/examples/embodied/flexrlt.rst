@@ -310,12 +310,12 @@ AC and TD3 are two ways to update the actor and critic, and they need different 
      - ``deterministic_mlp``
    * - ``algorithm.actor_agg_q``
      - ``q1``
-     - ``min``, ``q1``, or ``mean``
+     - ``q1``
    * - ``actor.model.critic_head.name``
      - ``multi_q_mlp`` with ``num_q_heads: 2``
      - ``twin_q_mlp``
 
-AC uses a stochastic actor. Its preset sets ``fixed_std: 0.002``, the fixed standard deviation. TD3 uses a deterministic actor with action noise. Its preset sets ``noise_sigma: 0.1``. Copy the head block from the matching preset when you switch, including those scales.
+AC uses a stochastic actor. Its preset sets ``fixed_std: 0.002``, the fixed standard deviation. The TD3 preset follows the `RLT paper <https://arxiv.org/html/2604.23073>`_ by sampling fixed-variance Gaussian actions during both rollout and actor updates, with ``noise_sigma: 0.1``. Actor updates optimize Q1 while retaining BC and reference dropout. Target policy smoothing uses one clipped Gaussian sample, with ``algorithm.target_policy_noise: 0.1`` and ``algorithm.target_noise_clip: 0.5``. The actor and both target networks update together every two critic updates. Copy the head block from the matching preset when you switch, including those scales.
 
 Both algorithms keep ``algorithm.entropy_tuning.alpha_type: fixed_alpha``, so the entropy temperature stays at the configured value and is not learned. The critic target uses the smaller of the first two Q estimates, so leave ``algorithm.agg_q`` unset or set it to ``min``. ``actor_agg_q`` is separate: it chooses how Q values are combined when the actor is updated. AC accepts only ``q1``.
 
@@ -378,7 +378,7 @@ From the repository root, with the model paths already set:
 
 This preset routes with the environment geometry gate, turns on ``collect_phase_features`` and ``algorithm.rlt_gate_calibration.enable``, and writes features, geometry labels, and diagnostics to ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``. Each launch creates ``<run_log_dir>`` under ``logs/``.
 
-Twenty steps only check that collection works. Once both positive and negative geometry labels appear, you can fit a first phase head. That short run does not finish the training preset's 3,000 warmup updates, and it does not validate expert takeover. Replace ``/path/to/run_log_dir`` with the log directory from this launch. ``CHECKPOINT_ROOT`` is the model directory from the download section.
+Twenty steps check that collection works. Once both positive and negative geometry labels appear, you can fit a first phase head. The calibration preset routes with the environment geometry gate and keeps the expert gate in shadow mode. After fitting the gates, use the training preset to check phase-head routing and actual expert takeover. Replace ``/path/to/run_log_dir`` with the log directory from this launch. ``CHECKPOINT_ROOT`` is the model directory from the download section.
 
 .. code:: bash
 

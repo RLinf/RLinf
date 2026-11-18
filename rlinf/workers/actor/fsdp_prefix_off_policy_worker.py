@@ -58,8 +58,18 @@ class PrefixOffPolicyRuntime:
     def setup_sac_components(self) -> None:
         """Initialize shared replay storage, then attach Prefix services."""
         super().setup_sac_components()
+        if self.algorithm_component.requirements.delayed_policy_updates:
+            self.critic_actor_ratio = self.cfg.algorithm.get("critic_actor_ratio", 2)
         self.replay_service.bind_buffers(self.replay_buffer, self.demo_buffer)
         self.update_schedule.configure_buffer_dataset(self.buffer_dataset)
+
+    def _get_update_flags(self, *, train_actor: bool) -> tuple[bool, bool]:
+        if self.algorithm_component.requirements.delayed_policy_updates:
+            update_actor = (
+                train_actor and (self.update_step + 1) % self.critic_actor_ratio == 0
+            )
+            return update_actor, update_actor
+        return super()._get_update_flags(train_actor=train_actor)
 
     def clip_optimizer_grad_norm(self, optimizer, max_norm):
         """Exclude gradients outside this optimizer from the FSDP global norm."""
@@ -197,7 +207,7 @@ class PrefixOffPolicyFSDPPolicy(PrefixOffPolicyRuntime, EmbodiedSACFSDPPolicy):
         critic_updates_run = 0
         actor_updates_run = 0
         for _ in range(plan.updates):
-            update_actor = self.update_step % int(self.critic_actor_ratio) == 0
+            update_actor, _ = self._get_update_flags(train_actor=True)
             append_to_dict(metrics, self.update_one_epoch(train_actor=True))
             self.update_step += 1
             critic_updates_run += 1
@@ -262,7 +272,7 @@ class AsyncPrefixOffPolicyFSDPPolicy(
         for _ in range(plan.updates):
             await asyncio.sleep(0)
             self._drain_received_trajectories(max_trajectories=max_trajectories)
-            update_actor = self.update_step % int(self.critic_actor_ratio) == 0
+            update_actor, _ = self._get_update_flags(train_actor=True)
             append_to_dict(metrics, self.update_one_epoch(train_actor=True))
             self.update_step += 1
             critic_updates_run += 1
