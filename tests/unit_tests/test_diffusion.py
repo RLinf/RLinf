@@ -103,7 +103,8 @@ def test_image_text_dataset_preprocessing_and_batches(tmp_path):
 
 
 @pytest.mark.parametrize("pre_weight", [0.0, 0.1, 0.01])
-def test_refl_config_composes(monkeypatch, pre_weight):
+@pytest.mark.parametrize("image_size,max_tokens", [(224, 35), (32, 7)])
+def test_refl_config_composes(monkeypatch, pre_weight, image_size, max_tokens):
     from hydra import compose, initialize_config_dir
 
     repo = Path(__file__).resolve().parents[2]
@@ -117,6 +118,8 @@ def test_refl_config_composes(monkeypatch, pre_weight):
             overrides=[
                 f"algorithm.refl_pre_loss_weight={pre_weight}",
                 "actor.refl_pre_data.num_workers=0",
+                f"actor.refl_reward_model.image_size={image_size}",
+                f"actor.refl_reward_model.max_tokens={max_tokens}",
                 "runner.max_epochs=200",
                 "runner.max_steps=200",
             ],
@@ -129,6 +132,10 @@ def test_refl_config_composes(monkeypatch, pre_weight):
     assert "refl_sampling" not in cfg.algorithm
     assert cfg.actor.model.sd3.rl_mode == "refl"
     assert cfg.actor.refl_reward_model.type == "image_reward"
+    assert cfg.actor.refl_reward_model.image_size == image_size
+    assert cfg.actor.refl_reward_model.max_tokens == max_tokens
+    assert cfg.env.eval.reward.image_size == image_size
+    assert cfg.env.eval.reward.max_tokens == max_tokens
     assert cfg.actor.refl_pre_data.num_workers == 0
     assert cfg.algorithm.refl_pre_loss_weight == pre_weight
     assert cfg.env.train is None
@@ -204,8 +211,10 @@ class _ExternalImageReward(torch.nn.Module):
         super().__init__()
         self.projection = torch.nn.Linear(3, 1)
         self.blip = SimpleNamespace(tokenizer=tokenizer)
+        self.image_shapes = []
 
     def score_gard(self, input_ids, attention_mask, pixels):
+        self.image_shapes.append(pixels.shape)
         return self.projection(pixels.mean(dim=(-2, -1)))
 
 
@@ -229,12 +238,14 @@ def image_reward_package(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("scorer_type", [None, "image_reward"])
+@pytest.mark.parametrize("preprocess_cfg", [{}, {"image_size": 32, "max_tokens": 7}])
 def test_image_reward_freezes_weights_but_preserves_image_gradients(
-    image_reward_package, scorer_type
+    image_reward_package, scorer_type, preprocess_cfg
 ):
     from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardBackend
 
     reward_cfg, external_model = image_reward_package
+    reward_cfg.update(preprocess_cfg)
     if scorer_type is not None:
         reward_cfg["type"] = scorer_type
     scorer = build_refl_scorer(reward_cfg, device="cpu")
@@ -249,14 +260,16 @@ def test_image_reward_freezes_weights_but_preserves_image_gradients(
     )
     torch.testing.assert_close(rewards, scorer.score(images, *tokens))
     assert rewards.shape == (2,)
-    assert tokens[0].shape == (2, 35)
+    assert tokens[0].shape == (2, preprocess_cfg.get("max_tokens", 35))
     rewards.sum().backward()
     assert images.grad is not None and images.grad.abs().sum() > 0
     assert all(
         not p.requires_grad and p.grad is None for p in external_model.parameters()
     )
 
-    backend = ImageRewardBackend(scorer, batch_size=1)
+    backend = ImageRewardBackend.from_config(
+        {**reward_cfg, "use_gpu": False, "batch_size": 1}
+    )
     scores = backend.score(
         np.full((2, 16, 16, 3), 128, dtype=np.uint8),
         [{"task_description": "a fox"}, {"task_description": "a cat"}],
@@ -265,6 +278,10 @@ def test_image_reward_freezes_weights_but_preserves_image_gradients(
     torch.testing.assert_close(scores["image_reward"], expected)
     torch.testing.assert_close(scores["avg"], expected)
     assert not scores["image_reward"].requires_grad
+    image_size = preprocess_cfg.get("image_size", 224)
+    assert all(
+        shape[-2:] == (image_size, image_size) for shape in external_model.image_shapes
+    )
 
 
 @pytest.fixture

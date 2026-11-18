@@ -24,6 +24,8 @@ reward:
   key: "avg"
   use_gpu: True
   batch_size: 32
+  image_size: 224
+  max_tokens: 35
   # ImageReward.pt and med_config.json from https://huggingface.co/THUDM/ImageReward.
   model_path: /path/to/ImageReward/ImageReward.pt
   med_config: /path/to/ImageReward/med_config.json

@@ -90,6 +90,8 @@ env:
       model_path: ${actor.refl_reward_model.model_path}
       med_config: ${actor.refl_reward_model.med_config}
       precision: ${actor.refl_reward_model.precision}
+      image_size: ${actor.refl_reward_model.image_size}
+      max_tokens: ${actor.refl_reward_model.max_tokens}
 
 rollout:
   group_name: "RolloutGroup"
@@ -128,6 +130,8 @@ actor:
     model_path: /path/to/ImageReward/ImageReward.pt
     med_config: /path/to/ImageReward/med_config.json
     precision: "bf16"
+    image_size: 224
+    max_tokens: 35
 
   # Read only when algorithm.refl_pre_loss_weight is above 0.
   refl_pre_data:

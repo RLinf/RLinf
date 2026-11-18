@@ -31,9 +31,6 @@ from rlinf.envs.sim.diffusion.rewards import ImageRewardBackendBase
 from rlinf.envs.sim.diffusion.utils import cfg_get, cfg_require
 from rlinf.scheduler import Worker
 
-REWARD_IMAGE_SIZE = 224
-REWARD_MAX_TOKENS = 35
-
 
 class ImageRewardScorer:
     """ImageReward scorer shared by the env reward and the ReFL actor.
@@ -48,22 +45,25 @@ class ImageRewardScorer:
         med_config: str,
         device: torch.device | str,
         precision: str = "bf16",
-    ):
+        image_size: int = 224,
+        max_tokens: int = 35,
+    ) -> None:
         import ImageReward as RM
 
         self.device = device
         self.dtype = torch_dtype_from_precision(precision)
+        self.max_tokens = max_tokens
         self.model = RM.load(model_path, device=device, med_config=med_config)
         self.model.requires_grad_(False)
         self.model.to(dtype=self.dtype)
         self.preprocess = Compose(
             [
                 Resize(
-                    REWARD_IMAGE_SIZE,
+                    image_size,
                     interpolation=InterpolationMode.BICUBIC,
                     antialias=True,
                 ),
-                CenterCrop(REWARD_IMAGE_SIZE),
+                CenterCrop(image_size),
                 Normalize(
                     (0.48145466, 0.4578275, 0.40821073),
                     (0.26862954, 0.26130258, 0.27577711),
@@ -78,6 +78,8 @@ class ImageRewardScorer:
             med_config=str(cfg_require(cfg, "med_config")),
             device=device,
             precision=str(cfg_get(cfg, "precision", "bf16")),
+            image_size=int(cfg_get(cfg, "image_size", 224)),
+            max_tokens=int(cfg_get(cfg, "max_tokens", 35)),
         )
 
     def tokenize(self, prompts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
@@ -85,7 +87,7 @@ class ImageRewardScorer:
             prompts,
             padding="max_length",
             truncation=True,
-            max_length=REWARD_MAX_TOKENS,
+            max_length=self.max_tokens,
             return_tensors="pt",
         ).to(self.device)
         return tokens.input_ids, tokens.attention_mask
