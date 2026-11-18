@@ -84,6 +84,8 @@ Launch one seed with the standard offline launcher:
 
 The default schedule is 1,000,000 updates at batch size 256, with 50 evaluation episodes every 50,000 updates and a checkpoint every 250,000 updates. The launcher writes the console log to ``logs/<timestamp>-ogbench_qam_offline/run_offline_rl.log`` and prints training and evaluation metrics there.
 
+The actor uses RLinf's ``fsdp`` training backend. The example keeps ``actor.use_fsdp_wrap=false`` for the native single-GPU performance path. Set ``actor.use_fsdp_wrap=true`` to wrap the QAM learner with FSDP and use per-rank batches for multi-GPU training. Keep the same value when resuming a checkpoint.
+
 For three independent seeds, run these commands sequentially:
 
 .. code-block:: bash

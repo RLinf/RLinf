@@ -84,6 +84,8 @@ QAM 的工作方式
 
 默认训练 1,000,000 次更新，batch size 为 256。每 50,000 次更新评估 50 个 episode，每 250,000 次更新保存 checkpoint。控制台日志位于 ``logs/<timestamp>-ogbench_qam_offline/run_offline_rl.log``\ ，其中会输出训练和评估指标。
 
+actor 使用 RLinf 的 ``fsdp`` training backend。示例默认将 ``actor.use_fsdp_wrap=false``，用于单卡原生路径的性能对照。设置 ``actor.use_fsdp_wrap=true`` 后，QAM learner 会使用 FSDP 封装和按 rank 划分的 batch，支持多卡训练。恢复 checkpoint 时请保持该选项与原训练一致。
+
 下面的命令依次训练三个独立 seed：
 
 .. code-block:: bash
