@@ -3472,7 +3472,7 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
         cfg.algorithm.rlt_gate_calibration.save_path
         == f"{cfg.runner.logger.log_path}/{cfg.runner.logger.experiment_name}/gate_calibration"
     )
-    assert cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 30000
+    assert cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 3000
     for mode in ("train", "eval"):
         switch = cfg.env[mode].rlt_policy_switch
         assert switch.routing_source == "environment"
@@ -3485,6 +3485,10 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
         "maniskill_prefix_stage2_td3_mlp_steam",
     )
     assert training_cfg.rollout.routing_gate.actor_switch.enable
+    assert training_cfg.algorithm.rlt_schedule.warmup_min_size == 1000
+    assert training_cfg.algorithm.rlt_schedule.warmup_post_collect_updates == 3000
+    assert training_cfg.runner.val_check_interval == 25
+    assert training_cfg.runner.save_interval == 500
     assert training_cfg.rollout.routing_gate.actor_switch.phase_head_path == (
         "/path/to/steam_phase_head.pt"
     )

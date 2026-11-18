@@ -192,7 +192,7 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
 训练进度
 ~~~~~~~~
 
-训练先收集数据，再完成预热更新。示例要求 replay 至少积累 10,00 条记录，并完成 30,00 次预热更新，之后才允许 actor 接管。是否进入关键阶段仍由 STEAM 判断。看到机器人继续执行 VLA 参考动作，只说明接管还没发生，不说明训练停了。
+训练先收集数据，再完成预热更新。示例要求 replay 至少积累 1,000 条记录，并完成 3,000 次预热更新，之后才允许 actor 接管。是否进入关键阶段仍由 STEAM 判断。看到机器人继续执行 VLA 参考动作，只说明接管还没发生，不说明训练停了。
 
 在所选日志后端里，进度指标带有 ``train/prefix/`` 前缀：
 
@@ -211,7 +211,7 @@ tokenizer 和 image processor 文件留在同一个 ``actor`` 目录。gate 从�
    * - ``train/prefix/ready_for_online``
      - 值为 ``1`` 表示预热条件已满足；actor 是否接管还取决于阶段 gate
 
-这些指标说明流程在推进，不代表任务已经学会。任务效果看定期评估里的成功率。这个 runner 把一次 rollout 加一次更新算作一个 step，本 preset 每个 epoch 走一个这样的 step。每 25 个 step 评估一次，每 50 个 step 保存一次 checkpoint，分别由 ``runner.val_check_interval`` 和 ``runner.save_interval`` 控制。保留训练 checkpoint，以及它所配套的 VLA checkpoint 和归一化文件，供以后恢复或评估。
+这些指标说明流程在推进，不代表任务已经学会。任务效果看定期评估里的成功率。这个 runner 把一次 rollout 加一次更新算作一个 step，本 preset 每个 epoch 走一个这样的 step。每 25 个 step 评估一次，每 500 个 step 保存一次 checkpoint，分别由 ``runner.val_check_interval`` 和 ``runner.save_interval`` 控制。保留训练 checkpoint，以及它所配套的 VLA checkpoint 和归一化文件，供以后恢复或评估。
 
 查看训练曲线
 ~~~~~~~~~~~~
@@ -378,7 +378,7 @@ critic 会考虑动作块内的奖励，以及动作块执行后状态的预计�
 
 该 preset 使用环境几何 gate 做路由，打开 ``collect_phase_features`` 和 ``algorithm.rlt_gate_calibration.enable``，把特征、几何标签和诊断信息写到 ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``。每次运行的 ``<run_log_dir>`` 位于 ``logs/`` 下。
 
-这 20 个 step 用来检查采集是否走通。出现正负几何标签后可以拟合初版 phase head，但这次短运行完不成训练 preset 的 30,000 次预热更新，也不能据此验证 expert 接管。把下面的 ``/path/to/run_log_dir`` 换成这次启动的日志目录。``CHECKPOINT_ROOT`` 仍是下载模型时的目录。
+这 20 个 step 用来检查采集是否走通。出现正负几何标签后可以拟合初版 phase head，但这次短运行完不成训练 preset 的 3,000 次预热更新，也不能据此验证 expert 接管。把下面的 ``/path/to/run_log_dir`` 换成这次启动的日志目录。``CHECKPOINT_ROOT`` 仍是下载模型时的目录。
 
 .. code:: bash
 

@@ -192,7 +192,7 @@ After launch, confirm that data collection and parameter updates are moving, the
 Training Progress
 ~~~~~~~~~~~~~~~~~
 
-The run first fills the replay buffer and finishes the warmup updates. The example waits for 10,00 replay records and 30,00 warmup updates before the actor may take over. STEAM still decides whether the task is in the critical phase. Seeing the robot continue to follow the VLA reference action does not mean training has stopped.
+The run first fills the replay buffer and finishes the warmup updates. The example waits for 1,000 replay records and 3,000 warmup updates before the actor may take over. STEAM still decides whether the task is in the critical phase. Seeing the robot continue to follow the VLA reference action does not mean training has stopped.
 
 In the logger you selected, the progress keys are prefixed with ``train/prefix/``:
 
@@ -211,7 +211,7 @@ In the logger you selected, the progress keys are prefixed with ``train/prefix/`
    * - ``train/prefix/ready_for_online``
      - ``1`` means the warmup condition is met; the actor still waits for the stage gate
 
-These keys show that the loop is advancing. They do not show that the task has been learned. Use the periodic evaluation for task success. This runner counts one rollout-and-update cycle as one step, and the preset runs one such step per epoch. Evaluation runs every 25 steps and a checkpoint is saved every 50 steps, set by ``runner.val_check_interval`` and ``runner.save_interval``. Keep the training checkpoint together with the VLA checkpoint and normalization files it was trained against, so you can resume or evaluate later.
+These keys show that the loop is advancing. They do not show that the task has been learned. Use the periodic evaluation for task success. This runner counts one rollout-and-update cycle as one step, and the preset runs one such step per epoch. Evaluation runs every 25 steps and a checkpoint is saved every 500 steps, set by ``runner.val_check_interval`` and ``runner.save_interval``. Keep the training checkpoint together with the VLA checkpoint and normalization files it was trained against, so you can resume or evaluate later.
 
 View the Curves
 ~~~~~~~~~~~~~~~
@@ -378,7 +378,7 @@ From the repository root, with the model paths already set:
 
 This preset routes with the environment geometry gate, turns on ``collect_phase_features`` and ``algorithm.rlt_gate_calibration.enable``, and writes features, geometry labels, and diagnostics to ``<run_log_dir>/maniskill_prefix_stage2_td3_mlp_steam_calibration/gate_calibration/rank_<rank>/trace_*.pt``. Each launch creates ``<run_log_dir>`` under ``logs/``.
 
-Twenty steps only check that collection works. Once both positive and negative geometry labels appear, you can fit a first phase head. That short run does not finish the training preset's 30,000 warmup updates, and it does not validate expert takeover. Replace ``/path/to/run_log_dir`` with the log directory from this launch. ``CHECKPOINT_ROOT`` is the model directory from the download section.
+Twenty steps only check that collection works. Once both positive and negative geometry labels appear, you can fit a first phase head. That short run does not finish the training preset's 3,000 warmup updates, and it does not validate expert takeover. Replace ``/path/to/run_log_dir`` with the log directory from this launch. ``CHECKPOINT_ROOT`` is the model directory from the download section.
 
 .. code:: bash
 
