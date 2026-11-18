@@ -67,7 +67,7 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  backend: huggingface
+  rollout_backend: huggingface
   enable_offload: false
   pipeline_stage_num: 1
   # Retain the value head so RLinf PPO checkpoints reload without key changes.

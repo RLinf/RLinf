@@ -95,7 +95,7 @@ rollout:
     max_new_tokens: 7
 
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   gpu_memory_utilization: 0.5
   enforce_eager: True

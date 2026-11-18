@@ -72,7 +72,7 @@ rollout:
     max_new_tokens: 256
 
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   enable_offload: False
   pipeline_stage_num: 1

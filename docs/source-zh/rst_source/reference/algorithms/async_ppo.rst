@@ -264,7 +264,7 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
        max_steps_per_rollout_epoch: 80
 
    rollout:
-     backend: huggingface
+     rollout_backend: huggingface
      recompute_logprobs: True
      pipeline_stage_num: 1
 

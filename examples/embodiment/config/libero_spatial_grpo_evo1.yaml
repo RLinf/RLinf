@@ -111,7 +111,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False      # GRPO uses the rollout-time prev_logprobs
   unnorm_key: libero_10          # unused by Evo-1 (its Normalizer keys on arm/dataset_key)
   enable_offload: False
