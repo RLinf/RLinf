@@ -338,6 +338,11 @@ actor
      - Global seed for reproducibility.
    * - ``actor.enable_offload``
      - Offload the actor model to reduce memory usage.
+   * - ``actor.prefetch_micro_batches``
+     - Copy the next training micro-batch to the accelerator while the current
+       one computes, staged through two reusable pinned host buffers, so the
+       pinned footprint is two micro-batches whatever the rollout size. Default
+       ``True``; set ``False`` to copy each micro-batch synchronously.
 
 **Model Configuration**
 

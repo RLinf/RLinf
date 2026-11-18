@@ -44,6 +44,8 @@ from rlinf.utils.metric_utils import (
 )
 from rlinf.utils.nested_dict_process import (
     flatten_nested_tensor_time_batch,
+    iter_dict_chunks,
+    prefetch_to_device,
     process_nested_dict_for_adv,
     process_nested_dict_for_train,
     put_tensor_device,
@@ -119,6 +121,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        self.prefetch_micro_batches = self.cfg.actor.get("prefetch_micro_batches", True)
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
@@ -667,50 +670,39 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics = {}
         if self.cfg.algorithm.get("recompute_logprobs", False):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
+        # Global batches split evenly, so one flat split gives the same
+        # micro-batches in the same order as splitting each global batch.
+        num_micro_batches = (
+            rollout_size // batch_size_per_rank
+        ) * self.gradient_accumulation
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            rollout_dataloader_iter = split_dict_to_chunk(
-                self.rollout_batch,
-                rollout_size // batch_size_per_rank,
-            )
-            for train_global_batch in rollout_dataloader_iter:
-                # split batch into micro_batches
-                train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
-                assert (
-                    train_global_batch_size
-                    == self.cfg.actor.global_batch_size
-                    // torch.distributed.get_world_size()
+            micro_batches = iter_dict_chunks(self.rollout_batch, num_micro_batches)
+            if self.prefetch_micro_batches:
+                micro_batches = prefetch_to_device(
+                    micro_batches, self.device, self.torch_platform
                 )
-                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
+            for idx, micro_batch in enumerate(micro_batches):
+                is_last = (idx + 1) % self.gradient_accumulation == 0
+                if idx % self.gradient_accumulation == 0:
+                    self.optimizer.zero_grad()
+                self.train_micro_batch(
+                    micro_batch=micro_batch,
+                    metrics=metrics,
+                    is_last=is_last,
                 )
-
-                train_micro_batch = split_dict_to_chunk(
-                    train_global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
-                )
-
-                self.optimizer.zero_grad()
-                for idx, batch in enumerate(train_micro_batch):
-                    self.train_micro_batch(
-                        micro_batch=batch,
-                        metrics=metrics,
-                        is_last=(idx + 1) == self.gradient_accumulation,
-                    )
-                    # avoid gpu memory leak
-                    train_micro_batch[idx] = None
-                    del batch
-
-                self.torch_platform.empty_cache()
-
-                grad_norm, lr_list = self.optimizer_step()
-                data = {
-                    "actor/grad_norm": grad_norm,
-                    "actor/lr": lr_list[0],
-                }
-                if len(lr_list) > 1:
-                    data["critic/lr"] = lr_list[1]
-                append_to_dict(metrics, data)
+                # Release the device copy before the optimizer step.
+                del micro_batch
+                if is_last:
+                    self.torch_platform.empty_cache()
+                    grad_norm, lr_list = self.optimizer_step()
+                    data = {
+                        "actor/grad_norm": grad_norm,
+                        "actor/lr": lr_list[0],
+                    }
+                    if len(lr_list) > 1:
+                        data["critic/lr"] = lr_list[1]
+                    append_to_dict(metrics, data)
         # put LR scheduler step here
         self.lr_scheduler.step()
         self.optimizer.zero_grad()
