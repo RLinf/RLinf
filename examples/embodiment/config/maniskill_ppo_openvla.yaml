@@ -137,7 +137,8 @@ actor:
     critic_warmup_steps: 0
 
   # Override the default values in hybrid_engines/fsdp
-  # On >=80 GB GPUs, you can add `forward_prefetch: True` and `backward_prefetch: "pre"`
+  # On >=80 GB GPUs, you can set `use_orig_params: True` for block-level LoRA
+  # wrapping, and add `forward_prefetch: True` and `backward_prefetch: "pre"`
   # to overlap FSDP AllGather communication with layer compute.
   fsdp_config:
     strategy: "fsdp"

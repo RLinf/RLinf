@@ -40,6 +40,7 @@ from rlinf.hybrid_engines.fsdp import (
     FSDPModule,
 )
 from rlinf.hybrid_engines.fsdp.optim import (
+    build_adam,
     build_adamw,
     validate_adam_mixed_precision,
 )
@@ -307,12 +308,9 @@ class FSDPModelManager:
                 # PI0Pytorch.gradient_checkpointing_enable, which takes none.
                 module.gradient_checkpointing_enable()
             else:
-                try:
-                    module.gradient_checkpointing_enable(
-                        gradient_checkpointing_kwargs={"use_reentrant": use_reentrant}
-                    )
-                except TypeError:
-                    module.gradient_checkpointing_enable()
+                module.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": use_reentrant}
+                )
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
 
@@ -550,13 +548,6 @@ class FSDPModelManager:
             and all(param.is_cuda for param in params)
         )
 
-    @staticmethod
-    def _build_adam(param_groups: list[dict], *, fused: bool) -> Optimizer:
-        try:
-            return torch.optim.Adam(param_groups, fused=fused)
-        except (RuntimeError, TypeError):
-            return torch.optim.Adam(param_groups)
-
     def build_optimizer(
         self,
         model: Union[nn.Module, FSDPModule, FSDP],
@@ -714,7 +705,7 @@ class FSDPModelManager:
             main_optim_params.append(param)
 
         assert len(main_optim_params) > 0
-        main_optimizer = self._build_adam(
+        main_optimizer = build_adam(
             [
                 {
                     "params": main_optim_params,
@@ -733,7 +724,7 @@ class FSDPModelManager:
             )
         for key, params in filtered_params_dict.items():
             optimizers.append(
-                self._build_adam(
+                build_adam(
                     [
                         {
                             "params": params,

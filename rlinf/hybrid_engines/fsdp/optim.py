@@ -220,6 +220,28 @@ def validate_adam_mixed_precision(
         )
 
 
+def _build_torch_optimizer(
+    optimizer_cls: type[Optimizer],
+    params: Iterable[torch.Tensor] | Iterable[dict[str, Any]],
+    *,
+    fused: bool = False,
+    **kwargs: Any,
+) -> Optimizer:
+    try:
+        return optimizer_cls(params, fused=fused, **kwargs)
+    except (RuntimeError, TypeError):
+        return optimizer_cls(params, **kwargs)
+
+
+def build_adam(
+    params: Iterable[torch.Tensor] | Iterable[dict[str, Any]],
+    *,
+    fused: bool = False,
+) -> Optimizer:
+    """Build native Adam, falling back if ``fused`` is unsupported."""
+    return _build_torch_optimizer(torch.optim.Adam, params, fused=fused)
+
+
 def build_adamw(
     params: Iterable[torch.Tensor] | Iterable[dict[str, Any]],
     *,
@@ -236,9 +258,10 @@ def build_adamw(
     if use_fp32_master_params:
         return FP32MasterAdamW(params, eps=eps, weight_decay=weight_decay)
 
-    try:
-        return torch.optim.AdamW(
-            params, eps=eps, weight_decay=weight_decay, fused=fused
-        )
-    except (RuntimeError, TypeError):
-        return torch.optim.AdamW(params, eps=eps, weight_decay=weight_decay)
+    return _build_torch_optimizer(
+        torch.optim.AdamW,
+        params,
+        eps=eps,
+        weight_decay=weight_decay,
+        fused=fused,
+    )

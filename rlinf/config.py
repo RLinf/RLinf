@@ -571,7 +571,6 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "backward_prefetch", None
         )
         cfg.fsdp_config.use_orig_params = cfg.fsdp_config.get("use_orig_params", False)
-        is_lora = bool(OmegaConf.select(cfg, "model.is_lora", default=False))
         if (
             model_type is not None
             and str(model_type) == SupportedModel.OPENPI.value
@@ -587,23 +586,6 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
                 "openpi requires actor.fsdp_config.use_orig_params=True "
                 "because dual-expert Gemma Block mixes frozen and trainable "
                 "parameters. Overriding use_orig_params=False to True."
-            )
-            cfg.fsdp_config.use_orig_params = True
-        elif (
-            cfg.fsdp_config.strategy == "fsdp"
-            and not cfg.fsdp_config.use_orig_params
-            and (
-                is_lora
-                or (
-                    model_type is not None
-                    and str(model_type) == SupportedModel.PI0_FAST.value
-                )
-            )
-        ):
-            logging.info(
-                "Enabling actor.fsdp_config.use_orig_params=True so FSDP1 "
-                "can wrap frozen base weights and trainable adapter parameters "
-                "at transformer-layer granularity."
             )
             cfg.fsdp_config.use_orig_params = True
         cfg.fsdp_config.use_liger_kernel = cfg.fsdp_config.get(

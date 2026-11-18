@@ -1328,21 +1328,24 @@ class _ToyPeftWrapper(nn.Module):
 
 
 @pytest.mark.parametrize(
-    ("model_cfg", "expected_orig_params"),
+    ("model_cfg", "fsdp_overrides", "expected_orig_params"),
     [
-        ({"model_type": "qwen2.5", "is_lora": True}, True),
-        ({"model_type": "pi0_fast", "is_lora": False}, True),
-        ({"model_type": "qwen2.5", "is_lora": False}, False),
+        ({"model_type": "qwen2.5", "is_lora": True}, {}, False),
+        ({"model_type": "openvla", "is_lora": True}, {}, False),
+        ({"model_type": "openvla", "is_lora": True}, {"use_orig_params": True}, True),
+        ({"model_type": "pi0_fast", "is_lora": False}, {}, False),
+        ({"model_type": "pi0_fast", "is_lora": False}, {"use_orig_params": True}, True),
+        ({"model_type": "qwen2.5", "is_lora": False}, {}, False),
     ],
 )
-def test_validate_fsdp_cfg_enables_use_orig_params_for_lora_and_pi0_fast(
-    model_cfg, expected_orig_params
+def test_validate_fsdp_cfg_keeps_use_orig_params_opt_in_for_lora_and_pi0_fast(
+    model_cfg, fsdp_overrides, expected_orig_params
 ):
     validated = validate_fsdp_cfg(
         OmegaConf.create(
             {
                 "model": model_cfg,
-                "fsdp_config": {"mixed_precision": {}},
+                "fsdp_config": {"mixed_precision": {}, **fsdp_overrides},
             }
         )
     )
@@ -1356,14 +1359,25 @@ def test_lora_wrap_policy_unwraps_peft_base_and_wraps_coarse_layers():
     from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 
     uniform_peft = _ToyPeftWrapper(_ToyVLAModel(adapter_dtype=torch.bfloat16))
+    layer0 = uniform_peft.base_model.language_model.layers[0]
+    vis0 = uniform_peft.base_model.visual.blocks[0]
+
+    default_policy = get_fsdp_wrap_policy(
+        module=uniform_peft,
+        config=OmegaConf.create({"use_orig_params": False}),
+        is_lora=True,
+        model_type="qwen2.5",
+    )
+    assert default_policy is not None
+    assert default_policy(module=layer0.lora_a, recurse=False, nonwrapped_numel=16)
+    assert default_policy(module=layer0, recurse=False, nonwrapped_numel=64)
+
     policy = get_fsdp_wrap_policy(
         module=uniform_peft,
         config=OmegaConf.create({"use_orig_params": True}),
         is_lora=True,
         model_type="qwen2.5",
     )
-    layer0 = uniform_peft.base_model.language_model.layers[0]
-    vis0 = uniform_peft.base_model.visual.blocks[0]
     assert policy is not None
     assert policy(module=layer0, recurse=False, nonwrapped_numel=80)
     assert policy(module=vis0, recurse=False, nonwrapped_numel=64)
@@ -1476,3 +1490,22 @@ def test_no_shard_uses_single_root_unit_and_ignores_frozen_backbone(monkeypatch)
     )
     assert full_shard_kwargs["auto_wrap_policy"] is not None
     assert full_shard_kwargs["ignored_states"] is None
+
+
+def test_build_adam_and_adamw_fall_back_when_fused_is_unsupported():
+    from rlinf.hybrid_engines.fsdp.optim import build_adam, build_adamw
+
+    weight = nn.Parameter(torch.ones(4))
+    adam = build_adam([{"params": [weight], "lr": 0.1}], fused=False)
+    assert isinstance(adam, torch.optim.Adam)
+    weight.grad = torch.ones_like(weight)
+    adam.step()
+    assert torch.all(weight < 1.0)
+
+    meta_weight = nn.Parameter(torch.ones(4, device="meta"))
+    adam_fallback = build_adam([meta_weight], fused=True)
+    adamw_fallback = build_adamw([meta_weight], eps=1e-8, weight_decay=0.01, fused=True)
+    assert isinstance(adam_fallback, torch.optim.Adam)
+    assert isinstance(adamw_fallback, torch.optim.AdamW)
+    assert not adam_fallback.defaults.get("fused", False)
+    assert not adamw_fallback.defaults.get("fused", False)

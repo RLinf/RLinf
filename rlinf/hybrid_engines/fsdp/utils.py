@@ -484,11 +484,9 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
         policies.append(lambda_policy)
 
-    # With use_orig_params=True and uniform parameter dtype, coarse layer policies
-    # already wrap frozen base weights and trainable LoRA adapters together without
-    # creating hundreds of tiny per-adapter collectives. Fall back to leaf wrapping
-    # only when use_orig_params is disabled, no coarse policy matched, or adapter
-    # dtypes differ from frozen base weights.
+    # Keep LoRA adapters in separate leaf units by default so frozen base blocks do
+    # not allocate gradients; opt into block-level wrapping only with use_orig_params=True
+    # and uniform floating dtypes.
     use_coarse_lora_layers = (
         bool(config.get("use_orig_params", False))
         and len(policies) > 0

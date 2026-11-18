@@ -14,7 +14,8 @@ reshard_after_forward: True   # if True, FSDP2 will reshard parameters after for
 enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
 # Communication prefetching: kept off by default to minimize peak GPU memory on 24-40 GB GPUs.
 # On >=80 GB GPUs with sharded training ("full_shard" / "shard_grad_op"), set
-# `forward_prefetch: True` and `backward_prefetch: "pre"` to overlap NCCL AllGather with compute.
+# `forward_prefetch: True` and `backward_prefetch: "pre"` to overlap NCCL AllGather with compute,
+# and set `use_orig_params: True` on LoRA models to opt into transformer-block wrapping.
 forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
 limit_all_gathers: True             # if True, FSDP synchronizes CPU threads to cap concurrent in-flight all-gathers and prevent memory spikes when prefetching is enabled.
 backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
