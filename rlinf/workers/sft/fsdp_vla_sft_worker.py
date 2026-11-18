@@ -37,7 +37,15 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.OPENPI:
+        if model_type == SupportedModel.GR00T_N1D7:
+            from rlinf.models.embodiment.gr00t.gr00t_n1d7.sft_builder import (
+                build_gr00t_sft_dataloader,
+            )
+
+            return build_gr00t_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
+        elif model_type == SupportedModel.OPENPI:
             from rlinf.data.datasets.openpi import (
                 build_openpi_sft_dataloader,
             )
@@ -144,9 +152,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def _load_data_checkpoint(self, load_path: str) -> None:
         """Restore data order before the RNG state used by the next model forward."""
         if isinstance(self.data_loader, StatefulDataLoader):
-            all_states = torch.load(
-                os.path.join(load_path, "data.pt"), weights_only=False
-            )
+            data_path = os.path.join(load_path, "data.pt")
+            if not os.path.exists(data_path):
+                raise FileNotFoundError(
+                    f"Data loader state is missing: {data_path}. "
+                    "A checkpoint saved before using StatefulDataLoader cannot "
+                    "restore the data position."
+                )
+            all_states = torch.load(data_path, weights_only=False)
             state = all_states[self._rank]
             self._data_epoch = state.pop("_rlinf_data_epoch", 0)
             forward_set_epoch(self.data_loader, self._data_epoch)
@@ -160,10 +173,18 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
             torch.distributed.barrier()
 
-    def get_max_steps_per_epoch(self):
+    def get_max_steps_per_epoch(self) -> int | None:
         if self.data_loader is None:
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.GR00T_N1D7:
+            from rlinf.models.embodiment.gr00t.gr00t_n1d7.sft_builder import (
+                Gr00tSftDataLoader,
+            )
+
+            if isinstance(self.data_loader, Gr00tSftDataLoader):
+                return None
+
         if model_type == SupportedModel.OPENPI:
             from rlinf.data.datasets.openpi import (
                 get_official_openpi_sft_num_batches,

@@ -1,0 +1,95 @@
+# Requires GR00T N1.7 weights, LIBERO Spatial data, and two supported accelerators.
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/sft/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-1
+
+runner:
+  task_type: sft
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: gr00t_n1d7_spatial_sft
+    logger_backends: [tensorboard]
+  max_epochs: -1
+  max_steps: 2
+  val_check_interval: -1
+  save_interval: 1
+  resume_dir: null
+
+data:
+  train_data_paths: ${oc.env:GR00T_SFT_DATA_PATH}
+  num_workers: 0
+  gr00t:
+    seed: 42
+    video_backend: torchcodec
+    shard_size: 64
+    episode_sampling_rate: 0.1
+    num_shards_per_epoch: 16
+    override_pretraining_statistics: true
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: 2
+  seed: 42
+  enable_offload: false
+  model:
+    model_type: gr00t_n1d7
+    task: sft
+    load_to_device: false
+    precision: fp32
+    rope_buffer_dtype: bf16
+    model_path: ${oc.env:GR00T_SFT_MODEL_PATH}
+    backbone_model_path: ${oc.env:GR00T_SFT_BACKBONE_PATH}
+    embodiment_tag: libero_sim
+    add_value_head: false
+    is_lora: false
+    gr00t_sft:
+      tune_llm: false
+      tune_visual: false
+      tune_projector: true
+      tune_diffusion_model: true
+      tune_vlln: true
+      state_dropout_prob: 0.2
+      use_flash_attention: true
+      color_jitter_params:
+        brightness: 0.3
+        contrast: 0.4
+        saturation: 0.5
+        hue: 0.08
+  optim:
+    lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: cosine
+    lr_warmup_steps: 0
+    total_training_steps: 2
+  fsdp_config:
+    strategy: fsdp2
+    sharding_strategy: full_shard
+    use_orig_params: true
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: bf16
+    save_full_model_weights: true

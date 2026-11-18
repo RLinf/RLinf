@@ -18,11 +18,12 @@ import logging
 import math
 import os
 from dataclasses import asdict
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
 import torch.nn.functional as F
-from omegaconf import OmegaConf, open_dict
+from omegaconf import ListConfig, OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
 # Register built-in physical robots before parsing cluster hardware configs.
@@ -1925,6 +1926,69 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _gr00t_sft_local_dir(value: str | None, field: str, *required_files: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must name a local directory, got {value!r}")
+    path = Path(value).expanduser()
+    if not path.is_dir():
+        raise FileNotFoundError(f"{field} must name an existing directory: {path}")
+    for required_file in required_files:
+        if not (path / required_file).is_file():
+            raise FileNotFoundError(f"{field} is missing {path / required_file}")
+    return str(path)
+
+
+def _validate_gr00t_sft_cfg(cfg: DictConfig) -> None:
+    if cfg.data.get("val_data_paths") is not None:
+        raise ValueError("GR00T SFT does not support validation datasets")
+    max_steps = cfg.runner.get("max_steps", -1)
+    if max_steps <= 0:
+        raise ValueError("GR00T SFT requires runner.max_steps > 0")
+
+    model = cfg.actor.model
+    if torch_dtype_from_precision(model.get("precision")) != torch.float32:
+        raise ValueError(
+            "GR00T SFT requires FP32 master parameters (actor.model.precision=fp32)"
+        )
+
+    model.model_path = _gr00t_sft_local_dir(
+        model.get("model_path"), "actor.model.model_path", "config.json"
+    )
+    model.backbone_model_path = _gr00t_sft_local_dir(
+        model.get("backbone_model_path"),
+        "actor.model.backbone_model_path",
+        "config.json",
+    )
+
+    paths = cfg.data.get("train_data_paths")
+    if isinstance(paths, (list, ListConfig)):
+        if not paths:
+            raise ValueError(
+                "data.train_data_paths requires at least one local dataset"
+            )
+        cfg.data.train_data_paths = [
+            _gr00t_sft_local_dir(
+                path,
+                f"data.train_data_paths[{index}]",
+                "meta/info.json",
+                "meta/modality.json",
+            )
+            for index, path in enumerate(paths)
+        ]
+    else:
+        cfg.data.train_data_paths = _gr00t_sft_local_dir(
+            paths, "data.train_data_paths", "meta/info.json", "meta/modality.json"
+        )
+
+    optim_cfg = cfg.actor.get("optim")
+    if (
+        optim_cfg is not None
+        and "total_training_steps" in optim_cfg
+        and optim_cfg.total_training_steps is None
+    ):
+        optim_cfg.total_training_steps = max_steps
+
+
 def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.get("global_batch_size", None) is not None, (
         "the actor.global_batch_size is not set"
@@ -1934,6 +1998,10 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     )
 
     with open_dict(cfg):
+        model_type = SupportedModel(cfg.actor.model.get("model_type"))
+        if model_type == SupportedModel.GR00T_N1D7:
+            _validate_gr00t_sft_cfg(cfg)
+
         if cfg.data.get("train_data_paths", None) is None:
             # if train_data_paths is None, the code will just eval the model
             assert cfg.data.get("val_data_paths", None) is not None, (
@@ -1947,8 +2015,7 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             # set the val_check_interval to -1 if there is no eval data or is not set
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
 
-        model_type = cfg.actor.model.get("model_type", None)
-        if SupportedModel(model_type) == SupportedModel.OPENPI:
+        if model_type == SupportedModel.OPENPI:
             openpi_cfg = cfg.actor.model.openpi
             history_cfg = cfg.data.get("short_memory")
             if openpi_cfg.get("short_memory", False):
@@ -1961,14 +2028,14 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
                     "OpenPI use_rlt=True requires the RLT loader; "
                     "got short_memory enabled in the model or data configuration."
                 )
-        elif SupportedModel(model_type) == SupportedModel.DREAMZERO:
+        elif model_type == SupportedModel.DREAMZERO:
             from rlinf.models.embodiment.dreamzero.dreamzero_config import (
                 validate_dreamzero_sft_model_cfg,
             )
 
             cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
 
-        elif SupportedModel(model_type) == SupportedModel.COSMOS3:
+        elif model_type == SupportedModel.COSMOS3:
             from rlinf.models.embodiment.cosmos3.cosmos3_config import (
                 validate_cosmos3_sft_model_cfg,
             )

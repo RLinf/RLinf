@@ -1143,3 +1143,98 @@ def test_clear_stub_import_preserves_real_flash_attn_module():
     Patcher.clear_stub_import("flash_attn")
 
     assert sys.modules["flash_attn"] is real_flash_attn
+
+
+@pytest.mark.parametrize(
+    ("steps_per_epoch", "max_epochs", "max_steps", "expected_limit"),
+    [
+        (None, -1, 3, 3),
+        (None, 1, 3, None),
+        (None, -1, -1, None),
+        (8, 2, 30, 16),
+        (8, 20, -1, 160),
+    ],
+)
+def test_sft_runner_step_limits(steps_per_epoch, max_epochs, max_steps, expected_limit):
+    from rlinf.runners.sft_runner import SFTRunner
+
+    runner = SFTRunner.__new__(SFTRunner)
+    runner.cfg = OmegaConf.create(
+        {"runner": {"max_steps": max_steps, "max_epochs": max_epochs}}
+    )
+    runner.actor = SimpleNamespace(
+        get_max_steps_per_epoch=lambda: SimpleNamespace(wait=lambda: [steps_per_epoch])
+    )
+    runner.global_step = 8
+    if expected_limit is None:
+        with pytest.raises(ValueError, match="runner.max_steps > 0"):
+            runner.set_max_steps()
+    else:
+        runner.set_max_steps()
+        assert runner.max_steps == expected_limit
+        assert runner.epoch == (None if steps_per_epoch is None else 1)
+
+
+def test_gr00t_sft_init_keeps_rng_sequence(monkeypatch):
+    import torch
+
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    worker = FSDPVlaSftWorker.__new__(FSDPVlaSftWorker)
+    worker.cfg = OmegaConf.create(
+        {"actor": {"model": {"model_type": "gr00t_n1d7"}, "seed": 42, "optim": {}}}
+    )
+    worker._rank = 0
+    monkeypatch.setattr(worker, "setup_model_and_optimizer", lambda: torch.rand(1))
+    generator = torch.Generator().manual_seed(42)
+    expected = torch.rand(2, generator=generator)[1:]
+
+    with torch.random.fork_rng(devices=[]):
+        torch.random.default_generator.manual_seed(1)
+        worker.init_worker()
+        torch.testing.assert_close(torch.rand(1), expected, rtol=0, atol=0)
+
+
+def test_gr00t_sft_checkpoint_uses_shared_loader_and_rng_state(monkeypatch, tmp_path):
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.sft_builder import Gr00tSftDataLoader
+    from rlinf.workers.sft import fsdp_vla_sft_worker as vla
+
+    def make_worker():
+        worker = vla.FSDPVlaSftWorker.__new__(vla.FSDPVlaSftWorker)
+        worker.cfg = OmegaConf.create(
+            {"actor": {"model": {"model_type": "gr00t_n1d7"}}, "data": {}}
+        )
+        worker._rank = 0
+        worker._world_size = 1
+        worker._data_epoch = 0
+        worker.data_loader = Gr00tSftDataLoader(vla.torch.arange(5), batch_size=1)
+        worker.data_iter = iter(worker.data_loader)
+        return worker
+
+    monkeypatch.setattr(vla.FSDPSftWorker, "save_checkpoint", lambda *args: None)
+    monkeypatch.setattr(vla.FSDPSftWorker, "load_checkpoint", lambda *args: None)
+    monkeypatch.setattr(vla.torch.distributed, "barrier", lambda: None)
+    monkeypatch.setattr(
+        vla.torch.distributed,
+        "all_gather_object",
+        lambda states, state: states.__setitem__(0, state),
+    )
+    original_rng = vla.get_rng_state()
+    try:
+        worker = make_worker()
+        assert worker.get_max_steps_per_epoch() is None
+        assert next(worker.data_iter).item() == 0
+        worker.save_checkpoint(str(tmp_path), step=1)
+        assert (tmp_path / "rng.pt").is_file()
+        assert (tmp_path / "data.pt").is_file()
+
+        expected_batch = next(worker.data_iter)
+        expected_random = vla.torch.rand(3)
+        restored = make_worker()
+        restored.load_checkpoint(str(tmp_path))
+        vla.torch.testing.assert_close(next(restored.data_iter), expected_batch)
+        vla.torch.testing.assert_close(
+            vla.torch.rand(3), expected_random, rtol=0, atol=0
+        )
+    finally:
+        vla.set_rng_state(original_rng)

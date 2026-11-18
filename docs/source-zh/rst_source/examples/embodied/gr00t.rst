@@ -667,6 +667,108 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
 
 将 ``rollout.model.model_path`` 指向同一 checkpoint，再通过 ``run_embodiment.sh`` 启动保存后的配置。环境的 action shape 与 normalization statistics 必须和 checkpoint metadata 一致。
 
+用 LIBERO Spatial 数据微调 GR00T N1.7
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+示例通过 ``actor.model.task: sft`` 选择监督训练的 action head。省略 ``task`` 时，GR00T N1.7 兼容旧配置中的 ``training_mode``，两个字段均未设置时默认使用 ``rl``。
+
+使用官方 processor、分片采样器、相对动作归一化和带 mask 的 flow-matching loss，在 LIBERO Spatial 数据集上训练 GR00T N1.7。示例使用 FSDP2，主参数为 FP32，计算和通信使用 BF16；语言和视觉 backbone 冻结，按配置训练 action head。
+
+示例通过 ``actor.model.rope_buffer_dtype: bf16`` 对齐参考训练路径。Qwen3-VL 以 FP32 生成视觉和语言的 ``inv_freq`` buffer，随后 GR00T SFT 将两者转为 BF16。使用旧版 GR00T SFT 配置时，将 ``actor.fsdp_config.mixed_precision.buffer_dtype`` 的值迁移到此模型选项。
+
+``state_dropout_prob`` 等共享选项只需在 ``actor.model.gr00t_sft`` 中设置一次，模型和 processor 使用相同的默认值与覆盖值。``color_jitter_params`` 等 processor 选项也在此处配置。GR00T SFT 要求 ``load_bf16: false`` 和 ``backbone_trainable_params_fp32: true``，使可训练的主参数保持 FP32。
+
+**NVIDIA CUDA**
+
+在 RLinf 仓库根目录用 N1.7 PPO 示例的镜像启动容器。镜像内的 Isaac-GR00T 对应提交 ``23ace64``\ 。挂载仓库目录后，训练日志和 checkpoint 保存在宿主机。
+
+.. code-block:: bash
+
+   docker run --rm -it --gpus all --shm-size=20g --network host \
+     -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
+     rlinf/rlinf:agentic-rlinf0.4-maniskill_libero@sha256:b5563d95f681478555c4af63ca988b19d1a113306dbdee15a79fff47d320b5cb bash
+
+在容器内切换到 GR00T N1.7 环境。
+
+.. code-block:: bash
+
+   source switch_env gr00t_n1d7
+
+**昆仑 XPU**
+
+在昆仑容器内进入仓库根目录，安装并激活 GR00T N1.7 环境。
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero --platform kunlun
+   source .venv/bin/activate
+
+**准备权重和数据集**
+
+下载前在 Hugging Face 接受 `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ 的访问条款。在仓库根目录下载基础权重、Cosmos backbone 和 LeRobot v2.1 格式的 LIBERO Spatial 示范数据。将 Isaac-GR00T 的 LIBERO 模态映射文件 ``modality.json`` 保存到数据集的 ``meta`` 目录。
+
+.. code-block:: bash
+
+   hf auth login
+   hf download nvidia/GR00T-N1.7-3B --local-dir checkpoints/GR00T-N1.7-3B
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+     --local-dir datasets/libero_spatial_no_noops_1.0.0_lerobot
+   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
+     -o datasets/libero_spatial_no_noops_1.0.0_lerobot/meta/modality.json
+
+**配置并启动训练**
+
+在 ``examples/sft/config/libero_sft_gr00t_n1d7.yaml`` 中填写基础权重、backbone 和数据集的路径。已有这些文件时，填写容器内的实际路径。
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: ./checkpoints/GR00T-N1.7-3B
+       backbone_model_path: ./checkpoints/Cosmos-Reason2-2B
+   data:
+     train_data_paths: ./datasets/libero_spatial_no_noops_1.0.0_lerobot
+
+配置默认使用 0、1 号卡。按实际分配的卡号修改 ``cluster.component_placement``\ ，按可用显存调整 ``actor.micro_batch_size``\ 。将 ``actor.global_batch_size`` 设为单卡 microbatch size 乘以训练卡数的整数倍。
+
+在昆仑平台上，用 OSMesa 在 CPU 上渲染，在 XPU 上训练模型。
+
+.. code-block:: bash
+
+   export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+
+在仓库根目录启动训练。
+
+.. code-block:: bash
+
+   export RAY_ADDRESS=local HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+   bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
+
+默认执行 20,000 次优化器更新，每 1,000 步保存一个 checkpoint。在终端查看 ``Global Step`` 了解训练进度。最终 checkpoint 位于 ``logs/`` 下本次运行的时间戳目录内，相对路径为 ``gr00t_n1d7_spatial_sft/checkpoints/global_step_20000/actor``\ 。
+
+RLinf AdamW 对所有可训练参数应用权重衰减。Isaac-GR00T 会排除偏置和部分归一化参数。
+
+从头训练时，RLinf 使用 worker 初始化结束时的 RNG 状态。Isaac-GR00T 在构建模型后创建 Trainer 时会再设一次 seed，因此即使数据 seed 相同，两边在训练中抽取的随机数也可能不同。数据分片的采样顺序由 ``data.gr00t.seed`` 决定。
+
+GR00T 持续读取数据分片。将 ``runner.max_steps`` 设为正数，以优化器更新次数为训练上限，并将 ``runner.max_epochs`` 设为 ``-1``。
+
+每个 ``checkpoints/global_step_<N>/actor`` 目录保存分布式训练 checkpoint、各 rank 的数据游标 ``data.pt`` 和训练 RNG 状态 ``rng.pt``。将 ``runner.resume_dir`` 指向 ``global_step_<N>`` 目录即可续训。使用此 loader 生成的 checkpoint，并沿用相同的数据集、采样配置、rank 数、data worker 数和 microbatch 大小。RLinf 从各 rank 尚未消费的下一个样本继续读取。Isaac-GR00T 使用原始数据 seed 加恢复步数生成新的采样顺序。RLinf 会重新构建预取的数据，恢复后的样本可能应用不同的随机增强。启用完整权重保存时，checkpoint 还包含 ``model_state_dict/full_weights.pt``。训练使用的 processor 和统计信息保存在 ``<log_path>/<experiment_name>/gr00t/rank_0/processor``。checkpoint 由用户自行清理。
+
+需要供推理或 RL 使用的 Hugging Face checkpoint 时，使用同一次训练的完整权重和 processor 执行导出。输出目录必须尚不存在：
+
+.. code-block:: bash
+
+   python toolkits/gr00t/export_sft.py \
+     --weights /path/to/actor/model_state_dict/full_weights.pt \
+     --base-model /path/to/GR00T-N1.7-3B \
+     --processor /path/to/gr00t/rank_0/processor \
+     --output /path/to/new-hf-checkpoint
+
+导出后，使用该目录运行 :ref:`LIBERO 闭环评测 <libero-gr00t-n1d7-sft-eval>`\ 。
+
+固定 batch 的 loss 和梯度对照可运行 ``PYTHONPATH=. python toolkits/gr00t/verify_sft.py``，传入 ``--batch``、``--model-path``、``--backbone-model-path`` 和 ``--output``。该工具按 RLinf 的 weight decay 规则比较单步更新。LIBERO 闭环评估需要另行执行。
+
 可视化与结果
 ----------------------------------------
 

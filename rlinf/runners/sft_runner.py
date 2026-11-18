@@ -201,6 +201,14 @@ class SFTRunner:
         self.num_steps_per_epoch = self.actor.get_max_steps_per_epoch().wait()[0]
         max_epochs = self.cfg.runner.get("max_epochs", -1)
         max_steps = self.cfg.runner.get("max_steps", -1)
+        if self.num_steps_per_epoch is None:
+            if max_epochs > 0 or max_steps <= 0:
+                raise ValueError(
+                    "SFT data without a fixed epoch length requires "
+                    "runner.max_steps > 0 and runner.max_epochs <= 0"
+                )
+            self.max_steps = max_steps
+            return
 
         step_limits = []
         if max_epochs > 0:
@@ -213,5 +221,7 @@ class SFTRunner:
         self.max_steps = min(step_limits) if step_limits else self.num_steps_per_epoch
 
     @property
-    def epoch(self) -> int:
+    def epoch(self) -> int | None:
+        if self.num_steps_per_epoch is None:
+            return None
         return self.global_step // self.num_steps_per_epoch

@@ -754,17 +754,32 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
     def __init__(
         self,
         config: Gr00tN1d7Config,
-        rl_head_config: dict[str, Any],
-        embodiment_tag: Union[str, EmbodimentTag],
-        local_model_path: str,
+        rl_head_config: Optional[dict[str, Any]] = None,
+        embodiment_tag: Optional[Union[str, EmbodimentTag]] = None,
+        local_model_path: Optional[str] = None,
         modality_config: Optional[Any] = None,
         modality_transform: Optional[Any] = None,
         compute_dtype: torch.dtype = torch.bfloat16,
         denoising_steps: Optional[int] = None,
         obs_converter_type: str = "libero",
         output_action_chunks: int = 1,
+        sft_mode: bool = False,
         **kwargs,
     ):
+        self.sft_mode = sft_mode
+        if sft_mode:
+            loading_kwargs = kwargs.pop(
+                "transformers_loading_kwargs", {"trust_remote_code": True}
+            )
+            if kwargs:
+                raise ValueError(f"Unexpected SFT model options: {sorted(kwargs)}")
+            super().__init__(config, transformers_loading_kwargs=loading_kwargs)
+            return
+
+        if rl_head_config is None or embodiment_tag is None or local_model_path is None:
+            raise ValueError(
+                "RL initialization requires head config, embodiment and model path"
+            )
         if isinstance(embodiment_tag, str):
             self.embodiment_tag = EmbodimentTag(embodiment_tag)
         else:
@@ -906,8 +921,9 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         return modality_transform, modality_config
 
     def eval(self):
-        self._modality_transform.eval()
-        super().eval()
+        if not self.sft_mode:
+            self._modality_transform.eval()
+        return super().eval()
 
     @staticmethod
     def _check_state_is_batched(obs: dict[str, Any]) -> bool:
@@ -918,10 +934,19 @@ class GR00T_N1_7_ForRLActionPrediction(Gr00tN1d7, BasePolicy):
         return True
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
+        if forward_type == ForwardType.SFT:
+            if not self.sft_mode:
+                raise ValueError("SFT forward requires an SFT-initialized model")
+            return self.sft_forward(**kwargs)
+        if self.sft_mode:
+            raise ValueError("RL forward requires an RL-initialized model")
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def sft_forward(self, data: dict[str, Any]):
+        return Gr00tN1d7.forward(self, data["inputs"])
 
     def default_forward(
         self,

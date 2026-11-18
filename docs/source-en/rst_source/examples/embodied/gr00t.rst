@@ -691,6 +691,108 @@ Set ``rollout.model.model_path`` to the same checkpoint, then launch the saved
 config with ``run_embodiment.sh``. Match the environment's action shape and
 normalization statistics to the checkpoint metadata.
 
+Fine-Tune GR00T N1.7 on LIBERO Spatial
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The example selects the supervised action head with ``actor.model.task: sft``. When ``task`` is omitted, GR00T N1.7 accepts ``training_mode`` from older configurations and defaults to ``rl`` if neither field is set.
+
+Train GR00T N1.7 on the LIBERO Spatial dataset using the official processor, shard sampler, relative-action normalization, and masked flow-matching loss. The example uses FSDP2 with FP32 master parameters and BF16 compute and communication. The language and vision backbone are frozen; the configured action head components are trainable.
+
+The example sets ``actor.model.rope_buffer_dtype: bf16`` to match the reference training path. GR00T SFT casts the vision and language ``inv_freq`` buffers after Qwen3-VL generates them in FP32. For older GR00T SFT configurations, move the dtype from ``actor.fsdp_config.mixed_precision.buffer_dtype`` to this model option.
+
+Set shared SFT options such as ``state_dropout_prob`` once under ``actor.model.gr00t_sft``. The model and processor use the same defaults and overrides. Processor settings such as ``color_jitter_params`` also go in this mapping. GR00T SFT requires ``load_bf16: false`` and ``backbone_trainable_params_fp32: true`` to keep the trainable master parameters in FP32.
+
+**NVIDIA CUDA**
+
+From the RLinf repository root, start a container with the image used by the N1.7 PPO example. The image includes Isaac-GR00T at commit ``23ace64``. Mount the checkout to keep checkpoints and logs on the host.
+
+.. code-block:: bash
+
+   docker run --rm -it --gpus all --shm-size=20g --network host \
+     -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
+     rlinf/rlinf:agentic-rlinf0.4-maniskill_libero@sha256:b5563d95f681478555c4af63ca988b19d1a113306dbdee15a79fff47d320b5cb bash
+
+In the container, activate the GR00T N1.7 environment.
+
+.. code-block:: bash
+
+   source switch_env gr00t_n1d7
+
+**Kunlun XPU**
+
+In the Kunlun container, install and activate the GR00T N1.7 environment from the repository root.
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero --platform kunlun
+   source .venv/bin/activate
+
+**Prepare the weights and dataset**
+
+Accept the access terms for `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ on Hugging Face. From the repository root, download the base checkpoint, the Cosmos backbone, and the LIBERO Spatial demonstrations in LeRobot v2.1 format. Save Isaac-GR00T's LIBERO ``modality.json`` in the dataset's ``meta`` directory.
+
+.. code-block:: bash
+
+   hf auth login
+   hf download nvidia/GR00T-N1.7-3B --local-dir checkpoints/GR00T-N1.7-3B
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+     --local-dir datasets/libero_spatial_no_noops_1.0.0_lerobot
+   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
+     -o datasets/libero_spatial_no_noops_1.0.0_lerobot/meta/modality.json
+
+**Configure and run training**
+
+Set the base checkpoint, backbone, and dataset paths in ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. If you already have the weights and dataset, enter their locations inside the container.
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: ./checkpoints/GR00T-N1.7-3B
+       backbone_model_path: ./checkpoints/Cosmos-Reason2-2B
+   data:
+     train_data_paths: ./datasets/libero_spatial_no_noops_1.0.0_lerobot
+
+The default placement uses devices 0 and 1. Set ``cluster.component_placement`` to the allocated device IDs. Adjust ``actor.micro_batch_size`` to fit device memory. Set ``actor.global_batch_size`` to a multiple of the microbatch size times the number of actor devices.
+
+On Kunlun XPU, select OSMesa for CPU rendering. Training runs on the XPUs.
+
+.. code-block:: bash
+
+   export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+
+Launch training from the repository root.
+
+.. code-block:: bash
+
+   export RAY_ADDRESS=local HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+   bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
+
+By default, training runs for 20,000 optimizer steps and saves a checkpoint every 1,000 steps. Follow ``Global Step`` in the console. The final checkpoint is at ``gr00t_n1d7_spatial_sft/checkpoints/global_step_20000/actor`` inside the timestamped run directory under ``logs/``.
+
+RLinf AdamW applies weight decay to all trainable parameters. Isaac-GR00T excludes biases and certain normalization parameters.
+
+For a fresh run, RLinf starts training from the RNG state left by worker initialization. Isaac-GR00T sets the seed again when it constructs the Trainer after model setup, so the two runs can draw different random values even with the same data seed. The shard sampling order uses ``data.gr00t.seed``.
+
+Set a positive ``runner.max_steps`` to stop training after that many optimizer updates and use ``runner.max_epochs: -1`` for the continuous GR00T data stream.
+
+Each ``checkpoints/global_step_<N>/actor`` directory contains the distributed training checkpoint, per-rank data cursors in ``data.pt``, and per-rank training RNG state in ``rng.pt``. Set ``runner.resume_dir`` to the ``global_step_<N>`` directory to resume. Use a checkpoint from this loader with the same dataset, sampling configuration, rank count, data worker count, and microbatch size. RLinf resumes at the next unconsumed sample in each rank's stream. Isaac-GR00T builds a new sampling schedule from the original data seed plus the restored step. RLinf recreates prefetched data, so random augmentation can differ on resumed samples. Full-weight saving adds ``model_state_dict/full_weights.pt``. The training processor and statistics are stored under ``<log_path>/<experiment_name>/gr00t/rank_0/processor``. Checkpoints are retained until you remove them.
+
+To create a Hugging Face checkpoint for inference or RL, export the full weights with the processor from the same training run. The output directory must not already exist:
+
+.. code-block:: bash
+
+   python toolkits/gr00t/export_sft.py \
+     --weights /path/to/actor/model_state_dict/full_weights.pt \
+     --base-model /path/to/GR00T-N1.7-3B \
+     --processor /path/to/gr00t/rank_0/processor \
+     --output /path/to/new-hf-checkpoint
+
+Run the :ref:`LIBERO closed-loop evaluation <libero-gr00t-n1d7-sft-eval>` on this exported directory.
+
+For fixed-batch loss and gradient comparison, run ``PYTHONPATH=. python toolkits/gr00t/verify_sft.py`` with ``--batch``, ``--model-path``, ``--backbone-model-path``, and ``--output``. Its update comparison uses RLinf's weight decay rule. Closed-loop LIBERO evaluation is a separate check.
+
 Visualization and Results
 -------------------------
 

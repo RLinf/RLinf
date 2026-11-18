@@ -3406,3 +3406,291 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+@pytest.mark.skipif(
+    not all(
+        os.environ.get(key)
+        for key in (
+            "GR00T_SFT_PARITY_BATCH",
+            "GR00T_SFT_MODEL_PATH",
+            "GR00T_SFT_BACKBONE_PATH",
+        )
+    ),
+    reason="Requires the official N1.7 checkpoint, a collated Spatial batch and an accelerator",
+)
+def test_gr00t_sft_matches_official_loss_gradients_and_update(tmp_path):
+    import os
+    import subprocess
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "toolkits/gr00t/verify_sft.py"),
+            "--batch",
+            os.environ["GR00T_SFT_PARITY_BATCH"],
+            "--model-path",
+            os.environ["GR00T_SFT_MODEL_PATH"],
+            "--backbone-model-path",
+            os.environ["GR00T_SFT_BACKBONE_PATH"],
+            "--output",
+            str(tmp_path / "parity.json"),
+        ],
+        check=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                filter(
+                    None,
+                    (
+                        str(Path(__file__).resolve().parents[2]),
+                        os.environ.get("PYTHONPATH"),
+                    ),
+                )
+            ),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "model_fields",
+    [{"task": "sft"}, {"training_mode": "sft"}, {"task": "sft", "training_mode": "rl"}],
+)
+def test_gr00t_model_factory_selects_sft_task(monkeypatch, model_fields):
+    from rlinf.models.embodiment.gr00t import gr00t_n1d7
+
+    sft_model = object()
+    monkeypatch.setattr(gr00t_n1d7, "build_sft_model", lambda cfg: sft_model)
+    cfg = OmegaConf.create(
+        {
+            "model_type": "gr00t_n1d7",
+            "precision": "fp32",
+            "load_to_device": False,
+            "is_lora": False,
+            **model_fields,
+        }
+    )
+
+    assert get_model(cfg) is sft_model
+
+
+def test_gr00t_model_factory_rejects_unsupported_task():
+    cfg = OmegaConf.create(
+        {"model_type": "gr00t_n1d7", "precision": "fp32", "task": "ppo"}
+    )
+
+    with pytest.raises(ValueError, match="Unsupported GR00T N1.7 task 'ppo'"):
+        get_model(cfg)
+
+
+def test_gr00t_sft_forward_dispatches_to_official_objective(monkeypatch):
+    pytest.importorskip("gr00t")
+    for name in ("imageio", "gymnasium"):
+        module = sys.modules.get(name)
+        if module is not None and getattr(module, "__spec__", None) is None:
+            monkeypatch.delitem(sys.modules, name)
+    from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7
+
+    from rlinf.models.embodiment.base_policy import ForwardType
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        GR00T_N1_7_ForRLActionPrediction,
+    )
+
+    model = GR00T_N1_7_ForRLActionPrediction.__new__(GR00T_N1_7_ForRLActionPrediction)
+    torch.nn.Module.__init__(model)
+    model.sft_mode = True
+    inputs = {"action": torch.tensor([1.0])}
+    monkeypatch.setattr(
+        Gr00tN1d7, "forward", lambda self, data: {"loss": data["action"]}
+    )
+    torch.testing.assert_close(
+        model(forward_type=ForwardType.SFT, data={"inputs": inputs})["loss"],
+        inputs["action"],
+    )
+    with pytest.raises(ValueError, match="RL forward requires"):
+        model(forward_type=ForwardType.DEFAULT)
+    model.sft_mode = False
+    with pytest.raises(ValueError, match="SFT forward requires"):
+        model(forward_type=ForwardType.SFT, data={"inputs": inputs})
+
+
+@pytest.fixture
+def gr00t_sft_cfg(tmp_path, monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/sft/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    monkeypatch.chdir(tmp_path)
+    for directory, files in {
+        "model": ("config.json",),
+        "backbone": ("config.json",),
+        "dataset/meta": ("info.json", "modality.json"),
+    }.items():
+        path = tmp_path / directory
+        path.mkdir(parents=True)
+        for name in files:
+            (path / name).write_text("{}")
+
+    with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+        return compose(
+            config_name="libero_sft_gr00t_n1d7",
+            overrides=[
+                "actor.model.model_path=./model",
+                f"actor.model.backbone_model_path={tmp_path / 'backbone'}",
+                "data.train_data_paths=./dataset",
+            ],
+        )
+
+
+def test_gr00t_sft_config_composes(gr00t_sft_cfg, tmp_path):
+    from rlinf.config import validate_sft_cfg
+
+    backbone = os.path.relpath(tmp_path / "backbone", Path.home())
+    gr00t_sft_cfg.actor.model.backbone_model_path = f"~/{backbone}"
+    gr00t_sft_cfg.data.train_data_paths = ["./dataset", str(tmp_path / "dataset")]
+    cfg = validate_sft_cfg(gr00t_sft_cfg)
+    assert cfg.actor.fsdp_config.strategy == "fsdp2"
+    assert Path(cfg.actor.model.model_path).resolve() == tmp_path / "model"
+    assert Path(cfg.actor.model.backbone_model_path).resolve() == tmp_path / "backbone"
+    assert [Path(path).resolve() for path in cfg.data.train_data_paths] == [
+        tmp_path / "dataset",
+        tmp_path / "dataset",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "error", "message"),
+    [
+        ("runner.max_steps", 0, ValueError, "runner.max_steps"),
+        ("data.val_data_paths", "/validation", ValueError, "validation datasets"),
+        ("actor.model.precision", "bf16", ValueError, "actor.model.precision"),
+        ("actor.model.model_path", "", ValueError, "actor.model.model_path"),
+        (
+            "actor.model.backbone_model_path",
+            "/path/to/cosmos",
+            FileNotFoundError,
+            "actor.model.backbone_model_path",
+        ),
+        ("data.train_data_paths", None, ValueError, "data.train_data_paths"),
+        ("data.train_data_paths", [], ValueError, "data.train_data_paths"),
+        (
+            "data.train_data_paths",
+            ["dataset", "missing"],
+            FileNotFoundError,
+            r"data.train_data_paths\[1\]",
+        ),
+    ],
+)
+def test_gr00t_sft_config_rejects_unsupported_settings(
+    gr00t_sft_cfg, key, value, error, message
+):
+    from rlinf.config import validate_sft_cfg
+
+    OmegaConf.update(gr00t_sft_cfg, key, value, force_add=True)
+    with pytest.raises(error, match=message):
+        validate_sft_cfg(gr00t_sft_cfg)
+
+
+@pytest.mark.parametrize("filename", ["info.json", "modality.json"])
+def test_gr00t_sft_config_requires_dataset_metadata(gr00t_sft_cfg, tmp_path, filename):
+    from rlinf.config import validate_sft_cfg
+
+    (tmp_path / "dataset" / "meta" / filename).unlink()
+    with pytest.raises(
+        FileNotFoundError, match=f"data.train_data_paths.*meta/{filename}"
+    ):
+        validate_sft_cfg(gr00t_sft_cfg)
+
+
+@pytest.mark.parametrize(
+    ("optim", "expected"),
+    [
+        ({}, {}),
+        ({"total_training_steps": None}, {"total_training_steps": 12}),
+        ({"total_training_steps": 20}, {"total_training_steps": 20}),
+    ],
+)
+def test_gr00t_sft_config_resolves_scheduler_steps(gr00t_sft_cfg, optim, expected):
+    from rlinf.config import validate_sft_cfg
+
+    gr00t_sft_cfg.runner.max_steps = 12
+    gr00t_sft_cfg.actor.optim = optim
+    assert validate_sft_cfg(gr00t_sft_cfg).actor.optim == expected
+
+
+def test_gr00t_sft_rejects_unsupported_master_precision(monkeypatch):
+    pytest.importorskip("gr00t")
+    for name in ("imageio", "gymnasium"):
+        module = sys.modules.get(name)
+        if module is not None and getattr(module, "__spec__", None) is None:
+            monkeypatch.delitem(sys.modules, name)
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7 import build_sft_model
+
+    with pytest.raises(ValueError, match="requires FP32 master parameters"):
+        build_sft_model(OmegaConf.create({"precision": "bf16"}))
+
+
+def test_gr00t_sft_preserves_official_data_and_model_options(monkeypatch):
+    pytest.importorskip("gr00t")
+    for name in ("imageio", "gymnasium"):
+        module = sys.modules.get(name)
+        if module is not None and getattr(module, "__spec__", None) is None:
+            monkeypatch.delitem(sys.modules, name)
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.sft_builder import (
+        build_finetune_config,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_path": "/unused/checkpoint",
+                    "embodiment_tag": "libero_sim",
+                    "gr00t_sft": {
+                        "state_dropout_prob": 0.2,
+                        "tune_llm": False,
+                        "tune_visual": False,
+                        "tune_diffusion_model": True,
+                    },
+                }
+            },
+            "runner": {"max_steps": 20000},
+            "data": {"train_data_paths": "/unused/spatial", "gr00t": {"seed": 42}},
+        }
+    )
+    config = build_finetune_config(cfg)
+    assert config.model.use_relative_action
+    assert config.model.state_dropout_prob == 0.2
+    assert not config.model.tune_llm
+    assert not config.model.tune_visual
+    assert config.model.tune_diffusion_model
+    assert not config.model.load_bf16
+    assert config.data.modality_configs["libero_sim"]["action"].delta_indices == list(
+        range(16)
+    )
+    assert config.data.datasets[0].dataset_paths == ["/unused/spatial"]
+    cfg.actor.model.gr00t_sft.unsupported_option = True
+    with pytest.raises(ValueError, match="Unknown GR00T model option"):
+        build_finetune_config(cfg)
+
+
+def test_gr00t_sft_iterator_uses_the_seed_set_before_the_first_batch():
+    from torch.utils.data import IterableDataset
+
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.sft_builder import Gr00tSftDataLoader
+
+    class RandomStream(IterableDataset):
+        seed = 42
+
+        def __iter__(self):
+            for _ in range(32):
+                yield torch.randint(0, 1000, ())
+
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(1)
+        iterator = iter(Gr00tSftDataLoader(RandomStream(), batch_size=4))
+        torch.manual_seed(42)
+        actual = torch.cat(list(iterator))
+        torch.manual_seed(42)
+        expected = torch.cat(list(Gr00tSftDataLoader(RandomStream(), batch_size=4)))
+    torch.testing.assert_close(actual, expected)

@@ -32,6 +32,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_openpi_pi05_eval.yaml``
      - Spatial
      - π₀.₅
+   * - ``libero_spatial_gr00t_n1d7_eval.yaml``
+     - Spatial
+     - GR00T N1.7 SFT
    * - ``libero_spatial_starvla_eval.yaml``
      - Spatial
      - StarVLA
@@ -146,6 +149,29 @@ transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理�
 ``[B,10,32]`` noise tensor。
 默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测
 10 个 reset state，共 100 条轨迹。
+
+.. _libero-gr00t-n1d7-sft-eval:
+
+评测 GR00T N1.7 SFT checkpoint
+----------------------------------------
+
+将模型路径指向训练导出的 Hugging Face 目录，并指定本地 Cosmos backbone。NVIDIA GPU 使用 EGL。昆仑 XPU 上的 CPU 仿真使用 ``MUJOCO_GL=osmesa`` 和 ``PYOPENGL_PLATFORM=osmesa``\ 。
+
+.. code-block:: bash
+
+   export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl ROBOT_PLATFORM=LIBERO
+   bash evaluations/run_eval.sh libero libero_spatial_gr00t_n1d7_eval \
+     rollout.model.model_path=/path/to/exported/GR00T-N1.7-SFT \
+     rollout.model.backbone_model_path=/path/to/Cosmos-Reason2-2B
+
+默认评测 Spatial 的 10 个任务，每个任务使用前 20 个固定初始状态，共 200 条轨迹。每条轨迹运行 240 个环境步。policy 每次推理执行 8 个动作，去噪 4 步，文本输入补齐到 570 个 token。``eval/success_once`` 是至少成功过一次的轨迹比例。日志包含每条轨迹的任务编号、初始状态编号和成败。将 ``cluster.component_placement.env`` 和 ``cluster.component_placement.rollout`` 设为分配到的设备。使用默认配置时，环境 worker 数必须整除 40。
+
+将下列参数追加到评测命令，即可检查导出的权重是否能加载并执行。短测运行 2 条轨迹，每条 8 步。报告基准成绩时，记录评测命令、checkpoint 和初始状态的选取方式。
+
+.. code-block:: text
+
+   env.eval.total_num_envs=2 env.eval.rollout_epoch=1 \
+   env.eval.max_episode_steps=8 env.eval.max_steps_per_rollout_epoch=8
 
 .. _libero-eval-config:
 
