@@ -91,16 +91,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         raise NotImplementedError("eval is not supported for embodied sft right now.")
 
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
-        kwargs = {}
-        if self.cfg.actor.model.get("sft_prompt_cache_size", 0):
-            kwargs["prompt_keys"] = [
-                (ids.numpy().tobytes(), mask.numpy().tobytes())
-                for ids, mask in zip(
-                    batch["text"], batch["text_attention_mask"], strict=True
-                )
-            ]
         with self.amp_context:
-            output = self.model(forward_type=ForwardType.SFT, data=batch, **kwargs)
+            output = self.model(forward_type=ForwardType.SFT, data=batch)
 
         if isinstance(output, torch.Tensor):
             loss = output

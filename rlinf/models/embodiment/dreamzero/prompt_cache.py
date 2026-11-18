@@ -34,7 +34,8 @@ class SFTPromptCache:
         attention_mask: torch.Tensor,
     ) -> torch.Tensor:
         """Reuse raw embeddings and apply the mask for the current batch."""
-        miss = any(key not in self.entries for key in keys)
+        local_miss = any(key not in self.entries for key in keys)
+        miss = local_miss
         if dist.is_initialized() and dist.get_world_size() > 1:
             # T5 is sharded. All ranks must agree whether to call it.
             any_miss = torch.tensor(int(miss), device=input_ids.device)
@@ -43,17 +44,18 @@ class SFTPromptCache:
 
         if miss:
             embeddings = encoder(input_ids, attention_mask).to(torch.bfloat16)
-            for key, embedding in zip(keys, embeddings.detach().cpu(), strict=True):
-                self.entries[key] = embedding.clone()
-                self.entries.move_to_end(key)
-            while len(self.entries) > self.capacity:
-                self.entries.popitem(last=False)
+            if local_miss:
+                for key, embedding in zip(keys, embeddings.detach().cpu(), strict=True):
+                    if key not in self.entries:
+                        self.entries[key] = embedding.clone()
         else:
             embeddings = torch.stack([self.entries[key] for key in keys]).to(
                 input_ids.device
             )
-            for key in keys:
-                self.entries.move_to_end(key)
+        for key in keys:
+            self.entries.move_to_end(key)
+        while len(self.entries) > self.capacity:
+            self.entries.popitem(last=False)
 
         # Upstream truncates every row at the shortest valid length in the batch.
         length = attention_mask.gt(0).sum(dim=1).min()

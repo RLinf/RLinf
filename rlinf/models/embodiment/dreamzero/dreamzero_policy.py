@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import contextmanager, nullcontext
 from typing import Any, Optional
 
 import numpy as np
@@ -28,6 +29,7 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     convert_rollout_env_obs,
     rollout_obs_layout_for_embodiment,
 )
+from rlinf.data.datasets.dreamzero.dataloader import PROMPT_CACHE_KEYS
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.dreamzero.dreamzero_config import DreamZeroConfig
 from rlinf.models.embodiment.dreamzero.prompt_cache import SFTPromptCache
@@ -43,19 +45,27 @@ class DreamZeroSFTHead(WANPolicyHead):
         self.prompt_cache = (
             SFTPromptCache(prompt_cache_size) if prompt_cache_size else None
         )
-        self.sft_prompt_keys: list[tuple[bytes, bytes]] | None = None
-        self.in_sft_forward = False
+        self._sft_prompt_keys: list[tuple[bytes, bytes]] | None = None
+
+    @contextmanager
+    def sft_batch(self, prompt_keys: list[tuple[bytes, bytes]]):
+        """Bind prompt keys for one upstream SFT forward."""
+        self._sft_prompt_keys = prompt_keys
+        try:
+            yield
+        finally:
+            self._sft_prompt_keys = None
 
     def encode_prompt(self, input_ids, attention_mask):
-        if self.sft_prompt_keys is None:
+        if self.prompt_cache is None or self._sft_prompt_keys is None:
             return super().encode_prompt(input_ids, attention_mask)
         return self.prompt_cache.encode(
-            self.text_encoder, self.sft_prompt_keys, input_ids, attention_mask
+            self.text_encoder, self._sft_prompt_keys, input_ids, attention_mask
         )
 
     def encode_image(self, image, num_frames, height, width):
         if (
-            self.in_sft_forward
+            self._sft_prompt_keys is not None
             and self.skip_unused_condition_vae
             and self.model.model_type == "ti2v"
             and not self.model.concat_first_frame_latent
@@ -353,7 +363,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
         else:
             raise NotImplementedError
 
-    def sft_forward(self, data=None, prompt_keys=None, **kwargs):
+    def sft_forward(self, data=None, **kwargs):
         # Mark the start of each training iteration so PyTorch knows when
         # to reclaim memory held by CUDA graphs from the previous iteration.
         # NPU skips the compile wrappers, so it has no CUDA graphs to mark.
@@ -368,16 +378,15 @@ class DreamZeroPolicy(VLA, BasePolicy):
         # moves the inputs to self.device; keep the two on the same device.
         self.action_head._device = self.device
         head = self.action_head
+        sft_context = nullcontext()
         if isinstance(head, DreamZeroSFTHead):
-            head.in_sft_forward = True
-            try:
-                if head.prompt_cache is not None:
-                    head.sft_prompt_keys = prompt_keys
-                outputs = super().forward(data)
-            finally:
-                head.in_sft_forward = False
-                head.sft_prompt_keys = None
-        else:
+            prompt_keys = []
+            if head.prompt_cache is not None:
+                data = dict(data)
+                # Older PyTorch pin-memory workers convert tuples to lists.
+                prompt_keys = [tuple(key) for key in data.pop(PROMPT_CACHE_KEYS)]
+            sft_context = head.sft_batch(prompt_keys)
+        with sft_context:
             outputs = super().forward(data)
         if hasattr(outputs, "data"):
             outputs = outputs.data
