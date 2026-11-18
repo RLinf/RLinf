@@ -156,6 +156,7 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
 
    reward_model_registry = {
        "resnet": ResNetRewardModel,
+       "robotwin_t5": RoboTwinT5RewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
        "shaped_vlm": ShapedVLMRewardModel,
@@ -164,6 +165,8 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
 Where:
 
 - ``resnet``: single-frame binary classifier; outputs sigmoid probabilities.
+- ``robotwin_t5``: single-frame success classifier conditioned on the task
+  instruction (T5 encoding); used by the :doc:`BWM example <../examples/embodied/bwm>`.
 - ``vlm``: runs a VLM on the current observation (step/terminal timing depends on ``reward_mode``).
 - ``buffered_vlm``: runs a VLM on history windows from the env worker; prompt, video
   layout, and scalar mapping come from ``input_builder_name`` / ``reward_parser_name``.

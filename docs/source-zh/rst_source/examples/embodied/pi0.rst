@@ -16,6 +16,13 @@
 模型进行强化学习微调（PPO / GRPO）。方法细节见论文
 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__。
 
+需要在 SFT 和评测中使用相机历史时，参阅 :doc:`Short Memory <pi0/short_memory>`。
+
+.. toctree::
+   :hidden:
+
+   Short Memory <pi0/short_memory>
+
 概览
 ----------------------------------------
 

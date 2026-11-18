@@ -35,6 +35,7 @@ import pytest
 import ray
 from omegaconf import OmegaConf
 
+import rlinf.scheduler.hardware.accelerators.intel_gpu as intel_module
 import rlinf.scheduler.hardware.accelerators.nvidia_gpu as nv_module
 from rlinf.scheduler import (
     AcceleratorType,
@@ -46,6 +47,7 @@ from rlinf.scheduler import (
     WorkerAddress,
 )
 from rlinf.scheduler.cluster.utils import DistributedRayLogCollector
+from rlinf.scheduler.hardware import AcceleratorUtil
 from rlinf.scheduler.hardware.accelerators.intel_gpu import IntelGPUManager
 from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
 from rlinf.scheduler.manager.coll_manager import CollectiveManager
@@ -439,15 +441,25 @@ class CollectorIntegrationWorker(Worker):
         return os.getpid()
 
 
+_cluster_reset_count = 0
+
+
 def _reset_cluster_singleton() -> None:
+    global _cluster_reset_count
     if ray.is_initialized():
         ray.shutdown()
+        _cluster_reset_count += 1
     if hasattr(Cluster, "_instance"):
         instance = getattr(Cluster, "_instance")
         if instance is not None:
             instance._has_initialized = False
         delattr(Cluster, "_instance")
-    Cluster.NAMESPACE = Cluster.SYS_NAME
+    # Use a fresh namespace per reset so dying named actors on a pre-started Ray head cannot collide.
+    Cluster.NAMESPACE = (
+        f"{Cluster.SYS_NAME}_reset_{_cluster_reset_count}"
+        if _cluster_reset_count > 0
+        else Cluster.SYS_NAME
+    )
 
 
 def test_cluster_launch_collects_real_worker_logs(tmp_path: Path):
@@ -768,6 +780,249 @@ def test_get_torch_platform_keeps_existing_ipc_collect(monkeypatch):
     assert result is xpu_platform
     assert xpu_platform.ipc_collect is _existing_ipc_collect
     assert xpu_platform.ipc_collect() is sentinel
+
+
+_INTEL_EGL_UUIDS = [bytes([idx]) * 16 for idx in range(4)]
+_INTEL_EGL_INDEX_BY_UUID = {
+    _INTEL_EGL_UUIDS[0]: 2,
+    _INTEL_EGL_UUIDS[1]: 3,
+    _INTEL_EGL_UUIDS[2]: 0,
+    _INTEL_EGL_UUIDS[3]: 1,
+    b"\xff" * 16: 4,
+}
+
+
+class TestIntelGPUManager:
+    """CPU unit tests for IntelGPUManager selector, discovery, oneCCL, and EGL logic."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_intel_state(self, monkeypatch):
+        for name in (
+            "ONEAPI_DEVICE_SELECTOR",
+            "NODE_LOCAL_RANK",
+            "NODE_LOCAL_WORLD_SIZE",
+            "MUJOCO_GL",
+            *intel_module.EGL_DEVICE_ID_ENV_VARS,
+        ):
+            monkeypatch.delenv(name, raising=False)
+        intel_module._egl_index_by_level_zero_device.cache_clear()
+        yield
+        intel_module._egl_index_by_level_zero_device.cache_clear()
+
+    def _mock_egl_topology(self, monkeypatch):
+        monkeypatch.setattr(
+            intel_module,
+            "_query_level_zero_device_uuids",
+            lambda: list(_INTEL_EGL_UUIDS),
+        )
+        monkeypatch.setattr(
+            intel_module,
+            "_query_egl_index_by_device_uuid",
+            lambda: dict(_INTEL_EGL_INDEX_BY_UUID),
+        )
+
+    def test_accelerator_env_var_and_visible_devices_round_trip(self, monkeypatch):
+        env_vars = IntelGPUManager.get_accelerator_env_var(["2", "3"])
+
+        assert env_vars == {
+            "RAY_EXPERIMENTAL_NOSET_ONEAPI_DEVICE_SELECTOR": "1",
+            "ONEAPI_DEVICE_SELECTOR": "level_zero:2,3",
+        }
+        monkeypatch.setenv("ONEAPI_DEVICE_SELECTOR", env_vars["ONEAPI_DEVICE_SELECTOR"])
+        assert IntelGPUManager.get_visible_devices() == [2, 3]
+
+    def test_accelerator_env_var_omits_selector_when_empty(self):
+        assert IntelGPUManager.get_accelerator_env_var([]) == {
+            "RAY_EXPERIMENTAL_NOSET_ONEAPI_DEVICE_SELECTOR": "1",
+        }
+
+    def test_visible_devices_accepts_bare_and_prefixed_ids(self, monkeypatch):
+        monkeypatch.setenv("ONEAPI_DEVICE_SELECTOR", " 2 , 3 ")
+        assert IntelGPUManager.get_visible_devices() == [2, 3]
+
+        monkeypatch.setenv("ONEAPI_DEVICE_SELECTOR", "level_zero:0,1")
+        assert IntelGPUManager.get_visible_devices() == [0, 1]
+
+    @pytest.mark.parametrize(
+        "selector",
+        [None, "", "NoDevFiles", "*", "gpu", "level_zero:*", "level_zero:gpu"],
+    )
+    def test_visible_devices_returns_empty_for_unset_or_wildcard_selectors(
+        self, monkeypatch, selector
+    ):
+        if selector is not None:
+            monkeypatch.setenv("ONEAPI_DEVICE_SELECTOR", selector)
+
+        assert IntelGPUManager.get_visible_devices() == []
+
+    @pytest.mark.parametrize("selector", ["opencl:0", "level_zero:0,gpu", "abc"])
+    def test_visible_devices_rejects_non_level_zero_or_invalid_selector(
+        self, monkeypatch, selector
+    ):
+        monkeypatch.setenv("ONEAPI_DEVICE_SELECTOR", selector)
+
+        with pytest.raises(ValueError, match="ONEAPI_DEVICE_SELECTOR"):
+            IntelGPUManager.get_visible_devices()
+
+    def test_get_num_devices_prefers_ray_and_falls_back_to_torch_xpu(self, monkeypatch):
+        torch_module = ModuleType("torch")
+        torch_module.xpu = SimpleNamespace(
+            is_available=lambda: True,
+            device_count=lambda: 4,
+        )
+        monkeypatch.setitem(sys.modules, "torch", torch_module)
+
+        monkeypatch.setattr(
+            intel_module.IntelGPUAcceleratorManager,
+            "get_current_node_num_accelerators",
+            lambda: 2,
+        )
+        assert IntelGPUManager.get_num_devices() == 2
+
+        monkeypatch.setattr(
+            intel_module.IntelGPUAcceleratorManager,
+            "get_current_node_num_accelerators",
+            lambda: 0,
+        )
+        assert IntelGPUManager.get_num_devices() == 4
+
+        torch_module.xpu.is_available = lambda: False
+        assert IntelGPUManager.get_num_devices() == 0
+
+    def test_get_accelerator_model_prefers_ray_and_falls_back_to_torch_xpu(
+        self, monkeypatch
+    ):
+        torch_module = ModuleType("torch")
+        torch_module.xpu = SimpleNamespace(
+            is_available=lambda: True,
+            get_device_name=lambda idx: f"Intel Arc Pro B70 ({idx})",
+        )
+        monkeypatch.setitem(sys.modules, "torch", torch_module)
+
+        monkeypatch.setattr(
+            intel_module.IntelGPUAcceleratorManager,
+            "get_current_node_accelerator_type",
+            lambda: "Intel-GPU-B70-Graphics",
+        )
+        assert IntelGPUManager.get_accelerator_model() == "Intel-GPU-B70-Graphics"
+
+        monkeypatch.setattr(
+            intel_module.IntelGPUAcceleratorManager,
+            "get_current_node_accelerator_type",
+            lambda: None,
+        )
+        assert IntelGPUManager.get_accelerator_model() == "Intel Arc Pro B70 (0)"
+
+        torch_module.xpu.is_available = lambda: False
+        assert IntelGPUManager.get_accelerator_model() == "Intel-GPU"
+
+    def test_device_discovery_propagates_unexpected_errors(self, monkeypatch):
+        def _boom():
+            raise RuntimeError("driver broken")
+
+        monkeypatch.setattr(
+            intel_module.IntelGPUAcceleratorManager,
+            "get_current_node_num_accelerators",
+            _boom,
+        )
+        with pytest.raises(RuntimeError, match="driver broken"):
+            IntelGPUManager.get_num_devices()
+
+        monkeypatch.setattr(
+            intel_module.IntelGPUAcceleratorManager,
+            "get_current_node_accelerator_type",
+            _boom,
+        )
+        with pytest.raises(RuntimeError, match="driver broken"):
+            IntelGPUManager.get_accelerator_model()
+
+    def test_get_egl_device_id_maps_uuids_and_caches_queries(self, monkeypatch):
+        calls = []
+
+        def query_ze():
+            calls.append("ze")
+            return list(_INTEL_EGL_UUIDS)
+
+        def query_egl():
+            calls.append("egl")
+            return dict(_INTEL_EGL_INDEX_BY_UUID)
+
+        monkeypatch.setattr(intel_module, "_query_level_zero_device_uuids", query_ze)
+        monkeypatch.setattr(intel_module, "_query_egl_index_by_device_uuid", query_egl)
+
+        assert [IntelGPUManager.get_egl_device_id(i) for i in range(4)] == [
+            2,
+            3,
+            0,
+            1,
+        ]
+        assert IntelGPUManager.get_egl_device_id("2") == 0
+        assert IntelGPUManager.get_egl_device_id(4) is None
+        assert IntelGPUManager.get_egl_device_id("GPU-uuid") is None
+        assert calls == ["ze", "egl"]
+
+    @pytest.mark.parametrize("exc_cls", [OSError, RuntimeError])
+    def test_get_egl_device_id_returns_none_when_native_query_fails(
+        self, monkeypatch, exc_cls
+    ):
+        def unavailable():
+            raise exc_cls("native library unavailable")
+
+        monkeypatch.setattr(intel_module, "_query_level_zero_device_uuids", unavailable)
+        assert IntelGPUManager.get_egl_device_id(0) is None
+
+    def test_worker_local_env_var_sets_oneccl_and_mapped_egl_device(self, monkeypatch):
+        self._mock_egl_topology(monkeypatch)
+        monkeypatch.setenv("NODE_LOCAL_RANK", "1")
+        monkeypatch.setenv("NODE_LOCAL_WORLD_SIZE", "4")
+        monkeypatch.setenv("MUJOCO_GL", "egl")
+
+        env_vars = AcceleratorUtil.get_worker_local_env_var(
+            AcceleratorType.INTEL_GPU, [3, 2]
+        )
+
+        assert env_vars == {
+            "CCL_PROCESS_LAUNCHER": "none",
+            "CCL_LOCAL_RANK": "1",
+            "CCL_LOCAL_SIZE": "4",
+            "MUJOCO_EGL_DEVICE_ID": "1",
+            "EGL_DEVICE_ID": "1",
+        }
+
+    def test_worker_local_env_var_falls_back_to_level_zero_id_without_egl_map(
+        self, monkeypatch
+    ):
+        def unavailable():
+            raise OSError("libze_loader.so.1 is not loadable")
+
+        monkeypatch.setattr(intel_module, "_query_level_zero_device_uuids", unavailable)
+        monkeypatch.setenv("MUJOCO_GL", "egl")
+
+        env_vars = IntelGPUManager.get_worker_local_env_var([3])
+
+        assert env_vars == {
+            "MUJOCO_EGL_DEVICE_ID": "3",
+            "EGL_DEVICE_ID": "3",
+        }
+
+    @pytest.mark.parametrize("backend", ["osmesa", "glx"])
+    def test_worker_local_env_var_skips_egl_for_cpu_rendering_or_no_gpus(
+        self, monkeypatch, backend
+    ):
+        self._mock_egl_topology(monkeypatch)
+        monkeypatch.setenv("NODE_LOCAL_RANK", "0")
+        monkeypatch.setenv("NODE_LOCAL_WORLD_SIZE", "2")
+        monkeypatch.setenv("MUJOCO_GL", backend)
+
+        expected = {
+            "CCL_PROCESS_LAUNCHER": "none",
+            "CCL_LOCAL_RANK": "0",
+            "CCL_LOCAL_SIZE": "2",
+        }
+        assert IntelGPUManager.get_worker_local_env_var([3]) == expected
+
+        monkeypatch.setenv("MUJOCO_GL", "egl")
+        assert IntelGPUManager.get_worker_local_env_var([]) == expected
 
 
 _PATCHER_UNDER_TEST = "_rlinf_utils_patcher_under_test"

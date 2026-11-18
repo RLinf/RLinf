@@ -76,6 +76,11 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Extra entries (full PEP 508 specifiers) inserted into the pyproject.toml
+# `constraint-dependencies` array by apply_torch_override. Unlike
+# PLATFORM_EXTRA_OVERRIDES, constraints intersect with constituent package
+# bounds rather than replacing them. Set per-platform by configure_<platform>.
+PLATFORM_EXTRA_CONSTRAINTS=()
 # Package names inserted into the pyproject.toml `exclude-dependencies` array
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
@@ -125,7 +130,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
 
 #=======================Utility Functions=======================
 
@@ -410,6 +415,17 @@ use_opencv_gui_wheel() {
     [ -n "$ver" ] || return 0
     uv pip uninstall opencv-python opencv-python-headless
     uv pip install --no-deps "opencv-python==${ver}"
+}
+
+# The GUI wheel above links libGL, which a robot computer that only captures
+# frames does not need and may not have. Restore the headless build lerobot
+# resolved, at the same version.
+use_opencv_headless_wheel() {
+    local ver
+    ver=$(uv pip show opencv-python 2>/dev/null | sed -n 's/^Version: //p') || true
+    [ -n "$ver" ] || return 0
+    uv pip uninstall opencv-python opencv-python-headless
+    uv pip install --no-deps "opencv-python-headless==${ver}"
 }
 
 #=======================PLATFORM CONFIG=======================
@@ -923,8 +939,11 @@ EOF
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_TORCHCODEC_SPEC=""
-    # The vendor torch builds are compiled against numpy 1.x.
+    # The vendor torch builds are compiled against numpy 1.x. Overriding numpy
+    # hides ml-dtypes>=0.6's numpy>=2 requirement (0.7+ links the NumPy 2.0
+    # C-API), while overriding ml-dtypes would replace TensorFlow 2.15's ~=0.2.0.
     PLATFORM_EXTRA_OVERRIDES=("numpy<2")
+    PLATFORM_EXTRA_CONSTRAINTS=("ml-dtypes<0.6")
     # Either vendor builds that only exist in the image, or CUDA-only kernels:
     # resolve them, never write them into the venv.
     PLATFORM_UV_SYNC_ARGS=("--inexact")
@@ -1141,6 +1160,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        robolab) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
     esac
@@ -1713,6 +1733,7 @@ apply_torch_override() {
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
         && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#PLATFORM_EXTRA_CONSTRAINTS[@]} -eq 0 ] \
         && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
@@ -1745,6 +1766,24 @@ apply_torch_override() {
             sed -i "/^override-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
         done
         echo "[install.sh] Added override-dependencies entries: ${extra_overrides[*]}"
+    fi
+
+    if [ ${#PLATFORM_EXTRA_CONSTRAINTS[@]} -gt 0 ]; then
+        if grep -q '^constraint-dependencies = \[' "$PYPROJECT_FILE"; then
+            local k
+            for (( k=${#PLATFORM_EXTRA_CONSTRAINTS[@]}-1; k>=0; k-- )); do
+                local entry="${PLATFORM_EXTRA_CONSTRAINTS[k]}"
+                sed -i "/^constraint-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
+            done
+        else
+            local joined=""
+            local entry
+            for entry in "${PLATFORM_EXTRA_CONSTRAINTS[@]}"; do
+                joined="${joined}${joined:+, }\"${entry}\""
+            done
+            sed -i "/^override-dependencies = \\[\$/i constraint-dependencies = [${joined}]" "$PYPROJECT_FILE"
+        fi
+        echo "[install.sh] Added constraint-dependencies entries: ${PLATFORM_EXTRA_CONSTRAINTS[*]}"
     fi
 
     if [ ${#PLATFORM_EXCLUDE_DEPS[@]} -gt 0 ]; then
@@ -2714,6 +2753,13 @@ EOF
             install_polaris_env
             uv pip install "rlinf-openpi==0.1.1"
             ;;
+        robolab)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_robolab_env
+            uv pip uninstall transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -3493,13 +3539,17 @@ install_env_only() {
     # A robot host trains in its env venv, so it takes the same embodied extra,
     # training dependencies and system libraries as a model install.
     case "$ENV_NAME" in
-        franka|franka-ros|so101|piper|dosw1|gim_arm|xsquare_turtle2|yam)
+        franka|franka-ros|so101|lekiwi|piper|dosw1|gim_arm|xsquare_turtle2|yam)
             install_common_embodied_deps
             ;;
     esac
     case "$ENV_NAME" in
         d4rl)
             install_d4rl_env
+            ;;
+        mujoco_warp)
+            install_common_embodied_deps
+            install_mujoco_warp_env
             ;;
         dummy)
             install_dummy_env
@@ -3531,8 +3581,14 @@ install_env_only() {
         so101)
             install_so101_env
             ;;
+        lekiwi)
+            install_lekiwi_env
+            ;;
         piper)
             install_piper_env
+            ;;
+        arx5)
+            install_arx5_env
             ;;
         dosw1)
             install_dosw1_env
@@ -3542,6 +3598,10 @@ install_env_only() {
             ;;
         polaris)
             install_polaris_env
+            ;;
+        robolab)
+            install_common_embodied_deps
+            install_robolab_env
             ;;
         simple)
             install_common_embodied_deps
@@ -3709,6 +3769,12 @@ install_maniskill_libero_env() {
     install_maniskill_libero_extras
 }
 
+install_mujoco_warp_env() {
+    # Pin the verified CUDA 12-compatible stack so driverless Docker builds do
+    # not resolve warp-lang>=1.17, whose wheels require a CUDA 13 driver.
+    uv pip install "mujoco-warp==3.17.0" "warp-lang==1.16.0"
+}
+
 install_d4rl_env() {
     # Install base embodied dependencies first (gym/gymnasium/transformers stack).
     uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
@@ -3857,6 +3923,30 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_robolab_env() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "RoboLab requires NVIDIA Isaac Sim; platform '$PLATFORM' is unsupported." >&2
+        exit 1
+    fi
+
+    local robolab_dir
+    robolab_dir=$(clone_or_reuse_repo ROBOLAB_PATH "$VENV_DIR/robolab" https://github.com/NVlabs/RoboLab.git)
+    if [ -z "${ROBOLAB_PATH:-}" ]; then
+        git -C "$robolab_dir" checkout b6cfcf6ccd2113c4cd1216d35b33024a7d5691da
+    fi
+    export OMNI_KIT_ACCEPT_EULA=YES
+
+    uv pip install "setuptools<82" wheel
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    pushd "$robolab_dir" >/dev/null
+    uv pip install -e ".[isaac50]"
+    popd >/dev/null
+    # Isaac Sim resolves sibling extensions relative to realpath(__file__).
+    materialize_package_files isaacsim-kernel
+    materialize_package_files omniverse-kit
+    uv pip install openpi-client
 }
 
 install_simple_env() {
@@ -4065,6 +4155,17 @@ install_franka_franky_env() {
     use_opencv_gui_wheel
 }
 
+install_arx5_env() {
+    local requirements="$SCRIPT_DIR/embodied/envs/arx5.txt"
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv pip install -r "$requirements"
+    install_lerobot -r "$requirements"
+    # Resolve Diffusers/Hub against the Transformers pin from the embodied extra.
+    uv pip install "diffusers>=0.27.2,<0.40" "huggingface-hub>=0.34.0,<1.0"
+    uv pip check
+    use_opencv_gui_wheel
+}
+
 install_piper_env() {
     uv pip install -r "$SCRIPT_DIR/embodied/envs/piper.txt"
     local index_args=()
@@ -4083,6 +4184,14 @@ install_so101_env() {
     # dependency resolution so installing the robot stack cannot upgrade it.
     uv pip install "numpy<2"
     use_opencv_gui_wheel
+}
+
+install_lekiwi_env() {
+    # Feetech wheel motors over lerobot and OpenCV cameras: the same
+    # dependency set the SO-101 uses, keeping the headless OpenCV build
+    # because the base captures frames and never opens a window.
+    install_so101_env
+    use_opencv_headless_wheel
 }
 
 install_xsquare_turtle2_env() {

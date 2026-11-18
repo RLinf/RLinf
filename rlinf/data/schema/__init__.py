@@ -46,12 +46,16 @@ from rlinf.data.schema.reasoning_requests import (
     get_seq_length,
 )
 from rlinf.data.schema.reasoning_results import (
+    DiscardedGroup,
     DynamicRolloutResult,
+    GroupMetadata,
     RolloutResult,
 )
 
 __all__ = [
+    "DiscardedGroup",
     "DynamicRolloutResult",
+    "GroupMetadata",
     "FinishReasonEnum",
     "RolloutRequest",
     "RolloutResult",
