@@ -183,7 +183,7 @@ SUPPORTED_TASK_TYPE = [
     "sft",
     "offline",
 ]
-SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp", "single"]
+SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
 
 
@@ -2530,11 +2530,6 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.actor.training_backend in SUPPORTED_TRAINING_BACKENDS, (
         f"Unsupported training_backend {cfg.actor.training_backend}. Supported training backends are {SUPPORTED_TRAINING_BACKENDS}."
     )
-    if cfg.actor.training_backend == "single":
-        assert cfg.runner.task_type == "offline" and cfg.algorithm.loss_type == "qam", (
-            "actor.training_backend=single is supported only for offline QAM"
-        )
-
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
         if cfg.runner.task_type == "sft":

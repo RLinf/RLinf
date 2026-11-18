@@ -26,7 +26,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 
 class QAMMLP(nn.Module):
@@ -98,16 +98,12 @@ class QAMPolicy(nn.Module, BasePolicy):
         super().__init__()
         self.cfg = cfg
         self.action_dim = int(cfg.action_dim)
-        self.horizon = int(cfg.horizon_length)
+        self.horizon = int(cfg.get("num_action_chunks", cfg.get("horizon_length", 1)))
         self.full_action_dim = self.action_dim * self.horizon
         self.flow_steps = int(cfg.flow_steps)
+        self.discount = float(cfg.get("discount", 0.99))
         if self.flow_steps < 1 or self.horizon < 1:
             raise ValueError("QAM requires positive horizon_length and flow_steps")
-        for key in ("residual", "fql_alpha", "edit_scale"):
-            if cfg.get(key, False):
-                raise ValueError(f"This QAM implementation requires {key}=0/False")
-        if not cfg.get("action_chunking", True):
-            raise ValueError("This QAM implementation requires action_chunking=True")
         field_args = (
             cfg.obs_dim + self.full_action_dim + 1,
             cfg.actor_hidden_dims,
@@ -125,8 +121,22 @@ class QAMPolicy(nn.Module, BasePolicy):
         self.target_actor_slow = copy.deepcopy(self.actor_slow).requires_grad_(False)
         self.target_critic = copy.deepcopy(self.critic).requires_grad_(False)
 
-    def forward(self, **kwargs):
-        return self.default_forward(**kwargs)
+    def forward(
+        self,
+        forward_type: ForwardType = ForwardType.DEFAULT,
+        compute_loss: bool = False,
+        **kwargs,
+    ):
+        if compute_loss:
+            from rlinf.algorithms.qam import qam_loss
+
+            return qam_loss(
+                self,
+                kwargs["batch"],
+                kwargs.get("generator"),
+                kwargs.get("noise"),
+            )
+        return BasePolicy.forward(self, forward_type=forward_type, **kwargs)
 
     def default_forward(self, observations, actions, times, **kwargs):
         return self.actor_fast(observations, actions, times)

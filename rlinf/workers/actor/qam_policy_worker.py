@@ -13,93 +13,167 @@
 # limitations under the License.
 
 
-import copy
 import os
 from pathlib import Path
 
 import numpy as np
 import torch
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.algorithms.qam import qam_update
 from rlinf.data.datasets.ogbench import OGBenchDataset
-from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
-from rlinf.scheduler import Cluster, Worker
-from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.scheduler import Worker
+from rlinf.utils.utils import collect_param_names_need_sync
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
-class QAMPolicyWorker(Worker):
-    """Own model, optimizer and offline data; runner owns scheduling and evaluation.
+class QAMPolicyWorker(EmbodiedFSDPActor):
+    """Train QAM with native or FSDP model execution.
 
-    Each run trains one seed; the common OfflineRunner owns evaluation.
+    actor.use_fsdp_wrap selects the execution mode. Both modes use the
+    same worker, checkpoint interface, and rollout weight synchronizer.
     """
 
-    def __init__(self, cfg):
-        super().__init__()
-        self.cfg = copy.deepcopy(cfg)
+    def __init__(self, cfg: DictConfig):
+        super().__init__(cfg)
         self.global_step = 0
-        self.updates = 0
-        self._group_name = self.cfg.actor.group_name
-        self._rollout_group_name = self.cfg.rollout.group_name
-        self._component_placement = HybridComponentPlacement(self.cfg, Cluster())
-        self._rollout_all_ranks = list(
-            range(self._component_placement.get_world_size("rollout"))
-        )
-        self._is_weight_sender = self._rank == 0
-        self.weight_syncer = WeightSyncer.create(self.cfg.weight_syncer)
-        self._sync_weight_comm_options = self.weight_syncer.comm_options
+        self.seed = int(cfg.actor.seed)
+        self._use_fsdp_wrap = bool(cfg.actor.get("use_fsdp_wrap", False))
+        self.batch_size = None
+        self.dataset = None
+        self.generator = None
 
     def init_worker(self):
-        if self._world_size != 1:
-            raise ValueError("Offline QAM requires one actor worker per seed")
-        self.seed = int(self.cfg.actor.seed)
-        torch.manual_seed(self.seed)
-        self.device = torch.device(
-            self.torch_device_type
-            if self.torch_platform and self.torch_platform.is_available()
-            else "cpu"
-        )
-        self.generator = torch.Generator(device=self.device).manual_seed(self.seed)
+        if not self._use_fsdp_wrap and self._world_size != 1:
+            raise ValueError(
+                "QAM native execution requires one actor rank. Set "
+                "actor.use_fsdp_wrap=true for multi-rank training."
+            )
+
+        global_batch_size = int(self.cfg.actor.global_batch_size)
+        if global_batch_size % self._world_size != 0:
+            raise ValueError(
+                "actor.global_batch_size must be divisible by actor world size, "
+                f"got global_batch_size={global_batch_size}, world_size={self._world_size}."
+            )
+        self.batch_size = global_batch_size // self._world_size
+        if int(self.cfg.actor.micro_batch_size) != self.batch_size:
+            raise ValueError(
+                "actor.micro_batch_size must equal the per-rank QAM batch size, "
+                f"got {self.cfg.actor.micro_batch_size}, expected {self.batch_size}."
+            )
+
+        rank_seed = self.seed + self._rank
+        torch.manual_seed(rank_seed)
+        np.random.seed(rank_seed)
+        self.generator = torch.Generator(device=self.device).manual_seed(rank_seed)
         self.dataset = OGBenchDataset.from_task(
             self.cfg.data.task_name,
-            self.seed,
+            rank_seed,
             self.cfg.data.get("dataset_dir", None),
         )
+
         model_cfg = self.cfg.actor.model
         obs_dim = self.dataset.data["observations"].shape[-1]
         action_dim = self.dataset.data["actions"].shape[-1]
         if int(model_cfg.obs_dim) != obs_dim or int(model_cfg.action_dim) != action_dim:
             raise ValueError(
                 f"QAM model dimensions ({model_cfg.obs_dim}, {model_cfg.action_dim}) "
-                f"do not match OGBench data ({obs_dim}, {action_dim})"
+                f"do not match OGBench data ({obs_dim}, {action_dim})."
             )
-        self.model = get_model(model_cfg).to(self.device)
+
+        module = get_model(model_cfg).to(self.device)
+        module.discount = float(self.cfg.algorithm.gamma)
+        self.param_names_need_sync = collect_param_names_need_sync(module)
+        if self._use_fsdp_wrap:
+            self.model = self._strategy.wrap_model(
+                model=module,
+                device_mesh=self._device_mesh,
+            )
+        else:
+            self.model = module
         self.optimizer = torch.optim.Adam(
             [p for p in self.model.parameters() if p.requires_grad],
-            lr=self.cfg.actor.optim.lr,
+            lr=float(self.cfg.actor.optim.lr),
             eps=1e-8,
         )
+        self.model.train()
+        self._qam_module().target_actor_slow.eval()
+        self._qam_module().target_critic.eval()
         self.log_info(
-            f"QAM seed={self.seed}, device={self.device}, dataset={self.dataset.size}"
+            f"QAM seed={self.seed}, rank={self._rank}/{self._world_size}, "
+            f"device={self.device}, dataset={self.dataset.size}, "
+            f"use_fsdp_wrap={self._use_fsdp_wrap}"
         )
         return {
             "seed": self.seed,
+            "rank": self._rank,
             "dataset_size": self.dataset.size,
             "device": str(self.device),
+            "use_fsdp_wrap": self._use_fsdp_wrap,
             "pid": os.getpid(),
         }
 
-    def _update(self):
-        batch = self.dataset.sample(
-            self.cfg.actor.global_batch_size,
-            self.model.horizon,
-            self.model.cfg.discount,
+    def _qam_module(self):
+        return getattr(self.model, "module", self.model)
+
+    def _fsdp_loss(self, batch, generator, noise):
+        return self.model(
+            batch=batch,
+            compute_loss=True,
+            generator=generator,
+            noise=noise,
         )
-        batch = {k: torch.as_tensor(v, device=self.device) for k, v in batch.items()}
-        info = qam_update(self.model, self.optimizer, batch, self.generator)
-        self.updates += 1
-        return info
+
+    def _fsdp_clip_grad(self):
+        return self._strategy.clip_grad_norm_(self.model, 1.0)
+
+    def _fsdp_update_targets(self):
+        state_dict = self.get_model_state_dict(
+            cpu_offload=False,
+            full_state_dict=True,
+        )
+        tau = float(self._qam_module().cfg.tau)
+        for target_prefix, source_prefix in (
+            ("target_critic.", "critic."),
+            ("target_actor_slow.", "actor_slow."),
+        ):
+            for target_name in tuple(state_dict):
+                if not target_name.startswith(target_prefix):
+                    continue
+                source_name = source_prefix + target_name[len(target_prefix) :]
+                source_value = state_dict.get(source_name)
+                target_value = state_dict[target_name]
+                if isinstance(source_value, torch.Tensor) and isinstance(
+                    target_value, torch.Tensor
+                ):
+                    state_dict[target_name] = target_value * (1 - tau) + source_value * tau
+        self.load_model_with_state_dict(
+            state_dict,
+            cpu_offload=False,
+            full_state_dict=True,
+        )
+
+    def _update(self):
+        module = self._qam_module()
+        batch = self.dataset.sample(
+            self.batch_size,
+            module.horizon,
+            module.discount,
+        )
+        batch = {key: torch.as_tensor(value, device=self.device) for key, value in batch.items()}
+        if self._use_fsdp_wrap:
+            return qam_update(
+                self.model,
+                self.optimizer,
+                batch,
+                self.generator,
+                loss_fn=self._fsdp_loss,
+                target_update=self._fsdp_update_targets,
+                clip_grad=self._fsdp_clip_grad,
+            )
+        return qam_update(self.model, self.optimizer, batch, self.generator)
 
     @Worker.timer("run_training")
     def run_training(self):
@@ -108,7 +182,6 @@ class QAMPolicyWorker(Worker):
             int(self.cfg.runner.max_steps),
             int(self.cfg.runner.max_epochs),
         )
-        # Never cross an evaluation or checkpoint boundary in one call.
         for interval in (
             self.cfg.runner.val_check_interval,
             self.cfg.runner.save_interval,
@@ -119,11 +192,13 @@ class QAMPolicyWorker(Worker):
         for step in range(self.global_step + 1, stop + 1):
             info = self._update()
             count += 1
-            for k, v in info.items():
-                sums[k] = sums.get(k, 0) + v
+            for key, value in info.items():
+                sums[key] = sums.get(key, 0) + value
             self.global_step = step
-        metrics = {k: float(v / count) for k, v in sums.items()} if count else {}
-        if not all(np.isfinite(v) for v in metrics.values()):
+        metrics = (
+            {key: float(value / count) for key, value in sums.items()} if count else {}
+        )
+        if not all(np.isfinite(value) for value in metrics.values()):
             raise FloatingPointError(f"Non-finite QAM metrics: {metrics}")
         return {**metrics, "__global_step": self.global_step}
 
@@ -133,85 +208,82 @@ class QAMPolicyWorker(Worker):
                 f"Runner step {step} differs from worker step {self.global_step}"
             )
 
-    def get_policy_state_dict(self):
-        """Return the model state used by rollout weight synchronization."""
-        return {k: v.detach() for k, v in self.model.state_dict().items()}
+    def get_rollout_sync_version(self):
+        return self.global_step
 
-    def _checkpoint_state_dict(self):
-        return {k: v.detach().cpu() for k, v in self.model.state_dict().items()}
-
-    @Worker.timer("actor/sync_model_to_rollout")
-    async def sync_model_to_rollout(self) -> None:
-        state_dict = self.get_policy_state_dict()
-        param_names_need_sync = [
-            name
-            for name in state_dict
-            if name.startswith(("actor_fast.", "actor_slow."))
-        ]
-
-        async def send_func(data):
-            if not self._is_weight_sender:
-                return
-            await self.broadcast(
-                data,
-                groups=[
-                    (self._group_name, 0),
-                    (self._rollout_group_name, self._rollout_all_ranks),
-                ],
-                src=(self._group_name, 0),
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        async def recv_func():
-            return await self.recv(
-                src_group_name=self._rollout_group_name,
-                src_rank=0,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
-
-        if not self.weight_syncer.sender_initialized():
-            await self.weight_syncer.init_sender(
-                state_dict=state_dict,
-                send=send_func,
-                recv=recv_func,
-                param_names_need_sync=param_names_need_sync,
-                is_sender=self._is_weight_sender,
+    def get_rollout_state_dict(self):
+        if self._use_fsdp_wrap:
+            return self.get_model_state_dict(
+                cpu_offload=False,
+                full_state_dict=False,
             )
-
-        await self.weight_syncer.sync(
-            state_dict, send_func, version=self.global_step
-        )
+        return {key: value.detach() for key, value in self.model.state_dict().items()}
 
     def save_checkpoint(self, path, global_step):
         if int(global_step) != self.global_step:
             raise ValueError("Checkpoint step must match worker step")
-        path = Path(path) / f"seed_{self.seed}.pt"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "model": self._checkpoint_state_dict(),
-            "optimizer": self.optimizer.state_dict(),
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        state_payload = {
             "generator": self.generator.get_state(),
             "replay": self.dataset.state_dict(),
             "step": self.global_step,
-            "updates": self.updates,
             "seed": self.seed,
+            "rank": self._rank,
             "config": OmegaConf.to_container(self.cfg, resolve=True),
         }
-        temp = path.with_suffix(".tmp")
-        torch.save(payload, temp)
-        temp.replace(path)
+        if self._use_fsdp_wrap:
+            self._strategy.save_checkpoint(
+                model=self.model,
+                optimizers=[self.optimizer],
+                lr_schedulers=[],
+                save_path=str(path / "qam_model"),
+                save_full_model_weights=False,
+                checkpoint_format="local_shard",
+            )
+            torch.save(state_payload, path / f"state_rank_{self._rank}.pt")
+        else:
+            state_payload.update(
+                {
+                    "model": {
+                        key: value.detach().cpu()
+                        for key, value in self.model.state_dict().items()
+                    },
+                    "optimizer": self.optimizer.state_dict(),
+                }
+            )
+            temp = path / f"seed_{self.seed}.tmp"
+            target = path / f"seed_{self.seed}.pt"
+            torch.save(state_payload, temp)
+            temp.replace(target)
         return str(path)
 
     def load_checkpoint(self, path):
-        path = Path(path) / f"seed_{self.seed}.pt"
-        state = torch.load(path, map_location=self.device, weights_only=False)
+        path = Path(path)
+        fsdp_path = path / "qam_model"
+        if self._use_fsdp_wrap and fsdp_path.exists():
+            self._strategy.load_checkpoint(
+                model=self.model,
+                optimizers=[self.optimizer],
+                lr_schedulers=[],
+                load_path=str(fsdp_path),
+            )
+            state = torch.load(
+                path / f"state_rank_{self._rank}.pt",
+                map_location=self.device,
+                weights_only=False,
+            )
+        else:
+            state = torch.load(
+                path / f"seed_{self.seed}.pt",
+                map_location=self.device,
+                weights_only=False,
+            )
+            self.model.load_state_dict(state["model"], strict=True)
+            self.optimizer.load_state_dict(state["optimizer"])
         if state["seed"] != self.seed:
             raise ValueError("Checkpoint seed mismatch")
-        self.model.load_state_dict(state["model"])
-        self.optimizer.load_state_dict(state["optimizer"])
         self.generator.set_state(state["generator"].cpu())
         self.dataset.load_state_dict(state["replay"])
-        self.global_step, self.updates = state["step"], state["updates"]
+        self.global_step = int(state["step"])
         return self.global_step

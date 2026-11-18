@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from collections.abc import Callable
+
 import torch
 
 
@@ -85,7 +87,7 @@ def qam_loss(model, batch, generator=None, noise=None):
         pessimistic_q = qs.mean(0) - model.cfg.rho * qs.std(0, correction=0)
         target = (
             batch["rewards"][:, -1]
-            + model.cfg.discount**model.horizon * batch["masks"][:, -1] * pessimistic_q
+            + model.discount**model.horizon * batch["masks"][:, -1] * pessimistic_q
         )
     q = model.critic(obs, actions)
     valid = batch["valid"][:, -1]
@@ -114,21 +116,42 @@ def qam_loss(model, batch, generator=None, noise=None):
     }
 
 
-def qam_update(model, optimizer, batch, generator=None, noise=None):
+def qam_update(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    batch: dict[str, torch.Tensor],
+    generator: torch.Generator | None = None,
+    noise: dict[str, torch.Tensor] | None = None,
+    *,
+    loss_fn: Callable[..., tuple[torch.Tensor, dict[str, torch.Tensor]]] | None = None,
+    target_update: Callable[[], None] | None = None,
+    clip_grad: Callable[[], torch.Tensor | float] | None = None,
+):
     """One Adam update with global clipping and pre-update-parameter EMA."""
     optimizer.zero_grad(set_to_none=True)
-    loss, info = qam_loss(model, batch, generator, noise)
+    if loss_fn is None:
+        loss, info = qam_loss(model, batch, generator, noise)
+    else:
+        loss, info = loss_fn(batch, generator, noise)
     loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        model.parameters(), 1.0, error_if_nonfinite=True
-    )
+    if clip_grad is None:
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), 1.0, error_if_nonfinite=True
+        )
+    else:
+        grad_norm = clip_grad()
     # Official QAM mixes OLD online weights into targets, before the Adam step.
     with torch.no_grad():
-        for source, target in (
-            (model.critic, model.target_critic),
-            (model.actor_slow, model.target_actor_slow),
-        ):
-            for p, tp in zip(source.parameters(), target.parameters()):
-                tp.mul_(1 - model.cfg.tau).add_(p, alpha=model.cfg.tau)
+        if target_update is None:
+            for source, target in (
+                (model.critic, model.target_critic),
+                (model.actor_slow, model.target_actor_slow),
+            ):
+                for p, tp in zip(source.parameters(), target.parameters()):
+                    tp.mul_(1 - model.cfg.tau).add_(p, alpha=model.cfg.tau)
+        else:
+            target_update()
     optimizer.step()
+    if not isinstance(grad_norm, torch.Tensor):
+        grad_norm = torch.tensor(grad_norm, device=loss.device)
     return {**info, "grad_norm": grad_norm.detach()}

@@ -1,4 +1,5 @@
 defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
   - _self_
@@ -68,16 +69,20 @@ rollout:
 weight_syncer:
   patch:
     init_sync:
-      prefixes: [actor_fast, actor_slow]
+      prefixes: [actor_fast, actor_slow, critic]
 
 actor:
   group_name: ActorGroup
-  training_backend: single
+  training_backend: fsdp
+  use_fsdp_wrap: false
+  fsdp_config:
+    use_orig_params: true
   seed: 10001
   global_batch_size: 256
   micro_batch_size: 256
   optim:
     lr: 0.0003
+    clip_grad: 1.0
   model:
     model_type: qam_policy
     precision: fp32
@@ -90,15 +95,9 @@ actor:
     value_hidden_dims: [512, 512, 512, 512]
     actor_layer_norm: false
     value_layer_norm: true
-    horizon_length: 1
-    action_chunking: true
     num_qs: 10
     rho: 0.5
-    discount: 0.99
     tau: 0.005
     flow_steps: 10
     best_of_n: 1
     inv_temp: 10.0
-    residual: false
-    fql_alpha: 0.0
-    edit_scale: 0.0
