@@ -55,45 +55,25 @@ from rlinf.workers.rollout.session_server.chat_completions import (
 from rlinf.workers.rollout.session_server.payload import (
     PayloadDiscard,
     PayloadPart,
+    PayloadWriter,
     payload_key_for,
     payload_locator_for,
-    payload_shard_for,
     routing_key_for,
 )
+from rlinf.workers.rollout.session_server.turns import (
+    TurnRecord,
+    UnderreportedTruncation,
+    classify_turns,
+    kept_len,
+    new_turn_record,
+)
 from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
-
-# Rough per-element byte cost of a serialized part's token and logprob lists;
-# used for the pending-bytes backpressure and the payload_bytes report, which
-# need an estimate, not an exact size.
-_BYTES_PER_LIST_ELEMENT = 8
-_PART_OVERHEAD_BYTES = 256
 
 _WRITE_FAILED = "payload_write_failed"
 
 # Bounded history of groups whose completion metadata was sent; guards a
 # straggler abort from producing a second record for the buffer worker.
 _REPORTED_HISTORY_LIMIT = 4096
-
-
-@dataclass
-class _TurnRecord:
-    """Prefix bookkeeping for one successful generate call of a session.
-
-    ``lcp`` is the longest common prefix length of this turn's input with the
-    previous turn's input+output, None on the first turn. ``kept_len`` and
-    ``continues_prev`` are filled when the agent declares them (close, or the
-    per-turn ``prev_kept_len`` declaration); until then the kept length is the
-    full output and the classification is pending. In verify mode
-    ``merged_sampling_params`` holds the params this call was forwarded with.
-    """
-
-    input_len: int
-    output_len: int = 0
-    lcp: Optional[int] = None
-    declared_prev_kept_len: Optional[int] = None
-    kept_len: Optional[int] = None
-    continues_prev: Optional[bool] = None
-    merged_sampling_params: Optional[dict] = None
 
 
 @dataclass
@@ -111,7 +91,7 @@ class _SessionState:
     session_id: Optional[str]
     group_id: int
     traj_index: int
-    turns: list[_TurnRecord] = field(default_factory=list)
+    turns: list[TurnRecord] = field(default_factory=list)
     last_input: Optional[list[int]] = None
     last_output: Optional[list[int]] = None
     extra_fields_train: dict = field(default_factory=dict)
@@ -194,9 +174,6 @@ class SessionServerWorker(Worker):
         self._host = str(session_server_cfg.host)
         self._port = int(session_server_cfg.port) + server_index
         self._payload_put_timeout_s = float(session_server_cfg.payload_put_timeout_s)
-        self._max_pending_payload_bytes = int(
-            session_server_cfg.max_pending_payload_bytes
-        )
         self._generate_timeout_s = float(session_server_cfg.generate_timeout_s)
         self._keep_alive_s = int(session_server_cfg.keep_alive_s)
         self._per_task_generate_timeout_s = {
@@ -219,10 +196,10 @@ class SessionServerWorker(Worker):
         self._groups: dict[int, _GroupState] = {}
         self._sessions: dict[str, _SessionState] = {}
         self._loaded_versions: list[int] = []
-        self._pending_payload_bytes = 0
         self._router_client: Optional[InferenceHTTPClient] = None
         self._agent_output_channel: Optional[Channel] = None
-        self._payload_channels: list[Channel] = []
+        # Built by serve(), once the payload channels exist.
+        self._payload_writer: Optional[PayloadWriter] = None
         self._http_server: Optional[uvicorn.Server] = None
         self._http_server_task: Optional[asyncio.Task] = None
         # Set when serving has ended (normally or not), with the exception
@@ -230,7 +207,6 @@ class SessionServerWorker(Worker):
         # end instead of hanging on a server that never listened.
         self._serve_ended = False
         self._serve_error: Optional[BaseException] = None
-        self._background_tasks: set[asyncio.Task] = set()
         # Reported groups, most recent last, bounded; a late abort for one of
         # them must not produce a second record for the buffer worker.
         self._reported_group_ids: set[int] = set()
@@ -370,8 +346,8 @@ class SessionServerWorker(Worker):
                 ``X-SMG-Routing-Key`` header.
             agent_output_channel: Channel completed-group metadata and
                 discard records are reported on.
-            payload_channels: The same-node payload channels, one per shard,
-                indexed by :func:`payload_shard_for`.
+            payload_channels: The same-node payload channels, one per shard.
+                Every part of a group goes to one of them.
         """
         assert self._http_server_task is None, "serve is already running."
         assert payload_channels, "serve needs at least one payload channel."
@@ -382,7 +358,12 @@ class SessionServerWorker(Worker):
         self._setup_chat()
         self._router_client = InferenceHTTPClient(router_url, keepalive_timeout=4.0)
         self._agent_output_channel = agent_output_channel
-        self._payload_channels = list(payload_channels)
+        self._payload_writer = PayloadWriter(
+            payload_channels,
+            max_pending_bytes=int(self._cfg.session_server.max_pending_payload_bytes),
+            put_timeout_s=self._payload_put_timeout_s,
+            on_write_failure=self._note_write_failure,
+        )
         self._http_server_task = asyncio.create_task(self._run_http_server())
         self.log_info(
             f"Session server {self._server_index} serving on {self._host}:{self._port}"
@@ -425,10 +406,8 @@ class SessionServerWorker(Worker):
             await self._http_server_task
             self._http_server_task = None
             self._serve_ended = True
-        for task in list(self._background_tasks):
-            task.cancel()
-        await asyncio.gather(*self._background_tasks, return_exceptions=True)
-        self._background_tasks.clear()
+        if self._payload_writer is not None:
+            await self._payload_writer.aclose()
         if self._router_client is not None:
             await self._router_client.aclose()
             self._router_client = None
@@ -479,7 +458,12 @@ class SessionServerWorker(Worker):
         metrics = dict(self._metrics)
         for key in self._metrics:
             self._metrics[key] = 0
-        metrics["session_server/pending_payload_bytes"] = self._pending_payload_bytes
+        if self._payload_writer is not None:
+            metrics["session_server/pending_payload_bytes"] = (
+                self._payload_writer.pending_bytes
+            )
+        else:
+            metrics["session_server/pending_payload_bytes"] = 0
         return metrics
 
     def _expire_discard_records(self) -> None:
@@ -689,7 +673,13 @@ class SessionServerWorker(Worker):
 
         group = self._groups[session.group_id]
         version_start = min(self._loaded_versions)
-        turn = self._new_turn_record(session, input_ids, prev_kept_len)
+        turn = new_turn_record(
+            input_ids, session.last_input, session.last_output, prev_kept_len
+        )
+        if turn.continues_prev is False:
+            # The arrival-time classification found a break inside the
+            # previous input, which is a history rewrite.
+            self._metrics["session_server/prefix_rewritten"] += 1
 
         forwarded = dict(body_fields or {})
         forwarded["input_ids"] = input_ids
@@ -794,36 +784,6 @@ class SessionServerWorker(Worker):
             },
             None,
         )
-
-    def _new_turn_record(
-        self, session: _SessionState, input_ids: list[int], prev_kept_len: Optional[int]
-    ) -> _TurnRecord:
-        """The turn's prefix bookkeeping, classified now where possible.
-
-        The lcp with the previous turn's input+output is computed against the
-        ids still held for the previous turn. A break inside the previous
-        input is a history rewrite and classifies immediately; with a
-        declared ``prev_kept_len`` the classification completes now too.
-        """
-        if session.last_input is None:
-            return _TurnRecord(
-                input_len=len(input_ids), declared_prev_kept_len=prev_kept_len
-            )
-        previous = session.last_input + (session.last_output or [])
-        lcp = 0
-        for cur, prev in zip(input_ids, previous):
-            if cur != prev:
-                break
-            lcp += 1
-        record = _TurnRecord(
-            input_len=len(input_ids),
-            lcp=lcp,
-            declared_prev_kept_len=prev_kept_len,
-        )
-        if lcp < len(session.last_input):
-            record.continues_prev = False
-            self._metrics["session_server/prefix_rewritten"] += 1
-        return record
 
     def _merged_sampling_params(self, overrides: Any) -> dict:
         """Config defaults merged with this call's overrides, in the order
@@ -1027,73 +987,20 @@ class SessionServerWorker(Worker):
     # Payload writes
     # ------------------------------------------------------------------
     async def _emit_part(self, session: _SessionState, part: PayloadPart) -> None:
-        """Put one part in the background, with backpressure.
+        """Emit one turn's part and register its settlement on the group.
 
-        The put is issued synchronously here (issuance order is the queue
-        order); it is awaited only when the pending byte budget is exceeded.
-        Its settlement runs as a task that flags the group on failure.
+        The write itself is the payload writer's; the group's byte count and
+        the task finalize waits for are the session's state, so they are
+        recorded here.
         """
-        nbytes = self._estimate_part_bytes(part)
+        nbytes, task = await self._payload_writer.emit_part(part)
         group = self._groups.get(part.group_id)
-        channel = self._payload_channels[
-            payload_shard_for(part.group_id, len(self._payload_channels))
-        ]
-        # Every-turn parts carry no weight: the byte estimate rides on the
-        # finalize part's put (_maybe_finalize), the queue element the
-        # runner's payload_queued_bytes gauge sums.
-        work = channel.put(part, key=payload_key_for(part.group_id), async_op=True)
-        self._pending_payload_bytes += nbytes
-        if group is not None:
-            group.payload_bytes += nbytes
-        if self._pending_payload_bytes > self._max_pending_payload_bytes:
-            await self._settle_put(part.group_id, nbytes, work)
-        else:
-            task = asyncio.create_task(self._settle_put(part.group_id, nbytes, work))
-            self._register_settle(part.group_id, task)
-
-    def _register_settle(self, group_id: int, task: asyncio.Task) -> None:
-        """Track a settlement task for cancellation and for finalize's wait."""
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-        group = self._groups.get(group_id)
-        if group is not None and not group.finalized:
+        if group is None:
+            return
+        group.payload_bytes += nbytes
+        if task is not None and not group.finalized:
             group.pending_settles.append(task)
             task.add_done_callback(group.pending_settles.remove)
-
-    @staticmethod
-    def _estimate_part_bytes(part: PayloadPart) -> int:
-        nbytes = (len(part.input_ids) + len(part.output_ids)) * _BYTES_PER_LIST_ELEMENT
-        if part.logprobs is not None:
-            nbytes += len(part.logprobs) * _BYTES_PER_LIST_ELEMENT
-        return nbytes + _PART_OVERHEAD_BYTES
-
-    async def _settle_put(self, group_id: int, nbytes: int, work: Any) -> bool:
-        """Wait for one payload put to settle.
-
-        Returns:
-            True if the put completed successfully, False if it failed or
-            timed out. A timed-out put may still land in the channel later,
-            so the failure flag this sets is never cleared again.
-
-        On failure the group's write-failure flag is recorded (and the group
-        voided if it is still live); the return value lets an awaiting caller
-        react as well.
-        """
-        success = True
-        try:
-            await asyncio.wait_for(
-                work.async_wait(), timeout=self._payload_put_timeout_s
-            )
-        except asyncio.CancelledError:
-            raise
-        except BaseException as exc:
-            success = False
-            self.log_error(f"Payload put failed for group {group_id} ({exc!r}).")
-        finally:
-            self._pending_payload_bytes -= nbytes
-        if not success:
-            await self._note_write_failure(group_id)
-        return success
 
     async def _note_write_failure(self, group_id: int) -> None:
         """Flag a group's payload as not fully written, voiding it if live.
@@ -1117,59 +1024,6 @@ class SessionServerWorker(Worker):
         if group.discard_reason is not None:
             return
         await self._void_group(group_id, _WRITE_FAILED)
-
-    async def _put_payload(
-        self, group_id: int, item: Any, await_completion: bool, weight: int = 0
-    ) -> bool:
-        """Put a payload-channel item under the group's key.
-
-        Args:
-            group_id: Group whose key the item is put under.
-            item: A :class:`PayloadPart` (the finalize part, awaited) or a
-                :class:`PayloadDiscard` marker (background).
-            await_completion: True to await the put's settlement and return
-                its success; False to monitor it in the background and
-                return True.
-            weight: Weight handed to the put; the finalize part carries the
-                group's byte estimate so the runner's payload_queued_bytes
-                gauge sums it.
-
-        Returns:
-            The settlement result when awaited, True when backgrounded.
-        """
-        channel = self._payload_channels[
-            payload_shard_for(group_id, len(self._payload_channels))
-        ]
-        work = channel.put(
-            item, weight=weight, key=payload_key_for(group_id), async_op=True
-        )
-        if await_completion:
-            return await self._settle_put(group_id, 0, work)
-        task = asyncio.create_task(self._settle_put(group_id, 0, work))
-        self._register_settle(group_id, task)
-        return True
-
-    async def _remove_payload_key(self, group_id: int) -> None:
-        """Drop the group's payload queue, after everything already issued.
-
-        Chains on the same key as the puts (AsyncChannelWork order), so this
-        runs after the finalize part and discard marker already queued. It
-        matters when a finalize part landed although its settlement timed
-        out: the collector emitted a container no one will fetch.
-        """
-        channel = self._payload_channels[
-            payload_shard_for(group_id, len(self._payload_channels))
-        ]
-        try:
-            work = channel.remove_key(key=payload_key_for(group_id), async_op=True)
-            await asyncio.wait_for(
-                work.async_wait(), timeout=self._payload_put_timeout_s
-            )
-        except BaseException as exc:
-            self.log_warning(
-                f"remove_key for group {group_id} failed ({exc!r}); its "
-                f"payload queue may hold an unfetched container."
-            )
 
     # ------------------------------------------------------------------
     # Lifecycle routes
@@ -1234,12 +1088,26 @@ class SessionServerWorker(Worker):
             group.verify_result = verify_result
 
         try:
-            kept = [self._kept_len(i, turns, kept_lens) for i in range(len(turns))]
-            continues = self._classify_turns(session, kept)
-        except ValueError as exc:
+            kept = [kept_len(i, turns, kept_lens) for i in range(len(turns))]
+            continues, counts = classify_turns(
+                turns,
+                kept,
+                session.not_training_turns,
+                session.entry,
+                session.traj_index,
+                session.group_id,
+            )
+        except UnderreportedTruncation as exc:
+            self._metrics["session_server/prefix_underreported"] += 1
             # Nothing is committed: a retried close re-runs the full check
             # instead of skipping over half-classified state.
             return self._error(500, str(exc))
+        except ValueError as exc:
+            return self._error(500, str(exc))
+        # Counted once the classification has committed: a close rejected by
+        # the checks above is retried and re-runs the full pass.
+        self._metrics["session_server/prefix_continuous"] += counts.continuous
+        self._metrics["session_server/prefix_rewritten"] += counts.rewritten
         for turn_index, turn in enumerate(turns):
             turn.kept_len = kept[turn_index]
             turn.continues_prev = continues[turn_index]
@@ -1248,111 +1116,6 @@ class SessionServerWorker(Worker):
         group.closed.add(session.traj_index)
         await self._maybe_finalize(group)
         return JSONResponse(content={})
-
-    @staticmethod
-    def _kept_len(turn_index: int, turns: list[_TurnRecord], kept_lens: dict) -> int:
-        """The declared kept length of a turn, defaulting to the full output."""
-        raw = kept_lens.get(turn_index, kept_lens.get(str(turn_index)))
-        turn = turns[turn_index]
-        if raw is None:
-            return turn.output_len
-        if not isinstance(raw, int) or raw < 0:
-            raise ValueError(
-                f"kept_lens[{turn_index}] must be a non-negative int, got {raw!r}"
-            )
-        if raw > turn.output_len:
-            raise ValueError(
-                f"kept_lens[{turn_index}] is {raw} but the turn's output has "
-                f"only {turn.output_len} tokens"
-            )
-        return raw
-
-    def _classify_turns(self, session: _SessionState, kept: list[int]) -> list[bool]:
-        """Classify each turn pair, failing loud on under-reporting.
-
-        For turn k the pair is its ``lcp`` against turn k-1's input length
-        ``L`` and kept length ``kept``: ``lcp >= L + kept`` continues the
-        previous turn, ``L <= lcp < L + kept`` means the agent used less
-        output than it declared (an under-reported truncation), and
-        ``lcp < L`` rewrites history and starts a new segment. A turn whose
-        input already broke inside the previous input was classified as a
-        rewrite when it arrived. A turn dropped by the verdict's
-        ``not_training`` never pairs: it yields no sequence, and the turn
-        after it compares against the last kept turn before it.
-
-        Args:
-            session: The session whose turns are classified.
-            kept: The kept length of each turn, as declared at close.
-
-        Returns:
-            ``continues_prev`` per turn; turn 0 is False.
-
-        Raises:
-            ValueError: On an under-reported truncation, or a per-turn
-                ``prev_kept_len`` declaration that disagrees with the close
-                declaration. No state is changed.
-        """
-        turns = session.turns
-        continues: list[bool] = []
-        continuous = 0
-        rewritten = 0
-        previous_index: Optional[int] = None
-        for turn_index, turn in enumerate(turns):
-            if turn_index in session.not_training_turns:
-                # Dropped from the training data: it never pairs, so it
-                # neither continues nor becomes the previous turn for the
-                # turn after it. Checked before the arrive-time
-                # classification: a rewrite that arrived before the drop
-                # must not anchor the next turn either.
-                continues.append(False)
-                continue
-            if turn.continues_prev is not None:
-                continues.append(turn.continues_prev)
-                previous_index = turn_index
-                continue
-            if previous_index is None:
-                continues.append(False)
-                previous_index = turn_index
-                continue
-            previous = turns[previous_index]
-            boundary = previous.input_len + kept[previous_index]
-            if turn.lcp >= boundary:
-                continues.append(True)
-                continuous += 1
-            elif turn.lcp >= previous.input_len and session.entry == "chat":
-                # A chat client rebuilt its history over the previous
-                # turn's output: the conversation rewrites and starts a new
-                # segment instead of failing the close. The generate entry
-                # has no such client and keeps the strict check.
-                continues.append(False)
-                rewritten += 1
-            elif turn.lcp >= previous.input_len:
-                self._metrics["session_server/prefix_underreported"] += 1
-                raise ValueError(
-                    f"turn {turn_index} of trajectory "
-                    f"{session.traj_index} in group {session.group_id} "
-                    f"breaks inside the previous turn's declared kept "
-                    f"output: the agent used {turn.lcp - previous.input_len} "
-                    f"of the {kept[turn_index - 1]} tokens it declared"
-                )
-            else:
-                continues.append(False)
-                rewritten += 1
-
-        for turn_index in range(1, len(turns)):
-            declared = turns[turn_index].declared_prev_kept_len
-            if declared is not None and declared != kept[turn_index - 1]:
-                raise ValueError(
-                    f"turn {turn_index} of trajectory "
-                    f"{session.traj_index} in group {session.group_id} "
-                    f"declared prev_kept_len {declared} but close declared "
-                    f"{kept[turn_index - 1]} for the previous turn"
-                )
-        # Count once the classification has committed: a close rejected by
-        # the checks above is retried and re-runs the full pass.
-        self._metrics["session_server/prefix_continuous"] += continuous
-        self._metrics["session_server/prefix_rewritten"] += rewritten
-        return continues
 
     async def _reward(self, sid: str, body: dict) -> JSONResponse:
         session, error = self._session(sid)
@@ -1485,15 +1248,16 @@ class SessionServerWorker(Worker):
             verdicts=verdicts,
             verify=verify,
         )
-        if not await self._put_payload(
-            group_id, finalize_part, await_completion=True, weight=group.payload_bytes
+        if not await self._payload_writer.put(
+            group_id,
+            finalize_part,
+            await_completion=True,
+            weight=group.payload_bytes,
         ):
-            # _settle_put already recorded the failure, voided the group,
+            # The writer already reported the failure, which voided the group
             # and removed any container the part produced.
             return False
-        payload_channel = self._payload_channels[
-            payload_shard_for(group_id, len(self._payload_channels))
-        ]
+        payload_channel = self._payload_writer.channel_for(group_id)
         metadata = GroupMetadata(
             group_id=group_id,
             task_name=group.task_name,
@@ -1519,7 +1283,7 @@ class SessionServerWorker(Worker):
             # told. Drop the container; the dead agent_output_channel makes
             # every future result equally undeliverable, so the run fails
             # instead of leaking admission slot after slot.
-            await self._remove_payload_key(group_id)
+            await self._payload_writer.remove_key(group_id)
             self._fail_serving(f"GroupMetadata put for group {group_id}", exc)
             return False
         group.reported = True
@@ -1554,7 +1318,7 @@ class SessionServerWorker(Worker):
         if reason == _WRITE_FAILED:
             self._metrics["session_server/payload_write_failed"] += 1
         await self._report_discard(group_id, reason)
-        await self._put_payload(
+        await self._payload_writer.put(
             group_id, PayloadDiscard(group_id=group_id), await_completion=False
         )
         if reason == _WRITE_FAILED:
@@ -1562,7 +1326,7 @@ class SessionServerWorker(Worker):
             # with the finalize part, the collector will then have emitted a
             # container no one will fetch. remove_key chains after all puts
             # already issued for the key and drops the whole queue.
-            await self._remove_payload_key(group_id)
+            await self._payload_writer.remove_key(group_id)
 
     async def _report_discard(self, group_id: int, reason: str) -> None:
         """Report a discard record to the buffer worker, awaited."""

@@ -19,19 +19,31 @@ A session server writes each generate response into a payload channel as a
 (:class:`PayloadCollector`) accumulates the parts and emits one
 :class:`GroupPayload` per finished group; assembly from parts into training
 sequences stays on the read side. A voided group is erased from the collector
-by a :class:`PayloadDiscard` on the same key.
+by a :class:`PayloadDiscard` on the same key. :class:`PayloadWriter` holds
+the writing side: the puts, their settlements, and the pending-byte budget.
 """
 
+import asyncio
 from dataclasses import dataclass
-from typing import Any, Iterator, Optional
+from typing import Any, Awaitable, Callable, Iterator, Optional
 
 from rlinf.scheduler.channel import Channel, Collector, register_collector
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
+
+# Rough per-element byte cost of a serialized part's token and logprob lists;
+# used for the pending-bytes backpressure and the payload_bytes report, which
+# need an estimate, not an exact size.
+_BYTES_PER_LIST_ELEMENT = 8
+_PART_OVERHEAD_BYTES = 256
 
 __all__ = [
     "PayloadPart",
     "PayloadDiscard",
     "GroupPayload",
     "PayloadCollector",
+    "PayloadWriter",
     "routing_key_for",
     "payload_key_for",
     "payload_shard_for",
@@ -165,6 +177,171 @@ class PayloadCollector(Collector):
         if item.last:
             del self._pending[key]
             yield key, GroupPayload(group_id=item.group_id, parts=parts)
+
+
+class PayloadWriter:
+    """Writes the parts of every group to the payload channels.
+
+    Owns the writes, their settlements, and the pending-byte budget. The
+    caller keeps the group state: a failed settlement is reported through
+    the ``on_write_failure`` callback, which voids the group and reports
+    the discard. The caller also keeps the per-group settlement tasks it
+    waits for at finalize; this class tracks them only to cancel them at
+    shutdown.
+    """
+
+    def __init__(
+        self,
+        payload_channels: list[Channel],
+        max_pending_bytes: int,
+        put_timeout_s: float,
+        on_write_failure: Callable[[int], Awaitable[None]],
+    ):
+        """
+        Args:
+            payload_channels: The same-node payload channels, one per shard.
+                Every part of a group goes to the shard
+                :func:`payload_shard_for` picks for it.
+            max_pending_bytes: Budget for bytes still being written. Past it,
+                each response waits for its own write instead of queueing
+                more, which slows the writers but bounds memory.
+            put_timeout_s: Limit on one write's settlement. A write that
+                times out may still land in the channel later, so the failure
+                it reports is never cleared again.
+            on_write_failure: Called with a group id when one of its writes
+                fails or times out.
+        """
+        self._channels = list(payload_channels)
+        self._max_pending_bytes = max_pending_bytes
+        self._put_timeout_s = put_timeout_s
+        self._on_write_failure = on_write_failure
+        self._pending_bytes = 0
+        self._tasks: set[asyncio.Task] = set()
+
+    @property
+    def pending_bytes(self) -> int:
+        """Bytes put but not yet known to have landed."""
+        return self._pending_bytes
+
+    def channel_for(self, group_id: int) -> Channel:
+        """The payload channel that serves a group."""
+        return self._channels[payload_shard_for(group_id, len(self._channels))]
+
+    async def emit_part(self, part: PayloadPart) -> tuple[int, Optional[asyncio.Task]]:
+        """Put one part in the background, with backpressure.
+
+        The put is issued synchronously here (issuance order is the queue
+        order); its settlement runs as a task, or is awaited inline once the
+        pending byte budget is exceeded. Every-turn parts carry no weight:
+        the byte estimate rides on the finalize part's put, the queue element
+        the runner's payload_queued_bytes gauge sums.
+
+        Returns:
+            The part's estimated size, and its settlement task when the
+            settlement runs in the background. The task is None when the
+            settlement was awaited inline, in which case the caller's next
+            step already sees its outcome.
+        """
+        nbytes = _estimate_part_bytes(part)
+        work = self.channel_for(part.group_id).put(
+            part, key=payload_key_for(part.group_id), async_op=True
+        )
+        self._pending_bytes += nbytes
+        if self._pending_bytes > self._max_pending_bytes:
+            await self._settle_put(part.group_id, nbytes, work)
+            return nbytes, None
+        task = asyncio.create_task(self._settle_put(part.group_id, nbytes, work))
+        self._track(task)
+        return nbytes, task
+
+    async def put(
+        self, group_id: int, item: Any, await_completion: bool, weight: int = 0
+    ) -> bool:
+        """Put a payload-channel item under the group's key.
+
+        Args:
+            group_id: Group whose key the item is put under.
+            item: A :class:`PayloadPart` (the finalize part, awaited) or a
+                :class:`PayloadDiscard` marker (background).
+            await_completion: True to await the put's settlement and return
+                its success; False to monitor it in the background and
+                return True.
+            weight: Weight handed to the put; the finalize part carries the
+                group's byte estimate so the runner's payload_queued_bytes
+                gauge sums it.
+
+        Returns:
+            The settlement result when awaited, True when backgrounded.
+        """
+        work = self.channel_for(group_id).put(
+            item, weight=weight, key=payload_key_for(group_id), async_op=True
+        )
+        if await_completion:
+            return await self._settle_put(group_id, 0, work)
+        task = asyncio.create_task(self._settle_put(group_id, 0, work))
+        self._track(task)
+        return True
+
+    async def remove_key(self, group_id: int) -> None:
+        """Drop the group's payload queue, after everything already issued.
+
+        Chains on the same key as the puts (AsyncChannelWork order), so this
+        runs after the finalize part and discard marker already queued. It
+        matters when a finalize part landed although its settlement timed
+        out: the collector emitted a container no one will fetch.
+        """
+        try:
+            work = self.channel_for(group_id).remove_key(
+                key=payload_key_for(group_id), async_op=True
+            )
+            await asyncio.wait_for(work.async_wait(), timeout=self._put_timeout_s)
+        except BaseException as exc:
+            logger.warning(
+                f"remove_key for group {group_id} failed ({exc!r}); its "
+                f"payload queue may hold an unfetched container."
+            )
+
+    async def aclose(self) -> None:
+        """Cancel the settlements still running."""
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
+    def _track(self, task: asyncio.Task) -> None:
+        """Track a settlement task so shutdown can cancel it."""
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _settle_put(self, group_id: int, nbytes: int, work: Any) -> bool:
+        """Wait for one payload put to settle.
+
+        Returns:
+            True if the put completed successfully, False if it failed or
+            timed out. A timed-out put may still land in the channel later,
+            so the failure this reports is never cleared again.
+        """
+        success = True
+        try:
+            await asyncio.wait_for(work.async_wait(), timeout=self._put_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            success = False
+            logger.error(f"Payload put failed for group {group_id} ({exc!r}).")
+        finally:
+            self._pending_bytes -= nbytes
+        if not success:
+            await self._on_write_failure(group_id)
+        return success
+
+
+def _estimate_part_bytes(part: PayloadPart) -> int:
+    """Rough byte cost of a part's serialized token and logprob lists."""
+    nbytes = (len(part.input_ids) + len(part.output_ids)) * _BYTES_PER_LIST_ELEMENT
+    if part.logprobs is not None:
+        nbytes += len(part.logprobs) * _BYTES_PER_LIST_ELEMENT
+    return nbytes + _PART_OVERHEAD_BYTES
 
 
 def routing_key_for(group_id: int) -> int:
