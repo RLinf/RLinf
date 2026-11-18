@@ -267,6 +267,7 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
                 optimizers=[self.optimizer],
                 lr_schedulers=[],
                 load_path=str(fsdp_path),
+                checkpoint_format="local_shard",
             )
             state = torch.load(
                 path / f"state_rank_{self._rank}.pt",
