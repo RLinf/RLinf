@@ -2152,9 +2152,6 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.send_env_batch = MagicMock()
         self.worker.store_last_obs_and_intervened_info = MagicMock()
         self.worker.finish_rollout = MagicMock()
-        self.worker.compute_bootstrap_rewards = MagicMock(
-            return_value=torch.zeros(2, 4)
-        )
         self.worker.record_env_metrics = MagicMock()
 
         # 1. Prefetch
@@ -2266,9 +2263,6 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.send_env_batch = MagicMock()
         self.worker.store_last_obs_and_intervened_info = MagicMock()
         self.worker.finish_rollout = MagicMock()
-        self.worker.compute_bootstrap_rewards = MagicMock(
-            return_value=torch.zeros(2, 4)
-        )
         self.worker._bootstrap_and_send_train = MagicMock(
             return_value=[
                 EnvOutput(

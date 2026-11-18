@@ -108,9 +108,6 @@ class EnvWorker(Worker):
             self.use_reward_model and not self.use_realworld_reward
         )
         self.env_infos_reward_keys = ("success", "episode", "final_info")
-        if self.use_external_reward_model:
-            self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
-            self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
 
         # Env configurations
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
