@@ -145,6 +145,13 @@ class RealWorldEnv(gym.Env):
             self.env.call("get_wrapper_attr", "task_description")
         )
 
+    def request_stop(self) -> None:
+        """Request cooperative interruption before closing robot resources."""
+        for env in self.env.envs:
+            request_stop = getattr(env.unwrapped, "request_stop", None)
+            if request_stop is not None:
+                request_stop()
+
     def close(self) -> None:
         """Close the vector env and its physical robot/camera resources."""
         if getattr(self, "_closed", False):

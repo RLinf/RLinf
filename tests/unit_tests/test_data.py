@@ -22,6 +22,7 @@ import json
 import pickle
 import random
 import shutil
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -2761,7 +2762,10 @@ def test_replay_collector_skips_start_preview_and_aborted_transitions(
     collector.manual_episode_control_only = True
     logs = []
     collector.log_info = logs.append
-    collector.run()
+    collector._stop_requested = threading.Event()
+    collector._run_future = None
+    collector._resources_closed = False
+    asyncio.run(collector.run())
     assert env.index == 10
     assert collector.total_cnt == 2
     assert len(saved) == 1
@@ -2808,7 +2812,10 @@ def test_lerobot_only_collector_does_not_build_replay_trajectories(monkeypatch):
     collector.manual_episode_control_only = True
     logs = []
     collector.log_info = logs.append
-    collector.run()
+    collector._stop_requested = threading.Event()
+    collector._run_future = None
+    collector._resources_closed = False
+    asyncio.run(collector.run())
     assert collector.total_cnt == 1
     assert all("Replay buffer saved" not in message for message in logs)
 
@@ -4305,3 +4312,247 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
+
+
+@pytest.mark.parametrize("phase", ["first_reset", "step", "next_reset"])
+def test_data_collector_stop_requests_stop_and_closes_resources(monkeypatch, phase):
+    DataCollector = _load_real_data_collector(monkeypatch).DataCollector
+
+    async def run():
+        collector = object.__new__(DataCollector)
+        collector._stop_requested = threading.Event()
+        collector._resources_closed = False
+        collector._run_future = None
+        collector._preexisting_success = collector.total_cnt = 0
+        collector.num_data_episodes = 2
+        collector.action_dim = 1
+        collector._target_step_period = 60
+        collector.manual_episode_control_only = False
+        collector.log_info = Mock()
+        collector.cfg = OmegaConf.create(
+            {
+                "runner": {
+                    "record_task_description": False,
+                    "logger": {"log_path": "."},
+                },
+                "env": {"eval": {"max_episode_steps": 10}},
+            }
+        )
+        ready = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        release = threading.Event()
+        obs = {"states": torch.zeros(1, 2)}
+
+        def wait_for_stop():
+            loop.call_soon_threadsafe(ready.set)
+            assert release.wait(3), "collector stop did not interrupt Pico wait"
+
+        def reset(**kwargs):
+            if phase == "first_reset" or (phase == "next_reset" and kwargs):
+                wait_for_stop()
+                raise KeyboardInterrupt()
+            return obs, {}
+
+        def step(action):
+            if phase == "step":
+                wait_for_stop()
+            done = torch.tensor([phase == "next_reset"])
+            return obs, done.float(), done, torch.tensor([False]), {}
+
+        collector.replay_buffer = Mock()
+        collector.env = SimpleNamespace(
+            reset=reset,
+            step=step,
+            request_stop=Mock(side_effect=release.set),
+            close=Mock(),
+        )
+        task = asyncio.create_task(collector.run())
+        await asyncio.wait_for(ready.wait(), 3)
+        await asyncio.wait_for(collector.stop(), 2)
+        await task
+        await collector.stop()
+
+        assert collector.replay_buffer.add_trajectories.call_count == int(
+            phase == "next_reset"
+        )
+        collector.env.request_stop.assert_called_once_with()
+        collector.env.close.assert_called_once_with()
+        collector.replay_buffer.close.assert_called_once_with()
+
+    asyncio.run(run())
+
+
+def test_arx5_lerobot_sft_horizon_and_episode_padding(tmp_path):
+    pytest.importorskip("openpi")
+    pytest.importorskip("lerobot.datasets.lerobot_dataset")
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    from rlinf.data.datasets.openpi.dual_arx5_tcp_rot6d import (
+        DualARX5TcpRot6dSftDataset,
+    )
+
+    root = tmp_path / "arx5"
+    writer = LeRobotDataset.create(
+        repo_id="test/arx5",
+        root=root,
+        fps=20,
+        features={
+            "state": {"dtype": "float32", "shape": (20,), "names": None},
+            "actions": {"dtype": "float32", "shape": (20,), "names": None},
+        },
+        use_videos=False,
+    )
+    for episode in range(2):
+        for index in range(3):
+            writer.add_frame(
+                {
+                    "state": np.full(20, index, dtype=np.float32),
+                    "actions": np.full(20, episode * 10 + index, dtype=np.float32),
+                },
+                task="pick up",
+            )
+        writer.save_episode()
+    data = DualARX5TcpRot6dSftDataset(data_path=str(root), action_horizon=4)
+    assert data.resolved_fps == 20
+    assert data.delta_timestamps["actions"] == [0, 0.05, 0.1, 0.15]
+    assert data[0]["task"] == "pick up"
+    np.testing.assert_array_equal(data[1]["actions"][:, 0], [1, 2, 2, 2])
+    np.testing.assert_array_equal(data[3]["actions"][:, 0], [10, 11, 12, 12])
+
+
+def test_arx5_sft_collates_model_batch_and_rejects_empty_loader():
+    pytest.importorskip("openpi")
+    pytest.importorskip("lerobot.datasets.lerobot_dataset")
+    from rlinf.data.datasets.openpi.dual_arx5_tcp_rot6d.dual_arx5_tcp_rot6d_sft_data_loader import (
+        DualARX5TcpRot6dSftDataConfig,
+        DualARX5TcpRot6dSftDataLoader,
+        collate_dual_arx5_tcp_rot6d_sft_items,
+    )
+
+    keys = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
+    item = {
+        "image": {key: np.zeros((8, 8, 3), dtype=np.uint8) for key in keys},
+        "image_mask": dict.fromkeys(keys, True),
+        "state": np.zeros(32),
+        "actions": np.zeros((20, 32)),
+        "tokenized_prompt": np.arange(8),
+        "tokenized_prompt_mask": np.ones(8, dtype=bool),
+    }
+    observation, actions = collate_dual_arx5_tcp_rot6d_sft_items([item, item])
+    assert actions.shape == (2, 20, 32) and actions.dtype == torch.float32
+    assert observation.state.shape == (2, 32)
+    assert observation.tokenized_prompt.dtype == torch.int64
+    assert all(mask.dtype == torch.bool for mask in observation.image_masks.values())
+    torch_loader = torch.utils.data.DataLoader([], batch_size=4, drop_last=True)
+    with pytest.raises(ValueError, match="one full batch per rank"):
+        DualARX5TcpRot6dSftDataLoader(
+            torch_loader, DualARX5TcpRot6dSftDataConfig("test", 32, 20, 8)
+        )
+
+
+def test_arx5_sft_public_builder_reads_export_and_applies_full_pipeline(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("openpi")
+    pytest.importorskip("lerobot.datasets.lerobot_dataset")
+    import sentencepiece
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from openpi.shared import download, normalize
+
+    from rlinf.data.datasets.openpi import build_openpi_sft_dataloader
+
+    # Replace only the remote tokenizer asset with a real, small SentencePiece model.
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("pick up the cube\nmove the arm\nplace the cube\n")
+    sentencepiece.SentencePieceTrainer.train(
+        input=str(corpus),
+        model_prefix=str(tmp_path / "tokenizer"),
+        vocab_size=24,
+        hard_vocab_limit=False,
+    )
+    original_download = download.maybe_download
+
+    def local_tokenizer(url, **kwargs):
+        if str(url).endswith("tokenizer.model"):
+            return tmp_path / "tokenizer.model"
+        return original_download(url, **kwargs)
+
+    monkeypatch.setattr(download, "maybe_download", local_tokenizer)
+
+    root = tmp_path / "dataset"
+    features = {
+        key: {
+            "dtype": "image",
+            "shape": (3, 16, 16),
+            "names": ["channels", "height", "width"],
+        }
+        for key in ["image", "extra_view_image-0", "extra_view_image-1"]
+    }
+    features.update(
+        {
+            key: {"dtype": "float32", "shape": (20,), "names": None}
+            for key in ["state", "actions"]
+        }
+    )
+    writer = LeRobotDataset.create(
+        repo_id="test/arx5", root=root, fps=20, features=features, use_videos=False
+    )
+    state = np.zeros(20, dtype=np.float32)
+    state[[5, 9, 14, 18]] = 1.0
+    actions = np.zeros(20, dtype=np.float32)
+    actions[[3, 7, 13, 17]] = 1.0
+    for _ in range(4):
+        frame = {
+            key: np.zeros((16, 16, 3), dtype=np.uint8)
+            for key in ["image", "extra_view_image-0", "extra_view_image-1"]
+        }
+        writer.add_frame(
+            {**frame, "state": state.copy(), "actions": actions.copy()},
+            task="pick up the cube",
+        )
+    writer.save_episode()
+    norm_dir = tmp_path / "stats"
+    normalize.save(
+        norm_dir,
+        {
+            key: normalize.NormStats(
+                mean=np.zeros(20),
+                std=np.ones(20),
+                q01=np.full(20, -2.0),
+                q99=np.full(20, 2.0),
+            )
+            for key in ["state", "actions"]
+        },
+    )
+    cfg = OmegaConf.create(
+        {
+            "data": {"num_workers": 0},
+            "actor": {
+                "seed": 0,
+                "micro_batch_size": 2,
+                "eval_batch_size": 1,
+                "model": {
+                    "model_path": str(tmp_path / "model"),
+                    "num_action_chunks": 20,
+                    "openpi": {
+                        "config_name": "pi05_dualarx5_tcp_rot6d",
+                        "model_action_dim": 32,
+                        "max_token_len": 200,
+                    },
+                    "openpi_data": {
+                        "norm_stats_path": str(norm_dir / "norm_stats.json")
+                    },
+                },
+            },
+        }
+    )
+    loader, config = build_openpi_sft_dataloader(
+        cfg, world_size=1, rank=0, data_paths=str(root)
+    )
+    observation, action_batch = next(iter(loader))
+    assert config.action_horizon == 20
+    assert action_batch.shape == (2, 20, 32)
+    assert observation.state.shape == (2, 32)
+    assert observation.tokenized_prompt.shape == (2, 200)
+    assert all(image.shape == (2, 224, 224, 3) for image in observation.images.values())
+    assert torch.isfinite(action_batch).all()

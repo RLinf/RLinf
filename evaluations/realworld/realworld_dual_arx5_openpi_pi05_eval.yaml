@@ -1,0 +1,102 @@
+# Standalone SFT evaluation: Pico B starts, X scores success, A scores failure.
+# Use the same camera mapping, task prompt and normalization as SFT training.
+defaults:
+  - env/realworld_dual_arx5_tcp_rot6d@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout: all
+    env:
+      node_group: arx5
+      placement: 0
+  node_groups:
+    - label: arx5
+      node_ranks: 0
+      hardware:
+        type: DualARX5
+        configs:
+          - node_rank: 0
+            left_can_port: can1
+            right_can_port: can3
+            arm_type: 0
+            camera_type: v4l2
+            camera_fps: 20
+            base_camera_serials: [/dev/v4l/by-path/BASE_CAMERA]
+            left_camera_serials: [/dev/v4l/by-path/LEFT_WRIST_CAMERA]
+            right_camera_serials: [/dev/v4l/by-path/RIGHT_WRIST_CAMERA]
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: dual_arx5_openpi_eval
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  max_steps: 1
+  only_eval: true
+  val_check_interval: -1
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  eval:
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    main_image_key: base_0_rgb
+    max_episode_steps: 1000
+    max_steps_per_rollout_epoch: 1000
+    rollout_epoch: 1
+    teleop: none
+    pico_reward_wrapper: eval
+    pico:
+      zmq_addr: tcp://127.0.0.1:5555
+      max_stale_s: 0.2
+    data_collection:
+      enabled: false
+    video_cfg:
+      save_video: true
+    override_cfg:
+      task_description: ${oc.env:ARX5_TASK_DESCRIPTION}
+      max_num_steps: 1000
+      step_frequency: 20
+      enforce_workspace_bounds: false
+      max_step: 0.05
+      max_step_rad: 0.8
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: false
+  collect_prev_infos: false
+  model:
+    # An RLinf SFT checkpoint directory containing actor/model_state_dict/full_weights.pt.
+    model_path: ${oc.env:ARX5_SFT_CHECKPOINT}
+    precision: bf16
+    num_action_chunks: 20
+    action_dim: 20
+    rewrite_chunk_gripper: false
+    openpi:
+      task: eval
+      config_name: pi05_dualarx5_tcp_rot6d
+      num_images_in_input: 3
+      action_horizon: 20
+      discrete_state_input: false
+    openpi_data:
+      norm_stats_path: ${oc.env:ARX5_NORM_STATS}
+      main_image_key: base_0_rgb

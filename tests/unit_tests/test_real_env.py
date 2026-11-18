@@ -6408,3 +6408,190 @@ def test_arx5_collection_preserves_pico_control_and_calibration_defaults(monkeyp
         assert reader.calibration_threshold == 0.5
         np.testing.assert_array_equal(reader.head_forward_axis, [0, 0, -1])
         np.testing.assert_array_equal(reader.base_position, [0, 0, 0])
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("auto_reset", False),
+        ("ignore_terminations", True),
+        ("total_num_envs", 2),
+        ("data_collection", {"enabled": True}),
+    ],
+)
+def test_arx5_pico_eval_rejects_incompatible_lifecycle(field, value):
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.envs.real.wrappers.episode.pico_eval import PicoEvalControlWrapper
+
+    base = DualARX5Env({"is_dummy": True})
+    try:
+        with pytest.raises(ValueError, match="pico_reward_wrapper"):
+            PicoEvalControlWrapper.from_cfg(
+                base, {"max_steps_per_rollout_epoch": 20, field: value}
+            )
+    finally:
+        base.close()
+
+
+def test_arx5_observe_does_not_execute_actions_and_honors_stop(monkeypatch):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    base = DualARX5Env(
+        {"require_camera": False}, robot_info=_robot_info(DualARX5Config(node_rank=0))
+    )
+    try:
+        before = [device.pose.copy() for device in sdk.SingleArm.instances]
+        observation = base.observe()
+        assert observation["state"]["tcp_pose_rot6d"].shape == (18,)
+        assert base._steps == 0
+        for device, pose in zip(sdk.SingleArm.instances, before):
+            np.testing.assert_array_equal(device.pose, pose)
+        base.request_stop()
+        with pytest.raises(KeyboardInterrupt):
+            base.observe()
+    finally:
+        base.close()
+
+
+@pytest.mark.parametrize("button,reward", [("X", 1.0), ("A", 0.0)])
+def test_arx5_pico_eval_stops_chunk_and_closes_owned_reader(
+    monkeypatch, button, reward
+):
+    from robot_mocks import mocked_sdks
+    from robot_mocks.sdks import arx5
+    from robot_mocks.teleop import SCRIPTED_OPERATOR, pico_packet
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.envs.real.wrappers import build_stack
+    from rlinf.robotics import DualARX5Config
+
+    with mocked_sdks(extra=arx5()) as sdks:
+        from rlinf.robotics.parts.transports import pico as transport
+
+        monkeypatch.setattr(transport, "zmq", sdks["zmq"])
+        base = DualARX5Env(
+            {
+                "require_camera": False,
+                "joint_reset_qpos": [[0.0] * 6] * 2,
+                "step_frequency": 20,
+            },
+            robot_info=_robot_info(DualARX5Config(node_rank=0)),
+        )
+        env = build_stack(
+            base,
+            {
+                "teleop": "none",
+                "pico_reward_wrapper": "eval",
+                "max_steps_per_rollout_epoch": 20,
+                "pico": {"zmq_addr": SCRIPTED_OPERATOR},
+            },
+        )
+        # The fake publisher presses B at phase 5; the real reader and wrapper
+        # still process the packet and wait for that rising edge.
+        transport.zmq.operator_started = time.monotonic() - 4.5
+        sockets = []
+        try:
+            obs, _ = env.reset()
+            assert obs["state"]["tcp_pose_rot6d"].shape == (18,)
+            sockets = list(transport.zmq.sockets)
+            for socket in sockets:
+                socket.address = "mock://controlled"
+            transport.zmq.frame = pico_packet({button: True})
+            action = np.zeros(20, dtype=np.float32)
+            done = False
+            for count in range(1, 11):
+                _, result_reward, done, _, info = env.step(action)
+                if done:
+                    break
+            assert done and result_reward == reward
+            assert info["pico_episode_event"] == (
+                "end_success" if reward else "end_failure"
+            )
+            executed = base._steps
+            transport.zmq.frame = pico_packet({"B": True})
+            for _ in range(20 - count):
+                assert not env.step(action)[2]
+            assert base._steps == executed
+            # The budget is exhausted: final auto-reset must not move or wait for B.
+            final, _ = env.reset()
+            assert final is not None and base._steps == executed
+        finally:
+            env.close()
+            env.close()
+        assert all(socket.closed for socket in sockets)
+        assert all(
+            device.close_count == 1 for device in sdks["bimanual"].SingleArm.instances
+        )
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_arx5_eval_worker_closes_resources_after_result_or_error(monkeypatch, failed):
+    import asyncio
+    import logging
+
+    from robot_mocks.sdks import arx5
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.robotics import DualARX5Config
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    base = DualARX5Env(
+        {"require_camera": False}, robot_info=_robot_info(DualARX5Config(node_rank=0))
+    )
+    # Only the scheduler constructor is bypassed; cleanup runs on a real env
+    # and real drivers backed by the external SDK fake.
+    worker = object.__new__(EnvWorker)
+    worker.eval_env_list = [base]
+    worker.should_stop = False
+    worker._logger = logging.getLogger("arx5-cleanup-test")
+    worker._stacklevel = 1
+
+    async def close():
+        worker._eval_future = asyncio.get_running_loop().create_future()
+        if failed:
+            worker._eval_future.set_exception(RuntimeError("evaluation failed"))
+            with pytest.raises(RuntimeError, match="evaluation failed"):
+                await worker.close_eval_envs()
+        else:
+            worker._eval_future.set_result({})
+            await worker.close_eval_envs()
+
+    try:
+        asyncio.run(close())
+        assert worker.should_stop
+        assert base._closed
+        assert all(device.close_count == 1 for device in sdk.SingleArm.instances)
+    finally:
+        base.close()
+
+
+@pytest.mark.parametrize("cooperative", [False, True])
+def test_arx5_eval_keeps_noncooperative_simulators_on_original_thread(cooperative):
+    import asyncio
+    import inspect
+
+    from rlinf.envs.real.arx5 import DualARX5Env
+    from rlinf.workers.env.env_worker import EnvWorker
+
+    env = DualARX5Env({"is_dummy": True}) if cooperative else gym.make("CartPole-v1")
+    worker = object.__new__(EnvWorker)
+    worker.eval_env_list = [env]
+    worker._eval_future = None
+    worker.should_stop = False
+    worker.eval_rollout_epoch = 0
+    worker.stage_num = 1
+    worker.eval_enable_offload = False
+    try:
+        # Unwrap only the scheduler's timing decorator; execute the actual worker.
+        result = asyncio.run(inspect.unwrap(EnvWorker.evaluate)(worker, None, None))
+        assert result == {}
+        assert (worker._eval_future is not None) == cooperative
+    finally:
+        env.close()

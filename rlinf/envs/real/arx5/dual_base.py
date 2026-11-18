@@ -22,6 +22,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Callable, Mapping
 
 import cv2
@@ -291,6 +292,10 @@ class DualARX5Env(gym.Env):
             raise
 
     def _request_stop_signal(self, signum: int, frame: Any) -> None:
+        self.request_stop()
+
+    def request_stop(self) -> None:
+        """Interrupt control and Pico waits before the owner parks the arms."""
         self._stop_requested = True
 
     def check_stop_requested(self) -> None:
@@ -625,6 +630,11 @@ class DualARX5Env(gym.Env):
             frames[name] = frame
         return frames
 
+    def observe(self) -> dict[str, Any]:
+        """Read fresh state and images without sending an action."""
+        self.check_stop_requested()
+        return self._observe()
+
     def _observe(self) -> dict[str, Any]:
         if self.config.is_dummy:
             return self.observation_space.sample()
@@ -690,10 +700,18 @@ class DualARX5Env(gym.Env):
         observation = self._observe()
         return observation, reset_info
 
-    def episode_wrappers(self, cfg: Mapping[str, Any]) -> tuple[type, ...]:
-        """Attach Pico episode controls only when teleoperation is enabled."""
+    def episode_wrappers(
+        self, cfg: Mapping[str, Any]
+    ) -> tuple[Callable[[gym.Env], gym.Env], ...]:
+        """Attach requested evaluation controls, or the teleoperation controls."""
         if self.config.is_dummy:
             return ()
+        if cfg.get("pico_reward_wrapper") == "eval":
+            from rlinf.envs.real.wrappers.episode.pico_eval import (
+                PicoEvalControlWrapper,
+            )
+
+            return (partial(PicoEvalControlWrapper.from_cfg, cfg=cfg),)
         from rlinf.envs.real.wrappers.episode import PicoEpisodeControlWrapper
         from rlinf.envs.real.wrappers.teleop.config import resolve_teleop_devices
 

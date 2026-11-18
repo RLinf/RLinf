@@ -3333,3 +3333,136 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+@pytest.mark.parametrize("main_key", ["base_0_rgb", "left_wrist_0_rgb"])
+@pytest.mark.parametrize("stacked", [False, True])
+def test_arx5_sft_and_eval_preserve_camera_identity(main_key, stacked):
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.dual_arx5_tcp_rot6d_policy import (
+        DualARX5TcpRot6dInputs,
+    )
+
+    names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
+    images = {
+        key: np.full((8, 8, 3), i + 1, dtype=np.uint8) for i, key in enumerate(names)
+    }
+    extra = [images[key] for key in names if key != main_key]
+    raw = {
+        "observation/image": images[main_key],
+        "observation/state": np.arange(20),
+        "prompt": b"pick up",
+    }
+    if stacked:
+        raw["observation/extra_view_image"] = np.stack(extra)
+    else:
+        for i, image in enumerate(extra):
+            raw[f"observation/extra_view_image-{i}"] = (
+                image.transpose(2, 0, 1).astype(np.float32) / 255
+            )
+    result = DualARX5TcpRot6dInputs(main_image_key=main_key)(raw)
+    for key in names:
+        np.testing.assert_array_equal(result["image"][key], images[key])
+    np.testing.assert_array_equal(result["state"], np.r_[2:11, 0:1, 11:20, 1:2])
+    assert result["prompt"] == "pick up"
+    assert all(result["image_mask"].values())
+
+
+def test_arx5_sft_delta_normalization_round_trips_to_eval_actions():
+    pytest.importorskip("openpi")
+    from openpi import transforms
+    from openpi.shared.normalize import NormStats
+    from scipy.spatial.transform import Rotation
+
+    from rlinf.models.embodiment.openpi.policies.dual_arx5_tcp_rot6d_policy import (
+        DualARX5TcpRot6dInputs,
+        DualARX5TcpRot6dOutputs,
+    )
+    from rlinf.models.embodiment.openpi.transforms.rigid_body_delta import (
+        DUAL_ARM_ROT6D_LAYOUT,
+        RigidBodyAbsoluteActions,
+        RigidBodyDeltaActions,
+    )
+    from rlinf.utils.rot6d import matrix_to_rot6d
+
+    state = np.zeros(20, dtype=np.float32)
+    state[:2] = [-0.3, 0.7]
+    state[2:5], state[11:14] = [0.2, 0.1, 0.3], [-0.2, 0.4, 0.1]
+    state[5:11] = matrix_to_rot6d(Rotation.from_euler("z", 0.7).as_matrix())
+    state[14:20] = matrix_to_rot6d(Rotation.from_euler("x", -0.4).as_matrix())
+    frame = {
+        "observation/state": state,
+        "observation/image": np.zeros((8, 8, 3), dtype=np.uint8),
+        "observation/extra_view_image": np.zeros((2, 8, 8, 3), dtype=np.uint8),
+    }
+    mapped = DualARX5TcpRot6dInputs()(frame)
+    absolute = np.tile(mapped["state"], (4, 1))
+    absolute[:, :3] += [0.05, -0.02, 0.03]
+    absolute[:, 13:19] = matrix_to_rot6d(Rotation.from_euler("y", 0.3).as_matrix())
+    absolute[:, [9, 19]] = [0.8, -0.5]
+    stats = {
+        key: NormStats(
+            mean=np.zeros(20),
+            std=np.ones(20),
+            q01=np.full(20, -2.0),
+            q99=np.full(20, 2.0),
+        )
+        for key in ["state", "actions"]
+    }
+    inputs = transforms.compose(
+        [
+            RigidBodyDeltaActions(DUAL_ARM_ROT6D_LAYOUT),
+            transforms.Normalize(stats, use_quantiles=True),
+            transforms.PadStatesAndActions(32),
+        ]
+    )
+    encoded = inputs({"state": mapped["state"].copy(), "actions": absolute.copy()})
+    assert encoded["state"].shape == (32,)
+    assert encoded["actions"].shape == (4, 32)
+    outputs = transforms.compose(
+        [
+            transforms.Unnormalize(stats, use_quantiles=True),
+            RigidBodyAbsoluteActions(DUAL_ARM_ROT6D_LAYOUT),
+            DualARX5TcpRot6dOutputs(),
+        ]
+    )
+    recovered = outputs(encoded)["actions"]
+    np.testing.assert_allclose(recovered, absolute, atol=1e-5)
+
+
+def test_arx5_sft_eval_configs_agree(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/sft"))
+    with initialize_config_dir(
+        version_base=None, config_dir=str(root / "examples/sft/config")
+    ):
+        sft = compose(config_name="realworld_sft_openpi_dual_arx5_tcp_rot6d")
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    for key in ("ARX5_SFT_CHECKPOINT", "ARX5_NORM_STATS", "ARX5_TASK_DESCRIPTION"):
+        monkeypatch.setenv(key, "test-placeholder")
+    with initialize_config_dir(
+        version_base=None, config_dir=str(root / "evaluations/realworld")
+    ):
+        evaluation = compose(config_name="realworld_dual_arx5_openpi_pi05_eval")
+    from rlinf.config import validate_only_eval_rollout_model
+    from rlinf.robotics import DualARX5Config
+
+    validate_only_eval_rollout_model(evaluation.rollout.model)
+    train_model, eval_model = sft.actor.model, evaluation.rollout.model
+    assert train_model.action_dim == eval_model.action_dim == 20
+    assert train_model.openpi.action_horizon == eval_model.openpi.action_horizon == 20
+    assert train_model.openpi.config_name == eval_model.openpi.config_name
+    assert (
+        train_model.openpi.discrete_state_input
+        is eval_model.openpi.discrete_state_input
+        is False
+    )
+    assert (
+        train_model.openpi_data.main_image_key
+        == eval_model.openpi_data.main_image_key
+        == evaluation.env.eval.main_image_key
+    )
+    hardware = evaluation.cluster.node_groups[0].hardware.configs[0]
+    DualARX5Config(**OmegaConf.to_container(hardware, resolve=True))

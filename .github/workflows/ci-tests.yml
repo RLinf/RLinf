@@ -192,6 +192,8 @@ jobs:
               - *shared
               - 'rlinf/robotics/**'
               - 'rlinf/models/embodiment/openpi/**'
+              - 'examples/sft/config/realworld_sft_openpi_dual_arx5_tcp_rot6d.yaml'
+              - 'evaluations/realworld/realworld_dual_arx5_openpi_pi05_eval*.yaml'
               # Unit tests import env modules directly (robot task envs, the
               # real-world compatibility suite, maniskill offload, delay
               # sampler), so env changes have to trigger this job.
