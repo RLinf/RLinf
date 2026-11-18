@@ -607,6 +607,7 @@ def test_hf_rollout_merges_nested_observations():
 
 def test_openpi_env_io_reads_history():
     from rlinf.models.embodiment.openpi.env_io import EnvIO
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     def frame_transform(sample):
         return {
@@ -628,6 +629,7 @@ def test_openpi_env_io_reads_history():
         return sample
 
     adapter = EnvIO()
+    adapter._config = Pi0Config(short_memory=True)
     adapter.config_name = "pi05_libero"
     adapter.state_indices = ()
     adapter.device = torch.device("cpu")
