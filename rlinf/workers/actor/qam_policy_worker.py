@@ -203,10 +203,10 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
         return {**metrics, "__global_step": self.global_step}
 
     def set_global_step(self, step):
-        if self.global_step != int(step):
-            raise ValueError(
-                f"Runner step {step} differs from worker step {self.global_step}"
-            )
+        # ``OfflineRunner`` sends this synchronization call asynchronously.
+        # If a completed update reaches the worker first, do not roll the
+        # worker back to the stale step carried by that request.
+        self.global_step = max(self.global_step, int(step))
 
     def get_rollout_sync_version(self):
         return self.global_step
