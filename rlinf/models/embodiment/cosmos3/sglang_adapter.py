@@ -181,16 +181,6 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 "Cosmos3 training requires a SGLang checkout with action-rollout support. "
                 "Install the modified SGLang 0.5.19 source in the serving environment."
             )
-        server = cfg.rollout.sglang.server
-        sp_degree = int(server.get("sp_degree", 1))
-        if sp_degree > 1 and (
-            int(server.get("ulysses_degree", 1)) != sp_degree
-            or int(server.get("ring_degree", 1)) != 1
-            or int(server.get("kv_gather_degree", 1) or 1) != 1
-        ):
-            raise ValueError(
-                "Cosmos3 action SP requires ulysses_degree=sp_degree and ring_degree=1"
-            )
 
     @staticmethod
     def map_weight_name(name: str) -> str | None:
