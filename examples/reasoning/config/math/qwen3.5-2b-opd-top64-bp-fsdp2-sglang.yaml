@@ -5,12 +5,12 @@ defaults:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout,reward: 4
-    teacher_default: 2-3
+    actor,rollout,reward: 2-7
+    teacher_default: 0-1
 
 runner:
   execution_mode: sync
-  experiment_name: qwen3.5-2b-opd-top64-bp
+  experiment_name: qwen3.5-2b-opd-top64-bp-8gpu
   output_dir: ./logs
   logger:
     project_name: qwen3_5_dapo_opd

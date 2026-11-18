@@ -141,5 +141,7 @@ class Manager:
         for var in cls.ENV_LIST:
             if var in os.environ:
                 runtime_env[var] = os.environ[var]
+        if ray.is_initialized():
+            runtime_env["RAY_ADDRESS"] = ray.get_runtime_context().gcs_address
         runtime_env["CLUSTER_NAMESPACE"] = Cluster.NAMESPACE
         return runtime_env

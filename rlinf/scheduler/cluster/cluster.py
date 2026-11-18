@@ -330,32 +330,21 @@ class Cluster:
             Cluster._prepare_ray_code_sync_runtime_env_fragment()
         )
 
-        try:
-            # First try to connect to an existing Ray cluster
-            ray_init_kwargs: dict[str, Any] = {
-                "address": "auto",
-                "logging_level": Cluster.LOGGING_LEVEL,
-                "namespace": Cluster.NAMESPACE,
-            }
-            if self._ray_code_sync_fragment is not None:
-                ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
-                py_mods = ray_init_kwargs["runtime_env"].get("py_modules") or ()
-                self._logger.info(
-                    "%s Ray code sync is enabled (py_modules=%r); workers receive "
-                    "only the rlinf package from the launch node. Disable with %s=0.",
-                    Cluster.SYS_NAME,
-                    tuple(py_mods),
-                    Cluster.get_full_env_var_name(ClusterEnvVar.CODE_WORKING_DIR),
-                )
-            ray.init(**ray_init_kwargs)
-        except ConnectionError:
-            ray_init_kwargs = {
-                "logging_level": Cluster.LOGGING_LEVEL,
-                "namespace": Cluster.NAMESPACE,
-            }
-            if self._ray_code_sync_fragment is not None:
-                ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
-            self._start_local_ray(ray_init_kwargs)
+        ray_init_kwargs: dict[str, Any] = {
+            "logging_level": Cluster.LOGGING_LEVEL,
+            "namespace": Cluster.NAMESPACE,
+        }
+        if self._ray_code_sync_fragment is not None:
+            ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
+            py_mods = ray_init_kwargs["runtime_env"].get("py_modules") or ()
+            self._logger.info(
+                "%s Ray code sync is enabled (py_modules=%r); workers receive "
+                "only the rlinf package from the launch node. Disable with %s=0.",
+                Cluster.SYS_NAME,
+                tuple(py_mods),
+                Cluster.get_full_env_var_name(ClusterEnvVar.CODE_WORKING_DIR),
+            )
+        self._init_ray(ray_init_kwargs)
 
         # Ray log collector
         if distributed_log_dir is not None:
@@ -463,10 +452,11 @@ class Cluster:
 
             with without_http_proxies():
                 alive_actors = list_actors(
+                    address=ray.get_runtime_context().gcs_address,
                     filters=[
                         ("STATE", "=", "ALIVE"),
                         ("RAY_NAMESPACE", "=", Cluster.NAMESPACE),
-                    ]
+                    ],
                 )
             for actor_state in alive_actors:
                 actor = ray.get_actor(actor_state.name)
@@ -480,6 +470,30 @@ class Cluster:
             exit(-1)
 
         signal.signal(signal.SIGUSR1, signal_handler)
+
+    def _init_ray(self, ray_init_kwargs: dict[str, Any]) -> None:
+        """Connect to the requested cluster or start a compatible local instance."""
+        address = os.environ.get("RAY_ADDRESS") or "auto"
+        try:
+            if address == "local":
+                self._start_local_ray({**ray_init_kwargs, "address": "local"})
+            else:
+                ray.init(address=address, **ray_init_kwargs)
+        except (ConnectionError, RuntimeError) as error:
+            version_mismatch = str(error).startswith("Version mismatch:")
+            if address != "auto" or (
+                not isinstance(error, ConnectionError)
+                and (not version_mismatch or self._num_nodes != 1)
+            ):
+                raise
+            if version_mismatch:
+                self._logger.warning(
+                    "Auto-discovered Ray cluster is incompatible with this process; "
+                    "starting a local instance. %s",
+                    error,
+                )
+            ray.shutdown()
+            self._start_local_ray({**ray_init_kwargs, "address": "local"})
 
     def _start_local_ray(self, ray_init_kwargs: dict[str, Any]):
         """Start a local Ray instance, retrying once if the node fails to come up.
@@ -572,12 +586,12 @@ class Cluster:
 
     @property
     def num_nodes(self):
-        """Get the number of nodes in the cluster."""
+        """Number of nodes in the cluster."""
         return self._num_nodes
 
     @property
     def collective_config(self) -> Optional["CollectiveConfig"]:
-        """Get the job-wide collective configuration, if one was provided.
+        """Job-wide collective configuration, if one was provided.
 
         The configuration is validated once on the driver and reaches every
         Worker with the rest of the :class:`ClusterConfig`, so both ends of a
@@ -587,12 +601,12 @@ class Cluster:
 
     @property
     def num_accelerators(self):
-        """Get the number of accelerators in the cluster."""
+        """Total number of accelerators across the cluster."""
         return sum(node.num_accelerators for node in self._nodes)
 
     @property
     def accelerator_ranks(self) -> list[list[int]]:
-        """Get the global accelerator ranks for each node in the cluster."""
+        """Global accelerator ranks grouped by node."""
         node_start_accel_rank = 0
         node_accel_ranks = []
         for node in self._nodes:
@@ -803,6 +817,8 @@ class Cluster:
             env_vars,
             path_env_merge_mode,
         )
+        # Child processes must join this cluster rather than rediscover or create one.
+        merged_env_vars["RAY_ADDRESS"] = ray.get_runtime_context().gcs_address
 
         # Update Python interpreter path
         python_interpreter_path = node.python_interpreter_path

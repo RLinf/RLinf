@@ -1,0 +1,8 @@
+defaults:
+  - eval_qwen3.5-2b
+  - _self_
+
+data:
+  dataset_name: AIME2026
+  val_data_paths:
+    - /mnt/public2/suheng/data/benchmark/AIME2026/data/train-00000-of-00001.parquet

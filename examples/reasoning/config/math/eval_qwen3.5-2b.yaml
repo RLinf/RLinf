@@ -1,0 +1,76 @@
+defaults:
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout: 0-1 # Visible GPU ranks; one model replica per TP × PP GPUs.
+
+runner:
+  task_type: reasoning_eval
+  experiment_name: null # Defaults to the HF model directory name.
+  output_dir: ./logs/math-eval # Per-question JSONL and summary.csv
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}/${data.dataset_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: [tensorboard] # [] disables metric logging; JSONL and CSV are still written.
+  seq_length: 10240 # Prompt and completion combined
+  max_steps: -1 # Validation batches; -1 evaluates the whole selected dataset.
+
+algorithm:
+  group_size: 4 # Independent answers per question; pass@4 requires at least four.
+  sampling_params:
+    do_sample: true
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    repetition_penalty: 1.0
+    min_new_tokens: 0 # SGLang default used by the OPD rollout.
+    max_new_tokens: 8192
+    stop: [] # Optional additional stop strings; the model's EOS applies by default.
+
+data:
+  dataset_name: AIME2025
+  val_data_paths:
+    - /mnt/public2/suheng/data/benchmark/AIME2025/data/train-00000-of-00001.parquet
+  prompt_key: problem
+  answer_key: answer
+  prompt_suffix: ' Please put your final answer in \boxed{}.'
+  apply_chat_template: true
+  apply_chat_template_kwargs:
+    enable_thinking: false
+  max_prompt_length: 2048
+  filter_prompt_by_length: false # true excludes overlength questions; false reports an error.
+  data_size: -1 # First N rows across validation files; -1 selects all rows.
+  validation_shuffle: false
+  seed: 42 # Validation order when shuffling
+  val_rollout_batch_size: 30 # Questions per batch before sampling; null uses the whole set.
+
+rollout:
+  rollout_backend: sglang
+  model:
+    model_path: /mnt/public2/suheng/models/Qwen3.5-2B # HF model with tokenizer
+    precision: bf16
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  gpu_memory_utilization: 0.5
+  max_model_len: 10241 # SGLang context capacity, matching the OPD rollout.
+  max_running_requests: 128 # Concurrent sequences per replica
+  seed: 42 # Generation RNG
+  enforce_eager: false
+  cuda_graph_max_bs: 4
+  print_outputs: false # Also write generated responses to the console.
+  sglang:
+    attention_backend: flashinfer
+    decode_log_interval: 500000
+    use_torch_compile: false
+    torch_compile_max_bs: 4

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
 import shlex
@@ -63,6 +64,60 @@ def path_merge_test_env_var() -> str:
         # whitelisted path var.
         return "LIBRARY_PATH"
     return "LD_LIBRARY_PATH"
+
+
+@pytest.mark.parametrize(
+    ("address", "num_nodes", "error", "fallback"),
+    [
+        (None, 1, None, False),
+        ("auto", 1, None, False),
+        ("local", 1, None, False),
+        ("192.0.2.1:6379", 2, None, False),
+        (None, 1, ConnectionError("No running Ray instance"), True),
+        (None, 2, ConnectionError("No running Ray instance"), True),
+        (None, 1, RuntimeError("Version mismatch: incompatible Ray"), True),
+        ("auto", 1, RuntimeError("Version mismatch: incompatible Python"), True),
+        (None, 2, RuntimeError("Version mismatch: incompatible Ray"), False),
+        (
+            "192.0.2.1:6379",
+            1,
+            RuntimeError("Version mismatch: incompatible Ray"),
+            False,
+        ),
+        ("192.0.2.1:6379", 1, ConnectionError("Connection refused"), False),
+        (None, 1, RuntimeError("Failed to load runtime environment"), False),
+    ],
+)
+def test_ray_connection_respects_explicit_addresses(
+    monkeypatch, address, num_nodes, error, fallback
+):
+    if address is None:
+        monkeypatch.delenv("RAY_ADDRESS", raising=False)
+    else:
+        monkeypatch.setenv("RAY_ADDRESS", address)
+    calls = []
+    shutdowns = []
+
+    def initialize(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1 and error is not None:
+            raise error
+
+    monkeypatch.setattr(ray, "init", initialize)
+    monkeypatch.setattr(ray, "shutdown", lambda: shutdowns.append(True))
+    cluster = object.__new__(Cluster)
+    cluster._num_nodes = num_nodes
+    cluster._logger = logging.getLogger(__name__)
+    options = {"namespace": "test", "runtime_env": {"env_vars": {"MARKER": "1"}}}
+    if error is not None and not fallback:
+        with pytest.raises(type(error)) as caught:
+            cluster._init_ray(options)
+        assert caught.value is error
+    else:
+        cluster._init_ray(options)
+    assert calls[0] == {**options, "address": address or "auto"}
+    assert calls[1:] == ([{**options, "address": "local"}] if fallback else [])
+    assert shutdowns == ([True] if fallback else [])
 
 
 def test_cluster_config_parses_node_group_hardware():
@@ -973,6 +1028,25 @@ class EnvConfigCheckWorker(Worker):
     def get_env_marker(self, key: str):
         return os.environ.get(key)
 
+    def get_child_manager_cluster(self):
+        script = (
+            "import json, os, ray\n"
+            "from rlinf.scheduler.manager.node_manager import NodeManager\n"
+            "manager = NodeManager.get_proxy(no_wait=True)\n"
+            "print(json.dumps({'address': ray.get_runtime_context().gcs_address, "
+            "'env_address': os.environ['RAY_ADDRESS'], "
+            "'num_nodes': len(manager.get_nodes()[0])}))\n"
+            "ray.shutdown()\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
 
 def _reset_cluster_singleton():
     if ray.is_initialized():
@@ -983,6 +1057,56 @@ def _reset_cluster_singleton():
             instance._has_initialized = False
         delattr(Cluster, "_instance")
     Cluster.NAMESPACE = Cluster.SYS_NAME
+
+
+@pytest.mark.placement
+def test_local_cluster_address_reaches_worker_subprocess(monkeypatch):
+    _reset_cluster_singleton()
+    monkeypatch.setenv("RAY_ADDRESS", "local")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(
+            path
+            for path in (
+                str(Path(__file__).resolve().parent),
+                str(Path(__file__).resolve().parents[2]),
+                os.environ.get("PYTHONPATH"),
+            )
+            if path
+        ),
+    )
+    original_init = ray.init
+    with tempfile.TemporaryDirectory(prefix="rlinf-ray-") as ray_tmp:
+
+        def initialize(**kwargs):
+            if kwargs.get("address") == "local":
+                kwargs.update(
+                    num_cpus=2,
+                    num_gpus=0,
+                    include_dashboard=False,
+                    object_store_memory=80 * 1024 * 1024,
+                    _temp_dir=ray_tmp,
+                )
+            return original_init(**kwargs)
+
+        monkeypatch.setattr(ray, "init", initialize)
+        try:
+            cluster = Cluster(num_nodes=1)
+            address = ray.get_runtime_context().gcs_address
+            from rlinf.scheduler.manager.manager import Manager
+
+            assert Manager.get_runtime_env_vars()["RAY_ADDRESS"] == address
+            worker = EnvConfigCheckWorker.create_group().launch(
+                cluster=cluster,
+                name="child_ray_address",
+                placement_strategy=NodePlacementStrategy([0]),
+            )
+            assert worker.get_env_marker("RAY_ADDRESS").wait() == [address]
+            assert worker.get_child_manager_cluster().wait() == [
+                {"address": address, "env_address": address, "num_nodes": 1}
+            ]
+        finally:
+            _reset_cluster_singleton()
 
 
 def test_cluster_env_configs_applied_in_worker_launch():

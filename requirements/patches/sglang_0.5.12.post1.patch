@@ -224,3 +224,28 @@
 
          # Build return object
          if isinstance(obj, GenerateReqInput):
+--- a/srt/entrypoints/engine.py
++++ b/srt/entrypoints/engine.py
+@@ -30,6 +30,7 @@
+ import tempfile
+ import threading
+ import time
++from multiprocessing import resource_tracker
+ from typing import (
+     Any,
+     AsyncIterator,
+@@ -893,7 +894,13 @@
+             and self.tokenizer_manager._subprocess_watchdog is not None
+         ):
+             self.tokenizer_manager._subprocess_watchdog.stop()
+-        kill_process_tree(os.getpid(), include_parent=False, wait_timeout=60)
++        # multiprocessing owns the tracker and waits for it at interpreter exit.
++        kill_process_tree(
++            os.getpid(),
++            include_parent=False,
++            skip_pid=resource_tracker._resource_tracker._pid,
++            wait_timeout=60,
++        )
+
+     def __enter__(self):
+         return self
