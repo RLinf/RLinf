@@ -1,7 +1,7 @@
 RL with Real-World Robots
 =========================
 
-Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for ARX X5, YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, AgileX Piper, SO101, LeKiwi, and UR5e.
+Use this section when your starting point is physical robot hardware. Start with Franka if you use a Franka arm or a Franka-based rig; use the other robot pages for ARX X5, YAM, GimArm, XSquare Turtle2, Dexmal DOS-W1, Robbyant R2, AgileX Piper, SO101, LeKiwi, and UR5e.
 
 Choose a guide for hardware checks, teleoperation, data collection, sim-to-real transfer, deployment, or online RL.
 
@@ -77,6 +77,18 @@ YAM
 
 Use :doc:`the YAM section <embodied/yam_index>` for dual-arm setup and data collection guides.
 
+Robbyant R2
+-----------
+
+.. grid:: 1 1 1 1
+   :gutter: 2
+
+   .. grid-item-card:: Robbyant R2
+      :link: embodied/r2
+      :link-type: doc
+
+      Run hardware checks, whole-body PICO VR teleoperation, and ``R2ReachEnv-v1`` on the Robbyant R2 wheeled humanoid.
+
 Piper, SO101, LeKiwi, and UR5e
 --------------------------------------
 
@@ -120,6 +132,7 @@ Use these guides to connect a robot, run hardware checks, and follow the collect
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
+   Robbyant R2 <embodied/r2>
    Piper <embodied/piper>
    SO101 <embodied/so101>
    LeKiwi <embodied/lekiwi>

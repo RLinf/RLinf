@@ -26,6 +26,8 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet
 @dataclasses.dataclass
 class Pi0Config:
     dtype: str = "bfloat16"
+    # Match native OpenPI Torch rounding and attention kernels when enabled.
+    pytorch_numerics: bool = False
     paligemma_variant: gemma.Variant = "gemma_2b"
     action_expert_variant: gemma.Variant = "gemma_300m"
     pointnet_variant: pointnet.Variant = "pcd"
