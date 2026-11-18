@@ -22,6 +22,17 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_openwam.html" style="display: block;"><img src="https://raw.githubusercontent.com/OpenWAM-Official/OpenWAM/main/assets/repo_images/teaser.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_openwam.html" style="text-decoration: underline; color: blue;">
+           <b>OpenWAM Supervised Fine-Tuning</b>
+         </a><br>
+         Full-parameter FSDP2 SFT for OpenWAM with its native readers and joint video/action loss
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/sft_dreamzero.html" style="display: block;"><img src="https://dreamzero0.github.io/images/project_overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -83,6 +94,7 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   OpenWAM <embodied/sft_openwam>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
    Cosmos3 <embodied/sft_cosmos3>

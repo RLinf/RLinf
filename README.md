@@ -35,6 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports OpenWAM full-parameter SFT with Ray-managed FSDP on LIBERO. Doc: [OpenWAM SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openwam.html).
 - [2026/11] 🔥 RLinf supports the Robbyant R2 wheeled humanoid robot for real-world RL, whole-body PICO VR teleoperation, and coordinated control across dual arms, grippers or dexterous hands, torso, and omnidirectional base. Doc: [Robbyant R2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html).
 - [2026/11] 🔥 RLinf adds a hardware fault-tolerance interface for real-world robots, available first on the Robbyant R2: non-blocking health diagnosis, severity-based automatic recovery with emergency-stop latching, jump-free motion resumption, and episode truncation for interrupted RL rollouts. Doc: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html).
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
@@ -266,6 +267,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           </ul>
           <li><b>World Action Model</b></li>
           <ul>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openwam.html">OpenWAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>

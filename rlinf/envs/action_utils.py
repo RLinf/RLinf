@@ -15,7 +15,10 @@
 import numpy as np
 import torch
 
-from rlinf.config import SupportedModel
+from rlinf.config import (
+    OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
+    SupportedModel,
+)
 from rlinf.envs import SupportedEnvType
 
 
@@ -72,11 +75,68 @@ def prepare_actions_for_maniskill(
     return chunk_actions
 
 
+def _openwam_eef20_to_robotwin_ee16(chunk_actions) -> np.ndarray:
+    """Convert OpenWAM's 20-D dual-arm EEF actions to RoboTwin's 16-D ``ee`` actions.
+
+    OpenWAM RoboTwin checkpoints (``dataloader.action_mode: eef``) predict
+    ``[l_xyz(3), l_rot6d(6), l_grip(1), r_xyz(3), r_rot6d(6), r_grip(1)]`` in
+    the same absolute end-effector frame as the ``endpose`` fields of the
+    RoboTwin dataset. RoboTwin's ``take_action(..., action_type="ee")`` wants
+    ``[l_xyz(3), l_quat_xyzw(4), l_grip(1), r_xyz(3), r_quat_xyzw(4), r_grip(1)]``;
+    the gripper stays a raw ``[0, 1]`` opening (1 = open), exactly as trained.
+    Mirrors ``benchmarks/utils/action_conversion.eef20d_to_ee16d`` in OpenWAM.
+    """
+    from rlinf.utils.rot6d import rot6d_to_quat_xyzw
+
+    raw = np.asarray(chunk_actions, dtype=np.float32)
+    if raw.shape[-1] != 20:
+        raise ValueError(
+            f"OpenWAM RoboTwin rollout expects 20-D EEF actions, got {raw.shape}"
+        )
+    if not np.isfinite(raw).all():
+        raise ValueError("OpenWAM RoboTwin rollout produced non-finite actions")
+    l_quat = rot6d_to_quat_xyzw(raw[..., 3:9])
+    r_quat = rot6d_to_quat_xyzw(raw[..., 13:19])
+    return np.concatenate(
+        [
+            raw[..., 0:3],
+            l_quat,
+            raw[..., 9:10],
+            raw[..., 10:13],
+            r_quat,
+            raw[..., 19:20],
+        ],
+        axis=-1,
+    ).astype(np.float32)
+
+
+def prepare_actions_for_robotwin(
+    raw_chunk_actions,
+    model_type,
+    env_cfg=None,
+) -> np.ndarray:
+    """RoboTwin consumes 14-D joint actions as-is; OpenWAM needs the EEF bridge."""
+    if SupportedModel(model_type) != SupportedModel.OPENWAM:
+        return raw_chunk_actions
+    representation = (
+        None if env_cfg is None else env_cfg.get("openwam_action_representation", None)
+    )
+    if representation not in OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS:
+        raise ValueError(
+            "OpenWAM RoboTwin requires env.<split>.openwam_action_representation "
+            f"to be one of {OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS}, got {representation!r}. "
+            "It switches RoboTwinEnv to end-effector control and 20-D native proprio."
+        )
+    return _openwam_eef20_to_robotwin_ee16(raw_chunk_actions)
+
+
 def prepare_actions_for_libero(
     raw_chunk_actions,
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
+    if SupportedModel(model_type) == SupportedModel.OPENWAM:
+        return _openwam_eef10_to_libero7(chunk_actions)
     if SupportedModel(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
@@ -87,6 +147,31 @@ def prepare_actions_for_libero(
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
     return chunk_actions
+
+
+def _openwam_eef10_to_libero7(raw_chunk_actions: np.ndarray) -> np.ndarray:
+    """Convert native OpenWAM EEF10 deltas to LIBERO's 7-D OSC action."""
+    from scipy.spatial.transform import Rotation
+
+    from rlinf.utils.rot6d import rot6d_to_matrix
+
+    raw = np.asarray(raw_chunk_actions, dtype=np.float32)
+    if raw.shape[-1] != 10:
+        raise ValueError(
+            f"OpenWAM LIBERO rollout expects 10-D EEF actions, got {raw.shape}"
+        )
+    if not np.all(np.isfinite(raw)):
+        raise ValueError(
+            "OpenWAM EEF action contains non-finite values; refusing to send "
+            "NaN or Inf into the LIBERO controller."
+        )
+    matrices = rot6d_to_matrix(raw[..., 3:9]).reshape(-1, 3, 3)
+    rotvec = Rotation.from_matrix(matrices).as_rotvec().astype(np.float32)
+    output = np.concatenate(
+        [raw[..., :3], rotvec.reshape(raw.shape[:-1] + (3,)), -raw[..., 9:10]],
+        axis=-1,
+    )
+    return np.clip(output, -1.0, 1.0).astype(np.float32)
 
 
 def prepare_actions_for_isaaclab(
@@ -389,11 +474,13 @@ def prepare_actions(
             action_scale=action_scale,
             policy=policy,
         )
-    elif env_type in (
-        SupportedEnvType.ROBOTWIN,
-        SupportedEnvType.ROBODOJO,
-        SupportedEnvType.EMBODICHAIN,
-    ):
+    elif env_type == SupportedEnvType.ROBOTWIN:
+        chunk_actions = prepare_actions_for_robotwin(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+            env_cfg=env_cfg,
+        )
+    elif env_type in (SupportedEnvType.ROBODOJO, SupportedEnvType.EMBODICHAIN):
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = prepare_actions_for_metaworld(

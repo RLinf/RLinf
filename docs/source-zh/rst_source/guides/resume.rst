@@ -55,7 +55,7 @@ Megatron检查点文件结构如下：
 
 * **分片权重** —— ``mp_rank_*`` 中的文件遵循 Megatron 的张量并行布局；每个 GPU 只会重新加载属于自己的分片。  
 * **优化器 / RNG 状态** —— *同时* 保存了 Adam 参数（``distrib_optim.pt``）和随机数生成器，确保恢复后可以比特级复现。  
-* **数据采样器** —— ``data.pt`` 存储了 dataloader，保证不会遗漏或重复样本。  
+* **数据采样器** —— ``data.pt`` 存储了 dataloader，保证不会遗漏或重复样本。
 
 FSDP/FSDP2 检查点
 ~~~~~~~~~~~~~~~~~~
@@ -79,6 +79,8 @@ FSDP/FSDP2 根据 actor worker 的实现，使用 DCP（``torch.distributed.chec
 
 
 DCP 将训练状态保存到一组分布式检查点文件（``.distcp``）中。可选导出的 ``model_state_dict/full_weights.pt`` 只包含模型权重；恢复训练时应使用完整的检查点目录，同时恢复优化器、scheduler 和 RNG 状态。
+
+FSDP/FSDP2 VLA SFT 将数据加载器状态保存在 ``actor/data.pt``，各 rank 的随机数状态保存在 ``actor/rng.pt``。缺少 ``data.pt`` 时，训练会从 epoch 开头重新开始并给出警告。设置 ``runner.strict_resume: true`` 后，两份文件都必须存在，缺少任一文件都会报错。
 
 部分 worker 为每个 rank 单独保存一个文件。SAC 和 DAgger 在 ``actor.fsdp_config.use_orig_params`` 为 true 时选择 ``local_shard`` 格式，IQL 则使用此格式保存 policy、critic 和 value 模型。例如，两个 rank 的 SAC actor 目录包含：
 

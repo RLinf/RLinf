@@ -108,6 +108,7 @@ SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.FASTWAM = SupportedModel.register("fastwam", force=True)
 SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
+SupportedModel.OPENWAM = SupportedModel.register("openwam", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
@@ -155,6 +156,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DREAMZERO,
         SupportedModel.FASTWAM,
         SupportedModel.COSMOS3,
+        SupportedModel.OPENWAM,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
@@ -183,6 +185,9 @@ SUPPORTED_TASK_TYPE = [
     "offline",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
+
+OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS = ("absolute_eef20",)
+
 __all__ = ["build_config"]
 
 
@@ -1141,6 +1146,50 @@ def validate_weight_sync_overlap_cfg(cfg):
     )
 
 
+def validate_openwam_eval_cfg(cfg: DictConfig) -> None:
+    """Reject OpenWAM eval recipes whose chunking or action bridge is inconsistent.
+
+    The policy returns one chunk of ``rollout.model.openwam.inference_horizon``
+    actions (``num_frames - 1`` when the horizon is null) and the environment
+    executes the whole chunk, so ``rollout.model.num_action_chunks`` must equal
+    that length and the episode budget must be a multiple of it. The RoboTwin
+    action bridge also requires ``env.eval.openwam_action_representation``.
+    """
+    model_cfg = cfg.rollout.model
+    horizon = OmegaConf.select(model_cfg, "openwam.inference_horizon", default=None)
+    chunk = (
+        int(horizon)
+        if horizon is not None
+        else int(OmegaConf.select(model_cfg, "num_frames", default=49)) - 1
+    )
+    num_action_chunks = int(model_cfg.num_action_chunks)
+    if num_action_chunks != chunk:
+        raise ValueError(
+            "OpenWAM executes one generated chunk per step: set "
+            f"rollout.model.num_action_chunks={chunk} to match "
+            "rollout.model.openwam.inference_horizon (or num_frames - 1 when the "
+            f"horizon is null); got num_action_chunks={num_action_chunks}."
+        )
+    env_cfg = cfg.env.eval
+    max_steps = OmegaConf.select(env_cfg, "max_steps_per_rollout_epoch", default=None)
+    if max_steps is not None and int(max_steps) % num_action_chunks != 0:
+        raise ValueError(
+            "env.eval.max_steps_per_rollout_epoch must be a multiple of "
+            f"rollout.model.num_action_chunks ({num_action_chunks}); got {max_steps}. "
+            "The env worker would otherwise drop the remainder silently."
+        )
+    env_type = str(OmegaConf.select(env_cfg, "env_type", default=""))
+    if env_type == "robotwin":
+        representation = OmegaConf.select(
+            env_cfg, "openwam_action_representation", default=None
+        )
+        if representation not in OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS:
+            raise ValueError(
+                "OpenWAM on robotwin requires env.eval.openwam_action_representation "
+                f"to be one of {OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS}; got {representation!r}."
+            )
+
+
 def validate_online_lerobot_env_cfg(cfg: DictConfig) -> None:
     """Require per-step observations when online LeRobot collection is enabled.
 
@@ -1199,6 +1248,14 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.OPENWAM:
+        if not only_eval:
+            raise ValueError(
+                "OpenWAM supports supervised fine-tuning (runner.task_type=sft) and "
+                "evaluation (runner.task_type=embodied_eval or runner.only_eval=True) "
+                "only; RL training with the OpenWAM policy is not implemented."
+            )
+        validate_openwam_eval_cfg(cfg)
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
             assert cfg.env.eval.get("short_memory") is not None, (
