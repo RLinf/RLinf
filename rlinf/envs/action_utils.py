@@ -490,6 +490,10 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_dexjoco(
             raw_chunk_actions=raw_chunk_actions,
         )
+    elif env_type == SupportedEnvType.ROBOLAB:
+        chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32).copy()
+        if _is_openpi_family(model_type):
+            chunk_actions[..., -1] = (chunk_actions[..., -1] > 0.5).astype(np.float32)
     elif env_type == SupportedEnvType.SIMPLE:
         chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
     else:
