@@ -190,7 +190,7 @@ JSON 机械臂文件需要 ``urdf``、``base``、``flange``、``tcp``、``approa
 
 RLinf 从预筛选的种子中选出 10 个，每个种子运行一条轨迹。种子来源和分配方式见 :ref:`robotwin-eval-config`\ 。ALOHA 的动作频率为 20 Hz，Piper 为 30 Hz，两者均使用 48 步、14 维的动作块。
 
-Dream 在单环境运行，并设置 ``env.eval.auto_reset=false``。将 ``env.eval.max_steps_per_rollout_epoch`` 设为 48 的倍数，最多到最后一个动作块结束时的累计步数。轨迹上限为 400 步时，默认预算 432 步对应九个动作块，第九块只执行 16 步。本页的完整测试集示例适用于其他后端。
+Dream 在单个环境中运行，并设置 ``env.eval.auto_reset=false``\ 。步数预算 ``env.eval.max_steps_per_rollout_epoch`` 须为 48 的倍数，取能覆盖轨迹上限 ``env.eval.max_episode_steps`` 的最小值。轨迹上限为 400 步时，预算必须设为 432 步。RLinf 安排 9 个动作块，最后一块只执行前 16 步。要缩短轨迹，先调低轨迹上限，再重新计算预算。本页的完整测试集示例使用其他后端。
 
 通过 ``eval/success_once`` 查看成功率，日志和视频见 :doc:`../reference/results`。
 

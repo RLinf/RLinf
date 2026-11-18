@@ -189,7 +189,7 @@ The ``click_bell`` correction is off by default. Set ``rollout.dream.eef_target_
 
 RLinf runs one trajectory for each of ten distinct pre-filtered success seeds, as described in :ref:`robotwin-eval-config`. ALOHA runs at 20 Hz and Piper at 30 Hz. Both use 48-step, 14-dimensional action chunks.
 
-Dream uses one environment with ``env.eval.auto_reset=false``. Set ``env.eval.max_steps_per_rollout_epoch`` in multiples of 48, up to the end of the last action chunk. With a 400-step limit, the default budget of 432 steps schedules nine chunks and RLinf runs only 16 steps of the ninth. The full-test-set recipes on this page use other backends.
+Dream uses one environment with ``env.eval.auto_reset=false``. Set ``env.eval.max_steps_per_rollout_epoch`` to the smallest multiple of 48 that is at least ``env.eval.max_episode_steps``. With a 400-step limit, the budget must be 432. RLinf schedules nine chunks and executes the first 16 steps of the last chunk. For shorter trajectories, lower ``env.eval.max_episode_steps`` and recalculate the budget. The full-test-set recipes on this page use other backends.
 
 Read ``eval/success_once`` for the success rate. See :doc:`../reference/results` for logs and videos.
 

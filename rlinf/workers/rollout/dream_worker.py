@@ -209,11 +209,12 @@ class DreamRolloutWorker(MultiStepRolloutWorker):
         budget = cfg.env.eval.max_steps_per_rollout_epoch
         limit = cfg.env.eval.max_episode_steps
         chunk = cfg.rollout.model.num_action_chunks
-        if budget > ((limit + chunk - 1) // chunk) * chunk:
+        required_budget = ((limit + chunk - 1) // chunk) * chunk
+        if budget != required_budget:
             raise ValueError(
-                f"env.eval.max_steps_per_rollout_epoch={budget} requests an action "
-                f"chunk after env.eval.max_episode_steps={limit} "
-                f"(chunk size {chunk})."
+                f"env.eval.max_steps_per_rollout_epoch={budget} must be "
+                f"{required_budget} for env.eval.max_episode_steps={limit} "
+                f"with {chunk}-step action chunks."
             )
         self.client = None
 
