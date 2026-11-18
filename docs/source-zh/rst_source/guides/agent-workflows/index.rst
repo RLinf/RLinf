@@ -12,7 +12,7 @@
    * - :doc:`智能体指南 <../agentic>`
      - 智能体任务的操作流程。
    * - :doc:`Session Server <../session_server>`
-     - 在 rollout 节点上收集、整理 agent 轨迹，分离控制面与数据面，经 SGLang router 路由请求。
+     - 在 rollout 节点上收集、整理 agent 轨迹；控制面与数据面分离，请求经 SGLang router 路由，agent 也可以使用 OpenAI chat completions 接口。
 
 .. toctree::
    :hidden:

@@ -3,12 +3,30 @@ Session Server
 
 Session server 在 rollout 节点上收集 agent 的轨迹，并整理成训练数据。agent 把 generate 请求发给 session server，session server 转发给推理引擎，并记下每一轮的结果。
 
-session server 还有两个特点：
+session server 还提供：
 
 - **控制面与数据面分离。** buffer worker 只按组的元数据调度。actor 取走之前，轨迹一直留在 rollout 节点上。
 - **经 SGLang router 路由。** 可以使用 router 自带的两种策略：``manual`` 把每个组固定在同一个引擎上，``cache_aware`` 按前缀亲和选引擎。
+- **OpenAI chat completions 接口。** 基于 OpenAI API 编写的 agent 可以发送消息，不必发送 token id；见 `使用 OpenAI chat completions 接口`_。
 
-目前只有异步 runner 接入了 session server；如果还不熟悉异步 runner，请先读 :doc:`异步 agentic RL <async_agentic>`。完整配方见 Search-R1 异步训练中的 :ref:`Session Server 路径 <searchr1-async-session-server>`。
+目前只有异步 runner 接入了 session server；如果还不熟悉异步 runner，请先读 :doc:`异步 agentic RL <async_agentic>`。`开启 session server`_ 一节附有一个 Search-R1 的完整示例。
+
+何时使用 session server
+-----------------------
+
+不开启 session server 时，agent loop 经 channel 把 generate 请求发给 rollout worker，buffer worker 保存每个组的完整训练数据，直到交付。
+
+以下情况不必开启：
+
+- 使用同步或评测 runner，或者需要 ``pause_mode: drain``；
+- 每组数据量小，run 只占几个节点；
+- 不想多部署进程和端口。
+
+以下情况建议开启 session server：
+
+- 同组轨迹共享长前缀；
+- 每组数据量大，或者 node 0 内存紧张；
+- agent 使用 OpenAI chat completions 接口。
 
 开启 session server
 -------------------
@@ -34,16 +52,7 @@ session server 还有两个特点：
 - **payload channel**：每个分片一个，存放记录下来的轨迹
 - **SGLang router**：只有一个，所有引擎都注册到它上面
 
-示例配置：
-
-.. code-block:: text
-
-   examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml
-
-前提条件
---------
-
-session server 路径要求：
+开启后需要满足以下条件：
 
 - ``runner.async_mode: True``，actor 使用 Megatron
 - ``rollout.sglang.backend_type: server``
@@ -54,8 +63,54 @@ session server 路径要求：
 
 启动时，配置校验会逐项检查。
 
+示例：Search-R1
+^^^^^^^^^^^^^^^
+
+下面的例子在两台机器上运行异步 Search-R1 训练，模型用 Qwen2.5-3B-Instruct，并开启 session server。
+
+配置是 ``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``，它继承 ``train_qwen2.5_async.yaml``，只多两项：
+
+.. code-block:: yaml
+
+   session_server:
+     enable: true
+   rollout:
+     router:
+       policy: manual
+
+``train_qwen2.5_async.yaml`` 里，Megatron actor 放在 node 0，SGLang server rollout（8 个实例，TP1）放在 node 1。每步用 ``rollout_batch_size`` 512 × ``group_size`` 4。
+
+按 :doc:`异步 Search-R1 训练 </rst_source/examples/agentic/searchr1/async>` 的说明，填好 ``train_qwen2.5_async.yaml`` 里的数据路径、Qwen2.5-3B-Instruct 模型路径和检索服务地址，然后在 head 节点上启动：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
+
+除了普通的异步训练进程，这条命令还会在 node 1 上启动一个 session server、它的 payload channel 和一个 router。agent loop 把 generate 请求发给 session server。
+
+下面的结果来自 2×8 A100-80G 上三次 100 步的 run：两次用这份配置，一次用 ``train_qwen2.5_async.yaml`` 且不开启 session server。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - 指标
+     - 开启 session server
+     - 不开启
+   * - 轨迹 reward，最后 20 步均值
+     - 0.376 / 0.375
+     - 0.372
+   * - 平均 data staleness
+     - 2.0
+     - 2.0
+
+无论是否开启 session server，训练表现都一致。两次开启 session server 的 run 都没有 payload 写入失败，``rollout/session_server/payload_queued_groups`` 始终与 ``rollout/buffer/size`` 同步变化。另有一次开启 ``session_server.verify_assembly: true`` 的 5 步 run，2,560 个组全部通过逐项比对。这些指标的含义见 :ref:`监控指标 <session-server-metrics>`。
+
+工作原理
+--------
+
 轨迹怎样收集
-------------
+^^^^^^^^^^^^
 
 每个组依次经过四步。
 
@@ -67,11 +122,11 @@ session server 路径要求：
 session server 还会检查每一轮的 prompt 是否接续上一轮。如果 agent 改写了历史，``prefix_*`` 指标会反映出来。
 
 控制面与数据面
---------------
+^^^^^^^^^^^^^^
 
-默认路径上，buffer worker 收到每个组的完整训练数据，一直存到交付。负责调度的进程同时在搬运数据。
+不开启 session server 时，buffer worker 收到每个组的完整训练数据，一直存到交付。负责调度的进程同时在搬运数据。
 
-session server 路径把两者分开：
+开启 session server 后，两者分开：
 
 .. list-table::
    :header-rows: 1
@@ -87,14 +142,28 @@ session server 路径把两者分开：
      - generate 请求和记录下来的轨迹
      - session server、router 和引擎；数据存放在 payload channel 里，直到 actor 取走
 
-调度逻辑不变。投放、缓冲上限、staleness 和丢弃规则都和默认路径一样，只是改为依据元数据。
+调度逻辑不变。投放、缓冲上限、staleness 和丢弃规则都和不开启 session server 时一样，只是改为依据元数据。
 
-buffer worker 是 node 0 上的单个进程（见 :doc:`多机指南 <multi_node>`）。在这条路径上，它的内存不随训练数据增长。开启 routed-expert replay（R3）或上下文很长时，每组数据量大，这一点的好处最明显。
+buffer worker 是 node 0 上的单个进程（见 :doc:`多机指南 <multi_node>`）。开启 session server 后，它的内存不随训练数据增长。每组数据量大时好处最明显，比如开启 routed-expert replay（R3）或上下文很长时。
 
 各 rollout worker 把权重同步等控制调用直接发给自己的引擎，不经过 router。
 
+丢弃与失败
+^^^^^^^^^^
+
+buffer worker 丢弃一个组时，payload channel 会删除这个组的数据。agent 中止的组、因写入失败而作废的组也一样。
+
+处理请求时出错，run 会失败：
+
+- 只有连不上 router 时，session server 才会重发请求。这种请求没有到达引擎，同一轮不会重复采样。
+- generate 请求超时或被引擎中止，run 失败。
+
+唯一可以恢复的错误是 payload 写入失败。session server 作废这个组，buffer worker 丢弃它。
+
 选择路由策略
 ------------
+
+所有 prompt 共享长前缀时用 ``manual``\ （默认），Search-R1 就属于这种情况。prompt 从开头就各不相同时可以试 ``cache_aware``，但这种情况还没有实测。
 
 session server 的所有请求都经 router 转发。RLinf 支持 router 的两种策略：
 
@@ -109,35 +178,7 @@ session server 的所有请求都经 router 转发。RLinf 支持 router 的两�
 
    每个 rollout 实例的运行中请求数（Qwen2.5-1.5B，12 个实例，每步 64 × 4，20 步）。``cache_aware`` 下实例 5 平均 27.5 个、峰值 79 个，其余实例在 4.8 个左右。``manual`` 下各实例都在 6 到 7.5 个之间。
 
-有共享前缀的工作负载请用 ``manual``。prompt 从开头就各不相同时，``cache_aware`` 可能更合适，但这种情况还没有实测。
-
 只有一个 rollout 实例时，经过 router 只是多转发一次。这种配置可以运行，启动时打印一条 warning。
-
-丢弃与失败
-----------
-
-buffer worker 丢弃一个组时，payload channel 会删除这个组的数据。agent 中止的组、因写入失败而作废的组也一样。
-
-请求路径上的错误会让 run 失败：
-
-- 只有连不上 router 时，session server 才会重发请求。这种请求没有到达引擎，同一轮不会重复采样。
-- generate 请求超时或被引擎中止，run 失败。
-
-唯一可以恢复的错误是 payload 写入失败。session server 作废这个组，buffer worker 丢弃它。
-
-选择路径
---------
-
-以下情况用 **默认路径**\ （channel 路径）：
-
-- 使用同步或评测 runner，或者需要 ``pause_mode: drain``
-- 每组数据量小，run 只占几个节点
-- 不想部署额外的进程和端口
-
-以下情况用 **session server 路径**：
-
-- 同组轨迹共享长前缀
-- 每组数据量大，或者 node 0 内存紧张
 
 多节点部署
 ----------
@@ -152,10 +193,13 @@ buffer worker 丢弃一个组时，payload channel 会删除这个组的数据�
 
    执行 ``ray start`` 的 shell 和启动 ``train.py`` 的 shell 要把 ``NCCL_IB_HCA`` 设成相同的值。RLinf 会用 ``train.py`` 进程的环境变量覆盖各 worker 的环境变量。
 
+监控与检查
+----------
+
 .. _session-server-metrics:
 
 监控指标
---------
+^^^^^^^^
 
 session server 每一步都在 ``rollout/session_server/`` 下上报指标。计数和耗时只统计当前这一步；字节数和队列长度取上报时的快照。
 
@@ -177,9 +221,9 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
      - payload channel 里等待取走的数据。``payload_queued_groups`` 应当等于或略大于 ``rollout/buffer/size``。如果差值不断增大，说明有数据没有释放。
 
 检查正确性
-----------
+^^^^^^^^^^
 
-第一次在新的 agent 上使用时，请开启 ``session_server.verify_assembly``。开启后，agent loop 还会按默认路径的方式再构建一遍每个组。actor 在训练前逐项比对两份结果：
+第一次在新的 agent 上使用时，请开启 ``session_server.verify_assembly``。开启后，agent loop 还会再构建一遍每个组，做法与不开启 session server 时相同。actor 在训练前逐项比对两份结果：
 
 - token id、prompt 与回复长度、rollout logprob
 - reward、序列到轨迹的映射、轨迹结束标记
@@ -189,83 +233,6 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 任何一项不一致，run 都会失败，并报出字段名。两份结果来自同一次生成，所以检查的是记录和装配，不是采样本身。这项检查会降低吞吐，正式训练时请关闭。
 
 在 Search-R1 上，约 2,900 个组通过了这项检查。它们来自两次 5 步的 run：Qwen2.5-1.5B 在 12 个实例上，Qwen2.5-3B 在 8 个实例上。
-
-配置参考
---------
-
-``session_server``：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 16 50
-
-   * - 配置项
-     - 默认值
-     - 作用
-   * - ``enable``
-     - ``False``
-     - 开启 session server 路径。
-   * - ``num_servers``
-     - ``1``
-     - session server 个数，按轮询分布到各 rollout 节点。
-   * - ``payload_shards``
-     - ``1``
-     - 每个 session server 的 payload channel 数，每个 payload channel 是一个独立进程。写入成为 CPU 瓶颈时调大。
-   * - ``port``
-     - ``8030``
-     - 第一个 session server 的端口。第 ``i`` 个使用 ``port + i``。
-   * - ``generate_timeout_s``
-     - ``600``
-     - 单次转发请求的时间上限，包括权重同步期间的暂停。超过即 run 失败。
-   * - ``per_task.<task>.generate_timeout_s``
-     - ``generate_timeout_s``
-     - 按 task 覆盖上面的超时。
-   * - ``payload_put_timeout_s``
-     - ``300``
-     - 单次 payload 写入的时间上限。超过即作废这个组。
-   * - ``max_pending_payload_bytes``
-     - 512 MiB
-     - 尚未写完的字节数上限。超过后，session server 等这一轮写完才回复 agent，宁可放慢 agent，也不让内存继续增长。
-   * - ``keep_alive_s``
-     - ``5``
-     - session server 保持空闲连接的时长，单位为整秒。
-   * - ``engine_keep_alive_s``
-     - ``120``
-     - 引擎保持空闲连接的时长，单位为整秒。必须大于 router 连接池 50 秒的空闲超时。
-   * - ``verify_assembly``
-     - ``False``
-     - 把每个组与默认路径的装配结果逐项比对；见 `检查正确性`_。
-   * - ``chat_template_kwargs``
-     - ``{}``
-     - chat completions 接口使用的 chat 模板参数，例如 GLM 的 ``clear_thinking``。请求中给出其他值会被拒绝。
-
-``rollout.router``\ （与 :doc:`SGLang Server & Router <sglang_server>` 中的 ``router_server_args`` 相互独立）：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 16 50
-
-   * - 配置项
-     - 默认值
-     - 作用
-   * - ``policy``
-     - ``manual``
-     - ``manual`` 或 ``cache_aware``；见 `选择路由策略`_。
-   * - ``assignment_mode``
-     - ``min_load``
-     - ``manual`` 为新组选引擎的方式。
-   * - ``request_timeout_secs``
-     - ``1800``
-     - router 自身的超时。不能小于任何一个 generate 超时。
-   * - ``max_idle_secs``
-     - ``600``
-     - router 保留组与引擎对应关系的时长，从组的最后一个请求起算。
-   * - ``disable_health_check``
-     - ``True``
-     - 必须保持 ``True``。router 的健康检查会生成 token。
-   * - ``disable_retries``
-     - ``True``
-     - 禁止 router 重发请求。
 
 使用 OpenAI chat completions 接口
 ---------------------------------
@@ -337,8 +304,100 @@ session server 保存一份自己的对话记录。每个请求都与这份记�
 
 一个 session 同一时间只处理一个请求。上一个请求还没返回时再发请求，会得到 409。
 
+配置参考与限制
+--------------
+
+配置参考
+^^^^^^^^
+
+``session_server``：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 16 50
+
+   * - 配置项
+     - 默认值
+     - 作用
+   * - ``enable``
+     - ``False``
+     - 开启 session server。
+   * - ``num_servers``
+     - ``1``
+     - session server 个数，按轮询分布到各 rollout 节点。
+   * - ``payload_shards``
+     - ``1``
+     - 每个 session server 的 payload channel 数，每个 payload channel 是一个独立进程。写入成为 CPU 瓶颈时调大。
+   * - ``port``
+     - ``8030``
+     - 第一个 session server 的端口。第 ``i`` 个使用 ``port + i``。
+   * - ``generate_timeout_s``
+     - ``600``
+     - 单次转发请求的时间上限，包括权重同步期间的暂停。超过即 run 失败。
+   * - ``per_task.<task>.generate_timeout_s``
+     - ``generate_timeout_s``
+     - 按 task 覆盖上面的超时。
+   * - ``payload_put_timeout_s``
+     - ``300``
+     - 单次 payload 写入的时间上限。超过即作废这个组。
+   * - ``max_pending_payload_bytes``
+     - 512 MiB
+     - 尚未写完的字节数上限。超过后，session server 等这一轮写完才回复 agent，宁可放慢 agent，也不让内存继续增长。
+   * - ``keep_alive_s``
+     - ``5``
+     - session server 保持空闲连接的时长，单位为整秒。
+   * - ``engine_keep_alive_s``
+     - ``120``
+     - 引擎保持空闲连接的时长，单位为整秒。必须大于 router 连接池 50 秒的空闲超时。
+   * - ``verify_assembly``
+     - ``False``
+     - 把每个组与不开启 session server 时的装配结果逐项比对；见 `检查正确性`_。
+   * - ``chat_template_kwargs``
+     - ``{}``
+     - chat completions 接口使用的 chat 模板参数，例如 GLM 的 ``clear_thinking``。请求中给出其他值会被拒绝。
+
+``rollout.router``\ （与 :doc:`SGLang Server & Router <sglang_server>` 中的 ``router_server_args`` 相互独立）：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 16 50
+
+   * - 配置项
+     - 默认值
+     - 作用
+   * - ``policy``
+     - ``manual``
+     - ``manual`` 或 ``cache_aware``；见 `选择路由策略`_。
+   * - ``assignment_mode``
+     - ``min_load``
+     - ``manual`` 为新组选引擎的方式。
+   * - ``request_timeout_secs``
+     - ``1800``
+     - router 自身的超时。不能小于任何一个 generate 超时。
+   * - ``max_idle_secs``
+     - ``600``
+     - router 保留组与引擎对应关系的时长，从组的最后一个请求起算。
+   * - ``disable_health_check``
+     - ``True``
+     - 必须保持 ``True``。router 的健康检查会生成 token。
+   * - ``disable_retries``
+     - ``True``
+     - 禁止 router 重发请求。
+
+限制
+^^^^
+
+- 要求异步 runner、Megatron actor、SGLang server 后端和 Search-R1 agent。
+- chat completions 接口不支持真正的流式输出。``stream: true`` 时，整轮结果在一个 chunk 中返回，随后是 ``[DONE]``。
+- chat completions 接口不支持 ``tool_choice: required``、指定函数和 ``response_format``，并忽略 ``seed``。
+- ``session_server.verify_assembly`` 只适用于发送 token id 的 agent loop。开启它时，chat completions 接口会拒绝所有请求。
+- agent 可以附带 ``extra_fields_train``；其他按轮、按轨迹或按组的额外字段，session server 一律拒绝。
+- ``agentloop.print_outputs`` 只在开启 ``verify_assembly`` 时生效：agent loop 在装配训练数据时打印，而使用 session server 时，只有开启这项检查才会在 agent loop 里装配。
+- 只支持 HTTP（``session_server.type: http``）。
+- session server 退出时 run 会结束，不会自动重启。
+
 在其他 runner 上使用
---------------------
+^^^^^^^^^^^^^^^^^^^^
 
 session server 本身不依赖异步训练，目前只有异步 runner 接入了它。其他 runner（比如同步的 agent runner）要接入，需要完成以下工作：
 
@@ -349,16 +408,4 @@ session server 本身不依赖异步训练，目前只有异步 runner 接入了
 - 把 payload channel 传给 actor。
 - 每个组完成后，告诉 actor 到哪里取这个组的数据，并删除被丢弃组的数据。
 
-在异步路径上，最后一项由 buffer worker 完成。同步 runner 不应使用 buffer worker：buffer worker 会超量投放，让生成领先于训练，而同步训练不允许这样。还要去掉配置校验中要求 ``runner.async_mode`` 的检查。这些改动都没有在异步 runner 之外测试过。
-
-限制
-----
-
-- 要求异步 runner、Megatron actor、SGLang server 后端和 Search-R1 agent。
-- chat completions 接口不支持真正的流式输出。``stream: true`` 时，整轮结果在一个 chunk 中返回，随后是 ``[DONE]``。
-- chat completions 接口不支持 ``tool_choice: required``、指定函数和 ``response_format``，并忽略 ``seed``。
-- ``session_server.verify_assembly`` 只适用于发送 token id 的 agent loop。开启它时，chat completions 接口会拒绝所有请求。
-- agent 可以附带 ``extra_fields_train``；其他按轮、按轨迹或按组的额外字段，session server 一律拒绝。
-- ``agentloop.print_outputs`` 只在开启 ``verify_assembly`` 时生效：agent loop 在装配训练数据时打印，而使用 session server 时，只有开启这项检查才会在 agent loop 里装配。
-- 只支持 HTTP（``session_server.type: http``）。
-- session server 退出时 run 会结束，不会自动重启。
+用异步 runner 时，最后一项由 buffer worker 完成。同步 runner 不应使用 buffer worker：buffer worker 会超量投放，让生成领先于训练，而同步训练不允许这样。还要去掉配置校验中要求 ``runner.async_mode`` 的检查。这些改动只在异步 runner 上测过。

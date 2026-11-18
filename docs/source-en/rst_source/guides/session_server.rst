@@ -5,7 +5,7 @@ The session server collects agent trajectories on the rollout nodes and
 assembles them into training data. Agents send their generate requests to it.
 It forwards each request to an inference engine and records every turn.
 
-It also provides two features:
+It also provides:
 
 - **Separate control and data planes.** The buffer worker schedules groups
   using only their metadata. The trajectories stay on the rollout nodes until
@@ -13,11 +13,32 @@ It also provides two features:
 - **Routing through an SGLang router.** You can use two of the router's own
   policies: ``manual`` pins each group to one engine, and ``cache_aware``
   routes by prefix affinity.
+- **An OpenAI chat completions endpoint.** Agents built on the OpenAI API
+  can send messages instead of token ids; see
+  `Use the OpenAI Chat Completions Endpoint`_.
 
 The session server works only with the asynchronous runner. If you have not
 used that runner, read :doc:`Asynchronous Agentic RL <async_agentic>` first.
-For a full recipe, see the :ref:`Session Server Path
-<searchr1-async-session-server>` of the asynchronous Search-R1 example.
+`Enable the Session Server`_ includes a worked example on Search-R1.
+
+When to Use the Session Server
+------------------------------
+
+Without the session server, the agent loop sends its generate requests to
+the rollout workers through channels, and the buffer worker holds each
+group's full training data until hand-off.
+
+Keep that default when:
+
+- you run a synchronous or evaluation runner, or need ``pause_mode: drain``;
+- each group's data is small and the run fits on a few nodes;
+- you want no extra processes or ports.
+
+Enable the session server when:
+
+- a group's trajectories share a long prefix;
+- each group's data is large, or node 0 is short of memory;
+- your agents use the OpenAI chat completions API.
 
 Enable the Session Server
 -------------------------
@@ -45,16 +66,7 @@ At launch, the entry script starts three components on the rollout nodes:
   trajectories;
 - one **SGLang router**, which every engine registers with.
 
-Example configuration:
-
-.. code-block:: text
-
-   examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml
-
-Requirements
-------------
-
-The session server path requires:
+Enabling it requires:
 
 - ``runner.async_mode: True`` and a Megatron actor;
 - ``rollout.sglang.backend_type: server``;
@@ -65,8 +77,72 @@ The session server path requires:
 
 Config validation checks each of these at startup.
 
+Example: Search-R1
+^^^^^^^^^^^^^^^^^^
+
+This example runs the asynchronous Search-R1 recipe on two nodes with
+Qwen2.5-3B-Instruct and the session server enabled.
+
+The config is
+``examples/agent/searchr1/config/train_qwen2.5_async_session_server.yaml``.
+It inherits ``train_qwen2.5_async.yaml`` and adds two keys:
+
+.. code-block:: yaml
+
+   session_server:
+     enable: true
+   rollout:
+     router:
+       policy: manual
+
+The parent config places the Megatron actor on node 0 and the SGLang server
+rollout (8 instances at TP1) on node 1. Each step uses
+``rollout_batch_size`` 512 × ``group_size`` 4.
+
+Fill in the data path, the Qwen2.5-3B-Instruct model path, and the retrieval
+server address in ``train_qwen2.5_async.yaml``, as in the
+:doc:`asynchronous Search-R1 example
+</rst_source/examples/agentic/searchr1/async>`. Then start training from the
+head node:
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_async_session_server
+
+Besides the asynchronous run, the script starts a session server, its payload
+channel, and a router on node 1. The agent loop sends its generate requests to
+the session server.
+
+The results below come from three 100-step runs on 2×8 A100-80G: two on this
+config and one on ``train_qwen2.5_async.yaml`` without the session server.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - Metric
+     - With the session server
+     - Without
+   * - Trajectory reward, mean of the last 20 steps
+     - 0.376 / 0.375
+     - 0.372
+   * - Mean data staleness
+     - 2.0
+     - 2.0
+
+Training behaves the same with and without the session server. In both session
+server runs, no payload write failed, and
+``rollout/session_server/payload_queued_groups`` tracked
+``rollout/buffer/size``. In a separate 5-step run with
+``session_server.verify_assembly: true``, all 2,560 groups passed the
+field-by-field check. See :ref:`Metrics to Watch <session-server-metrics>` for
+how to read these series.
+
+How It Works
+------------
+
 How Trajectories Are Collected
-------------------------------
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Each group goes through four steps.
 
@@ -87,13 +163,13 @@ The session server also checks that each turn's prompt extends the previous
 turn. A rewritten history shows up in the ``prefix_*`` metrics.
 
 Control and Data Planes
------------------------
+^^^^^^^^^^^^^^^^^^^^^^^
 
-On the default path, the buffer worker receives each group's full training
-data and holds it until hand-off. One process both schedules the groups and
-moves their data.
+Without the session server, the buffer worker receives each group's full
+training data and holds it until hand-off. One process both schedules the
+groups and moves their data.
 
-The session server path splits the two:
+With the session server, the two split:
 
 .. list-table::
    :header-rows: 1
@@ -113,18 +189,38 @@ The session server path splits the two:
        actor fetches the data
 
 Scheduling does not change. Admission, buffer limits, staleness, and
-dropping work as on the default path, but use only the metadata.
+dropping work as they do without the session server, but use only the
+metadata.
 
 The buffer worker is a single process on node 0 (see the
-:doc:`multi-node guide <multi_node>`). On this path, its memory does not grow
-with the training data. That matters when groups are large, for example with
-routed-expert replay (R3) or long contexts.
+:doc:`multi-node guide <multi_node>`). With the session server, its memory
+does not grow with the training data. That matters when groups are large, for
+example with routed-expert replay (R3) or long contexts.
 
 Weight sync and other control calls go from each rollout worker straight to
 its engine. They never pass through the router.
 
+Dropped Groups and Failures
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When the buffer worker drops a group, the payload channel deletes its data.
+The same holds for groups that an agent aborts or that a failed write voids.
+
+Errors while serving a request fail the run:
+
+- The session server resends a request only if it could not connect to the
+  router. That request never reached an engine, so no turn is sampled twice.
+- If a generate request times out or the engine aborts it, the run fails.
+
+A failed payload write is the one recoverable error. The session server voids
+that group, and the buffer worker drops it.
+
 Choose a Routing Policy
 -----------------------
+
+Use ``manual``, the default, when the prompts share a long prefix, as
+Search-R1's do. ``cache_aware`` may suit prompts that differ from the
+start, but no run has measured that case yet.
 
 The session servers forward every request through the router. RLinf
 supports two of the router's policies:
@@ -149,40 +245,8 @@ one engine. Search-R1 prompts all start with the same instructions:
    and peaks at 79; the others stay near 4.8. With ``manual``, every instance
    stays between 6 and 7.5.
 
-Use ``manual`` for workloads with a shared prefix. ``cache_aware`` may suit
-prompts that differ from the start; no run has measured that case yet.
-
 With one rollout instance, the router only adds a hop. The setup still works,
 and the run logs a warning.
-
-Dropped Groups and Failures
----------------------------
-
-When the buffer worker drops a group, the payload channel deletes its data.
-The same holds for groups that an agent aborts or that a failed write voids.
-
-Errors on the request path fail the run:
-
-- The session server resends a request only if it could not connect to the
-  router. That request never reached an engine, so no turn is sampled twice.
-- If a generate request times out or the engine aborts it, the run fails.
-
-A failed payload write is the one recoverable error. The session server voids
-that group, and the buffer worker drops it.
-
-Choose a Path
--------------
-
-Use the **default path** (the channel path) when:
-
-- you run a synchronous or evaluation runner, or need ``pause_mode: drain``;
-- each group's data is small and the run fits on a few nodes;
-- you want no extra processes or ports.
-
-Use the **session server path** when:
-
-- a group's trajectories share a long prefix;
-- each group's data is large, or node 0 is short of memory.
 
 Deploy on Multiple Nodes
 ------------------------
@@ -207,10 +271,13 @@ closed. Config validation enforces this through ``keep_alive_s`` and
    and in the shell that launches ``train.py``. RLinf sets each worker's
    environment variables to those of the ``train.py`` process.
 
+Monitor and Check
+-----------------
+
 .. _session-server-metrics:
 
 Metrics to Watch
-----------------
+^^^^^^^^^^^^^^^^
 
 The session servers report under ``rollout/session_server/`` at every step.
 Counts and times cover the step; bytes and queue sizes are snapshots.
@@ -240,11 +307,12 @@ Counts and times cover the step; bytes and queue sizes are snapshots.
        keeps growing means data is not being released.
 
 Check Correctness
------------------
+^^^^^^^^^^^^^^^^^
 
 Turn on ``session_server.verify_assembly`` the first time you use a new
-agent. The agent loop then also builds each group as on the default path.
-The actor compares both versions field by field before training:
+agent. The agent loop then also builds each group as it does without the
+session server. The actor compares both versions field by field before
+training:
 
 - token ids, prompt and response lengths, and rollout logprobs;
 - rewards, the sequence-to-trajectory mapping, and end flags;
@@ -257,93 +325,6 @@ sampling. It costs throughput, so turn it off for training runs.
 
 On Search-R1, about 2,900 groups passed this check. They came from two
 5-step runs: Qwen2.5-1.5B on 12 instances, and Qwen2.5-3B on 8.
-
-Configuration Reference
------------------------
-
-``session_server``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 16 50
-
-   * - Key
-     - Default
-     - What it does
-   * - ``enable``
-     - ``False``
-     - Turns the session server path on.
-   * - ``num_servers``
-     - ``1``
-     - Number of session servers, spread round-robin over the rollout nodes.
-   * - ``payload_shards``
-     - ``1``
-     - Payload channels per session server, one process each. Raise it if
-       writes become a CPU bottleneck.
-   * - ``port``
-     - ``8030``
-     - Port of the first session server. Server ``i`` uses ``port + i``.
-   * - ``generate_timeout_s``
-     - ``600``
-     - Limit on one forwarded request, including pauses for weight sync.
-       Exceeding it fails the run.
-   * - ``per_task.<task>.generate_timeout_s``
-     - ``generate_timeout_s``
-     - Per-task override of the timeout above.
-   * - ``payload_put_timeout_s``
-     - ``300``
-     - Limit on one payload write. Exceeding it voids the group.
-   * - ``max_pending_payload_bytes``
-     - 512 MiB
-     - Budget for bytes still being written. Past it, each response waits for
-       its own write. This slows the agents but keeps memory bounded.
-   * - ``keep_alive_s``
-     - ``5``
-     - How long the session servers keep an idle connection open, in whole
-       seconds.
-   * - ``engine_keep_alive_s``
-     - ``120``
-     - How long the engines keep an idle connection open, in whole seconds.
-       Must exceed the router's 50 s idle pool timeout.
-   * - ``verify_assembly``
-     - ``False``
-     - Checks each group against the default-path assembly; see
-       `Check Correctness`_.
-   * - ``chat_template_kwargs``
-     - ``{}``
-     - Chat template arguments for the chat completions endpoint, such as
-       GLM's ``clear_thinking``. Requests with other values are rejected.
-
-``rollout.router`` (separate from the ``router_server_args`` block in
-:doc:`SGLang Server & Router <sglang_server>`):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 16 50
-
-   * - Key
-     - Default
-     - What it does
-   * - ``policy``
-     - ``manual``
-     - ``manual`` or ``cache_aware``; see `Choose a Routing Policy`_.
-   * - ``assignment_mode``
-     - ``min_load``
-     - How ``manual`` picks an engine for a new group.
-   * - ``request_timeout_secs``
-     - ``1800``
-     - The router's own timeout. Must be at least as long as every generate
-       timeout.
-   * - ``max_idle_secs``
-     - ``600``
-     - How long the router remembers a group's engine after its last
-       request.
-   * - ``disable_health_check``
-     - ``True``
-     - Must stay ``True``. The router's health probes generate tokens.
-   * - ``disable_retries``
-     - ``True``
-     - Stops the router from resending requests.
 
 Use the OpenAI Chat Completions Endpoint
 ----------------------------------------
@@ -451,31 +432,98 @@ The endpoint also rejects the following with a 400 and an OpenAI error body:
 A session handles one request at a time. A request sent while another one is
 still running gets a 409.
 
-Use It from Another Runner
---------------------------
+Configuration and Limitations
+-----------------------------
 
-The session server does not depend on asynchronous training. RLinf connects
-only the asynchronous runner to it. Another runner, such as the synchronous
-agent runner, must:
+Configuration Reference
+^^^^^^^^^^^^^^^^^^^^^^^
 
-- launch the router and the session servers, and register the engines.
-  The agent runner has a startup hook for this. When the hook returns the
-  session server URLs, the agent loop sends its requests to the session
-  servers;
-- watch the session servers, so a failure ends the run;
-- send the session servers the loaded weight versions after each sync;
-- collect the session server metrics every step;
-- pass the payload channels to the actor;
-- for each finished group, tell the actor where to fetch its data, and delete
-  the data of every group it drops.
+``session_server``:
 
-On the asynchronous path, the buffer worker does the last item. A
-synchronous runner should not use the buffer worker, because it admits groups
-ahead of training. You must also relax the ``runner.async_mode`` check in
-config validation. Only the asynchronous runner has run this path in tests.
+.. list-table::
+   :header-rows: 1
+   :widths: 34 16 50
+
+   * - Key
+     - Default
+     - What it does
+   * - ``enable``
+     - ``False``
+     - Turns the session server on.
+   * - ``num_servers``
+     - ``1``
+     - Number of session servers, spread round-robin over the rollout nodes.
+   * - ``payload_shards``
+     - ``1``
+     - Payload channels per session server, one process each. Raise it if
+       writes become a CPU bottleneck.
+   * - ``port``
+     - ``8030``
+     - Port of the first session server. Server ``i`` uses ``port + i``.
+   * - ``generate_timeout_s``
+     - ``600``
+     - Limit on one forwarded request, including pauses for weight sync.
+       Exceeding it fails the run.
+   * - ``per_task.<task>.generate_timeout_s``
+     - ``generate_timeout_s``
+     - Per-task override of the timeout above.
+   * - ``payload_put_timeout_s``
+     - ``300``
+     - Limit on one payload write. Exceeding it voids the group.
+   * - ``max_pending_payload_bytes``
+     - 512 MiB
+     - Budget for bytes still being written. Past it, each response waits for
+       its own write. This slows the agents but keeps memory bounded.
+   * - ``keep_alive_s``
+     - ``5``
+     - How long the session servers keep an idle connection open, in whole
+       seconds.
+   * - ``engine_keep_alive_s``
+     - ``120``
+     - How long the engines keep an idle connection open, in whole seconds.
+       Must exceed the router's 50 s idle pool timeout.
+   * - ``verify_assembly``
+     - ``False``
+     - Checks each group against the assembly built without the session
+       server; see `Check Correctness`_.
+   * - ``chat_template_kwargs``
+     - ``{}``
+     - Chat template arguments for the chat completions endpoint, such as
+       GLM's ``clear_thinking``. Requests with other values are rejected.
+
+``rollout.router`` (separate from the ``router_server_args`` block in
+:doc:`SGLang Server & Router <sglang_server>`):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 16 50
+
+   * - Key
+     - Default
+     - What it does
+   * - ``policy``
+     - ``manual``
+     - ``manual`` or ``cache_aware``; see `Choose a Routing Policy`_.
+   * - ``assignment_mode``
+     - ``min_load``
+     - How ``manual`` picks an engine for a new group.
+   * - ``request_timeout_secs``
+     - ``1800``
+     - The router's own timeout. Must be at least as long as every generate
+       timeout.
+   * - ``max_idle_secs``
+     - ``600``
+     - How long the router remembers a group's engine after its last
+       request.
+   * - ``disable_health_check``
+     - ``True``
+     - Must stay ``True``. The router's health probes generate tokens.
+   * - ``disable_retries``
+     - ``True``
+     - Stops the router from resending requests.
 
 Limitations
------------
+^^^^^^^^^^^
 
 - Requires the asynchronous runner, a Megatron actor, the SGLang server
   backend, and the Search-R1 agent.
@@ -493,3 +541,27 @@ Limitations
   server it assembles only for that check.
 - HTTP is the only transport (``session_server.type: http``).
 - If a session server dies, the run ends. Nothing restarts it.
+
+Use It from Another Runner
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The session server does not depend on asynchronous training. RLinf connects
+only the asynchronous runner to it. Another runner, such as the synchronous
+agent runner, must:
+
+- launch the router and the session servers, and register the engines.
+  The agent runner has a startup hook for this. When the hook returns the
+  session server URLs, the agent loop sends its requests to the session
+  servers;
+- watch the session servers, so a failure ends the run;
+- send the session servers the loaded weight versions after each sync;
+- collect the session server metrics every step;
+- pass the payload channels to the actor;
+- for each finished group, tell the actor where to fetch its data, and delete
+  the data of every group it drops.
+
+With the asynchronous runner, the buffer worker does the last item. A
+synchronous runner should not use the buffer worker, because it admits groups
+ahead of training. You must also relax the ``runner.async_mode`` check in
+config validation. Only the asynchronous runner has been tested with the
+session server.

@@ -14,7 +14,8 @@ embodied RL jobs.
      - Operational workflows for agentic tasks.
    * - :doc:`Session Server <../session_server>`
      - Collect and assemble agent trajectories on the rollout nodes. Control
-       and data travel separately, and requests go through an SGLang router.
+       and data travel separately, requests go through an SGLang router, and
+       agents can use the OpenAI chat completions API.
 
 .. toctree::
    :hidden:
