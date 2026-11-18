@@ -1221,26 +1221,26 @@ def _reference_space_time_attention(attention, tokens, frame_mask):
                 for past in range(frame_index + 1)
                 if frame_mask[batch, past] or past == frame_index
             ]
-            for patch in range(num_patches):
+            for patch_index in range(num_patches):
                 for head in range(num_heads):
                     channels = slice(head * head_dim, (head + 1) * head_dim)
-                    query = queries[batch, frame_index, patch, channels]
+                    query = queries[batch, frame_index, patch_index, channels]
                     scores = torch.stack(
                         [
-                            query @ keys[batch, past, patch, channels]
+                            query @ keys[batch, past, patch_index, channels]
                             for past in valid_times
                         ]
                     ) / math.sqrt(head_dim)
                     weights = scores.softmax(dim=0)
-                    temporal_values[batch, frame_index, patch, channels] = sum(
-                        weight * values[batch, past, patch, channels]
+                    temporal_values[batch, frame_index, patch_index, channels] = sum(
+                        weight * values[batch, past, patch_index, channels]
                         for weight, past in zip(weights, valid_times)
                     )
         for frame_index in range(num_frames):
-            for patch in range(num_patches):
+            for patch_index in range(num_patches):
                 for head in range(num_heads):
                     channels = slice(head * head_dim, (head + 1) * head_dim)
-                    query = queries[batch, frame_index, patch, channels]
+                    query = queries[batch, frame_index, patch_index, channels]
                     scores = torch.stack(
                         [
                             query @ keys[batch, frame_index, other, channels]
@@ -1248,7 +1248,7 @@ def _reference_space_time_attention(attention, tokens, frame_mask):
                         ]
                     ) / math.sqrt(head_dim)
                     weights = scores.softmax(dim=0)
-                    mixed_values[batch, frame_index, patch, channels] = sum(
+                    mixed_values[batch, frame_index, patch_index, channels] = sum(
                         weights[other]
                         * temporal_values[batch, frame_index, other, channels]
                         for other in range(num_patches)
