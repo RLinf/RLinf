@@ -23,7 +23,7 @@ from rlinf.config import validate_cfg
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.env.env_worker import EnvWorker
+from rlinf.workers.env.env_worker import EnvWorker, push_world_model_server_urls
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
 
 mp.set_start_method("spawn", force=True)
@@ -142,6 +142,7 @@ def main(cfg) -> None:
     env_group = EnvWorker.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
+    push_world_model_server_urls(cfg, env_group)
 
     # Create reward worker group
     server_group = None

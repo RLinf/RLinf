@@ -279,23 +279,43 @@ class InferenceHTTPClient:
         body: dict,
         *,
         msgpack: bool = False,
+        files: Optional[Mapping[str, tuple[str, bytes, str]]] = None,
+        raw_response: bool = False,
         timeout_s: Optional[float] = None,
         max_retries: int = 0,
         retry_backoff_s: float = 0.0,
-    ) -> dict:
+    ) -> dict | bytes:
         """POST ``body`` to ``path`` and return the decoded response dict.
 
         JSON by default. With ``msgpack=True`` the body (including torch tensors
         / numpy arrays) is serialized with the sglang msgpack codec and the
-        response is msgpack-decoded; transient 5xx / connection errors are then
-        retried with linear backoff. Proxies are always stripped. Heavy deps
-        (sglang codec, torch, tianshou) are imported lazily so this module stays
+        response is msgpack-decoded. With ``files`` (part name to
+        ``(filename, content, content_type)``) the request is multipart: each
+        ``body`` value becomes a form field. ``raw_response=True`` returns the
+        response bytes undecoded. Transient 5xx / connection errors are retried
+        with linear backoff. Proxies are always stripped. Heavy deps (sglang
+        codec, torch, tianshou) are imported lazily so this module stays
         importable without them.
         """
         url = f"{self.base_url}{path}"
         retries = max(0, int(max_retries))
         retry_statuses = {500, 502, 503, 504}
-        if msgpack:
+        if files is not None and msgpack:
+            raise ValueError("files and msgpack=True are mutually exclusive")
+        if files is not None:
+            # Bytes, not file objects: a file object is drained by the first
+            # attempt, and a retry would send an empty part.
+            for name, (_, content, _) in files.items():
+                if not isinstance(content, (bytes, bytearray)):
+                    raise TypeError(
+                        f"files[{name!r}] content must be bytes, got {type(content).__name__}"
+                    )
+            request_kwargs = {
+                "data": {k: str(v) for k, v in body.items()},
+                "files": dict(files),
+                "timeout": (self.connect_timeout, timeout_s),
+            }
+        elif msgpack:
             # 0.5.17+: sglang renamed vla/ -> action/; support both for
             # compatibility with older sglang forks.
 
@@ -351,6 +371,8 @@ class InferenceHTTPClient:
                         f" (after {retries + 1} attempt(s); prior error: {last_error})"
                     )
                 raise RuntimeError(f"POST {url} failed: {detail}")
+            if raw_response:
+                return resp.content
             if msgpack:
                 if "msgpack" not in resp.headers.get("content-type", "").lower():
                     raise RuntimeError(

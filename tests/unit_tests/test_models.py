@@ -34,7 +34,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel, validate_embodied_cfg
@@ -3806,6 +3806,45 @@ def test_world_model_env_must_match_the_policy_action_shape(monkeypatch, path, v
 
     with pytest.raises(ValueError, match=f"Expected {path} to equal"):
         validate_embodied_cfg(cfg)
+
+
+@pytest.fixture
+def remote_world_model_cfg(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    config_dir = Path(__file__).resolve().parents[2] / "examples/embodiment/config"
+    monkeypatch.setenv("EMBODIED_PATH", str(config_dir.parent))
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="bwm_robotwin_adjust_bottle_ppo_openpi_pi05")
+    with open_dict(cfg):
+        cfg.env.train.backend = "remote"
+        cfg.env.train.remote = {"server_urls": ["http://wm-0:8091", "http://wm-1:8091"]}
+    return cfg
+
+
+def test_remote_world_model_with_server_urls_validates(remote_world_model_cfg):
+    # A CPU host has one placement rank, the node itself.
+    remote_world_model_cfg.cluster.component_placement = {"actor, env, rollout": "0"}
+
+    validate_embodied_cfg(remote_world_model_cfg)
+
+
+@pytest.mark.parametrize("urls", [None, [], ["http://wm-0:8091", ""], "http://wm-0"])
+def test_remote_world_model_requires_a_list_of_server_urls(
+    remote_world_model_cfg, urls
+):
+    remote_world_model_cfg.env.train.remote.server_urls = urls
+
+    with pytest.raises(ValueError, match="env.train.remote.server_urls"):
+        validate_embodied_cfg(remote_world_model_cfg)
+
+
+def test_remote_world_model_is_not_supported_for_eval(remote_world_model_cfg):
+    with open_dict(remote_world_model_cfg):
+        remote_world_model_cfg.env.eval = remote_world_model_cfg.env.train
+
+    with pytest.raises(ValueError, match="env.eval"):
+        validate_embodied_cfg(remote_world_model_cfg)
 
 
 def test_phyai_example_config_validates_and_shares_the_actor_checkpoint(
