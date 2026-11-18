@@ -116,32 +116,20 @@ class StarVLAForRLActionPrediction(nn.Module, BasePolicy):
 
     @property
     def _no_split_modules(self) -> list[str]:
-        """Return FSDP wrap target class names for the VLM and action submodules."""
+        """Return the VLM layer class names FSDP shards the backbone on.
+
+        Only classes the wrapper itself calls through ``forward`` belong here:
+        the action heads are invoked as plain methods
+        (``model.action_model.predict_action(...)``), which never enter an FSDP
+        wrapper's ``forward`` and so never trigger its parameter all-gather.
+        Wrapping a head here leaves it reading resharded parameters.
+        """
         names: list[str] = []
         iface = getattr(self.starvla_model, "qwen_vl_interface", None)
         vlm = getattr(iface, "model", None)
         for name in getattr(vlm, "_no_split_modules", None) or ():
             if name not in names:
                 names.append(name)
-        for attr in ("action_model", "dino_encoder"):
-            submodule = getattr(self.starvla_model, attr, None)
-            if not isinstance(submodule, nn.Module):
-                continue
-            sub_names = getattr(submodule, "_no_split_modules", None)
-            if sub_names:
-                for name in sub_names:
-                    if name not in names:
-                        names.append(name)
-                continue
-            params = list(submodule.parameters())
-            if (
-                params
-                and len({p.dtype for p in params}) == 1
-                and len({p.requires_grad for p in params}) == 1
-            ):
-                cls_name = type(submodule).__name__
-                if cls_name not in names:
-                    names.append(cls_name)
         return names
 
     @property

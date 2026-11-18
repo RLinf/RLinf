@@ -4805,7 +4805,6 @@ def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessi
     assert wrapper._no_split_modules == [
         "_FakeDecoderLayer",
         "_FakeVisionBlock",
-        "_FakeActionHead",
     ]
     wrap_policy = get_fsdp_wrap_policy(
         wrapper,
@@ -4826,8 +4825,10 @@ def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessi
     assert wrapped == {
         "starvla_model.qwen_vl_interface.model.vision",
         "starvla_model.qwen_vl_interface.model.layer",
-        "starvla_model.action_model",
     }
+    # The head is called as a plain method (``action_model.predict_action``),
+    # so an FSDP unit of its own would never unshard its parameters.
+    assert "starvla_model.action_model" not in wrapped
 
 
 def test_abot_m0_override_vggt_model_path_redirects_and_restores(monkeypatch):
