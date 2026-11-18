@@ -967,49 +967,44 @@ jobs:
     env:
       PHYAI_HTTP_CHECKPOINT: ${{ vars.PHYAI_HTTP_CHECKPOINT }}
       PHYAI_HTTP_TOKENIZER: ${{ vars.PHYAI_HTTP_TOKENIZER }}
-      SERVER_GPU_ID: '0'
-      GPU_ID: '1'
-      NUM_ENVS: '8'
-      MAX_STEPS: '240'
-      MIN_SUCCESS_ONCE: '0'
-      UV_PATH: /workspace/dataset/.uv
-      UV_LINK_MODE: symlink
-      UV_CACHE_DIR: /workspace/dataset/.uv_cache
-      UV_PYTHON_INSTALL_DIR: /workspace/dataset/.uv_python
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Prepare isolated environment paths
+      - name: Create isolated PhyAI environment
+        timeout-minutes: 75
         run: |
           environment_root=$(mktemp -d "$RUNNER_TEMP/phyai-http-envs.XXXXXX")
           echo "PHYAI_HTTP_ENV_ROOT=$environment_root" >> "$GITHUB_ENV"
           echo "RLINF_VENV=$environment_root/phyai" >> "$GITHUB_ENV"
-          echo "PHYAI_PYTHON=$environment_root/phyai/bin/python" >> "$GITHUB_ENV"
-
-      - name: Create the PhyAI environment
-        timeout-minutes: 75
-        run: |
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           unset UV_DEFAULT_INDEX UV_TORCH_BACKEND PYTHONPATH VIRTUAL_ENV
           test -d "$PHYAI_HTTP_CHECKPOINT"
           test -d "$PHYAI_HTTP_TOKENIZER"
-          bash requirements/install.sh \
-            --python 3.12 \
-            --venv "$PHYAI_HTTP_ENV_ROOT/phyai" \
-            --install-rlinf \
-            embodied --model openpi --env libero --engine phyai
-          "$PHYAI_PYTHON" -m phyai server \
-            tests/e2e_tests/evaluations/phyai_gateway_server.yaml --check
+          install_args=(
+            --python 3.12
+            --venv "$environment_root/phyai"
+            --install-rlinf
+            embodied
+            --model openpi
+            --env libero
+            --engine phyai
+          )
+          bash requirements/install.sh "${install_args[@]}"
 
-      - name: Libero-Spatial PhyAI Gateway evaluation
+      - name: Run PhyAI Gateway E2E
         timeout-minutes: 35
         run: |
           unset PYTHONPATH
-          source "$PHYAI_HTTP_ENV_ROOT/phyai/bin/activate"
+          source "$RLINF_VENV/bin/activate"
           if [[ -n "${CUDNN_FRONTEND_CUDART_LIB_NAME:-}" ]]; then
             export PHYAI_CUDART_LIB_NAME="$CUDNN_FRONTEND_CUDART_LIB_NAME"
           fi
-          bash tests/e2e_tests/evaluations/run_phyai_gateway.sh
+          env GPU_ID=1 SERVER_GPU_ID=0 \
+            bash tests/e2e_tests/evaluations/run_phyai_gateway.sh
 
       - name: Upload PhyAI HTTP evaluation logs
         if: always()
@@ -1019,7 +1014,7 @@ jobs:
           path: logs/ci/phyai-gateway.*/
           if-no-files-found: warn
 
-      - name: Remove this job's Python environments
+      - name: Clean up isolated PhyAI environment
         if: always()
         run: |
           if [[ -n "${PHYAI_HTTP_ENV_ROOT:-}" && "$PHYAI_HTTP_ENV_ROOT" == "$RUNNER_TEMP"/phyai-http-envs.* ]]; then
