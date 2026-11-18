@@ -704,7 +704,7 @@ Set shared SFT options such as ``state_dropout_prob`` once under ``actor.model.g
 
 **NVIDIA CUDA**
 
-From the RLinf repository root, start the N1.7 PPO image. This image contains Isaac-GR00T ``23ace64``. The mount keeps checkpoints and logs on the host.
+From the RLinf repository root, start a container with the image used by the N1.7 PPO example. The image includes Isaac-GR00T at commit ``23ace64``. Mount the checkout to keep checkpoints and logs on the host.
 
 .. code-block:: bash
 
@@ -712,65 +712,66 @@ From the RLinf repository root, start the N1.7 PPO image. This image contains Is
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero@sha256:b5563d95f681478555c4af63ca988b19d1a113306dbdee15a79fff47d320b5cb bash
 
-Before downloading the backbone, accept the access terms for `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ on Hugging Face.
-
-In the container, activate the GR00T N1.7 environment, sign in to Hugging Face, and download the base checkpoint, Cosmos backbone, and LIBERO Spatial demonstrations in LeRobot v2.1 format. Copy the pinned Isaac-GR00T modality mapping into the dataset's ``meta`` directory.
+In the container, activate the GR00T N1.7 environment.
 
 .. code-block:: bash
 
    source switch_env gr00t_n1d7
-   hf auth login
-   export GR00T_SFT_MODEL_PATH="$PWD/checkpoints/GR00T-N1.7-3B"
-   export GR00T_SFT_BACKBONE_PATH="$PWD/checkpoints/Cosmos-Reason2-2B"
-   export GR00T_SFT_DATA_PATH="$PWD/datasets/libero_spatial_no_noops_1.0.0_lerobot"
-   hf download nvidia/GR00T-N1.7-3B --local-dir "$GR00T_SFT_MODEL_PATH"
-   hf download nvidia/Cosmos-Reason2-2B --local-dir "$GR00T_SFT_BACKBONE_PATH"
-   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
-     --local-dir "$GR00T_SFT_DATA_PATH"
-   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
-     -o "$GR00T_SFT_DATA_PATH/meta/modality.json"
-
-With two visible NVIDIA GPUs, run two optimizer updates and save a checkpoint after each update.
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$PWD/examples/sft"
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-   export CUDA_VISIBLE_DEVICES=0,1 RAY_ADDRESS=local
-   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
-     actor.model.model_path="$GR00T_SFT_MODEL_PATH" \
-     actor.model.backbone_model_path="$GR00T_SFT_BACKBONE_PATH" \
-     data.train_data_paths="$GR00T_SFT_DATA_PATH" \
-     runner.logger.log_path="$PWD/sft-smoke" \
-     runner.max_steps=2 runner.save_interval=1 \
-     actor.global_batch_size=2 actor.micro_batch_size=1 \
-     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
-
-To use the same configuration for a full run, keep the asset paths, remove the smoke test's step, save, and optimizer overrides, choose a new log directory, and set the batch sizes for your GPU memory. The full recipe saves every 1,000 steps through step 20,000.
 
 **Kunlun XPU**
 
-Install ``gr00t_n1d7`` for Kunlun and set the three model and dataset paths in ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. Copy Isaac-GR00T's ``examples/LIBERO/modality.json`` into the dataset's ``meta`` directory. Set actor placement to the allocated physical device ranks and adjust the batch sizes to the available cards. For XPU, select OSMesa for CPU rendering while keeping training on XPU:
+In the Kunlun container, install and activate the GR00T N1.7 environment from the repository root.
 
 .. code-block:: bash
 
+   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero --platform kunlun
    source .venv/bin/activate
+
+**Prepare the weights and dataset**
+
+Accept the access terms for `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ on Hugging Face. From the repository root, download the base checkpoint, the Cosmos backbone, and the LIBERO Spatial demonstrations in LeRobot v2.1 format. Save Isaac-GR00T's LIBERO ``modality.json`` in the dataset's ``meta`` directory.
+
+.. code-block:: bash
+
+   hf auth login
+   hf download nvidia/GR00T-N1.7-3B --local-dir checkpoints/GR00T-N1.7-3B
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+     --local-dir datasets/libero_spatial_no_noops_1.0.0_lerobot
+   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
+     -o datasets/libero_spatial_no_noops_1.0.0_lerobot/meta/modality.json
+
+**Configure and run training**
+
+Set the base checkpoint, backbone, and dataset paths in ``examples/sft/config/libero_sft_gr00t_n1d7.yaml``. If you already have the weights and dataset, enter their locations inside the container.
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: ./checkpoints/GR00T-N1.7-3B
+       backbone_model_path: ./checkpoints/Cosmos-Reason2-2B
+   data:
+     train_data_paths: ./datasets/libero_spatial_no_noops_1.0.0_lerobot
+
+The default placement uses devices 0 and 1. Set ``cluster.component_placement`` to the allocated device IDs. Adjust ``actor.micro_batch_size`` to fit device memory. Set ``actor.global_batch_size`` to a multiple of the microbatch size times the number of actor devices.
+
+On Kunlun XPU, select OSMesa for CPU rendering. Training runs on the XPUs.
+
+.. code-block:: bash
+
    export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+
+Launch training from the repository root.
+
+.. code-block:: bash
+
+   export RAY_ADDRESS=local HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
    bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
 
+By default, training runs for 20,000 optimizer steps and saves a checkpoint every 1,000 steps. Follow ``Global Step`` in the console. The final checkpoint is at ``gr00t_n1d7_spatial_sft/checkpoints/global_step_20000/actor`` inside the timestamped run directory under ``logs/``.
+
 RLinf AdamW applies weight decay to all trainable parameters. Isaac-GR00T excludes biases and certain normalization parameters.
-
-For a two-step smoke test, set the three environment variables above and run the command below. It saves a checkpoint after each step.
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$PWD/examples/sft"
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
-     runner.max_steps=2 runner.save_interval=1 \
-     actor.global_batch_size=2 actor.micro_batch_size=1 \
-     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
 
 For a fresh run, RLinf starts training from the RNG state left by worker initialization. Isaac-GR00T sets the seed again when it constructs the Trainer after model setup, so the two runs can draw different random values even with the same data seed. The shard sampling order uses ``data.gr00t.seed``.
 

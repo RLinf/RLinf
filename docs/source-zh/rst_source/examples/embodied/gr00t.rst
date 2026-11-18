@@ -680,7 +680,7 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
 
 **NVIDIA CUDA**
 
-在 RLinf 仓库根目录启动 N1.7 PPO 示例使用的镜像。镜像内置 Isaac-GR00T ``23ace64``\ 。挂载仓库目录后，训练日志和检查点会写入宿主机。
+在 RLinf 仓库根目录用 N1.7 PPO 示例的镜像启动容器。镜像内的 Isaac-GR00T 对应提交 ``23ace64``\ 。挂载仓库目录后，训练日志和 checkpoint 保存在宿主机。
 
 .. code-block:: bash
 
@@ -688,65 +688,66 @@ RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没
      -v "$PWD:/workspace/RLinf" -w /workspace/RLinf \
      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero@sha256:b5563d95f681478555c4af63ca988b19d1a113306dbdee15a79fff47d320b5cb bash
 
-下载 backbone 前，先在 Hugging Face 接受 `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ 的访问条款。
-
-进入容器后切换到 GR00T N1.7 环境，登录 Hugging Face 并下载基础权重、Cosmos backbone 和 LeRobot v2.1 格式的 LIBERO Spatial 示范数据。将下列命令指定版本的 Isaac-GR00T 模态映射复制到数据集的 ``meta`` 目录。
+在容器内切换到 GR00T N1.7 环境。
 
 .. code-block:: bash
 
    source switch_env gr00t_n1d7
-   hf auth login
-   export GR00T_SFT_MODEL_PATH="$PWD/checkpoints/GR00T-N1.7-3B"
-   export GR00T_SFT_BACKBONE_PATH="$PWD/checkpoints/Cosmos-Reason2-2B"
-   export GR00T_SFT_DATA_PATH="$PWD/datasets/libero_spatial_no_noops_1.0.0_lerobot"
-   hf download nvidia/GR00T-N1.7-3B --local-dir "$GR00T_SFT_MODEL_PATH"
-   hf download nvidia/Cosmos-Reason2-2B --local-dir "$GR00T_SFT_BACKBONE_PATH"
-   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
-     --local-dir "$GR00T_SFT_DATA_PATH"
-   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
-     -o "$GR00T_SFT_DATA_PATH/meta/modality.json"
-
-使用两张可见的 NVIDIA GPU 训练两步，每步保存一次。
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$PWD/examples/sft"
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-   export CUDA_VISIBLE_DEVICES=0,1 RAY_ADDRESS=local
-   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
-     actor.model.model_path="$GR00T_SFT_MODEL_PATH" \
-     actor.model.backbone_model_path="$GR00T_SFT_BACKBONE_PATH" \
-     data.train_data_paths="$GR00T_SFT_DATA_PATH" \
-     runner.logger.log_path="$PWD/sft-smoke" \
-     runner.max_steps=2 runner.save_interval=1 \
-     actor.global_batch_size=2 actor.micro_batch_size=1 \
-     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
-
-正式训练时保留数据和权重路径，去掉短测的步数、保存间隔和优化器覆盖项，换一个日志目录，再按显存设置 batch size。完整配置训练 20,000 步，每 1,000 步保存一次。
 
 **昆仑 XPU**
 
-为昆仑平台安装 ``gr00t_n1d7``，并在 ``examples/sft/config/libero_sft_gr00t_n1d7.yaml`` 中设置模型和数据集的三个路径。将 Isaac-GR00T 的 ``examples/LIBERO/modality.json`` 复制到数据集的 ``meta`` 目录。把 actor placement 改为分配到的物理卡号，并按卡数调整 batch size。在 XPU 上运行时，使用 OSMesa 在 CPU 上渲染，训练在 XPU 上执行：
+在昆仑容器内进入仓库根目录，安装并激活 GR00T N1.7 环境。
 
 .. code-block:: bash
 
+   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero --platform kunlun
    source .venv/bin/activate
+
+**准备权重和数据集**
+
+下载前在 Hugging Face 接受 `Cosmos-Reason2-2B <https://huggingface.co/nvidia/Cosmos-Reason2-2B>`_ 的访问条款。在仓库根目录下载基础权重、Cosmos backbone 和 LeRobot v2.1 格式的 LIBERO Spatial 示范数据。将 Isaac-GR00T 的 LIBERO 模态映射文件 ``modality.json`` 保存到数据集的 ``meta`` 目录。
+
+.. code-block:: bash
+
+   hf auth login
+   hf download nvidia/GR00T-N1.7-3B --local-dir checkpoints/GR00T-N1.7-3B
+   hf download nvidia/Cosmos-Reason2-2B --local-dir checkpoints/Cosmos-Reason2-2B
+   hf download --repo-type dataset IPEC-COMMUNITY/libero_spatial_no_noops_1.0.0_lerobot \
+     --local-dir datasets/libero_spatial_no_noops_1.0.0_lerobot
+   curl -fsSL https://raw.githubusercontent.com/NVIDIA/Isaac-GR00T/23ace64f17aa5015259b8609d371eb61a357c776/examples/LIBERO/modality.json \
+     -o datasets/libero_spatial_no_noops_1.0.0_lerobot/meta/modality.json
+
+**配置并启动训练**
+
+在 ``examples/sft/config/libero_sft_gr00t_n1d7.yaml`` 中填写基础权重、backbone 和数据集的路径。已有这些文件时，填写容器内的实际路径。
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: ./checkpoints/GR00T-N1.7-3B
+       backbone_model_path: ./checkpoints/Cosmos-Reason2-2B
+   data:
+     train_data_paths: ./datasets/libero_spatial_no_noops_1.0.0_lerobot
+
+配置默认使用 0、1 号卡。按实际分配的卡号修改 ``cluster.component_placement``\ ，按可用显存调整 ``actor.micro_batch_size``\ 。将 ``actor.global_batch_size`` 设为单卡 microbatch size 乘以训练卡数的整数倍。
+
+在昆仑平台上，用 OSMesa 在 CPU 上渲染，在 XPU 上训练模型。
+
+.. code-block:: bash
+
    export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa ROBOT_PLATFORM=LIBERO
+
+在仓库根目录启动训练。
+
+.. code-block:: bash
+
+   export RAY_ADDRESS=local HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
    bash examples/sft/run_vla_sft.sh libero_sft_gr00t_n1d7
 
+默认执行 20,000 次优化器更新，每 1,000 步保存一个 checkpoint。在终端查看 ``Global Step`` 了解训练进度。最终 checkpoint 位于 ``logs/`` 下本次运行的时间戳目录内，相对路径为 ``gr00t_n1d7_spatial_sft/checkpoints/global_step_20000/actor``\ 。
+
 RLinf AdamW 对所有可训练参数应用权重衰减。Isaac-GR00T 会排除偏置和部分归一化参数。
-
-设置上面列出的 3 个环境变量，再运行下面的命令。训练执行 2 步，每步保存一个 checkpoint。
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$PWD/examples/sft"
-   export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
-   python examples/sft/train_vla_sft.py --config-name libero_sft_gr00t_n1d7 \
-     runner.max_steps=2 runner.save_interval=1 \
-     actor.global_batch_size=2 actor.micro_batch_size=1 \
-     actor.optim.total_training_steps=2 actor.optim.lr_warmup_steps=0
 
 从头训练时，RLinf 使用 worker 初始化结束时的 RNG 状态。Isaac-GR00T 在构建模型后创建 Trainer 时会再设一次 seed，因此即使数据 seed 相同，两边在训练中抽取的随机数也可能不同。数据分片的采样顺序由 ``data.gr00t.seed`` 决定。
 
