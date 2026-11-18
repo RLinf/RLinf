@@ -271,13 +271,13 @@ class QAMPolicyWorker(EmbodiedFSDPActor):
             )
             state = torch.load(
                 path / f"state_rank_{self._rank}.pt",
-                map_location=self.device,
+                map_location="cpu",
                 weights_only=False,
             )
         else:
             state = torch.load(
                 path / f"seed_{self.seed}.pt",
-                map_location=self.device,
+                map_location="cpu",
                 weights_only=False,
             )
             self.model.load_state_dict(state["model"], strict=True)
