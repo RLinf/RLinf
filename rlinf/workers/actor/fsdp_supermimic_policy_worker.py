@@ -535,8 +535,8 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         ``steps`` holds the critic features of the ``H`` states the policy
         acted in, ``[B, H, F]``, and ``terminal`` those of the last state.
         The rows are shuffled once into ``critic_minibatches`` equal
-        minibatches (:func:`critic_minibatch_rows`), fitted ``critic_epochs``
-        times.
+        minibatches (:func:`critic_minibatch_rows`), gathered once, and
+        fitted ``critic_epochs`` times.
         """
         self._enter_phase(CRITIC)
         batch, horizon, width = steps.shape
@@ -558,11 +558,14 @@ class EmbodiedSuperMimicFSDPPolicy(EmbodiedFSDPActor):
         order = critic_minibatch_rows(
             features.shape[0], self.critic_minibatches, features.device
         )
+        minibatches = list(zip(features[order], targets[order]))
         losses = []
         for _ in range(self.critic_epochs):
-            for rows in order:
+            for minibatch_features, minibatch_targets in minibatches:
                 out = self.model(
-                    forward_type=CRITIC, features=features[rows], targets=targets[rows]
+                    forward_type=CRITIC,
+                    features=minibatch_features,
+                    targets=minibatch_targets,
                 )
                 out["loss"].backward()
                 self._optimizer_step("critic")
