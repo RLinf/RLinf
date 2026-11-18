@@ -1712,6 +1712,8 @@ class EnvOutput:
                 "native_proprio",
             )
         }
+        if obs.get("active_mask") is not None:
+            prepared["active_mask"] = obs["active_mask"]
         for key in ("reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]
@@ -1754,7 +1756,9 @@ class PolicyInput:
     # Whether this message closes an epoch without requesting another action.
     is_last: bool = False
     # Externally supplied actions, float [B, C, A] or [B, D]. ``None`` means
-    # Rollout must run model inference. Used by smooth intervention only.
+    # Rollout must run model inference and reply with actions; otherwise the
+    # sender already runs these and Rollout sends nothing back. Used by smooth
+    # intervention only.
     external_actions: torch.Tensor | None = None
 
     def __post_init__(self) -> None:

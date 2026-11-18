@@ -107,7 +107,7 @@ class EnvWorker(Worker):
         self.use_external_reward_model = (
             self.use_reward_model and not self.use_realworld_reward
         )
-        self.env_infos_reward_keys = ("success", "episode", "final_info")
+        self.env_infos_reward_keys = ("success", "episode", "final_info", "_final_info")
         if self.use_external_reward_model:
             self.reward_weight = self.cfg.reward.get("reward_weight", 1.0)
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
@@ -196,6 +196,8 @@ class EnvWorker(Worker):
         )
         if self.smooth_intervene.enabled and self.env_decoupled_mode:
             raise ValueError("smooth_intervene does not support decoupled env mode")
+        # Actions a stage sent with its request, run without waiting for a reply.
+        self._supplied_actions: dict[int, torch.Tensor] = {}
 
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
@@ -672,7 +674,9 @@ class EnvWorker(Worker):
                     flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
                     if callable(flush_video):
                         flush_video()
-                if not self.cfg.env.eval.auto_reset:
+                if not self.cfg.env.eval.auto_reset and not self.cfg.env.eval.get(
+                    "use_fixed_reset_state_ids", False
+                ):
                     self.eval_env_list[i].update_reset_state_ids()
 
     @Worker.timer("get_reward_model_output")
@@ -701,9 +705,10 @@ class EnvWorker(Worker):
             )
 
         dones = env_output.dones
-        if dones is not None and getattr(dones, "ndim", 0) > 1:
-            dones = dones[:, -1]
-            reward_input.update({"dones": dones})
+        if dones is not None:
+            if getattr(dones, "ndim", 0) > 1:
+                dones = dones.any(dim=-1)
+            reward_input["dones"] = dones
 
         if self.reward_mode == "history_buffer":
             if stage_id is None:
@@ -886,6 +891,11 @@ class EnvWorker(Worker):
             policy_input.sources = [
                 TrajectorySource(key=key, size=self.train_num_envs_per_stage)
             ]
+        # Rollout does not reply to a request that carries its own actions, so
+        # the stage runs them at once while the request is still in transit.
+        supplies_actions = not policy_input.requires_inference
+        if supplies_actions:
+            self._supplied_actions[stage_id] = policy_input.external_actions
         self.send_to(
             group_name=self.cfg.rollout.group_name,
             channel=rollout_channel,
@@ -893,6 +903,7 @@ class EnvWorker(Worker):
             mode="train",
             tag="policy_final" if policy_input.is_last else "policy",
             route_key=stage_id if not self.env_decoupled_mode else None,
+            async_op=supplies_actions,
             batch_size=self.train_batch_size,
             split_fn=self._policy_input_split_fn or PolicyInput.split,
             decoupled_mode=self.env_decoupled_mode,
@@ -1104,7 +1115,10 @@ class EnvWorker(Worker):
         return int(actions.shape[0])
 
     def _recv_actions(self, input_channel: Channel, stage_id: int) -> torch.Tensor:
-        """Receive actions using the route paired with the policy request."""
+        """Return the actions the stage supplied, else receive the policy's reply."""
+        supplied = self._supplied_actions.pop(stage_id, None)
+        if supplied is not None:
+            return supplied
         return self.recv_from(
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,

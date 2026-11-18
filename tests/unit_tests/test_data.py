@@ -72,6 +72,7 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.scheduler import AcceleratorType
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -1257,6 +1258,34 @@ def test_env_output_preserves_nested_observations():
             shard.obs["history"]["main_images"],
             output.obs["history"]["main_images"][index : index + 1],
         )
+
+
+@pytest.mark.parametrize(
+    "reset_config, expected_updates",
+    [({}, 1), ({"use_fixed_reset_state_ids": True}, 0)],
+    ids=["optional-setting-absent", "fixed-reset-ids"],
+)
+def test_env_worker_finishes_eval_with_optional_fixed_reset_ids(
+    reset_config, expected_updates
+):
+    class EvalEnv:
+        reset_updates = 0
+
+        def update_reset_state_ids(self):
+            self.reset_updates += 1
+
+    worker = object.__new__(EnvWorker)
+    worker.stage_num = 1
+    worker.eval_env_list = [EvalEnv()]
+    worker.cfg = OmegaConf.create(
+        {"env": {"eval": {"auto_reset": False, "video_cfg": {"save_video": False}}}}
+    )
+    worker.cfg.env.eval.update(reset_config)
+    OmegaConf.set_struct(worker.cfg, True)
+
+    worker.finish_rollout(mode="eval")
+
+    assert worker.eval_env_list[0].reset_updates == expected_updates
 
 
 @pytest.mark.parametrize("array_type", [torch.tensor, np.array])
@@ -3201,6 +3230,7 @@ def test_env_uses_mode_qualified_decoupled_response_tag():
     env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
     env.env_decoupled_mode = True
     env.train_batch_size = 32
+    env._supplied_actions = {}
     env.recv_from = Mock(return_value=torch.zeros(8, 4))
 
     env._recv_actions(None, stage_id=0)
@@ -3266,20 +3296,25 @@ def test_smooth_intervention_requires_online_lerobot_dagger():
         )
 
 
-def test_env_sends_external_request_after_intervention_continues():
+def test_env_runs_its_own_actions_after_intervention_continues():
     env = object.__new__(EnvWorker)
+    env.cfg = OmegaConf.create({"rollout": {"group_name": "rollout"}})
     env._trajectory_step = 0
     env._rank = 0
     env.train_num_envs_per_stage = 1
+    env.train_batch_size = 1
     env.n_train_chunk_steps = 2
     env.enable_online_lerobot = True
     env.env_decoupled_mode = False
+    env._policy_input_split_fn = None
+    env._supplied_actions = {}
     env.env_list = [
         SimpleNamespace(get_hold_actions=lambda fallback=None: [[1.0, 2.0]])
     ]
     env.smooth_intervene = SmoothInterveneController(1, 1, 2, 2, enabled=True)
     env._build_env_transition = Mock(return_value=EnvTransition())
-    env._send_policy_input = Mock()
+    env.send_to = Mock()
+    env.recv_from = Mock(return_value=torch.zeros(1, 2, 2))
     env_output = EnvOutput(
         obs={"states": torch.zeros(1, 4)},
         transition=EnvTransition(
@@ -3287,18 +3322,24 @@ def test_env_sends_external_request_after_intervention_continues():
             intervene_flags=torch.tensor([[False, True]]),
         ),
     )
+    hold_chunk = torch.tensor([[[1.0, 2.0], [1.0, 2.0]]])
 
     env._publish_step(Mock(), env_output, EnvTransition(), None, {}, 0, 0, 0)
 
-    policy_input = env._send_policy_input.call_args.args[1]
+    send = env.send_to.call_args.kwargs
+    policy_input = send["data"]
+    assert send["async_op"]
     assert not policy_input.requires_inference
     assert policy_input.env_parts[0] is not None
     assert policy_input.env_parts[0].next_obs is None
     assert torch.equal(policy_input.obs["states"], env_output.obs["states"])
-    assert torch.equal(
-        policy_input.external_actions,
-        torch.tensor([[[1.0, 2.0], [1.0, 2.0]]]),
-    )
+    assert torch.equal(policy_input.external_actions, hold_chunk)
+    # Rollout sends nothing back, so the next chunk starts without a receive.
+    assert torch.equal(env._recv_actions(Mock(), 0), hold_chunk)
+    env.recv_from.assert_not_called()
+    # The chunk after that waits for the policy again.
+    env._recv_actions(Mock(), 0)
+    env.recv_from.assert_called_once()
 
 
 def _publish_step_env(**overrides):
@@ -3536,7 +3577,8 @@ def test_rollout_routes_external_input_without_model_inference():
     )
     assert torch.equal(external_part.external_actions, dummy_actions)
     assert rollout._predict_rollout_actions.call_count == 1
-    assert torch.equal(rollout._send_actions.call_args_list[1].args[1], dummy_actions)
+    # Only the inferred chunk gets a reply; the env already runs its own actions.
+    rollout._send_actions.assert_called_once()
 
 
 def test_decoupled_final_completion_uses_next_bootstrap():
@@ -3579,6 +3621,35 @@ def test_decoupled_final_completion_uses_next_bootstrap():
 
     policy_input = env._send_policy_input.call_args.args[1]
     assert policy_input.env_parts == [completion]
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_reward_request_forwards_done_masks_and_final_info(chunked):
+    worker = object.__new__(EnvWorker)
+    worker._accelerator_type = AcceleratorType.NO_ACCEL
+    worker._timer_metrics = {}
+    worker.reward_mode = "per_step"
+    worker.env_infos_reward_keys = ("success", "episode", "final_info", "_final_info")
+    worker.cfg = OmegaConf.create({"reward": {"group_name": "reward"}})
+    worker.env_decoupled_mode = False
+    worker.train_batch_size = 2
+    worker.send_to = Mock()
+    worker.recv_from = Mock()
+    done = torch.tensor([True, False])
+    valid = torch.tensor([False, True])
+    dones = torch.stack([done, torch.zeros_like(done)], dim=-1) if chunked else done
+    env_output = EnvOutput(
+        obs={"states": torch.zeros(2, 1)},
+        transition=EnvTransition(dones=dones),
+        env_infos={"final_info": {"success": done}, "_final_info": valid},
+    )
+
+    worker.get_reward_model_output(env_output, Mock(), Mock())
+
+    payload = worker.send_to.call_args.kwargs["data"]
+    assert torch.equal(payload["dones"], done)
+    assert torch.equal(payload["env_infos"]["_final_info"], valid)
+    assert torch.equal(payload["env_infos"]["final_info"]["success"], done)
 
 
 def test_env_closes_reward_stream_with_final_chunk():
@@ -3782,6 +3853,57 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
         forward_inputs["rlt_transition_z_rl"],
     )
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
+
+
+@pytest.mark.parametrize("use_chat_template", [False, True])
+def test_vlm_trend_sft_uses_inference_prefix_without_trailing_assistant(
+    use_chat_template,
+):
+    from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+
+    class Processor:
+        video_token = "<|video_pad|>"
+        assistant_prefix = "<|im_start|>assistant\n"
+
+        def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+            assert not tokenize
+            text = "".join(
+                f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+                for msg in messages
+            )
+            return text + self.assistant_prefix if add_generation_prompt else text
+
+        def __call__(self, *, text, **kwargs):
+            input_ids = torch.tensor([[ord(char) for char in text[0]]])
+            return {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            }
+
+    dataset = object.__new__(VLMTrendRewardSFTDataset)
+    dataset._processor = Processor()
+    dataset.system_prompt = "Score the attempt."
+    dataset.use_chat_template = use_chat_template
+    dataset._video_fps = 24.0
+    videos = [torch.zeros(2, 3, 2, 2), torch.zeros(1, 3, 2, 2)]
+    question, answer = "Did the robot finish?", "Yes"
+    prompt, prefix, _ = dataset.process_inputs(
+        dataset._processor, dataset.system_prompt, use_chat_template, [question], videos
+    )
+    ids, length, attention_mask, label_mask, _ = dataset.encode_prompt(
+        question, videos, answer
+    )
+
+    assert prompt.count(dataset._processor.video_token) == 2
+    assert prompt.endswith(dataset._processor.assistant_prefix)
+    assert label_mask.shape == prefix["input_ids"].shape
+    prefix_length = int(label_mask.sum())
+    torch.testing.assert_close(ids[:prefix_length], prefix["input_ids"][0])
+    assert (
+        "".join(chr(token) for token in ids[prefix_length:].tolist())
+        == "Yes<|im_end|>\n"
+    )
+    assert length == int(attention_mask.sum())
 
 
 def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
