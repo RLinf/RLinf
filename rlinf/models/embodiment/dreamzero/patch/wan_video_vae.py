@@ -261,6 +261,8 @@ class WanVideoVAE(nn.Module):
     def encode(self, videos, tiled=False, tile_size=(34, 34), tile_stride=(18, 16)):
         if videos.dim() == 4:
             videos = videos.unsqueeze(0)
+        # Video preprocessing and the VAE may use different precision under FSDP.
+        videos = videos.to(dtype=self.model.encoder.conv1.weight.dtype)
         if tiled:
             return self.tiled_encode(videos, tile_size, tile_stride)
         return self.single_encode(videos)
