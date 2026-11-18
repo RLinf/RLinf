@@ -37,6 +37,8 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 下载完成后，请将 ``env.eval.assets_path``
 设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
+RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。可通过 ``env.eval.camera_near`` 修改该值，设为 ``null`` 即沿用 RoboTwin 自身的取值。
+
 **环境变量**
 
 每次评测前须设置：
@@ -291,7 +293,7 @@ LingbotVLA 2.0
 常见问题
 --------
 
-- **ROBOTWIN_PATH 未设置：** ``run_eval.sh`` 会将其加入 ``PYTHONPATH``，但必须指向有效的 RoboTwin 仓库根目录（``RLinf_support`` 分支）。
+- **ROBOTWIN_PATH 未设置：** 请将 ``ROBOTWIN_PATH`` 导出为 RoboTwin 仓库根目录（``RLinf_support`` 分支）。``run_eval.sh`` 仅在该变量已设置时将其加入 ``PYTHONPATH``。
 - **assets_path 错误：** 环境通过 ``ASSETS_PATH`` 加载仿真资产；路径无效会导致启动失败或场景缺失。
 - **机器人平台：** 通过 ``ROBOT_PLATFORM=ALOHA`` 选择平台变体。
 - **GPU 显存不足：** 在 YAML 中设置 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``；或减小 ``env.eval.total_num_envs``。

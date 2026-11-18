@@ -33,7 +33,33 @@ import functools
 import inspect
 from typing import Any, Callable
 
-__all__ = ["add_frame_to_dataset", "episode_boundaries"]
+__all__ = [
+    "add_frame_to_dataset",
+    "episode_boundaries",
+    "index_episode_subset_by_id",
+]
+
+
+def index_episode_subset_by_id(dataset: Any) -> None:
+    """Index legacy LeRobot subset bounds by their original episode IDs.
+
+    Legacy delta queries use the stored episode ID to address bounds that the
+    subset constructor packs by local episode position. Frame bounds remain
+    relative to the subset's rows; v3 readers have no ``episode_data_index``.
+    """
+    bounds = getattr(dataset, "episode_data_index", None)
+    if (
+        dataset.episodes is None
+        or bounds is None
+        or getattr(dataset, "_rlinf_episode_bounds_by_id", False)
+    ):
+        return
+    episodes = list(dataset.episodes)
+    for key, values in bounds.items():
+        indexed = values.new_full((max(episodes) + 1,), -1)
+        indexed[episodes] = values
+        bounds[key] = indexed
+    dataset._rlinf_episode_bounds_by_id = True
 
 
 @functools.lru_cache(maxsize=None)
@@ -113,6 +139,10 @@ def episode_boundaries(dataset: Any) -> tuple[list[int], list[int]]:
     """
     index = getattr(dataset, "episode_data_index", None)
     if index is not None:  # v2.1
+        if getattr(dataset, "_rlinf_episode_bounds_by_id", False):
+            index = {
+                key: values[list(dataset.episodes)] for key, values in index.items()
+            }
         return [int(x) for x in index["from"]], [int(x) for x in index["to"]]
 
     episodes = getattr(getattr(dataset, "meta", None), "episodes", None)

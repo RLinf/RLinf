@@ -24,7 +24,7 @@ runner:
     log_path: "../results/libero_spatial_dagger_openpi"
     project_name: rlinf
     experiment_name: "test_openpi_dagger"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -60,8 +60,8 @@ env:
     auto_reset: True
     ignore_terminations: True
     total_num_envs: 4
-    max_episode_steps: 100
-    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
   eval:
     rollout_epoch: 1
     total_num_envs: 1

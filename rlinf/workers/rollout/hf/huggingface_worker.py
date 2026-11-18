@@ -49,6 +49,7 @@ from rlinf.scheduler import (
     split_channel_message,
 )
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -910,16 +911,19 @@ class MultiStepRolloutWorker(Worker):
         actor_channel: Channel,
         stage_id: int,
         split_sizes: list[int] | None = None,
-        peer_ranks: Collection[int] | None = None,
+        peer_ranks: list[int] | None = None,
     ) -> None:
         """Answer one round of policy requests and publish their trajectory parts.
 
         Requests share one forward pass when their observations share a format
         and their envs share policy fields, so the model never sees two of
-        either in one batch. The actions go back in request order.
+        either in one batch. The inferred actions go back in request order; a
+        request that supplied its own actions gets no reply, since its env runs
+        them without waiting.
 
         Args:
-            requests: Decompressed requests that each need actions, in route order.
+            requests: Decompressed requests that each need or supply actions,
+                in route order.
             output_channel: Channel the actions go back on.
             actor_channel: Channel the trajectory parts go to.
             stage_id: Pipeline stage of the requests.
@@ -932,13 +936,14 @@ class MultiStepRolloutWorker(Worker):
                 self.train_layout,
                 {source.key.env_rank for source in request.sources},
             )
-            groups.setdefault((batch_format(request.obs), policy_fields), []).append(
-                index
-            )
+            groups.setdefault(
+                (request.requires_inference, batch_format(request.obs), policy_fields),
+                [],
+            ).append(index)
 
         request_actions: list[torch.Tensor | None] = [None] * len(requests)
         published = []
-        for (_, policy_fields), indices in groups.items():
+        for (_, _, policy_fields), indices in groups.items():
             policy_input = PolicyInput.merge([requests[index] for index in indices])
             if not policy_input.requires_inference:
                 actions = policy_input.external_actions
@@ -961,13 +966,25 @@ class MultiStepRolloutWorker(Worker):
                 request_actions[index] = shard
             published.append((policy_input, actions, forward_inputs, policy_output))
 
-        self._send_actions(
-            output_channel,
-            torch.cat(request_actions, dim=0).contiguous(),
-            stage_id,
-            split_sizes,
-            peer_ranks,
-        )
+        # The env runs the actions it supplied, so nothing goes back.
+        replied = [
+            index
+            for index, request in enumerate(requests)
+            if request.requires_inference
+        ]
+        if len(replied) < len(requests):
+            if split_sizes is not None:
+                split_sizes = [split_sizes[index] for index in replied]
+            if peer_ranks is not None:
+                peer_ranks = [peer_ranks[index] for index in replied]
+        if replied:
+            self._send_actions(
+                output_channel,
+                torch.cat([request_actions[index] for index in replied]).contiguous(),
+                stage_id,
+                split_sizes,
+                peer_ranks,
+            )
         for policy_input, actions, forward_inputs, policy_output in published:
             # Omit raw observations when the collector does not consume them.
             transition_obs = policy_input.obs if self.collect_raw_transition_obs else {}
@@ -1287,11 +1304,12 @@ class MultiStepRolloutWorker(Worker):
     def offload_model(self):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
-        self.hf_model.to("cpu")
-        if self.rlt_feature_model is not None:
-            self.rlt_feature_model.to("cpu")
-        if self.expert_model is not None:
-            self.expert_model.to("cpu")
+        with pinned_offload_context():
+            self.hf_model.to("cpu")
+            if self.rlt_feature_model is not None:
+                self.rlt_feature_model.to("cpu")
+            if self.expert_model is not None:
+                self.expert_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
@@ -1361,6 +1379,8 @@ class MultiStepRolloutWorker(Worker):
                     merged[key] = torch.cat(values, dim=0)
                 elif isinstance(first_non_none, list):
                     merged[key] = [item for sublist in values for item in sublist]
+                elif isinstance(first_non_none, dict):
+                    merged[key] = _merge_obs_dicts(values)
                 else:
                     merged[key] = values
             return merged

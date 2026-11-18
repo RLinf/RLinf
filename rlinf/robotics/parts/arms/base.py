@@ -170,8 +170,9 @@ class Arm(ControllablePart):
         """Whether the arm is ready to be read and commanded."""
         return self.is_connected
 
-    def clear_errors(self) -> None:
+    def clear_errors(self) -> Any:
         """Clear a latched fault so the arm accepts commands again."""
+        return super().clear_errors()
 
     def reset_joint(self, positions: "Sequence[float]") -> None:
         """Move the joints to a configuration, outside the action stream.

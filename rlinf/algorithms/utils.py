@@ -265,7 +265,7 @@ def preprocess_reasoning_advantages_inputs(
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
-    elif kwargs["adv_type"] == "raw":
+    elif kwargs["adv_type"] in ("raw", "gae_dynamic"):
         kwargs.update({"rewards": rewards})
 
     else:
@@ -274,16 +274,17 @@ def preprocess_reasoning_advantages_inputs(
     if values is not None:  # [bsz, seq_len]
         assert values.ndim == 2, f"Unsupported values shape {values.shape}"
         values = values.transpose(0, 1)  # [seq_len, bsz]
-        # pad values with zeros at the end for bootstrapping
-        values = torch.cat(
-            [
-                values,
-                torch.zeros(
-                    (1, values.shape[-1]), dtype=values.dtype, device=values.device
-                ),
-            ],
-            dim=0,
-        )  # [seq_len+1, bsz]
+        if kwargs["adv_type"] != "gae_dynamic":
+            # pad values with zeros at the end for bootstrapping
+            values = torch.cat(
+                [
+                    values,
+                    torch.zeros(
+                        (1, values.shape[-1]), dtype=values.dtype, device=values.device
+                    ),
+                ],
+                dim=0,
+            )  # [seq_len+1, bsz]
 
         kwargs.update({"values": values})
 
