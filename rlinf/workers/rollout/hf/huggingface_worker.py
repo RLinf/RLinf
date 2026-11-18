@@ -35,6 +35,7 @@ from rlinf.data.schema.embodied_types import (
     PolicyInput,
     PolicyOutput,
     PolicyPart,
+    merge_batch_values,
     split_batch_value,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -86,6 +87,12 @@ class MultiStepRolloutWorker(Worker):
         self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
         self.enable_rlt = self.algorithm_cfg.get("loss_type") in {"rlt_ac", "rlt_td3"}
+        self.batch_bootstrap_inference = bool(
+            self.cfg.rollout.get("batch_bootstrap_inference", False)
+        )
+        self.value_only_bootstrap = bool(
+            self.cfg.rollout.get("value_only_bootstrap", False)
+        )
         self.expert_model = None
         self.rlt_feature_model = None
         self.rlt_route = None
@@ -160,6 +167,13 @@ class MultiStepRolloutWorker(Worker):
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
+        if self.value_only_bootstrap and getattr(
+            type(self.hf_model), "predict_value_batch", None
+        ) in (None, BasePolicy.predict_value_batch):
+            raise ValueError(
+                "rollout.value_only_bootstrap=True requires a policy implementing "
+                f"predict_value_batch, got {type(self.hf_model).__name__}."
+            )
 
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
@@ -746,12 +760,30 @@ class MultiStepRolloutWorker(Worker):
         ).async_wait()
         return policy_input, None
 
+    def _can_predict_value_only(self) -> bool:
+        if isinstance(self.hf_model, BasePolicy):
+            return self.hf_model.supports_value_only_bootstrap()
+        return callable(getattr(self.hf_model, "predict_value_batch", None))
+
+    def _predict_bootstrap(self, env_obs: dict[str, Any]) -> dict[str, Any]:
+        if self.model_cfg.model_type == SupportedModel.PSI0.value or (
+            self.value_only_bootstrap
+            and not self.enable_rlt
+            and not self.enable_dagger
+            and self.rlt_feature_model is None
+            and self._can_predict_value_only()
+        ):
+            return {"prev_values": self.hf_model.predict_value_batch(env_obs)}
+        _, result = self._predict_rollout_actions(env_obs)
+        return result
+
     def _publish_env_part(
         self,
         env_part: EnvPart,
         policy_obs: dict[str, Any] | None,
         next_rlt_obs: dict[str, Any] | None,
         actor_channel: Channel,
+        bootstrap_result: dict[str, Any] | None = None,
     ) -> None:
         next_obs = env_part.next_obs if env_part.next_obs is not None else policy_obs
         final_prev_values = None
@@ -761,15 +793,19 @@ class MultiStepRolloutWorker(Worker):
                 raise ValueError(
                     "Terminal inference requires a post-action observation."
                 )
-            if self.model_cfg.model_type == SupportedModel.PSI0.value:
-                values = self.hf_model.predict_value_batch(next_obs)
-            else:
-                _, result = self._predict_rollout_actions(next_obs)
-                values = result.get("prev_values")
-                if self.enable_rlt:
-                    next_rlt_obs = extract_rlt_obs_from_forward_inputs(
-                        result.get("forward_inputs"), transition=True
-                    )
+            result = (
+                bootstrap_result
+                if bootstrap_result is not None
+                else self._predict_bootstrap(next_obs)
+            )
+            values = result.get("prev_values")
+            if (
+                self.enable_rlt
+                and self.model_cfg.model_type != SupportedModel.PSI0.value
+            ):
+                next_rlt_obs = extract_rlt_obs_from_forward_inputs(
+                    result.get("forward_inputs"), transition=True
+                )
             if values is not None:
                 final_prev_values = values.cpu().contiguous()
         # Republish environment-owned data here to keep one Actor-channel writer.
@@ -818,10 +854,41 @@ class MultiStepRolloutWorker(Worker):
             if needs_policy_obs
             else [None] * part_count
         )
-        for env_part, policy_obs, next_features in zip(
+        bootstrap_results = [None] * part_count
+        if (
+            self.batch_bootstrap_inference
+            and not self.enable_rlt
+            and not self.enable_dagger
+            and self.rlt_feature_model is None
+        ):
+            indices = [
+                index
+                for index, part in enumerate(policy_input.env_parts)
+                if part is not None and part.requires_inference
+            ]
+            if len(indices) > 1:
+                observations = [
+                    policy_input.env_parts[index].next_obs
+                    if policy_input.env_parts[index].next_obs is not None
+                    else policy_observations[index]
+                    for index in indices
+                ]
+                if any(obs is None for obs in observations):
+                    raise ValueError(
+                        "Terminal inference requires a post-action observation."
+                    )
+                result = self._predict_bootstrap(merge_batch_values(observations))
+                results = split_batch_value(
+                    {"prev_values": result.get("prev_values")},
+                    [policy_input.request_sizes[index] for index in indices],
+                )
+                for index, result in zip(indices, results):
+                    bootstrap_results[index] = result
+        for env_part, policy_obs, next_features, bootstrap_result in zip(
             policy_input.env_parts,
             policy_observations,
             next_rlt_observations,
+            bootstrap_results,
         ):
             if env_part is not None:
                 self._publish_env_part(
@@ -829,6 +896,7 @@ class MultiStepRolloutWorker(Worker):
                     policy_obs,
                     next_features,
                     actor_channel,
+                    bootstrap_result,
                 )
 
     def _send_actions(
