@@ -45,4 +45,4 @@
 
    ASCEND_CHIP=Ascend950PR bash requirements/install.sh --platform ascend embodied --model openpi --env libero
 
-用 ``--torch <version>`` 可以覆盖默认版本并跳过设备查询；所选版本需要与宿主机 CANN 兼容。当 ``ASCEND_CHIP=Ascend950PR`` 且 torch 为 2.10.0 时，安装脚本仍将 ``torch-npu`` 固定为 2.10.0.post4。
+用 ``--torch <version>`` 可以覆盖默认版本并跳过设备查询；所选版本需要与宿主机 CANN 兼容。``ASCEND_CHIP=Ascend950PR`` 且 torch 为 2.10.0 时，安装脚本仍将 ``torch-npu`` 固定为 2.10.0.post4。
