@@ -1706,6 +1706,8 @@ class EnvOutput:
             key: obs.get(key)
             for key in ("main_images", "wrist_images", "extra_view_images", "states")
         }
+        if obs.get("active_mask") is not None:
+            prepared["active_mask"] = obs["active_mask"]
         for key in ("reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]

@@ -491,6 +491,23 @@ Both local VLM Trend paths use history-window reward inputs. The standard path u
    reward worker **every step**. When ``min_history_size`` is not met,
    the reward worker returns ``interval_reward`` instead of skipping the RPC.
 
+Set ``gt_success_bonus`` to add a fixed amount to the VLM reward whenever the
+environment reports task success. This provides a reward signal from the
+simulator alongside the VLM's prediction. On a step that ends with an automatic
+reset, the bonus uses the success status of the episode that just ended.
+
+Set ``env.eval.use_fixed_reset_state_ids: true`` to reuse initial states across
+evaluation rounds. Compare ``eval/success_at_end`` (success at the end of an
+episode) with ``eval/success_once`` (success at any point in the episode).
+
+Match the checkpoint's SFT and inference settings for frame order, frame
+sampling, ``video_fps``, system prompt, and chat template. Match
+``data.video_do_sample_frames`` with
+``reward.model.subprocessor_kwargs.video_processor.do_sample_frames``. Set FPS
+and prompt options under ``data`` for SFT and
+``reward.model.input_builder_params`` for inference. For a separate success
+head, use ``reward.model.success_input_builder_params``.
+
 3.4.1 Local Hugging Face Inference
 .....................................
 
@@ -586,10 +603,19 @@ Both state machines reset on ``done``.
 3.4.2 SGLang API Inference
 ............................
 
-Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``). Point
-``reward.api.api_base`` at an external OpenAI-compatible endpoint, or leave it empty
-and let RLinf launch a Ray-managed SGLang server/router via
+Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``) and leave
+``reward.api.api_base`` empty to launch a Ray-managed SGLang server/router via
 :doc:`../guides/sglang_server`.
+
+For Qwen3-VL video rewards, the worker sends the shared processor's unpadded token
+IDs and video tensors losslessly to ``/generate``. The managed server
+preserves video grouping, sampled frames, pixels, grids, and temporal positions
+instead of converting videos to JPEG image lists or resampling them. An external
+video endpoint must use the same RLinf SGLang integration; a generic
+OpenAI-compatible chat endpoint is not sufficient. Image builders continue to
+use the chat API. Equal inputs do not guarantee identical floating-point
+inference outputs across backends.
+
 See ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``:
 
 .. code-block:: yaml
@@ -649,6 +675,22 @@ Launch:
      --config-path config \
      --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
      runner.ckpt_path="${POLICY_CHECKPOINT}"
+
+3.4.3 ManiSkill Training and Validation Results
+...............................................
+
+Training on ManiSkill PickCube3View started from a policy checkpoint with a
+58.89% success rate in independent evaluation.
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pickcube3view_vlm_trend_ppo_success_rate.png
+   :alt: ManiSkill PickCube3View success rate by PPO update
+
+   Independent success rate reached 80.76% at PPO update 18. Each point uses
+   1,024 complete 50-step episodes evaluated in a fresh process.
+
+At update 21, both the managed SGLang run and the custom SGLang reference
+reached 81.25%. In-training validation matched the independent
+``success_at_end`` at each evaluated checkpoint.
 
 4. Summary
 ^^^^^^^^^^

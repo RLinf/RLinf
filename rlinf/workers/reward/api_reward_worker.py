@@ -30,6 +30,7 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
     BufferedVLMInputBuilder,
+    VideoVLMInputBuilder,
     get_input_builder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
@@ -155,6 +156,11 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
     ) -> list[dict[str, Any]]:
         prompt_texts_list = prepared_inputs.get("prompt_texts_list") or []
         videos_list = prepared_inputs.get("videos_list") or []
+        if videos_list:
+            raise ValueError("Video inputs require the managed SGLang video transport")
+        videos_list = [
+            [images] for images in (prepared_inputs.get("images_list") or [])
+        ]
 
         payloads: list[dict[str, Any]] = []
         for prompt_texts, videos in zip(prompt_texts_list, videos_list):
@@ -206,6 +212,44 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
         with ThreadPoolExecutor(max_workers=len(payloads)) as executor:
             return list(executor.map(_generate_one, payloads))
 
+    def _generate_videos(self, prepared_inputs: dict[str, Any]) -> list[str]:
+        from rlinf.models.embodiment.reward.vlm_reward_utils.video_transport import (
+            encode_video_inputs,
+        )
+
+        sampling = dict(self.sampling_params)
+        if "max_tokens" in sampling:
+            sampling["max_new_tokens"] = sampling.pop("max_tokens")
+
+        def generate_one(sample):
+            prompts, videos = sample
+            # Process each sample separately so padding never enters SGLang's prompt.
+            inputs = self.input_builder.process_inputs(
+                {"prompt_texts_list": [prompts], "videos_list": [videos]}
+            )
+            response = self.http_client.post(
+                "/generate",
+                {
+                    "input_ids": inputs["input_ids"][0].tolist(),
+                    "image_data": [encode_video_inputs(inputs)],
+                    "sampling_params": sampling,
+                },
+            )
+            return response["text"]
+
+        samples = list(
+            zip(
+                prepared_inputs["prompt_texts_list"],
+                prepared_inputs["videos_list"],
+                strict=True,
+            )
+        )
+        if not samples:
+            return []
+        max_workers = max(1, int(self.model_cfg.get("infer_micro_batch_size", 16)))
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(samples))) as executor:
+            return list(executor.map(generate_one, samples))
+
     @torch.no_grad()
     def compute_reward(
         self,
@@ -235,7 +279,10 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
                 history_input,
                 valid_input_ids,
             )
-            outputs = self._generate(self._build_chat_payloads(prepared_inputs))
+            if isinstance(self.input_builder, VideoVLMInputBuilder):
+                outputs = self._generate_videos(prepared_inputs)
+            else:
+                outputs = self._generate(self._build_chat_payloads(prepared_inputs))
             if len(outputs) != len(valid_input_ids):
                 logger.warning(
                     "API reward output count mismatch: outputs=%d valid_inputs=%d",
