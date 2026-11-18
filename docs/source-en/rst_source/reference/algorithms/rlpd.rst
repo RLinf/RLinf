@@ -86,7 +86,7 @@ Environment settings (``env.train`` / ``env.eval``) follow the same layout as SA
 
    rollout:
      group_name: "RolloutGroup"
-     backend: "huggingface"
+     rollout_backend: "huggingface"
      enable_offload: False
      pipeline_stage_num: 1
 
