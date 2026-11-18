@@ -161,8 +161,6 @@ def main(cfg) -> None:
         # dataloader and the admission budget.
         runner_kwargs["rollout_buffer"] = rollout_buffer
     if critic_group is not None:
-        # AsyncAgentRunner does not take a critic; async and PPO are kept
-        # mutually exclusive by config validation.
         runner_kwargs["critic"] = critic_group
     runner = runner_cls(**runner_kwargs)
 

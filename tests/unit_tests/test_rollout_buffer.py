@@ -209,6 +209,7 @@ def _make_worker(
     worker._data_iter = None
     worker._rollout_channel = None
     worker._pending_fetch = None
+    worker._release_waiter = None
     return worker
 
 
@@ -496,6 +497,59 @@ class TestRelease:
             _result(group_ids[2]), _result(group_ids[2]).group_metadata()
         )
         assert buffer.can_release()
+
+    def test_shared_release_waits_until_the_full_batch_is_dispatched(self):
+        async def run():
+            worker = _make_worker(rollout_batch_size=2)
+            agent, dataloader, rollout = (
+                _QueueChannel(),
+                _QueueChannel(),
+                _QueueChannel(),
+            )
+            resident = asyncio.create_task(
+                worker.run_continuously(agent, dataloader, rollout)
+            )
+            first = await asyncio.wait_for(
+                dataloader.get(async_op=True).async_wait(), 5
+            )
+            second = await asyncio.wait_for(
+                dataloader.get(async_op=True).async_wait(), 5
+            )
+            release = asyncio.create_task(
+                worker.release_batch(0, wait_for_dispatch=True)
+            )
+            await asyncio.sleep(0)
+            assert not release.done()
+            await agent.put(_result(first.group_ids[0]), async_op=True).async_wait()
+            await asyncio.sleep(0)
+            assert not release.done() and rollout._queue.empty()
+            await agent.put(_result(second.group_ids[0]), async_op=True).async_wait()
+            await asyncio.wait_for(release, 5)
+            assert rollout._queue.qsize() == 2
+            await worker.stop()
+            await asyncio.wait_for(resident, 5)
+
+        asyncio.run(run())
+
+    def test_stop_cancels_a_pending_shared_release(self):
+        async def run():
+            worker = _make_worker()
+            resident = asyncio.create_task(
+                worker.run_continuously(
+                    _QueueChannel(), _QueueChannel(), _QueueChannel()
+                )
+            )
+            await asyncio.sleep(0)
+            release = asyncio.create_task(
+                worker.release_batch(0, wait_for_dispatch=True)
+            )
+            await asyncio.sleep(0)
+            await worker.stop()
+            await asyncio.wait_for(resident, 5)
+            with pytest.raises(asyncio.CancelledError):
+                await release
+
+        asyncio.run(run())
 
 
 class TestRecordResult:

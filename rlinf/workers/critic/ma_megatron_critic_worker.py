@@ -46,7 +46,7 @@ class MAMegatronCritic(MegatronCritic):
     ) -> None:
         super().__init__(cfg, placement, role)
         assert cfg.agentloop.is_dynamic_rollout_batch and not self.is_pipeline, (
-            "Multi-agent critic requires dynamic rollout batches and synchronous execution."
+            "Multi-agent critic requires dynamic rollout batches and non-pipeline execution."
         )
         assert self.enable_dp_load_balance, (
             "Multi-agent critic requires enable_dp_load_balance=True."
@@ -136,13 +136,14 @@ class MAMegatronCritic(MegatronCritic):
             task_type=self.cfg.runner.task_type,
             adv_type=self.cfg.algorithm.adv_type,
             rewards=batch["rewards"],
-            values=batch["values"],
+            values=batch.get("values"),
             loss_mask=batch["response_mask"],
             idx_to_traj=batch["idx_to_traj"],
             prompt_lengths=batch["prompt_lengths"],
             group_size=self.cfg.algorithm.group_size,
             gamma=self.cfg.algorithm.gamma,
             gae_lambda=self.cfg.algorithm.gae_lambda,
+            gae_lambda_alpha=self.cfg.algorithm.get("gae_lambda_alpha", None),
             normalize_advantages=False,
         )
         if self.cfg.algorithm.normalize_advantages:
@@ -179,16 +180,15 @@ class MAMegatronCritic(MegatronCritic):
         batch = DynamicRolloutResult.merge_batches(
             batches, self.cfg.algorithm.group_size
         )
-        assert "values" in batch, (
-            "Multi-agent critic training requires fixed old values."
-        )
+        batches.clear()
+        infer_after_update = self.role_cfg.compute_advantages_after_update
         batch = self.compute_advantages_and_returns(batch)
         if output_channel is not None:
             sizes = [result.num_sequence for result in results]
             for result, advantages in zip(
                 results, batch["advantages"].cpu().split(sizes), strict=True
             ):
-                result.advantages = advantages.clone()
+                result.advantages = None if infer_after_update else advantages.clone()
                 # Values and returns belong to the critic's training batch.
                 result.values = result.returns = None
         rollout_metrics = (
@@ -205,32 +205,33 @@ class MAMegatronCritic(MegatronCritic):
 
         if self.enable_dp_load_balance:
             batch = self._dp_load_balance(batch)
+        update_epochs = self.role_cfg.get("update_epochs", 1)
         if self.use_profiler:
-            self.profiler.init_fwd_bwd_schedule(self.cfg.algorithm.n_minibatches)
-
-        global_batches = get_iterator_k_split(
-            batch,
-            num_splits=self.num_train_steps,
-            shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
-            shuffle_seed=self.role_cfg.seed,
-        )
+            self.profiler.init_fwd_bwd_schedule(self.num_train_steps * update_epochs)
         training_metrics_list = []
         with self.worker_timer("run_training"):
-            for global_batch in global_batches:
-                if self.cfg.algorithm.use_valid_token_scale:
-                    self._setup_valid_token_scale(global_batch)
-                assert global_batch["input_ids"].shape[0] > 0, (
-                    "Dynamic DP load balancing must produce nonempty critic minibatches."
+            for epoch in range(update_epochs):
+                global_batches = get_iterator_k_split(
+                    batch,
+                    num_splits=self.num_train_steps,
+                    shuffle=self.cfg.algorithm.get("shuffle_rollout", True),
+                    shuffle_seed=self.role_cfg.seed + epoch,
                 )
-                dp_size = parallel_state.get_data_parallel_world_size()
-                configure_batch_sizes(
-                    rank=torch.distributed.get_rank(),
-                    mbs=self.role_cfg.micro_batch_size,
-                    gbs=global_batch["input_ids"].shape[0] * dp_size,
-                    dp=dp_size,
-                )
-                training_metrics = self.training_step(global_batch)
-                training_metrics_list.append(training_metrics)
+                for global_batch in global_batches:
+                    if self.cfg.algorithm.use_valid_token_scale:
+                        self._setup_valid_token_scale(global_batch)
+                    assert global_batch["input_ids"].shape[0] > 0, (
+                        "Dynamic DP load balancing must produce nonempty critic minibatches."
+                    )
+                    dp_size = parallel_state.get_data_parallel_world_size()
+                    configure_batch_sizes(
+                        rank=torch.distributed.get_rank(),
+                        mbs=self.role_cfg.micro_batch_size,
+                        gbs=global_batch["input_ids"].shape[0] * dp_size,
+                        dp=dp_size,
+                    )
+                    training_metrics = self.training_step(global_batch)
+                    training_metrics_list.append(training_metrics)
 
         self._gather_weights_among_dp()
         if output_channel is not None:
@@ -248,6 +249,7 @@ class MAMegatronCritic(MegatronCritic):
         output_channel: Channel,
         compute_ref_logprobs: bool = False,
         do_offload: bool = True,
+        compute_advantages: bool = False,
     ) -> None:
         """Compute token values and return each episode group through the channel."""
         assert not compute_ref_logprobs, "Critic inference does not compute logprobs."
@@ -262,23 +264,36 @@ class MAMegatronCritic(MegatronCritic):
             batches.append(batch)
             rollout_results.append(rollout_result)
         merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
-            batches, adjust_traj_indices=False, return_num_sequence_per_group=True
+            batches,
+            group_size=self.cfg.algorithm.group_size,
+            adjust_traj_indices=compute_advantages,
+            return_num_sequence_per_group=True,
         )
-        merged_batch.pop("idx_to_traj")
+        trajectory_indices = merged_batch.pop("idx_to_traj")
 
         rollout_result = DynamicRolloutResult.merge_result_list(rollout_results)
 
         self._load_weight_and_optimizer()
         with self.worker_timer():
-            self.process_inference_output(
-                rollout_result, self.inference_step(merged_batch).cpu()
-            )
+            values = self.inference_step(merged_batch)
+        if compute_advantages:
+            merged_batch["values"] = values
+            merged_batch["idx_to_traj"] = trajectory_indices
+            merged_batch = self.compute_advantages_and_returns(merged_batch)
+            rollout_result.advantages = merged_batch["advantages"].cpu()
+            rollout_result.values = rollout_result.returns = None
+        else:
+            self.process_inference_output(rollout_result, values.cpu())
         for rollout_result in DynamicRolloutResult.split_results(
             rollout_result, num_sequence_per_group
         ):
             # Each channel payload owns its storage instead of the whole DP batch.
-            rollout_result.values = rollout_result.values.clone()
+            if compute_advantages:
+                rollout_result.advantages = rollout_result.advantages.clone()
+            else:
+                rollout_result.values = rollout_result.values.clone()
             self.put_result(rollout_result, output_channel)
+        del batches, batch, merged_batch, values
         self.scheduler_offload_sync()
         if do_offload:
             self._offload_weight_and_optimizer()

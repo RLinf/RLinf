@@ -203,10 +203,12 @@ jobs:
               - 'rlinf/agents/**'
               - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/megatron_worker.py'
+              - 'rlinf/workers/critic/**'
               - 'rlinf/workers/agent/**'
               - 'rlinf/workers/rollout_buffer/**'
               - 'rlinf/runners/async_agent_runner.py'
               # test_data.py loads this script to test reward split preprocessing.
+              - 'rlinf/runners/agent_ppo_runner.py'
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
               - 'tests/conftest.py'

@@ -11,6 +11,8 @@ runner:
   experiment_name: searchr1-qwen2.5-1.5b-ppo-megatron
 
 algorithm:
+  loss_type: actor
+  critic_loss_type: critic
   group_size: 1
   adv_type: gae_dynamic
   gamma: 1.0

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Synchronous PPO scheduling for multi-turn agents."""
+"""Actor/critic scheduling for multi-turn agents."""
 
 from rlinf.runners.agent_runner import AgentRunner
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
@@ -24,7 +24,11 @@ class AgentPPORunner(AgentRunner):
     def init_rollout_workers(self) -> None:
         """Reuse agent initialization and convert the independent critic checkpoint."""
         super().init_rollout_workers()
-        if self.cfg.runner.resume_dir is None and self.cfg.critic.megatron.use_hf_ckpt:
+        if (
+            self.critic is not None
+            and self.cfg.runner.resume_dir is None
+            and self.cfg.critic.megatron.use_hf_ckpt
+        ):
             from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                 convert_hf_to_mg,
             )
@@ -35,23 +39,39 @@ class AgentPPORunner(AgentRunner):
             )
 
     def _run_training(
-        self, rollout_handle: Handle
+        self,
+        rollout_handle: Handle,
+        version: int | None = None,
     ) -> tuple[dict | None, list[dict], dict]:
-        """Compute fixed critic targets, update the critic, then update the actor."""
-        critic_infer_handle = self.critic.run_inference(
-            input_channel=self.rollout_channel,
-            output_channel=self.value_channel,
-            do_offload=False,
-        )
-        critic_infer_handle.wait()
+        """Update the critic, prepare policy advantages, and update the actor."""
+        infer_after_update = self.cfg.critic.compute_advantages_after_update
+        critic_infer_handle = None
+        critic_input_channel = self.rollout_channel
+        if not infer_after_update:
+            critic_infer_handle = self.critic.run_inference(
+                input_channel=critic_input_channel,
+                output_channel=self.value_channel,
+                do_offload=False,
+            )
+            critic_infer_handle.wait()
+            critic_input_channel = self.value_channel
         critic_handle = self.critic.run_training(
-            input_channel=self.value_channel,
+            input_channel=critic_input_channel,
             output_channel=self.critic_output_channel,
             compute_rollout_metrics=False,
+            do_offload=not infer_after_update,
         )
         critic_training_metrics = critic_handle.wait()[0][1]
 
         actor_input_channel = self.critic_output_channel
+        if infer_after_update:
+            critic_infer_handle = self.critic.run_inference(
+                input_channel=actor_input_channel,
+                output_channel=self.value_channel,
+                compute_advantages=True,
+            )
+            critic_infer_handle.wait()
+            actor_input_channel = self.value_channel
         actor_infer_handle = None
         if self.recompute_logprobs:
             actor_infer_handle = self.actor.run_inference(
@@ -61,10 +81,19 @@ class AgentPPORunner(AgentRunner):
             )
             actor_infer_handle.wait()
             actor_input_channel = self.actor_inference_channel
-        actor_handle = self.actor.run_training(input_channel=actor_input_channel)
+        actor_handle = self.actor.run_training(
+            input_channel=actor_input_channel, version=version
+        )
         rollout_metrics, training_metrics = actor_handle.wait()[0]
+        for step, metrics in enumerate(critic_training_metrics):
+            self.metric_logger.log(
+                {f"critic_update/{key}": value for key, value in metrics.items()},
+                self.global_steps * len(critic_training_metrics) + step,
+            )
         for actor_metrics, critic_metrics in zip(
-            training_metrics, critic_training_metrics, strict=True
+            training_metrics,
+            critic_training_metrics[-len(training_metrics) :],
+            strict=True,
         ):
             actor_metrics.update(critic_metrics)
         durations = {

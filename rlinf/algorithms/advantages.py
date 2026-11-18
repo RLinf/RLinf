@@ -25,7 +25,7 @@ from rlinf.utils.utils import masked_mean
 def compute_gae_advantages_and_returns(
     rewards: torch.Tensor,
     gamma: float = 1.0,
-    gae_lambda: float = 1.0,
+    gae_lambda: float | torch.Tensor = 1.0,
     values: Optional[torch.Tensor] = None,
     normalize_advantages: bool = True,
     normalize_returns: bool = False,
@@ -141,6 +141,7 @@ def compute_gae_dynamic_advantages_and_returns(
     gamma: float = 1.0,
     gae_lambda: float = 1.0,
     normalize_advantages: bool = True,
+    gae_lambda_alpha: float | None = None,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute GAE across complete multi-turn episodes.
@@ -181,6 +182,8 @@ def compute_gae_dynamic_advantages_and_returns(
     episode_rewards[lengths - 1, torch.arange(len(lengths), device=values.device)] = (
         rewards[last_turns]
     )
+    if gae_lambda_alpha is not None:
+        gae_lambda = 1.0 - 1.0 / (gae_lambda_alpha * lengths.float())
     values_with_bootstrap = torch.nn.functional.pad(episode_values, (0, 0, 0, 1))
     dones = torch.zeros_like(values_with_bootstrap, dtype=torch.bool)
     dones[lengths, torch.arange(len(lengths), device=values.device)] = True
@@ -192,6 +195,13 @@ def compute_gae_dynamic_advantages_and_returns(
         gae_lambda=gae_lambda,
         normalize_advantages=False,
     )
+    if gae_lambda_alpha is not None:
+        remaining_actions = (
+            lengths[None, :]
+            - 1
+            - torch.arange(len(episode_values), device=values.device)[:, None]
+        ).clamp_min(0)
+        returns = rewards[last_turns][None, :].float() * gamma**remaining_actions
     if normalize_advantages:
         valid = advantages[episode_mask].double()
         mean, variance = valid.mean(), valid.var(unbiased=False)
@@ -204,6 +214,30 @@ def compute_gae_dynamic_advantages_and_returns(
     turn_advantages[loss_mask] = advantages[times, trajectories]
     turn_returns[loss_mask] = returns[times, trajectories]
     return turn_advantages, turn_returns
+
+
+@register_advantage("sao_gae")
+def compute_sao_advantages_and_returns(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    values: torch.Tensor | None = None,
+    gae_lambda_alpha: float = 1.5,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Use length-adaptive action GAE and independent Monte Carlo critic targets.
+
+    Missing values are used only to prepare critic targets before its updates;
+    policy advantages are recomputed from the updated critic afterwards.
+    """
+    return compute_gae_dynamic_advantages_and_returns(
+        rewards=rewards,
+        values=torch.zeros_like(loss_mask, dtype=torch.float32)
+        if values is None
+        else values,
+        loss_mask=loss_mask,
+        gae_lambda_alpha=gae_lambda_alpha,
+        **kwargs,
+    )
 
 
 @register_advantage("grpo")
