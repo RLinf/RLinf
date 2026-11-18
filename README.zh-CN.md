@@ -34,6 +34,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
+- [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，率先在 Robbyant R2 上支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
@@ -334,6 +336,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/piper.html">AgileX Piper</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/so101.html">SO101</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html">Robbyant R2</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html">LeKiwi</a> ✅</li>
           <li>More...</li>
         </ul>
