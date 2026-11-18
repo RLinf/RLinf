@@ -186,10 +186,6 @@ SUPPORTED_TASK_TYPE = [
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 
-# Action spaces the OpenWAM policy can be evaluated in, per environment. The
-# env worker converts each chunk with rlinf.envs.action_utils; the recipes name
-# the representation the checkpoint was trained with.
-OPENWAM_LIBERO_ACTION_REPRESENTATIONS = ("native_delta_eef10",)
 OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS = ("absolute_eef20",)
 
 __all__ = ["build_config"]
@@ -1156,9 +1152,8 @@ def validate_openwam_eval_cfg(cfg: DictConfig) -> None:
     The policy returns one chunk of ``rollout.model.openwam.inference_horizon``
     actions (``num_frames - 1`` when the horizon is null) and the environment
     executes the whole chunk, so ``rollout.model.num_action_chunks`` must equal
-    that length and the episode budget must be a multiple of it. The action
-    bridge needs ``env.eval.openwam_action_representation`` before the first
-    step; checking it here fails before the multi-minute model load.
+    that length and the episode budget must be a multiple of it. The RoboTwin
+    action bridge also requires ``env.eval.openwam_action_representation``.
     """
     model_cfg = cfg.rollout.model
     horizon = OmegaConf.select(model_cfg, "openwam.inference_horizon", default=None)
@@ -1183,19 +1178,15 @@ def validate_openwam_eval_cfg(cfg: DictConfig) -> None:
             f"rollout.model.num_action_chunks ({num_action_chunks}); got {max_steps}. "
             "The env worker would otherwise drop the remainder silently."
         )
-    allowed = {
-        "libero": OPENWAM_LIBERO_ACTION_REPRESENTATIONS,
-        "robotwin": OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS,
-    }
     env_type = str(OmegaConf.select(env_cfg, "env_type", default=""))
-    if env_type in allowed:
+    if env_type == "robotwin":
         representation = OmegaConf.select(
             env_cfg, "openwam_action_representation", default=None
         )
-        if representation not in allowed[env_type]:
+        if representation not in OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS:
             raise ValueError(
-                f"OpenWAM on {env_type} requires env.eval.openwam_action_representation "
-                f"to be one of {allowed[env_type]}; got {representation!r}."
+                "OpenWAM on robotwin requires env.eval.openwam_action_representation "
+                f"to be one of {OPENWAM_ROBOTWIN_ACTION_REPRESENTATIONS}; got {representation!r}."
             )
 
 

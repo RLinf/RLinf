@@ -34,7 +34,8 @@ runner:
   strict_resume: true
 
 data:
-  train_data_paths: /path/to/libero
+  # https://huggingface.co/datasets/OpenWAM/LIBERO
+  train_data_paths: /path/to/LIBERO
   num_workers: 0
 
 actor:

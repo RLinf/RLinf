@@ -50,7 +50,6 @@ env:
     is_eval: true
     # Render every step; set true to render only at chunk ends.
     skip_intermediate_renders: false
-    openwam_action_representation: native_delta_eef10
     video_cfg:
       save_video: false
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -64,7 +63,8 @@ rollout:
     model_type: "openwam"
     precision: bf16
     is_lora: false
-    model_path: /path/to/openwam-libero-sft-delta-aligned
+    # https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-LIBERO
+    model_path: /path/to/OpenWAM-Alpha-Sim-LIBERO
     device: cuda
     load_to_device: true
     ckpt_name: null

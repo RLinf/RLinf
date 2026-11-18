@@ -61,10 +61,7 @@ Key points
   (``distrib_optim.pt``) *and* random-number generators are captured,
   guaranteeing bit-for-bit reproducibility after resume.
 * **Data sampler** – ``data.pt`` stores dataloader, so no
-  samples are skipped or repeated. When an SFT run resumes from a
-  checkpoint that has no ``data.pt`` (written before the loader became
-  stateful), the loader restarts from the beginning of the epoch with a
-  warning; set ``runner.strict_resume: true`` to fail instead.
+  samples are skipped or repeated.
 
 
 
@@ -94,6 +91,12 @@ DCP stores the training state across distributed checkpoint files (``.distcp``).
 The optional ``model_state_dict/full_weights.pt`` export contains model weights;
 resume training from the complete checkpoint directory to restore optimizer,
 scheduler, and RNG state as well.
+
+For FSDP/FSDP2 VLA SFT, ``actor/data.pt`` stores the stateful data loader and
+``actor/rng.pt`` stores the per-rank random-number states. If ``data.pt`` is
+missing, training resumes from the start of the epoch with a warning. Set
+``runner.strict_resume: true`` to require both files and fail if either is
+missing.
 
 Some workers save one file per rank instead. SAC and DAgger select
 ``local_shard`` when ``actor.fsdp_config.use_orig_params`` is true, while IQL

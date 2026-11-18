@@ -29,18 +29,6 @@ from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
-def _saved_sampler_epoch(loader_state: dict[str, Any]) -> int | None:
-    """Return the sampler epoch in a ``StatefulDataLoader.state_dict()``, if any.
-
-    Multi-process loaders nest the sampler state under the main-process
-    snapshot; single-process loaders keep it at the top level.
-    """
-    main = loader_state.get("_snapshot", {}).get("_main_snapshot", loader_state)
-    sampler_state = (main.get("_sampler_iter_state") or {}).get("sampler_state") or {}
-    epoch = sampler_state.get("epoch")
-    return None if epoch is None else int(epoch)
-
-
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -288,11 +276,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             if os.path.exists(data_path):
                 all_states = torch.load(data_path, weights_only=False)
                 state = all_states[self._rank]
-                # Older OpenWAM checkpoints keep the epoch in sampler state.
-                saved_epoch = state.pop("_rlinf_data_epoch", None)
-                if saved_epoch is None:
-                    saved_epoch = _saved_sampler_epoch(state)
-                self._data_epoch = int(saved_epoch) if saved_epoch is not None else 0
+                self._data_epoch = int(state.pop("_rlinf_data_epoch", 0))
                 forward_set_epoch(self.data_loader, self._data_epoch)
                 self.data_loader.load_state_dict(state)
                 self.data_iter = iter(self.data_loader)

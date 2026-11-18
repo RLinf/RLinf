@@ -1,7 +1,9 @@
 OpenWAM 监督微调
 ================
 
-RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调。本指南以发布的 LIBERO checkpoint 为起点，介绍权重与数据准备、训练配置，以及训练后导出和评测的流程。
+使用 FSDP 在 OpenWAM 的 LIBERO 数据集上微调已发布的 LIBERO checkpoint，再导出模型用于评测。
+
+RoboTwin 评测可使用已发布的 OpenWAM checkpoint。RLinf 尚未验证 RoboTwin SFT。监督微调请使用下文的 LIBERO 配方，RoboTwin 评测见 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`。
 
 安装
 ----
@@ -23,13 +25,13 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. code-block:: bash
 
-   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir /your_path_to/OpenWAM-Alpha-Sim-LIBERO
+   hf download OpenWAM/OpenWAM-Alpha-Sim-LIBERO --local-dir /path/to/OpenWAM-Alpha-Sim-LIBERO
 
 下载目录应包含权重文件、模型配置、归一化统计文件和 tokenizer。该 checkpoint 已包含所需的模型组件，无需另外下载 Wan 基座模型。后续的 ``actor.model.model_path`` 应指向整个目录，而不是单个权重文件：
 
 .. code-block:: text
 
-   /your_path_to/OpenWAM-Alpha-Sim-LIBERO/
+   /path/to/OpenWAM-Alpha-Sim-LIBERO/
    ├── checkpoint_step_10690.safetensors
    ├── config.yaml
    ├── normalization_stats.npy
@@ -43,13 +45,13 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. code-block:: bash
 
-   hf download OpenWAM/LIBERO --repo-type dataset --local-dir /your_path_to/libero
+   hf download OpenWAM/LIBERO --repo-type dataset --local-dir /path/to/LIBERO
 
 该数据集已经是 LeRobot v3 格式，无需解压或额外转换。请保留完整的 ``data/``、``meta/`` 和 ``videos/`` 目录，其中 ``meta/libero_normalization_stats.npy`` 是数据集的归一化统计文件：
 
 .. code-block:: text
 
-   /your_path_to/libero/
+   /path/to/LIBERO/
    ├── data/
    ├── meta/
    │   ├── info.json
@@ -69,7 +71,7 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. code-block:: yaml
 
-   model_path: /your_path_to/OpenWAM-Alpha-Sim-LIBERO
+   model_path: /path/to/OpenWAM-Alpha-Sim-LIBERO
    precision: fp32
    load_to_device: false
 
@@ -83,7 +85,7 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
        actor: 0-7
 
    data:
-     train_data_paths: /your_path_to/libero
+     train_data_paths: /path/to/LIBERO
 
    runner:
      max_steps: 30000
@@ -100,10 +102,10 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
 .. note::
 
-   在 H200 上，使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8`` 的已有测试中，8 卡训练每卡峰值已分配显存为 55.5 GiB，保留显存为 83.7 GiB；4 卡时分别为 72.3 GiB 和 113.3 GiB。
+   H200 测试使用 LIBERO 数据、``micro_batch_size: 1`` 和 ``global_batch_size: 8``。8 卡训练时，每卡峰值已分配显存为 55.5 GiB，保留显存为 83.7 GiB；4 卡时分别为 72.3 GiB 和 113.3 GiB。
 
-启动训练与查看结果
-~~~~~~~~~~~~~~~~~~
+运行
+----
 
 在 RLinf 仓库根目录运行：
 
@@ -111,7 +113,7 @@ RLinf 支持使用 OpenWAM 的 LIBERO 数据对 OpenWAM 进行 FSDP 监督微调
 
    bash examples/sft/run_vla_sft.sh libero_sft_openwam
 
-启动脚本会把本次运行的日志目录设置为 ``logs/<timestamp>-libero_sft_openwam/``。通过 ``run_embodiment.log`` 查看训练日志，或在 TensorBoard 中查看 ``train/loss``、``train/loss_video`` 和 ``train/loss_action``。将下面的 RUN_DIR 替换为实际运行目录：
+训练日志保存在 ``logs/<timestamp>-libero_sft_openwam/`` 下。通过 ``run_embodiment.log`` 查看训练日志，或在 TensorBoard 中查看 ``train/loss``、``train/loss_video`` 和 ``train/loss_action``。将下面的 RUN_DIR 替换为实际运行目录：
 
 .. code-block:: bash
 
@@ -129,12 +131,12 @@ checkpoint 默认每 1000 步保存一次，位于 ``$RUN_DIR/libero_sft_openwam
 
    python toolkits/openwam/export_checkpoint.py \
      --rlinf-checkpoint "$RUN_DIR/libero_sft_openwam/checkpoints/global_step_1000" \
-     --source-checkpoint /your_path_to/OpenWAM-Alpha-Sim-LIBERO \
-     --output /your_path_to/openwam-libero-step1000
+     --source-checkpoint /path/to/OpenWAM-Alpha-Sim-LIBERO \
+     --output /path/to/openwam-libero-step1000
 
-``--source-checkpoint`` 应使用训练起点的 checkpoint 目录，以保留配套的配置、tokenizer 和归一化文件。导出脚本会处理 RLinf 权重分片；如果需要检查导出结果能否在 GPU 上重新加载，可以额外传入 ``--verify cuda``。
+将 ``--source-checkpoint`` 设置为初始化训练时使用的 checkpoint 目录，保留配套的配置、tokenizer 和归一化文件。添加 ``--verify cuda`` 可检查导出结果能否在 GPU 上加载。
 
-在 LIBERO 评测配置中将 ``rollout.model.model_path`` 设置为导出目录 ``/your_path_to/openwam-libero-step1000``，再按照 :doc:`../../evaluations/guides/libero` 中的 OpenWAM 说明运行评测。RoboTwin checkpoint 的评测流程见 :doc:`../../evaluations/guides/robotwin`。
+在 LIBERO 评测配置中将 ``rollout.model.model_path`` 设置为导出目录 ``/path/to/openwam-libero-step1000``，再按照 :doc:`../../evaluations/guides/libero` 中的 OpenWAM 说明运行评测。RoboTwin checkpoint 的评测流程见 :doc:`../../evaluations/guides/robotwin`。
 
 可选配置
 --------
@@ -144,11 +146,11 @@ checkpoint 默认每 1000 步保存一次，位于 ``$RUN_DIR/libero_sft_openwam
 
 启用训练期间的验证时，将 ``data.val_data_paths`` 指向独立的验证数据集，并设置 ``runner.val_check_interval``。上文下载的 OpenWAM LIBERO 数据集只有 ``train`` split；不要直接把同一份训练数据作为验证集。如果独立验证数据集也只提供 ``train`` split，需要设置 ``data.openwam_val_split: train``，并确保其使用与训练一致的归一化统计量。验证指标记录为 ``eval/loss``、``eval/loss_video`` 和 ``eval/loss_action``。
 
-断点续训时，在训练配置中将 ``runner.resume_dir`` 设置为 ``$RUN_DIR/libero_sft_openwam/checkpoints/global_step_<N>`` 对应的实际绝对路径，而不是其下的 ``actor/`` 目录。配方默认启用 ``runner.strict_resume: true``，要求 checkpoint 包含数据流和随机数状态；使用缺少这些状态的旧 checkpoint 时会报错。更多说明见 :doc:`../../guides/resume`。
+断点续训时，在训练配置中将 ``runner.resume_dir`` 设置为 ``$RUN_DIR/libero_sft_openwam/checkpoints/global_step_<N>`` 的绝对路径。使用包含 ``actor/`` 的目录。配方默认设置 ``runner.strict_resume: true``。checkpoint 缺少数据流或随机数状态时，续训会报错。更多说明见 :doc:`../../guides/resume`。
 
 其他数据源与混合训练
 ~~~~~~~~~~~~~~~~~~~~
 
-使用其他 OpenWAM checkpoint 时，先确认其 ``config.yaml`` 中的 ``dataloader.type`` 与数据集格式一致。单数据源使用 ``libero_sft_openwam.yaml`` 配方并替换权重与数据路径；仅当 checkpoint 配置为 ``mixture`` 时使用 ``mixture_sft_openwam.yaml``。
+使用其他 OpenWAM checkpoint 时，先确认其 ``config.yaml`` 中的 ``dataloader.type`` 与数据集格式一致。单数据源使用 ``libero_sft_openwam.yaml`` 配方并替换权重与数据路径。checkpoint 配置为 ``mixture`` 时才使用 ``mixture_sft_openwam.yaml``。
 
 混合训练的 ``data.train_data_paths`` 只填一个根目录，各启用的数据源默认从 ``<root>/<name>`` 读取。需要单独指定某个数据源的位置时，修改 ``data.openwam.datasets.<name>.dataset_dir``，并保留该数据源配套的归一化统计文件。

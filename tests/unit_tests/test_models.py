@@ -182,7 +182,7 @@ def test_openwam_libero_eval_recipes_validate(
     cfg.runner.task_type = "embodied_eval"
     cfg = validate_cfg(cfg)
     assert cfg.env.eval.task_suite_name == suite
-    assert cfg.env.eval.openwam_action_representation == "native_delta_eef10"
+    assert "openwam_action_representation" not in cfg.env.eval
     # benchmarks/libero/policy_config.yml: 600 steps, 700 for libero_10, 30
     # settling steps after every reset.
     assert cfg.env.eval.max_episode_steps == max_steps
@@ -3349,6 +3349,7 @@ def test_openwam_robotwin_eval_recipes_validate(openwam_eval_recipe, name):
     assert env.env_type == "robotwin"
     assert env.task_config.task_name == task
     assert env.openwam_action_representation == "absolute_eef20"
+    assert env.use_fixed_reset_state_ids is False
     # OpenWAM's RoboTwin protocol evaluates on unseen instructions.
     assert env.instruction_type == "unseen"
     assert env.task_config.data_type.endpose is True
@@ -3413,6 +3414,7 @@ def test_openwam_robotwin_recipe_generator_covers_all_tasks(
         cfg = validate_cfg(cfg)
         assert cfg.env.eval.task_config.task_name == task
         assert cfg.env.eval.max_episode_steps == rounded_steps(STEP_LIMITS[task])
+        assert cfg.env.eval.use_fixed_reset_state_ids is False
 
 
 def test_openwam_eef20_to_robotwin_ee16_layout():
@@ -4196,10 +4198,21 @@ def test_openwam_eval_validation_rejects_inconsistent_recipes(openwam_eval_recip
         )
     with pytest.raises(ValueError, match="multiple of"):
         validate("env.eval.max_steps_per_rollout_epoch=605")
+
+
+@pytest.mark.parametrize("representation", [None, "joint", "native_delta_eef10"])
+def test_openwam_robotwin_eval_rejects_invalid_action_representation(
+    openwam_eval_recipe, representation
+):
+    from rlinf.config import validate_cfg
+
+    cfg = openwam_eval_recipe("robotwin_click_bell_openwam_eval", subdir="robotwin")
+    if representation is None:
+        del cfg.env.eval.openwam_action_representation
+    else:
+        cfg.env.eval.openwam_action_representation = representation
     with pytest.raises(ValueError, match="openwam_action_representation"):
-        validate("env.eval.openwam_action_representation=joint")
-    with pytest.raises(ValueError, match="openwam_action_representation"):
-        validate("env.eval.openwam_action_representation=absolute_eef10")
+        validate_cfg(cfg)
 
 
 def test_psi0_rtc_prefix_survives_the_last_denoise_step():

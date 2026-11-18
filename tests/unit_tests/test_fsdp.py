@@ -1356,6 +1356,7 @@ def test_openwam_sft_load_checkpoint_restores_or_tolerates_missing_data_state(
     iterator = iter(source)
     consumed = [indices(next(iterator)) for _ in range(2)]
     source_state = source.state_dict()  # position after two batches
+    source_state["_rlinf_data_epoch"] = 1
     remaining = [indices(batch) for batch in iterator]
     ckpt = tmp_path / "global_step_2" / "actor"
     ckpt.mkdir(parents=True)
@@ -1438,10 +1439,7 @@ def test_openwam_sft_model_provider_uses_the_model_registry(monkeypatch):
     assert cfg.model_path == "/ckpt"
 
 
-@pytest.mark.parametrize("explicit_epoch", [False, True])
-def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(
-    tmp_path, monkeypatch, explicit_epoch
-):
+def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(tmp_path, monkeypatch):
     """A resumed epoch-aware dataset reshuffles for the restored epoch, not epoch 0."""
     pytest.importorskip("torchdata")
     from rlinf.data.datasets.openwam.dataloader import build_openwam_sft_dataloader
@@ -1460,8 +1458,7 @@ def test_openwam_sft_resume_forwards_the_epoch_to_the_dataset(
     ckpt = tmp_path / "global_step_1" / "actor"
     ckpt.mkdir(parents=True)
     state = source.state_dict()
-    if explicit_epoch:
-        state["_rlinf_data_epoch"] = 2
+    state["_rlinf_data_epoch"] = 2
     torch.save([state], ckpt / "data.pt")
 
     loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")
@@ -1505,7 +1502,9 @@ def test_openwam_sft_resume_hands_the_epoch_to_loader_workers(tmp_path, monkeypa
     next(iterator)
     ckpt = tmp_path / "global_step_1" / "actor"
     ckpt.mkdir(parents=True)
-    torch.save([source.state_dict()], ckpt / "data.pt")
+    state = source.state_dict()
+    state["_rlinf_data_epoch"] = 2
+    torch.save([state], ckpt / "data.pt")
     del iterator
 
     loader, _ = build_openwam_sft_dataloader(cfg, 1, 0, "/root")

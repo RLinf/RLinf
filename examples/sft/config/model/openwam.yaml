@@ -3,7 +3,8 @@ model_type: "openwam"
 # handles compute. bf16 master weights round away almost every update at lr=1e-6.
 precision: "fp32"
 is_lora: false
-model_path: /path/to/openwam-libero-sft
+# https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-LIBERO
+model_path: /path/to/OpenWAM-Alpha-Sim-LIBERO
 device: "cuda" # where rollout/eval recipes load the model (load_to_device: true)
 load_to_device: false # SFT: build on the CPU, FSDP moves each rank's shard to its GPU
 ckpt_name: null

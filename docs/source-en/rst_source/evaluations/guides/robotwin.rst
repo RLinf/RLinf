@@ -116,8 +116,15 @@ Recommended pretrained weights:
 - OpenVLA-OFT: `RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
 - π\ :sub:`0`: `RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
 - π\ :sub:`0.5`: `RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
+- OpenWAM: `OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full>`_ (recipe default), `OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_, or the `joint self-attention study checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_.
 
 See the training doc "Model Download" section for download commands.
+
+For the default OpenWAM recipe, download the Full checkpoint into the directory used by ``rollout.model.model_path``:
+
+.. code-block:: bash
+
+   hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir /path/to/OpenWAM-Alpha-Sim-RoboTwin-Full
 
 **Step 3: Edit the config**
 
@@ -225,13 +232,13 @@ LingbotVLA 2.0
 
 OpenWAM
 
-The OpenWAM recipes target RoboTwin study checkpoints. Set ``rollout.model.model_path`` to the matching checkpoint directory and retain these settings:
+The OpenWAM recipes use the public RoboTwin checkpoints linked in Step 2. Set ``rollout.model.model_path`` to the downloaded checkpoint directory and retain these settings:
 
 - Use the shared ``env/robotwin_openwam_aloha.yaml`` preset for the ``aloha-agilex`` robot, head and wrist cameras, and end-effector observations.
 - Keep ``env.eval.openwam_action_representation: absolute_eef20`` for the checkpoint's absolute end-effector actions.
-- Set ``rollout.model.num_action_chunks: 32`` and ``rollout.model.openwam.inference_horizon: null``. Keep the recipe values for ``env.eval.max_episode_steps`` and ``env.eval.task_config.step_lim``. These round the task's step limit up to a multiple of 32, such as 416 for ``click_bell``.
+- Set ``rollout.model.num_action_chunks: 32`` and ``rollout.model.openwam.inference_horizon: null``. Keep the recipe values for ``env.eval.max_episode_steps`` and ``env.eval.task_config.step_lim``. The recipes round each task's step limit up to a multiple of 32; ``click_bell`` uses 416 steps.
 - Keep ``env.eval.instruction_type: unseen`` and the preset's domain randomization for the randomized protocol. For the clean protocol, disable the randomization options under ``env.eval.task_config.domain_randomization``.
-- Keep env and rollout on separate GPUs with ``cluster.component_placement``. The recipes use two environments per env GPU; increase ``env.eval.rollout_epoch`` or allocate more env GPUs to evaluate more trajectories.
+- Keep env and rollout on separate GPUs with ``cluster.component_placement``. The recipes use two environments per env GPU. Keep ``env.eval.use_fixed_reset_state_ids: false`` so each rollout epoch advances to more seeds; increase ``env.eval.rollout_epoch`` or allocate more env GPUs to evaluate more trajectories.
 
 The repository includes ``adjust_bottle`` and ``click_bell`` recipes. Generate the other supported task recipes with:
 

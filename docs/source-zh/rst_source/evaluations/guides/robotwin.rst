@@ -117,8 +117,15 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 - OpenVLA-OFT：`RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
 - π\ :sub:`0`：`RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
 - π\ :sub:`0.5`：`RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
+- OpenWAM：配方默认使用 `OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full>`_，也可使用 `OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random <https://huggingface.co/OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Clean2Random>`_ 或 `joint self-attention 实验 checkpoint <https://huggingface.co/OpenWAM/robotwin_dual_system_joint_self_attention>`_。
 
 下载命令见训练文档「模型下载」一节。
+
+使用默认 OpenWAM 配方时，将 Full checkpoint 下载到 ``rollout.model.model_path`` 指定的目录：
+
+.. code-block:: bash
+
+   hf download OpenWAM/OpenWAM-Alpha-Sim-RoboTwin-Full --local-dir /path/to/OpenWAM-Alpha-Sim-RoboTwin-Full
 
 **Step 3：编辑配置**
 
@@ -226,13 +233,13 @@ LingbotVLA 2.0
 
 OpenWAM
 
-OpenWAM 配方适用于 RoboTwin study checkpoint。将 ``rollout.model.model_path`` 指向匹配的 checkpoint 目录，并保留以下设置：
+OpenWAM 配方使用 Step 2 中列出的公开 RoboTwin checkpoint。将 ``rollout.model.model_path`` 设置为下载后的 checkpoint 目录，并保留以下设置：
 
 - 使用共享 preset ``env/robotwin_openwam_aloha.yaml``，其中已配置 ``aloha-agilex`` 机器人、头部与腕部相机及末端位姿观测。
 - 保留 ``env.eval.openwam_action_representation: absolute_eef20``，与 checkpoint 的绝对末端动作表示一致。
 - 设置 ``rollout.model.num_action_chunks: 32`` 和 ``rollout.model.openwam.inference_horizon: null``。沿用配方中的 ``env.eval.max_episode_steps`` 和 ``env.eval.task_config.step_lim``。配方已将任务步数上限向上取整到 32 的倍数，例如 ``click_bell`` 使用 416 步。
 - randomized 协议使用 ``env.eval.instruction_type: unseen``，并保留 preset 的域随机化设置。clean 协议需关闭 ``env.eval.task_config.domain_randomization`` 下的随机化选项。
-- 用 ``cluster.component_placement`` 为环境和 rollout 分配不同的 GPU。配方在每张 env GPU 上运行两个环境；增加 ``env.eval.rollout_epoch`` 或 env GPU 数量可评测更多轨迹。
+- 用 ``cluster.component_placement`` 为环境和 rollout 分配不同的 GPU。配方在每张 env GPU 上运行两个环境。保留 ``env.eval.use_fixed_reset_state_ids: false``，每轮 rollout 才会继续使用后续 seed；增加 ``env.eval.rollout_epoch`` 或 env GPU 数量可评测更多轨迹。
 
 仓库提供 ``adjust_bottle`` 和 ``click_bell`` 配方。运行以下命令，为支持的任务生成配方：
 
