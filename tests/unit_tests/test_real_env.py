@@ -6152,38 +6152,34 @@ def test_ur_collection_uses_fresh_pose_and_observes_after_control_period(
     assert events == ["read", "wait", "read"]
 
 
-def test_ur_collection_clips_positions_to_configured_workspace(ur_collection_env):
-    env, made = ur_collection_env
-    receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
-    control = made["rtde_control"].RTDEControlInterface.instances[-1]
-    receive.pose[:3] = [0.499, -0.499, 0.799]
-    env.step(np.zeros(6))
-
-    env.step(np.array([10.0, -10.0, 10.0, 0, 0, 0]))
-    assert control.servo_called.wait(1.0)
-    sent = next(args[0] for name, args in control.commands if name == "servoL")
-    np.testing.assert_allclose(sent[:3], [0.5, -0.5, 0.8], atol=1e-7)
-
-
 @pytest.mark.parametrize(
-    "start_x,action_x,target_x",
-    [(0.5001, -0.1, 0.4981), (0.5001, 0.1, 0.5), (0.8, -0.1, 0.78), (0.8, 0.1, 0.78)],
+    "start,translation,target",
+    [
+        ([0.499, -0.499, 0.799], [10, -10, 10], [0.5, -0.5, 0.8]),
+        ([0.5001, 0.05, 0.3], [-0.1, 0, 0], [0.4981, 0.05, 0.3]),
+        ([0.5001, 0.05, 0.3], [0.1, 0, 0], [0.5, 0.05, 0.3]),
+        ([0.8, 0.05, 0.3], [-0.1, 0, 0], [0.78, 0.05, 0.3]),
+        ([0.8, 0.05, 0.3], [0.1, 0, 0], [0.78, 0.05, 0.3]),
+    ],
 )
-def test_ur_collection_recovers_from_outside_without_a_large_step(
-    ur_collection_env, start_x, action_x, target_x
+def test_ur_collection_clips_positions_and_bounds_recovery_steps(
+    ur_collection_env, start, translation, target
 ):
     env, made = ur_collection_env
     receive = made["rtde_receive"].RTDEReceiveInterface.instances[-1]
     control = made["rtde_control"].RTDEControlInterface.instances[-1]
-    receive.pose[0] = start_x
+    receive.pose[:3] = start
     env.step(np.zeros(6))
     assert control.commands == []
 
-    env.step(np.array([action_x, 0, 0, 0, 0, 0]))
+    env.step(np.r_[translation, np.zeros(3)])
     assert control.servo_called.wait(1.0)
     sent = next(args[0] for name, args in control.commands if name == "servoL")
-    assert sent[0] == pytest.approx(target_x)
-    assert abs(sent[0] - start_x) <= env.config.action_scale[0] + 1e-7
+    np.testing.assert_allclose(sent[:3], target, atol=1e-7)
+    assert (
+        np.max(np.abs(np.asarray(sent[:3]) - start))
+        <= env.config.action_scale[0] + 1e-7
+    )
 
 
 @pytest.mark.parametrize(

@@ -228,7 +228,7 @@ class URRTDEArm(BaseArm):
         """Read measured state and convert UR rotation vectors to quaternions."""
         receive = self._require_receive()
         pose = self._vector(receive.getActualTCPPose(), 6, "TCP pose")
-        state = URRobotState(
+        return URRobotState(
             tcp_pose=np.concatenate(
                 [pose[:3], R.from_rotvec(pose[3:]).as_quat()]
             ).astype(np.float32),
@@ -242,8 +242,6 @@ class URRTDEArm(BaseArm):
                 receive.getActualQd(), 6, "joint velocity"
             ).astype(np.float32),
         )
-        self._check_error()
-        return state
 
     def is_robot_up(self) -> bool:
         """Report a running control program with normal or reduced safety mode."""
@@ -254,7 +252,6 @@ class URRTDEArm(BaseArm):
             return bool(
                 self._control is not None
                 and self._receive is not None
-                and not self._stop.is_set()
                 and self._control.isConnected()
                 and self._receive.isConnected()
                 and self._control.isProgramRunning()
@@ -272,10 +269,7 @@ class URRTDEArm(BaseArm):
         if not np.isfinite(norm) or norm == 0:
             raise ValueError("UR TCP target requires a finite, nonzero quaternion.")
         pose[3:] /= norm
-        with np.errstate(over="ignore"):
-            accepted = pose.astype(np.float32)
-        if not np.isfinite(accepted).all():
-            raise ValueError("UR TCP target must be representable as float32.")
+        accepted = pose.astype(np.float32)
         target = np.concatenate([accepted[:3], R.from_quat(accepted[3:]).as_rotvec()])
         with self._condition:
             self._require_receive()

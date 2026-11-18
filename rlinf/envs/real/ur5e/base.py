@@ -14,7 +14,6 @@
 
 """UR5e Cartesian-delta environment for collection and policy execution."""
 
-import copy
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -175,7 +174,6 @@ class URCollectionEnv(gym.Env):
         self._cameras: dict[str, BaseCamera] = {}
         self._end_effector: Optional[EndEffector] = None
         self._with_gripper = bool(self.hardware.gripper_type)
-        self._last_reading: dict[str, Any] = {}
         if self._with_gripper:
             part = EndEffector.backend(self.hardware.gripper_type)
             if not part.is_gripper or part.is_hand:
@@ -245,7 +243,6 @@ class URCollectionEnv(gym.Env):
             path.rsplit(".", 1)[-1]: camera
             for path, camera in self.robot.parts_of_type(Camera).items()
         }
-        self._last_reading = self.robot.get_observation()
 
     def _init_spaces(self) -> None:
         width = 7 if self._with_gripper else 6
@@ -443,7 +440,6 @@ class URCollectionEnv(gym.Env):
                     target, self.get_tcp_pose(), self.config.action_scale[1]
                 )
                 self.robot.send_action({"arm": {"tcp_pose": pose.astype(np.float32)}})
-                self._get_observation()
                 if not reached():
                     time.sleep(1.0 / self.config.step_frequency)
             self._arm_was_driving = False
@@ -501,7 +497,6 @@ class URCollectionEnv(gym.Env):
         if self.config.is_dummy:
             return self.observation_space.sample()
         reading = self.robot.get_observation()
-        self._last_reading = reading
         observation = {
             "state": {
                 "tcp_pose": np.asarray(reading["arm"]["tcp_pose"], dtype=np.float32)
@@ -535,12 +530,11 @@ class URCollectionEnv(gym.Env):
                 frames[name] = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             self.camera_player.put_frame(display)
             observation["frames"] = frames
-        return copy.deepcopy(observation)
+        return observation
 
     def close(self) -> None:
         """Release the preview and every connection owned by the robot."""
-        if hasattr(self, "camera_player"):
-            self.camera_player.stop()
+        self.camera_player.stop()
         self._cameras = {}
         if self.robot is not None:
             self.robot.disconnect()
