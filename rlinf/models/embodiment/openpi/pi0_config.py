@@ -27,6 +27,8 @@ from rlinf.models.embodiment.openpi.modules import gemma, model, pointnet
 class Pi0Config:
     dtype: str = "bfloat16"
     attention_backend: str = "eager"
+    # Match native OpenPI Torch rounding and attention kernels when enabled.
+    pytorch_numerics: bool = False
     paligemma_variant: gemma.Variant = "gemma_2b"
     action_expert_variant: gemma.Variant = "gemma_300m"
     pointnet_variant: pointnet.Variant = "pcd"
@@ -60,6 +62,11 @@ class Pi0Config:
         ):
             raise ValueError(
                 f"{self.attention_backend} requires pi05=True and FP16/BF16 embed_dtype"
+            )
+        if self.pytorch_numerics and self.attention_backend != "eager":
+            raise ValueError(
+                "pytorch_numerics=True requires attention_backend='eager' to "
+                "preserve native OpenPI Torch rounding and masked-query gradients"
             )
         if self.pi05 and self.max_token_len == 48:
             object.__setattr__(self, "max_token_len", 200)

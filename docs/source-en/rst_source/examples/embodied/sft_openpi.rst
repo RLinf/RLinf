@@ -127,6 +127,9 @@ FlashAttention-2 for Gemma attention in SFT, RL, and inference. Install a
 ``flash-attn`` 2.x build matching your PyTorch and CUDA versions in the training
 and rollout environments. The default ``eager`` backend computes attention in
 FP32; FlashAttention can produce small numerical differences.
+Keep ``pytorch_numerics=False`` when using FlashAttention. Native OpenPI Torch
+numerics requires ``attention_backend: eager`` to preserve its rounding and
+masked-query gradients.
 
 On Hopper GPUs, set ``attention_backend: flash_attention_3`` and install the
 official FlashAttention-3 build:

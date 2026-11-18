@@ -101,6 +101,8 @@ RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
 π₀.₅ 的主干激活使用 FP16 或 BF16 时，设置 ``actor.model.openpi.attention_backend: flash_attention_2``，即可在 SFT、RL 和推理中使用 FlashAttention-2 计算 Gemma attention。训练和 rollout 环境需安装与 PyTorch、CUDA 版本匹配的 ``flash-attn`` 2.x。默认的 ``eager`` 后端使用 FP32 计算 attention；FlashAttention 会产生小幅数值差异。
 
+使用 FlashAttention 时保持 ``pytorch_numerics=False``。原生 OpenPI Torch 数值模式要求 ``attention_backend: eager``，以保留其舍入和全遮罩 query 的梯度行为。
+
 Hopper GPU 可设置 ``attention_backend: flash_attention_3``，并安装官方 FlashAttention-3：
 
 .. code-block:: bash

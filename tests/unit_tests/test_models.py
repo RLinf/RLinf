@@ -445,7 +445,7 @@ def test_openpi_prepares_attention_layout(pi05, backend, mode):
     torch.nn.Module.__init__(policy)
     policy.pi05 = pi05
     policy.action_horizon = 3
-    policy._config = SimpleNamespace(attention_backend=backend)
+    policy._config = SimpleNamespace(attention_backend=backend, pytorch_numerics=False)
     policy.action_in_proj = torch.nn.Linear(4, 8)
     if pi05:
         policy.time_mlp_in = torch.nn.Linear(8, 8)
@@ -512,6 +512,16 @@ def test_openpi_prepares_attention_layout(pi05, backend, mode):
         {"attention_backend": "flash_attention_2", "pi05": True, "dtype": "float32"},
         {"attention_backend": "flash_attention_3", "pi05": False},
         {"attention_backend": "flash_attention_3", "pi05": True, "dtype": "float32"},
+        {
+            "attention_backend": "flash_attention_2",
+            "pi05": True,
+            "pytorch_numerics": True,
+        },
+        {
+            "attention_backend": "flash_attention_3",
+            "pi05": True,
+            "pytorch_numerics": True,
+        },
     ],
 )
 def test_openpi_attention_backend_validates_configuration(kwargs):
@@ -1019,6 +1029,7 @@ def test_hf_rollout_merges_nested_observations():
 
 def test_openpi_env_io_reads_history():
     from rlinf.models.embodiment.openpi.env_io import EnvIO
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     def frame_transform(sample):
         return {
@@ -1040,6 +1051,7 @@ def test_openpi_env_io_reads_history():
         return sample
 
     adapter = EnvIO()
+    adapter._config = Pi0Config(short_memory=True)
     adapter.config_name = "pi05_libero"
     adapter.state_indices = ()
     adapter.device = torch.device("cpu")
