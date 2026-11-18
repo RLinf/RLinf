@@ -177,6 +177,10 @@ Launch a config with ``run_embodiment.sh``:
 2. Builds LIBERO actor, rollout, and env workers according to ``cluster.component_placement``.
 3. Runs PPO and writes logs/checkpoints under ``runner.logger.log_path``.
 
+For π₀, ``actor.model.precision`` controls the loaded parameter dtype. Set it to
+``bf16`` for BF16 execution, and use the same precision in ``rollout.model``.
+Leaving precision at ``null`` preserves the checkpoint's default dtype.
+
 .. admonition:: Configure further
    :class: note
 
