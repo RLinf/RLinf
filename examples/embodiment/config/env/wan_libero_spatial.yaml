@@ -63,6 +63,7 @@ remote:
   warmup_timeout_s: 1800       # first request only; it pays a kernel build
   max_retries: 2
   retry_backoff_s: 1.0
+  reward_backend: wan          # the scorer stays local; this backend's reward model scores the frames
 
 reward_model:
   type: ResnetRewModel

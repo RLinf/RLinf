@@ -319,7 +319,7 @@ def _gray_levels(mp4: bytes) -> np.ndarray:
 
     import imageio.v3 as iio
 
-    frames = iio.imread(io.BytesIO(mp4), extension=".mp4", plugin="pyav")
+    frames = iio.imread(io.BytesIO(mp4), extension=".mp4", plugin="FFMPEG")
     return np.asarray(frames, dtype=np.float32).mean(axis=(1, 2, 3))
 
 

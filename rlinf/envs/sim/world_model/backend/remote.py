@@ -138,53 +138,19 @@ class RemoteWorldModelBackend:
             )
 
     @staticmethod
-    def _reward_backend(cfg) -> Optional[type]:
-        name = cfg.remote.get("reward_backend", None)
-        return get_backend(name) if name else None
-
-    @staticmethod
     def load_reward_model(cfg):
-        """The scorer runs here, not on the server, so it is the benchmark's own.
-
-        Imported inside the call: selecting this backend should not require the
-        generation stack that happens to ship the reward models.
-        """
-        borrowed = RemoteWorldModelBackend._reward_backend(cfg)
-        if borrowed is not None:
-            return borrowed.load_reward_model(cfg)
-        from diffsynth.models.reward_model import (
-            ResnetRewModel,
-            TaskEmbedResnetRewModel,
-        )
-
-        if cfg.reward_model.type == "ResnetRewModel":
-            return ResnetRewModel(cfg.reward_model.from_pretrained)
-        if cfg.reward_model.type == "TaskEmbedResnetRewModel":
-            return TaskEmbedResnetRewModel(
-                checkpoint_path=cfg.reward_model.from_pretrained,
-                task_suite_name=cfg.task_suite_name,
-            )
-        raise ValueError(f"Unknown reward model type: {cfg.reward_model.type}")
+        """The scorer runs here, not on the server: the one of ``remote.reward_backend``."""
+        return get_backend(cfg.remote.reward_backend).load_reward_model(cfg)
 
     def reward_instructions(self, env) -> Optional[list[str]]:
-        borrowed = self._reward_backend(self.cfg)
-        if borrowed is not None:
-            return borrowed.reward_instructions(self, env)
-        if env.cfg.reward_model.type != "TaskEmbedResnetRewModel":
-            return None
-        # One instruction per scored frame, so each description repeats over its chunk
-        instructions = []
-        for env_idx in range(env.num_envs):
-            instructions.extend([env.task_descriptions[env_idx]] * self.chunk)
-        return instructions
+        reward_backend = get_backend(self.cfg.remote.reward_backend)
+        return reward_backend.reward_instructions(self, env)
 
     @staticmethod
     def _to_uint8(frame: torch.Tensor) -> np.ndarray:
-        """``[C, 1, H, W]`` in ``[-1, 1]`` or ``[0, 1]`` to ``[H, W, C]`` uint8."""
+        """``[C, 1, H, W]`` in ``[-1, 1]`` to ``[H, W, C]`` uint8."""
         img = np.transpose(frame[:, 0].detach().cpu().numpy(), (1, 2, 0))
-        if img.max() <= 1.2:
-            img = (img + 1.0) / 2.0 * 255.0
-        return img.clip(0, 255).astype(np.uint8)
+        return ((img + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
 
     def open_session(
         self,
@@ -359,7 +325,7 @@ class VideosSyncAdapter:
         import imageio.v3 as iio
 
         frames = np.asarray(
-            iio.imread(io.BytesIO(resp), extension=".mp4", plugin="pyav")
+            iio.imread(io.BytesIO(resp), extension=".mp4", plugin="FFMPEG")
         )
         return frames[:state]
 
