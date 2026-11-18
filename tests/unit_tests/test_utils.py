@@ -347,6 +347,26 @@ def test_importance_sampling_correction_scales_advantages_by_clipped_weight():
     torch.testing.assert_close(log_ratios, recomputed_logprobs)
 
 
+def test_ppo_epoch_kl_uses_only_valid_probe_chunks(tmp_path):
+    torch.distributed.init_process_group(
+        "gloo", init_method=(tmp_path / "ppo_kl_store").as_uri(), rank=0, world_size=1
+    )
+    try:
+        worker = object.__new__(EmbodiedFSDPActor)
+        worker._dp_group = torch.distributed.group.WORLD
+        shift = torch.tensor([[[1.0, 2.0]], [[float("nan"), 3.0]]])
+        assert worker._measure_ppo_epoch_kl(shift, torch.tensor([True, False])) == (
+            2.5,
+            1,
+        )
+        assert worker._measure_ppo_epoch_kl(shift, torch.tensor([False, False])) == (
+            None,
+            0,
+        )
+    finally:
+        torch.distributed.destroy_process_group()
+
+
 @pytest.mark.parametrize("importance_sampling_fix", [False, True])
 def test_embodied_actor_recompute_preserves_behavior_logprobs_when_enabled(
     monkeypatch, importance_sampling_fix

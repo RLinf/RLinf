@@ -47,6 +47,7 @@ from rlinf.utils.nested_dict_process import (
     process_nested_dict_for_adv,
     process_nested_dict_for_train,
     put_tensor_device,
+    split_dict,
     split_dict_to_chunk,
     trim_nested_tensor_time_dim,
 )
@@ -620,6 +621,28 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         return loss
 
+    @torch.no_grad()
+    def _ppo_denoise_stats(
+        self, forward_inputs: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        with self.amp_context:
+            return self.model(
+                forward_inputs=forward_inputs,
+                compute_values=False,
+                return_denoise_stats=True,
+            )
+
+    def _measure_ppo_epoch_kl(
+        self, shift: torch.Tensor, valid: torch.Tensor
+    ) -> tuple[float | None, int]:
+        chunk_kl = 0.5 * shift.square().sum(dim=(1, 2))
+        totals = torch.stack((chunk_kl.masked_fill(~valid, 0).sum(), valid.sum()))
+        torch.distributed.all_reduce(totals, group=self._dp_group)
+        kl_sum, count = totals.tolist()
+        if not np.isfinite(kl_sum):
+            raise RuntimeError(f"Expected finite PPO epoch KL, got sum={kl_sum}.")
+        return (kl_sum / count if count else None), int(count)
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -668,7 +691,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.cfg.algorithm.get("recompute_logprobs", False):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        for _ in range(update_epoch):
+        target_kl = self.cfg.algorithm.get("ppo_epoch_target_kl")
+        probe_inputs = None
+        if target_kl is not None:
+            # Score one fixed microbatch per rank at each policy snapshot.
+            probe_size = self.cfg.actor.micro_batch_size
+            probe_inputs = split_dict(
+                self.rollout_batch["forward_inputs"],
+                [probe_size, rollout_size - probe_size],
+            )[0]
+            probe_inputs = put_tensor_device(probe_inputs, self.device)
+            reference = self._ppo_denoise_stats(probe_inputs)
+            std = reference["denoise_std"]
+            mask = self.rollout_batch.get("loss_mask")
+            valid = (std > 0).flatten(1).any(1)
+            if mask is not None:
+                valid &= mask[:probe_size].reshape(probe_size).to(valid)
+            std = torch.where(std > 0, std, 1.0)
+        for epoch in range(1, update_epoch + 1):
             rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
                 rollout_size // batch_size_per_rank,
@@ -711,6 +751,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 if len(lr_list) > 1:
                     data["critic/lr"] = lr_list[1]
                 append_to_dict(metrics, data)
+            if probe_inputs is not None:
+                self.optimizer.zero_grad()
+                current = self._ppo_denoise_stats(probe_inputs)
+                shift = (current["denoise_mean"] - reference["denoise_mean"]) / std
+                epoch_kl, count = self._measure_ppo_epoch_kl(shift, valid)
+                if epoch_kl is None:
+                    probe_inputs = None
+                else:
+                    metrics[f"actor/ppo_epoch_{epoch}_kl"] = [epoch_kl]
+                    if epoch_kl >= target_kl:
+                        break
+        if target_kl is not None:
+            metrics["actor/ppo_epochs_used"] = [epoch]
+            metrics["actor/ppo_epoch_probe_count"] = [count]
         # put LR scheduler step here
         self.lr_scheduler.step()
         self.optimizer.zero_grad()

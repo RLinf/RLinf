@@ -422,9 +422,20 @@ class Pi0RL(EnvIO, Pi0):
             f"{type(self).__name__} does not support forward_type={forward_type!r}."
         )
 
-    def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
-        """PPO/GRPO recompute of logprobs and values from the stored chain."""
+    def default_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor],
+        *,
+        return_denoise_stats: bool = False,
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:
+        """Score the stored chain or return the selected transition's Gaussian stats."""
         rl_cfg = self.rl_cfg
+        if return_denoise_stats and rl_cfg.joint_logprob:
+            raise ValueError(
+                "Denoise statistics require a single selected transition, "
+                "got joint_logprob=True."
+            )
         compute_values = kwargs.get("compute_values", True)
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
@@ -478,6 +489,15 @@ class Pi0RL(EnvIO, Pi0):
                 num_steps=self.num_steps,
                 noise_std=noise_std,
             )
+            if return_denoise_stats:
+                return {
+                    "denoise_mean": x_t_mean[
+                        :, : self.action_chunk, : self.action_env_dim
+                    ],
+                    "denoise_std": x_t_std[
+                        :, : self.action_chunk, : self.action_env_dim
+                    ],
+                }
             step_logprobs.append(
                 rl_sampler.gaussian_logprob(
                     chains_next.to(torch.float32), x_t_mean, x_t_std
