@@ -207,6 +207,30 @@ def _collect_ignored_params_for_fsdp2(
     return out
 
 
+def _unwrap_peft_model(module: torch.nn.Module) -> torch.nn.Module:
+    """Return the underlying model when ``module`` is wrapped by ``PeftModel``."""
+    get_base_model = getattr(module, "get_base_model", None)
+    if callable(get_base_model):
+        try:
+            base = get_base_model()
+            if isinstance(base, torch.nn.Module):
+                return base
+        except Exception:
+            pass
+    return module
+
+
+def _collect_shared_params(root_module: torch.nn.Module) -> set[torch.nn.Parameter]:
+    seen: set[torch.nn.Parameter] = set()
+    shared: set[torch.nn.Parameter] = set()
+    for _, param in root_module.named_parameters(remove_duplicate=False):
+        if param in seen:
+            shared.add(param)
+        else:
+            seen.add(param)
+    return shared
+
+
 def _module_has_single_floating_dtype(module: torch.nn.Module) -> bool:
     dtype = None
     for param in module.parameters():
@@ -220,11 +244,33 @@ def _module_has_single_floating_dtype(module: torch.nn.Module) -> bool:
 
 
 def _pi0_fast_dtype_auto_wrap_policy(
-    module: torch.nn.Module, recurse: bool, nonwrapped_numel: int
+    module: torch.nn.Module,
+    recurse: bool,
+    nonwrapped_numel: int,
+    *,
+    root_module: torch.nn.Module | None = None,
+    shared_params: set[torch.nn.Parameter] | None = None,
 ) -> bool:
+    if (
+        isinstance(module, (torch.nn.ModuleList, torch.nn.ModuleDict))
+        or type(module).forward is torch.nn.Module.forward
+    ):
+        return recurse
+    has_shared = bool(shared_params) and any(
+        param in shared_params for param in module.parameters()
+    )
+    has_layer_list = any(
+        isinstance(sub, torch.nn.ModuleList)
+        for sub in module.modules()
+        if sub is not module
+    )
     if recurse:
-        return True
-    if nonwrapped_numel <= 0:
+        if root_module is not None and module is root_module:
+            return True
+        if has_shared or has_layer_list:
+            return True
+        return not _module_has_single_floating_dtype(module)
+    if nonwrapped_numel <= 0 or has_shared:
         return False
     return _module_has_single_floating_dtype(module)
 
@@ -246,6 +292,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
 
     if config.get("disable", False):
         return None
+    base_module = _unwrap_peft_model(module)
     wrap_policy_config = config.get("wrap_policy", {}) or {}
     use_custom_wrap_policy = any(
         key in wrap_policy_config
@@ -266,40 +313,54 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
 
     else:
-        if hasattr(module, "language_model"):
+        if hasattr(base_module, "language_model"):
             # For VLA models, get transformer classes from language_model submodule
-            default_transformer_cls_names_to_wrap = getattr(
-                module.language_model, "_no_split_modules", None
+            lang_no_split = getattr(
+                base_module.language_model, "_no_split_modules", None
             )
-            if hasattr(module, "visual"):
+            default_transformer_cls_names_to_wrap = (
+                list(lang_no_split) if lang_no_split is not None else []
+            )
+            if hasattr(base_module, "visual"):
                 default_transformer_cls_names_to_wrap.extend(
-                    getattr(module.visual, "_no_split_modules", [])
+                    getattr(base_module.visual, "_no_split_modules", None) or []
                 )
+            if not default_transformer_cls_names_to_wrap:
+                default_transformer_cls_names_to_wrap = None
 
         else:
             # For standard models, get transformer classes directly from module
             default_transformer_cls_names_to_wrap = getattr(
-                module, "_no_split_modules", None
-            )
+                base_module, "_no_split_modules", None
+            ) or getattr(module, "_no_split_modules", None)
 
         fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
             default_transformer_cls_names_to_wrap
         )
         module_classes_to_wrap = None
-        no_split_names = getattr(module, "_no_split_names", None)
+        no_split_names = getattr(base_module, "_no_split_names", None) or getattr(
+            module, "_no_split_names", None
+        )
 
     # Build policies list
     policies = []
 
     if (
-        SupportedModel(model_type) == SupportedModel.PI0_FAST
+        model_type is not None
+        and SupportedModel(model_type) == SupportedModel.PI0_FAST
         and not use_custom_wrap_policy
     ):
         # PI0-Fast mixes small FP32 embedding/norm parameters with a BF16 backbone.
-        # FSDP flat parameters must have one dtype, so split only on dtype-uniform modules.
-        policies.append(_pi0_fast_dtype_auto_wrap_policy)
+        # FSDP flat parameters must have one dtype, so split on coarse dtype-uniform subtrees.
+        policies.append(
+            functools.partial(
+                _pi0_fast_dtype_auto_wrap_policy,
+                root_module=module,
+                shared_params=_collect_shared_params(module),
+            )
+        )
 
-    if SupportedModel(model_type) in [
+    if model_type is not None and SupportedModel(model_type) in [
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
     ]:
@@ -311,7 +372,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         policies.append(resnet_policy)
 
     # Add vision transformer policies for OpenVLA models
-    if SupportedModel(model_type) in [
+    if model_type is not None and SupportedModel(model_type) in [
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
     ]:
@@ -337,8 +398,9 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         policies.append(prismatic_fsdp_wrapping_policy)
 
     if (
-        SupportedModel(model_type) == SupportedModel.CNN_POLICY
-        and not config.use_orig_params
+        model_type is not None
+        and SupportedModel(model_type) == SupportedModel.CNN_POLICY
+        and not config.get("use_orig_params", False)
     ):
         from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
@@ -356,7 +418,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
             functools.partial(lambda_auto_wrap_policy, lambda_fn=is_state_proj)
         )
 
-    if hasattr(module, "value_head"):
+    if hasattr(base_module, "value_head") or hasattr(module, "value_head"):
         from rlinf.models.embodiment.modules.value_head import ValueHead
 
         value_head_policy = functools.partial(
@@ -364,10 +426,11 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
         policies.append(value_head_policy)
 
-    if hasattr(module, "q_head"):
+    q_head_owner = base_module if hasattr(base_module, "q_head") else module
+    if hasattr(q_head_owner, "q_head"):
         from rlinf.models.embodiment.modules.q_head import MultiCrossQHead, MultiQHead
 
-        if isinstance(module.q_head, MultiCrossQHead):
+        if isinstance(q_head_owner.q_head, MultiCrossQHead):
             q_head_policy = functools.partial(
                 _module_wrap_policy, module_classes={MultiCrossQHead}
             )
@@ -421,8 +484,15 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
         policies.append(lambda_policy)
 
-    # Add LoRA lambda policy if enabled
-    if is_lora:
+    # Keep LoRA adapters in separate leaf units by default so frozen base blocks do
+    # not allocate gradients; opt into block-level wrapping only with use_orig_params=True
+    # and uniform floating dtypes.
+    use_coarse_lora_layers = (
+        bool(config.get("use_orig_params", False))
+        and len(policies) > 0
+        and _module_has_single_floating_dtype(module)
+    )
+    if is_lora and not use_coarse_lora_layers:
         from torch.distributed.fsdp.wrap import lambda_auto_wrap_policy
 
         def lambda_policy_fn(module):
@@ -493,23 +563,31 @@ def apply_fsdp2_to_model(
             wrap_policy_config.get("no_split_names")
         )
     else:
-        if hasattr(module, "language_model"):
-            default_transformer_cls_names_to_wrap = getattr(
-                module.language_model, "_no_split_modules", None
+        base_module = _unwrap_peft_model(module)
+        if hasattr(base_module, "language_model"):
+            lang_no_split = getattr(
+                base_module.language_model, "_no_split_modules", None
             )
-            if hasattr(module, "visual"):
+            default_transformer_cls_names_to_wrap = (
+                list(lang_no_split) if lang_no_split is not None else []
+            )
+            if hasattr(base_module, "visual"):
                 default_transformer_cls_names_to_wrap.extend(
-                    getattr(module.visual, "_no_split_modules", [])
+                    getattr(base_module.visual, "_no_split_modules", None) or []
                 )
+            if not default_transformer_cls_names_to_wrap:
+                default_transformer_cls_names_to_wrap = None
         else:
             default_transformer_cls_names_to_wrap = getattr(
-                module, "_no_split_modules", None
-            )
+                base_module, "_no_split_modules", None
+            ) or getattr(module, "_no_split_modules", None)
         fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
             default_transformer_cls_names_to_wrap
         )
         module_classes_to_wrap = None
-        no_split_names = getattr(module, "_no_split_names", None)
+        no_split_names = getattr(base_module, "_no_split_names", None) or getattr(
+            module, "_no_split_names", None
+        )
         assert (
             len(fsdp_transformer_layer_cls_to_wrap) > 0
             and fsdp_transformer_layer_cls_to_wrap[0] is not None

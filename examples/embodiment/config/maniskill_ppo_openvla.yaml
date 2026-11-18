@@ -103,7 +103,7 @@ rollout:
 
   group_name: "RolloutGroup"
   backend: "huggingface"
-  enable_offload: True
+  enable_offload: True # Default for <=40 GB GPUs; set False on >=80 GB GPUs to avoid per-step CPU-GPU offload transfers.
   pipeline_stage_num: 2
 
   model:
@@ -116,7 +116,7 @@ actor:
   micro_batch_size: 80
   global_batch_size: 640
   seed: 1234
-  enable_offload: True
+  enable_offload: True # Default for <=40 GB GPUs; set False on >=80 GB GPUs.
 
   # Override the default values in model/openvla
   model:
@@ -137,6 +137,9 @@ actor:
     critic_warmup_steps: 0
 
   # Override the default values in hybrid_engines/fsdp
+  # On >=80 GB GPUs, you can set `use_orig_params: True` for block-level LoRA
+  # wrapping, and add `forward_prefetch: True` and `backward_prefetch: "pre"`
+  # to overlap FSDP AllGather communication with layer compute.
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

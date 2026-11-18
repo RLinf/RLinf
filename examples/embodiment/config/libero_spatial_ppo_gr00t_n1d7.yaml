@@ -141,6 +141,9 @@ actor:
     clip_grad: 1.0
     critic_warmup_steps: 0
   
+  # On >=80 GB GPUs, you can set `enable_offload: False` on rollout/actor,
+  # `gradient_checkpointing: False`, `forward_prefetch: True`, and
+  # `backward_prefetch: "pre"` to avoid offload transfers and overlap AllGather.
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"

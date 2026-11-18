@@ -564,10 +564,31 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             noise=noise,
         )
 
-        conditional_count = conditional_mask.sum().item()
-        unconditional_count = (~conditional_mask).sum().item()
-        positive_label_count = positive_mask.sum().item()
-        negative_label_count = negative_mask.sum().item()
+        (
+            conditional_count,
+            unconditional_count,
+            positive_label_count,
+            negative_label_count,
+            positive_conditional_count,
+            positive_unconditional_count,
+            negative_conditional_count,
+            negative_unconditional_count,
+        ) = (
+            torch.stack(
+                [
+                    conditional_mask.sum(),
+                    (~conditional_mask).sum(),
+                    positive_mask.sum(),
+                    negative_mask.sum(),
+                    positive_conditional_mask.sum(),
+                    positive_unconditional_mask.sum(),
+                    negative_conditional_mask.sum(),
+                    negative_unconditional_mask.sum(),
+                ]
+            )
+            .cpu()
+            .tolist()
+        )
 
         metrics = {
             "conditional_count": conditional_count,
@@ -580,10 +601,10 @@ class OpenPi0ForCFGActionPrediction(BasePolicy, PI0Pytorch):
             ),
             "positive_label_count": positive_label_count,
             "negative_label_count": negative_label_count,
-            "positive_conditional_count": positive_conditional_mask.sum().item(),
-            "positive_unconditional_count": positive_unconditional_mask.sum().item(),
-            "negative_conditional_count": negative_conditional_mask.sum().item(),
-            "negative_unconditional_count": negative_unconditional_mask.sum().item(),
+            "positive_conditional_count": positive_conditional_count,
+            "positive_unconditional_count": positive_unconditional_count,
+            "negative_conditional_count": negative_conditional_count,
+            "negative_unconditional_count": negative_unconditional_count,
             "positive_conditional_loss_sum": self._masked_loss_sum(
                 per_sample_loss, positive_conditional_mask
             ),

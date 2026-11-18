@@ -1272,3 +1272,240 @@ def test_art_metrics_weight_active_samples_across_microbatches(
         assert "actor/active_count" not in results[0]
     finally:
         dist.destroy_process_group()
+
+
+class _ToyDecoderLayer(nn.Module):
+    def __init__(self, adapter_dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.base_proj = nn.Linear(8, 8, bias=False).to(torch.bfloat16)
+        self.base_proj.weight.requires_grad_(False)
+        self.lora_a = nn.Linear(8, 2, bias=False).to(adapter_dtype)
+        self.lora_b = nn.Linear(2, 8, bias=False).to(adapter_dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base_proj(x) + self.lora_b(self.lora_a(x)).to(x.dtype)
+
+
+class _ToyVisionBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = nn.Linear(8, 8, bias=False).to(torch.bfloat16)
+        self.proj.weight.requires_grad_(False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.proj(x)
+
+
+class _ToyVLAModel(nn.Module):
+    def __init__(self, adapter_dtype: torch.dtype = torch.bfloat16):
+        super().__init__()
+        self.language_model = nn.Module()
+        self.language_model._no_split_modules = ("_ToyDecoderLayer",)
+        self.language_model.layers = nn.ModuleList(
+            [_ToyDecoderLayer(adapter_dtype) for _ in range(2)]
+        )
+        self.visual = nn.Module()
+        self.visual._no_split_modules = ("_ToyVisionBlock",)
+        self.visual.blocks = nn.ModuleList([_ToyVisionBlock()])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.visual.blocks[0](x)
+        for layer in self.language_model.layers:
+            x = layer(x)
+        return x
+
+
+class _ToyPeftWrapper(nn.Module):
+    def __init__(self, base: nn.Module):
+        super().__init__()
+        self.base_model = base
+
+    def get_base_model(self) -> nn.Module:
+        return self.base_model
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.base_model(x)
+
+
+@pytest.mark.parametrize(
+    ("model_cfg", "fsdp_overrides", "expected_orig_params"),
+    [
+        ({"model_type": "qwen2.5", "is_lora": True}, {}, False),
+        ({"model_type": "openvla", "is_lora": True}, {}, False),
+        ({"model_type": "openvla", "is_lora": True}, {"use_orig_params": True}, True),
+        ({"model_type": "pi0_fast", "is_lora": False}, {}, False),
+        ({"model_type": "pi0_fast", "is_lora": False}, {"use_orig_params": True}, True),
+        ({"model_type": "qwen2.5", "is_lora": False}, {}, False),
+    ],
+)
+def test_validate_fsdp_cfg_keeps_use_orig_params_opt_in_for_lora_and_pi0_fast(
+    model_cfg, fsdp_overrides, expected_orig_params
+):
+    validated = validate_fsdp_cfg(
+        OmegaConf.create(
+            {
+                "model": model_cfg,
+                "fsdp_config": {"mixed_precision": {}, **fsdp_overrides},
+            }
+        )
+    )
+    assert validated.fsdp_config.use_orig_params is expected_orig_params
+    assert validated.fsdp_config.limit_all_gathers is True
+    assert validated.fsdp_config.forward_prefetch is False
+    assert validated.fsdp_config.backward_prefetch is None
+
+
+def test_lora_wrap_policy_unwraps_peft_base_and_wraps_coarse_layers():
+    from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
+
+    uniform_peft = _ToyPeftWrapper(_ToyVLAModel(adapter_dtype=torch.bfloat16))
+    layer0 = uniform_peft.base_model.language_model.layers[0]
+    vis0 = uniform_peft.base_model.visual.blocks[0]
+
+    default_policy = get_fsdp_wrap_policy(
+        module=uniform_peft,
+        config=OmegaConf.create({"use_orig_params": False}),
+        is_lora=True,
+        model_type="qwen2.5",
+    )
+    assert default_policy is not None
+    assert default_policy(module=layer0.lora_a, recurse=False, nonwrapped_numel=16)
+    assert default_policy(module=layer0, recurse=False, nonwrapped_numel=64)
+
+    policy = get_fsdp_wrap_policy(
+        module=uniform_peft,
+        config=OmegaConf.create({"use_orig_params": True}),
+        is_lora=True,
+        model_type="qwen2.5",
+    )
+    assert policy is not None
+    assert policy(module=layer0, recurse=False, nonwrapped_numel=80)
+    assert policy(module=vis0, recurse=False, nonwrapped_numel=64)
+    assert not policy(module=layer0.lora_a, recurse=False, nonwrapped_numel=16)
+
+    mixed_peft = _ToyPeftWrapper(_ToyVLAModel(adapter_dtype=torch.float32))
+    mixed_policy = get_fsdp_wrap_policy(
+        module=mixed_peft,
+        config=OmegaConf.create({"use_orig_params": True}),
+        is_lora=True,
+        model_type="qwen2.5",
+    )
+    mixed_layer0 = mixed_peft.base_model.language_model.layers[0]
+    assert mixed_policy(module=mixed_layer0.lora_a, recurse=False, nonwrapped_numel=16)
+
+
+def test_pi0_fast_wrap_policy_groups_uniform_dtype_blocks_and_preserves_tied_weights():
+    from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
+
+    class _MixedPi0Fast(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = nn.Embedding(16, 8).to(torch.bfloat16)
+            self.lm_head = nn.Linear(8, 16, bias=False).to(torch.bfloat16)
+            self.lm_head.weight = self.embed.weight
+            self.projector = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 8)).float()
+            self.layers = nn.ModuleList([_ToyVisionBlock(), _ToyVisionBlock()])
+
+        def forward(self, ids: torch.Tensor) -> torch.Tensor:
+            x = self.embed(ids)
+            for layer in self.layers:
+                x = layer(x)
+            x = self.projector(x.float()).to(torch.bfloat16)
+            return self.lm_head(x)
+
+    model = _MixedPi0Fast()
+    policy = get_fsdp_wrap_policy(
+        module=model,
+        config=OmegaConf.create({"use_orig_params": True}),
+        is_lora=False,
+        model_type="pi0_fast",
+    )
+    assert policy is not None
+    assert policy(module=model, recurse=True, nonwrapped_numel=100)
+    assert policy(module=model.layers, recurse=True, nonwrapped_numel=100)
+    assert not policy(module=model.layers, recurse=False, nonwrapped_numel=100)
+    assert not policy(module=model.projector, recurse=True, nonwrapped_numel=128)
+    assert policy(module=model.projector, recurse=False, nonwrapped_numel=128)
+    assert not policy(module=model.layers[0], recurse=True, nonwrapped_numel=64)
+    assert policy(module=model.layers[0], recurse=False, nonwrapped_numel=64)
+    assert not policy(module=model.embed, recurse=False, nonwrapped_numel=128)
+    assert not policy(module=model.lm_head, recurse=False, nonwrapped_numel=128)
+
+
+def test_no_shard_uses_single_root_unit_and_ignores_frozen_backbone(monkeypatch):
+    from rlinf.hybrid_engines.fsdp.strategy import fsdp as strategy_module
+
+    class _FrozenBackboneModel(nn.Module):
+        _no_split_modules = ("_ToyVisionBlock",)
+
+        def __init__(self):
+            super().__init__()
+            self.frozen = _ToyVisionBlock()
+            self.head = nn.Linear(8, 8, bias=False).to(torch.bfloat16)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.head(self.frozen(x))
+
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    monkeypatch.setattr(Worker, "torch_platform", None)
+    monkeypatch.setattr(strategy_module, "FSDP", lambda **kwargs: kwargs)
+    monkeypatch.setattr(
+        strategy_module, "apply_buffer_dtype_compatibility", lambda _: None
+    )
+
+    no_shard_actor = validate_fsdp_cfg(
+        OmegaConf.create(
+            {
+                "model": {"model_type": "qwen2.5", "is_lora": False},
+                "fsdp_config": {
+                    "sharding_strategy": "no_shard",
+                    "use_orig_params": True,
+                    "mixed_precision": {"param_dtype": "bf16"},
+                },
+            }
+        )
+    )
+    model_no_shard = _FrozenBackboneModel()
+    no_shard_kwargs = strategy_module.FSDPStrategy(no_shard_actor, 1).wrap_model(
+        model_no_shard, object()
+    )
+    assert no_shard_kwargs["auto_wrap_policy"] is None
+    assert no_shard_kwargs["ignored_states"] == [model_no_shard.frozen.proj.weight]
+
+    full_shard_actor = validate_fsdp_cfg(
+        OmegaConf.create(
+            {
+                "model": {"model_type": "qwen2.5", "is_lora": False},
+                "fsdp_config": {
+                    "sharding_strategy": "full_shard",
+                    "use_orig_params": True,
+                    "mixed_precision": {"param_dtype": "bf16"},
+                },
+            }
+        )
+    )
+    model_full_shard = _FrozenBackboneModel()
+    full_shard_kwargs = strategy_module.FSDPStrategy(full_shard_actor, 1).wrap_model(
+        model_full_shard, object()
+    )
+    assert full_shard_kwargs["auto_wrap_policy"] is not None
+    assert full_shard_kwargs["ignored_states"] is None
+
+
+def test_build_adam_and_adamw_fall_back_when_fused_is_unsupported():
+    from rlinf.hybrid_engines.fsdp.optim import build_adam, build_adamw
+
+    weight = nn.Parameter(torch.ones(4))
+    adam = build_adam([{"params": [weight], "lr": 0.1}], fused=False)
+    assert isinstance(adam, torch.optim.Adam)
+    weight.grad = torch.ones_like(weight)
+    adam.step()
+    assert torch.all(weight < 1.0)
+
+    meta_weight = nn.Parameter(torch.ones(4, device="meta"))
+    adam_fallback = build_adam([meta_weight], fused=True)
+    adamw_fallback = build_adamw([meta_weight], eps=1e-8, weight_decay=0.01, fused=True)
+    assert isinstance(adam_fallback, torch.optim.Adam)
+    assert isinstance(adamw_fallback, torch.optim.AdamW)
+    assert not adam_fallback.defaults.get("fused", False)
+    assert not adamw_fallback.defaults.get("fused", False)

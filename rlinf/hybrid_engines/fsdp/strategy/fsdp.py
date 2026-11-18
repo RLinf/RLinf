@@ -24,7 +24,7 @@ from torch.distributed.fsdp import (
 )
 from torch.optim import Optimizer
 
-from rlinf.hybrid_engines.fsdp import FSDP, CPUOffload
+from rlinf.hybrid_engines.fsdp import FSDP, CPUOffload, ShardingStrategy
 from rlinf.hybrid_engines.fsdp.compat import apply_buffer_dtype_compatibility
 from rlinf.hybrid_engines.fsdp.mixed_precision import (
     build_mixed_precision,
@@ -134,6 +134,85 @@ class FSDPStrategy(FSDPStrategyBase):
             return
         self._rebind_sharded_tensor_views(handle)
 
+    @staticmethod
+    def _has_explicit_wrap_config(fsdp_config) -> bool:
+        if fsdp_config.get("disable", False):
+            return True
+        if fsdp_config.get("wrappers"):
+            return True
+        wrap_policy_cfg = fsdp_config.get("wrap_policy") or {}
+        return any(
+            wrap_policy_cfg.get(key) is not None
+            for key in (
+                "transformer_layer_cls_to_wrap",
+                "module_classes_to_wrap",
+                "no_split_names",
+            )
+        )
+
+    def _prepare_no_shard_states(
+        self,
+        model: nn.Module,
+        mixed_precision,
+        local_rank: int,
+    ) -> tuple[list[nn.Parameter] | None, bool]:
+        """Exclude frozen parameters and check whether a single root NO_SHARD unit is valid."""
+        all_params = list(model.parameters())
+        ignored_states: list[nn.Parameter] | None = None
+        ignored_set: set[nn.Parameter] = set()
+
+        if any(param.requires_grad for param in all_params):
+            frozen_params = [
+                param
+                for param in all_params
+                if not param.requires_grad
+                and not param.is_meta
+                and (
+                    mixed_precision.param_dtype is None
+                    or param.dtype == mixed_precision.param_dtype
+                )
+            ]
+            if frozen_params:
+                ignored_states = frozen_params
+                ignored_set = set(frozen_params)
+                if (
+                    not self.cfg.fsdp_config.cpu_offload
+                    and Worker.torch_platform is not None
+                    and Worker.torch_platform.is_available()
+                ):
+                    target_device = torch.device(
+                        f"{Worker.torch_device_type}:{local_rank}"
+                    )
+                    for param in ignored_states:
+                        param.data = self._move_tensor(param.data, target_device)
+                if (
+                    torch.distributed.is_initialized()
+                    and self.world_size > 1
+                    and self._dp_group is not None
+                ):
+                    src_rank = torch.distributed.get_global_rank(self._dp_group, 0)
+                    for param in ignored_states:
+                        torch.distributed.broadcast(
+                            param.data, src=src_rank, group=self._dp_group
+                        )
+
+        managed_params = [param for param in all_params if param not in ignored_set]
+        floating_dtypes = {
+            param.dtype for param in managed_params if param.is_floating_point()
+        }
+        grad_flags = {param.requires_grad for param in managed_params}
+        ignored_module_classes = tuple(mixed_precision._module_classes_to_ignore)
+        has_ignored_modules = bool(ignored_module_classes) and any(
+            isinstance(module, ignored_module_classes) for module in model.modules()
+        )
+        can_use_single_root = (
+            bool(managed_params)
+            and len(floating_dtypes) <= 1
+            and (bool(self.cfg.fsdp_config.use_orig_params) or len(grad_flags) <= 1)
+            and not has_ignored_modules
+        )
+        return ignored_states, can_use_single_root
+
     def wrap_model(self, model: nn.Module, device_mesh: DeviceMesh) -> FSDP:
         """
         Wrap the model with FSDP using the specified configuration,
@@ -162,16 +241,30 @@ class FSDPStrategy(FSDPStrategyBase):
         sharding_strategy = get_sharding_strategy(
             self.cfg.fsdp_config.sharding_strategy
         )
+        local_rank = int(os.environ["LOCAL_RANK"])
 
-        auto_wrap_policy = get_fsdp_wrap_policy(
-            module=model,
-            config=self.cfg.fsdp_config,
-            is_lora=self.cfg.model.is_lora,
-            model_type=self.cfg.model.model_type,
-        )
-        auto_wrap_policy = get_mixed_precision_wrap_policy(
-            model, self.cfg.fsdp_config, auto_wrap_policy, mixed_precision
-        )
+        ignored_states = None
+        use_single_root_no_shard = False
+        if (
+            sharding_strategy == ShardingStrategy.NO_SHARD
+            and not self._has_explicit_wrap_config(self.cfg.fsdp_config)
+        ):
+            ignored_states, use_single_root_no_shard = self._prepare_no_shard_states(
+                model, mixed_precision, local_rank
+            )
+
+        if use_single_root_no_shard:
+            auto_wrap_policy = None
+        else:
+            auto_wrap_policy = get_fsdp_wrap_policy(
+                module=model,
+                config=self.cfg.fsdp_config,
+                is_lora=self.cfg.model.is_lora,
+                model_type=self.cfg.model.model_type,
+            )
+            auto_wrap_policy = get_mixed_precision_wrap_policy(
+                model, self.cfg.fsdp_config, auto_wrap_policy, mixed_precision
+            )
 
         backward_prefetch = get_backward_prefetch_strategy(
             self.cfg.fsdp_config.backward_prefetch
@@ -183,7 +276,7 @@ class FSDPStrategy(FSDPStrategyBase):
             module=model,
             param_init_fn=init_fn,
             auto_wrap_policy=auto_wrap_policy,
-            device_id=int(os.environ["LOCAL_RANK"]),
+            device_id=local_rank,
             sharding_strategy=sharding_strategy,
             mixed_precision=mixed_precision,
             sync_module_states=True,
@@ -193,6 +286,7 @@ class FSDPStrategy(FSDPStrategyBase):
             limit_all_gathers=self.cfg.fsdp_config.limit_all_gathers,
             use_orig_params=self.cfg.fsdp_config.use_orig_params,
             cpu_offload=cpu_offload,
+            ignored_states=ignored_states,
         )
         apply_buffer_dtype_compatibility(fsdp_model)
         return fsdp_model

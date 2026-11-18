@@ -153,6 +153,10 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
+    # Coarse dtype-uniform subtrees mix frozen and trainable parameters,
+    # and FSDP1 rejects a FlatParameter that mixes requires_grad unless
+    # use_orig_params=True.
+    use_orig_params: True
     gradient_checkpointing: False
     mixed_precision:
       param_dtype: null

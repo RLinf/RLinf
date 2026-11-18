@@ -353,7 +353,6 @@ class DexboticDM0ForRLActionPrediction(BasePolicy, DM0ForCausalLM):
             prefix_attn_mask_2d,
             position_embeddings,
         )
-        torch.cuda.empty_cache()
         return prefix_padding_mask, prefix_attn_mask, past_key_values
 
     def get_suffix_out(

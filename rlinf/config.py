@@ -565,7 +565,7 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "forward_prefetch", False
         )
         cfg.fsdp_config.limit_all_gathers = cfg.fsdp_config.get(
-            "limit_all_gathers", False
+            "limit_all_gathers", True
         )
         cfg.fsdp_config.backward_prefetch = cfg.fsdp_config.get(
             "backward_prefetch", None
@@ -1476,6 +1476,15 @@ def validate_embodied_cfg(cfg):
             "algorithm.adv_type only supports 'gae' now"
             "when runner.use_training_pipeline is True."
         )
+        rollout_epoch = cfg.env.train.get("rollout_epoch", 1)
+        pipeline_stage_num = cfg.rollout.get("pipeline_stage_num", 1)
+        if rollout_epoch < 2 or pipeline_stage_num < 2:
+            logging.warning(
+                f"runner.use_training_pipeline=True with env.train.rollout_epoch={rollout_epoch!r} "
+                f"and rollout.pipeline_stage_num={pipeline_stage_num!r} cannot overlap "
+                "multi-stage rollout with actor updates and may increase step latency; "
+                "set both >= 2 for pipelined training."
+            )
 
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.

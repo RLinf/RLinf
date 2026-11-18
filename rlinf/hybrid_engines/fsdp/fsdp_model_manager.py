@@ -40,6 +40,7 @@ from rlinf.hybrid_engines.fsdp import (
     FSDPModule,
 )
 from rlinf.hybrid_engines.fsdp.optim import (
+    build_adam,
     build_adamw,
     validate_adam_mixed_precision,
 )
@@ -297,6 +298,10 @@ class FSDPModelManager:
             self._logger.info(
                 f"[FSDP] Enabling gradient checkpointing with use_reentrant={use_reentrant}"
             )
+            if self._cfg.model.get("is_lora", False) and hasattr(
+                module, "enable_input_require_grads"
+            ):
+                module.enable_input_require_grads()
             if use_reentrant:
                 # use_reentrant=True is the default for HuggingFace models.
                 # We pass no arguments to stay compatible with openpi's
@@ -528,6 +533,21 @@ class FSDPModelManager:
             last_epoch=last_epoch,
         )
 
+    def _can_use_fused_adam(self, params: list[torch.Tensor]) -> bool:
+        """Return whether native fused CUDA Adam/AdamW is safe for ``params``."""
+        if not params:
+            return False
+        if self._cfg.fsdp_config.get("grad_scaler", {}).get("enabled", False):
+            return False
+        if self._cfg.fsdp_config.get("cpu_offload", False):
+            return False
+        return (
+            Worker.torch_device_type == "cuda"
+            and Worker.torch_platform is not None
+            and Worker.torch_platform.is_available()
+            and all(param.is_cuda for param in params)
+        )
+
     def build_optimizer(
         self,
         model: Union[nn.Module, FSDPModule, FSDP],
@@ -614,16 +634,9 @@ class FSDPModelManager:
             model, use_fp32_master_params=use_fp32_master_params
         )
 
-        # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
-        # for NO_SHARD models. Sharded scalar parameters cannot use this path.
         all_params = [p for group in param_groups for p in group["params"]]
-        use_fused_adamw = (
-            not use_fp32_master_params
-            and self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
-            == "no_shard"
-            and Worker.torch_device_type == "cuda"
-            and Worker.torch_platform.is_available()
-            and not any(p.dim() == 0 for p in all_params)
+        use_fused_adamw = not use_fp32_master_params and self._can_use_fused_adam(
+            all_params
         )
         optimizer = build_adamw(
             param_groups,
@@ -692,7 +705,7 @@ class FSDPModelManager:
             main_optim_params.append(param)
 
         assert len(main_optim_params) > 0
-        main_optimizer = torch.optim.Adam(
+        main_optimizer = build_adam(
             [
                 {
                     "params": main_optim_params,
@@ -700,7 +713,8 @@ class FSDPModelManager:
                     "betas": main_betas,
                     "eps": main_adam_eps,
                 },
-            ]
+            ],
+            fused=self._can_use_fused_adam(main_optim_params),
         )
         optimizers = [main_optimizer]
 
@@ -710,7 +724,7 @@ class FSDPModelManager:
             )
         for key, params in filtered_params_dict.items():
             optimizers.append(
-                torch.optim.Adam(
+                build_adam(
                     [
                         {
                             "params": params,
@@ -718,7 +732,8 @@ class FSDPModelManager:
                             "betas": filtered_optim_batas_map[key],
                             "eps": filtered_optim_adam_eps_map[key],
                         },
-                    ]
+                    ],
+                    fused=self._can_use_fused_adam(params),
                 )
             )
         return optimizers
