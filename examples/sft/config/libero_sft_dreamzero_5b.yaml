@@ -69,8 +69,13 @@ actor:
     embodiment_tag: "libero_sim"
     relative_action: False
     relative_action_per_horizon: False
+    # Opt-in SFT performance options. An interval of 2 checkpoints alternate blocks.
+    checkpoint_every_n_blocks: 1
+    sft_prompt_cache_size: 0 # CPU entries per rank for frozen T5 outputs.
+    sft_skip_unused_condition_vae: False
 
   optim:
+    fused_adamw: False # Opt in on CUDA FSDP2 with a compatible PyTorch build.
     lr: 1.0e-5
     adam_beta1: 0.95
     adam_beta2: 0.999

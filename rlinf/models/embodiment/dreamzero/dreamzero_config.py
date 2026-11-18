@@ -214,6 +214,7 @@ def validate_dreamzero_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
 @dataclass
 class DreamZeroConfig(VLAConfig):
     model_type = "dreamzero"
+    checkpoint_every_n_blocks: int = 1
     backbone_cfg: PretrainedConfig = field(
         default=None, metadata={"help": "Backbone configuration."}
     )
