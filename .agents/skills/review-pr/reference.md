@@ -4,7 +4,7 @@ The checks for step 5 of [SKILL.md](SKILL.md), by finding category in priority o
 
 Read `main` with `git show "$BASE:<path>"` (or `https://github.com/RLinf/RLinf/blob/main/<path>`) and search it with `git grep <pattern> "$BASE"`, never the working tree. Cite each finding as `path:line` on the PR head, plus `main:path:line` when it came from a main-branch cross-check.
 
-## correctness (question 4)
+## correctness
 
 - [ ] Logic: off-by-one, inverted conditions, wrong operator or default, swapped arguments, mutated shared state, missing `await` or sync.
 - [ ] Edge cases: empty, `None`, or NaN input; single-element batches; zero-size tensors; world size 1; first and last iteration; eval-only paths; resume from checkpoint; single-node versus multi-node paths.
@@ -14,7 +14,7 @@ Read `main` with `git show "$BASE:<path>"` (or `https://github.com/RLinf/RLinf/b
 - [ ] Error handling: silent `except`, exceptions raised on hot paths, missing validation at boundaries, and the opposite, over-validation of state RLinf already guarantees ([patterns.md](../code/patterns.md#no-unnecessary-protection-code)).
 - [ ] Refactor regressions: read the `main` and PR versions of every changed function side by side, because partial refactors often change semantics by accident, and compare every affected backend, env, model, and task.
 
-## design (question 5)
+## design
 
 A mismatch with how RLinf already does things, a bloated workaround, or dead boilerplate is a design defect, not a style nit.
 
@@ -27,20 +27,20 @@ A mismatch with how RLinf already does things, a bloated workaround, or dead boi
 - [ ] YAML: a new file starts from a current sibling in `examples/` and keeps every value static, and code treats user-settable fields as read-only. A file that inherits a base config through Hydra `defaults` (for example `model/pi0_5@actor.model`) overrides only task-specific fields and does not re-declare unchanged defaults.
 - [ ] Hacks: no machine-specific paths, sleep-based synchronization, or monkey-patches; ask for a config- or env-driven version.
 
-## reuse (question 6)
+## reuse
 
 - [ ] Duplication: new logic does not duplicate a helper or abstraction that already exists anywhere in the stack on `main`, such as `rlinf/utils/` (placement, checkpoint, distributed, data iterators, logging), `rlinf/models/embodiment/` (shared transforms, image parsing, action packing), `rlinf/envs/` (`prepare_actions`, wrappers), `rlinf/data/` (dataset writers and loaders), or the `requirements/install.sh` helpers (`clone_or_reuse_repo`, `install_lerobot`, `install_flash_attn`).
 - [ ] Citation: each reuse finding cites the existing helper as `main:<path>:<line>` and proposes reusing or extending it.
 - [ ] Comparison: when nothing should be reused, the review names the implementation it compared against.
 
-## tests, docs, and docs-style (questions 3, 7, and 8)
+## tests, docs, and docs-style
 
 These come from the area checks of step 6: [code § Check](../code/SKILL.md#check) for unit tests, mocks, markers, and CI path filters; [install § Check](../install/SKILL.md#check) for install, Docker, and e2e wiring; and [docs § Check](../docs/SKILL.md#check) for docs against code, EN/ZH parity, README highlights, asset references, and the reading of every changed page against the style guide. Two checks stay with the review, because they need the whole PR in view:
 
 - [ ] Coverage: a user-facing change has a unit or e2e test that fails without the change, so a reviewer can validate that it works.
 - [ ] Completeness: a new model or env comes with an install path, a Docker stage where comparable targets have one, an e2e config, CI coverage, a recipe page in both languages, and a README highlight; a large new dependency (a Docker image, model, or dataset) comes with a maintainer ping.
 
-## style (question 9)
+## style
 
 Flag only real problems; do not pad the review. Lint, formatting, package layout, and license headers come from the code check, and code conventions from [patterns.md § Code](../code/patterns.md#code).
 
