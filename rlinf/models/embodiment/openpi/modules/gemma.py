@@ -210,9 +210,11 @@ class Attention(nn.Module):
     def __init__(
         self,
         configs: Sequence[Config],
+        pytorch_numerics: bool = False,
     ):
         super().__init__()
         self.expert_configs = configs
+        self.pytorch_numerics = pytorch_numerics
         self.num_heads = configs[0].num_heads
         self.num_kv_heads = configs[0].num_kv_heads
         self.head_dim = configs[0].head_dim
@@ -330,8 +332,9 @@ class Attention(nn.Module):
         v = torch.cat([v for v in v_parts if v is not None], dim=1)
 
         # Apply RoPE
-        q = _apply_rope(q, positions=positions)
-        k = _apply_rope(k, positions=positions)
+        rope = _apply_rope_pytorch if self.pytorch_numerics else _apply_rope
+        q = rope(q, positions=positions)
+        k = rope(k, positions=positions)
 
         # KV cache: concatenate along sequence dim
         if kv_cache is not None:
@@ -345,38 +348,49 @@ class Attention(nn.Module):
         if attn_mask.dim() == 4:
             attn_mask = attn_mask[:, 0:1, :, :]  # (B, 1, T, S)
 
-        # GQA einsum pattern matching JAX:
-        q = q * (self.head_dim**-0.5)
+        if self.pytorch_numerics:
+            query = q.transpose(1, 2)
+            key = k.transpose(1, 2).repeat_interleave(self.num_query_groups, dim=1)
+            value = v.transpose(1, 2).repeat_interleave(self.num_query_groups, dim=1)
+            logits = torch.matmul(query, key.transpose(-1, -2)) * self.head_dim**-0.5
+            additive_mask = torch.where(attn_mask, 0.0, -2.3819763e38)
+            probs = F.softmax(logits + additive_mask, dim=-1, dtype=torch.float32).to(
+                dtype
+            )
+            encoded = torch.matmul(probs, value).transpose(1, 2).contiguous()
+        else:
+            # GQA einsum pattern matching JAX:
+            q = q * (self.head_dim**-0.5)
 
-        # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
-        # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
-        K = self.num_kv_heads
-        G = self.num_heads // K
+            # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
+            # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
+            K = self.num_kv_heads
+            G = self.num_heads // K
 
-        q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
-        k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
-        v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
+            q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
+            k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
+            v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
 
-        # einsum "BTKGH,BSKH->BKGTS"
-        logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
+            # einsum "BTKGH,BSKH->BKGTS"
+            logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
 
-        # Align mask to logits shape: logits is (B, K, G, T, S), mask is (B, 1, T, S)
-        # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
-        big_neg = -2.3819763e38
-        mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
-        masked_logits = torch.where(
-            mask_for_logits,
-            logits,
-            torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
-        )
+            # Align mask to logits shape: logits is (B, K, G, T, S), mask is (B, 1, T, S)
+            # We need mask to be (B, 1, 1, T, S) so it broadcasts to (B, K, G, T, S)
+            big_neg = -2.3819763e38
+            mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
+            masked_logits = torch.where(
+                mask_for_logits,
+                logits,
+                torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
+            )
 
-        probs = F.softmax(masked_logits, dim=-1).to(dtype)
+            probs = F.softmax(masked_logits, dim=-1).to(dtype)
 
-        # einsum "BKGTS,BSKH->BTKGH"
-        encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
-        encoded = encoded.reshape(
-            encoded.shape[0], encoded.shape[1], K * G, self.head_dim
-        )
+            # einsum "BKGTS,BSKH->BTKGH"
+            encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
+            encoded = encoded.reshape(
+                encoded.shape[0], encoded.shape[1], K * G, self.head_dim
+            )
         # encoded: (B, T_total, num_heads, head_dim)
 
         # Split back to per-expert outputs
@@ -398,8 +412,9 @@ class Attention(nn.Module):
 class FeedForward(nn.Module):
     """Feed forward module."""
 
-    def __init__(self, features: int, hidden_dim: int):
+    def __init__(self, features: int, hidden_dim: int, pytorch_numerics: bool = False):
         super().__init__()
+        self.pytorch_numerics = pytorch_numerics
         self.features = features
         self.hidden_dim = hidden_dim
         self.w_gating = nn.Parameter(torch.empty(2, features, hidden_dim))
@@ -413,6 +428,13 @@ class FeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dtype = x.dtype
+        if self.pytorch_numerics:
+            gate = F.linear(x, self.w_gating[0].T.contiguous().to(dtype))
+            value = F.linear(x, self.w_gating[1].T.contiguous().to(dtype))
+            return F.linear(
+                F.gelu(gate, approximate="tanh") * value,
+                self.w_linear.T.contiguous().to(dtype),
+            )
         ff_gate = torch.matmul(x, self.w_gating[0].to(dtype))
         ff1 = torch.matmul(x, self.w_gating[1].to(dtype))
         activations = gelu_glu(ff_gate, ff1)
@@ -426,6 +448,7 @@ class Block(nn.Module):
     def __init__(
         self,
         configs: Sequence[Config],
+        pytorch_numerics: bool = False,
         adarms: Sequence[bool] | bool = False,
         dropout: float = 0.0,
     ):
@@ -437,7 +460,7 @@ class Block(nn.Module):
             adarms = [adarms] * len(configs)
         self.adarms = list(adarms)
 
-        self.attn = Attention(configs)
+        self.attn = Attention(configs, pytorch_numerics=pytorch_numerics)
         self.pre_attention_norms = nn.ModuleList(
             [RMSNorm(c.width, adaptive=adarms[i]) for i, c in enumerate(configs)]
         )
@@ -450,11 +473,19 @@ class Block(nn.Module):
         for config in configs:
             lora_cfg = config.lora_configs.get("ffn")
             if lora_cfg is not None:
+                if pytorch_numerics:
+                    raise ValueError(
+                        "OpenPI PyTorch numerics currently requires a non-LoRA model"
+                    )
                 self.mlps.append(
                     LoRAFeedForward(config.width, config.mlp_dim, lora_cfg)
                 )
             else:
-                self.mlps.append(FeedForward(config.width, config.mlp_dim))
+                self.mlps.append(
+                    FeedForward(
+                        config.width, config.mlp_dim, pytorch_numerics=pytorch_numerics
+                    )
+                )
 
     def forward(
         self,
@@ -539,6 +570,7 @@ class Module(nn.Module):
     def __init__(
         self,
         configs: Sequence[Config],
+        pytorch_numerics: bool = False,
         embed_dtype: str = "bfloat16",
         adarms: Sequence[bool] | bool = False,
         dropout: float = 0.0,
@@ -561,6 +593,7 @@ class Module(nn.Module):
                 Block(
                     configs,
                     adarms=self.adarms,
+                    pytorch_numerics=pytorch_numerics,
                     dropout=dropout,
                 )
                 for _ in range(configs[0].depth)
@@ -674,6 +707,26 @@ class Module(nn.Module):
                 outputs.append(None)
 
         return outputs, kv_cache
+
+
+def _apply_rope_pytorch(
+    x: torch.Tensor, *, positions: torch.Tensor, max_wavelength: float = 10000.0
+) -> torch.Tensor:
+    """Match Transformers Gemma's rounded sine/cosine and rotary products."""
+    dim = x.shape[-1]
+    inv_freq = 1.0 / (
+        max_wavelength ** (torch.arange(0, dim, 2, device=x.device).float() / dim)
+    )
+    # OpenPI casts the rotary frequency buffer with the backbone, then upcasts it.
+    inv_freq = inv_freq.to(x.dtype).float()
+    freq = (
+        inv_freq[None, :, None].expand(x.shape[0], -1, 1)
+        @ positions[:, None, :].float()
+    ).transpose(1, 2)
+    angles = torch.cat((freq, freq), dim=-1)[:, :, None, :]
+    cos, sin = angles.cos().to(x.dtype), angles.sin().to(x.dtype)
+    left, right = x.chunk(2, dim=-1)
+    return x * cos + torch.cat((-right, left), dim=-1) * sin
 
 
 def _apply_rope_eager(
