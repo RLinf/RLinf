@@ -55,53 +55,53 @@ SEVERITIES = ("critical", "major", "minor")
 CATEGORIES = ("correctness", "design", "reuse", "tests", "docs", "docs-style", "style")
 STATUSES = ("confirmed", "unresolved")
 POSTED = ("inline", "here")
-SECTIONS = ("### Findings", "### Reproduction")
+REPRODUCTION, FINDINGS = "### Reproduction", "### Findings"
+SECTIONS = (REPRODUCTION, FINDINGS)
 REPRO_LABELS = ("- Settings:", "- Result:")
 NO_FINDINGS = "No findings."
 TABLE_COLUMNS = 7  # ID, Severity, Category, Location, Summary, Status, Posted
 MAX_BODY = 65536  # GitHub rejects a longer review body
 EVENTS = ("COMMENT", "REQUEST_CHANGES", "APPROVE")
 FIX_LEAD = "Suggested fix:"
+EVIDENCE_LEAD = "Evidence:"
 TEMPLATE = """\
 **<Recommendation>** · <n critical, n major, n minor, or no findings> · head `<sha7>` · base `main@<sha7>`
 
-<!-- One or two sentences: what the PR does, what blocks it, and any decision a maintainer must make. -->
+<One or two sentences: what the PR does, what blocks it, and any decision a maintainer must make.>
+
+### Reproduction
+
+- Settings: <PR revision, hardware and nodes, environment, model and dataset, config, commands, who ran it; or: not run, why, and what a run needs>
+- Result: <claimed vs. observed, functional and metric results separately, first failure and every intervention, what was not reproduced>
 
 ### Findings
 
 | ID | Severity | Category | Location | Summary | Status | Posted |
 |---|---|---|---|---|---|---|
-| F1 | critical | correctness | `rlinf/x.py:42` | <!-- one line --> | confirmed | inline |
-| F2 | major | docs | `docs/source-zh/...` | <!-- one line --> | confirmed | here |
+| F1 | critical | correctness | `rlinf/x.py:42` | <one line> | confirmed | inline |
+| F2 | major | docs | `docs/source-zh/...` | <one line> | confirmed | here |
 
-#### F1 · critical · correctness: <!-- plain title -->
+#### F1 · critical · correctness: <plain title>
 
-Inline at `rlinf/x.py:42`: <!-- one sentence: what goes wrong and when. The fix lives in the inline comment. -->
+Inline at `rlinf/x.py:42`: <one sentence: what goes wrong and when; the fix lives in the inline comment>
 
-<details><summary>Code walkthrough and evidence</summary>
+Code walkthrough:
 
-<!-- Quoted snippets from the PR, and from main when compared, each under a `path:line` line; the steps from the input to the bug. -->
+<quoted snippets from the PR, and from main when compared, each under a `path:line` line; then the steps from the input to the bug>
 
-Evidence: <!-- the command and its result, or the trace; for an unresolved finding, what would settle it -->
+Evidence: <the command and its result, or the trace; for an unresolved finding, what would settle it>
 
-</details>
+#### F2 · major · docs: <plain title>
 
-#### F2 · major · docs: <!-- plain title -->
+<what it tries to do, what happens instead, and why it matters, written like an inline comment>
 
-<!-- What it tries to do, what happens instead, why it matters; written like an inline comment. -->
+Suggested fix: <one sentence, then a code block when code changes>
 
-Suggested fix: <!-- one sentence, then a code block when code changes -->
+Code walkthrough:
 
-<details><summary>Code walkthrough and evidence</summary>
+<as for F1>
 
-<!-- as above -->
-
-</details>
-
-### Reproduction
-
-- Settings: <!-- PR revision, hardware and nodes, environment, model and dataset, config, commands, who ran it; or: not run, why, and what a run needs -->
-- Result: <!-- claimed vs. observed, functional and metric results separately, first failure and every intervention, what was not reproduced -->
+Evidence: <as for F1>
 """
 PAYLOAD_KEYS = {"commit_id", "event", "body", "comments"}
 COMMENT_KEYS = {"path", "line", "side", "start_line", "start_side", "body"}
@@ -125,7 +125,9 @@ class Markdown:
     FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
     BLOCK = re.compile(r"^\s*([#|>]|[-*+] |\d+[.)] |<)")
     HEADING = re.compile(r"^(#{1,6})\s")
-    HINT = "<!--"
+    # A tag, an HTML comment, or a <placeholder> left from the template.
+    HTML = re.compile(r"<!--|</?[A-Za-z][\w-]*(\s[^<>]*)?/?>")
+    CODE_SPAN = re.compile(r"(`+).+?\1")
 
     @classmethod
     def unfenced(cls, text: str) -> list[tuple[int, str]]:
@@ -354,10 +356,11 @@ class ReviewLinter:
                 f"line {n} is hard-wrapped; GitHub renders it as a line break, so keep each paragraph on one line",
             )
         for n, line in Markdown.unfenced(text):
-            if Markdown.HINT in line:
+            m = Markdown.HTML.search(Markdown.CODE_SPAN.sub("", line))
+            if m:
                 self.error(
                     where,
-                    f"line {n} still holds a template hint: {line.strip()[:60]!r}",
+                    f"line {n} holds HTML or an unfilled template placeholder ({m[0][:40]!r}); write plain Markdown",
                 )
 
     def check_body(self, body: str) -> None:
@@ -383,10 +386,10 @@ class ReviewLinter:
                 f"sections must be {list(SECTIONS)} in this order, found {found}; use #### inside a section",
             )
         content = dict(reversed(sections))
-        rows = self.check_findings(content.get(SECTIONS[0], []))
+        rows = self.check_findings(content.get(FINDINGS, []))
         self.check_inline_rows(rows)
-        if SECTIONS[1] in content:
-            self.check_reproduction(content[SECTIONS[1]])
+        if REPRODUCTION in content:
+            self.check_reproduction(content[REPRODUCTION])
 
     def check_verdict(self, lines: list[tuple[int, str]]) -> None:
         first = next((line.strip() for _, line in lines if line.strip()), "")
@@ -484,24 +487,13 @@ class ReviewLinter:
         return Row(n, fid, severity, category, location, posted)
 
     def check_section(self, row: Row, section: Section) -> None:
-        outside, depth, has_details = [], 0, False
-        for line in section.lines:
-            stripped = line.strip()
-            if stripped.startswith("<details"):
-                depth, has_details = depth + 1, True
-            elif stripped.startswith("</details"):
-                depth -= 1
-            elif depth == 0:
-                outside.append(stripped)
-        text = "\n".join(outside)
+        text = "\n".join(line.strip() for line in section.lines)
         where = f"body {row.id}"
-        if not text.strip():
-            self.error(where, "the section says nothing outside its <details> block")
-        if not has_details:
-            self.error(
-                where,
-                "the section needs a <details> block with the code walkthrough and evidence",
-            )
+        if not any(
+            line.startswith(EVIDENCE_LEAD) and line[len(EVIDENCE_LEAD) :].strip()
+            for line in text.splitlines()
+        ):
+            self.error(where, f"the section needs an '{EVIDENCE_LEAD}' paragraph")
         if row.posted == "here" and FIX_LEAD not in text:
             self.error(where, f"a finding posted here needs a '{FIX_LEAD}' paragraph")
         if row.posted == "inline" and FIX_LEAD in text:
