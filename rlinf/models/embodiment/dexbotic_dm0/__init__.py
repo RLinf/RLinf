@@ -31,13 +31,14 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     from rlinf.models.embodiment.dexbotic_dm0.dm0_policy import (
         DexboticDM0ForRLActionPrediction,
     )
+    from rlinf.scheduler import Worker
     from rlinf.utils.logging import get_logger
 
     logger = get_logger()
 
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.empty_cache()
+    if Worker.torch_platform is not None and Worker.torch_platform.is_available():
+        Worker.torch_platform.reset_peak_memory_stats()
+        Worker.torch_platform.empty_cache()
 
     if not cfg.model_path or not os.path.exists(cfg.model_path):
         raise ValueError(f"Model path does not exist: {cfg.model_path}")
@@ -128,7 +129,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             try:
                 return next(_pe_model_ref.model.mm_projector.parameters()).device
             except StopIteration:
-                return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                return torch.device(
+                    Worker.torch_device_type
+                    if Worker.torch_platform is not None
+                    and Worker.torch_platform.is_available()
+                    else "cpu"
+                )
 
         def _pe_dtype_property(self):
             params = list(self.vision_tower.parameters())
