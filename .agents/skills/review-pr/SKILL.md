@@ -31,7 +31,7 @@ gh api "repos/RLinf/RLinf/pulls/$N/comments" --paginate  # earlier review thread
 
 Check out `$PR_HEAD` in a separate git worktree; steps 3 and 6 run there, and so does any code you run to verify a finding. Never edit the PR branch or push to it. Without `gh`, read the PR page, `<PR URL>.diff` (or `<PR URL>.patch`), and files on `https://github.com/RLinf/RLinf/blob/main/<path>`; the review can still run, but posting needs `gh`. If the PR is private and neither works, tell the user and ask for an exported diff and description.
 
-On a second round of review, go through every earlier thread first. Note which ones the new commits fix and which are still open, and carry the open ones forward rather than writing them again.
+On a second round of review, go through every earlier thread and every finding of the earlier main comment first. Note which ones the new commits fix and which are still open, and carry the open ones forward rather than writing them again: an open inline thread gets a reply, and an open main-comment finding keeps its earlier ID in the new review. The verdict sentence names the earlier findings the new commits fix.
 
 ## 2. Understand the PR
 
@@ -193,7 +193,7 @@ Dismissed:
 
 The review ends with the report of step 8; do not post it by default. When the user asks you to post, follow step 10 with the event they name: `COMMENT` unless they ask for request changes. When they ask for edits first, apply them and show the changed text. Approve only when the user asks for it.
 
-A posted review is changed in place, never posted again. To change its main comment, run `lint_review.py update` (step 10); to change an inline comment, edit that comment or reply in its thread. When `post` fails without printing a URL, as on a dropped connection, list the PR's reviews (`gh api "repos/RLinf/RLinf/pulls/$N/reviews"`) before you try again, because GitHub may have created the review.
+A posted review is changed in place rather than posted again; only a second round on a new head posts a new review (step 1). To change its main comment, run `lint_review.py update` (step 10); to change an inline comment, edit that comment or reply in its thread. When `post` fails without printing a URL, as on a dropped connection, list the PR's reviews (`gh api "repos/RLinf/RLinf/pulls/$N/reviews"`) before you try again, because GitHub may have created the review.
 
 ## 10. Post
 
