@@ -2161,16 +2161,16 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
             "Synchronous SearchR1 PPO requires actor, critic, and rollout "
             "to share the same GPUs."
         )
-    if not component_placement.is_collocated:
-        # The Megatron MA actor gathers the full rollout batch before
-        # training, so it also runs under disaggregated placement. The FSDP
-        # MA actor still asserts collocated placement internally.
+    if cfg.actor.training_backend == "fsdp":
+        from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
+
+        MAFSDPActor.validate_placement(cfg, component_placement)
+    if cfg.runner.get("async_mode", False):
         if cfg.actor.training_backend != "megatron":
             raise ValueError(
-                "SearchR1 multi-agent actors support only collocated component "
-                "placement unless actor.training_backend is megatron."
+                "SearchR1 async training currently requires "
+                "actor.training_backend=megatron; FSDP supports synchronous training."
             )
-    if cfg.runner.get("async_mode", False):
         if not component_placement.is_disaggregated:
             raise ValueError(
                 "SearchR1 async training requires the actor and the rollout "

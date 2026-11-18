@@ -11,7 +11,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,rollout,reward: all
+    actor: all
+    rollout: all
+    reward: all
 
 
 runner:

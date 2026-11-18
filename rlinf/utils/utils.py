@@ -199,7 +199,7 @@ def seed_everything(seed: int) -> int:
 def retrieve_model_state_dict_in_cpu(
     resident_model, offloaded_buffer=None, is_fsdp: bool = False
 ):
-    """Return a pinned CPU copy of regular-module or FSDP local model states.
+    """Return an independent CPU snapshot of regular or FSDP local model states.
 
     Args:
         resident_model: A regular ``torch.nn.Module`` or an FSDP actor when
@@ -216,10 +216,18 @@ def retrieve_model_state_dict_in_cpu(
                 "offloaded_buffer is unsupported for FSDP state dicts; "
                 "pass None so the strategy can preserve DTensor metadata."
             )
-        return resident_model.get_model_state_dict(
-            cpu_offload=True,
+        state_dict = resident_model.get_model_state_dict(
+            cpu_offload=False,
             full_state_dict=False,
         )
+        cpu_state_dict = {
+            name: value.detach().to(device="cpu", non_blocking=True, copy=True)
+            if isinstance(value, torch.Tensor)
+            else value
+            for name, value in state_dict.items()
+        }
+        Worker.torch_platform.synchronize()
+        return cpu_state_dict
 
     if offloaded_buffer is None:
         offloaded_buffer = {}
@@ -422,9 +430,7 @@ def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
 
 
 def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
-        mask, dim=-1
-    )  # token-mean
+    seq_losses = (values * mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
     loss = torch.mean(seq_losses)  # seq-mean
     return loss
 
