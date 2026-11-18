@@ -353,7 +353,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
         else:
             raise NotImplementedError
 
-    def sft_forward(self, data=None, **kwargs):
+    def sft_forward(self, data=None, prompt_keys=None, **kwargs):
         # Mark the start of each training iteration so PyTorch knows when
         # to reclaim memory held by CUDA graphs from the previous iteration.
         # NPU skips the compile wrappers, so it has no CUDA graphs to mark.
@@ -372,12 +372,7 @@ class DreamZeroPolicy(VLA, BasePolicy):
             head.in_sft_forward = True
             try:
                 if head.prompt_cache is not None:
-                    head.sft_prompt_keys = [
-                        (ids.numpy().tobytes(), mask.numpy().tobytes())
-                        for ids, mask in zip(
-                            data["text"], data["text_attention_mask"], strict=True
-                        )
-                    ]
+                    head.sft_prompt_keys = prompt_keys
                 outputs = super().forward(data)
             finally:
                 head.in_sft_forward = False
