@@ -180,6 +180,22 @@ Launch a config with ``run_embodiment.sh``:
 2. Attaches to (or starts) Ray and places the actor, rollout, and env workers per ``cluster.component_placement``.
 3. Runs the PPO training loop, writing logs and checkpoints under ``runner.logger.log_path``.
 
+When PPO rollout spends time running terminal value bootstrap one environment
+slice at a time or decoding unused action tokens on OpenVLA, enable batched and
+value-only bootstrap in the config:
+
+.. code-block:: yaml
+
+   rollout:
+     batch_bootstrap_inference: True
+     value_only_bootstrap: True
+
+``rollout.batch_bootstrap_inference`` merges pending terminal observations into
+one rollout batch before splitting values back to their routes.
+``rollout.value_only_bootstrap`` calls ``predict_value_batch`` directly from the
+prompt hidden state instead of autoregressively generating actions when a value
+head is present (such as OpenVLA PPO). Both options default to ``False``.
+
 .. admonition:: Configure further
    :class: note
 

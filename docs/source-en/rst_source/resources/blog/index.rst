@@ -6,6 +6,12 @@ Explore RLinf engineering reports, system optimizations, and model integrations.
 .. grid:: 1 2 2 3
    :gutter: 2
 
+   .. grid-item-card:: Embodied Models on Ascend
+      :link: ascend_embodied_optimization
+      :link-type: doc
+
+      Follow complete-call dependencies to understand metadata reuse, communication overlap, and graph execution.
+
    .. grid-item-card:: Comparison with VeRL
       :link: compare_with_verl
       :link-type: doc
@@ -46,6 +52,7 @@ Explore RLinf engineering reports, system optimizations, and model integrations.
    :hidden:
    :maxdepth: 1
 
+   Embodied Models on Ascend <ascend_embodied_optimization>
    compare_with_verl
    build_a_coding_online_rl_case
    behavior_system_optimization

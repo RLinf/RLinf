@@ -54,6 +54,9 @@ class EnvFacts:
         joint_limit_min: Per-arm lower joint limits, when the env declares them.
         joint_limit_max: Per-arm upper joint limits, when the env declares them.
         joint_step_limits: Largest joint movement one control tick may command.
+        max_joint_lead: Largest gap a joint command may run ahead of the
+            measured joints, when the env wants devices to integrate their own
+            command rather than step from the measured joints.
         arm_kinematics: Builds the kinematic model of one arm, named by its
             action branch (``None`` on a one-arm robot), for a device that
             maps a Cartesian input onto joints.
@@ -66,6 +69,7 @@ class EnvFacts:
     joint_limit_min: Optional[tuple[tuple[float, ...], ...]] = None
     joint_limit_max: Optional[tuple[tuple[float, ...], ...]] = None
     joint_step_limits: Optional[tuple[float, ...]] = None
+    max_joint_lead: Optional[float] = None
     arm_kinematics: Optional[Callable[[Optional[str]], Any]] = None
 
     @classmethod
@@ -78,6 +82,7 @@ class EnvFacts:
         """Build action metadata from an environment."""
         config = getattr(env.unwrapped, "config", None)
         step_limits = getattr(config, "joint_step_limits", None)
+        max_lead = getattr(config, "teleop_max_joint_lead", None)
         return cls(
             layout=layout,
             kinds=kinds,
@@ -88,5 +93,6 @@ class EnvFacts:
             joint_step_limits=(
                 None if step_limits is None else tuple(float(x) for x in step_limits)
             ),
+            max_joint_lead=None if max_lead is None else float(max_lead),
             arm_kinematics=getattr(env.unwrapped, "arm_kinematics", None),
         )

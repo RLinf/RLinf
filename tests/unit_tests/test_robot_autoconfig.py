@@ -73,14 +73,28 @@ def _run_scenario(mode: str) -> subprocess.CompletedProcess:
     )
 
 
+def _max_parallel_scenarios() -> int:
+    """Bound concurrent Ray clusters by both CPU cores and physical memory."""
+    cpus = os.cpu_count() or 1
+    try:
+        mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return min(3, cpus)
+    if mem_bytes <= 0:
+        return min(3, cpus)
+    # Each scenario starts a private Ray cluster with manager and worker actors.
+    return max(1, min(3, cpus, mem_bytes // (10 * 1024**3)))
+
+
 @pytest.fixture(scope="module")
 def scenario_results() -> dict[str, subprocess.CompletedProcess]:
     """Run isolated scenario subprocesses with bounded concurrency."""
-    workers = min(3, os.cpu_count() or 1)
+    workers = _max_parallel_scenarios()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return dict(zip(_MODES, pool.map(_run_scenario, _MODES), strict=True))
 
 
+@pytest.mark.placement
 @pytest.mark.parametrize("mode", _MODES)
 def test_real_cluster_robot_autoconfig(
     mode: str, scenario_results: dict[str, subprocess.CompletedProcess]

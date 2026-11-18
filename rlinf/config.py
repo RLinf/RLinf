@@ -1313,6 +1313,20 @@ def validate_embodied_cfg(cfg):
         assert algorithm_cfg.get("adv_type", None) != "opd", (
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
+    for bootstrap_flag in ("batch_bootstrap_inference", "value_only_bootstrap"):
+        flag_value = cfg.rollout.get(bootstrap_flag, False)
+        if not isinstance(flag_value, bool):
+            raise ValueError(
+                f"Expected bool for rollout.{bootstrap_flag}, got {flag_value!r}."
+            )
+    if (
+        cfg.rollout.get("batch_bootstrap_inference", False)
+        or cfg.rollout.get("value_only_bootstrap", False)
+    ) and cfg.rollout.get("rollout_backend", "huggingface") != "huggingface":
+        raise ValueError(
+            "rollout.batch_bootstrap_inference and rollout.value_only_bootstrap "
+            "require rollout.rollout_backend='huggingface'."
+        )
     if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
         assert model_type == SupportedModel.OPENPI, (
             "Expected model_type='openpi' for rollout_backend='phyai', "
@@ -1807,6 +1821,11 @@ def validate_embodied_cfg(cfg):
             if cfg.env.get("eval", None) is not None
             else None
         )
+        if eval_env_type == SupportedEnvType.MANISKILL:
+            with open_dict(cfg.env.eval):
+                cfg.env.eval._reconfigure_on_full_reset = (
+                    cfg.env.eval.use_fixed_reset_state_ids
+                )
         if (
             train_env_type == SupportedEnvType.MANISKILL
             or eval_env_type == SupportedEnvType.MANISKILL
