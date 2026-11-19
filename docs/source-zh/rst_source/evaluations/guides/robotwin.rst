@@ -138,7 +138,9 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 Dream API 评测
 --------------
 
-使用 Dream API 评测 ALOHA 或 Piper 的 ``click_bell`` 任务。默认使用 ``dreamlabs/dream-1-beta``，可通过 ``rollout.model.checkpoint`` 切换 checkpoint。
+用 Dream API 在 RoboTwin 中评测 ``click_bell`` 任务。Dream API 是 Dream Labs 提供的在线推理服务，根据相机图像、机器人状态和任务指令生成动作。
+
+可用 ALOHA-AgileX 双臂平台或两条 AgileX Piper 机械臂运行评测。默认 checkpoint 为 ``dreamlabs/dream-1-beta``\ 。要切换 checkpoint，设置 ``rollout.model.checkpoint``\ 。
 
 **安装依赖**
 

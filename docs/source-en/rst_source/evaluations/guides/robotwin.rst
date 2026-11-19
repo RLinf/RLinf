@@ -137,7 +137,9 @@ The terminal prints ``eval/success_once``; see :doc:`../reference/results` for l
 Dream API Evaluation
 --------------------
 
-Use the Dream API to run the RoboTwin task ``click_bell`` on ALOHA or Piper. The config uses ``dreamlabs/dream-1-beta``. To select another checkpoint, set ``rollout.model.checkpoint``.
+Use the Dream API to run the RoboTwin task ``click_bell``. Dream API is a hosted inference service from Dream Labs. It predicts robot actions from camera images, robot state, and a task instruction.
+
+Run the evaluation with the ALOHA-AgileX dual-arm platform or a pair of AgileX Piper arms. The default checkpoint is ``dreamlabs/dream-1-beta``. To select another checkpoint, set ``rollout.model.checkpoint``.
 
 **Install dependencies**
 
