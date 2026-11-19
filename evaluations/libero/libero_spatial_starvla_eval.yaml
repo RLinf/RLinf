@@ -65,7 +65,7 @@ rollout:
     max_new_tokens: 256
 
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: franka
   enable_offload: False

@@ -109,7 +109,6 @@ env:
 rollout:
   group_name: "RolloutGroup"
   rollout_backend: huggingface
-  generation_backend: huggingface
   recompute_logprobs: False
   enable_offload: False
   pipeline_stage_num: 2
