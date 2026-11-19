@@ -33,7 +33,7 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.managers.scheduler import Scheduler as _Scheduler
 from sglang.srt.managers.scheduler import logger
 from sglang.srt.managers.scheduler import (
-    run_scheduler_process as _run_scheduler_process,
+    run_scheduler_process as ORIG__run_scheduler_process,
 )
 
 from rlinf.scheduler import Worker, WorkerAddress
@@ -921,4 +921,4 @@ def run_scheduler_process(*args, **kwargs):
         "rlinf.hybrid_engines.sglang.common.sgl_scheduler.Scheduler",
     )
     Patcher.apply()
-    _run_scheduler_process(*args, **kwargs)
+    ORIG__run_scheduler_process(*args, **kwargs)
