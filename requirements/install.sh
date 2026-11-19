@@ -39,6 +39,11 @@ PLATFORM_TORCH_INDEX=""
 # deps that only live on the platform-specific index (e.g. pytorch-triton-rocm
 # for ROCm). Set per-platform by configure_<platform>.
 PLATFORM_TORCH_PACKAGES=()
+# Whether apply_torch_override also pins later `uv pip install` calls to the
+# platform's torch builds through UV_CONSTRAINT, for an index uv has no
+# torch-backend for. Set per-platform by configure_<platform>.
+PLATFORM_TORCH_CONSTRAINT=0
+TORCH_CONSTRAINT_FILE=""
 # Lines appended to the venv's bin/activate by embodied installers (each is a
 # full shell statement, e.g. `export VK_DRIVER_FILES=...`). Populated per-
 # platform by configure_<platform>; other targets ignore the array.
@@ -107,7 +112,8 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # AMD composes UV_TORCH_BACKEND=rocm<version>; --rocm picks the version. When
 # unset, configure_amd detects the system's ROCm version and auto-picks the
 # minimum torch version on https://download.pytorch.org/whl/torch/ that has a
-# matching +rocm<version> wheel.
+# matching +rocm<version> wheel. ROCm 10 and later install from AMD's wheel
+# index instead (see configure_amd_therock_torch).
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
@@ -183,8 +189,15 @@ Common options:
                            /opt/clone-uv-env.sh, so torch/torch-kunlun and their dependencies
                            are reused.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
-                           system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
-                           UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
+                           system (/opt/rocm/.info/version, hipconfig, rocminfo). ROCm 7 and
+                           earlier compose UV_TORCH_BACKEND=rocm<version>. Ignored on other
+                           platforms.
+                           10.0 needs no system ROCm: torch and the ROCm runtime install from
+                           AMD's wheel index, for the GPU architectures in PYTORCH_ROCM_ARCH
+                           (e.g. gfx1201, or 'gfx942;gfx950'), else the detected one. This
+                           install skips flash-attn. Later 10.x releases take the same path
+                           and need torch, torchvision, and torchaudio wheels on that index
+                           for the selected torch version.
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
                            or 3.12.12 for agentic on the torch 2.11 stack.
                            Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
@@ -764,27 +777,31 @@ configure_amd() {
         exit 1
     fi
 
-    if [ -z "$TORCH_VERSION" ]; then
-        TORCH_VERSION=$(detect_torch_for_rocm "$ROCM_VERSION") || {
-            echo "[install.sh] No compatible torch wheels found for ROCm ${ROCM_VERSION} (Python ${PYTHON_VERSION}). Pass --torch explicitly." >&2
-            exit 1
-        }
-        echo "[install.sh] Auto-selected torch version for ROCm ${ROCM_VERSION}: ${TORCH_VERSION}"
-    fi
-
-    PLATFORM_TORCH_STR="+rocm${ROCM_VERSION}"
-    if [ "$USE_MIRRORS" -eq 1 ]; then
-        PLATFORM_TORCH_INDEX="https://mirrors.nju.edu.cn/pytorch/whl/rocm${ROCM_VERSION}"
+    if amd_rocm_is_therock "$ROCM_VERSION"; then
+        configure_amd_therock_torch
     else
-        PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/rocm${ROCM_VERSION}"
+        if [ -z "$TORCH_VERSION" ]; then
+            TORCH_VERSION=$(detect_torch_for_rocm "$ROCM_VERSION") || {
+                echo "[install.sh] No compatible torch wheels found for ROCm ${ROCM_VERSION} (Python ${PYTHON_VERSION}). Pass --torch explicitly." >&2
+                exit 1
+            }
+            echo "[install.sh] Auto-selected torch version for ROCm ${ROCM_VERSION}: ${TORCH_VERSION}"
+        fi
+
+        PLATFORM_TORCH_STR="+rocm${ROCM_VERSION}"
+        if [ "$USE_MIRRORS" -eq 1 ]; then
+            PLATFORM_TORCH_INDEX="https://mirrors.nju.edu.cn/pytorch/whl/rocm${ROCM_VERSION}"
+        else
+            PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/rocm${ROCM_VERSION}"
+        fi
+        # All four packages are routed through the ROCm index (and only that
+        # index — see explicit=true on [[tool.uv.index]]). torchvision/torchaudio
+        # arrive transitively via vllm/etc.; pytorch-triton-rocm arrives
+        # transitively via torch. apply_torch_override promotes them to direct
+        # deps in [project.dependencies] so [tool.uv.sources] mappings actually
+        # take effect (uv only applies sources to direct deps).
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio" "pytorch-triton-rocm" "triton-rocm")
     fi
-    # All four packages are routed through the ROCm index (and only that
-    # index — see explicit=true on [[tool.uv.index]]). torchvision/torchaudio
-    # arrive transitively via vllm/etc.; pytorch-triton-rocm arrives
-    # transitively via torch. apply_torch_override promotes them to direct
-    # deps in [project.dependencies] so [tool.uv.sources] mappings actually
-    # take effect (uv only applies sources to direct deps).
-    PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio" "pytorch-triton-rocm" "triton-rocm")
     # The Vulkan driver follows the GPU ISA, not the platform. RADV renders on
     # RDNA; on CDNA it reports the card as a usable discrete GPU and then fails
     # when SAPIEN allocates a render image, so those hosts render on Mesa's
@@ -793,6 +810,11 @@ configure_amd() {
     # Undetected GPUs keep the RADV defaults.
     local gfx_arch
     gfx_arch=$(detect_amd_gfx_arch) || gfx_arch=""
+    if [ -z "$gfx_arch" ] && amd_rocm_is_therock "$ROCM_VERSION"; then
+        # A host that takes ROCm from the wheels has no rocminfo before the install.
+        gfx_arch=$(amd_therock_target_archs)
+        gfx_arch="${gfx_arch%% *}"
+    fi
     if [ -n "$gfx_arch" ] && amd_gfx_is_cdna "$gfx_arch"; then
         echo "[install.sh] Detected CDNA (${gfx_arch}); rendering with Mesa lavapipe."
         PLATFORM_VENV_EXPORTS=(
@@ -808,7 +830,7 @@ configure_amd() {
         )
     fi
     # flash-attn selects its backend at import time from this variable.
-    if amd_flash_attn_needs_triton "$gfx_arch"; then
+    if ! amd_rocm_is_therock "$ROCM_VERSION" && amd_flash_attn_needs_triton "$gfx_arch"; then
         echo "[install.sh] flash-attn will use its Triton backend on ${gfx_arch:-${PYTORCH_ROCM_ARCH}}."
         PLATFORM_VENV_EXPORTS+=("export FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE")
     fi
@@ -821,9 +843,105 @@ configure_amd() {
     PLATFORM_SYSTEM_SITE_PACKAGES=0
     PLATFORM_VENV_HOOK=""
     PLATFORM_COMMON_REQ_EXCLUDE_RE=""
-    if [ -z "${UV_TORCH_BACKEND:-}" ]; then
+    if amd_rocm_is_therock "$ROCM_VERSION"; then
+        # No flash-attn wheel matches the ROCm 10 torch builds.
+        PLATFORM_FLASH_ATTN_INSTALL=0
+    elif [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="rocm${ROCM_VERSION}"
     fi
+}
+
+# AMD's index provides ROCm 10 builds compatible with RLinf's torch pin. They
+# are TheRock wheels: the local version tag is +rocmX.Y.Z, the ROCm runtime
+# arrives as rocm / rocm-sdk-* wheels, and the GPU code objects live in
+# per-architecture device packages that install_amd_extras adds.
+AMD_THEROCK_INDEX="${AMD_THEROCK_INDEX:-https://stable.repo.amd.com/rocm/whl-next}"
+
+amd_rocm_is_therock() {
+    [ "${1%%.*}" -ge 10 ] 2>/dev/null
+}
+
+# X.Y -> X.Y.0; TheRock wheels always carry a three-part ROCm version.
+amd_therock_rocm_full() {
+    if [[ "$1" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        echo "$1.0"
+    else
+        echo "$1"
+    fi
+}
+
+configure_amd_therock_torch() {
+    PLATFORM_TORCH_STR="+rocm$(amd_therock_rocm_full "$ROCM_VERSION")"
+    PLATFORM_TORCH_INDEX="$AMD_THEROCK_INDEX"
+    # torch pulls triton and the ROCm runtime wheels from the same index; route
+    # them there too, so the resolver never mixes in PyPI's CUDA builds.
+    PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio" "triton" "rocm" "rocm-bootstrap" "rocm-sdk-core" "rocm-sdk-libraries")
+    # uv rejects UV_TORCH_BACKEND=rocm10.x.
+    PLATFORM_TORCH_CONSTRAINT=1
+    echo "[install.sh] ROCm ${ROCM_VERSION}: torch${PLATFORM_TORCH_STR} wheels from ${AMD_THEROCK_INDEX}"
+}
+
+# GPU architectures to install TheRock device packages for: PYTORCH_ROCM_ARCH
+# (';' or ',' separated), else the first GPU the ROCm stack reports.
+amd_therock_target_archs() {
+    local archs="${PYTORCH_ROCM_ARCH:-}"
+    if [ -z "$archs" ]; then
+        archs=$(detect_amd_gfx_arch) || archs=""
+    fi
+    echo "$archs" | tr ';,' '  '
+}
+
+install_amd_therock_device_packages() {
+    local archs
+    archs=$(amd_therock_target_archs)
+    if [ -z "${archs// /}" ]; then
+        echo "[install.sh] No AMD GPU architecture detected; set PYTORCH_ROCM_ARCH (e.g. gfx1201, or 'gfx942;gfx950') to install the ROCm ${ROCM_VERSION} device packages." >&2
+        exit 1
+    fi
+    # The torch, torchvision and rocm wheels name their device packages under
+    # the device-<arch> extra. The set differs by architecture: Radeon ones
+    # add a family package that holds the attention kernels.
+    local pkg_list pkgs=()
+    # shellcheck disable=SC2086
+    pkg_list=$(python - $archs <<'EOF'
+import re
+import sys
+from importlib.metadata import PackageNotFoundError, requires
+
+for arch in sys.argv[1:]:
+    extra = re.compile(r"""extra\s*==\s*["']device-%s["']""" % re.escape(arch))
+    found = False
+    for dist in ("torch", "torchvision", "rocm"):
+        try:
+            reqs = requires(dist) or []
+        except PackageNotFoundError:
+            continue
+        for req in reqs:
+            spec, _, marker = req.partition(";")
+            if extra.search(marker):
+                print(spec.replace(" ", ""))
+                found = True
+    if not found:
+        sys.exit(f"[install.sh] The installed TheRock wheels list no device packages for {arch}.")
+EOF
+    ) || exit 1
+    mapfile -t pkgs <<< "$pkg_list"
+    echo "[install.sh] Installing TheRock device packages for ${archs}: ${pkgs[*]}"
+    # --index-url would lose to the UV_DEFAULT_INDEX that --use-mirror exports.
+    uv pip install --default-index "$AMD_THEROCK_INDEX" --no-deps "${pkgs[@]}"
+}
+
+install_amd_therock_amdsmi() {
+    # Ray counts AMD GPUs through the `amdsmi` Python package. rocm-sdk-core
+    # ships the bindings that match its libamd_smi, and they find the library
+    # relative to their own path, so a .pth exposes them in place.
+    local site_dir amd_smi_rel="_rocm_sdk_core/share/amd_smi"
+    site_dir=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+    if [ ! -f "$site_dir/$amd_smi_rel/amdsmi/__init__.py" ]; then
+        echo "[install.sh] amdsmi bindings not found under $site_dir/$amd_smi_rel; Ray cannot detect AMD GPUs without them." >&2
+        exit 1
+    fi
+    echo "$amd_smi_rel" > "$site_dir/rocm_sdk_amdsmi.pth"
 }
 
 configure_ascend() {
@@ -1205,6 +1323,13 @@ install_nvidia_extras() {
 }
 
 install_amd_extras() {
+    if amd_rocm_is_therock "$ROCM_VERSION"; then
+        # TheRock torch depends on the importable `triton` package directly, so
+        # the pytorch-triton-rocm shim below does not apply.
+        install_amd_therock_device_packages
+        install_amd_therock_amdsmi
+        return 0
+    fi
     # Some downstream packages (vllm and friends) import `triton` directly even
     # when running on ROCm. pytorch-triton-rocm provides the ROCm runtime but
     # is not importable as `triton`, so install the `triton` shim package at
@@ -1517,6 +1642,10 @@ restore_pyproject() {
     if [ -n "$PYPROJECT_BACKUP" ] && [ -f "$PYPROJECT_BACKUP" ]; then
         mv -f "$PYPROJECT_BACKUP" "$PYPROJECT_FILE"
         PYPROJECT_BACKUP=""
+    fi
+    if [ -n "$TORCH_CONSTRAINT_FILE" ]; then
+        rm -f "$TORCH_CONSTRAINT_FILE"
+        TORCH_CONSTRAINT_FILE=""
     fi
 }
 
@@ -1860,6 +1989,15 @@ apply_torch_override() {
         "$PYPROJECT_FILE"
 
     echo "[install.sh] Patched pyproject.toml override-dependencies: torch==${torch_pin}, torchvision==${torchvision_pin}, torchaudio==${torchaudio_pin}"
+
+    if [ "$PLATFORM_TORCH_CONSTRAINT" -eq 1 ]; then
+        # Without it, a later `uv pip install` of a torch dependent replaces
+        # these builds with PyPI's CUDA wheels.
+        TORCH_CONSTRAINT_FILE="$(mktemp -t rlinf-torch-constraint.XXXXXX)"
+        printf '%s\n' "torch==${torch_pin}" "torchvision==${torchvision_pin}" "torchaudio==${torchaudio_pin}" > "$TORCH_CONSTRAINT_FILE"
+        # UV_CONSTRAINT is a space-separated list; keep the caller's files.
+        export UV_CONSTRAINT="${UV_CONSTRAINT:+$UV_CONSTRAINT }$TORCH_CONSTRAINT_FILE"
+    fi
 
     if [ -n "$PLATFORM_TORCH_INDEX" ]; then
         # `uv sync` does not honor UV_TORCH_BACKEND for resolution, so register

@@ -475,6 +475,15 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 OpenPI 可直接使用共用的
 
 省略 ``--rocm`` 可自动检测已安装的版本；中国大陆用户可添加 ``--use-mirror``。
 
+使用 ROCm 10.0 时，安装脚本从 AMD 的 wheel 索引安装 PyTorch 和 ROCm 运行时，宿主机需要兼容的 AMD GPU 驱动，不需要系统级 ROCm。创建环境时，用 ``PYTORCH_ROCM_ARCH`` 指定 GPU 架构：
+
+.. code-block:: bash
+
+   PYTORCH_ROCM_ARCH=gfx1201 bash requirements/install.sh --platform amd --rocm 10.0 embodied --model openpi --env libero
+   source .venv/bin/activate
+
+``gfx1201`` 对应 Radeon AI PRO R9700。有多种架构时，用 ``;`` 分隔，并给整个值加引号。ROCm 10.0 下安装脚本会跳过 flash-attn。以上安装方式已在两张 Radeon AI PRO R9700 和两张 Instinct MI300X 上验证，运行的是 LIBERO 上的 π₀.₅。尚未验证 ROCm 10.0 下的 ManiSkill，也未测试不同架构 GPU 同时运行。
+
 华为昇腾 CANN
 ~~~~~~~~~~~~~
 

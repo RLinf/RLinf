@@ -526,6 +526,22 @@ OpenPI LIBERO environment:
 Omit ``--rocm`` to detect the installed version, or add ``--use-mirror`` for
 downloads from mainland China.
 
+With ROCm 10.0, the installer takes PyTorch and the ROCm runtime from AMD's
+wheel index, so the host needs a compatible AMD GPU driver and no system ROCm.
+Set ``PYTORCH_ROCM_ARCH`` to your GPU's architecture when you create the
+environment:
+
+.. code-block:: bash
+
+   PYTORCH_ROCM_ARCH=gfx1201 bash requirements/install.sh --platform amd --rocm 10.0 embodied --model openpi --env libero
+   source .venv/bin/activate
+
+``gfx1201`` is the architecture of the Radeon AI PRO R9700. To list several
+architectures, separate them with ``;`` and quote the value. The installer
+skips flash-attn on ROCm 10.0. This setup was verified with π₀.₅ on LIBERO, on
+two Radeon AI PRO R9700 GPUs and on two Instinct MI300X GPUs. ManiSkill and
+runs using GPUs with different architectures have not been tested on ROCm 10.0.
+
 Huawei Ascend CANN
 ~~~~~~~~~~~~~~~~~~
 
