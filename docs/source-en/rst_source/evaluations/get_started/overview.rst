@@ -33,10 +33,11 @@ Typical data flow:
 3. **Parallel rollout** — Env workers reset environments and return observations; Rollout workers generate actions from the model; loop until episodes finish.
 4. **Metric aggregation** — Task-level metrics such as ``success_once`` and ``return`` are computed and logged.
 
-SuperMimic uses the same entry and the same Channel loop. Its runner then
-merges the rows of every env rank and writes the result tables for motion
-tracking and knees-bent standing push recovery. See
-:doc:`../../examples/embodied/supermimic_eval`.
+SuperMimic also launches evaluation through ``evaluations/run_eval.sh``. It
+covers G1 motion tracking and recovery after a push while standing. The
+evaluation gathers the results from every environment. Motion tracking is
+exported per clip, and push recovery per trial. The launch command and the
+metric definitions are in :doc:`../../examples/embodied/supermimic_eval`.
 
 Next Steps
 ----------

@@ -33,7 +33,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
 3. **并行 Rollout** — Env Worker 重置环境并返回观测；Rollout Worker 根据模型生成动作；循环直至 episode 结束。
 4. **指标汇总** — 统计 ``success_once``、``return`` 等任务级指标并写入日志。
 
-SuperMimic 使用同一入口和同一条 Channel 回路，它的 runner 再合并各 env rank 的结果行，写出动作跟踪和屈膝站立推力恢复的表格。见 :doc:`../../examples/embodied/supermimic_eval`。
+SuperMimic 也通过 ``evaluations/run_eval.sh`` 启动评测，支持 G1 动作跟踪，以及站立时受到推力后的恢复测试。评测会汇总各环境的结果。动作跟踪按片段导出，推力恢复按试次导出。启动命令和指标说明见 :doc:`../../examples/embodied/supermimic_eval`。
 
 下一步
 ------
