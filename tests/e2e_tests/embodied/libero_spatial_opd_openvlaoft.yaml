@@ -28,7 +28,7 @@ runner:
     log_path: /workspace/results/libero_spatial_opd_openvlaoft
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -102,7 +102,7 @@ rollout:
     max_new_tokens: 64
 
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
 

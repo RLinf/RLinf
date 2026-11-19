@@ -23,7 +23,7 @@ from omegaconf import DictConfig
 from torch.multiprocessing.reductions import reduce_tensor
 
 from rlinf.algorithms.registry import policy_loss
-from rlinf.algorithms.utils import kl_penalty
+from rlinf.algorithms.utils import apply_importance_sampling_correction, kl_penalty
 from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
@@ -38,7 +38,10 @@ from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshar
 from rlinf.utils.resharding.reshard_config import ReshardConfig
 from rlinf.utils.utils import retrieve_model_state_dict_in_cpu
 from rlinf.workers.megatron_worker import MegatronWorker
-from rlinf.workers.rollout.utils import RankMapper
+from rlinf.workers.rollout.utils import (
+    RankMapper,
+    instance_ids_to_entry_process_ranks,
+)
 
 try:
     from params_resharding import nccl_group_recreate
@@ -223,11 +226,11 @@ class MegatronActor(MegatronWorker):
                         raise ValueError(
                             "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
                         )
-                    rollout_logprobs = batch["rollout_logprobs"]
-                    recomputed_logprobs = batch["recomputed_logprobs"]
-                    advantages = advantages * torch.clamp(
-                        (recomputed_logprobs - rollout_logprobs).exp(),
-                        max=self.cfg.algorithm.importance_sampling_clip,
+                    advantages, _, _ = apply_importance_sampling_correction(
+                        advantages,
+                        batch["recomputed_logprobs"],
+                        batch["rollout_logprobs"],
+                        self.cfg.algorithm.importance_sampling_clip,
                     )
 
                 mask = batch["response_mask"][:, -response_len:]
@@ -326,16 +329,21 @@ class MegatronActor(MegatronWorker):
         """Setup destination ranks for token and weight communication.
 
         Two independent coordinate systems:
-        - transmission (engine_id, rank_in_engine): where to send. From
-          RankMapper. Colocate returns a tuple (single target); disaggregate
-          returns a list of tuples (multiple targets).
+        - transmission (entry_process_rank, rank_in_engine): where to send.
+          From RankMapper, with the model-instance id converted into the
+          instance's entry process rank - scheduler child
+          workers register under [entry process rank, tp_rank]. Colocate
+          returns a tuple (single target); disaggregate returns a list of
+          tuples (multiple targets).
         - sharding (dst_tp_rank, dst_ep_rank, ...): how to slice the weight.
           Scalar in colocate, list (per-target) in disaggregate.
         """
         rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
             self.component_placement
         )
-        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self._weight_dst_rank_in_rollout = instance_ids_to_entry_process_ranks(
+            rank_map[self._rank], self.component_placement
+        )
         placement = self.component_placement
         enable_dp_lm_head = self.cfg.rollout.get("sglang", {}).get(
             "enable_dp_lm_head", False

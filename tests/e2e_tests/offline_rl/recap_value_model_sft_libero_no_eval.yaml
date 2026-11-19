@@ -29,7 +29,7 @@ runner:
     log_path: "/workspace/results/libero_sft_value_no_eval"
     project_name: rlinf
     experiment_name: "libero_sft_value_no_eval"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: -1
   # check_progress() also validates on the last step, so a single step is

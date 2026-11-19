@@ -187,6 +187,24 @@ class AcceleratorManager:
         raise NotImplementedError
 
     @staticmethod
+    def get_worker_local_env_var(visible_accelerators: list[int]) -> dict[str, str]:
+        """Get the environment variables a worker resolves on its own node.
+
+        ``get_accelerator_env_var`` runs in the driver process, which may be on
+        another node. Values that depend on the hardware layout of the worker's
+        node are resolved here instead, inside the worker process before it
+        initializes any device or renderer.
+
+        Args:
+            visible_accelerators (List[int]): The worker's accelerator IDs.
+
+        Returns:
+            Dict[str, str]: The environment variables to set in the worker
+            process. Empty unless an accelerator overrides this.
+        """
+        return {}
+
+    @staticmethod
     def get_visible_devices() -> list[int]:
         """Get the visible device IDs.
 
@@ -218,6 +236,11 @@ class AcceleratorManager:
     def get_torch_platform():
         """Get the PyTorch platform module."""
         raise NotImplementedError
+
+    @staticmethod
+    def setup_worker_torch() -> None:
+        """Install torch adaptations for a worker process on this accelerator."""
+        return None
 
     @staticmethod
     def get_device_type() -> str:
@@ -394,6 +417,25 @@ class AcceleratorUtil:
         return env_vars
 
     @staticmethod
+    def get_worker_local_env_var(
+        accelerator_type: AcceleratorType, visible_accelerators: list[int]
+    ) -> dict[str, str]:
+        """Get the environment variables a worker resolves on its own node.
+
+        Args:
+            accelerator_type (AcceleratorType): The type of the accelerator.
+            visible_accelerators (List[int]): The worker's accelerator IDs.
+
+        Returns:
+            Dict[str, str]: The environment variables to set in the worker process.
+        """
+        env_vars = {}
+        if accelerator_type in AcceleratorManager.manager_register:
+            manager = AcceleratorManager.manager_register[accelerator_type]
+            env_vars = manager.get_worker_local_env_var(visible_accelerators)
+        return env_vars
+
+    @staticmethod
     def get_visible_devices(accelerator_type: AcceleratorType) -> list[int]:
         """Get the visible device environment variable based on accelerator type.
 
@@ -453,6 +495,13 @@ class AcceleratorUtil:
             manager = AcceleratorManager.manager_register[accelerator_type]
             return manager.get_torch_platform()
         raise ValueError(f"Unsupported accelerator type: {accelerator_type}")
+
+    @staticmethod
+    def setup_worker_torch(accelerator_type: AcceleratorType) -> None:
+        """Install torch adaptations for a worker process on this accelerator."""
+        manager = AcceleratorManager.manager_register.get(accelerator_type)
+        if manager is not None:
+            manager.setup_worker_torch()
 
     @staticmethod
     def get_device_type(accelerator_type: AcceleratorType) -> str | None:

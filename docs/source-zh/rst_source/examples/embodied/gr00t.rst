@@ -16,7 +16,7 @@ GR00T模型强化学习训练
 
 .. note::
 
-   RLinf 同时支持 GR00T-N1.5、GR00T-N1.6 和 GR00T-N1.7。N1.6 引入了流匹配动作头、FSDP 训练和更强的跨具身支持；N1.7 则进一步将官方 backbone 升级到 Cosmos-Reason2-2B / Qwen3-VL，并显著扩展了官方通用 state/action 空间。版本差异以 **N1.5** / **N1.6** / **N1.7** 标注区分。本页的 AMD、昇腾与 MUSA 步骤适用于 N1.5 + LIBERO 或 ManiSkill；这些后端上的 N1.6、N1.7 与 IsaacLab 需要分别验证。
+   RLinf 同时支持 GR00T-N1.5、GR00T-N1.6 和 GR00T-N1.7。N1.6 引入了流匹配动作头、FSDP 训练和更强的跨具身支持；N1.7 则进一步将官方 backbone 升级到 Cosmos-Reason2-2B / Qwen3-VL，并显著扩展了官方通用 state/action 空间。版本差异以 **N1.5** / **N1.6** / **N1.7** 标注区分。本页的 AMD、昇腾与 MUSA 步骤适用于 N1.5 + LIBERO 或 ManiSkill；昇腾还可运行 N1.6 与 N1.7，其余组合在这些后端上需要分别验证。
 
 概览
 ----------------------------------------
@@ -347,6 +347,8 @@ RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
 
 - 当前维护中的 RLinf N1.7 RL 示例为 ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``。
 - 当前 RL 设置使用 PPO 且 ``algorithm.loss_type: actor_critic``，因此训练时必须保证 ``actor.model.add_value_head`` 为 ``True``。
+- 设置 ``rl_head_config.detach_critic_input: true`` 时，value head 使用已分离梯度的特征，其 loss 不会更新共享的 policy 特征；设为 ``false`` 则保留联合梯度传播。
+- 对于 BF16 N1.7 模型，加载器会在各 worker 进程中关闭 ``torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction``；此进程级设置持续影响该 worker 内所有 CUDA BF16 GEMM，保留更高精度的 GEMM 中间归约，以处理已观察到的 rollout 与 actor 批量大小不同引起的 backbone 输出漂移。此设置不改变参数和优化器状态的存储类型。
 - 当前仓库中经过验证的 LIBERO 示例使用 ``num_action_chunks: 16`` 和 ``denoising_steps: 4``。
 
 ---------------
@@ -543,7 +545,7 @@ GR00T-N1.5的动作头包含dropout层，这会干扰对数概率的计算，因
 在不同硬件后端上运行
 --------------------
 
-NVIDIA 使用上面各版本对应的安装流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行。非 NVIDIA 的说明不包含 N1.6、N1.7 与 IsaacLab。
+NVIDIA 使用上面各版本对应的安装流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行，昇腾还支持 N1.6 与 N1.7 在 LIBERO 上运行。AMD 与 MUSA 上的 N1.6、N1.7，以及所有非 NVIDIA 后端上的 IsaacLab，尚未验证。
 
 AMD ROCm
 ~~~~~~~~
@@ -580,14 +582,16 @@ ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 GR00T N1.5 可直接使用共�
 
    source switch_env gr00t
 
-本地安装时，明确选择 N1.5 和 LIBERO：
+本地安装时，明确选择版本和 LIBERO：
 
 .. code-block:: bash
 
    bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
    source .venv/bin/activate
 
-中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用 N1.5 的 NPU 补丁。
+N1.6 或 N1.7 使用 ``--model gr00t_n1d6`` 或 ``--model gr00t_n1d7``，环境为 ``--env maniskill_libero``。
+
+中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用各版本对应的 NPU 补丁。
 
 .. include:: _ascend_torch.rst
 
