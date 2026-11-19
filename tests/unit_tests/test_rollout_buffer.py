@@ -1416,3 +1416,43 @@ class TestIssuedRequestTaskName:
         with mock.patch.object(Worker, "__init__", return_value=None):
             worker = RolloutBufferWorker(cfg, _ToyDataset(num_samples=8))
         assert worker.max_actor_accept_staleness == 3
+
+
+def test_real_length_groups_keep_versions_through_buffer_release():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    buffer = RolloutBuffer(_cfg(rollout_batch_size=2), _ToyDataset(8))
+    buffer.set_loaded_versions({0: 7})
+    results = []
+    for index, start in enumerate((5, 7, 8)):
+        group_id, _ = buffer.issue_group(index, "searchr1")
+        result = DynamicRolloutResult(
+            num_sequence=2,
+            group_size=1,
+            idx_to_traj=[0, 0],
+            input_ids=[[1, 2, 3], [1, 2, 3, 4, 5, 6]],
+            prompt_lengths=[1, 4],
+            response_lengths=[2, 2],
+            is_end=[False, True],
+            rewards=[1.0, 1.0],
+            group_id=group_id,
+            task_name="searchr1",
+            version_start=[start, start + 1],
+            version_end=[start, start + 2],
+            advantages=[torch.ones(3), torch.ones(6)],
+        )
+        results.append(result)
+        buffer.record_result(result, result.group_metadata())
+    # The first group completed recently but started too far behind version 10.
+    stale = buffer.stale_group_ids(
+        buffer.tasks["searchr1"], version=10, max_staleness=3
+    )
+    assert stale == [results[0].group_id]
+    buffer.drop_group(stale[0], "staleness", 100, True, task_name="searchr1")
+    released = buffer.release_groups()
+    assert len(released) == 2
+    for actual, expected in zip(released, results[1:], strict=True):
+        assert actual is expected
+        assert actual.task_name == "searchr1"
+        assert actual.group_metadata().earliest_version == actual.version_start[0]
+        assert list(map(len, actual.to_actor_batch()["advantages"])) == [3, 6]

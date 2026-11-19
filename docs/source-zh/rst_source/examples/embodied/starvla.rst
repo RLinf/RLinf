@@ -231,6 +231,17 @@ RLinf 安装器将 starVLA 固定为 ``starVLA-v1.6``，并在 aarch64 上从源
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_starvla
 
+如果使用 Qwen2.5-VL checkpoint，可以在实验配置中启用以下选项，减少 attention 中的数据复制和重复算子下发：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       starvla:
+         enable_npu_attention: True
+
+该选项同时作用于 actor 和 rollout 模型，默认关闭，仅在昇腾上生效。StarVLA 安装器提供所需的 Transformers ``4.57.6`` 版本。
+
 可视化与结果
 ----------------------------------------
 
