@@ -1001,6 +1001,112 @@ def test_video_grpo_returns_zero_when_every_reward_is_masked(mode):
     torch.testing.assert_close(result["advantages"], torch.zeros_like(rewards))
 
 
+@pytest.mark.parametrize("mode", ["frame", "video"])
+def test_video_grpo_keeps_tied_rewards_neutral(mode):
+    rewards = torch.full((1, 8, 1), 0.74, requires_grad=True)
+    loss_mask = torch.ones_like(rewards, dtype=torch.bool)
+    loss_mask[0, -1, 0] = False
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="grpo_video",
+        advantage_mode=mode,
+        reward_type="action_level",
+        group_size=8,
+        rewards=rewards,
+        loss_mask=loss_mask,
+        dones=torch.zeros(2, 8, 1, dtype=torch.bool),
+    )
+    advantages = result["advantages"]
+    torch.testing.assert_close(advantages, torch.zeros_like(rewards), atol=0, rtol=0)
+    advantages.sum().backward()
+    assert torch.isfinite(rewards.grad).all()
+
+
+@pytest.mark.parametrize("mode", ["frame", "video"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_video_grpo_normalizes_large_finite_rewards(mode, dtype):
+    limit = torch.finfo(dtype).max
+    rewards = torch.tensor([[[limit], [-limit]]], dtype=dtype)
+    result = calculate_adv_and_returns(
+        task_type="embodied",
+        adv_type="grpo_video",
+        advantage_mode=mode,
+        reward_type="action_level",
+        group_size=2,
+        rewards=rewards,
+        loss_mask=None,
+        dones=torch.zeros(2, 2, 1, dtype=torch.bool),
+    )
+    expected = (torch.tensor([[[1.0], [-1.0]]]) / math.sqrt(2)).to(dtype)
+    torch.testing.assert_close(result["advantages"], expected)
+
+
+def _video_grpo_actor(reward_type, *, ignore_terminations=False):
+    actor = object.__new__(EmbodiedFSDPActor)
+    actor.cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"num_action_chunks": 2}},
+            "algorithm": {
+                "adv_type": "grpo_video",
+                "advantage_mode": "frame",
+                "reward_type": reward_type,
+                "group_size": 2,
+                "filter_rewards": True,
+                "rewards_lower_bound": 0.0,
+                "rewards_upper_bound": 10.0,
+            },
+            "env": {
+                "train": {
+                    "rollout_epoch": 1,
+                    "auto_reset": False,
+                    "ignore_terminations": ignore_terminations,
+                }
+            },
+            "runner": {"task_type": "embodied"},
+        }
+    )
+    return actor
+
+
+@pytest.mark.parametrize("invalid_reward", [100.0, float("nan")])
+def test_video_grpo_filters_and_aggregates_only_valid_actions_in_chunks(
+    invalid_reward, single_rank_reduction
+):
+    actor = _video_grpo_actor("chunk_level")
+    rewards = torch.tensor([[[1.0, invalid_reward], [3.0, 0.0]]])
+    dones = torch.tensor(
+        [[[False, False], [False, False]], [[True, False], [False, True]]]
+    )
+    actor.rollout_batch = actor._process_received_rollout_batch(
+        {"rewards": rewards, "dones": dones}
+    )
+    inspect.unwrap(EmbodiedFSDPActor.compute_advantages_and_returns)(actor)
+
+    expected = torch.tensor([[[-1.0], [1.0]]]) / (math.sqrt(2) + 1e-6)
+    torch.testing.assert_close(actor.rollout_batch["advantages"], expected)
+    torch.testing.assert_close(
+        actor.rollout_batch["loss_mask"], torch.ones_like(expected, dtype=torch.bool)
+    )
+
+
+def test_video_grpo_broadcasts_actor_group_filter_mask(single_rank_reduction):
+    actor = _video_grpo_actor("action_level", ignore_terminations=True)
+    actor.rollout_batch = actor._process_received_rollout_batch(
+        {
+            "rewards": torch.tensor(
+                [[[1.0, 5.0], [3.0, 7.0], [11.0, 15.0], [13.0, 17.0]]]
+            ),
+            "dones": torch.zeros(2, 4, 2, dtype=torch.bool),
+        }
+    )
+    inspect.unwrap(EmbodiedFSDPActor.compute_advantages_and_returns)(actor)
+
+    expected = torch.tensor([[[-1.0, -1.0], [1.0, 1.0], [0.0, 0.0], [0.0, 0.0]]]) / (
+        math.sqrt(2) + 1e-6
+    )
+    torch.testing.assert_close(actor.rollout_batch["advantages"], expected)
+
+
 @pytest.mark.parametrize("normalize", [False, True])
 def test_multiturn_gae_matches_discounted_targets_in_shuffled_turn_order(normalize):
     values = torch.full((4, 6), 99.0)

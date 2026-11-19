@@ -290,14 +290,26 @@ def compute_grpo_video_advantages(
 
     invalid = ~valid
     count = valid.sum(dim=reduce_dims, keepdim=True)
-    masked_rewards = grouped_rewards.masked_fill(invalid, 0)
-    mean = masked_rewards.sum(dim=reduce_dims, keepdim=True) / count.clamp_min(1)
-    centered = (masked_rewards - mean).masked_fill(invalid, 0)
+    minimum = grouped_rewards.masked_fill(invalid, torch.inf).amin(
+        dim=reduce_dims, keepdim=True
+    )
+    maximum = grouped_rewards.masked_fill(invalid, -torch.inf).amax(
+        dim=reduce_dims, keepdim=True
+    )
+    # Center near the rewards before summing so tied rewards stay tied.
+    midpoint = (0.5 * minimum + 0.5 * maximum).masked_fill(count == 0, 0)
+    offsets = (grouped_rewards - midpoint).masked_fill(invalid, 0)
+    # Scale the offsets before squaring to keep the variance in range.
+    scale = offsets.abs().amax(dim=reduce_dims, keepdim=True).clamp_min(1)
+    scaled_offsets = offsets / scale
+    mean = scaled_offsets.sum(dim=reduce_dims, keepdim=True) / count.clamp_min(1)
+    centered = (scaled_offsets - mean).masked_fill(invalid, 0)
     # Keep torch.std's sample-variance correction.
     variance = centered.square().sum(dim=reduce_dims, keepdim=True) / (
         count - 1
     ).clamp_min(1)
-    advantages = (centered / (variance.sqrt() + 1e-6)).masked_fill(invalid, 0)
+    std = variance.clamp_min(torch.finfo(variance.dtype).tiny).sqrt()
+    advantages = (centered / (std + 1e-6 / scale)).masked_fill(invalid, 0)
     return advantages.reshape(num_steps, batch_size).to(rewards.dtype), None
 
 
