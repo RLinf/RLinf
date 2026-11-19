@@ -535,6 +535,7 @@ class SGLangWorker(Worker):
             self._teacher_scorer = RolloutTeacherScorer(
                 self._cfg, endpoints, self._tokenizer
             )
+        self._teacher_scorer.client.begin_step()
         self._teacher_scorer.student_policy_version = student_policy_version
 
     async def _async_generate_group(self, seq_group_info: SeqGroupInfo):
@@ -625,6 +626,9 @@ class SGLangWorker(Worker):
                         ids,
                         str(seq_group_info.id),
                         selected,
+                        context=seq_group_info.sample_contexts[index]
+                        if seq_group_info.sample_contexts
+                        else None,
                     )
 
                 teacher_tasks.append(asyncio.create_task(score_one()))

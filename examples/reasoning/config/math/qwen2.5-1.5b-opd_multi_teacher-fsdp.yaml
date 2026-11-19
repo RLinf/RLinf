@@ -1,0 +1,68 @@
+defaults:
+  - qwen2.5-1.5b-grpo-fsdp
+  - _self_
+
+cluster:
+  component_placement:
+    actor,rollout,reward: 0-3
+    teacher_math: 4-5
+    teacher_code: 6-7
+
+runner:
+  execution_mode: sync
+  experiment_name: opd-multi-teacher-1.5b
+
+algorithm:
+  group_size: 1
+  recompute_logprobs: false
+  normalize_advantages: false
+  entropy_bonus: 0.0
+  calculate_entropy: false
+  kl_beta: 0.0
+  sampling_params:
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    repetition_penalty: 1.0
+
+rollout:
+  return_logprobs: false
+
+data:
+  # Each JSONL row supplies data_source as either math or code.
+  train_data_paths: ["/path/to/mixed-train.jsonl"]
+
+distillation:
+  enabled: true
+  teacher_key: data_source
+  teacher_models:
+    math:
+      model_path: /path/to/math-teacher
+      num_replicas: 1
+      inference:
+        backend: vllm
+        tensor_parallel_size: 2
+        pipeline_parallel_size: 1
+        max_model_len: 32768
+    code:
+      model_path: /path/to/code-teacher
+      num_replicas: 1
+      inference:
+        backend: vllm
+        tensor_parallel_size: 2
+        pipeline_parallel_size: 1
+        max_model_len: 32768
+  distillation_loss:
+    loss_mode: forward_kl_topk
+    topk_source: teacher
+    topk: 64
+    use_policy_gradient: false
+    use_task_rewards: false
+    distillation_loss_coef: 1.0
+    policy_loss_mode: vanilla
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.28
+    clip_ratio_c: 3.0
+    loss_max_clamp: null
+    log_prob_min_clamp: null
+    tail_mass_eps: 0.000001

@@ -279,24 +279,43 @@ class ReasoningRunner:
         )
         logging.info(f"Setting global step to {self.global_steps}")
 
-        actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
-        self.actor.load_checkpoint(actor_checkpoint_path).wait()
-
-        if self.critic is not None:
-            critic_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "critic")
-            self.critic.load_checkpoint(critic_checkpoint_path).wait()
-
         # load data
         dataloader_local_path = os.path.join(self.cfg.runner.resume_dir, "data/data.pt")
         if os.path.exists(dataloader_local_path):
             dataloader_state_dict = torch.load(
                 dataloader_local_path, weights_only=False
             )
+            saved = dataloader_state_dict.pop("distillation_manifest", None)
+            current = (
+                self.teacher_runtime.manifest
+                if self.teacher_runtime is not None
+                else None
+            )
+            if (
+                saved is not None
+                and saved != current
+                or saved is None
+                and len(self.distillation_plan.teacher_keys) > 1
+            ):
+                raise ValueError(
+                    "Checkpoint Teacher identities, routing or placement differ from this run"
+                )
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
+            if len(self.distillation_plan.teacher_keys) > 1:
+                raise ValueError(
+                    "Multi-Teacher resume requires the completed dataloader checkpoint"
+                )
             logging.warning(
                 f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch"
             )
+
+        actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
+        self.actor.load_checkpoint(actor_checkpoint_path).wait()
+
+        if self.critic is not None:
+            critic_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "critic")
+            self.critic.load_checkpoint(critic_checkpoint_path).wait()
 
     def init_workers(self):
         if self.cfg.runner.resume_dir == "auto":
@@ -408,6 +427,10 @@ class ReasoningRunner:
         dataloader_local_path = os.path.join(data_save_path, "data.pt")
         dataloader_tmp_path = f"{dataloader_local_path}.tmp"
         dataloader_state_dict = self.train_dataloader.state_dict()
+        if self.teacher_runtime is not None:
+            dataloader_state_dict["distillation_manifest"] = (
+                self.teacher_runtime.manifest
+            )
         # Publish atomically so an interrupted save cannot leave a truncated
         # data.pt behind, which auto resume reads as a complete checkpoint.
         try:
@@ -438,6 +461,10 @@ class ReasoningRunner:
             group_size=self.cfg.algorithm.group_size,
             split_size=split_size,
             enforce_divisible_batch=False,
+            teacher_keys=self.distillation_plan.teacher_keys,
+            route_field=self.cfg.distillation.get("teacher_key", "data_source")
+            if self.distillation_plan.enabled
+            else "data_source",
         )
         for request in requests:
             self.dataloader_channel.put(request, async_op=True)
@@ -700,6 +727,10 @@ class ReasoningRunner:
                 }
 
                 self.metric_logger.log(log_time_metrics, logging_steps)
+                if self.teacher_runtime is not None:
+                    self.metric_logger.log(
+                        self.teacher_runtime.take_metrics(), logging_steps
+                    )
                 self.metric_logger.log(rollout_metrics, logging_steps)
                 for i in range(self.cfg.algorithm.n_minibatches):
                     training_metrics = {}

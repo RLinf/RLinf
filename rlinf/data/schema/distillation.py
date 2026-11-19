@@ -20,6 +20,16 @@ from typing import Literal
 import torch
 
 
+@dataclass(frozen=True)
+class SampleContext:
+    """Student sample and frozen Teacher assignment shared by its turns."""
+
+    group_id: str
+    sample_id: str
+    teacher_key: str
+    teacher_index: int
+
+
 def teacher_targets_to_batch(
     targets: list["TeacherTargets"],
     prompt_lengths: list[int],
@@ -37,7 +47,7 @@ def teacher_targets_to_batch(
         raise ValueError("Expected one Teacher target per Student sequence")
     identity = {
         (
-            t.model_fingerprint,
+            t.token_ids is None,
             t.target_format,
             t.student_policy_version,
             t.logprobs.shape[-1],
@@ -46,7 +56,7 @@ def teacher_targets_to_batch(
     }
     if len(identity) != 1:
         raise ValueError(
-            "A stage-one batch must use one model, target format and Student version"
+            "Expected compatible Teacher target formats, widths and Student versions"
         )
     width = targets[0].logprobs.shape[-1]
     shape = (len(targets), sequence_length, width)
@@ -54,6 +64,26 @@ def teacher_targets_to_batch(
         "teacher_logprobs": torch.zeros(shape, dtype=torch.float32),
         "teacher_valid_mask": torch.zeros(shape[:2], dtype=torch.bool),
     }
+    identities = {}
+    teacher_indices = {}
+    for target in targets:
+        if target.context and target.context.teacher_key != target.teacher_key:
+            raise ValueError(
+                f"Teacher target for {target.request_id} disagrees with sample route"
+            )
+        if (
+            teacher_indices.setdefault(target.teacher_index, target.teacher_key)
+            != target.teacher_key
+        ):
+            raise ValueError(
+                "Expected a distinct index for each Teacher in a mixed batch"
+            )
+        identity = (target.model_fingerprint, target.teacher_index)
+        if identities.setdefault(target.teacher_key, identity) != identity:
+            raise ValueError(
+                f"Teacher {target.teacher_key!r} changed identity within a batch"
+            )
+    result["teacher_index"] = torch.tensor([target.teacher_index for target in targets])
     if targets[0].token_ids is not None:
         result["teacher_token_ids"] = torch.zeros(shape, dtype=torch.long)
     for index, (target, prompt, response) in enumerate(
@@ -138,6 +168,12 @@ class TeacherTargets:
     token_ids: torch.Tensor | None
     logprobs: torch.Tensor
     valid_mask: torch.Tensor
+    context: SampleContext | None = None
+
+    @property
+    def teacher_index(self) -> int:
+        """Return the run-wide model index, defaulting to zero for legacy single-Teacher targets."""
+        return self.context.teacher_index if self.context else 0
 
     def validate(self, request: TeacherScoreRequest, vocab_size: int) -> None:
         """Check response identity, support and positional alignment."""

@@ -153,29 +153,32 @@ def main(cfg) -> None:
         teacher_placement.validate_disjoint(component_placement)
         teacher_runtime = launch_teacher_workers(cfg, cluster, teacher_placement)
 
-    runner = ReasoningRunner(
-        cfg=cfg,
-        teacher_runtime=teacher_runtime,
-        placement=component_placement,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        rollout=rollout_group,
-        actor_inference=actor_inference_group,
-        actor=actor_group,
-        reward=reward_group,
-        scheduler=scheduler,
-        # critic components are only used for PPO
-        critic_inference=critic_inference_group,
-        critic=critic_group,
-    )
-
+    runner = None
     try:
+        runner = ReasoningRunner(
+            cfg=cfg,
+            teacher_runtime=teacher_runtime,
+            placement=component_placement,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            rollout=rollout_group,
+            actor_inference=actor_inference_group,
+            actor=actor_group,
+            reward=reward_group,
+            scheduler=scheduler,
+            # critic components are only used for PPO
+            critic_inference=critic_inference_group,
+            critic=critic_group,
+        )
         runner.init_workers()
         runner.run()
     finally:
         if teacher_runtime is not None:
-            runner.close_teacher_clients()
-            teacher_runtime.close()
+            try:
+                if runner is not None:
+                    runner.close_teacher_clients()
+            finally:
+                teacher_runtime.close()
 
 
 if __name__ == "__main__":

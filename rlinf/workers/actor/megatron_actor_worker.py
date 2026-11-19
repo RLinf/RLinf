@@ -152,9 +152,10 @@ class MegatronActor(MegatronWorker):
         """Store immutable scoring endpoints for the synchronous update."""
         from rlinf.workers.teacher.backend import tokenizer_fingerprint
 
-        if (
-            tokenizer_fingerprint(self.tokenizer)
-            != endpoints[0].model_info.tokenizer_fingerprint
+        fingerprint = tokenizer_fingerprint(self.tokenizer)
+        if any(
+            fingerprint != endpoint.model_info.tokenizer_fingerprint
+            for endpoint in endpoints
         ):
             raise ValueError("Actor and Teacher tokenizer mappings must match")
         self._teacher_endpoints = endpoints

@@ -258,13 +258,14 @@ class AgentLoopWorker(Worker):
             self._teacher_scorer = RolloutTeacherScorer(
                 self.cfg, endpoints, self.tokenizer
             )
+        self._teacher_scorer.client.begin_step()
         self._teacher_scorer.student_policy_version = student_policy_version
 
-    async def _run_query_with_teacher(self, *args, **kwargs):
+    async def _run_query_with_teacher(self, *args, sample_context=None, **kwargs):
         output = await self.run_one_query(*args, **kwargs)
         scorer = getattr(self, "_teacher_scorer", None)
         if scorer is not None:
-            output = await scorer.score_agent_output(output)
+            output = await scorer.score_agent_output(output, sample_context)
         return output
 
     async def run_agentloop_rollout_group(
@@ -273,15 +274,20 @@ class AgentLoopWorker(Worker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        *,
+        sample_contexts=None,
     ):
         """
         Run the agent loop for a group of queries.
         """
         rollout_tasks = []
         # grpo group_size
-        for _ in range(group_size):
+        for i in range(group_size):
             task = asyncio.create_task(
-                self._run_query_with_teacher(copy.deepcopy(input_ids))
+                self._run_query_with_teacher(
+                    copy.deepcopy(input_ids),
+                    sample_context=sample_contexts[i] if sample_contexts else None,
+                )
             )
             rollout_tasks.append(task)
 
@@ -299,13 +305,21 @@ class AgentLoopWorker(Worker):
             rollout_request: RolloutRequest = input_channel.get()
 
             send_output_tasks = []
-            for input_ids, answer in zip(
-                rollout_request.input_ids, rollout_request.answers
+            for input_ids, answer, contexts in zip(
+                rollout_request.input_ids,
+                rollout_request.answers,
+                rollout_request.sample_contexts
+                or [None] * len(rollout_request.input_ids),
+                strict=True,
             ):
                 send_output_tasks.append(
                     asyncio.create_task(
                         self.run_agentloop_rollout_group(
-                            input_ids, answer, rollout_request.n, output_channel
+                            input_ids,
+                            answer,
+                            rollout_request.n,
+                            output_channel,
+                            **({"sample_contexts": contexts} if contexts else {}),
                         ),
                     )
                 )
@@ -354,6 +368,12 @@ class AgentLoopWorker(Worker):
             ]
         is_end = [True for _ in task_results]
         answers = [answer] * len(task_results)
+        if any(r.teacher_targets is None for r in task_results) and any(
+            r.teacher_targets is not None for r in task_results
+        ):
+            raise ValueError(
+                "Expected Teacher targets for every sample in a scored group"
+            )
         return RolloutResult(
             teacher_targets=[r.teacher_targets for r in task_results]
             if task_results and task_results[0].teacher_targets is not None
@@ -505,6 +525,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         answer: str,
         group_size: int,
         output_channel: Channel,
+        *,
+        sample_contexts=None,
     ):
         """
         Run the agent loop for a group of queries.
@@ -517,9 +539,13 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         """
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
-        for _ in range(group_size):
+        for i in range(group_size):
             task = asyncio.create_task(
-                self._run_query_with_teacher(copy.deepcopy(input_dict), answer=answer)
+                self._run_query_with_teacher(
+                    copy.deepcopy(input_dict),
+                    answer=answer,
+                    sample_context=sample_contexts[i] if sample_contexts else None,
+                )
             )
             rollout_tasks.append(task)
 
@@ -549,8 +575,12 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             rollout_request: RolloutRequest = input_channel.get()
 
             send_output_tasks: list[asyncio.Task[dict]] = []
-            for input_ids, answer in zip(
-                rollout_request.input_ids, rollout_request.answers
+            for input_ids, answer, contexts in zip(
+                rollout_request.input_ids,
+                rollout_request.answers,
+                rollout_request.sample_contexts
+                or [None] * len(rollout_request.input_ids),
+                strict=True,
             ):
                 task = asyncio.create_task(
                     self.run_agentloop_rollout_group(
@@ -558,6 +588,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                         answer,
                         rollout_request.n,
                         output_channel,
+                        **({"sample_contexts": contexts} if contexts else {}),
                     ),
                 )
                 send_output_tasks.append(task)
@@ -717,6 +748,10 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         elif rewards and any(reward is None for reward in rewards):
             raise ValueError("Expected either all turn rewards or no turn rewards")
         targets = [turn.teacher_targets for turn in retained_turns]
+        if any(t is None for t in targets) and any(t is not None for t in targets):
+            raise ValueError(
+                "Expected Teacher targets for every retained turn in a scored group"
+            )
         requests = [turn.teacher_request for turn in retained_turns]
         return DynamicRolloutResult(
             teacher_targets=targets if targets and targets[0] is not None else None,

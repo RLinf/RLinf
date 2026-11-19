@@ -124,7 +124,7 @@ class TeacherModelConfig:
 
 @dataclass(frozen=True)
 class DistillationConfig:
-    """Single-teacher synchronous distillation configuration."""
+    """Sample-routed synchronous distillation configuration."""
 
     enabled: bool = False
     teacher_key: str = "data_source"
@@ -151,6 +151,7 @@ class DistillationPlan:
     need_task_advantages: bool = True
     need_entropy: bool = False
     use_policy_gradient: bool = False
+    teacher_keys: tuple[str, ...] = ()
 
 
 def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
@@ -159,10 +160,19 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
     if not section or not section.get("enabled", False):
         return DistillationPlan()
     if cfg.get("runner", {}).get("execution_mode", "sync") != "sync":
-        raise ValueError("Stage-one distillation requires runner.execution_mode='sync'")
+        raise ValueError(
+            "Synchronous distillation requires runner.execution_mode='sync'"
+        )
     teachers = section.get("teacher_models", {})
-    if len(teachers) != 1:
-        raise ValueError(f"Expected exactly one Teacher model, got {len(teachers)}")
+    if not teachers or any(
+        not isinstance(key, str) or not key.strip() for key in teachers
+    ):
+        raise ValueError(
+            "Expected at least one Teacher model with a nonempty string key"
+        )
+    route_field = section.get("teacher_key", "data_source")
+    if not isinstance(route_field, str) or not route_field.strip():
+        raise ValueError("Expected a nonempty distillation.teacher_key")
     for model in teachers.values():
         TeacherModelConfig(**model)
     loss = DistillationLossConfig(**section.get("distillation_loss", {}))
@@ -196,10 +206,11 @@ def build_distillation_plan(cfg: Mapping) -> DistillationPlan:
                 "Distillation PG currently requires do_sample=True, temperature=1, top_p=1 and disabled sampling top_k; truncated behavior probabilities are not verified"
             )
     if cfg.get("data", {}).get("type") in {"vlm", "vision_language"}:
-        raise ValueError("Stage-one distillation supports text-only inputs")
+        raise ValueError("Synchronous distillation supports text-only inputs")
     need_ref = algorithm.get("kl_beta", 0) > 0
     return DistillationPlan(
         enabled=True,
+        teacher_keys=tuple(sorted(teachers)),
         canonical_loss_mode=mode,
         topk=loss.topk if distribution else None,
         support_source=source,

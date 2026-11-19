@@ -1355,11 +1355,24 @@ class TeacherComponentPlacement(ComponentPlacement):
                 raise ValueError(
                     "Teacher placement currently requires global accelerator ranks without node_group aliases"
                 )
+        expected = {f"teacher_{key}" for key in config.distillation.teacher_models}
+        unexpected = {
+            name for name in self.components if name.startswith("teacher_")
+        } - expected
+        if unexpected:
+            raise ValueError(f"Unexpected Teacher placements: {sorted(unexpected)}")
+        allocated = set()
         for key, model in config.distillation.teacher_models.items():
             component = f"teacher_{key}"
             if component not in self.components:
                 raise ValueError(f"Missing placement for {component}")
             ranks = sorted(self.get_hardware_ranks(component))
+            overlap = allocated.intersection(ranks)
+            if overlap:
+                raise ValueError(
+                    f"{component} overlaps other Teacher GPUs: {sorted(overlap)}"
+                )
+            allocated.update(ranks)
             width = model.inference.get(
                 "tensor_parallel_size", 1
             ) * model.inference.get("pipeline_parallel_size", 1)
@@ -1371,6 +1384,13 @@ class TeacherComponentPlacement(ComponentPlacement):
             self._teacher_replicas[key] = [
                 tuple(ranks[i * width : (i + 1) * width]) for i in range(count)
             ]
+            for replica in self._teacher_replicas[key]:
+                if not any(
+                    set(replica).issubset(node) for node in cluster.accelerator_ranks
+                ):
+                    raise ValueError(
+                        f"{component}: replica GPUs {replica} must belong to one node"
+                    )
         self.validate_disjoint(self)
 
     def get_replicas(self, teacher_key: str) -> list[tuple[int, ...]]:

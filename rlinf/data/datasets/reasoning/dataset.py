@@ -74,6 +74,12 @@ class ReasoningDataset(Dataset):
 
         self.max_prompt_length = config.data.max_prompt_length
         self.tokenizer = tokenizer
+        distillation = config.get("distillation") or {}
+        self.route_field = (
+            distillation.get("teacher_key", "data_source")
+            if distillation.get("enabled")
+            else None
+        )
         self.prompt_key = config.data.prompt_key
         self.answer_key = config.data.answer_key
         self.is_apply_chat_template = config.data.apply_chat_template
@@ -220,6 +226,13 @@ class ReasoningDataset(Dataset):
             text_ids = self.tokenizer(list(texts))["input_ids"]
         return text_ids
 
+    def route_metadata(self, idx: int) -> dict | None:
+        """Return the configured route column when present in the source row."""
+        row = self.data[idx]
+        if self.route_field in row:
+            return {self.route_field: row[self.route_field]}
+        return None
+
     def __getitem__(self, idx):
         """
         Return a single prompt.
@@ -249,6 +262,7 @@ class ReasoningDataset(Dataset):
             left_pad=True,
         )[0]
         output = DatasetItem(
+            meta=self.route_metadata(idx),
             prompt=prompt_tokens_tensor,
             length=prompt_length,
             answer=answer,

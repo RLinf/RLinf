@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Optional, Union
+from uuid import NAMESPACE_OID, uuid5
 
 import torch
 from omegaconf import DictConfig
@@ -637,6 +638,7 @@ class RolloutResult:
                 batch["teacher_requests"] = self.teacher_requests
             if self.teacher_targets is not None:
                 # Empty ranks are coordinated before any target tensors are consumed.
+                batch["teacher_index"] = torch.empty(0, dtype=torch.long)
                 batch["teacher_logprobs"] = torch.zeros((0, max_response_len, 0))
                 batch["teacher_token_ids"] = torch.zeros(
                     (0, max_response_len, 0), dtype=torch.long
@@ -1062,6 +1064,18 @@ class DynamicRolloutResult:
         if self.teacher_requests is not None:
             batch["teacher_requests"] = self.teacher_requests
         if self.teacher_targets is not None:
+            # idx_to_traj is local to a prompt group and can repeat after merging results.
+            # Keep a stable sample identity for packing after subsequent DP reordering.
+            if any(t.context is not None for t in self.teacher_targets):
+                if any(t.context is None for t in self.teacher_targets):
+                    raise ValueError("Expected sample contexts for every scored turn")
+                batch["teacher_sample_id"] = torch.tensor(
+                    [
+                        list(uuid5(NAMESPACE_OID, t.context.sample_id).bytes)
+                        for t in self.teacher_targets
+                    ],
+                    dtype=torch.uint8,
+                )
             batch.update(
                 teacher_targets_to_batch(
                     self.teacher_targets,
@@ -1222,10 +1236,21 @@ class DynamicRolloutResult:
         """
         # calculate pack map
         traj_to_idx = {}
+        teacher_indices = (
+            batch["teacher_index"].tolist() if "teacher_index" in batch else None
+        )
+        sample_ids = (
+            batch["teacher_sample_id"].tolist()
+            if "teacher_sample_id" in batch
+            else None
+        )
         for idx, traj in enumerate(batch["idx_to_traj"]):
-            if traj not in traj_to_idx:
-                traj_to_idx[traj] = []
-            traj_to_idx[traj].append(idx)
+            identity = (
+                traj,
+                teacher_indices[idx] if teacher_indices else None,
+                bytes(sample_ids[idx]) if sample_ids else None,
+            )
+            traj_to_idx.setdefault(identity, []).append(idx)
 
         prompt_lengths = batch["prompt_lengths"].tolist()
         response_lengths = batch["response_lengths"].tolist()
@@ -1287,6 +1312,8 @@ class DynamicRolloutResult:
             "teacher_logprobs",
             "teacher_token_ids",
             "teacher_valid_mask",
+            "teacher_index",
+            "teacher_sample_id",
             *(k for k in batch.keys() if k.startswith("extra:")),
         ]
         custom_keys = [

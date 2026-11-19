@@ -3676,6 +3676,74 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
     assert len(val_loader) == 1
 
 
+@pytest.mark.parametrize("dataset_type", ["reasoning", "wideseek_r1", "rstar2"])
+def test_teacher_route_from_dataset_column(tmp_path, dataset_type):
+    from omegaconf import OmegaConf
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from transformers import PreTrainedTokenizerFast
+
+    from rlinf.data.datasets.reasoning import collate_fn, create_reasoning_datasets
+
+    path = tmp_path / "questions.jsonl"
+    path.write_text('{"prompt":"x","answer":"x","source":"math"}\n')
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "train_data_paths": str(path),
+                "type": dataset_type,
+                "prompt_key": "prompt",
+                "answer_key": "answer",
+                "max_prompt_length": 4,
+                "apply_chat_template": False,
+            },
+            "runner": {"task_type": "reasoning"},
+            "rollout": {},
+            "distillation": {"enabled": True, "teacher_key": "source"},
+        }
+    )
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(WordLevel({"x": 0}, unk_token="x")), eos_token="x"
+    )
+    dataset, _ = create_reasoning_datasets(cfg, tokenizer)
+    assert collate_fn([dataset[0]])["meta"] == [{"source": "math"}]
+
+
+def test_sample_routes_survive_prompt_splitting():
+    from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
+
+    batch = {
+        "prompt": torch.tensor([[1], [2], [3]]),
+        "length": torch.ones(3, dtype=torch.long),
+        "answer": ["a"] * 3,
+        "image_data": [[]] * 3,
+        "multi_modal_inputs": [None] * 3,
+        "meta": [{"source": key} for key in ("math", "code", "math")],
+    }
+    opts = {
+        "group_size": 2,
+        "split_size": 2,
+        "teacher_keys": ("math", "code"),
+        "route_field": "source",
+    }
+    requests = build_rollout_requests_from_batch(batch, **opts)
+    groups = [group for req in requests for group in req.to_seq_group_infos()]
+    contexts = [ctx for group in groups for ctx in group.sample_contexts]
+    assert [ctx.teacher_index for ctx in contexts] == [1, 1, 0, 0, 1, 1]
+    assert len({ctx.sample_id for ctx in contexts}) == 6
+    assert len({ctx.group_id for ctx in contexts}) == 3
+    assert requests[0].to_seq_group_infos()[0].id == groups[0].id
+    for bad in (None, {"source": "Math"}):
+        batch["meta"][0] = bad
+        with pytest.raises(ValueError, match="code.*math"):
+            build_rollout_requests_from_batch(batch, **opts)
+    del batch["meta"]
+    requests = build_rollout_requests_from_batch(
+        batch, **(opts | {"teacher_keys": ("math",)})
+    )
+    assert requests[0].sample_contexts[0][0].teacher_key == "math"
+
+
 def test_teacher_targets_survive_rollout_split_merge():
     from rlinf.data.schema.distillation import TeacherTargets
     from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
@@ -3746,7 +3814,13 @@ def test_teacher_targets_packing_copies_disjoint_spans():
             [[False, True, True, False, False], [False, False, False, True, True]]
         ),
     }
+    separated = DynamicRolloutResult.pack_traj_batch(
+        {"folding_scale": []}, {**batch, "teacher_index": torch.tensor([0, 1])}
+    )
+    assert separated["teacher_index"].tolist() == [0, 1]
+    batch["teacher_index"] = torch.tensor([1, 1])
     packed = DynamicRolloutResult.pack_traj_batch({"folding_scale": []}, batch)
+    assert packed["teacher_index"].tolist() == [1]
     assert packed["teacher_token_ids"].tolist() == [[[0], [7], [8], [9], [10]]]
     torch.testing.assert_close(
         packed["teacher_logprobs"],

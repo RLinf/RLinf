@@ -631,6 +631,7 @@ def _saving_runner(tmp_path: Path) -> _StubRunner:
     runner.global_steps = 8
     runner.actor = _Actor()
     runner.train_dataloader = _Dataloader()
+    runner.teacher_runtime = None
     return runner
 
 
@@ -685,6 +686,29 @@ def test_dataloader_state_is_published_atomically(tmp_path, monkeypatch):
     assert final_path.read_bytes() == b"complete"
     assert not Path(f"{final_path}.tmp").exists()
     assert runner._is_complete_checkpoint(str(checkpoint))
+
+
+def test_multi_teacher_checkpoint_checks_model_identity(tmp_path):
+    runner = _saving_runner(tmp_path)
+    runner.teacher_runtime = SimpleNamespace(
+        manifest={"models": {"math": "a", "code": "b"}}
+    )
+    runner.distillation_plan = SimpleNamespace(teacher_keys=("code", "math"))
+    ReasoningRunner._save_checkpoint(runner)
+    runner.cfg.runner.resume_dir = str(
+        tmp_path / "experiment/checkpoints/global_step_8"
+    )
+    runner.reward = None
+    runner.has_dedicated_actor_inference = False
+    runner.actor.init_worker = _ImmediateHandle
+    runner.actor.load_checkpoint = lambda path: _ImmediateHandle()
+    loaded = []
+    runner.train_dataloader.load_state_dict = loaded.append
+    ReasoningRunner.init_actor_critic_workers(runner)
+    assert loaded == [{"offset": 3}]
+    runner.teacher_runtime.manifest["models"]["math"] = "changed"
+    with pytest.raises(ValueError, match="Teacher identities"):
+        ReasoningRunner.init_actor_critic_workers(runner)
 
 
 def test_interrupted_dataloader_save_does_not_publish_completion(tmp_path, monkeypatch):

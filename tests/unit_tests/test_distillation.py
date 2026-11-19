@@ -224,6 +224,111 @@ def _empty_rank_process(rank, path):
 
 
 class TestDistillation(unittest.TestCase):
+    def test_mixed_teacher_gradients_use_global_denominator(self):
+        from rlinf.data.schema.distillation import (
+            SampleContext,
+            TeacherTargets,
+            teacher_targets_to_batch,
+        )
+
+        keys = ("code", "math", "math")
+        mask = torch.tensor(
+            [[False, True, False], [False, True, True], [False, True, True]]
+        )
+        targets = [
+            TeacherTargets(
+                str(i),
+                key,
+                key + "-model",
+                "sampled",
+                None,
+                torch.ones(3, 1, dtype=torch.long),
+                torch.full((3, 1), -0.8 if key == "code" else -1.5),
+                mask[i],
+                SampleContext(str(i), str(i), key, int(key == "math")),
+            )
+            for i, key in enumerate(keys)
+        ]
+        batch = teacher_targets_to_batch(
+            targets, [1] * 3, [2] * 3, 3, response_only=False
+        )
+        batch["response_mask"] = mask
+        current = (
+            torch.tensor([0.3, 0.8, -0.2]).expand(3, 3, 3).clone().requires_grad_()
+        )
+        teacher_logits = torch.tensor(
+            [[0.2, 0.7, 0.1], [0.7, 0.1, 0.2], [0.7, 0.1, 0.2]]
+        )
+        teacher_logprobs = teacher_logits.log().unsqueeze(1).expand_as(current)
+        sampled = current.log_softmax(-1)[..., 1]
+        batch["rollout_logprobs"] = sampled.detach()
+        for mode in ("k1", "k2", "k3", "abs", *MODES):
+            for pg in (True,) if mode == "k1" else (False, True):
+                for topk in (2, -1) if mode in MODES else (1,):
+                    with self.subTest(mode=mode, pg=pg, topk=topk):
+                        cfg = DistillationLossConfig(
+                            loss_mode=mode,
+                            use_policy_gradient=pg,
+                            topk=topk,
+                            topk_source="student"
+                            if mode.startswith("reverse")
+                            else "teacher",
+                        )
+                        plan = DistillationPlan(
+                            enabled=True,
+                            teacher_keys=("code", "math"),
+                            use_policy_gradient=pg,
+                            target_format="full"
+                            if topk == -1
+                            else "sparse"
+                            if mode in MODES
+                            else "sampled",
+                        )
+                        reduction = DistillationReductionContext(5)
+
+                        def loss_for(rows):
+                            forward = DistillationForwardOutput(logprobs=sampled[rows])
+                            if mode in MODES:
+                                scores = teacher_logprobs[rows]
+                                ids = None
+                                if topk > 0:
+                                    source = (
+                                        current[rows]
+                                        if cfg.topk_source == "student"
+                                        else scores
+                                    )
+                                    ids = source.topk(topk, dim=-1).indices
+                                    scores = scores.gather(-1, ids)
+                                distribution = compute_distribution_loss(
+                                    current[rows],
+                                    ids,
+                                    scores,
+                                    cfg,
+                                    valid_mask=mask[rows],
+                                )
+                                forward.distribution_losses = (
+                                    distribution.distribution_losses
+                                )
+                                forward.teacher_mass = distribution.teacher_mass
+                            return compute_distillation_loss(
+                                forward,
+                                {k: v[rows] for k, v in batch.items()},
+                                plan=plan,
+                                config=cfg,
+                                reduction=reduction,
+                            )
+
+                        mixed, metrics = loss_for(slice(None))
+                        self.assertEqual(
+                            metrics["distillation/math/valid_tokens"].item(), 4
+                        )
+                        blocks = loss_for(slice(0, 1))[0] + loss_for(slice(1, None))[0]
+                        torch.testing.assert_close(mixed, blocks)
+                        torch.testing.assert_close(
+                            torch.autograd.grad(mixed, current, retain_graph=True)[0],
+                            torch.autograd.grad(blocks, current, retain_graph=True)[0],
+                        )
+
     def test_policy_gradient_rejects_greedy_sampling(self):
         cfg = {
             "distillation": {

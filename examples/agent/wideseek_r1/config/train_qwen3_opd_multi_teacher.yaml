@@ -1,0 +1,42 @@
+defaults:
+  - train_qwen3_hybrid
+  - _self_
+
+cluster:
+  component_placement:
+    actor,reward: 0-3
+    rollout: 0-3
+    teacher_math: 4-5
+    teacher_code: 6-7
+
+runner:
+  execution_mode: sync
+  experiment_name: wideseek-opd-multi-teacher
+
+algorithm:
+  kl_beta: 0.0
+
+data:
+  # Each question and all its agent turns use the Teacher named by data_source.
+  train_data_paths: /path/to/mixed-wideseek.jsonl
+  shuffle: true
+
+distillation:
+  enabled: true
+  teacher_key: data_source
+  teacher_models:
+    math:
+      model_path: /path/to/math-teacher
+      inference:
+        backend: sglang
+        tensor_parallel_size: 2
+    code:
+      model_path: /path/to/code-teacher
+      inference:
+        backend: vllm
+        tensor_parallel_size: 2
+  distillation_loss:
+    loss_mode: forward_kl_topk
+    use_policy_gradient: false
+    use_task_rewards: false
+    topk: 64

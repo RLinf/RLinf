@@ -200,10 +200,29 @@ def compute_distillation_loss(
     if scales is not None:
         tokens = tokens * scales
     loss = reduction.reduce(tokens, mask)
-    return loss, {
+    metrics = {
         "distillation/loss": loss.detach(),
         "distillation/token_count": mask.sum(dtype=torch.float32).detach(),
     }
+    if len(plan.teacher_keys) > 1:
+        indices = batch["teacher_index"].to(mask.device)
+        # Both trainers average microbatch metrics across accumulation and DP.
+        scale = reduction.dp_size * reduction.gradient_divisor
+        for index, key in enumerate(plan.teacher_keys):
+            selected = mask & (indices == index).unsqueeze(-1)
+            prefix = f"distillation/{key}"
+            metrics[f"{prefix}/valid_tokens"] = (
+                selected.sum(dtype=torch.float32) * scale
+            )
+            metrics[f"{prefix}/loss_sum"] = (
+                tokens.detach().masked_fill(~selected, 0).sum() * scale
+            )
+            if forward.teacher_mass is not None:
+                metrics[f"{prefix}/teacher_mass_sum"] = (
+                    forward.teacher_mass.detach().masked_fill(~selected, 0).sum()
+                    * scale
+                )
+    return loss, metrics
 
 
 def combine_distillation_and_task_loss(

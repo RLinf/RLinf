@@ -15,12 +15,14 @@
 """Reasoning request and sequence-group structures."""
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 
+from rlinf.data.schema.distillation import SampleContext
 from rlinf.utils.data_iter_utils import split_list
 
 if TYPE_CHECKING:
@@ -56,21 +58,32 @@ class RolloutRequest:
     answers: list[Union[list[str], dict]]
     multi_modal_inputs: list[Optional[dict]]
 
+    sample_contexts: list[list[SampleContext]] | None = None
+
+    def __post_init__(self):
+        if self.sample_contexts is not None and (
+            len(self.sample_contexts) != len(self.input_ids)
+            or any(len(group) != self.n for group in self.sample_contexts)
+        ):
+            raise ValueError("Expected one Teacher context per rollout sample")
+
     def to_seq_group_infos(self) -> list["SeqGroupInfo"]:
         return [
             SeqGroupInfo(
-                id=uuid.uuid4().int,
+                id=int(contexts[0].group_id, 16) if contexts else uuid.uuid4().int,
+                sample_contexts=contexts,
                 input_ids=input_ids,
                 answer=answer,
                 group_size=self.n,
                 image_data=image_data,
                 multi_modal_inputs=multi_modal_inputs,
             )
-            for input_ids, answer, image_data, multi_modal_inputs in zip(
+            for input_ids, answer, image_data, multi_modal_inputs, contexts in zip(
                 self.input_ids,
                 self.answers,
                 self.image_data,
                 self.multi_modal_inputs,
+                self.sample_contexts or [None] * len(self.input_ids),
                 strict=True,
             )
         ]
@@ -82,6 +95,8 @@ def build_rollout_requests_from_batch(
     group_size: int,
     split_size: int,
     enforce_divisible_batch: bool = False,
+    teacher_keys: tuple[str, ...] = (),
+    route_field: str = "data_source",
 ) -> list[RolloutRequest]:
     """Convert one collated batch into split rollout requests."""
     prompt_ids = batch["prompt"].tolist()
@@ -89,7 +104,38 @@ def build_rollout_requests_from_batch(
     answers = batch["answer"]
     image_data = batch["image_data"]
     multi_modal_inputs = batch["multi_modal_inputs"]
-    prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
+    prompt_ids = [
+        ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths, strict=True)
+    ]
+
+    size = len(prompt_ids)
+    if any(len(field) != size for field in (answers, image_data, multi_modal_inputs)):
+        raise ValueError("Expected one answer and multimodal entry per prompt")
+    contexts = []
+    if teacher_keys:
+        indices = {key: i for i, key in enumerate(sorted(teacher_keys))}
+        metadata = batch.get("meta", [None] * size)
+        if metadata is None or len(metadata) != size:
+            raise ValueError("Expected one metadata entry per prompt")
+        for meta in metadata:
+            group_id = uuid.uuid4().hex
+            key = (
+                teacher_keys[0]
+                if len(teacher_keys) == 1
+                else meta.get(route_field)
+                if isinstance(meta, Mapping)
+                else None
+            )
+            if not isinstance(key, str) or key not in indices:
+                raise ValueError(
+                    f"Group {group_id}: expected {route_field} in {list(indices)}, got {key!r}"
+                )
+            contexts.append(
+                [
+                    SampleContext(group_id, f"{group_id}/{i}", key, indices[key])
+                    for i in range(group_size)
+                ]
+            )
 
     requests = []
     for (
@@ -97,6 +143,7 @@ def build_rollout_requests_from_batch(
         split_answers,
         split_image_data,
         split_multi_modal_inputs,
+        split_contexts,
     ) in zip(
         split_list(
             prompt_ids, split_size, enforce_divisible_batch=enforce_divisible_batch
@@ -112,10 +159,17 @@ def build_rollout_requests_from_batch(
             split_size,
             enforce_divisible_batch=enforce_divisible_batch,
         ),
+        split_list(
+            contexts or [None] * size,
+            split_size,
+            enforce_divisible_batch=enforce_divisible_batch,
+        ),
+        strict=True,
     ):
         requests.append(
             RolloutRequest(
                 n=group_size,
+                sample_contexts=split_contexts if teacher_keys else None,
                 input_ids=split_prompt_ids,
                 answers=split_answers,
                 image_data=split_image_data,
@@ -161,6 +215,7 @@ class SeqGroupInfo:
     teacher_requests: list | None = None
     image_data: Optional[list] = None
     multi_modal_inputs: Optional[dict] = None
+    sample_contexts: list[SampleContext] | None = None
 
     def __post_init__(self):
         assert self.group_size > 0, "group_size must be greater than 0"

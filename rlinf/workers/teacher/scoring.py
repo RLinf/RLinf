@@ -23,7 +23,11 @@ from uuid import uuid4
 from omegaconf import DictConfig
 
 from rlinf.algorithms.distillation.config import build_distillation_plan
-from rlinf.data.schema.distillation import TeacherScoreRequest, TeacherTargets
+from rlinf.data.schema.distillation import (
+    SampleContext,
+    TeacherScoreRequest,
+    TeacherTargets,
+)
 
 from .backend import tokenizer_fingerprint
 from .client import TeacherClient
@@ -67,20 +71,52 @@ class RolloutTeacherScorer:
         self.plan = build_distillation_plan(cfg)
         self.client = TeacherClient(endpoints)
         self.fingerprint = tokenizer_fingerprint(tokenizer)
-        self.teacher_key = endpoints[0].teacher_key
-        if self.fingerprint != endpoints[0].model_info.tokenizer_fingerprint:
+        self.teacher_key = (
+            endpoints[0].teacher_key if len(self.client.endpoints) == 1 else None
+        )
+        if any(
+            self.fingerprint != endpoint.model_info.tokenizer_fingerprint
+            for endpoint in endpoints
+        ):
             raise ValueError("Student and Teacher tokenizer mappings must be identical")
+        if set(self.plan.teacher_keys) != self.client.endpoints.keys():
+            raise ValueError("Expected a ready endpoint for every configured Teacher")
+        if len(self.plan.teacher_keys) > 1:
+            from transformers import AutoConfig
+
+            model = cfg.rollout.model
+            student_config = AutoConfig.from_pretrained(
+                model.model_path,
+                trust_remote_code=model.get("trust_remote_code", False),
+            )
+            vocab_size = student_config.get_text_config().vocab_size
+            if any(
+                endpoint.model_info.vocab_size != vocab_size for endpoint in endpoints
+            ):
+                raise ValueError(
+                    f"Teacher output vocabulary sizes must match Student size {vocab_size}"
+                )
         self.student_policy_version = "0"
 
     def request(
-        self, input_ids, response_mask, *, selected_token_ids=None, sample_id=None
+        self,
+        input_ids,
+        response_mask,
+        *,
+        selected_token_ids=None,
+        sample_id=None,
+        context: SampleContext | None = None,
+        turn_index=0,
     ):
         """Build a position-aligned request without decoding or re-tokenizing."""
+        teacher_key = context.teacher_key if context else self.teacher_key
+        if teacher_key is None:
+            raise ValueError("Multi-Teacher scoring requires a frozen sample context")
         return TeacherScoreRequest(
-            request_id=uuid4().hex,
-            sample_id=sample_id or uuid4().hex,
-            group_id=sample_id or "",
-            teacher_key=self.teacher_key,
+            request_id=f"{context.sample_id}/{turn_index}" if context else uuid4().hex,
+            sample_id=context.sample_id if context else sample_id or uuid4().hex,
+            group_id=context.group_id if context else sample_id or "",
+            teacher_key=teacher_key,
             input_ids=tuple(input_ids),
             response_mask=tuple(bool(v) for v in response_mask),
             topk=self.plan.topk,
@@ -91,11 +127,11 @@ class RolloutTeacherScorer:
             else None,
         )
 
-    async def score_agent_output(self, output):
+    async def score_agent_output(self, output, context: SampleContext | None = None):
         """Score trainable turns independently using their actual private context."""
         turns = getattr(output, "single_turn_outputs", [output])
 
-        async def score_turn(turn):
+        async def score_turn(index, turn):
             if turn.extra_fields.get("not_training", False):
                 return
             mask = [False] * len(turn.prompt_ids) + list(
@@ -111,11 +147,16 @@ class RolloutTeacherScorer:
                     turn.response_topk_token_ids,
                 )
             request = self.request(
-                turn.prompt_ids + turn.response_ids, mask, selected_token_ids=selected
+                turn.prompt_ids + turn.response_ids,
+                mask,
+                context=context,
+                turn_index=index,
+                selected_token_ids=selected,
             )
             turn.teacher_targets = await self.client.score(request)
+            turn.teacher_targets.context = context
 
-        await asyncio.gather(*(score_turn(turn) for turn in turns))
+        await asyncio.gather(*(score_turn(i, turn) for i, turn in enumerate(turns)))
         return output
 
     def align_selected_ids(
@@ -139,19 +180,24 @@ class RolloutTeacherScorer:
         response_ids: list[int],
         sample_id: str,
         selected_ids: Sequence[Sequence[int]] | None = None,
+        *,
+        context: SampleContext | None = None,
     ) -> TeacherTargets:
         """Score a completed reasoning sequence."""
         request = self.request(
             prompt_ids + response_ids,
             [False] * len(prompt_ids) + [True] * len(response_ids),
             sample_id=sample_id,
+            context=context,
             selected_token_ids=self.align_selected_ids(
                 len(prompt_ids), len(response_ids), selected_ids
             )
             if self.plan.need_rollout_topk
             else None,
         )
-        return await self.client.score(request)
+        target = await self.client.score(request)
+        target.context = context
+        return target
 
     async def close(self):
         """Release local client connections."""

@@ -1806,3 +1806,37 @@ class TestAutoPlacementWorkerForEmbodiment:
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
+
+
+def test_mixed_teacher_placement():
+    from rlinf.utils.placement import TeacherComponentPlacement
+
+    cluster = create_fake_cluster(2, 4)
+    cfg = OmegaConf.create(
+        {
+            "cluster": {
+                "component_placement": {
+                    "actor": "0-1",
+                    "teacher_math": "2-3",
+                    "teacher_code": "4-7",
+                }
+            },
+            "distillation": {
+                "teacher_models": {
+                    "math": {"inference": {"tensor_parallel_size": 2}},
+                    "code": {
+                        "num_replicas": 2,
+                        "inference": {"tensor_parallel_size": 2},
+                    },
+                }
+            },
+        }
+    )
+    placement = TeacherComponentPlacement(cfg, cluster)
+    assert placement.get_replicas("code") == [(4, 5), (6, 7)]
+    cfg.cluster.component_placement.teacher_math = "3-4"
+    with pytest.raises(ValueError, match="one node"):
+        TeacherComponentPlacement(cfg, cluster)
+    cfg.cluster.component_placement.teacher_math = "4-5"
+    with pytest.raises(ValueError, match="overlaps"):
+        TeacherComponentPlacement(cfg, cluster)

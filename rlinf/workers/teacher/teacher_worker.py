@@ -15,7 +15,9 @@
 """Scheduler-owned frozen Teacher service."""
 
 import asyncio
+from collections import Counter
 from dataclasses import asdict
+from time import monotonic
 
 from rlinf.algorithms.distillation.config import (
     DistillationLossConfig,
@@ -42,6 +44,7 @@ class TeacherWorker(Worker):
         self.loss_config = loss_config
         self.backend = None
         self._runner = None
+        self._metrics = Counter()
         self.endpoint = None
         self._limit = asyncio.Semaphore(config.inference.get("max_concurrency", 8))
 
@@ -118,12 +121,31 @@ class TeacherWorker(Worker):
         """Score one sample using the frozen model and bounded engine concurrency."""
         if self.backend is None:
             raise RuntimeError("Teacher is not initialized")
+        queued = monotonic()
+        self._metrics["requests"] += 1
+        self._metrics["tokens"] += len(request.input_ids)
         async with self._limit:
-            return await self.backend.score(request)
+            started = monotonic()
+            self._metrics["queue_seconds"] += started - queued
+            try:
+                return await self.backend.score(request)
+            except Exception:
+                self._metrics["failures"] += 1
+                raise
+            finally:
+                self._metrics["score_seconds"] += monotonic() - started
+
+    def take_metrics(self) -> dict:
+        """Drain replica counters at a completed synchronous update boundary."""
+        metrics = self._metrics.copy()
+        self._metrics.clear()
+        return metrics
 
     async def _handle_score(self, http_request):
         from aiohttp import web
 
+        if http_request.headers.get("X-Teacher-Retry") == "1":
+            self._metrics["retries"] += 1
         payload = await http_request.json()
         request = TeacherScoreRequest(**payload)
         try:

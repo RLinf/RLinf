@@ -120,27 +120,30 @@ def main(cfg) -> None:
         teacher_placement.validate_disjoint(component_placement)
         teacher_runtime = launch_teacher_workers(cfg, cluster, teacher_placement)
 
-    runner = AgentRunner(
-        cfg=cfg,
-        teacher_runtime=teacher_runtime,
-        placement=component_placement,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        rollout=rollout_group,
-        inference=inference_group,
-        actor=actor_group,
-        reward=None,
-        agent_loop=agentloop_group,
-        tool_workers=tool_workers,
-    )
-
+    runner = None
     try:
+        runner = AgentRunner(
+            cfg=cfg,
+            teacher_runtime=teacher_runtime,
+            placement=component_placement,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            rollout=rollout_group,
+            inference=inference_group,
+            actor=actor_group,
+            reward=None,
+            agent_loop=agentloop_group,
+            tool_workers=tool_workers,
+        )
         runner.init_workers()
         runner.run()
     finally:
         if teacher_runtime is not None:
-            runner.close_teacher_clients()
-            teacher_runtime.close()
+            try:
+                if runner is not None:
+                    runner.close_teacher_clients()
+            finally:
+                teacher_runtime.close()
 
 
 if __name__ == "__main__":

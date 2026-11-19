@@ -18,6 +18,7 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
@@ -79,10 +80,19 @@ class TeacherScoringBackend(ABC):
             raise ValueError(
                 "Teacher model vocabulary does not cover all tokenizer IDs"
             )
+        weights = hashlib.sha256()
+        for shard in sorted(Path(path).glob("*")):
+            if shard.suffix in {".safetensors", ".bin", ".pt"} and shard.is_file():
+                weights.update(shard.name.encode())
+                with shard.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                        weights.update(chunk)
         fingerprint = hashlib.sha256(
             json.dumps(
                 {
                     "path": path,
+                    "weights": weights.hexdigest(),
+                    "revision": getattr(config, "_commit_hash", None),
                     "config": config.to_dict(),
                     "tokenizer": tokenizer_fingerprint(tokenizer),
                 },

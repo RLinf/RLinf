@@ -19,6 +19,7 @@ import os
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,6 +61,38 @@ class TestTeacher(unittest.TestCase):
         self.rows = [None] + [
             {i: float(value.log()) for i, value in enumerate(row)} for row in self.probs
         ]
+
+    def test_failed_second_teacher_rolls_back_started_replicas(self):
+        from unittest.mock import MagicMock
+
+        from omegaconf import OmegaConf
+
+        from rlinf.workers.teacher.runtime import TeacherWorker, launch_teacher_workers
+
+        cfg = OmegaConf.create(
+            {
+                "distillation": {
+                    "teacher_models": {
+                        "math": {"model_path": "math"},
+                        "code": {"model_path": "code"},
+                    }
+                }
+            }
+        )
+        groups = [MagicMock(), MagicMock()]
+        groups[0].launch.return_value = groups[0]
+        groups[1].launch.return_value = groups[1]
+        groups[0].init_worker.return_value.wait.return_value = [
+            TeacherEndpoint("http://code", "code", self.backend.info)
+        ]
+        groups[1].init_worker.return_value.wait.side_effect = RuntimeError(
+            "engine startup failed"
+        )
+        with patch.object(TeacherWorker, "create_group", side_effect=groups):
+            with self.assertRaisesRegex(RuntimeError, "engine startup failed"):
+                launch_teacher_workers(cfg, MagicMock(), MagicMock())
+        for group in groups:
+            group.stop.return_value.wait.assert_called_once()
 
     def test_tokenizer_padding_normalization_preserves_identity(self):
         from tokenizers import Tokenizer
@@ -618,15 +651,18 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
         async def handler(http_request):
             payload = await http_request.json()
             selected = payload.get("selected_token_ids")
+            code = http_request.path.startswith("/code/")
+            key = "code" if code else "default"
+            model = "code-model" if code else "model"
             self.active += 1
             self.peak = max(self.peak, self.active)
             try:
-                await asyncio.sleep(self.delay)
+                await asyncio.sleep(0 if code else self.delay)
                 return web.json_response(
                     {
                         "request_id": payload["request_id"],
-                        "teacher_key": "default",
-                        "model_fingerprint": "wrong" if self.wrong_model else "model",
+                        "teacher_key": key,
+                        "model_fingerprint": "wrong" if self.wrong_model else model,
                         "target_format": "sparse" if selected else "sampled",
                         "student_policy_version": payload.get("student_policy_version"),
                         "token_ids": selected or [[0], [3], [2]],
@@ -636,7 +672,7 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
                             [-2.0] * len(selected[2]),
                         ]
                         if selected
-                        else [[0.0], [-1.0], [-2.0]],
+                        else [[0.0], [-4.0 if code else -1.0], [-2.0]],
                         "valid_mask": payload["response_mask"],
                     }
                 )
@@ -645,6 +681,7 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
 
         app = web.Application()
         app.router.add_post("/score", handler)
+        app.router.add_post("/code/score", handler)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
@@ -724,6 +761,80 @@ class TestTeacherClient(unittest.IsolatedAsyncioTestCase):
         finally:
             await scorer.close()
 
+    async def test_mixed_teacher_routing_retry_and_order(self):
+        code = TeacherEndpoint(
+            self.endpoint.url + "/code",
+            "code",
+            replace(self.endpoint.model_info, model_fingerprint="code-model"),
+        )
+        down = replace(self.endpoint, url="http://127.0.0.1:0")
+        self.delay = 0.04
+        client = TeacherClient([down, code, self.endpoint], max_concurrency=1)
+        requests = [
+            request(),
+            replace(request(), request_id="other", teacher_key="code"),
+            request(),
+        ]
+        try:
+            targets = await client.score_many(requests)
+            self.assertEqual([t.logprobs[1].item() for t in targets], [-1, -4, -1])
+            self.assertEqual(
+                [t.teacher_key for t in targets], ["default", "code", "default"]
+            )
+            with self.assertRaisesRegex(ValueError, "Conflicting content"):
+                await client.score(replace(request(), teacher_key="code"))
+            with self.assertRaisesRegex(ValueError, "Unknown Teacher"):
+                await client.score(replace(request(), teacher_key="missing"))
+        finally:
+            await client.close()
+
+    async def test_mixed_teacher_agent_turns_follow_sample_context(self):
+        from rlinf.algorithms.distillation.config import DistillationPlan
+        from rlinf.data.schema.distillation import SampleContext
+        from rlinf.workers.teacher.scoring import RolloutTeacherScorer
+
+        code = TeacherEndpoint(
+            self.endpoint.url + "/code",
+            "code",
+            replace(self.endpoint.model_info, model_fingerprint="code-model"),
+        )
+        scorer = object.__new__(RolloutTeacherScorer)
+        scorer.plan = DistillationPlan(enabled=True, teacher_keys=("code", "default"))
+        scorer.teacher_key = None
+        scorer.fingerprint = "tokenizer"
+        scorer.client = TeacherClient([self.endpoint, code])
+        self.addAsyncCleanup(scorer.close)
+
+        def output():
+            return SimpleNamespace(
+                single_turn_outputs=[
+                    SimpleNamespace(
+                        prompt_ids=[1],
+                        response_ids=[3, 2],
+                        response_mask=None,
+                        extra_fields={"not_training": skip},
+                    )
+                    for skip in (False, True, False)
+                ]
+            )
+
+        samples = [
+            SampleContext("group" + key, key + "-sample", key, i)
+            for i, key in enumerate(scorer.plan.teacher_keys)
+        ]
+        outputs = await asyncio.gather(
+            *(scorer.score_agent_output(output(), ctx) for ctx in samples)
+        )
+        for ctx, result in zip(samples, outputs, strict=True):
+            first, skipped, last = result.single_turn_outputs
+            self.assertFalse(hasattr(skipped, "teacher_targets"))
+            self.assertEqual(first.teacher_targets.context, ctx)
+            self.assertEqual(last.teacher_targets.teacher_key, ctx.teacher_key)
+            self.assertEqual(last.teacher_targets.request_id, ctx.sample_id + "/2")
+            self.assertNotEqual(
+                first.teacher_targets.request_id, last.teacher_targets.request_id
+            )
+
     async def test_matching_bounded_concurrency_and_close(self):
         self.delay = 0.01
         client = TeacherClient([self.endpoint], max_concurrency=2)
@@ -792,6 +903,7 @@ class TestTeacherHTTP(unittest.IsolatedAsyncioTestCase):
         worker = object.__new__(TeacherWorker)
         worker.backend = backend
         worker.teacher_key = "default"
+        worker._metrics = Counter()
         worker._limit = asyncio.Semaphore(1)
         worker._logger = get_logger()
         worker._stacklevel = 1

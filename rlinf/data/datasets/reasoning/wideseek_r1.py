@@ -130,6 +130,7 @@ class WideSeekR1Dataset(ReasoningDataset):
             left_pad=True,
         )[0]
         output = DatasetItem(
+            meta=self.route_metadata(idx),
             prompt=prompt_tokens_tensor,
             length=prompt_length,
             answer=answer,

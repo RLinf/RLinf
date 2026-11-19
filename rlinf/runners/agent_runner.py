@@ -305,6 +305,10 @@ class AgentRunner(ReasoningRunner):
 
                     self.metric_logger.log(agent_metrics, logging_steps)
                     self.metric_logger.log(log_time_metrics, logging_steps)
+                    if self.teacher_runtime is not None:
+                        self.metric_logger.log(
+                            self.teacher_runtime.take_metrics(), logging_steps
+                        )
                     if actor_rollout_metrics is not None:
                         rollout_metrics = {
                             f"rollout/{k}": v for k, v in actor_rollout_metrics.items()
