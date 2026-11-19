@@ -14,6 +14,7 @@
 
 from typing import Callable, Optional
 
+import torch
 from omegaconf import DictConfig
 
 from rlinf.config import (
@@ -376,6 +377,23 @@ def _register_builtin_models():
 
 
 _register_builtin_models()
+
+
+def load_model_checkpoint(
+    model: torch.nn.Module,
+    checkpoint_path: str,
+    model_type: str,
+    *,
+    use_inference_loader: bool,
+) -> None:
+    """Load RLinf weights, using the model's inference format when requested."""
+    if str(model_type).lower() == "cosmos3" and use_inference_loader:
+        from rlinf.models.embodiment.cosmos3 import load_inference_checkpoint
+
+        load_inference_checkpoint(model, checkpoint_path)
+    else:
+        state_dict = torch.load(checkpoint_path)
+        model.load_state_dict(state_dict)
 
 
 def get_model(cfg: DictConfig):
