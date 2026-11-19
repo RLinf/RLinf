@@ -710,6 +710,8 @@ class BehaviorEnv(gym.Env):
         # as all-False for the whole chunk. RLinf's evaluation metrics gate on
         # `terminations|truncations`, so we fall back to info-done here.
         past_info_dones = torch.stack(info_done_flags, dim=1).any(dim=1)
+        # A native timeout already has a classification; do not also mark it as terminated.
+        past_info_dones &= ~(past_terminations | past_truncations)
 
         # If the config asks to ignore terminations, map info-done into
         # truncations; otherwise map it into terminations.
@@ -792,7 +794,7 @@ class BehaviorEnv(gym.Env):
                 episode_info["return"] / episode_info["episode_len"]
             )
             if self.ignore_terminations:
-                episode_info["success_at_end"] = info["success"]
+                episode_info["success_at_end"] = episode_info["success"]
 
             info_lists.append(episode_info)
 
@@ -801,7 +803,7 @@ class BehaviorEnv(gym.Env):
 
     @staticmethod
     def _extract_info_done(info: dict) -> bool:
-        tc = info["done"]["termination_conditions"]
+        tc = info.get("done", {}).get("termination_conditions", {})
         return any(v["done"] for v in tc.values())
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
