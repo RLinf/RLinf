@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "dexjoco_cnn_eval"
+    experiment_name: "dexjoco_cnn_nll_eval"
     logger_backends: ["tensorboard"]
 
   max_epochs: 1
@@ -31,7 +31,7 @@ runner:
   save_interval: -1
 
   resume_dir: null
-  ckpt_path: "/path/to/dexjoco_sft_cnn/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
+  ckpt_path: "/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt"
 
 env:
   group_name: "EnvGroup"
@@ -42,9 +42,9 @@ env:
     auto_reset: False
     ignore_terminations: False
     is_eval: True
-    seed: 42
+    seed: 10000
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
     init_params:
       camera_heights: 128
@@ -52,7 +52,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   enable_offload: False
   pipeline_stage_num: 1

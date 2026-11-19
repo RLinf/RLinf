@@ -16,27 +16,27 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0
+    actor,env,rollout: all
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "dexjoco_ppo_cnn"
+    experiment_name: "dexjoco_ppo_cnn_nll"
     logger_backends: ["tensorboard"]
 
   max_epochs: 200
   max_steps: -1
 
   only_eval: False
-  val_check_interval: 5
-  save_interval: 10
+  val_check_interval: 1
+  save_interval: 1
 
   seq_length: 1
   max_prompt_length: 1
   resume_dir: null
-  ckpt_path: null # Optional: full_weights.pt of a dexjoco_sft_cnn checkpoint to start PPO from.
+  ckpt_path: "/path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt"
 
 algorithm:
   update_epoch: 1
@@ -70,6 +70,7 @@ env:
   group_name: EnvGroup
 
   train:
+    seed: 42
     rollout_epoch: 1
     total_num_envs: 128
     group_size: ${algorithm.group_size}
@@ -94,9 +95,9 @@ env:
     use_rel_reward: False
     reward_coef: ${algorithm.reward_coef}
     is_eval: True
-    seed: 42
+    seed: 10000
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
     init_params:
       camera_heights: 128
@@ -104,7 +105,7 @@ env:
 
 rollout:
   group_name: RolloutGroup
-  backend: huggingface
+  rollout_backend: huggingface
   enable_offload: False
   pipeline_stage_num: 1
 
@@ -112,15 +113,15 @@ rollout:
     model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
-  enable_torch_compile: True
-  enable_cuda_graph: True
+  enable_torch_compile: False
+  enable_cuda_graph: False
 
 actor:
   group_name: ActorGroup
   training_backend: fsdp
   micro_batch_size: 200
   global_batch_size: 1600
-  seed: 1234
+  seed: 42
   enable_offload: False
 
   model:

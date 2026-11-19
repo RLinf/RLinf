@@ -7,7 +7,7 @@
 
    使用 Allegro 灵巧手浇花（图片来源：`DexJoCo <https://github.com/brave-eai/dexjoco>`__）。
 
-使用 DexJoCo 官方 ``water_plant`` 示范数据微调 CNN 和 π₀.₅ policy，再用 PPO 继续训练。本页介绍 Franka 机械臂与 Allegro 灵巧手浇花任务的数据准备、训练和检查点评测流程。
+使用 DexJoCo 官方 ``water_plant`` 示范数据训练 CNN 和 π₀.₅ policy，再用 PPO 微调。本页介绍 Franka 机械臂与 Allegro 灵巧手浇花任务的数据准备、训练和 checkpoint 评测流程。DexJoCo 包含 11 项单臂和双臂任务，本页配置与实验结果均针对 WaterPlant。
 
 概览
 ----------------------------------------
@@ -40,7 +40,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-训练和评测配置均使用 ``dexjoco_water_plant``：
+训练和评测配置均使用 ``dexjoco_water_plant``\ ：
 
 .. list-table::
    :header-rows: 1
@@ -65,9 +65,9 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
    * - 字段
      - 说明
    * - 观测
-     - 前视和腕部 RGB 图像，加上 23 维本体状态：7 维末端位姿和 16 个 Allegro 关节位置。CNN 图像缩放到 128×128。
+     - 前视和腕部 RGB 图像，加上 23 维本体感知状态：7 维末端位姿和 16 个 Allegro 关节位置。CNN 图像缩放到 128×128。
    * - 动作
-     - 22 维连续动作：末端的三维绝对位置、三维旋转向量和 16 个 Allegro 关节目标。
+     - 22 维连续动作：末端的三维绝对位置、三维旋转向量和 16 个 Allegro 关节的目标位置。
    * - 奖励
      - 稀疏的 0/1 成功奖励。
    * - 提示词（仅 π₀.₅）
@@ -93,7 +93,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
 下载数据集
 ----------------------------------------
 
-两类配方使用同一份 `官方 LeRobot 示范数据 <https://huggingface.co/datasets/DexJoCo/DexJoCo-Datasets-LeRobot>`__。先下载 ``water_plant`` 回合：
+两类模型使用同一份 `官方 LeRobot 示范数据 <https://huggingface.co/datasets/DexJoCo/DexJoCo-Datasets-LeRobot>`__。下载 ``water_plant`` 的示范轨迹：
 
 .. code:: bash
 
@@ -106,47 +106,49 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
 运行
 ----------------------------------------
 
-选择一种 policy，按下文步骤训练并评测 checkpoint。各阶段使用以下配置：
+选择一种 policy，按下文步骤训练并评测 checkpoint。配置文件已包含复现实验所需的参数，填写下文列出的本地路径即可。各阶段使用以下配置：
 
 .. list-table::
    :header-rows: 1
    :widths: 17 49 18 16
 
-   * - 配方
+   * - 方案
      - 配置
-     - GPU
+     - GPU（括号内为每张卡的显存）
      - 运行规模
    * - CNN + SFT
      - ``examples/sft/config/dexjoco_sft_cnn.yaml``
-     - 1 × 48 GB
-     - 20,000 次更新
+     - 1 × RTX PRO 5000 Blackwell（48 GB）
+     - 20,000 步 SFT
    * - CNN + PPO
      - ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``
-     - 8 × H100
-     - 200 轮
+     - 8 × H100（80 GB）
+     - 200 轮 PPO
    * - CNN 评测
      - ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``
-     - 8 × H100
+     - 8 × H100（80 GB）
      - 64 个回合
    * - π₀.₅ + SFT
      - ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``
-     - 16 × H100
-     - 5000 次更新
+     - 16 × H100（80 GB）
+     - 5000 步 SFT
    * - π₀.₅ + PPO
      - ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``
-     - 8 × H100
-     - 150 轮
+     - 8 × H100（80 GB）
+     - 150 轮 PPO
    * - π₀.₅ 评测
      - ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``
-     - 8 × H100
+     - 8 × H100（80 GB）
      - 64 个回合
 
-每次启动训练，脚本都会在仓库根目录下创建 ``logs/<timestamp>-<config>``。checkpoint 保存在该目录下的 ``<experiment_name>/checkpoints/global_step_<N>``。下文中的 ``/path/to/RLinf`` 填写仓库根目录，``<sft-timestamp>`` 和 ``<ppo-timestamp>`` 分别填写对应训练目录的时间戳。每次运行的 ``run_embodiment.log`` 都记录了包含日志路径的启动命令。
+SFT 的“步”指一次优化器更新；PPO 的“轮”指一次轨迹采样及随后的训练，其中包含多次优化器更新。下文的训练进度和 checkpoint 分别按这两种方式计数，评测规模按回合数计。
+
+每次启动训练，脚本都会在仓库根目录下创建 ``logs/<timestamp>-<config>``\ 。checkpoint 保存在该目录下的 ``<experiment_name>/checkpoints/global_step_<N>``\ 。下文中的 ``/path/to/RLinf`` 填写仓库根目录，``<sft-timestamp>`` 和 ``<ppo-timestamp>`` 分别填写对应训练目录的时间戳。每次运行的 ``run_embodiment.log`` 都记录了包含日志路径的启动命令。
 
 CNN：SFT 与 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-下载 ResNet-10 主干，并把示范数据导出为图像、状态和长度为 10 的动作块：
+下载 ResNet-10 预训练权重，并将示范数据导出为 CNN 训练所需的图像、状态和动作序列：
 
 .. code:: bash
 
@@ -157,59 +159,40 @@ CNN：SFT 与 PPO
      --output /path/to/dexjoco/dexjoco_cnn_datasets/water_plant \
      --cameras front wrist --image-size 128 --chunk 10 --state-dim 23
 
-导出器生成训练数组和记录动作归一化统计量的 ``meta.json``。在 ``examples/sft/config/dexjoco_sft_cnn.yaml`` 中设置这些路径：
+导出命令会缩放图像，并为每帧观测配上示范中连续 10 步的动作。输出目录包含这些训练数据和 ``meta.json``\ ，后者记录动作的均值与标准差。SFT、PPO 和评测沿用同一份统计量，保证动作缩放一致。在 ``examples/sft/config/dexjoco_sft_cnn.yaml`` 中填写：
 
 .. code:: yaml
 
-   runner:
-     logger:
-       experiment_name: dexjoco_sft_cnn_nll
    data:
      train_data_paths: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant
    actor:
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
-       sft_loss_type: nll
 
-本流程用高斯负对数似然（NLL）训练 CNN。SFT 共更新 20,000 次，每 2000 次保存一个 checkpoint：
+默认配置使用高斯负对数似然（NLL）训练 CNN。SFT 共训练 20,000 步，每 2000 步保存一个 checkpoint：
 
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
 
-使用 NLL 训练第 8000 步的权重初始化 PPO。在 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` 中设置：
+20,000 步训练共保存 10 个 checkpoint。记录中的 SFT 评测逐个检查了这些权重，每次用一个 worker 运行 64 个回合。10 个 NLL checkpoint 中，第 8000 步的成功率最高，为 50/64（78.1%），因此选它作为 PPO 起点。下文的 8 个 worker 评测配置测得这个起点的成功率为 42/64（65.6%）。比较 SFT 与 PPO 时，应沿用相同的评测配置。
+
+在 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` 中填写模型、归一化统计量和选定 checkpoint 的路径：
 
 .. code:: yaml
 
-   cluster:
-     component_placement:
-       actor,env,rollout: all
    runner:
-     logger:
-       experiment_name: dexjoco_ppo_cnn_nll
      ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
-     val_check_interval: 1
-     save_interval: 1
-   env:
-     train:
-       seed: 42
-     eval:
-       seed: 10000
-       video_cfg:
-         save_video: False
    rollout:
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
-     enable_torch_compile: False
-     enable_cuda_graph: False
    actor:
-     seed: 42
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-PPO 使用 128 个环境、action-level log-probability、1e-5 学习率和 1600 的全局批量。启动训练：
+PPO 使用 128 个环境和动作级对数概率（action-level），policy 学习率为 1e-5，全局批大小为 1600。启动训练：
 
 .. code:: bash
 
@@ -220,14 +203,7 @@ PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_
 .. code:: yaml
 
    runner:
-     logger:
-       experiment_name: dexjoco_cnn_nll_eval
      ckpt_path: /path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt
-   env:
-     eval:
-       seed: 10000
-       video_cfg:
-         save_video: False
    rollout:
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
@@ -239,21 +215,10 @@ PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_
 
    bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
-复现 MSE 对照时，复用上面导出的数据，重新运行 SFT 和 PPO。在 SFT 配置中设置 ``actor.model.sft_loss_type: mse`` 和 ``runner.logger.experiment_name: dexjoco_sft_cnn_mse``。PPO 使用单独的实验名，并加载 MSE 训练第 8000 步的权重：
-
-.. code:: yaml
-
-   runner:
-     logger:
-       experiment_name: dexjoco_ppo_cnn_mse
-     ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
-
-评测的实验名设为 ``dexjoco_cnn_mse_eval``，``runner.ckpt_path`` 设为 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``。两处时间戳分别填写 MSE SFT 和 MSE PPO 运行目录的时间戳，其余设置保持一致。
-
 π₀.₅：SFT 与 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-计算 OpenPI 归一化统计量，并下载 π₀.₅ 基座模型：
+π₀.₅ 直接读取原始 LeRobot 数据。先计算状态和动作的归一化统计量，再下载并转换基座模型权重：
 
 .. code:: bash
 
@@ -269,16 +234,12 @@ PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_
      --output-norm-stats /path/to/pi05_base_openpi/dexjoco/norm_stats.json \
      --action-dim 32 --action-horizon 30 --max-token-len 250
 
-这些命令生成 ``norm_stats.json`` 和 RLinf OpenPI 格式的模型。按照 :doc:`/rst_source/guides/multi_node` 准备双节点集群，然后在 ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml`` 中替换 ``cluster`` 配置段，并设置以下训练字段：
+第一条命令在数据集目录下生成 ``norm_stats.json``\ ，SFT、PPO 和评测均使用这份统计量。权重转换命令将 PyTorch 权重按 RLinf 的 OpenPI 格式保存到 ``/path/to/pi05_base_openpi``\ ，供 SFT 加载。SFT 的训练数据仍使用原始 LeRobot 目录。
+
+按照 :doc:`/rst_source/guides/multi_node` 准备两台各有 8 张 H100 的节点。配置文件已设置 16 张 GPU 和 5000 步 SFT，在 ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml`` 中填写以下路径：
 
 .. code:: yaml
 
-   cluster:
-     num_nodes: 2
-     component_placement:
-       actor: 0-15
-   runner:
-     max_steps: 5000
    data:
      train_data_paths: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant
    actor:
@@ -287,13 +248,13 @@ PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
-SFT 使用全局批量 32、micro batch 2 和 30,000 步的学习率调度。在头节点启动：
+SFT 的全局批大小为 32，每张 GPU 的微批大小为 2，学习率按 30,000 步的调度计划变化。在头节点启动：
 
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_openpi_pi05
 
-SFT 将第 5000 步的 checkpoint 保存在 ``logs/<sft-timestamp>-dexjoco_sft_openpi_pi05/dexjoco_sft_openpi_pi05/checkpoints/global_step_5000``。开始 PPO 前，先在单节点上评测它。在 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml`` 中设置：
+实验使用 SFT 结束时第 5000 步的 checkpoint 初始化 PPO。这个 checkpoint 保存在 ``logs/<sft-timestamp>-dexjoco_sft_openpi_pi05/dexjoco_sft_openpi_pi05/checkpoints/global_step_5000``\ 。开始 PPO 前，先在单节点上评测它。在 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml`` 中设置：
 
 .. code:: yaml
 
@@ -310,7 +271,7 @@ SFT 将第 5000 步的 checkpoint 保存在 ``logs/<sft-timestamp>-dexjoco_sft_o
    bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval \
      runner.logger.experiment_name=dexjoco_pi05_sft5000_eval
 
-评测配置在 8 个 worker 上运行 64 个回合，种子为 10000，每个动作块执行 10 步、去噪 5 步，回合上限为 1000 步。下文评测 PPO checkpoint 时沿用同一配置。
+评测配置使用 8 个 worker，共运行 64 个回合，随机种子为 10000。每次预测执行 10 个动作，模型采样使用 5 步去噪，每个回合最多执行 1000 步动作。下文评测 PPO checkpoint 时沿用这套配置。
 
 用同一个 SFT checkpoint 初始化 PPO。在 ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml`` 中设置：
 
@@ -325,13 +286,13 @@ SFT 将第 5000 步的 checkpoint 保存在 ``logs/<sft-timestamp>-dexjoco_sft_o
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
-在单节点上启动 PPO。默认配方训练 150 轮，使用 token-level log-probability、5e-6 的 policy 学习率和 2e-4 的 value 学习率，每轮评测并保存检查点：
+在单节点上启动 PPO。默认配置训练 150 轮，使用 token 级对数概率（token-level），policy 学习率为 5e-6，价值网络学习率为 2e-4。每轮评测并保存 checkpoint：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh dexjoco_ppo_openpi_pi05
 
-PPO 将第 150 轮的 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_openpi_pi05/dexjoco_ppo_openpi_pi05/checkpoints/global_step_150``。在上面的评测配置中，仅将 ``rollout.model.model_path`` 改为这个 checkpoint：
+PPO 将第 150 轮的 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_openpi_pi05/dexjoco_ppo_openpi_pi05/checkpoints/global_step_150``\ 。在上面的评测配置中，仅将 ``rollout.model.model_path`` 改为这个 checkpoint：
 
 .. code:: yaml
 
@@ -348,16 +309,30 @@ PPO 将第 150 轮的 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_op
 
 其他评测选项见 :doc:`/rst_source/evaluations/reference/cli`。
 
+CNN：复现 MSE 对照
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+复现 MSE 对照时，复用上面导出的数据，重新运行 SFT 和 PPO。在 SFT 配置中设置 ``actor.model.sft_loss_type: mse`` 和 ``runner.logger.experiment_name: dexjoco_sft_cnn_mse``\ 。PPO 使用单独的实验名，并加载 MSE 训练第 8000 步的权重：
+
+.. code:: yaml
+
+   runner:
+     logger:
+       experiment_name: dexjoco_ppo_cnn_mse
+     ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+
+评测的实验名设为 ``dexjoco_cnn_mse_eval``\ ，``runner.ckpt_path`` 设为 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``\ 。两处时间戳分别填写 MSE SFT 和 MSE PPO 运行目录的时间戳，其余设置保持一致。
+
 可视化与结果
 ----------------------------------------
 
-用 TensorBoard 查看 ``env/success_once`` 和 ``eval/success_once``：
+用 TensorBoard 查看 ``env/success_once`` 和 ``eval/success_once``\ ：
 
 .. code:: bash
 
    tensorboard --logdir ./logs --port 6006
 
-使用 Weights & Biases 时，先运行 ``wandb login``，再启用两个日志后端：
+使用 Weights & Biases 时，先运行 ``wandb login``\ ，再启用两个日志后端：
 
 .. code:: yaml
 
@@ -383,7 +358,7 @@ PPO 将第 150 轮的 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_op
    :header-rows: 1
    :widths: 25 75
 
-   * - 配方
+   * - 方案
      - 成功率
    * - CNN + SFT
      - 第 8000 步：MSE 为 46/64（71.9%），NLL 为 42/64（65.6%）。

@@ -1,5 +1,5 @@
-RL with DexJoCo Benchmark
-=========================
+RL with the DexJoCo Benchmark
+========================================
 
 .. figure:: https://raw.githubusercontent.com/brave-eai/dexjoco/main/docs/pics/water_plant_4.png
    :align: center
@@ -10,6 +10,8 @@ RL with DexJoCo Benchmark
 Fine-tune CNN and π₀.₅ policies on the official DexJoCo ``water_plant``
 demonstrations, then continue with PPO. This page covers data preparation,
 training, and checkpoint evaluation for the Franka arm and Allegro hand.
+DexJoCo provides 11 single-arm and dual-arm tasks; the configurations and results
+on this page cover WaterPlant.
 
 Overview
 --------
@@ -114,7 +116,8 @@ Run It
 ------
 
 Choose a policy and follow the training and checkpoint evaluation steps below.
-Each stage uses one of these configurations:
+The checked-in configurations contain the reproduction settings; fill in the
+local paths shown below. Each stage uses one of these configurations:
 
 .. list-table::
    :header-rows: 1
@@ -122,32 +125,36 @@ Each stage uses one of these configurations:
 
    * - Recipe
      - Config
-     - GPUs
+     - GPUs (memory per GPU)
      - Run length
    * - CNN + SFT
      - ``examples/sft/config/dexjoco_sft_cnn.yaml``
-     - 1 × 48 GB
-     - 20,000 updates
+     - 1 × RTX PRO 5000 Blackwell (48 GB)
+     - 20,000 SFT steps
    * - CNN + PPO
      - ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``
-     - 8 × H100
-     - 200 iterations
+     - 8 × H100 (80 GB)
+     - 200 PPO iterations
    * - CNN evaluation
      - ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``
-     - 8 × H100
+     - 8 × H100 (80 GB)
      - 64 episodes
    * - π₀.₅ + SFT
      - ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``
-     - 16 × H100
-     - 5000 updates
+     - 16 × H100 (80 GB)
+     - 5000 SFT steps
    * - π₀.₅ + PPO
      - ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml``
-     - 8 × H100
-     - 150 iterations
+     - 8 × H100 (80 GB)
+     - 150 PPO iterations
    * - π₀.₅ evaluation
      - ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``
-     - 8 × H100
+     - 8 × H100 (80 GB)
      - 64 episodes
+
+One SFT step is one optimizer update. One PPO iteration collects rollouts and
+trains on them for multiple optimizer steps. The run lengths and checkpoints
+below use these two counters. Evaluation length is measured in episodes.
 
 Each training launch creates ``logs/<timestamp>-<config>`` under the repository
 root. Checkpoints are saved beneath that directory at
@@ -171,64 +178,53 @@ and 10-action chunks:
      --output /path/to/dexjoco/dexjoco_cnn_datasets/water_plant \
      --cameras front wrist --image-size 128 --chunk 10 --state-dim 23
 
-The exporter writes the training arrays and ``meta.json``, which contains the
-action normalization statistics. Set these paths in
+The exporter resizes the images and pairs each observation with ten consecutive
+actions from its demonstration. It saves these training arrays and ``meta.json``
+in the output directory. The metadata contains the action mean and standard
+deviation; reuse it for SFT, PPO, and evaluation so all stages use the same
+action scale. Set these paths in
 ``examples/sft/config/dexjoco_sft_cnn.yaml``:
 
 .. code:: yaml
 
-   runner:
-     logger:
-       experiment_name: dexjoco_sft_cnn_nll
    data:
      train_data_paths: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant
    actor:
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
-       sft_loss_type: nll
 
-This recipe uses Gaussian negative log-likelihood (NLL) for SFT. Train for
-20,000 updates, saving a checkpoint every 2000 updates:
+The default SFT configuration uses Gaussian negative log-likelihood (NLL).
+Train for 20,000 SFT steps, saving a checkpoint every 2000 steps:
 
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
 
-Initialize PPO with weights from step 8000 of the NLL SFT run. Set these fields in
+The 20,000-step run produces ten checkpoints. In the recorded SFT sweep, each
+was evaluated on 64 episodes with one worker. Among the ten checkpoints trained
+with NLL, step 8000 achieved the highest success rate, 50/64 (78.1%). PPO therefore
+starts from step 8000. With the eight-worker evaluation configuration, its
+baseline is 42/64 (65.6%), as reported below. Use that same configuration when
+comparing the SFT and PPO checkpoints.
+
+Set the model, normalization, and selected checkpoint paths in
 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``:
 
 .. code:: yaml
 
-   cluster:
-     component_placement:
-       actor,env,rollout: all
    runner:
-     logger:
-       experiment_name: dexjoco_ppo_cnn_nll
      ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
-     val_check_interval: 1
-     save_interval: 1
-   env:
-     train:
-       seed: 42
-     eval:
-       seed: 10000
-       video_cfg:
-         save_video: False
    rollout:
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
-     enable_torch_compile: False
-     enable_cuda_graph: False
    actor:
-     seed: 42
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-PPO uses 128 environments, action-level log-probabilities, learning rate 1e-5,
-and global batch 1600. Launch it with:
+PPO uses 128 environments, action-level log-probabilities, policy learning rate
+1e-5, and global batch size 1600. Launch it with:
 
 .. code:: bash
 
@@ -243,14 +239,7 @@ in ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``:
 .. code:: yaml
 
    runner:
-     logger:
-       experiment_name: dexjoco_cnn_nll_eval
      ckpt_path: /path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_nll/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt
-   env:
-     eval:
-       seed: 10000
-       video_cfg:
-         save_video: False
    rollout:
      model:
        model_path: /path/to/RLinf-ResNet10-pretrained
@@ -262,28 +251,11 @@ The following command runs 64 episodes across the eight GPUs:
 
    bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
 
-For the MSE comparison, reuse the exported data and rerun SFT and PPO. In the SFT
-config, set ``actor.model.sft_loss_type: mse`` and
-``runner.logger.experiment_name: dexjoco_sft_cnn_mse``.
-Use ``dexjoco_ppo_cnn_mse`` as the PPO experiment name and load step 8000 from
-the MSE run:
-
-.. code:: yaml
-
-   runner:
-     logger:
-       experiment_name: dexjoco_ppo_cnn_mse
-     ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
-
-For its evaluation, set the experiment name to ``dexjoco_cnn_mse_eval`` and
-``runner.ckpt_path`` to
-``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``.
-Use the timestamps of the MSE runs and keep the remaining settings unchanged.
-
 π₀.₅: SFT and PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Compute the OpenPI normalization statistics and download the π₀.₅ base model:
+Prepare the π₀.₅ inputs from the original LeRobot dataset. Compute its state
+and action normalization statistics, then download and convert the base model:
 
 .. code:: bash
 
@@ -299,19 +271,18 @@ Compute the OpenPI normalization statistics and download the π₀.₅ base mode
      --output-norm-stats /path/to/pi05_base_openpi/dexjoco/norm_stats.json \
      --action-dim 32 --action-horizon 30 --max-token-len 250
 
-This produces ``norm_stats.json`` and a model in the RLinf OpenPI layout.
-Prepare the two-node cluster using :doc:`/rst_source/guides/multi_node`.
-In ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``, replace the ``cluster``
-section and set the training fields below:
+The first command writes ``norm_stats.json`` in the dataset directory. Reuse
+this file for SFT, PPO, and evaluation. The conversion writes PyTorch weights
+in the RLinf OpenPI layout under ``/path/to/pi05_base_openpi``. SFT reads the
+original LeRobot dataset and initializes from these converted base weights.
+
+Prepare two nodes with eight H100 GPUs each using
+:doc:`/rst_source/guides/multi_node`. The SFT configuration selects all 16 GPUs
+and 5000 SFT steps. Set these paths in
+``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``:
 
 .. code:: yaml
 
-   cluster:
-     num_nodes: 2
-     component_placement:
-       actor: 0-15
-   runner:
-     max_steps: 5000
    data:
      train_data_paths: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant
    actor:
@@ -320,14 +291,15 @@ section and set the training fields below:
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
-SFT uses global batch 32, micro batch 2, and a 30,000-step learning-rate schedule.
-Launch it on the head node:
+SFT uses global batch size 32, micro batch size 2 per GPU, and a 30,000-step
+learning-rate schedule. Launch it on the head node:
 
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_openpi_pi05
 
-SFT saves step 5000 under
+The reported PPO run starts from the final SFT checkpoint at step 5000.
+SFT saves it under
 ``logs/<sft-timestamp>-dexjoco_sft_openpi_pi05/dexjoco_sft_openpi_pi05/checkpoints/global_step_5000``.
 Evaluate this checkpoint on one node before PPO. Set the following paths in
 ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``:
@@ -365,7 +337,7 @@ Initialize PPO from that same SFT checkpoint. Set these paths in
        openpi_data:
          norm_stats_path: /path/to/dexjoco/dexjoco_lerobot_datasets/water_plant/norm_stats.json
 
-Launch PPO on one node. The default recipe trains for 150 iterations with
+Launch PPO on one node. The default recipe trains for 150 PPO iterations with
 token-level log-probabilities, policy learning rate 5e-6, and value learning rate
 2e-4. It evaluates and saves a checkpoint every iteration:
 
@@ -392,6 +364,27 @@ Run the PPO evaluation under a separate experiment name:
      runner.logger.experiment_name=dexjoco_pi05_ppo150_eval
 
 See :doc:`/rst_source/evaluations/reference/cli` for evaluation options.
+
+CNN: MSE Comparison
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For the MSE comparison, reuse the exported data and rerun SFT and PPO. In the SFT
+config, set ``actor.model.sft_loss_type: mse`` and
+``runner.logger.experiment_name: dexjoco_sft_cnn_mse``.
+Use ``dexjoco_ppo_cnn_mse`` as the PPO experiment name and load step 8000 from
+the MSE run:
+
+.. code:: yaml
+
+   runner:
+     logger:
+       experiment_name: dexjoco_ppo_cnn_mse
+     ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
+
+For its evaluation, set the experiment name to ``dexjoco_cnn_mse_eval`` and
+``runner.ckpt_path`` to
+``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``.
+Use the timestamps of the MSE runs and keep the remaining settings unchanged.
 
 Visualization and Results
 -------------------------
