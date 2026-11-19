@@ -2063,6 +2063,19 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
+    expected_adv_type = (
+        "gae_dynamic"
+        if OmegaConf.select(cfg, "critic.use_critic_model", default=False)
+        else "grpo_dynamic"
+    )
+    if (
+        OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False)
+        and cfg.algorithm.adv_type != expected_adv_type
+    ):
+        raise ValueError(
+            f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
+            f"got {cfg.algorithm.adv_type!r}."
+        )
     reward_cfg = cfg.get("reward", None)
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
@@ -2071,8 +2084,6 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         cfg.agentloop.setdefault("truncate_response", True)
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
-    if not cfg.actor.get("enable_dp_load_balance", False):
-        raise ValueError("SearchR1 requires actor.enable_dp_load_balance=True.")
     if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(
         "importance_sampling_fix", False
     ):
