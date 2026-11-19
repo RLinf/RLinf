@@ -208,4 +208,4 @@ The repository ships four configs that share the same VLM-as-Policy stack:
      - Multi-embodiment template
      - Enables ``score_centering: True`` and ``max_off_policy_threshold: 5`` for stage-3 training.
 
-To explore the underlying RLinf components used here, see :doc:`trajectory_collector`, :doc:`execution-model/index`, and :doc:`scheduling-model/index`.
+To explore the underlying RLinf components used here, see :doc:`../../concepts/trajectory_collector`, :doc:`../../concepts/execution-model/index`, and :doc:`../../concepts/scheduling-model/index`.

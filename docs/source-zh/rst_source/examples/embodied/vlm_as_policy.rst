@@ -208,4 +208,4 @@ Policy 损失采用无 PPO clip 的 bypass REINFORCE（``algorithm.loss_type: pe
      - 多本体模板
      - 开启 ``score_centering: True`` 与 ``max_off_policy_threshold: 5``，用于第三阶段扩展。
 
-如需继续了解底层组件，可参阅 :doc:`trajectory_collector`、:doc:`execution-model/index` 和 :doc:`scheduling-model/index`。
+如需继续了解底层组件，可参阅 :doc:`../../concepts/trajectory_collector`、:doc:`../../concepts/execution-model/index` 和 :doc:`../../concepts/scheduling-model/index`。

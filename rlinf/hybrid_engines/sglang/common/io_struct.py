@@ -38,11 +38,31 @@ def _seal(value: Any) -> Any:
     return wrap_as_pickle(value)
 
 
-class AbortGenerationInput(BaseReq, kw_only=True):
+def _base_req_class_kwargs(base: Any) -> dict[str, Any]:
+    """Keywords accepted by ``class Sub(BaseReq, **kwargs)``.
+
+    SGLang >= 0.5.19 defines ``BaseReq`` as a ``msgspec.Struct``. Subclasses
+    that add required fields must pass ``kw_only=True``, because the base
+    already has optional fields. A dataclass ``BaseReq`` (older SGLang) and
+    Sphinx's autodoc mock of sglang both reject that keyword in
+    ``__init_subclass__``, which fails the docs build.
+    """
+    if getattr(base, "__sphinx_mock__", False):
+        return {}
+    # Public on msgspec.Struct; absent on dataclasses and plain ABCs.
+    if getattr(base, "__struct_config__", None) is None:
+        return {}
+    return {"kw_only": True}
+
+
+_REQ_KWARGS = _base_req_class_kwargs(BaseReq)
+
+
+class AbortGenerationInput(BaseReq, **_REQ_KWARGS):
     pass
 
 
-class AbortGenerationOutput(BaseReq, kw_only=True):
+class AbortGenerationOutput(BaseReq, **_REQ_KWARGS):
     waiting_reqs: Optional[PickleWrapper] = None
     running_reqs: Optional[PickleWrapper] = None
 
@@ -51,7 +71,7 @@ class AbortGenerationOutput(BaseReq, kw_only=True):
         self.running_reqs = _seal(self.running_reqs)
 
 
-class TaskMethodInput(BaseReq, kw_only=True):
+class TaskMethodInput(BaseReq, **_REQ_KWARGS):
     method_name: str
     args: Optional[PickleWrapper] = None
     kwargs: Optional[PickleWrapper] = None
@@ -66,7 +86,7 @@ class TaskMethodInput(BaseReq, kw_only=True):
         return list(args), dict(kwargs)
 
 
-class TaskMethodOutput(BaseReq, kw_only=True):
+class TaskMethodOutput(BaseReq, **_REQ_KWARGS):
     method_name: str
     result: Optional[PickleWrapper] = None
 
@@ -77,14 +97,14 @@ class TaskMethodOutput(BaseReq, kw_only=True):
         return unwrap_from_pickle(self.result)
 
 
-class SyncHFWeightInput(BaseReq, kw_only=True):
+class SyncHFWeightInput(BaseReq, **_REQ_KWARGS):
     # The rollout's current pause mode during async training, None when not
     # paused (i.e. the existing synchronous training path). Same values as the
     # `rollout.pause_mode` config: "in_place" / "retract" / "drain".
     pause_mode: Optional[str] = None
 
 
-class SyncHFWeightOutput(BaseReq, kw_only=True):
+class SyncHFWeightOutput(BaseReq, **_REQ_KWARGS):
     pass
 
 
