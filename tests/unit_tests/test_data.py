@@ -226,6 +226,56 @@ def test_auto_save_checkpoint_resaves_restored_window(tmp_path):
         shutil.rmtree(second_checkpoint, ignore_errors=True)
 
 
+def test_flatten_trajectory_strips_final_prev_values_and_preserves_checkpoint_shape(
+    tmp_path,
+):
+    """Flattening strips per-epoch final_prev_values so sampling and checkpoints align."""
+    from rlinf.data.schema.embodied_types import TrajectoryStep
+
+    def _make_traj(step_val: float, final_val: float) -> Trajectory:
+        step = TrajectoryStep(
+            rewards=torch.full((2, 1), step_val),
+            dones=torch.zeros(2, 1, dtype=torch.bool),
+            initial_dones=torch.zeros(2, 1, dtype=torch.bool),
+            prev_values=torch.full((2, 1), step_val),
+            final_prev_values=torch.full((2, 1), final_val),
+        )
+        return Trajectory.from_steps([step])
+
+    t0 = _make_traj(step_val=10.0, final_val=999.0)
+    t1 = _make_traj(step_val=20.0, final_val=888.0)
+
+    store_dir = tmp_path / "store"
+    buf = TrajectoryReplayBuffer(
+        auto_save=True,
+        auto_save_path=str(store_dir),
+        enable_cache=False,
+    )
+    try:
+        buf.add_trajectories([t0, t1])
+        batch = buf.sample_chunks(16)
+        t0_mask = batch["rewards"] == 10.0
+        t1_mask = batch["rewards"] == 20.0
+        assert torch.all(batch["prev_values"][t0_mask] == 10.0)
+        assert torch.all(batch["prev_values"][t1_mask] == 20.0)
+    finally:
+        buf.close()
+
+    ckpt_dir = tmp_path / "ckpt"
+    mem_buf = TrajectoryReplayBuffer(auto_save=False, sample_window_size=4)
+    try:
+        mem_buf.add_trajectories([t0])
+        mem_buf.save_checkpoint(str(ckpt_dir))
+        saved = torch.load(
+            ckpt_dir / f"trajectory_0_{t0.model_weights_id}.pt",
+            weights_only=False,
+        )
+        assert saved["prev_values"].shape == (1, 2, 1)
+        assert torch.all(saved["prev_values"] == 10.0)
+    finally:
+        mem_buf.close()
+
+
 class TestD4RLDataset:
     """Tests for loading D4RL transition datasets."""
 
