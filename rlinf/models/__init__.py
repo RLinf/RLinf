@@ -395,13 +395,16 @@ def merge_lora(model, path: str, scale: float):
         parameter as trainable as it was before.
     """
     from peft import PeftModel
+    from peft.tuners.lora import LoraLayer
 
     # Loading an adapter for inference freezes every parameter of the model.
     trainable = {name: param.requires_grad for name, param in model.named_parameters()}
     peft_model = PeftModel.from_pretrained(model, path)
-    for name, param in peft_model.named_parameters():
-        if "lora_B" in name:
-            param.data.mul_(scale)
+    # Every LoRA layer type, embeddings included, merges through its scaling.
+    for module in peft_model.modules():
+        if isinstance(module, LoraLayer):
+            for adapter in module.scaling:
+                module.scaling[adapter] *= scale
     merged = peft_model.merge_and_unload()
     for name, param in merged.named_parameters():
         param.requires_grad_(trainable[name])

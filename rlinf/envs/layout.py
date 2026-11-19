@@ -29,6 +29,12 @@ from omegaconf import DictConfig, OmegaConf
 from rlinf.envs.policy_obs import PolicyObsSpec
 
 
+def _scope_metrics(name: str | None, metrics: dict[str, Any]) -> dict[str, Any]:
+    if name is None:
+        return dict(metrics)
+    return {f"{name}/{key}": value for key, value in metrics.items()}
+
+
 @dataclass(frozen=True)
 class EnvSpec:
     """One env config of a mode and the env worker ranks that host it.
@@ -46,6 +52,7 @@ class EnvSpec:
     # Algorithm fields that ``algorithm.envs.<name>`` may set for one env.
     ALGORITHM_FIELDS: ClassVar[tuple[str, ...]] = (
         "loss_weight",
+        "reward_scale",
         "gamma",
         "gae_lambda",
         "rewards_lower_bound",
@@ -82,13 +89,12 @@ class EnvSpec:
         return self.cfg.max_steps_per_rollout_epoch
 
     def scoped(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        """Return ``metrics`` under ``<name>/``; empty for a homogeneous mode.
+        """Return ``metrics`` as this env reports them.
 
-        A homogeneous mode's metrics are already the pooled ones.
+        A listed env reports them under ``<name>/``. A homogeneous mode's one env
+        is the whole mode, so its metrics keep their keys.
         """
-        if self.name is None:
-            return {}
-        return {f"{self.name}/{key}": value for key, value in metrics.items()}
+        return _scope_metrics(self.name, metrics)
 
     def chunk_steps(self, num_action_chunks: int) -> int:
         """Return the number of action chunks in one rollout epoch."""
@@ -130,12 +136,9 @@ class EnvAssignment:
     rank: int
     world_size: int
 
-    def scope_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        """Return ``metrics`` plus a ``<name>/`` copy of each, so every env reports its own."""
-        if self.name is None:
-            return metrics
-        scoped = {f"{self.name}/{key}": value for key, value in metrics.items()}
-        return {**metrics, **scoped}
+    def scoped(self, metrics: dict[str, Any]) -> dict[str, Any]:
+        """Return ``metrics`` as this env reports them, as :meth:`EnvSpec.scoped`."""
+        return _scope_metrics(self.name, metrics)
 
 
 class EnvLayout:
@@ -308,6 +311,12 @@ class EnvLayout:
             f"Expected an env name in {[spec.name for spec in self._specs]} for "
             f"{self._path}, got {name!r}."
         )
+
+    def spec_path(self, spec: EnvSpec) -> str:
+        """Return the config path of ``spec``, such as ``env.train.envs.<name>``."""
+        if spec.name is None:
+            return self._path
+        return f"{self._path}.{self.ENVS_KEY}.{spec.name}"
 
     def spec_of_rank(self, rank: int) -> EnvSpec:
         """Return the spec of the env that env worker ``rank`` hosts."""

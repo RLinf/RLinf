@@ -97,13 +97,13 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
      mix_envs: True
 
 - ``env_weighting: sample`` 改为让每一步的分量相同，于是 episode 更长的环境配置占比更大。
-- ``algorithm.envs.<name>`` 为一份环境配置单独设置 ``loss_weight`` 、 ``gamma`` 、 ``gae_lambda`` 、 ``rewards_lower_bound`` 或 ``rewards_upper_bound`` ，其余设置沿用 ``algorithm`` 。 ``loss_weight`` 会乘到这份环境配置每一步的权重上。
-- ``adv_norm_scope: all`` 在所有环境配置上一起归一化 advantage，而不是分别归一化。它只影响在整个 batch 上做归一化的 advantage 类型，例如 GAE；GRPO 本来就在每个 group 内归一化。
+- ``algorithm.envs.<name>`` 为一份环境配置单独设置 ``loss_weight`` 、 ``reward_scale`` 、 ``gamma`` 、 ``gae_lambda`` 、 ``rewards_lower_bound`` 或 ``rewards_upper_bound`` ，其余设置沿用 ``algorithm`` 。 ``loss_weight`` 会乘到这份环境配置每一步的权重上。
+- ``adv_norm_scope: all`` 在所有环境配置上一起归一化 advantage，而不是分别归一化。它作用于在整个 batch 上做归一化的 advantage 类型，即 ``gae`` 、 ``gae_dynamic`` 和 ``raw`` ，并且要求 ``normalize_advantages: True`` 。GRPO 在每个 group 内归一化，所以 RLinf 不允许它使用 ``all`` 。
 - ``actor.mix_envs: False`` 让每个 optimizer step 只使用一份环境配置的数据，顺序随机且所有 actor worker 一致。此时每份环境配置的样本数必须能填满整数个 global batch。
 
-异步训练和 off-policy 训练也保持同样的配比。在异步 PPO 中，每份环境配置按它每个 step 发给每个 actor 的轨迹数，分到 ``algorithm.rollout_store_size_per_rank`` 中相应的份额；训练 step 要等每份份额都填满才开始，因此跑得快的环境不会挤占慢的环境。off-policy 训练（SAC、DAgger、RLT）为每份环境配置保留一个 replay buffer，并按每份配置每个 step 采集的 transition 数乘以 ``loss_weight`` 的比例从中采样；设置 ``actor.mix_envs: False`` 时，每个 batch 只来自一份环境配置。
+异步训练和 off-policy 训练也保持同样的配比。在异步 PPO 中，每份环境配置按它每个 step 发给每个 actor 的轨迹数，分到 ``algorithm.rollout_store_size_per_rank`` 中相应的份额；训练 step 要等每份份额都填满才开始，因此跑得快的环境不会挤占慢的环境。off-policy 训练（SAC、DAgger、RLT）为每份环境配置保留一个 replay buffer，并按每份配置每个 step 采集的 transition 数乘以 ``loss_weight`` 的比例从中采样；设置 ``actor.mix_envs: False`` 时，每个 batch 只来自一份环境配置。每份环境配置的 buffer 都存满 ``min_buffer_size`` 条轨迹后，训练才会开始。
 
-奖励保持各环境自己的尺度。PPO 和 SAC 的 critic 同时服务所有环境配置，如果各环境的奖励大小相差很多，较大的那份会主导 critic，另一个环境得到的 baseline 就会变差。可以在环境配置上设置 ``reward_scale`` ，让各环境的 return 处在相近的量级；它会在训练读取奖励之前乘到这个环境的奖励上，此后 ``huber_delta`` 和 ``value_clip`` 作用于缩放后的值。
+奖励保持各环境自己的尺度。PPO 和 SAC 的 critic 同时服务所有环境配置，如果各环境的奖励大小相差很多，较大的那份会主导 critic，另一个环境得到的 baseline 就会变差。可以设置 ``algorithm.envs.<name>.reward_scale`` ，让各环境的 return 处在相近的量级；它会在训练读取奖励之前乘到这个环境的奖励上，此后 ``huber_delta`` 和 ``value_clip`` 作用于缩放后的值。
 
 处理不同的观测
 --------------
@@ -122,7 +122,7 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 
 ``keys`` 列出 policy 读取的观测，其余观测不会发送； ``image_size`` 把所有相机图像缩放到同一个高度和宽度。这样设置后，两个环境都只发送 256x256 的主相机图像和任务描述，这正是 OpenVLA-OFT 需要的输入。
 
-被改动的只是发给 policy 的那一份观测，奖励模型、视频录制和数据采集看到的仍是环境的原始观测。缩放在每一步都会消耗时间，所以图像尺寸本来一致时，不要设置 ``image_size`` 。 ``policy_obs`` 不会缩放机器人状态，状态维度不同的环境配置会保持各自的格式。
+被改动的只是发给 policy 的那一份观测，视频录制和数据采集看到的仍是环境的原始观测。缩放在每一步都会消耗时间，所以图像尺寸本来一致时，不要设置 ``image_size`` 。 ``policy_obs`` 不会缩放机器人状态，状态维度不同的环境配置会保持各自的格式。
 
 处理不同的动作统计量
 --------------------
@@ -148,36 +148,50 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 查看各环境的结果
 ----------------
 
-每个指标都会记录两份：一份汇总所有环境，一份按环境配置区分。 ``env/success_once`` 统计全部 episode， ``env/libero_goal/success_once`` 只统计 LIBERO-Goal。评估指标以同样的方式记录在 ``eval/`` 下。
+env、eval 和 rollout 指标都会记录两份：一份汇总所有环境，一份按环境配置区分。 ``env/success_once`` 统计全部 episode， ``env/libero_goal/success_once`` 只统计 LIBERO-Goal；评估指标以同样的方式记录在 ``eval/`` 下。训练和耗时指标，例如 ``train/actor/*`` 和 ``time/*`` ，只汇总所有环境。group 成功率和数据陈旧度指标取决于每个环境自己的 group 和 rollout store，因此只按环境配置记录。
 
 视频保存在 ``<video_base_dir>/seed_<n>/<name>/`` 下，因此共用同一个视频目录的环境配置不会互相覆盖文件。
 
 运行示例
 --------
 
-端到端测试 ``maniskill_libero_grpo_openvlaoft`` 用 GRPO 在 LIBERO-Goal 和 ManiSkill 上训练 OpenVLA-OFT，并在两者上评估。运行它需要一个同时安装了两个仿真器的虚拟环境、配置中指定的 checkpoint 和 LoRA adapter，以及 2 块 GPU。
+训练示例 ``maniskill_libero_grpo_openvlaoft`` 用 GRPO 在 LIBERO-10 和一个 ManiSkill 场景上训练同一个 OpenVLA-OFT policy，需要 4 块 GPU。先在一个虚拟环境中同时安装两个仿真器：
 
 .. code-block:: bash
 
    bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
    source .venv/bin/activate
+
+按 :doc:`../examples/embodied/maniskill` 的说明下载 ManiSkill 资源文件，然后下载基础 checkpoint 和 ManiSkill 的 LoRA adapter：
+
+.. code-block:: bash
+
+   # 在中国大陆可设置 HF_ENDPOINT=https://hf-mirror.com。
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+在 ``examples/embodiment/config/maniskill_libero_grpo_openvlaoft.yaml`` 中，把 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设为 checkpoint 的路径，把 ``actor.model.merged_loras`` 下的 ``path`` 设为 adapter 的路径，然后启动：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_libero_grpo_openvlaoft
+
+GRPO 要求 policy 在每个环境里都偶尔能成功，否则学不到东西，而目前发布的 checkpoint 都做不到同时在两个环境里成功：LIBERO 的 checkpoint 在 ManiSkill 里从来抓不起物体，ManiSkill 的 policy 在 LIBERO-10 上则完全失败。所以这个示例从 LIBERO-10 基础 policy 出发，把一半强度的 ManiSkill LoRA 合并进它的权重（ ``merged_loras`` 中 ``scale: 0.5`` ），得到一个在两个环境里都偶尔能成功的 policy，再在其上训练一个新的 LoRA。训练时观察 ``env/libero_10/success_once`` 和 ``env/maniskill/success_once`` 的上升。
+
+如果想在长时间训练之前先检查各部分能否连通，可以运行同名的端到端测试：它用 2 块 GPU，在 LIBERO-Goal 和 ManiSkill 上以 8 步和 16 步的 episode 运行两个 GRPO step。运行前先把 ``tests/e2e_tests/embodied/maniskill_libero_grpo_openvlaoft.yaml`` 中的 checkpoint 和 adapter 路径改成你自己的副本：
+
+.. code-block:: bash
+
    export REPO_PATH=$(pwd)
    bash tests/e2e_tests/embodied/run.sh maniskill_libero_grpo_openvlaoft
-
-这组命令依次完成：
-
-1. 安装 OpenVLA-OFT 以及 ManiSkill 和 LIBERO。
-2. 在 env worker 0 上运行 LIBERO-Goal，在 env worker 1 上运行 ManiSkill。
-3. 运行两个 GRPO step，并把 ``env/<name>/*`` 和 ``eval/<name>/*`` 记录到 ``runner.logger.log_path`` 下的 TensorBoard 中。
-
-这个测试用 8 步的 episode 检查各部分能否正确连通。用于实际训练时，请加长 episode 并增加环境数。ManiSkill 场景还需要准备资源文件，具体做法见 :doc:`../examples/embodied/maniskill` 。
 
 限制
 ----
 
 - policy 只有一种动作格式，也无法得知某个样本来自哪个环境。只有 OpenVLA-OFT 能按环境配置分别还原动作。
-- NFT 训练要求各份环境配置发送同一种观测格式，请用 ``policy_obs`` 让它们一致。
-- training pipeline（ ``runner.use_training_pipeline`` ）、DAgger 的在线 LeRobot 采集、DiffusionART 训练和 PhyAI rollout 后端（ ``rollout.rollout_backend: phyai`` ）需要单份环境配置。
-- PPO 和 SAC 在各环境配置之间共享一个 critic；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``reward_scale`` 。SAC 为每份环境配置分别调节 entropy temperature，但与 demo buffer 混合采样的样本使用各 temperature 的平均值。
-- 在 env-decoupled 模式下，每个 rollout worker 从共享队列中处理一个 step 里相同份额的请求，并对收到的请求按观测格式分别运行前向计算。
+- NFT 训练要求各份环境配置发送同一种观测格式，请用 ``policy_obs`` 让它们一致。NFT 还让每个有效步的权重相同，因此需要设置 ``algorithm.env_weighting: sample`` ，并且不能为单份环境配置设置 ``loss_weight`` 。
+- 在 ``actor.mix_envs: True`` 下，off-policy 训练会把多份环境配置混在一个 batch 里，因此它们必须存储同一种观测格式，请用 ``policy_obs`` 让它们一致。
+- training pipeline（ ``runner.use_training_pipeline`` ）、DAgger 的在线 LeRobot 采集、DiffusionART 训练、奖励模型（ ``reward.use_reward_model`` ），以及除 ``huggingface`` 之外的所有 rollout 后端（例如 PhyAI、SGLang 和 ApxInf）都需要单份环境配置。
+- PPO 和 SAC 在各环境配置之间共享一个 critic；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``algorithm.envs.<name>.reward_scale`` 。SAC 为每份环境配置分别调节 entropy temperature，但与 demo buffer 混合采样的样本使用各 temperature 的平均值。
+- 在 env-decoupled 模式下，每个 rollout worker 从共享队列中处理一个 step 里属于自己的那份请求，并对收到的请求按观测格式分别运行前向计算。
 - 平滑干预（ ``smooth_intervene`` ）和实时控制评估（ ``runner.rtc`` ）只支持单份环境配置；RLT 仿真 replay 要求训练中的每份环境配置都是 ``maniskill_rlt`` 。配置不满足这些要求时，RLinf 会在启动阶段停止。

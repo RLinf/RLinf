@@ -1254,17 +1254,37 @@ def validate_env_training_cfg(
             f"algorithm.envs.{name} may set {list(EnvSpec.ALGORITHM_FIELDS)}, "
             f"got {sorted(unknown)}."
         )
+    adv_type = algorithm_cfg.get("adv_type")
     adv_norm_scope = algorithm_cfg.get("adv_norm_scope", "env")
     assert adv_norm_scope in ("env", "all"), (
         f"algorithm.adv_norm_scope must be 'env' or 'all', got {adv_norm_scope!r}."
     )
+    assert adv_norm_scope == "env" or (
+        adv_normalizes_over_batch(adv_type)
+        and algorithm_cfg.get("normalize_advantages", True)
+    ), (
+        "algorithm.adv_norm_scope='all' sets the scope of the batch normalization "
+        "of algorithm.adv_type 'gae', 'gae_dynamic' or 'raw' with "
+        f"normalize_advantages=True, got adv_type={adv_type!r} and "
+        f"normalize_advantages={algorithm_cfg.get('normalize_advantages', True)}."
+    )
     layout.reference_lengths(algorithm_cfg.get("env_weighting", "trajectory"))
-    if algorithm_cfg.get("adv_type") == "grpo":
+    if adv_requires_group_baseline(
+        adv_type, algorithm_cfg.get("use_reinpp_baseline", False)
+    ):
+        for spec in layout.specs:
+            group_size = spec.algorithm_cfg(algorithm_cfg).group_size
+            assert group_size > 1, (
+                f"algorithm.adv_type={adv_type!r} compares each reward with its "
+                f"group, so {layout.spec_path(spec)} needs group_size > 1, got "
+                f"{group_size}."
+            )
+    if adv_type == "grpo":
         for spec in layout.specs:
             assert spec.has_loss_mask, (
                 "GRPO scores each trajectory up to its first done, so "
-                f"{'env.train' if spec.name is None else f'env.train.envs.{spec.name}'} "
-                "needs auto_reset=False and ignore_terminations=False, got "
+                f"{layout.spec_path(spec)} needs auto_reset=False and "
+                "ignore_terminations=False, got "
                 f"auto_reset={spec.cfg.auto_reset} and "
                 f"ignore_terminations={spec.cfg.ignore_terminations}."
             )
@@ -1277,12 +1297,28 @@ def validate_env_training_cfg(
         "algorithm.dagger.online_lerobot.enabled": OmegaConf.select(
             cfg, "algorithm.dagger.online_lerobot.enabled", default=False
         ),
+        "reward.use_reward_model": OmegaConf.select(
+            cfg, "reward.use_reward_model", default=False
+        ),
     }
     unsupported = [path for path, enabled in single_env_paths.items() if enabled]
     assert not unsupported, (
         "Heterogeneous env.train configs need each env's loop read per env, which "
         f"{unsupported} does not do; use one env configuration."
     )
+    if algorithm_cfg.get("loss_type") == "embodied_nft":
+        # The NFT loss averages its valid steps without per-env loss weights.
+        weighted = [
+            f"algorithm.envs.{name}.loss_weight"
+            for name, overrides in (algorithm_cfg.get("envs", None) or {}).items()
+            if "loss_weight" in overrides
+        ]
+        env_weighting = algorithm_cfg.get("env_weighting", "trajectory")
+        assert env_weighting == "sample" and not weighted, (
+            "NFT weights every valid step the same, so heterogeneous NFT needs "
+            "algorithm.env_weighting='sample' and no per-env loss_weight, got "
+            f"env_weighting={env_weighting!r} and {weighted}."
+        )
     for spec in layout.specs:
         sources = len(spec.ranks) * stage_num
         shards_per_source = math.lcm(sources, actor_world_size) // sources
@@ -1465,7 +1501,21 @@ def validate_embodied_cfg(cfg):
             "rollout.batch_bootstrap_inference and rollout.value_only_bootstrap "
             "require rollout.rollout_backend='huggingface'."
         )
-    if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
+    # Only the HF rollout worker serves each env configuration on its own loop.
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    listed = [
+        f"env.{mode}.envs"
+        for mode in ("train", "eval")
+        if EnvLayout.is_heterogeneous(
+            OmegaConf.select(cfg, f"env.{mode}", default=None) or {}
+        )
+    ]
+    assert rollout_backend == "huggingface" or not listed, (
+        "Expected one env configuration per mode for "
+        f"rollout.rollout_backend={rollout_backend!r}, got envs listed under "
+        f"{listed}; only rollout_backend='huggingface' runs listed envs."
+    )
+    if rollout_backend == "phyai":
         assert model_type == SupportedModel.OPENPI, (
             "Expected model_type='openpi' for rollout_backend='phyai', "
             f"got {model_cfg.model_type!r}."
@@ -1489,16 +1539,6 @@ def validate_embodied_cfg(cfg):
                 f"Expected model.openpi.{field}={expected!r} for "
                 f"rollout_backend='phyai', got {configured!r}."
             )
-        listed = [
-            f"env.{mode}.envs"
-            for mode in ("train", "eval")
-            if cfg.env.get(mode) is not None
-            and EnvLayout.is_heterogeneous(cfg.env[mode])
-        ]
-        assert not listed, (
-            "Expected one env configuration per mode for rollout_backend='phyai', "
-            f"got envs listed under {listed}."
-        )
         num_images = openpi_cfg.get("num_images_in_input", 3)
         assert 1 <= num_images <= 3, (
             "Expected model.openpi.num_images_in_input in [1, 3] for "
@@ -1702,6 +1742,15 @@ def validate_embodied_cfg(cfg):
             "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
             f"total_num_envs must equal the environment worker count ({env_world_size}), "
             f"got {psi0_env_cfg.total_num_envs}."
+        )
+
+    if not only_eval:
+        # Every embodied step carries its trajectory's and env's loss weight,
+        # which the losses average over all steps, as token-mean does.
+        loss_agg_func = algorithm_cfg.get("loss_agg_func", "token-mean")
+        assert loss_agg_func == "token-mean", (
+            "Embodied losses average every step with its loss_mask_ratio weight, "
+            f"so algorithm.loss_agg_func must be 'token-mean', got {loss_agg_func!r}."
         )
 
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
@@ -2581,6 +2630,16 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             cfg.rollout, cfg.algorithm, cfg.get("actor", None)
         )
     return cfg
+
+
+def adv_normalizes_over_batch(adv_type: Optional[str]) -> bool:
+    """Whether an advantage estimator normalizes over the batch it is given.
+
+    These estimators honor ``algorithm.normalize_advantages``, so
+    ``algorithm.adv_norm_scope`` can widen their batch to every env. Group
+    estimators normalize within each group instead.
+    """
+    return bool(adv_type) and adv_type.lower() in ("gae", "gae_dynamic", "raw")
 
 
 def adv_requires_group_baseline(

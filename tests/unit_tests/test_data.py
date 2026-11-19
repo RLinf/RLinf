@@ -140,13 +140,48 @@ def test_env_replay_buffer_draws_each_env_by_weight_not_by_fill(tmp_path):
         )
         assert env_buffer.get_stats()["libero/num_trajectories"] == 8
         assert env_buffer.get_stats()["num_trajectories"] == 10
-        # ManiSkill holds 2 trajectories, its 3/4 share of 2 but not of 4.
+        # Every env's buffer must hold min_size trajectories; ManiSkill holds 2.
         assert env_buffer.is_ready(2) and not env_buffer.is_ready(4)
+        env_buffer.add_trajectories(
+            [_env_trajectory("maniskill", 2.0) for _ in range(2)]
+        )
+        assert env_buffer.is_ready(4) and not env_buffer.is_ready(5)
 
         env_buffer.save_checkpoint(str(tmp_path))
         assert (tmp_path / "maniskill" / "metadata.json").exists()
     finally:
         env_buffer.close()
+
+
+def test_env_replay_buffer_rejects_envs_whose_transitions_cannot_share_a_batch():
+    buffers = {
+        "libero": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+        "maniskill": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+    }
+    env_buffer = EnvReplayBuffer(buffers, {"libero": 1.0, "maniskill": 1.0})
+    try:
+        wide = Trajectory(max_episode_length=4, rewards=torch.full((4, 1, 2), 2.0))
+        wide.env_name = "maniskill"
+        env_buffer.add_trajectories([_env_trajectory("libero", 1.0), wide])
+
+        with pytest.raises(ValueError, match="same keys and shapes"):
+            env_buffer.sample(4)
+    finally:
+        env_buffer.close()
+
+
+def test_demo_samples_join_a_replay_batch_under_no_env():
+    from rlinf.data.storage.replay.dataset import mix_demo_batch
+
+    replay = {"rewards": torch.ones(2, 1), "env_index": torch.tensor([0, 1])}
+    demo = {"rewards": torch.zeros(3, 1)}
+
+    batch = mix_demo_batch(replay, demo)
+
+    assert batch["env_index"].tolist() == [0, 1, -1, -1, -1]
+    assert batch["rewards"].shape == (5, 1)
+    # A replay batch without env indices keeps none.
+    assert "env_index" not in mix_demo_batch({"rewards": torch.ones(2, 1)}, demo)
 
 
 def test_env_replay_buffer_draws_one_env_per_batch_when_envs_do_not_mix():
@@ -2431,10 +2466,11 @@ def test_each_source_follows_the_spec_of_the_env_it_hosts():
             "total_num_envs": 2,
             "envs": {
                 "short": env(),
-                "long": env(max_steps_per_rollout_epoch=2, reward_scale=2.0),
+                "long": env(max_steps_per_rollout_epoch=2),
             },
         }
     )
+    cfg.algorithm.envs = {"long": {"reward_scale": 2.0}}
     collector = _make(cfg, env_world_size=2)
     initial = EnvTransition(
         dones=torch.zeros(1, 1, dtype=torch.bool),
@@ -3277,6 +3313,16 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
     runner.rollout.evaluate.assert_not_called()
 
 
+def test_decoupled_rollout_workers_split_any_step_among_themselves():
+    # 8 env workers with 50 chunk steps each feed 3 rollout workers.
+    shares = [
+        MultiStepRolloutWorker._decoupled_share(400, 3, rank) for rank in range(3)
+    ]
+
+    assert shares == [134, 133, 133]
+    assert sum(shares) == 400
+
+
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.batch_bootstrap_inference = False
@@ -3292,7 +3338,7 @@ def test_decoupled_policy_route_round_trip():
     rollout.send_to_recorded_batch_routes = Mock()
 
     [policy_input], split_sizes = asyncio.run(
-        rollout._receive_policy_input(None, "policy", 0)
+        rollout._receive_decoupled_policy_inputs(None)
     )
     source = torch.zeros(16, 4, requires_grad=True)
     output = source * 2
@@ -4393,7 +4439,6 @@ def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstra
         request_sizes=sizes,
         is_last=True,
     )
-    rollout._receive_policy_input = AsyncMock(return_value=(request, None))
 
     class ActorChannel:
         def __init__(self):

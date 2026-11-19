@@ -34,7 +34,9 @@ class PolicyObsSpec:
     """
 
     CFG_KEY: ClassVar[str] = "policy_obs"
-    # Keys of ``EnvOutput.prepare_observations``; images are ``[..., H, W, C]``.
+    # Observation keys of ``EnvOutput.prepare_observations``; images are
+    # ``[..., H, W, C]``. Its other entries, such as ``active_mask``, are control
+    # signals that pass through unchanged.
     KEYS: ClassVar[tuple[str, ...]] = (
         "main_images",
         "wrist_images",
@@ -52,8 +54,8 @@ class PolicyObsSpec:
         """Describe the policy observations.
 
         Args:
-            keys: Observations the policy reads; the rest are sent as ``None``.
-                ``None`` keeps every key.
+            keys: Observations the policy reads; the other :attr:`KEYS` are sent
+                as ``None``. ``None`` keeps every key.
             image_size: ``[height, width]`` every image view is resized to.
                 ``None`` keeps each env's resolution.
         """
@@ -86,7 +88,7 @@ class PolicyObsSpec:
             return obs
         conformed = {}
         for key, value in obs.items():
-            if self._keys is not None and key not in self._keys:
+            if self._keys is not None and key in self.KEYS and key not in self._keys:
                 value = None
             elif (
                 key in self.IMAGE_KEYS

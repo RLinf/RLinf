@@ -153,13 +153,15 @@ settings change that:
 
 - ``env_weighting: sample`` counts every step the same instead, so an env
   configuration with longer episodes weighs more.
-- ``algorithm.envs.<name>`` sets ``loss_weight``, ``gamma``, ``gae_lambda``,
-  ``rewards_lower_bound``, or ``rewards_upper_bound`` for one env configuration;
-  the rest come from ``algorithm``. ``loss_weight`` multiplies the weight of that
-  env configuration's steps.
+- ``algorithm.envs.<name>`` sets ``loss_weight``, ``reward_scale``, ``gamma``,
+  ``gae_lambda``, ``rewards_lower_bound``, or ``rewards_upper_bound`` for one env
+  configuration; the rest come from ``algorithm``. ``loss_weight`` multiplies the
+  weight of that env configuration's steps.
 - ``adv_norm_scope: all`` normalizes advantages over all env configurations
-  together instead of over each one. It only matters for advantage types that
-  normalize over the batch, such as GAE; GRPO normalizes within each group.
+  together instead of over each one. It applies to the advantage types that
+  normalize over the batch, ``gae``, ``gae_dynamic``, and ``raw``, with
+  ``normalize_advantages: True``. GRPO normalizes within each group, so RLinf
+  rejects ``all`` for it.
 - ``actor.mix_envs: False`` gives every optimizer step data from one env
   configuration, in a random order shared by all actor workers. Each env
   configuration's samples must then fill whole global batches.
@@ -171,14 +173,15 @@ until every share is full, so a fast env cannot crowd out a slow one.
 Off-policy training (SAC, DAgger, RLT) keeps one replay buffer per env
 configuration and samples them in proportion to the transitions each collects
 per step, times ``loss_weight``; with ``actor.mix_envs: False`` each batch
-comes from one env configuration.
+comes from one env configuration. Training starts once every env
+configuration's buffer holds ``min_buffer_size`` trajectories.
 
 Rewards keep each env's own scale. For PPO and SAC, whose critic serves every env
 configuration, rewards of very different sizes let the larger one dominate the
-critic, which gives the other env poor baselines. Set ``reward_scale`` on an env
-configuration to bring the returns to a similar size; it multiplies that env's
-rewards before training sees them, and ``huber_delta`` and ``value_clip`` then
-act on the scaled values.
+critic, which gives the other env poor baselines. Set
+``algorithm.envs.<name>.reward_scale`` to bring the returns to a similar size;
+it multiplies that env's rewards before training sees them, and ``huber_delta``
+and ``value_clip`` then act on the scaled values.
 
 Handle Different Observations
 -----------------------------
@@ -208,8 +211,8 @@ one forward pass again:
 envs send a 256x256 main camera image and the task text, which is what
 OpenVLA-OFT reads.
 
-Only the policy's copy changes. Reward models, videos, and data collection still
-see each env's original observations. Resizing costs time on every step, so
+Only the policy's copy changes. Videos and data collection still see each env's
+original observations. Resizing costs time on every step, so
 leave ``image_size`` out when the image sizes already match. ``policy_obs`` does
 not resize robot states, so env configurations whose states differ in size keep
 separate formats.
@@ -248,10 +251,13 @@ another policy would ignore it.
 Read Per-Env Results
 --------------------
 
-Each metric is logged twice: once for all envs together and once for each env
-configuration. ``env/success_once`` covers every episode, and
-``env/libero_goal/success_once`` covers LIBERO-Goal only. Evaluation metrics
-follow the same pattern under ``eval/``.
+Env, eval, and rollout metrics are logged twice: once for all envs together and
+once for each env configuration. ``env/success_once`` covers every episode, and
+``env/libero_goal/success_once`` covers LIBERO-Goal only; evaluation metrics
+follow the same pattern under ``eval/``. Training and timing metrics, such as
+``train/actor/*`` and ``time/*``, cover all envs together. Group-success and
+data-staleness metrics depend on each env's groups and rollout store, so they
+are logged for each env configuration only.
 
 Videos are saved under ``<video_base_dir>/seed_<n>/<name>/``, so env
 configurations that share a video folder do not overwrite each other.
@@ -259,28 +265,51 @@ configurations that share a video folder do not overwrite each other.
 Run the Example
 ---------------
 
-The end-to-end test ``maniskill_libero_grpo_openvlaoft`` trains OpenVLA-OFT with
-GRPO on LIBERO-Goal and ManiSkill and evaluates on both. It needs both simulators
-in one virtual environment, the checkpoint and LoRA adapter named in the config,
-and 2 GPUs.
+The training example ``maniskill_libero_grpo_openvlaoft`` trains one OpenVLA-OFT
+policy with GRPO on LIBERO-10 and a ManiSkill scene, on 4 GPUs. Install both
+simulators in one virtual environment:
 
 .. code-block:: bash
 
    bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
    source .venv/bin/activate
+
+Download the ManiSkill assets as described in
+:doc:`../examples/embodied/maniskill`. Then download the base checkpoint and the
+ManiSkill LoRA adapter:
+
+.. code-block:: bash
+
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+In ``examples/embodiment/config/maniskill_libero_grpo_openvlaoft.yaml``, set
+``actor.model.model_path`` and ``rollout.model.model_path`` to the checkpoint and
+the ``path`` under ``actor.model.merged_loras`` to the adapter, then launch:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_libero_grpo_openvlaoft
+
+GRPO learns only when the policy succeeds sometimes in every env, and no
+released checkpoint does that in both: LIBERO checkpoints never grasp in
+ManiSkill, and the ManiSkill policy fails on LIBERO-10. The example therefore
+starts from the LIBERO-10 base policy with half of the ManiSkill LoRA folded
+into its weights (``merged_loras`` with ``scale: 0.5``), which succeeds sometimes
+in both, and trains a new LoRA on top. Watch ``env/libero_10/success_once`` and
+``env/maniskill/success_once`` rise.
+
+To check that everything connects before a long run, the end-to-end test of the
+same name runs two GRPO steps on LIBERO-Goal and ManiSkill with 8- and 16-step
+episodes on 2 GPUs. Point the checkpoint and adapter paths in
+``tests/e2e_tests/embodied/maniskill_libero_grpo_openvlaoft.yaml`` at your
+copies first:
+
+.. code-block:: bash
+
    export REPO_PATH=$(pwd)
    bash tests/e2e_tests/embodied/run.sh maniskill_libero_grpo_openvlaoft
-
-What this does:
-
-1. Installs OpenVLA-OFT with ManiSkill and LIBERO.
-2. Runs LIBERO-Goal on env worker 0 and ManiSkill on env worker 1.
-3. Runs two GRPO steps and logs ``env/<name>/*`` and ``eval/<name>/*`` to
-   TensorBoard under ``runner.logger.log_path``.
-
-The test uses 8-step episodes to check that everything connects. For real
-training, raise the episode lengths and env counts. The ManiSkill scene also
-needs its assets, as described in :doc:`../examples/embodied/maniskill`.
 
 Limitations
 -----------
@@ -288,15 +317,22 @@ Limitations
 - The policy has one action format and does not know which env a sample came
   from. Only OpenVLA-OFT can unnormalize actions per env configuration.
 - NFT training needs every env configuration to send one observation format;
-  use ``policy_obs`` to make them match.
+  use ``policy_obs`` to make them match. NFT also weights every valid step the
+  same, so it needs ``algorithm.env_weighting: sample`` and no per-env
+  ``loss_weight``.
+- Off-policy training with ``actor.mix_envs: True`` mixes env configurations in
+  one batch, so they must store one observation format; use ``policy_obs``.
 - The training pipeline (``runner.use_training_pipeline``), online LeRobot
-  collection for DAgger, DiffusionART training, and the PhyAI rollout backend
-  (``rollout.rollout_backend: phyai``) need a single env configuration.
+  collection for DAgger, DiffusionART training, reward models
+  (``reward.use_reward_model``), and every rollout backend except
+  ``huggingface``, such as PhyAI, SGLang, and ApxInf, need a single env
+  configuration.
 - PPO and SAC share one critic across env configurations; RLinf does not
-  normalize rewards per env, so set ``reward_scale`` when reward scales differ.
+  normalize rewards per env, so set ``algorithm.envs.<name>.reward_scale`` when
+  reward scales differ.
   SAC tunes one entropy temperature per env configuration, except for samples
   mixed with a demo buffer, which use their mean.
-- In env-decoupled mode, each rollout worker serves an equal share of a step's
+- In env-decoupled mode, each rollout worker serves its share of a step's
   requests from a shared queue and runs one forward pass per observation
   format in what it receives.
 - Smooth intervention (``smooth_intervene``) and real-time control evaluation

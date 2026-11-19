@@ -1314,6 +1314,28 @@ def test_async_ppo_normalizes_advantages_over_the_configured_scope(scope):
         assert a.mean() < 0 < b.mean()
 
 
+def test_off_policy_targets_discount_each_sample_with_its_envs_gamma():
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.algorithm.gamma = 0.99
+    layout = actor._rollout_geometry.layout
+
+    def env_values(env_index):
+        actor._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(actor.cfg.algorithm) for spec in layout.specs
+        }
+        return actor._env_values("gamma", env_index, torch.float32)
+
+    # Envs that share algorithm.gamma keep the float SAC and RLT used before.
+    assert env_values(torch.tensor([1, 0])) == 0.99
+    actor.cfg.algorithm.envs = {"b": {"gamma": 0.9}}
+    # Index -1 is a demo sample, which takes algorithm.gamma.
+    assert torch.allclose(
+        env_values(torch.tensor([1, 0, -1])), torch.tensor([[0.9], [0.99], [0.99]])
+    )
+
+
 def test_one_env_trains_on_the_same_batch_and_loss_weights_as_before():
     from rlinf.utils.nested_dict_process import process_nested_dict_for_train
     from rlinf.utils.utils import compute_trajectory_loss_mask

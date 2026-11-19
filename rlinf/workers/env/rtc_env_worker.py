@@ -394,4 +394,4 @@ class RTCEnvWorker(EnvWorker):
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
-        return self.eval_assignment.scope_metrics(eval_metrics)
+        return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}

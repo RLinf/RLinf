@@ -63,17 +63,11 @@ class EntropyTemperature(nn.Module):
         else:
             raise NotImplementedError(f"Unknown alpha_type: {alpha_type}")
 
+        # One temperature stays a scalar, the shape single-env checkpoints hold.
+        shape = (num_temperatures,) if num_temperatures > 1 else ()
         self.base_alpha = nn.Parameter(
-            torch.full((num_temperatures,), float(init), device=device, dtype=dtype)
+            torch.full(shape, float(init), device=device, dtype=dtype)
         )
-        self._register_load_state_dict_pre_hook(self._load_scalar_base_alpha)
-
-    @staticmethod
-    def _load_scalar_base_alpha(state_dict, prefix, *args) -> None:
-        # Checkpoints from before per-env temperatures hold a scalar.
-        key = prefix + "base_alpha"
-        if key in state_dict and state_dict[key].dim() == 0:
-            state_dict[key] = state_dict[key].reshape(1)
 
     def compute_alpha(self) -> torch.Tensor:
         if self.alpha_type == "exp":
@@ -85,6 +79,10 @@ class EntropyTemperature(nn.Module):
         else:
             raise NotImplementedError
 
+    def temperatures(self) -> torch.Tensor:
+        """Return one temperature per env, shape ``[num_temperatures]``."""
+        return self.compute_alpha().reshape(-1)
+
     @property
     def alpha(self) -> float:
         """Mean temperature, which is the temperature when there is one."""
@@ -94,13 +92,15 @@ class EntropyTemperature(nn.Module):
         """Return each sample's temperature, picked by the env it came from.
 
         Args:
-            env_index: Env of each sample, shape ``[B]``; ``None`` uses the mean
-                temperature.
+            env_index: Env of each sample, shape ``[B]``. Index -1 marks a
+                sample of no env, such as a demo sample, which takes the mean
+                temperature, as does every sample when ``env_index`` is None.
 
         Returns:
             Temperatures of shape ``[B, 1]``, or a scalar without ``env_index``.
         """
-        alpha = self.compute_alpha()
+        temperatures = self.temperatures()
         if env_index is None:
-            return alpha.mean()
-        return alpha[env_index.to(alpha.device)].unsqueeze(-1)
+            return temperatures.mean()
+        temperatures = torch.cat([temperatures, temperatures.mean().reshape(1)])
+        return temperatures[env_index.to(temperatures.device)].unsqueeze(-1)

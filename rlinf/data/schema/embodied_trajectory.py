@@ -473,7 +473,7 @@ class AccumulatorOutput(TrajectoryOutput):
         rewards = chunk.env.compute_rewards(
             env_reward_weight=self._env_reward_weight,
             reward_weight=self._reward_weight,
-            reward_scale=spec.cfg.get("reward_scale", 1.0),
+            reward_scale=self._env_algorithm_cfgs[spec.name].get("reward_scale", 1.0),
             auto_reset=spec.cfg.auto_reset,
             bootstrap_type=self._cfg.algorithm.get("bootstrap_type", "standard"),
             gamma=self._env_algorithm_cfgs[spec.name].get("gamma", 1.0),

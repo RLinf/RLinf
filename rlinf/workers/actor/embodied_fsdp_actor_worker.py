@@ -25,7 +25,7 @@ from torch import nn
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
-from rlinf.algorithms.utils import compute_entropy_loss
+from rlinf.algorithms.utils import compute_entropy_loss, safe_normalize
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_trajectory import RolloutGeometry
 from rlinf.data.schema.embodied_types import Trajectory, batch_format
@@ -65,7 +65,6 @@ from rlinf.utils.utils import (
     add_loss_weights,
     clear_memory,
     compute_trajectory_loss_mask,
-    get_loss_agg_func,
     masked_mean,
 )
 
@@ -103,9 +102,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self._opd_teacher_model = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
-        self.loss_agg_func = get_loss_agg_func(
-            self.cfg.algorithm.get("loss_agg_func", "token-mean")
-        )
         self._group_success_metrics: dict[str, float] = {}
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
@@ -149,6 +145,34 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             spec.name: spec.algorithm_cfg(self.cfg.algorithm)
             for spec in self._rollout_geometry.layout.specs
         }
+
+    def _env_values(
+        self, field: str, env_index: torch.Tensor | None, dtype: torch.dtype
+    ) -> float | torch.Tensor:
+        """Return ``algorithm.<field>`` as it applies to each sample's env.
+
+        Each env takes its ``algorithm.envs.<name>`` value. A sample with env
+        index -1, such as a demo sample, and a batch without ``env_index`` take
+        ``algorithm.<field>``.
+
+        Args:
+            field: One of :attr:`EnvSpec.ALGORITHM_FIELDS`.
+            env_index: Env of each sample, shape ``[B]``.
+            dtype: Dtype of per-sample values.
+
+        Returns:
+            The float when every env shares it, so one env computes as before;
+            otherwise per-sample values of shape ``[B, 1]``.
+        """
+        default = self.cfg.algorithm[field]
+        values = [
+            self._env_algorithm_cfgs[spec.name][field]
+            for spec in self._rollout_geometry.layout.specs
+        ]
+        if env_index is None or all(value == default for value in values):
+            return default
+        table = torch.tensor([*values, default], dtype=dtype, device=env_index.device)
+        return table[env_index].unsqueeze(-1)
 
     def init_worker(self) -> None:
         """
@@ -255,7 +279,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 Trajectory.to_batch(trajectories[spec.name]), spec
             )
             self.env_batches[spec.name] = batch
-            self._group_success_metrics.update(spec.scoped(metrics) or metrics)
+            self._group_success_metrics.update(spec.scoped(metrics))
 
     def _process_received_rollout_batch(
         self, rollout_batch: dict[str, torch.Tensor], spec: EnvSpec
@@ -415,19 +439,28 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def _normalize_advantages_jointly(self) -> None:
         """Normalize advantages over the valid steps of every env together.
 
-        This applies GAE's own normalization to the union of the envs' batches.
+        This applies the estimator's own batch normalization, which config
+        validation allows only for estimators that have one, to the union of
+        the envs' batches.
         """
-        valid = []
-        for batch in self.env_batches.values():
-            advantages, loss_mask = batch["advantages"], batch.get("loss_mask")
-            if loss_mask is None:
-                valid.append(advantages.reshape(-1))
-            else:
-                valid.append(advantages[loss_mask.expand_as(advantages).bool()])
-        valid = torch.cat(valid)
-        mean, std = valid.mean(), valid.std()
-        for batch in self.env_batches.values():
-            batch["advantages"] = (batch["advantages"] - mean) / (std + 1e-5)
+        batches = list(self.env_batches.values())
+        advantages = [batch["advantages"] for batch in batches]
+        masks = [
+            torch.ones_like(values, dtype=torch.bool)
+            if batch.get("loss_mask") is None
+            else batch["loss_mask"].expand_as(values).bool()
+            for batch, values in zip(batches, advantages)
+        ]
+        normalized = safe_normalize(
+            torch.cat([values.reshape(-1) for values in advantages]),
+            torch.cat([mask.reshape(-1) for mask in masks]),
+        )
+        for batch, values, part in zip(
+            batches,
+            advantages,
+            normalized.split([values.numel() for values in advantages]),
+        ):
+            batch["advantages"] = part.view_as(values)
 
     def _merge_env_batches(self) -> list[dict[str, Any]]:
         """Weight each env's steps, flatten them to transitions, and pool them.
@@ -1031,7 +1064,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "task_type": self.cfg.runner.task_type,
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
             "logprob_mask": output_dict.get("logprob_mask", None),
-            "loss_agg_func": self.loss_agg_func,
             "log_logprob_diagnostics": self.cfg.algorithm.get(
                 "log_logprob_diagnostics", False
             ),

@@ -14,13 +14,12 @@
 
 """Replay buffers of a run's env configurations, sampled as one buffer."""
 
-import math
 import os
 from functools import reduce
 
 import torch
 
-from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.data.schema.embodied_types import Trajectory, batch_format
 from rlinf.data.storage.replay.buffer import TrajectoryReplayBuffer
 from rlinf.utils.nested_dict_process import concat_batch
 
@@ -76,8 +75,12 @@ class EnvReplayBuffer:
 
         Each transition carries ``env_index``, the position of its env in the
         buffer order, which matches the env layout's order.
+
+        Raises:
+            ValueError: If the envs in one batch store transitions of different
+                formats, which cannot share a batch.
         """
-        parts = []
+        parts = {}
         for index, (name, count) in enumerate(self._counts(num_chunks).items()):
             if count == 0:
                 continue
@@ -88,15 +91,20 @@ class EnvReplayBuffer:
                 if isinstance(value, torch.Tensor)
             )
             part["env_index"] = torch.full((rows,), index, dtype=torch.long)
-            parts.append(part)
-        return reduce(concat_batch, parts)
+            parts[name] = part
+        formats = {name: batch_format(part) for name, part in parts.items()}
+        if len(set(formats.values())) > 1:
+            raise ValueError(
+                "Expected the envs of one replay batch to store the same keys and "
+                f"shapes, got different formats from envs {list(formats)}. Set "
+                "env.train.policy_obs so the envs send one observation format, or "
+                "set actor.mix_envs=False so each batch comes from one env."
+            )
+        return reduce(concat_batch, parts.values())
 
     def is_ready(self, min_size: int) -> bool:
-        """Return whether every env holds its share of ``min_size`` trajectories."""
-        return all(
-            buffer.is_ready(math.ceil(min_size * self.shares[name]))
-            for name, buffer in self.buffers.items()
-        )
+        """Return whether every env's buffer holds ``min_size`` trajectories."""
+        return all(buffer.is_ready(min_size) for buffer in self.buffers.values())
 
     async def is_ready_async(self, min_size: int) -> bool:
         """Async form of :meth:`is_ready`."""

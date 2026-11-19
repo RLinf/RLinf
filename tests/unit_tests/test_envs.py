@@ -22,6 +22,7 @@ from omegaconf import OmegaConf
 import rlinf.workers.env.env_worker as env_worker_module
 from rlinf.config import (
     resolve_env_mode_cfg,
+    validate_embodied_cfg,
     validate_env_policy_fields,
     validate_env_training_cfg,
     validate_eval_env_cfg,
@@ -62,7 +63,7 @@ def test_homogeneous_mode_is_hosted_unchanged_by_every_worker():
     assert (assignment.name, assignment.rank, assignment.world_size) == (None, 1, 2)
     assert layout.mode_fields() == {}
     metrics = {"success_once": torch.ones(2)}
-    assert assignment.scope_metrics(metrics) is metrics
+    assert assignment.scoped(metrics) == metrics
 
 
 def test_listed_envs_get_contiguous_worker_blocks_sized_by_their_share():
@@ -179,7 +180,10 @@ def test_each_env_reports_its_own_metrics_beside_the_overall_ones():
 
     metrics = compute_evaluate_metrics(
         [
-            layout.assign(rank).scope_metrics({"success_once": success})
+            {
+                "success_once": success,
+                **layout.assign(rank).scoped({"success_once": success}),
+            }
             for rank, success in enumerate(success_per_rank)
         ]
     )
@@ -349,6 +353,26 @@ def _training_cfg(algorithm=None, runner=None, **envs):
             r"may set \['loss_weight'.*got \['group_size'\]",
         ),
         ({"adv_norm_scope": "rank"}, None, r"must be 'env' or 'all', got 'rank'"),
+        (
+            {"adv_type": "grpo", "adv_norm_scope": "all"},
+            None,
+            r"adv_norm_scope='all' sets the scope .* got adv_type='grpo'",
+        ),
+        (
+            {"adv_type": "gae", "adv_norm_scope": "all", "normalize_advantages": False},
+            None,
+            r"normalize_advantages=False",
+        ),
+        (
+            {"adv_type": "grpo", "group_size": 8},
+            None,
+            r"so env.train.envs.libero needs group_size > 1, got 1",
+        ),
+        (
+            {"loss_type": "embodied_nft"},
+            None,
+            r"heterogeneous NFT needs algorithm.env_weighting='sample'",
+        ),
         ({}, {"use_training_pipeline": True}, r"runner.use_training_pipeline"),
     ],
 )
@@ -387,6 +411,40 @@ def test_config_checks_the_horizon_of_each_eval_env(maniskill_steps, accepted):
         AssertionError, match=r"env.eval.envs.maniskill.max_steps_per_rollout_epoch"
     ):
         validate_eval_env_cfg(cfg, 2, 1, num_action_chunks=8)
+
+
+def test_config_keeps_reward_models_to_one_env_configuration():
+    cfg = _training_cfg(libero=_env("libero", 8), maniskill=_env("maniskill", 8))
+    cfg.reward = {"use_reward_model": True}
+    layout = EnvLayout(cfg.env.train, world_size=2, path="env.train")
+
+    with pytest.raises(AssertionError, match=r"reward.use_reward_model"):
+        validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+def test_config_runs_listed_envs_only_on_the_hf_rollout_backend():
+    # The SGLang eval worker reads one loop per mode, as on a homogeneous run.
+    cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla_oft"}},
+            "rollout": {"rollout_backend": "sglang"},
+            "algorithm": {},
+            "env": {
+                "eval": {
+                    "envs": {
+                        "libero": _env("libero", 8),
+                        "maniskill": _env("maniskill", 8),
+                    }
+                }
+            },
+        }
+    )
+
+    with pytest.raises(
+        AssertionError, match=r"only rollout_backend='huggingface' runs listed envs"
+    ):
+        validate_embodied_cfg(cfg)
 
 
 def test_config_needs_each_env_split_evenly_across_actors_in_whole_groups():
@@ -515,6 +573,23 @@ def test_policy_obs_spec_resizes_stacked_views_and_keeps_pixel_values():
     assert conformed["states"] is obs["states"]
 
 
+def test_policy_obs_spec_passes_control_entries_through():
+    active_mask = torch.tensor([True, False])
+    history = {"main_images": torch.zeros(2, 3, 4, 4, 3)}
+    obs = {
+        "main_images": torch.zeros(2, 4, 4, 3),
+        "states": torch.zeros(2, 8),
+        "active_mask": active_mask,
+        "history": history,
+    }
+
+    conformed = PolicyObsSpec(keys=["main_images"]).apply(obs)
+
+    assert conformed["states"] is None
+    assert conformed["active_mask"] is active_mask
+    assert conformed["history"] is history
+
+
 def test_policy_obs_spec_rejects_keys_the_policy_batch_does_not_carry():
     with pytest.raises(ValueError, match=r"unknown keys \['main_image'\]"):
         PolicyObsSpec(keys=["main_image"])
@@ -523,8 +598,8 @@ def test_policy_obs_spec_rejects_keys_the_policy_batch_does_not_carry():
 def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
     cfg = _training_cfg(
         {"adv_type": "grpo"},
-        libero=_env("libero", 8),
-        maniskill=_env("maniskill", 8, ignore_terminations=True),
+        libero=_env("libero", 8, group_size=2),
+        maniskill=_env("maniskill", 8, group_size=2, ignore_terminations=True),
     )
     layout = EnvLayout(cfg.env.train, world_size=2, path="env.train")
 

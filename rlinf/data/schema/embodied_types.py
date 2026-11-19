@@ -37,6 +37,7 @@ from typing import Any, TypeAlias
 import numpy as np
 import torch
 
+from rlinf.envs.policy_obs import PolicyObsSpec
 from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict,
@@ -1718,16 +1719,13 @@ class EnvOutput:
 
     def prepare_observations(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Select policy inputs and normalize task descriptions."""
-        prepared = {
-            key: obs.get(key)
-            for key in ("main_images", "wrist_images", "extra_view_images", "states")
-        }
+        prepared = {key: obs.get(key) for key in PolicyObsSpec.KEYS}
         if obs.get("active_mask") is not None:
             prepared["active_mask"] = obs["active_mask"]
         for key in ("reset_mask", "history"):
             if key in obs:
                 prepared[key] = obs[key]
-        task_descriptions = obs.get("task_descriptions")
+        task_descriptions = prepared["task_descriptions"]
         prepared["task_descriptions"] = (
             list(task_descriptions) if task_descriptions is not None else None
         )

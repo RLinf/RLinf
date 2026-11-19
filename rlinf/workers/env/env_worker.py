@@ -1262,7 +1262,7 @@ class EnvWorker(Worker):
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
-        return self.train_assignment.scope_metrics(env_metrics)
+        return {**env_metrics, **self.train_assignment.scoped(env_metrics)}
 
     @Worker.timer("interact")
     async def interact(
@@ -1400,4 +1400,4 @@ class EnvWorker(Worker):
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
-        return self.eval_assignment.scope_metrics(eval_metrics)
+        return {**eval_metrics, **self.eval_assignment.scoped(eval_metrics)}

@@ -1032,6 +1032,7 @@ def test_custom_model_registration_smoke():
 class _TinyProjModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
+        self.embed = torch.nn.Embedding(5, 4)
         self.proj = torch.nn.Linear(4, 3)
 
 
@@ -1042,12 +1043,19 @@ def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
     adapted = peft.get_peft_model(
         _clone_module(base),
         peft.LoraConfig(
-            r=2, lora_alpha=4, target_modules=["proj"], init_lora_weights=False
+            r=2,
+            lora_alpha=4,
+            target_modules=["embed", "proj"],
+            init_lora_weights=False,
         ),
     )
     adapted.save_pretrained(tmp_path)
     proj = adapted.base_model.model.proj
     update = (proj.lora_B["default"].weight @ proj.lora_A["default"].weight) * (4 / 2)
+    embed = adapted.base_model.model.embed
+    embed_update = (
+        embed.lora_embedding_B["default"] @ embed.lora_embedding_A["default"]
+    ).T * (4 / 2)
     model_type = f"custom_model_merged_lora_{int(time.time() * 1000)}"
     register_model(model_type, lambda cfg, torch_dtype: _clone_module(base))
 
@@ -1064,6 +1072,9 @@ def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
     )
 
     assert torch.allclose(model.proj.weight, base.proj.weight + 0.5 * update, atol=1e-6)
+    assert torch.allclose(
+        model.embed.weight, base.embed.weight + 0.5 * embed_update, atol=1e-6
+    )
     assert not any("lora" in name for name, _ in model.named_parameters())
     # Without a trainable LoRA on top, the merged weights are fully fine-tuned.
     assert all(param.requires_grad for param in model.parameters())
@@ -4580,22 +4591,29 @@ def test_lingbotvlav2_smoke_config_composes(monkeypatch):
     assert cfg.runner.max_steps == 1 and cfg.env.train.total_num_envs == 4
 
 
-def test_entropy_temperatures_are_tuned_per_env_and_load_scalar_checkpoints():
+def test_entropy_temperatures_are_tuned_per_env_and_keep_scalar_checkpoints():
     from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
 
     temperature = EntropyTemperature(initial_alpha=0.1, num_temperatures=2)
     with torch.no_grad():
         temperature.base_alpha[1] += 1.0
 
-    alpha = temperature.sample_alpha(torch.tensor([1, 0, 1]))
+    # Index -1 marks a demo sample, which belongs to no env.
+    alpha = temperature.sample_alpha(torch.tensor([1, 0, -1]))
 
     assert alpha.shape == (3, 1)
-    assert alpha[0, 0] == alpha[2, 0] > alpha[1, 0]
-    assert temperature.sample_alpha(None) == temperature.compute_alpha().mean()
+    assert alpha[0, 0] > alpha[1, 0]
+    assert torch.isclose(alpha[2, 0], temperature.temperatures().mean())
+    assert temperature.sample_alpha(None) == temperature.temperatures().mean()
 
+    # One temperature keeps the 0-dim parameter that checkpoints already hold.
     single = EntropyTemperature(initial_alpha=0.1)
+    assert single.state_dict()["base_alpha"].shape == torch.Size([])
     single.load_state_dict({"base_alpha": torch.tensor(0.5)})
-    assert single.base_alpha.tolist() == [0.5]
+    expected = torch.nn.functional.softplus(torch.tensor(0.5))
+    assert torch.allclose(
+        single.sample_alpha(torch.tensor([0, -1])), expected.expand(2, 1)
+    )
 
 
 @pytest.mark.parametrize(
@@ -5067,11 +5085,13 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
     monkeypatch.setattr(
         starvla_mod,
         "get_rollout_handler",
-        lambda _: lambda model, **kw: {
-            "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
-            "model_inputs": {},
-            "forward_inputs": {},
-        },
+        lambda _: (
+            lambda model, **kw: {
+                "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
+                "model_inputs": {},
+                "forward_inputs": {},
+            }
+        ),
     )
     monkeypatch.setattr(
         starvla_mod.action_space_utils,

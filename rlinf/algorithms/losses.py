@@ -158,10 +158,10 @@ def compute_decoupled_ppo_actor_loss(
     if (
         versions is not None
         and current_version is not None
-        and versions.shape == loss_mask.shape
-        and loss_mask.any()
+        and versions.shape == metric_mask.shape
+        and metric_mask.any()
     ):
-        metrics_data["actor/average_version"] = versions[loss_mask].float().mean()
+        metrics_data["actor/average_version"] = versions[metric_mask].float().mean()
         metrics_data["actor/current_version"] = torch.tensor(
             float(current_version), device=logprobs.device
         )

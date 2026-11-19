@@ -211,15 +211,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                     continue
                 diff = int(self.version) - int(version_val)
                 env_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
-            staleness_metrics.update(spec.scoped(env_metrics) or env_metrics)
+            staleness_metrics.update(spec.scoped(env_metrics))
 
             batch, group_metrics = self._process_received_rollout_batch(
                 Trajectory.to_batch(trajectories), spec
             )
             self.env_batches[spec.name] = batch
-            self._group_success_metrics.update(
-                spec.scoped(group_metrics) or group_metrics
-            )
+            self._group_success_metrics.update(spec.scoped(group_metrics))
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
 

@@ -1177,6 +1177,33 @@ def test_loss_weights_count_every_step_of_an_unmasked_trajectory_and_keep_filter
     assert torch.allclose(batch["loss_mask_ratio"], torch.full((3, 2, 1), 0.25))
 
 
+def test_decoupled_loss_counts_dropped_steps_as_zero_and_logs_versions():
+    from rlinf.algorithms.losses import compute_decoupled_ppo_actor_loss
+
+    # An unmasked batch weighted by add_loss_weights: every step is valid.
+    old_logprobs = torch.zeros(4, 2, 3)
+    old_logprobs[0] = -1.0  # behaviour weight e > 2, so these steps are dropped
+    loss, metrics = compute_decoupled_ppo_actor_loss(
+        logprobs=torch.zeros(4, 2, 3),
+        old_logprobs=old_logprobs,
+        proximal_logprobs=torch.zeros(4, 2, 3),
+        advantages=torch.ones(4, 2, 3),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_mask=torch.ones(4, 2, 1, dtype=torch.bool),
+        loss_mask_ratio=torch.ones(4, 2, 1),
+        behave_weight_threshold=2.0,
+        versions=torch.full((4, 2, 3), 3.0),
+        current_version=4,
+    )
+
+    # Every step weighs the same, so a dropped step adds zero to the mean
+    # instead of leaving it; a quarter of the steps are dropped.
+    assert loss.item() == pytest.approx(-0.75)
+    assert metrics["actor/behav_clip_fraction"] == pytest.approx(0.25)
+    assert metrics["actor/average_version"].item() == pytest.approx(3.0)
+
+
 def test_boolean_attention_mask_casts_only_binary_float_masks():
     # The NPU keeps its fused SDPA kernel for boolean masks; the cast must
     # accept exactly the {0, dtype-min} masks HF models build and refuse any
