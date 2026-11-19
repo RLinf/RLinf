@@ -58,9 +58,11 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/zh-style` | minor | 您, 「」, 值得注意的是, 进行, 当……时, half-width punctuation in a Chinese sentence, or no space between Chinese and English or digits ([rules/chinese.md](rules/chinese.md)) |
 | `docs/zh-hard-wrap` | minor | Chinese prose wrapped inside a paragraph or list item, which renders as a space |
 
-Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and check:
+Then read every changed page in full, in both languages, as a reader new to RLinf who has not seen its code, and inspect every command block (the script above checks build, markup, and prose, not command quality or workflow design):
 
 - [ ] The checklist in the page type's rules file holds.
+- [ ] Sibling workflow & setup reuse (recipes and guides): compare side by side against the closest sibling pages of the same model or domain family on `main` (not only the same directory or gallery). Verify shared setup (install, base checkpoints, common datasets) links to existing family pages or partials instead of duplicating commands, and flag unmotivated deviations in how users set up, configure, or launch.
+- [ ] Instruction simplicity & standardness: check every command block for unnecessary shell plumbing (argument arrays, long CLI override lists, inline multi-step prep scripts, or env-var/CLI workarounds that duplicate or bypass what RLinf configures in YAML and its standard launchers).
 - [ ] Docs to code: every config key, CLI flag, env var, path, and model or env name exists on `main` plus the change.
 - [ ] Code to docs: a change that adds, removes, or renames a public config key, model, env, runner, script, env var, or feature updates the pages that describe it. Name the pages under `docs/source-en/` and `docs/source-zh/` that still need it.
 - [ ] Parity: paired pages agree on commands, paths, env vars, config keys, supported models, envs, and algorithms, capability claims, reported numbers, and section order.
@@ -68,4 +70,4 @@ Then read every changed page in full, in both languages, as a reader new to RLin
 - [ ] Model and dataset references in changed docs and configs pass [reference.md § Asset references](reference.md#asset-references).
 - [ ] None of the mistakes in [rules/mistakes.md](rules/mistakes.md) remains, and each page reads as written in its own language.
 
-Report every changed page with its type and its result, pass or the findings, so the reader sees which pages were checked. A page fails as a whole (major) when a first-time reader cannot tell what the feature does or how to run it, it explains code instead of behavior, it breaks the rules of its type, it sits in the wrong place in the tree, or the Chinese page tracks the English one sentence for sentence. A line or two of wording is minor. Each finding quotes the line, names the rule it breaks, and gives the rewrite.
+Report every changed page with its type and its result, pass or the findings, so the reader sees which pages were checked. A page fails as a whole (major) when a first-time reader cannot tell what the feature does or how to run it, its instructions are needlessly complex or diverge from RLinf's standard YAML-and-launcher workflow without reason, it duplicates shared setup owned by another page, it explains code instead of behavior, it breaks the rules of its type, it sits in the wrong place in the tree, or the Chinese page tracks the English one sentence for sentence. A line or two of wording is minor. Each finding quotes the line, names the rule it breaks, and gives the rewrite.

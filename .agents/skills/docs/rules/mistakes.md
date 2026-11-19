@@ -14,7 +14,8 @@ Agents that write docs repeat the same mistakes, and the reader pays for each on
 | Sentences that only say what is not needed ("ROS is not required") | State the requirement positively |
 | Only the happy path: no prerequisites, no expected output, no sign that a step worked | Add what to prepare, the output to expect, and the known problems with their fixes |
 | Claims with no evidence ("significantly faster", "state-of-the-art") | Give the number and its source, or cut the claim |
-| Copying a block that another page already has | Link to that page, or move the block into a partial |
+| Copying a block that another page already has (including install or model-download steps owned by a shared family page) | Link to that page with `:doc:` or `:ref:`, or move the block into a partial |
+| Hard-to-follow or non-standard recipe commands: shell argument arrays, long CLI override lists, ad-hoc env-var workarounds for config-managed settings, or long inline prep scripts | Configure paths, placement, and defaults in the YAML, run RLinf's standard launcher cleanly, and put multi-step prep logic in a script |
 | Creating a new page where an existing one should grow, or listing a page in two galleries | Search the docs first; extend the page that owns the topic |
 | Mixing page types: a recipe that turns into a tutorial on internals, a concept page full of procedures | Split by type and link between the parts |
 
