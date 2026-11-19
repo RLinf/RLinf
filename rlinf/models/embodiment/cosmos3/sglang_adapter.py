@@ -21,7 +21,7 @@ returns the N action chunks in one response
 supplies the HTTP client and delegates request handling to this adapter.
 
 Training uses JSON ``POST /rollout/generate`` and a msgpack response carrying
-action denoising transitions for GRPO or joint endpoints for NFT resampling.
+joint endpoints for NFT resampling.
 
 The server only batches prompts of equal token length, up to
 ``--batching-max-size``; :meth:`Cosmos3SGLangAdapter.request_groups` groups
@@ -65,7 +65,6 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
         self.cfg_rollout = cfg.rollout
         self.model_cfg = cfg.rollout.model
         self.rank = rank
-        self._nft = cfg.get("algorithm", {}).get("loss_type") == "embodied_nft"
 
         c = self.model_cfg
         self._action_mode = str(c.get("action_mode", "policy"))
@@ -104,26 +103,22 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
     def validate_training(self, cfg) -> None:
         if str(self.model_cfg.model_type) != "cosmos3":
             raise ValueError("SGLang embodied RL currently requires model_type=cosmos3")
-        if cfg.algorithm.get("adv_type") != "grpo" or cfg.algorithm.get(
-            "loss_type"
-        ) not in {"actor", "embodied_nft"}:
+        if (
+            cfg.algorithm.get("adv_type") != "grpo"
+            or cfg.algorithm.get("loss_type") != "embodied_nft"
+        ):
             raise ValueError(
-                "Cosmos3 SGLang RL requires GRPO advantages with actor or NFT loss"
+                "Cosmos3 SGLang training requires GRPO advantages with embodied_nft loss"
             )
-        if self._nft:
-            for key, expected in (
-                ("nft_xcur_source", "resample"),
-                ("nft_target_space", "x0"),
-            ):
-                if cfg.algorithm.get(key) != expected:
-                    raise ValueError(
-                        f"Cosmos3 NFT requires {key}={expected!r}, "
-                        f"got {cfg.algorithm.get(key)!r}"
-                    )
-        if cfg.algorithm.get("logprob_type") != "chunk_level":
-            raise ValueError(
-                "Cosmos3 action denoising logprobs require chunk_level aggregation"
-            )
+        for key, expected in (
+            ("nft_xcur_source", "resample"),
+            ("nft_target_space", "x0"),
+        ):
+            if cfg.algorithm.get(key) != expected:
+                raise ValueError(
+                    f"Cosmos3 NFT requires {key}={expected!r}, "
+                    f"got {cfg.algorithm.get(key)!r}"
+                )
         if (
             cfg.algorithm.get("entropy_bonus", 0) != 0
             or cfg.algorithm.get("kl_beta", 0) != 0
@@ -357,7 +352,6 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
         noise_level = float(self.model_cfg.get("noise_level", 0.5))
         if noise_level <= 0:
             raise ValueError("Cosmos3 RL noise_level must be positive")
-        step = int(torch.randint(self._num_inference_steps, (1,)).item())
         seed = int(torch.randint(2**31 - 1, (1,)).item())
         payload = {
             "prompt": prompts[0],
@@ -375,12 +369,9 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             "rollout": True,
             "rollout_sde_type": "sde",
             "rollout_noise_level": noise_level,
-            "rollout_log_prob_no_const": False,
             "rollout_debug_mode": False,
             "rollout_return_dit_trajectory": True,
-            "rollout_return_step_indices": (
-                [self._num_inference_steps] if self._nft else [step, step + 1]
-            ),
+            "rollout_return_step_indices": [self._num_inference_steps],
             "extra_sampling_params": {
                 "action_mode": "policy",
                 "domain_name": self._domain_name,
@@ -399,14 +390,13 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
             "prompts": encode_prompts(
                 prompts, int(self.model_cfg.get("prompt_bytes", 512))
             ),
-            "step": step,
             "nft_noise_seed": seed,
         }
 
     def parse_rollout_response(
         self, response: list[dict], state: dict
     ) -> tuple[torch.Tensor, dict]:
-        """Restore GRPO transitions or NFT endpoints in environment order."""
+        """Restore NFT actions and joint endpoints in environment order."""
         from safetensors.torch import load
 
         from rlinf.models.embodiment.cosmos3.cosmos3_action_model import (
@@ -422,9 +412,8 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
 
         if not isinstance(response, list) or len(response) != len(state["images"]):
             raise ValueError("Cosmos3 rollout response batch size differs from request")
-        actions, logprobs, latents, next_latents = [], [], [], []
+        actions = []
         nft_actions, nft_endpoints = [], []
-        step = state["step"]
         times = shifted_timesteps(
             self._num_inference_steps, self._shift, torch.device("cpu")
         )
@@ -434,73 +423,45 @@ class Cosmos3SGLangAdapter(SGLangEmbodiedAdapter):
                 raise ValueError(
                     "SGLang did not return Cosmos3 action replay data; install the modified SGLang 0.5.19 source in the serving environment"
                 )
-            replay_times = tensor(trajectory["timesteps"]).float()
-            expected_times = (
-                times[-1:] if self._nft else times[step : step + 2]
-            ) * 1000.0
-            if replay_times.shape != expected_times.shape or not torch.allclose(
-                replay_times, expected_times
+            endpoint_times = tensor(trajectory["timesteps"]).float()
+            expected_times = times[-1:] * 1000.0
+            if endpoint_times.shape != expected_times.shape or not torch.allclose(
+                endpoint_times, expected_times
             ):
-                raise ValueError("Cosmos3 server returned the wrong replay step")
+                raise ValueError("Cosmos3 server did not return the final NFT endpoint")
             sigmas = tensor(trajectory["sigmas"]).float()
             if sigmas.shape != times.shape or not torch.allclose(sigmas, times):
                 raise ValueError(
                     "Cosmos3 server and actor use different flow schedules"
                 )
-            pair = tensor(trajectory["latents"]).float()
-            expected_states = 1 if self._nft else 2
-            if pair.ndim != 2 or pair.shape[0] != expected_states:
-                raise ValueError(f"Invalid Cosmos3 replay latent shape: {pair.shape}")
+            endpoint_state = tensor(trajectory["latents"]).float()
+            if endpoint_state.ndim != 2 or endpoint_state.shape[0] != 1:
+                raise ValueError(
+                    f"Invalid Cosmos3 NFT endpoint shape: {endpoint_state.shape}"
+                )
             action = tensor(item["generated_output"]).float()
             if tuple(action.shape) != (self._num_action_chunks, self._raw_action_dim):
                 raise ValueError(f"Invalid Cosmos3 action shape: {action.shape}")
-            if not all(torch.isfinite(t).all() for t in (pair, action)):
+            if not all(torch.isfinite(t).all() for t in (endpoint_state, action)):
                 raise ValueError(
                     "Cosmos3 rollout contains nonfinite actions or replay tensors"
                 )
             actions.append(self._action_to_env(action.numpy()))
-            if self._nft:
-                nft_actions.append(action)
-                nft_endpoints.append(pair[0])
-                continue
-            lp = tensor(item.get("rollout_log_probs")).float()
-            if (
-                tuple(lp.shape) != (self._num_inference_steps,)
-                or not torch.isfinite(lp).all()
-            ):
-                raise ValueError("Invalid Cosmos3 replay logprobs")
-            # SGLang reports a mean over the unmasked action dimensions at each
-            # step. RLinf's chunk-level loss sums this [horizon, action_dim] layout.
-            chunk_lp = torch.zeros(self._num_action_chunks, 7)
-            chunk_lp[0, 0] = lp[step] * self._num_action_chunks * self._raw_action_dim
-            logprobs.append(chunk_lp)
-            latents.append(pair[0])
-            next_latents.append(pair[1])
-        if self._nft:
-            endpoint = torch.stack(nft_endpoints)
-            generator = torch.Generator().manual_seed(state["nft_noise_seed"])
-            return torch.from_numpy(np.stack(actions)).float(), {
-                "prev_logprobs": torch.zeros(len(actions), self._num_action_chunks, 7),
-                "prev_values": torch.zeros(len(actions), 1),
-                "forward_inputs": {
-                    "images": state["images"],
-                    "prompts": state["prompts"],
-                    "nft_x0": torch.stack(nft_actions),
-                    "nft_joint_x0": endpoint,
-                    "nft_joint_noise": torch.randn(endpoint.shape, generator=generator),
-                    # Resampled linear flow matching has no SDE drift correction.
-                    "nft_noise_level": torch.zeros(len(actions)),
-                },
-            }
+            nft_actions.append(action)
+            nft_endpoints.append(endpoint_state[0])
+        endpoint = torch.stack(nft_endpoints)
+        generator = torch.Generator().manual_seed(state["nft_noise_seed"])
         return torch.from_numpy(np.stack(actions)).float(), {
-            "prev_logprobs": torch.stack(logprobs),
+            "prev_logprobs": torch.zeros(len(actions), self._num_action_chunks, 7),
             "prev_values": torch.zeros(len(actions), 1),
             "forward_inputs": {
                 "images": state["images"],
                 "prompts": state["prompts"],
-                "latent": torch.stack(latents),
-                "next_latent": torch.stack(next_latents),
-                "step": torch.full((len(actions),), step, dtype=torch.long),
+                "nft_x0": torch.stack(nft_actions),
+                "nft_joint_x0": endpoint,
+                "nft_joint_noise": torch.randn(endpoint.shape, generator=generator),
+                # Resampled linear flow matching has no SDE drift correction.
+                "nft_noise_level": torch.zeros(len(actions)),
             },
         }
 

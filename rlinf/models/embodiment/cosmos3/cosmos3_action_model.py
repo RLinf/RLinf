@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cosmos3 action model: SFT forward, native HF sampling and actor replay."""
+"""Cosmos3 action model: SFT and NFT forwards with native HF action sampling."""
 
 from __future__ import annotations
 
-import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -60,36 +59,6 @@ def flow_sde_transition(
     x1 = x_t + (1.0 - t) * velocity
     mean = (1.0 - t_next) * x0 + (t_next - sigma.square() * delta / (2.0 * t)) * x1
     return mean, std
-
-
-def action_transition_logprobs(
-    sample: torch.Tensor,
-    mean: torch.Tensor,
-    std: torch.Tensor,
-    *,
-    horizon: int,
-    model_action_dim: int,
-    raw_action_dim: int,
-    env_action_dim: int,
-) -> torch.Tensor:
-    """Return chunk-shaped logprobs whose sum is the selected flow transition logprob."""
-    action_width = horizon * model_action_dim
-    sample_action = sample[:, -action_width:].reshape(-1, horizon, model_action_dim)
-    mean_action = mean[:, -action_width:].reshape(-1, horizon, model_action_dim)
-    std_action = std[:, -action_width:].reshape(-1, 1, 1)
-    sigma = std_action.clamp_min(1e-12)
-    logprob = (
-        -torch.log(sigma)
-        - 0.5 * math.log(2.0 * math.pi)
-        - 0.5 * ((sample_action - mean_action) / sigma).square()
-    )[..., :raw_action_dim].sum(dim=-1)
-    result = torch.zeros(
-        (sample.shape[0], horizon, env_action_dim),
-        device=sample.device,
-        dtype=torch.float32,
-    )
-    result[..., 0] = logprob.float()
-    return result
 
 
 class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
@@ -165,14 +134,17 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         beta = model.ema_beta(iteration)
         worker.update_average(net, net_ema, beta=beta)
 
-    def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
-        if forward_type == ForwardType.SFT:
-            return self.sft_forward(**kwargs)
-        if forward_type == ForwardType.DEFAULT:
+    def forward(
+        self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs
+    ) -> dict[str, torch.Tensor]:
+        """Use SFT by default, or dispatch to the NFT training forward."""
+        if forward_type in (ForwardType.DEFAULT, ForwardType.SFT):
             return self.default_forward(**kwargs)
         if forward_type == ForwardType.NFT:
             return self.nft_forward(**kwargs)
-        raise NotImplementedError(f"Unsupported Cosmos3 forward type: {forward_type}")
+        raise NotImplementedError(
+            f"Cosmos3 supports DEFAULT (SFT), SFT or NFT, got {forward_type}"
+        )
 
     def nft_forward(
         self,
@@ -239,14 +211,14 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             ]
         }
 
-    def sft_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
+    def default_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
         """Compute the native Cosmos flow-matching SFT loss."""
         torch.compiler.cudagraph_mark_step_begin()
         if data is None:
             data = kwargs.get("data")
         if data is None:
             raise ValueError(
-                "Cosmos3 sft_forward requires `data` from the SFT dataloader."
+                "Cosmos3 default_forward requires `data` from the SFT dataloader."
             )
         from cosmos_framework.utils.misc import to as _cosmos_to
 
@@ -353,12 +325,7 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
 
     @torch.no_grad()
     def sample_train_actions(self, images: torch.Tensor, prompts: torch.Tensor):
-        """Sample an SDE trajectory for GRPO replay or NFT endpoint resampling."""
-        rl_mode = self._option("rl_mode", "grpo")
-        if rl_mode not in {"grpo", "nft"}:
-            raise ValueError(
-                f"Expected Cosmos3 rl_mode='grpo' or 'nft', got {rl_mode!r}"
-            )
+        """Sample an SDE trajectory and return endpoints for NFT resampling."""
         self._set_device(self.device)
         self._ensure_vision_device_patch()
         batch = self._build_batch(images, prompts)
@@ -389,8 +356,6 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         noise_level = float(self._option("noise_level", 0.5))
         if noise_level <= 0:
             raise ValueError("Cosmos3 RL noise_level must be positive")
-        selected = int(torch.randint(steps, (1,)).item())
-        saved_x = saved_next = old_logprobs = None
         for step in range(steps):
             t = times[step].expand(n)
             velocity = torch.stack(
@@ -408,44 +373,21 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
             )
             x_next = mean + std * torch.randn_like(mean)
             x_next = cond_mask * ref + (1 - cond_mask) * x_next
-            if rl_mode == "grpo" and step == selected:
-                saved_x, saved_next = x.cpu(), x_next.cpu()
-                old_logprobs = action_transition_logprobs(
-                    x_next,
-                    mean,
-                    std,
-                    horizon=horizon,
-                    model_action_dim=model_dim,
-                    raw_action_dim=raw_dim,
-                    env_action_dim=7,
-                ).cpu()
             x = x_next
         model_actions = x[:, -action_width:].reshape(n, horizon, model_dim)[
             :, :, :raw_dim
         ]
-        if rl_mode == "nft":
-            endpoint = x.cpu()
-            return list(model_actions.unbind(0)), {
-                "prev_logprobs": torch.zeros(n, horizon, 7),
-                "prev_values": None,
-                "forward_inputs": {
-                    "images": images,
-                    "prompts": prompts,
-                    "nft_x0": model_actions.cpu(),
-                    "nft_joint_x0": endpoint,
-                    "nft_joint_noise": torch.randn(endpoint.shape),
-                    "nft_noise_level": torch.zeros(n),
-                },
-            }
+        endpoint = x.cpu()
         return list(model_actions.unbind(0)), {
-            "prev_logprobs": old_logprobs,
-            "prev_values": torch.zeros((n, 1), dtype=torch.float32),
+            "prev_logprobs": torch.zeros(n, horizon, 7),
+            "prev_values": None,
             "forward_inputs": {
                 "images": images,
                 "prompts": prompts,
-                "latent": saved_x,
-                "next_latent": saved_next,
-                "step": torch.full((n,), selected, dtype=torch.long),
+                "nft_x0": model_actions.cpu(),
+                "nft_joint_x0": endpoint,
+                "nft_joint_noise": torch.randn(endpoint.shape),
+                "nft_noise_level": torch.zeros(n),
             },
         }
 
@@ -453,69 +395,3 @@ class Cosmos3ActionModel(Cosmos3Policy, nn.Module, BasePolicy):
         """Convert sampler sigmas to the native model's training timestep units."""
         scale = self.omni.config.rectified_flow_inference_config.num_train_timesteps
         return sigmas * float(scale)
-
-    def default_forward(
-        self,
-        forward_inputs: dict,
-        compute_values: bool = False,
-        compute_entropy: bool = False,
-        **kwargs,
-    ) -> dict[str, torch.Tensor]:
-        """Recompute selected rollout transition with current actor parameters."""
-        del kwargs
-        if compute_values:
-            raise NotImplementedError(
-                "Cosmos3 actor supports GRPO, not GAE value learning"
-            )
-        x = forward_inputs["latent"].float()
-        x_next = forward_inputs["next_latent"].float()
-        step = forward_inputs["step"].long()
-        n = x.shape[0]
-        self._set_device(x.device)
-        self._ensure_vision_device_patch()
-        batch = self._build_batch(forward_inputs["images"], forward_inputs["prompts"])
-        # Frozen conditioning uses the native inference-only VAE prefix encoder.
-        with torch.no_grad():
-            plans, clean, cond, _, _, _, _, has_actions = (
-                self.omni._prepare_inference_data(batch, seed=[0] * n)
-            )
-        if not has_actions:
-            raise RuntimeError("Cosmos3 replay has no action target")
-        if getattr(self.omni.config, "sound_gen", False):
-            raise ValueError("Cosmos3 action replay requires a vision-action model")
-        times = shifted_timesteps(
-            int(self._option("num_inference_steps", 30)),
-            float(self._option("shift", 10.0)),
-            x.device,
-        )
-        t = times[step]
-        velocity = torch.stack(
-            self.omni._get_velocity(
-                noise_x=list(x.unbind(0)),
-                timestep=self._velocity_timesteps(t[:, None]),
-                text_tokens=cond,
-                sequence_plans=plans,
-                gen_data_clean=clean,
-                has_noisy_actions=True,
-            )
-        ).float()
-        mean, std = flow_sde_transition(
-            x,
-            velocity,
-            t[:, None],
-            times[step + 1][:, None],
-            float(self._option("noise_level", 0.5)),
-        )
-        logprobs = action_transition_logprobs(
-            x_next,
-            mean,
-            std,
-            horizon=int(self._option("num_action_chunks", 16)),
-            model_action_dim=int(clean.x0_tokens_action[0].shape[-1]),
-            raw_action_dim=int(self._option("raw_action_dim", 10)),
-            env_action_dim=7,
-        )
-        output = {"logprobs": logprobs}
-        if compute_entropy:
-            output["entropy"] = torch.zeros_like(logprobs)
-        return output
