@@ -202,6 +202,8 @@ class LiberoParquetDataset(ShardedDataset):
             rng.shuffle(steps)
             for split in range(num_splits):
                 indices = steps[split::num_splits]
+                if not indices.size:
+                    continue
                 shard = np.argmin(self.shard_lengths)
                 self.sharded_episodes[shard].append((episode_index, indices))
                 self.shard_lengths[shard] += len(indices)

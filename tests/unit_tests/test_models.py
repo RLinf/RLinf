@@ -5388,6 +5388,30 @@ def test_gr00t_libero_shards(gr00t_libero_parquet, seed, sampling_rate):
             np.testing.assert_array_equal(sample.actions["x"], reference.actions["x"])
 
 
+def test_gr00t_libero_no_complete_chunks(gr00t_libero_parquet):
+    from gr00t.data.types import EmbodimentTag, ModalityConfig
+
+    from rlinf.data.datasets.gr00t.libero import (
+        LiberoEpisodeLoader,
+        LiberoParquetDataset,
+    )
+
+    reader = LiberoEpisodeLoader(gr00t_libero_parquet, None)
+    horizon = max(reader.episode_lengths) + 1
+    dataset = LiberoParquetDataset(
+        reader,
+        EmbodimentTag("libero_sim"),
+        {
+            "action": ModalityConfig(
+                delta_indices=list(range(horizon)), modality_keys=["x"]
+            )
+        },
+        statistics={},
+    )
+
+    assert len(dataset) == 0
+
+
 def test_gr00t_sft_metadata(gr00t_libero_parquet, monkeypatch):
     import json
 
