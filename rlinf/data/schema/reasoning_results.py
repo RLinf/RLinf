@@ -28,6 +28,7 @@ from rlinf.utils.data_iter_utils import (
     split_list,
 )
 from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
+from rlinf.utils.utils import get_current_device
 
 if TYPE_CHECKING:
     from vllm.outputs import CompletionOutput
@@ -581,27 +582,32 @@ class RolloutResult:
 
         # when do_down_sample is enabled, there might be no valid rewards
         if self.rewards is not None and self.rewards.numel() == 0:
+            device = get_current_device()
             batch = {
-                "input_ids": torch.zeros(0, dtype=torch.long).cuda(),
-                "attention_mask": torch.zeros(0, dtype=torch.bool).cuda(),
-                "response_mask": torch.zeros(0, dtype=torch.bool).cuda(),
-                "is_end": torch.zeros(0, dtype=torch.bool).cuda(),
-                "position_ids": torch.zeros(0, dtype=torch.long).cuda(),
-                "prompt_lengths": torch.zeros(0, dtype=torch.long).cuda(),
-                "response_lengths": torch.zeros(0, dtype=torch.long).cuda(),
+                "input_ids": torch.zeros(0, dtype=torch.long, device=device),
+                "attention_mask": torch.zeros(0, dtype=torch.bool, device=device),
+                "response_mask": torch.zeros(0, dtype=torch.bool, device=device),
+                "is_end": torch.zeros(0, dtype=torch.bool, device=device),
+                "position_ids": torch.zeros(0, dtype=torch.long, device=device),
+                "prompt_lengths": torch.zeros(0, dtype=torch.long, device=device),
+                "response_lengths": torch.zeros(0, dtype=torch.long, device=device),
             }
             if self.advantages is not None:
-                batch["advantages"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["advantages"] = torch.zeros(0, dtype=torch.float32, device=device)
             if self.recomputed_logprobs is not None:
                 batch["recomputed_logprobs"] = torch.zeros(
-                    0, dtype=torch.float32
-                ).cuda()
+                    0, dtype=torch.float32, device=device
+                )
             if self.ref_logprobs is not None:
-                batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["ref_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32, device=device
+                )
             if self.rewards is not None:
-                batch["rewards"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["rewards"] = torch.zeros(0, dtype=torch.float32, device=device)
             if self.rollout_logprobs is not None:
-                batch["rollout_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["rollout_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32, device=device
+                )
             return batch
 
         prompt_lengths = torch.tensor(self.prompt_lengths)
@@ -1093,55 +1099,47 @@ class DynamicRolloutResult:
         available_keys: list[str],
     ) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
-
+        target_device = get_current_device()
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
-            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            *pad_seq_shape, dtype=torch.bool, device=target_device
         )
         attention_mask[:, :1] = True
         batch_pad = {
             "input_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=target_device
             ),
             "attention_mask": attention_mask,
             "response_mask": torch.zeros(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.bool, device=target_device
             ),
             "position_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=target_device
             ),
-            "is_end": torch.zeros(
-                1, dtype=torch.bool, device=torch.cuda.current_device()
-            ),
-            "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
-            ),
-            "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
-            ),
+            "is_end": torch.zeros(1, dtype=torch.bool, device=target_device),
+            "prompt_lengths": torch.zeros(1, dtype=torch.int32, device=target_device),
+            "response_lengths": torch.zeros(1, dtype=torch.int32, device=target_device),
             "ref_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "recomputed_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "rollout_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
-            "rewards": torch.zeros(
-                1, dtype=torch.float32, device=torch.cuda.current_device()
-            ),
+            "rewards": torch.zeros(1, dtype=torch.float32, device=target_device),
             "advantages": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "loss_scales": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "values": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "returns": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
         }
         batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}

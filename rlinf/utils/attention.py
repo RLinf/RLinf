@@ -54,6 +54,13 @@ def resolve_attn_implementation(preferred: str = "flash_attention_2") -> str:
     fails there. Fall back to another installed flash variant when there is one,
     and to ``sdpa`` otherwise.
     """
+    if preferred == "ascend_fusion":
+        from rlinf.hybrid_engines.fsdp.ascend_attention import (
+            register_ascend_fusion_attention,
+        )
+
+        register_ascend_fusion_attention()
+        return preferred
     if _is_available(preferred):
         return preferred
     for implementation in _FLASH_IMPLEMENTATIONS:

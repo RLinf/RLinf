@@ -191,3 +191,34 @@ PPO 训练会在每个 ``global_step_xxx`` 下保存 ``actor`` 和 ``critic`` �
      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/search_r1/qwen_searchr1_ppo_grpo_reward.png" alt="Qwen2.5-3B Search-R1 reward：橙色为 GRPO，蓝色为 PPO" style="width: 100%; max-width: 410px;"/>
      <p><em>橙色为 GRPO，蓝色为 PPO。两组实验均使用 8×A800 80 GB，有效 batch size 均为 1024，TensorBoard 平滑系数为 0.6。</em></p>
    </div>
+
+.. _searchr1-qwen25-hardware:
+
+运行于不同硬件后端
+------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: ../_ascend_agentic.rst
+
+Ascend 配方使用 FP16 和动态梯度缩放，初始 scale 为 ``32768``，以减少训练初期的梯度溢出。训练过程中 scaler 会继续自动调整 scale。
+
+按前文步骤准备检索服务，服务可以运行在另一台机器上。Ascend 配置从基础配方继承模型、数据集和检索服务设置。在 ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` 中按下例覆盖继承的路径和检索服务地址。将 ``model`` 添加到已有的 ``rollout`` 下，保留 ``sglang``，不要重复添加顶层 ``rollout``：
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
+   tools:
+     search:
+       server_addr: retriever-host:8000
+   rollout:
+     model:
+       model_path: /path/to/model/Qwen2.5-3B-Instruct
+
+使用 Ascend 配置启动训练：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train_ascend.sh train_qwen2.5_ascend

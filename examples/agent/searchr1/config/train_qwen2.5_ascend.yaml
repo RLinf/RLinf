@@ -1,0 +1,30 @@
+defaults:
+  - train_qwen2.5_fsdp
+  - _self_
+
+runner:
+  # Limit actor microbatch memory on 64 GB Ascend cards.
+  max_tokens_per_mbs: 8192
+  experiment_name: searchr1-grpo-qwen2.5-3b-instruct-fsdp
+
+algorithm:
+  # CUDA FlashAttention entropy kernels are unavailable on Ascend.
+  entropy_op_type: torch
+
+rollout:
+  sglang:
+    # Use the Ascend-native SGLang attention backend.
+    attention_backend: ascend
+  # Avoid loading a duplicate HF model for first-sync validation.
+  validate_weight_first_sync: False
+
+actor:
+  model:
+    # Use packed NPU attention with the inherited dynamic batching.
+    attn_implementation: ascend_fusion
+  fsdp_config:
+    # Liger kernels require a CUDA-compatible backend.
+    use_liger_kernel: False
+    grad_scaler:
+      # Start below the default scale to reduce FP16 overflow on Ascend.
+      init_scale: 32768

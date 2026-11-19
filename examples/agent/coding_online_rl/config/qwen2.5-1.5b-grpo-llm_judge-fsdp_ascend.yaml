@@ -1,0 +1,20 @@
+defaults:
+  - qwen2.5-1.5b-grpo-llm_judge-fsdp
+  - _self_
+
+algorithm:
+  # CUDA FlashAttention entropy kernels are unavailable on Ascend.
+  entropy_op_type: torch
+
+rollout:
+  sglang:
+    # Use the Ascend-native SGLang attention backend.
+    attention_backend: ascend
+  # Avoid loading a duplicate HF model for first-sync validation.
+  validate_weight_first_sync: False
+
+actor:
+  model:
+    # Ascend fused attention requires the packed-input path.
+    attn_implementation: ascend_fusion
+    variable_seq_lengths: True

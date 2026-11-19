@@ -25,31 +25,16 @@ from rlinf.data.datasets.reasoning import create_reasoning_datasets
 from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.agent_ppo_runner import AgentPPORunner
 from rlinf.runners.agent_runner import AgentRunner
-from rlinf.runners.async_agent_runner import AsyncAgentRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import output_redirector
-from rlinf.workers.actor.ma_fsdp_actor_worker import MAFSDPActor
-from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+from rlinf.workers.actor import get_ma_actor_worker
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
-from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
 from rlinf.workers.inference.utils import get_inference_backend_worker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
-from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 """Script to start Search-R1 training"""
 mp.set_start_method("spawn", force=True)
-
-
-def get_ma_actor_worker(cfg):
-    """Select the multi-agent actor worker based on training backend."""
-    if cfg.actor.training_backend == "fsdp":
-        return MAFSDPActor
-    if cfg.actor.training_backend == "megatron":
-        return MAMegatronActor
-    raise ValueError(
-        f"Unsupported training backend for Search-R1 actor: {cfg.actor.training_backend}"
-    )
 
 
 @hydra.main(version_base="1.1")
@@ -111,6 +96,8 @@ def main(cfg) -> None:
 
     critic_group = None
     if cfg.critic.get("use_critic_model", False):
+        from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
+
         critic_group = MAMegatronCritic.create_group(cfg, component_placement).launch(
             cluster,
             name=cfg.critic.group_name,
@@ -130,6 +117,8 @@ def main(cfg) -> None:
     }
 
     if cfg.runner.get("async_mode", False):
+        from rlinf.runners.async_agent_runner import AsyncAgentRunner
+
         runner_cls = AsyncAgentRunner
     elif critic_group is not None:
         runner_cls = AgentPPORunner
@@ -137,6 +126,10 @@ def main(cfg) -> None:
         runner_cls = AgentRunner
     rollout_buffer = None
     if cfg.runner.get("async_mode", False):
+        from rlinf.workers.rollout_buffer.rollout_buffer_worker import (
+            RolloutBufferWorker,
+        )
+
         # The buffer worker owns the dataloader and the admission budget;
         # one instance on the head node, like the search tool worker.
         rollout_buffer = RolloutBufferWorker.create_group(cfg, train_ds).launch(

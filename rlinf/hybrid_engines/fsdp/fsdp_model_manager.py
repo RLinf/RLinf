@@ -176,10 +176,14 @@ class FSDPModelManager:
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         device = torch.device(f"{Worker.torch_device_type}:{local_rank}")
 
+        attn_implementation = resolve_attn_implementation(
+            cfg.model.get("attn_implementation", "flash_attention_2")
+        )
+
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
             trust_remote_code=True,
-            attn_implementation=resolve_attn_implementation(),
+            attn_implementation=attn_implementation,
         )
 
         if use_gptq:

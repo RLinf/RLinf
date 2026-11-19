@@ -82,6 +82,8 @@ AgentLightning 0.3.0 需要使用 RLinf 约束的 OpenTelemetry 版本，因为 
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
 
+在 NVIDIA GPU 上使用 FSDP 训练时，选择 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp`` 配置，沿用上述启动脚本和模型、数据路径。
+
 也可以不修改配置文件，直接通过命令行传入 Hydra overrides：
 
 .. code-block:: bash
@@ -119,3 +121,27 @@ HF 评测时在对应的 ``*_eval.yaml`` 里设置 ``rollout.model.model_path``�
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+
+.. _agentlightning-calc-x-hardware:
+
+运行于不同硬件后端
+------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+安装计算器依赖时保留 Ascend 的配套版本。``--no-config`` 可以避免 uv 应用仓库默认的 CUDA 依赖覆盖配置：
+
+.. code-block:: bash
+
+   uv --no-config pip install --torch-backend cpu \
+     --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
+     -r requirements/agentic/agentlightning_npu.txt
+
+准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend

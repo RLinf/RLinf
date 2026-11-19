@@ -89,6 +89,8 @@ Start training:
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
 
+For FSDP training on NVIDIA GPUs, use ``qwen2.5-1.5b-enginehttp-multiturn-fsdp`` with the same launch script and model and dataset paths.
+
 You can also keep the config file unchanged and pass Hydra overrides on the
 command line:
 
@@ -127,3 +129,27 @@ For HF evaluation, set ``rollout.model.model_path`` in the matching ``*_eval.yam
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn_eval
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory_eval
+
+.. _agentlightning-calc-x-hardware:
+
+Run on Different Hardware Backends
+----------------------------------
+
+Huawei Ascend CANN
+~~~~~~~~~~~~~~~~~~
+
+.. include:: _ascend_agentic.rst
+
+Install the calculator dependencies while preserving the Ascend package versions. ``--no-config`` prevents uv from applying the repository's default CUDA dependency overrides:
+
+.. code-block:: bash
+
+   uv --no-config pip install --torch-backend cpu \
+     --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
+     -r requirements/agentic/agentlightning_npu.txt
+
+Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
+
+.. code-block:: bash
+
+   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend
