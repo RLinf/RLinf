@@ -568,10 +568,10 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
                     "hybrid_shard requires fsdp_config.strategy='fsdp'; "
                     f"got strategy={cfg.fsdp_config.strategy!r}."
                 )
-            if type(hybrid_shard_size) is not int or hybrid_shard_size <= 0:
+            if type(hybrid_shard_size) is not int or hybrid_shard_size < 2:
                 raise ValueError(
-                    "hybrid_shard requires a positive integer "
-                    "fsdp_config.hybrid_shard_size; "
+                    "hybrid_shard requires fsdp_config.hybrid_shard_size "
+                    "to be an integer of at least 2; "
                     f"got hybrid_shard_size={hybrid_shard_size!r}."
                 )
         elif hybrid_shard_size is not None:

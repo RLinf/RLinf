@@ -78,8 +78,8 @@ def create_device_mesh(
     Args:
         world_size (int): Number of ranks participating in FSDP.
         sharding_strategy (str): FSDP sharding strategy.
-        hybrid_shard_size (Optional[int]): Ranks per shard group. Required for
-            hybrid sharding; each group contains consecutive actor ranks.
+        hybrid_shard_size (Optional[int]): Ranks per shard group. Hybrid sharding
+            requires at least two consecutive actor ranks per group.
 
     Returns:
         DeviceMesh: A mesh named ``fsdp``, or ``(ddp, fsdp)`` for hybrid sharding.
@@ -90,12 +90,12 @@ def create_device_mesh(
     if sharding_strategy == "hybrid_shard":
         if (
             type(hybrid_shard_size) is not int
-            or hybrid_shard_size <= 0
+            or hybrid_shard_size < 2
             or world_size % hybrid_shard_size != 0
         ):
             raise ValueError(
-                "hybrid_shard_size must be a positive integer dividing the actor "
-                f"world size; got hybrid_shard_size={hybrid_shard_size!r}, "
+                "hybrid_shard_size must be an integer of at least 2 dividing "
+                f"the actor world size; got hybrid_shard_size={hybrid_shard_size!r}, "
                 f"world_size={world_size}."
             )
         mesh_shape = (world_size // hybrid_shard_size, hybrid_shard_size)

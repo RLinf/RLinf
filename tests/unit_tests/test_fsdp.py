@@ -365,7 +365,7 @@ def test_hybrid_mesh_accumulated_updates_match_unsharded_reference(tmp_path):
     )
 
 
-@pytest.mark.parametrize("shard_size", [3, 8])
+@pytest.mark.parametrize("shard_size", [1, 3, 8])
 def test_hybrid_mesh_rejects_invalid_shard_sizes_before_distributed_init(shard_size):
     assert not dist.is_initialized()
     with pytest.raises(ValueError, match="hybrid_shard_size"):
@@ -559,7 +559,7 @@ def test_openpi_sharded_training_requires_fsdp1(sharding):
         validate_fsdp_cfg(actor)
 
 
-@pytest.mark.parametrize("shard_size", [None, 0, True, 1.5])
+@pytest.mark.parametrize("shard_size", [None, 0, 1, True, 1.5])
 def test_hybrid_config_rejects_invalid_shard_sizes(shard_size):
     actor = OmegaConf.create(
         {

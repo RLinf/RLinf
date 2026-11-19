@@ -152,7 +152,8 @@ BEHAVIOR / RoboTwin configurations use the ``openpi_cosine`` learning rate sched
 
 To shard training state within each node and replicate it across nodes, select
 ``hybrid_shard``. Set ``hybrid_shard_size`` to the number of actor ranks in each
-sharding group: it must be a positive integer that divides the actor world size.
+sharding group. The group size must be an integer of at least two and divide
+the total number of actor ranks.
 For two nodes with four actor ranks each, keep the precision settings above and
 override:
 

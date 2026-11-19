@@ -122,7 +122,7 @@ OpenPI 的 FSDP1 支持 ``no_shard``、``shard_grad_op``、``full_shard`` 和 ``
          reduce_dtype: fp32
          buffer_dtype: fp32
 
-若要在节点内分片训练状态、在节点间复制，选择 ``hybrid_shard``。用 ``hybrid_shard_size`` 指定每个分片组的 actor rank 数，取值必须为正整数，且能整除 actor world size。例如，两节点各分配 4 个 actor rank 时，保留上面的精度配置并覆写：
+选择 ``hybrid_shard``，可以在节点内分片训练状态，并在节点间复制。用 ``hybrid_shard_size`` 指定每个分片组的 actor rank 数。每组至少有 2 个 rank，组大小须整除 actor rank 总数。以下配置适用于两个节点各有 4 个 actor rank 的情况，精度设置沿用上面的配置。
 
 .. code:: yaml
 
