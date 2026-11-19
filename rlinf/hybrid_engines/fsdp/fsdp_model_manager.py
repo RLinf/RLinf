@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import warnings
 from typing import ContextManager, Union
@@ -383,6 +384,29 @@ class FSDPModelManager:
             self.load_optimizer(self.device)
             self.is_optimizer_offloaded = False
 
+        state_path = os.path.join(load_path, "training_state.json")
+        if os.path.exists(state_path):
+            with open(state_path) as f:
+                state = json.load(f)
+            warmup_active = self.critic_warmup_steps > 0
+            self.optimizer_steps = state["optimizer_steps"]
+            self.critic_warmup_steps = state["critic_warmup_steps"]
+            # DCP restores into the optimizer's existing parameter groups.
+            if warmup_active != (self.critic_warmup_steps > 0):
+                self.optimizer = self.build_optimizer(
+                    model=self.model,
+                    enable_critic_warmup=self.critic_warmup_steps > 0,
+                )
+                self.lr_scheduler = self.build_lr_scheduler(
+                    optimizer=self.optimizer, optim_config=self._cfg.optim
+                )
+        elif self.critic_warmup_steps > 0:
+            raise ValueError(
+                f"Checkpoint {load_path!r} has no optimizer-step metadata for "
+                "critic warmup. For a checkpoint saved after warmup completed, "
+                "resume with actor.optim.critic_warmup_steps=0."
+            )
+
         self._strategy.load_checkpoint(
             self.model, self.optimizer, self.lr_scheduler, load_path
         )
@@ -412,6 +436,17 @@ class FSDPModelManager:
                 "save_full_model_weights", True
             ),
         )
+
+        if torch.distributed.get_rank() == 0:
+            with open(os.path.join(save_path, "training_state.json"), "w") as f:
+                json.dump(
+                    {
+                        "optimizer_steps": self.optimizer_steps,
+                        "critic_warmup_steps": self.critic_warmup_steps,
+                    },
+                    f,
+                )
+        torch.distributed.barrier()
 
         if restore_weight_offload:
             self.offload_param_and_grad()

@@ -367,7 +367,7 @@ class DexJoCoEnv(gym.Env):
 
         obs = self._wrap_obs(self.current_raw_obs)
         terminations = self._terminated.copy()
-        truncations = self._truncated.copy()
+        truncations = self._truncated & ~terminations
 
         dones = terminations | truncations
         _auto_reset = auto_reset and self.auto_reset

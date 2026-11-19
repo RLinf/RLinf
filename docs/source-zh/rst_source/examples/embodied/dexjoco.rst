@@ -178,6 +178,16 @@ CNN：SFT 与 PPO
 
 20,000 步训练共保存 10 个 checkpoint。记录中的 SFT 评测逐个检查了这些权重，每次用一个 worker 运行 64 个 episode。10 个 NLL checkpoint 中，第 8000 步的成功率最高，为 50/64（78.1%），因此选它作为 PPO 起点。下文的 8 个 worker 评测配置测得这个起点的成功率为 42/64（65.6%）。比较 SFT 与 PPO 时，应沿用相同的评测配置。
 
+开始 PPO 前，先评测这个 SFT checkpoint。沿用 8 个 worker、64 个 episode、随机种子 10000、每次预测执行 10 个动作、每个 episode 最多执行 1000 步动作：
+
+.. code:: bash
+
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
+     'runner.ckpt_path="/path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt"' \
+     rollout.model.model_path=/path/to/RLinf-ResNet10-pretrained \
+     rollout.model.action_norm_stats=/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json \
+     runner.logger.experiment_name=dexjoco_cnn_nll_sft8000_eval
+
 在 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` 中填写模型、归一化统计量和选定 checkpoint 的路径：
 
 .. code:: yaml
@@ -213,7 +223,8 @@ PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
+     runner.logger.experiment_name=dexjoco_cnn_nll_ppo200_eval
 
 π₀.₅：SFT 与 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -321,7 +332,9 @@ CNN：复现 MSE 对照
        experiment_name: dexjoco_ppo_cnn_mse
      ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
 
-评测的实验名设为 ``dexjoco_cnn_mse_eval``\ ，``runner.ckpt_path`` 设为 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``\ 。两处时间戳分别填写 MSE SFT 和 MSE PPO 运行目录的时间戳，其余设置保持一致。
+评测 MSE 的 SFT 基线时，复用上面的 SFT 评测命令，改用 ``dexjoco_sft_cnn_mse`` 的第 8000 步 checkpoint，并将实验名设为 ``dexjoco_cnn_mse_sft8000_eval``\ 。
+
+PPO 评测的实验名设为 ``dexjoco_cnn_mse_ppo200_eval``\ ，``runner.ckpt_path`` 设为 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``\ 。两处时间戳分别填写 MSE SFT 和 MSE PPO 运行目录的时间戳，其余设置保持一致。
 
 可视化与结果
 ----------------------------------------
@@ -347,6 +360,8 @@ CNN：复现 MSE 对照
 
    CNN 分别经过 MSE、NLL SFT 后在 ``water_plant`` 上的 PPO 成功率（64 个评测 episode）。
 
+CNN 图中的第 0 轮来自 SFT 第 8000 步 checkpoint 的独立评测，第 1–200 轮来自训练期间的评测。TensorBoard 的 step ``N - 1`` 记录完成第 ``N`` 轮 PPO 后的评测结果。
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/dc2607a2769dfd49cca117cdf42e5ef3f70b8dcf/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
@@ -360,12 +375,12 @@ CNN：复现 MSE 对照
 
    * - 方案
      - 成功率
-   * - CNN + SFT
-     - 第 8000 步：MSE 为 46/64（71.9%），NLL 为 42/64（65.6%）。
+   * - CNN + SFT 基线
+     - 第 8000 步（独立评测）：MSE 为 46/64（71.9%），NLL 为 42/64（65.6%）。
    * - CNN + PPO（MSE SFT）
-     - 第 0 轮：46/64（71.9%）；第 200 轮：44/64（68.8%）；峰值（第 123 轮）：60/64（93.8%）。
+     - 第 200 轮（独立评测）：44/64（68.8%）；训练期间的评测峰值（第 123 轮）：60/64（93.8%）。
    * - CNN + PPO（NLL SFT）
-     - 第 0 轮：42/64（65.6%）；第 200 轮：59/64（92.2%）；峰值（第 163 轮）：64/64（100%）。
+     - 第 200 轮（独立评测）：59/64（92.2%）；训练期间的评测首次峰值（第 163 轮）：64/64（100%）。
    * - π₀.₅ + SFT
      - 第 5000 步：50/64（78.1%）。
    * - π₀.₅ + PPO

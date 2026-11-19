@@ -208,6 +208,17 @@ starts from step 8000. With the eight-worker evaluation configuration, its
 baseline is 42/64 (65.6%), as reported below. Use that same configuration when
 comparing the SFT and PPO checkpoints.
 
+Evaluate the SFT checkpoint before PPO with the same eight-worker, 64-episode
+configuration, seed 10000, 10-action chunks, and 1000-step episode limit:
+
+.. code:: bash
+
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
+     'runner.ckpt_path="/path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_nll/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt"' \
+     rollout.model.model_path=/path/to/RLinf-ResNet10-pretrained \
+     rollout.model.action_norm_stats=/path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json \
+     runner.logger.experiment_name=dexjoco_cnn_nll_sft8000_eval
+
 Set the model, normalization, and selected checkpoint paths in
 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml``:
 
@@ -249,7 +260,8 @@ The following command runs 64 episodes across the eight GPUs:
 
 .. code:: bash
 
-   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval
+   bash evaluations/run_eval.sh dexjoco dexjoco_cnn_eval \
+     runner.logger.experiment_name=dexjoco_cnn_nll_ppo200_eval
 
 π₀.₅: SFT and PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -381,7 +393,10 @@ the MSE run:
        experiment_name: dexjoco_ppo_cnn_mse
      ckpt_path: /path/to/RLinf/logs/<sft-timestamp>-dexjoco_sft_cnn/dexjoco_sft_cnn_mse/checkpoints/global_step_8000/actor/model_state_dict/full_weights.pt
 
-For its evaluation, set the experiment name to ``dexjoco_cnn_mse_eval`` and
+For the MSE SFT baseline, repeat the SFT evaluation command above with the
+``dexjoco_sft_cnn_mse`` step-8000 checkpoint and experiment name
+``dexjoco_cnn_mse_sft8000_eval``. For the PPO evaluation, set the experiment name
+to ``dexjoco_cnn_mse_ppo200_eval`` and
 ``runner.ckpt_path`` to
 ``/path/to/RLinf/logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_cnn_mse/checkpoints/global_step_200/actor/model_state_dict/full_weights.pt``.
 Use the timestamps of the MSE runs and keep the remaining settings unchanged.
@@ -410,6 +425,10 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
 
    CNN PPO after MSE or NLL SFT on ``water_plant`` (64 evaluation episodes).
 
+In the CNN figure, iteration 0 is the standalone evaluation of the SFT step-8000
+checkpoint. Iterations 1–200 are in-training evaluations; TensorBoard step
+``N - 1`` records the evaluation after PPO iteration ``N``.
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/dc2607a2769dfd49cca117cdf42e5ef3f70b8dcf/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
@@ -423,12 +442,12 @@ For Weights & Biases, run ``wandb login`` and select both logging backends:
 
    * - Recipe
      - Success rate
-   * - CNN + SFT
-     - Step 8000: MSE 46/64 (71.9%); NLL 42/64 (65.6%).
+   * - CNN + SFT baseline
+     - Step 8000 (standalone): MSE 46/64 (71.9%); NLL 42/64 (65.6%).
    * - CNN + PPO (MSE SFT)
-     - Iteration 0: 46/64 (71.9%); iteration 200: 44/64 (68.8%); peak (iteration 123): 60/64 (93.8%).
+     - Iteration 200 (standalone): 44/64 (68.8%); in-training peak (iteration 123): 60/64 (93.8%).
    * - CNN + PPO (NLL SFT)
-     - Iteration 0: 42/64 (65.6%); iteration 200: 59/64 (92.2%); peak (iteration 163): 64/64 (100%).
+     - Iteration 200 (standalone): 59/64 (92.2%); in-training peak (first reached at iteration 163): 64/64 (100%).
    * - π₀.₅ + SFT
      - Step 5000: 50/64 (78.1%).
    * - π₀.₅ + PPO
