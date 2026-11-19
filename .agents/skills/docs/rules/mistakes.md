@@ -8,13 +8,15 @@ Agents that write docs repeat the same mistakes, and the reader pays for each on
 |---|---|
 | Naming classes, functions, modules, and files the reader never touches, or explaining a mechanism by touring the source tree | Describe what the reader sees and controls; name code only when the reader types, runs, opens, or edits it |
 | Explaining RLinf's internals on a recipe or guide page | Link to the concept page once and stay on the task |
-| Documenting every config key, option, and alternative | Show the keys the reader writes and the one path that works best; link to Reference for the rest |
+| Documenting every config key, option, default, caveat, and alternative | Show only the keys the reader changes for the main path; leave defaults in YAML and link to Reference for the rest |
+| Repeating the same detail across sections, or burying config lists in dense prose paragraphs | State each fact once in the shortest scannable form (1–3 sentence paragraphs on recipes and guides) |
 | Equations and tensor-shape tables on recipe or guide pages | Move them to Reference |
 | Telling the history of a change ("previously", "no longer", "after the refactor") | Describe what exists now; history goes in the PR description |
 | Sentences that only say what is not needed ("ROS is not required") | State the requirement positively |
 | Only the happy path: no prerequisites, no expected output, no sign that a step worked | Add what to prepare, the output to expect, and the known problems with their fixes |
 | Claims with no evidence ("significantly faster", "state-of-the-art") | Give the number and its source, or cut the claim |
-| Copying a block that another page already has | Link to that page, or move the block into a partial |
+| Copying a block that another page already has (including install or model-download steps owned by a shared family page) | Link to that page with `:doc:` or `:ref:`, or move the block into a partial |
+| Hard-to-follow or non-standard recipe commands: shell argument arrays, long CLI override lists, ad-hoc env-var workarounds for config-managed settings, or long inline prep scripts | Configure paths, placement, and defaults in the YAML, run RLinf's standard launcher cleanly, and put multi-step prep logic in a script |
 | Creating a new page where an existing one should grow, or listing a page in two galleries | Search the docs first; extend the page that owns the topic |
 | Mixing page types: a recipe that turns into a tutorial on internals, a concept page full of procedures | Split by type and link between the parts |
 

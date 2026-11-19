@@ -109,7 +109,6 @@ CUDA 构建默认面向构建机器上检测到的 GPU。如需部署到其他�
 
    rollout:
      rollout_backend: apxinf
-     generation_backend: apxinf
      model:
        model_path: ${oc.env:APXINF_PI05_MODEL_DIR}
        num_action_chunks: 5
