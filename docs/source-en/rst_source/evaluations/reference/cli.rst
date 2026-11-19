@@ -55,24 +55,65 @@ Supported Benchmark Prefixes
 SuperMimic Evaluation
 ---------------------
 
-SuperMimic configs run through ``eval_embodied_agent.py`` like the other
-benchmarks. Pass the checkpoint's ``full_weights.pt`` as ``runner.ckpt_path``;
-``runner.eval_export.output_dir`` chooses where the result tables go. For
-update 6000 of the run in the SuperMimic guide, with its ``RUN_DIR``:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
-
-The last two lines keep the evaluation on GPU 0; without them it uses every
-GPU on the machine. A MaxCoord checkpoint also needs
-``actor.model.representation=maxcoord``.
-The protocol, the output files, and push recovery are in
+The arguments below apply to the two SuperMimic configs,
+``supermimic_lafan1_eval`` (motion tracking) and ``supermimic_push_recovery``
+(standing push recovery). The full commands are in
 :doc:`../../examples/embodied/supermimic_eval`.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 40
+
+   * - Argument
+     - Default
+     - Meaning
+   * - ``runner.ckpt_path``
+     - none, required
+     - The ``actor/model_state_dict/full_weights.pt`` file of a checkpoint
+   * - ``runner.eval_export.output_dir``
+     - ``<log_path>/<experiment_name>/eval_results``
+     - Folder for ``summary.json``, ``per_clip.csv`` or ``per_trial.csv``,
+       and ``config.yaml``
+   * - ``runner.logger.log_path``
+     - ``../results/eval``
+     - Folder for the evaluation logs
+   * - ``actor.model.representation``
+     - ``gencoord``
+     - ``maxcoord`` for a checkpoint trained with MaxCoord
+   * - ``cluster.component_placement``
+     - every GPU
+     - Pass ``'~cluster.component_placement'`` and
+       ``'+cluster.component_placement={actor:0,env:0,rollout:0}'`` to run on
+       GPU 0
+   * - ``env.eval.num_clips``
+     - ``40``
+     - Clips to load from ``SUPERMIMIC_MOTION_PATH``; ``null`` loads all
+   * - ``env.eval.total_num_envs``
+     - ``40``, push: ``16``
+     - Environments; each clip or trial takes one
+   * - ``env.eval.rollout_epoch``
+     - ``1``
+     - Evaluation rounds; ``total_num_envs`` times this must cover every
+       clip or trial
+   * - ``env.eval.max_steps_per_rollout_epoch``
+     - ``13656``, push: ``300``
+     - Control steps per round; must cover the longest clip or trial
+   * - ``env.eval.push_recovery.speeds``
+     - ``[0.5, 1.0, 2.0, 4.0]``
+     - Push speeds in m/s
+   * - ``env.eval.push_recovery.trials``
+     - ``4``
+     - Trials per speed
+   * - ``env.eval.push_recovery.push_mode``
+     - ``add``
+     - ``add`` adds the push to the root's horizontal velocity; ``set``
+       replaces it
+   * - ``env.eval.push_recovery.direction``
+     - ``random``
+     - ``random``, or a horizontal direction ``[x, y]``
+   * - ``env.eval.push_recovery.frame``
+     - ``world``
+     - ``world`` or ``heading``, the frame of ``direction``
 
 Config Fallback
 ---------------

@@ -55,17 +55,57 @@ CLI 参考
 SuperMimic 评测
 ---------------
 
-SuperMimic 配置和其他 benchmark 一样通过 ``eval_embodied_agent.py`` 运行。用 ``runner.ckpt_path`` 指定检查点中的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果表格的目录。评测 SuperMimic 指南里那次训练的第 6000 次更新（沿用其中的 ``RUN_DIR``）：
+下表的参数适用于两份 SuperMimic 配置：``supermimic_lafan1_eval``\ （动作跟踪）和 ``supermimic_push_recovery``\ （站立推力恢复）。完整命令见 :doc:`../../examples/embodied/supermimic_eval`。
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 40
 
-   bash evaluations/run_eval.sh supermimic_lafan1_eval \
-       runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
-
-最后两行让评测只用 0 号 GPU，不加时会用上机器上的所有 GPU。MaxCoord 检查点再加上 ``actor.model.representation=maxcoord``。评测协议、输出文件和推力恢复见 :doc:`../../examples/embodied/supermimic_eval`。
+   * - 参数
+     - 默认值
+     - 含义
+   * - ``runner.ckpt_path``
+     - 无，必填
+     - checkpoint 里的 ``actor/model_state_dict/full_weights.pt``
+   * - ``runner.eval_export.output_dir``
+     - ``<log_path>/<experiment_name>/eval_results``
+     - 存放 ``summary.json``、``per_clip.csv`` 或 ``per_trial.csv`` 以及 ``config.yaml`` 的目录
+   * - ``runner.logger.log_path``
+     - ``../results/eval``
+     - 评测日志目录
+   * - ``actor.model.representation``
+     - ``gencoord``
+     - 用 MaxCoord 训练的 checkpoint 要设为 ``maxcoord``
+   * - ``cluster.component_placement``
+     - 所有 GPU
+     - 传入 ``'~cluster.component_placement'`` 和 ``'+cluster.component_placement={actor:0,env:0,rollout:0}'``，只用 0 号 GPU
+   * - ``env.eval.num_clips``
+     - ``40``
+     - 从 ``SUPERMIMIC_MOTION_PATH`` 加载的片段数，``null`` 加载全部
+   * - ``env.eval.total_num_envs``
+     - ``40``，推力恢复为 ``16``
+     - 环境数，每条片段或每次试验占一个
+   * - ``env.eval.rollout_epoch``
+     - ``1``
+     - 评测轮数，和 ``total_num_envs`` 的乘积要覆盖全部片段或试验
+   * - ``env.eval.max_steps_per_rollout_epoch``
+     - ``13656``，推力恢复为 ``300``
+     - 每轮的控制步数，要覆盖最长的片段或试验
+   * - ``env.eval.push_recovery.speeds``
+     - ``[0.5, 1.0, 2.0, 4.0]``
+     - 推动速度，单位 m/s
+   * - ``env.eval.push_recovery.trials``
+     - ``4``
+     - 每种速度的试验次数
+   * - ``env.eval.push_recovery.push_mode``
+     - ``add``
+     - ``add`` 在根节点水平速度上叠加推动速度，``set`` 直接替换
+   * - ``env.eval.push_recovery.direction``
+     - ``random``
+     - ``random``，或水平方向 ``[x, y]``
+   * - ``env.eval.push_recovery.frame``
+     - ``world``
+     - ``direction`` 所在的坐标系，``world`` 或 ``heading``
 
 配置回退
 --------

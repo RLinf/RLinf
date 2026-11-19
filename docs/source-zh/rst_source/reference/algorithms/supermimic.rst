@@ -103,7 +103,7 @@ Actor worker 组成一个 FSDP2 组，动力学网络、policy 和 critic 是三
      - 每张 GPU 一组 env、rollout、FSDP2 actor，三个网络各是一个 FSDP 单元。批量是全局值，GPU 数不改变更新
    * - 已报告的数据
      - 论文主结果是过滤后的 BONES-SEED；官方默认下载一条 wandb 片段
-     - 本地的 40 条 LAFAN1。评测数字见使用指南
+     - 本地的 40 条 LAFAN1
 
 实现入口
 --------
@@ -121,9 +121,9 @@ Actor worker 组成一个 FSDP2 组，动力学网络、policy 和 critic 是三
 已知限制
 --------
 
-速度跟踪没有实现。站立推力恢复用的是 mjlab 的屈膝站立姿态，不是论文 §4.3 的 T-pose。BONES-SEED 转换器还没有拿官方 CSV 核对过。多节点训练以及换 GPU 数续训都还没有验证。使用指南里的跟踪表评测的是 GenCoord 第 6000 次更新。那些训练早于上文的三个 FSDP 单元、共用窗口起点表和 critic 先打乱这几项改动，改动后还没有在同等规模上重跑。
+速度跟踪没有实现。站立推力恢复用的是 mjlab 的屈膝站立姿态，不是论文 §4.3 的 T-pose。BONES-SEED 转换器还没有拿官方 CSV 核对过。多节点训练以及换 GPU 数续训都还没有验证。
 
 致谢
 ----
 
-感谢 `CuboiLeo <https://github.com/CuboiLeo>`__\ （`SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`__）和 `zita-ch <https://github.com/zita-ch>`__\ （`supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`__）公开各自的社区复现，本集成的早期版本参考过它们。当前设置以上文所述的官方代码和论文为准。
+感谢 `CuboiLeo <https://github.com/CuboiLeo>`__\ （`SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`__）和 `zita-ch <https://github.com/zita-ch>`__\ （`supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`__）公开各自的社区复现，本集成参考过它们。设置以上文所述的官方代码和论文为准。

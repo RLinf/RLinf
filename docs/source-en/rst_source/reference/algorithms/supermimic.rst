@@ -217,7 +217,7 @@ Differences from the Paper and the Official Code
    * - Reported data
      - The paper's main result is filtered BONES-SEED. The official default
        downloads one Weights & Biases clip
-     - The local 40 LAFAN1 clips. Evaluation numbers are in the user guide
+     - The local 40 LAFAN1 clips
 
 Entry Points
 ------------
@@ -243,10 +243,6 @@ Velocity tracking is not implemented. Standing push recovery holds mjlab's
 knees-bent keyframe, not the T-pose in Section 4.3 of the paper. The
 BONES-SEED converter has not been checked against an official CSV.
 Multi-node training and resuming on a different GPU count are unvalidated.
-The tracking table in the user guide evaluates GenCoord at update 6000. Its
-runs predate the three FSDP units, the shared window table, and the
-critic shuffle described above; those changes have not yet been rerun at
-that scale.
 
 Acknowledgments
 ---------------
@@ -255,6 +251,5 @@ Thanks to `CuboiLeo <https://github.com/CuboiLeo>`__
 (`SuperMimic-Reproduced <https://github.com/CuboiLeo/SuperMimic-Reproduced>`__)
 and `zita-ch <https://github.com/zita-ch>`__
 (`supermimic_vibed <https://github.com/zita-ch/supermimic_vibed>`__) for
-publishing their community reproductions, which earlier versions of this
-integration consulted. The current settings follow the official code and the
-paper as described above.
+publishing their community reproductions, which this integration consulted.
+The settings follow the official code and the paper as described above.
