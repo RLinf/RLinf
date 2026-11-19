@@ -26,7 +26,7 @@ from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
-from rlinf.models import get_model, load_model_checkpoint
+from rlinf.models import get_inference_checkpoint_loader, get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.distributed import (
@@ -145,13 +145,17 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model = super().model_provider_func()
 
         if self.cfg.runner.get("ckpt_path", None):
-            load_model_checkpoint(
-                model,
-                self.cfg.runner.ckpt_path,
-                self.cfg.actor.model.model_type,
-                use_inference_loader=self.cfg.algorithm.get("loss_type")
-                == "embodied_dagger",
+            load_checkpoint = get_inference_checkpoint_loader(
+                self.cfg.actor.model.model_type
             )
+            if (
+                load_checkpoint is not None
+                and self.cfg.algorithm.get("loss_type") == "embodied_dagger"
+            ):
+                load_checkpoint(model, self.cfg.runner.ckpt_path)
+            else:
+                model_dict = torch.load(self.cfg.runner.ckpt_path)
+                model.load_state_dict(model_dict)
 
         return model
 

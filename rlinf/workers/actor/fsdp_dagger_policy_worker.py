@@ -28,8 +28,8 @@ from rlinf.data.datasets.dagger import (
 )
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.models.embodiment import get_dagger_adapter
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.models.embodiment.dagger import get_dagger_policy_adapter
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
@@ -42,9 +42,6 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
-        self._dagger_policy_adapter = get_dagger_policy_adapter(
-            cfg.actor.model.model_type
-        )
         self.replay_buffer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
@@ -83,26 +80,32 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         training_action_horizon = online_lerobot_cfg.get(
             "training_action_horizon", self.cfg.actor.model.num_action_chunks
         )
+        adapter = get_dagger_adapter(self.cfg.actor.model.model_type)
+        joint_vision_sft = adapter is not None and adapter.uses_joint_vision_sft(
+            self.cfg.actor.model
+        )
         window_size = online_lerobot_cfg.get("rolling_lerobot_window_size", None)
         require_all_intervene = self.cfg.algorithm.dagger.get("only_save_expert", False)
         self.dataset = RollingLeRobotDataset(
             root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
             chunk_size=training_action_horizon,
+            vision_horizon=training_action_horizon if joint_vision_sft else 0,
+            require_full_window=joint_vision_sft,
             min_frames=online_lerobot_cfg.get("min_frames", 1),
             wait_interval_s=online_lerobot_cfg.get("wait_interval_s", 10.0),
             require_all_intervene=require_all_intervene,
             window_size=window_size,
             in_memory_mode=True,
+            keep_uint8_images=(
+                joint_vision_sft
+                and not require_all_intervene
+                and window_size is not None
+                and int(window_size) > 0
+            ),
             fps=int(
                 OmegaConf.select(
                     self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
                 )
-            ),
-            **self._dagger_policy_adapter.lerobot_dataset_options(
-                self.cfg.actor.model,
-                training_action_horizon=training_action_horizon,
-                window_size=window_size,
-                require_all_intervene=require_all_intervene,
             ),
         )
 
@@ -498,9 +501,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if successful:
             self.lr_scheduler.step()
             self.update_step += 1
-            set_optimizer_step = self._dagger_policy_adapter.set_optimizer_step
-            if set_optimizer_step is not None:
-                set_optimizer_step(self.model, self.update_step, after_update=True)
+            adapter = get_dagger_adapter(self.cfg.actor.model.model_type)
+            if adapter is not None:
+                adapter.after_optimizer_step(self.model, self.update_step)
         self.optimizer.zero_grad(set_to_none=True)
         result = {key: float(np.mean(values)) for key, values in metrics.items()}
         result.update(
@@ -514,12 +517,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         return result
 
     def set_global_step(self, global_step: int) -> None:
-        """Publish the rollout version and retain the policy's training clock."""
-        set_optimizer_step = self._dagger_policy_adapter.set_optimizer_step
-        if set_optimizer_step is None:
+        """Keep rollout versions separate from policy optimizer steps."""
+        adapter = get_dagger_adapter(self.cfg.actor.model.model_type)
+        if adapter is None:
             return super().set_global_step(global_step)
         self.version = global_step
-        set_optimizer_step(self.model, self.update_step, after_update=False)
+        adapter.restore_optimizer_step(self.model, self.update_step)
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
@@ -571,6 +574,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def update_lerobot_one_epoch(self):
         """Run one LeRobot update epoch."""
 
+        adapter = get_dagger_adapter(self.cfg.actor.model.model_type)
+        use_policy_batch = adapter is not None and not self.enable_drq
         with self.worker_timer("prepare_micro_batches"):
             with self._lerobot_loader_lock:
                 num_batches = len(self._lerobot_loader)
@@ -578,13 +583,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     next(self._lerobot_iter) for _ in range(num_batches)
                 ]
             for idx, batch in enumerate(train_micro_batch_list):
-                if self.enable_drq:
-                    batch = put_tensor_device(batch, device=self.device)
-                    drq.apply_drq(batch["curr_obs"], pad=4)
-                else:
-                    batch = self._dagger_policy_adapter.stage_lerobot_batch(
-                        batch, device=self.device
+                if use_policy_batch:
+                    train_micro_batch_list[idx] = adapter.stage_lerobot_batch(
+                        batch, self.device
                     )
+                    continue
+
+                batch = put_tensor_device(batch, device=self.device)
+                if self.enable_drq:
+                    drq.apply_drq(batch["curr_obs"], pad=4)
                 train_micro_batch_list[idx] = batch
 
         self.optimizer.zero_grad()
@@ -762,12 +769,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
         )
-        set_optimizer_step = self._dagger_policy_adapter.set_optimizer_step
-        if set_optimizer_step is not None:
+        adapter = get_dagger_adapter(self.cfg.actor.model.model_type)
+        if adapter is not None:
             # The scheduler is checkpointed and advances once per successful update.
             self.update_step = max(0, int(self.lr_scheduler.last_epoch))
             self.optimizer_steps = self.update_step
-            set_optimizer_step(self.model, self.update_step, after_update=False)
+            adapter.restore_optimizer_step(self.model, self.update_step)
 
         if not self.enable_online_lerobot:
             buffer_load_path = os.path.join(

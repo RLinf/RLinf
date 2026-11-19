@@ -12,56 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cosmos3 policy integration for online DAgger training."""
-
 from typing import Any
 
 import torch
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.dagger import DAggerPolicyAdapter
 from rlinf.utils.nested_dict_process import put_tensor_device
 
 
-class Cosmos3DAggerPolicyAdapter(DAggerPolicyAdapter):
-    """Prepare Cosmos SFT windows and track the optimizer clock for EMA."""
+class Cosmos3DAggerAdapter:
+    """Cosmos input and training-step conventions for the DAgger actor."""
 
     @staticmethod
-    def set_optimizer_step(
-        model: torch.nn.Module, step: int, *, after_update: bool
-    ) -> None:
-        """Only a successful optimizer update may advance the EMA weights."""
-        if after_update:
-            model.set_global_step(step)
-        else:
-            model.set_global_step(step, update_ema=False)
-
-    @staticmethod
-    def lerobot_dataset_options(
-        model_config: DictConfig,
-        *,
-        training_action_horizon: int,
-        window_size: int | None,
-        require_all_intervene: bool,
-    ) -> dict[str, int | bool]:
-        """Request complete future video windows for the joint SFT objective."""
-        joint_vision = model_config.get("sft_objective") == "joint"
-        return {
-            "vision_horizon": training_action_horizon if joint_vision else 0,
-            "require_full_window": joint_vision,
-            "keep_uint8_images": (
-                joint_vision
-                and not require_all_intervene
-                and window_size is not None
-                and int(window_size) > 0
-            ),
-        }
+    def uses_joint_vision_sft(model_cfg: DictConfig) -> bool:
+        return model_cfg.get("sft_objective") == "joint"
 
     @staticmethod
     def stage_lerobot_batch(
         batch: dict[str, Any], device: torch.device
     ) -> dict[str, Any]:
-        """Keep pixels on the host until Cosmos builds its native video batch."""
+        # Leave pixels on the host until Cosmos builds its video batch.
         prepared = {
             key: batch[key]
             for key in (
@@ -85,3 +55,12 @@ class Cosmos3DAggerPolicyAdapter(DAggerPolicyAdapter):
             )
         )
         return prepared
+
+    @staticmethod
+    def after_optimizer_step(model: torch.nn.Module, step: int) -> None:
+        model.set_global_step(step)
+
+    @staticmethod
+    def restore_optimizer_step(model: torch.nn.Module, step: int) -> None:
+        """Restore the iteration without an EMA update on resume or version changes."""
+        model.set_global_step(step, update_ema=False)
