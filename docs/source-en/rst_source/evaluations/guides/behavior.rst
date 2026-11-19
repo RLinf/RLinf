@@ -92,6 +92,7 @@ The command above runs the radio task on base layout ``0`` with the default conf
 
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model \
+     +env.eval.omni_config.scene.scene_instance=house_double_floor_lower_task_turning_on_radio_0_0_template \
      "env.eval.omni_config.task.activity_instance_dir=${OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances" \
      env.eval.omni_config.task.activity_instance_id=301
 

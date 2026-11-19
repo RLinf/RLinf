@@ -81,16 +81,6 @@ class BehaviorProcess:
             resolve=True,
             throw_on_missing=True,
         )
-        # A cached TRO file contains object poses only. Start from the task's base template.
-        instances = self.instance_loader.activity_instances
-        scene_cfg = omni_cfg_dict["scene"]
-        if instances and not (
-            scene_cfg.get("scene_file") or scene_cfg.get("scene_instance")
-        ):
-            if instances[0].file_format == "tro_state":
-                omni_cfg_dict["task"]["activity_instance_id"] = 0
-            else:
-                scene_cfg["scene_file"] = instances[0].path
         omni_cfg_dict["env"]["num_envs"] = num_envs
         self.env = Environment(configs=omni_cfg_dict)
         apply_runtime_renderer_settings()
