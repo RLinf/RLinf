@@ -145,7 +145,7 @@ Generic ``env.eval`` fields
    * - ``max_steps_per_rollout_epoch``
      - Leave unset to request enough whole action chunks to reach the episode limit. With the default fixed episode, only the remaining actions in the last chunk are executed. An explicit budget must be divisible by ``rollout.model.num_action_chunks``.
    * - ``num_env_subprocess``
-     - Number of simulator processes per environment worker (default 1). Allocate at least one process per pipeline stage. The worker’s environment count must be divisible by both the process count and the stage count.
+     - Number of simulator processes per environment worker (default 1). When there are fewer processes than pipeline stages, stages share processes. Only the active stage receives actions and advances its episode counters. Each process handling those actions advances physics for all its scenes. The worker’s environment count must be divisible by both the process count and the stage count.
    * - ``skip_intermediate_renders``
      - When ``True``, skips intermediate observations inside action chunks for faster stepping; saved videos only contain chunk-boundary frames.
 
