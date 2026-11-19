@@ -251,9 +251,7 @@ def check_build() -> list[route.Finding]:
         for lang in ("en", "zh"):
             source = route.REPO_ROOT / "docs" / f"source-{lang}"
             print(f"building {source.relative_to(route.REPO_ROOT)}", flush=True)
-            for record in build(
-                python, source, Path(output) / lang, strict_autodoc=False
-            ):
+            for record in build(python, source, Path(output) / lang):
                 head, *rest = record.splitlines()
                 where = WARNING_AT.match(head)
                 path, line = f"docs/source-{lang}", None
