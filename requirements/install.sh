@@ -1971,7 +1971,7 @@ ensure_uv_python() {
         echo "[install.sh] WARNING: uv could not install Python ${PYTHON_VERSION}; the venv step will fail." >&2
 }
 
-create_and_sync_venv() {
+create_or_activate_venv() {
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
     local venv_args=()
@@ -2025,6 +2025,10 @@ EOF
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
     fi
+}
+
+create_and_sync_venv() {
+    create_or_activate_venv
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
@@ -3089,7 +3093,6 @@ install_gr00t_n1d6_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/RLinf/Isaac-GR00T.git" -b n1.6.1-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -3102,6 +3105,10 @@ install_gr00t_n1d6_model() {
             ;;
     esac
 
+    # Environment installs may resolve a different Transformers version;
+    # apply the Eagle3-compatible model pins last.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
+
     uv pip uninstall pynvml || true
 }
 
@@ -3112,7 +3119,6 @@ install_gr00t_n1d7_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -3124,6 +3130,9 @@ install_gr00t_n1d7_model() {
             exit 1
             ;;
     esac
+
+    # Apply the backbone's version pins after environment dependency resolution.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     uv pip uninstall pynvml || true
 }
@@ -4766,12 +4775,10 @@ install_agentic() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    install_engine_requirements "$(agentic_requirements_file vllm "$(agentic_latest_version vllm)")"
-    install_sglang "$AGENTIC_DEFAULT_SGLANG_VERSION"
-    uv sync --extra embodied --active --inexact "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/docs/requirements.txt
-    uv pip uninstall pynvml || true
+    # Sphinx mocks RLinf's runtime dependencies (docs/autodoc_mock.py), so the
+    # docs venv only needs Sphinx and its extensions.
+    create_or_activate_venv
+    uv pip install -r "$SCRIPT_DIR/docs/requirements.txt"
 }
 
 main() {
@@ -4782,6 +4789,11 @@ main() {
         exit 1
     fi
     validate_python_version
+    if [ "$TARGET" = "docs" ]; then
+        setup_mirror
+        install_docs
+        return 0
+    fi
     validate_engine
     apply_model_default_torch
     apply_env_default_torch
@@ -4891,10 +4903,6 @@ main() {
             fi
             create_and_sync_venv
             install_agentic
-            ;;
-        docs)
-            create_and_sync_venv
-            install_docs
             ;;
         *)
 			echo "Unknown target: $TARGET" >&2
