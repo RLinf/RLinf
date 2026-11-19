@@ -25,7 +25,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from rlinf.utils.logging import get_logger
 
-SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
+SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rgbd_full_res")
 
 R1PRO_PROPRIO_KEYS = [
     "joint_qpos",
@@ -95,8 +95,14 @@ def set_camera_resolution(
     camera_cfg: DictConfig | None,
     robot_cfg: DictConfig,
     r1pro: DictConfig | None = None,
+    wrapper_name: str | None = None,
 ) -> None:
-    if camera_cfg is None:
+    # Official wrappers declare their modalities and sizes before sensors are built.
+    camera_spec = None
+    if wrapper_name not in (None, "rgb"):
+        camera_spec = get_env_wrapper(wrapper_name).camera_spec()
+        robot_cfg.obs_modalities = ["proprio", *camera_spec["modalities"]]
+    if camera_cfg is None and camera_spec is None:
         return
 
     # OmniGibson 3.9.3 fixes camera sizes at sensor creation.
@@ -106,9 +112,12 @@ def set_camera_resolution(
         r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
     sensors = robot_cfg.get("sensor_config") or {}
     for role, name in r1pro.eval.camera_sensor_names.items():
-        resolution = camera_cfg.get(
-            "head_resolution" if role == "head" else "wrist_resolution"
-        )
+        if camera_spec is None:
+            resolution = camera_cfg.get(
+                "head_resolution" if role == "head" else "wrist_resolution"
+            )
+        else:
+            resolution = camera_spec["resolution"].get(role)
         if resolution is None:
             continue
         height, width = resolution
@@ -116,6 +125,8 @@ def set_camera_resolution(
         # A per-link entry takes precedence over the shared VisionSensor settings.
         current = sensors.get(link, sensors.get("VisionSensor", {}))
         size = {"image_height": height, "image_width": width}
+        if camera_spec is not None and role == "head":
+            size["horizontal_aperture"] = 40.0
         OmegaConf.update(
             robot_cfg,
             f"sensor_config.{link}",
@@ -141,18 +152,19 @@ def get_env_wrapper(wrapper_name: str):
         from .rgb_wrapper import RGBWrapper
 
         return RGBWrapper
-    if wrapper_name == "default":
-        from omnigibson.learning.wrappers.default_wrapper import DefaultWrapper
+    if wrapper_name in ("default", "rgb_lowres"):
+        from omnigibson.eval.wrappers import DefaultWrapper
 
         return DefaultWrapper
-    if wrapper_name == "rgb_lowres":
-        from omnigibson.learning.wrappers.rgb_low_res_wrapper import RGBLowResWrapper
+    if wrapper_name == "rgbd_full_res":
+        from omnigibson.eval.wrappers import RGBDFullResWrapper
 
-        return RGBLowResWrapper
+        return RGBDFullResWrapper
     if wrapper_name == "rich_obs":
-        from omnigibson.learning.wrappers.rich_obs_wrapper import RichObservationWrapper
-
-        return RichObservationWrapper
+        raise ValueError(
+            "OmniGibson 3.9.3 removed rich_obs. Use rgbd_full_res for RGB and depth. "
+            "It does not provide normals, optical flow or privileged task observations."
+        )
     raise ValueError(
         f"Unsupported wrapper name: {wrapper_name}, expected one of {SUPPORTED_ENV_WRAPPERS}"
     )
@@ -376,7 +388,9 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
 
     # setup head/wrist camera resolutions
     camera_cfg = OmegaConf.select(omni_cfg, "camera")
-    set_camera_resolution(camera_cfg, omni_cfg.robots[0], r1pro)
+    set_camera_resolution(
+        camera_cfg, omni_cfg.robots[0], r1pro, omni_cfg.env.get("env_wrapper")
+    )
 
     # override behavior's termination config `max_steps` field
     max_episode_steps = (

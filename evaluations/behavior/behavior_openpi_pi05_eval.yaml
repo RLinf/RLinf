@@ -1,12 +1,9 @@
 defaults:
-  - env/behavior_r1pro@env.eval
+  - env/behavior_r1pro_eval
   - model/pi0_5@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
-  callbacks:
-    step_limits:
-      _target_: rlinf.envs.sim.behavior.utils.BehaviorEvalStepLimits
   run:
     dir: .
   output_subdir: null
@@ -41,11 +38,8 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    use_eval_utils_cfg: True
     rollout_epoch: 4
     total_num_envs: 4
-    max_episode_steps: null  # Use the selected task's official 2026 timeout.
-    max_steps_per_rollout_epoch: null  # Request enough action chunks for one episode.
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval

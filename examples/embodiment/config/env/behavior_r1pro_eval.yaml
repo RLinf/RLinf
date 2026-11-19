@@ -1,0 +1,17 @@
+# @package _global_
+
+# Standalone evaluation uses the official 2026 robot observations, rooms and task timeouts.
+defaults:
+  - /env/behavior_r1pro@env.eval
+  - _self_
+
+hydra:
+  callbacks:
+    step_limits:
+      _target_: rlinf.envs.sim.behavior.utils.BehaviorEvalStepLimits
+
+env:
+  eval:
+    use_eval_utils_cfg: True
+    max_episode_steps: null  # Use the selected task's official 2026 timeout.
+    max_steps_per_rollout_epoch: null  # Request enough action chunks for one episode.

@@ -607,24 +607,33 @@ class BehaviorEnv(gym.Env):
             assert isinstance(sensor_data, dict)
             for k, v in sensor_data.items():
                 if "left_realsense_link:Camera:0" in k:
-                    left_image = convert_uint8_rgb(v["rgb"])
+                    left_camera = v
                 elif "right_realsense_link:Camera:0" in k:
-                    right_image = convert_uint8_rgb(v["rgb"])
+                    right_camera = v
                 elif "zed_link:Camera:0" in k:
-                    zed_image = convert_uint8_rgb(v["rgb"])
+                    head_camera = v
                 elif "proprio" in k:
                     state = v
         assert state is not None, (
             "state is not found in the observation which is required for the behavior training."
         )
 
-        return {
-            "main_images": zed_image,  # [H, W, C]
+        obs = {
+            "main_images": convert_uint8_rgb(head_camera["rgb"]),
             "wrist_images": torch.stack(
-                [left_image, right_image], axis=0
+                [convert_uint8_rgb(cam["rgb"]) for cam in (left_camera, right_camera)]
             ),  # [N_IMG, H, W, C]
-            "state": state,
+            "states": state,
         }
+        cameras = (head_camera, left_camera, right_camera)
+        if all("depth_linear" in cam for cam in cameras):
+            # Tiled cameras may include a trailing channel; RLinf uses one H x W depth map per view.
+            depths = [
+                cam["depth_linear"].reshape(cam["rgb"].shape[:2]) for cam in cameras
+            ]
+            obs["main_depths"] = depths[0]
+            obs["extra_view_depths"] = torch.stack(depths[1:])
+        return obs
 
     def _wrap_obs(self, obs_list):
         extracted_obs_list = []
@@ -633,17 +642,10 @@ class BehaviorEnv(gym.Env):
             extracted_obs_list.append(extracted_obs)
 
         obs = {
-            "main_images": torch.stack(
-                [obs["main_images"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, H, W, C]
-            "wrist_images": torch.stack(
-                [obs["wrist_images"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, N_IMG, H, W, C]
-            "task_descriptions": [self.task_description for _ in range(self.num_envs)],
-            "states": torch.stack(
-                [obs["state"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, proprio_dim]
+            key: torch.stack([item[key] for item in extracted_obs_list])
+            for key in extracted_obs_list[0]
         }
+        obs["task_descriptions"] = [self.task_description for _ in range(self.num_envs)]
         return obs
 
     def _calc_step_reward(self, reward):
