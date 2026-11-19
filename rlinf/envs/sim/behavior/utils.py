@@ -20,6 +20,7 @@ from pathlib import Path
 
 import torch
 import yaml
+from hydra.experimental.callback import Callback
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from rlinf.utils.logging import get_logger
@@ -215,6 +216,19 @@ def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: s
             if omni_sub_cfg is None
             else OmegaConf.merge(omni_sub_cfg, override_sub_cfg),
         )
+
+
+class BehaviorEvalStepLimits(Callback):
+    """Apply the selected BEHAVIOR task's step limits before RLinf validates the run."""
+
+    def on_run_start(self, config: DictConfig, **kwargs: object) -> None:
+        try:
+            resolve_eval_step_limits(
+                config.env.eval, config.rollout.model.num_action_chunks
+            )
+        except (OSError, ImportError, ValueError) as exc:
+            # Hydra logs ordinary callback exceptions and starts the job anyway.
+            raise SystemExit(str(exc)) from exc
 
 
 def resolve_eval_step_limits(cfg: DictConfig, chunk_size: int) -> None:

@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+from pathlib import Path
 from unittest.mock import Mock
 
+import hydra
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -86,3 +89,37 @@ def test_too_few_processes_fails_before_launch(actors):
     with pytest.raises(ValueError, match="one simulator process per pipeline stage"):
         behavior_env.BehaviorProcessPool(OmegaConf.create({}), 4, 1, 2)
     assert not actors
+
+
+@pytest.mark.parametrize(
+    "episode_override,expected",
+    [(None, (151, 160)), (49, (49, 64))],
+    ids=["official-task-timeout", "manual-episode-limit"],
+)
+def test_eval_config_resolves_step_limits(
+    monkeypatch, tmp_path, episode_override, expected
+):
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("OMNIGIBSON_DATA_PATH", str(tmp_path))
+    args = [sys.argv[0], f"hydra.run.dir={tmp_path}", "hydra.job.chdir=false"]
+    if episode_override is None:
+        stats = tmp_path / "2026-challenge-task-instances/metadata/task.jsonl"
+        stats.parent.mkdir(parents=True)
+        stats.write_text('{"task_name": "turning_on_radio", "length": 100}\n')
+    else:
+        args.append(f"env.eval.max_episode_steps={episode_override}")
+    monkeypatch.setattr(sys, "argv", args)
+
+    @hydra.main(
+        version_base="1.1",
+        config_path=str(root / "evaluations/behavior"),
+        config_name="behavior_openpi_pi05_eval",
+    )
+    def check(cfg):
+        assert (
+            cfg.env.eval.max_episode_steps,
+            cfg.env.eval.max_steps_per_rollout_epoch,
+        ) == expected
+
+    check()

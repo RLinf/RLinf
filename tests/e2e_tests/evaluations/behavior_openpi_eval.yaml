@@ -4,6 +4,9 @@ defaults:
   - override hydra/job_logging: stdout
 
 hydra:
+  callbacks:
+    step_limits:
+      _target_: rlinf.envs.sim.behavior.utils.BehaviorEvalStepLimits
   run:
     dir: .
   output_subdir: null
