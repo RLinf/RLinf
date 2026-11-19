@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import dataclasses
 import logging
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -205,6 +206,96 @@ def _observation_to_dtype(obs: Observation, dtype: torch.dtype) -> Observation:
     )
 
 
+def _blend_images(
+    images: torch.Tensor, other: torch.Tensor, factors: torch.Tensor
+) -> torch.Tensor:
+    """Blend with per-image factors, rounding each product to the image dtype."""
+    first = (images * factors[:, 0]).to(images.dtype)
+    second = (other * factors[:, 1]).to(images.dtype)
+    return (first + second).clamp(0, 1)
+
+
+def _augment_images(
+    images: torch.Tensor,
+    *,
+    spatial: bool,
+    rng: torch.Generator | None,
+) -> torch.Tensor:
+    """Augment BHWC images in [0, 1] with independent parameters per image."""
+    import torchvision.transforms.functional as TF
+
+    batch, height, width, channels = images.shape
+    crop_height, crop_width = int(height * 0.95), int(width * 0.95)
+    parameters = []
+    # Keep the draw order shared with checkpointed torch RNG state.
+    for _ in range(batch):
+        row = []
+        if spatial:
+            top = torch.randint(0, height - crop_height + 1, (1,), generator=rng).item()
+            left = torch.randint(0, width - crop_width + 1, (1,), generator=rng).item()
+            angle = torch.rand(1, generator=rng).item() * 10 - 5
+            radians = math.radians(angle)
+            cosine, sine = math.cos(radians), math.sin(radians)
+            row.extend((top, left, cosine, -sine, 0.0, sine, cosine, 0.0))
+        for amount in (0.3, 0.4, 0.5):
+            factor = 1.0 + (torch.rand(1, generator=rng).item() * 2 - 1) * amount
+            row.extend((factor, 1.0 - factor))
+        parameters.append(row)
+    # Python scalar factors use float32 opmath with half-precision images.
+    parameter_dtype = torch.float64 if images.dtype == torch.float64 else torch.float32
+    parameters = images.new_tensor(parameters, dtype=parameter_dtype)
+
+    if spatial:
+        offsets = parameters[:, :2].to(torch.long)
+        rows = torch.arange(crop_height, device=images.device) + offsets[:, :1]
+        columns = torch.arange(crop_width, device=images.device) + offsets[:, 1:2]
+        indices = torch.arange(batch, device=images.device)[:, None, None]
+        images = images[indices, rows[:, :, None], columns[:, None, :], :]
+        images = TF.resize(images.permute(0, 3, 1, 2), [height, width], antialias=True)
+
+        # Normalize after rotation, using the pixel centers used by torchvision.
+        theta = parameters[:, 2:8].to(images.dtype).reshape(batch, 2, 3)
+        base = images.new_empty(1, height, width, 3)
+        base[..., 0] = torch.linspace(
+            -width * 0.5 + 0.5, width * 0.5 - 0.5, width, device=images.device
+        )
+        base[..., 1] = torch.linspace(
+            -height * 0.5 + 0.5, height * 0.5 - 0.5, height, device=images.device
+        )[:, None]
+        base[..., 2] = 1
+        scale = images.new_tensor([width * 0.5, height * 0.5])
+        base = base.reshape(1, height * width, 3)
+        # Batched GEMM can round across a nearest-neighbor pixel boundary.
+        grids = []
+        for matrix in theta:
+            matrix = matrix.clone().reshape(1, 2, 3).transpose(1, 2) / scale
+            grids.append(base.bmm(matrix))
+        grid = torch.cat(grids, dim=0)
+        output_dtype = images.dtype
+        needs_cast = images.dtype != grid.dtype
+        images = tF.grid_sample(
+            images.to(grid.dtype),
+            grid.reshape(batch, height, width, 2),
+            mode="nearest",
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        if needs_cast:
+            images = images.to(output_dtype)
+        factors = parameters[:, 8:].reshape(batch, 3, 2, 1, 1, 1)
+    else:
+        images = images.permute(0, 3, 1, 2)
+        factors = parameters.reshape(batch, 3, 2, 1, 1, 1)
+
+    images = _blend_images(images, images.new_zeros(()), factors[:, 0])
+    gray = TF.rgb_to_grayscale(images) if channels == 3 else images
+    mean = torch.stack([image.mean().reshape(1, 1, 1) for image in gray])
+    images = _blend_images(images, mean, factors[:, 1])
+    if channels != 1:
+        images = _blend_images(images, TF.rgb_to_grayscale(images), factors[:, 2])
+    return images.permute(0, 2, 3, 1).contiguous()
+
+
 def preprocess_observation(
     observation: Observation,
     *,
@@ -246,7 +337,13 @@ def preprocess_observation(
         if image.shape[1:3] != image_resolution:
             image = resize_with_pad_torch(image, *image_resolution)
 
-        if train:
+        if train and history_shape is None:
+            image = (
+                _augment_images(image / 2.0 + 0.5, spatial="wrist" not in key, rng=rng)
+                * 2.0
+                - 1.0
+            )
+        elif train:
             import torchvision.transforms.functional as TF
 
             # Convert from [-1, 1] to [0, 1] for augmentations
