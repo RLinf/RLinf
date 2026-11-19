@@ -23,11 +23,9 @@ CJK punctuation problem, a missing ZH counterpart, a broken ``:doc:`` target
 — fails ``rlinf-cn`` while ``rlinf`` stays green.  Always build **both**.
 
 This script provisions a docs-only virtualenv from
-``requirements/docs/requirements.txt``, builds each language, and reports the
-warnings that would fail Read the Docs.  Autodoc import failures are filtered
-by default: the docs venv deliberately does not install torch, so every
-``.. autoclass::`` fails locally in a way it never does on Read the Docs.
-Pass ``--strict-autodoc`` (in a full environment) to see them.
+``requirements/docs/requirements.txt``, builds each language, and reports every
+warning that would fail Read the Docs (including autodoc warnings, since
+``docs/autodoc_mock.py`` mocks RLinf's runtime dependencies).
 
 Usage::
 
@@ -116,7 +114,9 @@ def split_records(stderr: str) -> list[str]:
     return [r for r in records if r.strip()]
 
 
-def build(python: Path, source: Path, output: Path, strict_autodoc: bool) -> list[str]:
+def build(
+    python: Path, source: Path, output: Path, strict_autodoc: bool = True
+) -> list[str]:
     """Build one language and return the warnings that matter."""
     result = subprocess.run(
         [
@@ -154,8 +154,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--strict-autodoc",
-        action="store_true",
-        help="keep autodoc import warnings (only useful in a full env)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="report autodoc import warnings (enabled by default; pass --no-strict-autodoc to suppress)",
     )
     parser.add_argument(
         "--keep-output", action="store_true", help="keep the generated HTML"

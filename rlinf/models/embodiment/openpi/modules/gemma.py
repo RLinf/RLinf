@@ -40,7 +40,12 @@ from .flash_attention import (
     flash_attention,
 )
 from .lora import FeedForward as LoRAFeedForward
-from .utils import _str_to_dtype, gelu_glu, torch_compile_enabled
+from .utils import (
+    _str_to_dtype,
+    gelu_glu,
+    sdpa_attention_enabled,
+    torch_compile_enabled,
+)
 
 PALIGEMMA_VOCAB_SIZE = 257_152
 
@@ -350,15 +355,15 @@ class Attention(nn.Module):
 
         new_kv_cache = (k, v)
 
-        if not self.pytorch_numerics:
-            # Match JAX's query scaling in the original dtype.
-            q = q * (self.head_dim**-0.5)
-
         if flash_attention_metadata is None and attn_mask.dim() == 4:
             attn_mask = attn_mask[:, 0:1, :, :]
 
+        K = self.num_kv_heads
+        G = self.num_heads // K
+
         if flash_attention_metadata is not None:
-            encoded = flash_attention(q, k, v, flash_attention_metadata)
+            q_s = q * (self.head_dim**-0.5)
+            encoded = flash_attention(q_s, k, v, flash_attention_metadata)
         elif self.pytorch_numerics:
             query = q.transpose(1, 2)
             key = k.transpose(1, 2).repeat_interleave(self.num_query_groups, dim=1)
@@ -369,20 +374,32 @@ class Attention(nn.Module):
                 dtype
             )
             encoded = torch.matmul(probs, value).transpose(1, 2).contiguous()
+        elif sdpa_attention_enabled():
+            # Fused SDPA in (B, heads, T, H) layout with keys/values repeated per
+            # query group. Selected per accelerator via Worker.accelerator_type so
+            # rollout and training use the same attention backend.
+            q_r = q.transpose(1, 2) * (self.head_dim**-0.5)
+            k_r = k.transpose(1, 2).repeat_interleave(G, dim=1)
+            v_r = v.transpose(1, 2).repeat_interleave(G, dim=1)
+            keep = attn_mask.bool()
+            has_keys = keep.any(dim=-1, keepdim=True)
+            # The eager finite-mask path produces uniform attention for a
+            # fully masked query. Zero its query and allow all keys to retain
+            # that behavior, including zero query/key gradients for the row.
+            q_r = q_r.masked_fill(~has_keys, 0)
+            keep = keep | ~has_keys
+            encoded = F.scaled_dot_product_attention(
+                q_r, k_r, v_r, attn_mask=keep, scale=1.0
+            )
+            encoded = encoded.transpose(1, 2).reshape(
+                q.shape[0], q.shape[1], K * G, self.head_dim
+            )
         else:
-            # q: (B, T, num_heads, H) -> rearrange to (B, T, K, G, H)
-            # k: (B, S, num_kv_heads, H) -> stays (B, S, K, H)
-            K = self.num_kv_heads
-            G = self.num_heads // K
-
-            q_r = q.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
+            q_s = q * (self.head_dim**-0.5)
+            q_r = q_s.reshape(q.shape[0], q.shape[1], K, G, self.head_dim)
             k_r = k.reshape(k.shape[0], k.shape[1], K, self.head_dim)
             v_r = v.reshape(v.shape[0], v.shape[1], K, self.head_dim)
-
-            # einsum "BTKGH,BSKH->BKGTS"
             logits = torch.einsum("BTKGH,BSKH->BKGTS", q_r.float(), k_r.float())
-
-            # Broadcast the mask over KV heads and query groups.
             big_neg = -2.3819763e38
             mask_for_logits = attn_mask[:, :, None, :, :].expand_as(logits).bool()
             masked_logits = torch.where(
@@ -390,10 +407,7 @@ class Attention(nn.Module):
                 logits,
                 torch.tensor(big_neg, dtype=logits.dtype, device=logits.device),
             )
-
             probs = F.softmax(masked_logits, dim=-1).to(dtype)
-
-            # einsum "BKGTS,BSKH->BTKGH"
             encoded = torch.einsum("BKGTS,BSKH->BTKGH", probs, v_r.to(dtype))
         encoded = encoded.reshape(
             encoded.shape[0], encoded.shape[1], self.num_heads, self.head_dim
