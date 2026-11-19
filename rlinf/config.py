@@ -1188,17 +1188,29 @@ def _validate_env_pipeline_shards(
     total_num_envs: int, env_world_size: int, stage_num: int, split: str
 ) -> None:
     """Validate that a split has a nonempty shard for each worker and stage."""
-    assert env_world_size > 0 and stage_num > 0, (
-        f"Expected positive environment worker and pipeline stage counts, "
-        f"got {env_world_size} and {stage_num}."
-    )
+    if env_world_size <= 0:
+        raise ValueError(
+            f"Expected a positive environment worker count, got {env_world_size}."
+        )
+    if not isinstance(stage_num, int) or isinstance(stage_num, bool) or stage_num <= 0:
+        raise ValueError(
+            "Expected rollout.pipeline_stage_num to be a positive integer, "
+            f"got {stage_num!r}."
+        )
+
     # Each worker-stage pair gets one equal-sized environment shard.
     num_shards = env_world_size * stage_num
-    assert total_num_envs > 0 and total_num_envs % num_shards == 0, (
-        f"Expected env.{split}.total_num_envs to be a positive multiple of "
-        f"{num_shards} ({env_world_size} workers × {stage_num} stages), "
-        f"got {total_num_envs}."
-    )
+    if (
+        not isinstance(total_num_envs, int)
+        or isinstance(total_num_envs, bool)
+        or total_num_envs <= 0
+        or total_num_envs % num_shards != 0
+    ):
+        raise ValueError(
+            f"Expected env.{split}.total_num_envs to be a positive integer "
+            f"multiple of {num_shards} ({env_world_size} workers × {stage_num} stages), "
+            f"got {total_num_envs!r}."
+        )
 
 
 def validate_embodied_cfg(cfg):
