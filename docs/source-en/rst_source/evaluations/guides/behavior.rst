@@ -12,14 +12,34 @@ Environment Setup
 
 .. code-block:: bash
 
+   unset ISAAC_PATH EXP_PATH CARB_APP_PATH
    bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
 
 ``evaluations/behavior/`` currently ships an OpenPI π₀.₅ example only. Training also supports OpenVLA-OFT; you can derive an eval YAML from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`).
 
-**Simulator and assets**
+**Hardware and Isaac Sim**
 
-Use OmniGibson 3.9.3 and Isaac Sim 5.1. See :doc:`../../examples/embodied/behavior` for GPU requirements and how to download the 2026 simulation assets. Set ``OMNIGIBSON_DATA_PATH`` to the directory containing ``2026-challenge-task-instances/``.
+Evaluation uses OmniGibson 3.9.3 and Isaac Sim 5.1.
+
+- Use an NVIDIA GPU with RT cores. NVIDIA lists 16 GB of GPU memory as the minimum for Isaac Sim 5.1. A100 and H100 GPUs lack RT cores and are unsupported.
+- NVIDIA lists Linux driver 580.65.06 as a tested version. Check the supported driver versions and operating systems in the `Isaac Sim 5.1 requirements <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`_.
+
+The RLinf BEHAVIOR Docker image with OmniGibson 3.9.3 is pending release.
+
+**Environment variables**
+
+Set the BEHAVIOR data root in the terminal where you launch evaluation.
+
+.. code-block:: bash
+
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
+
+OmniGibson looks for ``behavior-1k-assets/`` (scene and object assets), ``omnigibson-robot-assets/`` (robot assets), and ``omnigibson.key`` (the asset key) under this root. Keep the 2026 cached layouts and task statistics in ``2026-challenge-task-instances/`` under the same root.
+
+The installation command above installs Isaac Sim 5.1 as a Python package. The package sets ``ISAAC_PATH`` when it is imported. Use a shell with ``ISAAC_PATH``, ``EXP_PATH``, and ``CARB_APP_PATH`` unset when running the installation command.
+
+Download and license setup commands are in :doc:`../../examples/embodied/behavior`.
 
 Example Configs
 ---------------
@@ -66,15 +86,13 @@ The OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` must match training (``a
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model
 
-RLinf loads base layout ``0`` by default. To run the first public test instance for the radio task, select instance ID ``301``, which corresponds to public test index ``0``.
+The command above runs the radio task on base layout ``0`` with the default configuration. To evaluate the first 2026 public test instance, set the task's cached-instance directory and select instance ID ``301``. Public test index ``0`` refers to layout ``301``. The layout determines the starting object states and robot pose.
 
 .. code-block:: bash
 
-   scene=house_double_floor_lower
-   instances="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/$scene/json"
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model \
-     "env.eval.omni_config.task.activity_instance_dir=$instances/${scene}_task_turning_on_radio_instances" \
+     "env.eval.omni_config.task.activity_instance_dir=${OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances" \
      env.eval.omni_config.task.activity_instance_id=301
 
 **Step 5: Check results**
@@ -119,15 +137,15 @@ Generic ``env.eval`` fields
    * - Field
      - BEHAVIOR guidance
    * - ``total_num_envs``
-     - Global parallel env count. Each BEHAVIOR env uses roughly **10 GiB** VRAM; the example defaults to ``8``.
+     - Number of environments across all workers. The π₀.₅ evaluation defaults to four environments and one pipeline stage. With one environment worker, all four share one simulator process.
    * - ``rollout_epoch``
-     - Number of eval rounds with the same config; metrics are averaged. The example defaults to ``2``.
+     - Number of evaluation rounds. The π₀.₅ example runs four rounds.
    * - ``max_episode_steps``
      - Leave unset in the π₀.₅ evaluation to use the official timeout for the task. The SDK checks a zero-based counter against 1.5 times the mean human demonstration length, rounded down. Set an integer to specify the number of actions directly.
    * - ``max_steps_per_rollout_epoch``
      - Leave unset to request enough whole action chunks to reach the episode limit. With the default fixed episode, only the remaining actions in the last chunk are executed. An explicit budget must be divisible by ``rollout.model.num_action_chunks``.
    * - ``num_env_subprocess``
-     - Isaac sim subprocesses per env worker (default ``1``). Increasing this can reduce stepping bottlenecks but multiplies VRAM and process overhead; ``total_num_envs`` must be divisible by ``num_env_subprocess × pipeline_stage_num``.
+     - Number of simulator processes per environment worker (default 1). Allocate at least one process per pipeline stage. The worker’s environment count must be divisible by both the process count and the stage count.
    * - ``skip_intermediate_renders``
      - When ``True``, skips intermediate observations inside action chunks for faster stepping; saved videos only contain chunk-boundary frames.
 
@@ -212,7 +230,7 @@ FAQ
 
 - **Data download:** BEHAVIOR assets are large; complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation.
 - **Headless mode:** ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
-- **Out of memory:** Lower ``total_num_envs`` or ``num_env_subprocess``; each env uses about 10 GiB VRAM.
+- **Out of memory:** Reduce the number of parallel environments or simulator processes per GPU. Each simulator process uses additional GPU memory.
 - **Blurry or blocky rendering:** The GPU lacks Ray Tracing; use RTX 30/40 series or newer.
 - **Very slow startup:** First load of a large scene is expensive; keep ``partial_scene_load: true`` to load only task-relevant rooms.
 - **Fewer video frames than expected:** ``skip_intermediate_renders: True`` skips intermediate chunk frames and keeps only observations consumed by the policy.

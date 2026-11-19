@@ -12,14 +12,34 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
 .. code-block:: bash
 
+   unset ISAAC_PATH EXP_PATH CARB_APP_PATH
    bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
 
 当前 ``evaluations/behavior/`` 仅提供 OpenPI π₀.₅ 示例；训练侧还支持 OpenVLA-OFT，可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
-**仿真环境与资产**
+**硬件与 Isaac Sim**
 
-评测使用 OmniGibson 3.9.3 和 Isaac Sim 5.1。GPU 要求及 2026 仿真资产下载步骤见 :doc:`../../examples/embodied/behavior`\ 。将 ``OMNIGIBSON_DATA_PATH`` 设为包含 ``2026-challenge-task-instances/`` 的目录。
+评测使用 OmniGibson 3.9.3 和 Isaac Sim 5.1。
+
+- 使用配有 RT Core 的 NVIDIA GPU。NVIDIA 为 Isaac Sim 5.1 列出的最低显存为 16 GB。A100、H100 缺少 RT Core，不在支持范围内。
+- NVIDIA 列出的 Linux 测试驱动版本为 580.65.06。支持的驱动版本和操作系统见 `Isaac Sim 5.1 系统要求 <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`_\ 。
+
+包含 OmniGibson 3.9.3 的 RLinf BEHAVIOR Docker 镜像待发布。
+
+**环境变量**
+
+在启动评测的终端中设置 BEHAVIOR 资产的根目录。
+
+.. code-block:: bash
+
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
+
+OmniGibson 从根目录下的 ``behavior-1k-assets/`` 读取场景和物体资产，从 ``omnigibson-robot-assets/`` 读取机器人资产，并使用 ``omnigibson.key`` 解密资产。将 2026 任务的缓存布局和统计文件放在同一根目录下的 ``2026-challenge-task-instances/`` 中。
+
+上述安装命令将 Isaac Sim 5.1 安装为 Python 包，导入包时会自动设置 ``ISAAC_PATH``\ 。运行安装命令前，请清除终端中已有的 ``ISAAC_PATH``、``EXP_PATH`` 和 ``CARB_APP_PATH``\ 。
+
+资产下载和许可设置命令见 :doc:`../../examples/embodied/behavior`\ 。
 
 示例配置
 --------
@@ -66,15 +86,13 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model
 
-RLinf 默认加载基础布局 0。要评测“打开收音机”任务的首个公开测试实例（索引为 0），请将实例编号设为 301。
+上面的命令按默认配置在基础布局 0 上评测“打开收音机”任务。评测 2026 年公开测试集的首个实例时，需指定该任务的缓存目录，并将实例编号设为 301。公开测试索引 0 对应布局 301。布局决定物体的初始状态和机器人的初始位姿。
 
 .. code-block:: bash
 
-   scene=house_double_floor_lower
-   instances="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/$scene/json"
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model \
-     "env.eval.omni_config.task.activity_instance_dir=$instances/${scene}_task_turning_on_radio_instances" \
+     "env.eval.omni_config.task.activity_instance_dir=${OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances" \
      env.eval.omni_config.task.activity_instance_id=301
 
 **Step 5：查看结果**
@@ -119,15 +137,15 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
    * - 字段
      - BEHAVIOR 设置建议
    * - ``total_num_envs``
-     - 全局并行环境数。单个 BEHAVIOR 环境约占 **10 GiB** 显存，请按 GPU 显存酌情设置；示例默认 ``8``。
+     - 所有环境 worker 的环境总数。π₀.₅ 评测默认用一个流水线阶段跑 4 个环境。如果只用一个环境 worker，4 个环境共用一个仿真进程。
    * - ``rollout_epoch``
-     - 评测轮次，相同配置下重复运行并取指标平均；示例默认 ``2``。
+     - 评测轮数。π₀.₅ 示例默认运行 4 轮。
    * - ``max_episode_steps``
      - π₀.₅ 评测留空时采用该任务的官方时限。SDK 从 0 开始计数，达到人类示范平均步数的 1.5 倍（向下取整）时判定超时。也可以直接填写本回合允许执行的动作数。
    * - ``max_steps_per_rollout_epoch``
      - 留空时按整组动作计算足够覆盖回合时限的采样预算。默认配置下，最后一组只执行回合剩余的动作。手动填写的预算必须能被 ``rollout.model.num_action_chunks`` 整除。
    * - ``num_env_subprocess``
-     - 单个 env worker 内划分的 Isaac 仿真子进程数（默认 ``1``）。适当增大可缓解步进瓶颈，但会成倍增加显存与进程开销；``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
+     - 每个环境 worker 的仿真子进程数，默认为 1。每个流水线阶段至少需要一个进程。每个 worker 的环境数须能分别被进程数和阶段数整除。
    * - ``skip_intermediate_renders``
      - 设为 ``True`` 时跳过 chunk 内中间 observation，显著加速环境步进；保存的视频仅含 chunk 边界帧。
 
@@ -212,7 +230,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 
 - **数据下载：** BEHAVIOR 资源体积较大，请按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。
 - **Headless 模式：** ``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
-- **显存不足：** 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
+- **显存不足：** 减少每张 GPU 上的并行环境数或仿真进程数。每启动一个仿真进程都会占用额外显存。
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。
 - **启动极慢：** 首次加载大场景耗时较长；保持 ``partial_scene_load: true`` 可只加载任务相关房间。
 - **视频帧数少于预期：** ``skip_intermediate_renders: True`` 会跳过 chunk 内中间帧，仅保留策略实际消费的 observation 对应帧。

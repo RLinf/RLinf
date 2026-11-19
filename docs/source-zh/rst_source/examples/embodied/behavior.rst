@@ -68,7 +68,7 @@
    * - 官方评测观测
      - 默认模式提供三路 224×224 RGB 和本体状态。全分辨率模式提供头部 720×720、两腕各 480×480 的 RGB 和深度图，以及本体状态。详见 `官方评测说明 <https://behavior.stanford.edu/challenge/evaluation.html>`_\ 。
    * - 动作 (Action)
-     - R1 Pro 的 23 维连续控制量包括底盘的 3 维速度、躯干的 4 个关节目标、每条手臂的 7 个关节目标，以及每侧夹爪的 1 个开合命令。
+     - R1 Pro 的 23 维连续控制量包括底盘的 3 个速度指令（前后移动、左右横移和转向）、躯干 4 个关节的目标位置、左右臂各 7 个关节的目标位置，以及左右夹爪各 1 个开合指令。
 
 
 安装
@@ -83,10 +83,14 @@
 
 **选项 1：Docker 镜像** — BEHAVIOR 3.9.3 镜像待发布。
 
-**选项 2：自定义环境** — RLinf 的 ``--env behavior`` 安装入口尚待适配 3.9.3。已有对应版本的 RLinf 环境时，激活它并核对版本。以下命令假设环境位于仓库的 ``.venv`` 目录。
+**选项 2：自定义环境**
+
+在 RLinf 仓库根目录运行以下命令。RLinf、OpenPI 和仿真器共用一个 Python 3.11.14 环境。脚本会安装 Torch 2.7.0，以及所需版本的 LeRobot、Hugging Face Hub 和 Warp。
 
 .. code-block:: bash
 
+   unset ISAAC_PATH EXP_PATH CARB_APP_PATH
+   bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
    python -c "from importlib.metadata import version; print(version('omnigibson'), version('isaacsim'))"
 
@@ -167,7 +171,7 @@ RLinf 于 2025 年发布了以下两个 BEHAVIOR checkpoint。选择模型后，
      - PPO
      - ``behavior_ppo_openpi_pi05.yaml``
 
-RLinf 的 3.9.3 环境适配完成后，可用原有入口启动训练：
+PPO 训练沿用以下入口。
 
 .. code-block:: bash
 
@@ -241,7 +245,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 归一化统计从转换后 checkpoint 中打包的
 ``physical-intelligence/behavior/norm_stats.json`` 读取。
 
-RLinf 环境完成 3.9.3 适配后，可用以下命令运行独立评测。
+在同一环境中运行独立评测。
 
 .. code:: bash
 
@@ -310,9 +314,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示策略在
        chunk 边界观测到的帧。
    * - ``num_env_subprocess``
-     - 将 ``num_envs`` 拆分到多个子进程，每个子进程承载自己的 Isaac/OmniGibson 仿真（见
-       ``BehaviorProcess``）。默认 ``1``。**约束：** ``num_envs`` 必须能被 ``num_env_subprocess``
-       整除。提高该值可缓解环境步进瓶颈，但会成倍增加进程数与内存。
+     - 每个环境 worker 的仿真子进程数，默认为 1。每个流水线阶段至少需要一个进程。每个 worker 的环境数须能分别被进程数和阶段数整除。
 
 生成缓存任务实例
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -70,7 +70,7 @@ Observation and Action
    * - Challenge observation
      - The default profile returns three 224×224 RGB images and proprioception. The full-resolution profile adds depth and uses 720×720 for the head and 480×480 for each wrist. See the `challenge evaluation rules <https://behavior.stanford.edu/challenge/evaluation.html>`_.
    * - Action
-     - The R1 Pro uses 23 continuous commands: 3 base velocities, 4 torso joint targets, 7 joint targets per arm, and 1 opening or closing command per gripper.
+     - The R1 Pro’s 23-dimensional continuous action includes 3 base velocity commands (forward/backward, sideways, and turning), 4 joint position targets for the torso, 7 joint position targets per arm, and 1 open/close command per gripper.
 
 
 Installation
@@ -86,12 +86,16 @@ Installation
 
 **Option 1: Docker image** — The BEHAVIOR 3.9.3 image is pending release.
 
-**Option 2: Custom environment** — Support for 3.9.3 in the RLinf ``--env behavior`` installer is pending.
-If you already have an RLinf environment with the required simulator versions, activate it and check the packages.
-This example assumes the environment is in the repository's ``.venv`` directory.
+**Option 2: Custom environment**
+
+From the RLinf repository root, install RLinf, OpenPI, and the simulator in one
+Python 3.11.14 environment. The installer sets up Torch 2.7.0 and the required
+versions of LeRobot, Hugging Face Hub, and Warp.
 
 .. code-block:: bash
 
+   unset ISAAC_PATH EXP_PATH CARB_APP_PATH
+   bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
    python -c "from importlib.metadata import version; print(version('omnigibson'), version('isaacsim'))"
 
@@ -174,7 +178,7 @@ Each recipe is a YAML config under ``examples/embodiment/config/``:
      - PPO
      - ``behavior_ppo_openpi_pi05.yaml``
 
-Once the RLinf environment adapter supports 3.9.3, launch training with the existing entry point:
+Launch PPO training with the existing entry point.
 
 .. code-block:: bash
 
@@ -295,9 +299,7 @@ performance.
      - When ``True``, skips collecting intermediate observations inside an action chunk (large
        env-speed gain). Saved videos then show only the frames the policy observes at chunk boundaries.
    * - ``num_env_subprocess``
-     - Splits ``num_envs`` across child processes, each hosting its own Isaac/OmniGibson sim
-       (see ``BehaviorProcess``). Default ``1``. **Constraint:** ``num_envs`` must be divisible by
-       ``num_env_subprocess``. Higher values cut env-step bottlenecks but multiply processes and memory.
+     - Number of simulator processes per environment worker (default 1). Allocate at least one process per pipeline stage. The worker’s environment count must be divisible by both the process count and the stage count.
 
 Generating cached task instances
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -353,7 +355,7 @@ paths directly in the config as ``/path/to/...`` placeholders:
 Normalization statistics are loaded from the converted checkpoint's bundled
 ``physical-intelligence/behavior/norm_stats.json`` asset.
 
-Once the RLinf environment adapter supports 3.9.3, run standalone evaluation from the same environment.
+Run standalone evaluation from the same environment.
 
 .. code:: bash
 
