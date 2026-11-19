@@ -253,8 +253,14 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     override_proprio_obs = OmegaConf.select(
         override_cfg, "robots[0].proprio_obs", default=None
     )
+    r1pro = None
     if override_proprio_obs is None:
-        override_proprio_obs = R1PRO_PROPRIO_KEYS
+        if cfg.get("use_eval_utils_cfg", False):
+            # Match the official 61-value state in 2026 evaluation and demonstrations.
+            r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+            override_proprio_obs = r1pro.proprio_obs
+        else:
+            override_proprio_obs = R1PRO_PROPRIO_KEYS
     OmegaConf.update(
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
@@ -314,7 +320,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
 
     # setup head/wrist camera resolutions
     camera_cfg = OmegaConf.select(omni_cfg, "camera")
-    set_camera_resolution(camera_cfg, omni_cfg.robots[0])
+    set_camera_resolution(camera_cfg, omni_cfg.robots[0], r1pro)
 
     # override behavior's termination config `max_steps` field
     max_episode_steps = (

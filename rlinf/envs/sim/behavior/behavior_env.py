@@ -26,6 +26,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from rlinf.envs.sim.behavior.instance_loader import ActivityInstanceLoader
 from rlinf.envs.sim.behavior.utils import (
+    R1PRO_PROPRIO_KEYS,
     apply_env_wrapper,
     apply_runtime_renderer_settings,
     convert_uint8_rgb,
@@ -71,6 +72,7 @@ class BehaviorProcess:
         self.logger = get_logger()
         self.pipeline_stage_num = pipeline_stage_num
         omni_cfg = setup_omni_cfg(cfg)
+        self.use_legacy_proprio = omni_cfg.robots[0].proprio_obs == R1PRO_PROPRIO_KEYS
         self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
 
         # create env and apply env wrapper if enabled
@@ -130,6 +132,18 @@ class BehaviorProcess:
     def get_activity_name(self):
         return self.instance_loader.activity_name
 
+    def _restore_legacy_base_velocity(self, observations, env_indices):
+        # 3.9.3 reports robot-frame velocity. Legacy RLinf observations end in raw base joint velocities.
+        if not self.use_legacy_proprio:
+            return
+        if env_indices is None:
+            env_indices = range(self.env.num_envs)
+        for obs, idx in zip(observations, env_indices, strict=True):
+            robot = self.env.scenes[idx].robots[0]
+            obs[robot.name]["proprio"][-3:] = robot.get_joint_velocities()[
+                robot.base_control_idx
+            ]
+
     def _call_step(self, actions, env_indices=None, get_obs=True, render=True):
         """Call ``self.env.step`` forwarding only the kwargs it supports."""
         kwargs = {}
@@ -182,6 +196,8 @@ class BehaviorProcess:
             truncates = [truncates[i] for i in env_indices]
             infos = [infos[i] for i in env_indices]
 
+        if need_obs:
+            self._restore_legacy_base_velocity(raw_obs, env_indices)
         return (
             list(raw_obs) if need_obs else None,
             to_tensor(rewards),
@@ -220,6 +236,7 @@ class BehaviorProcess:
             return None, None
 
         raw_obs, infos = result
+        self._restore_legacy_base_velocity(raw_obs, reset_indices)
         # 3.9.3 batches observation info; RLinf pairs one info dict with each observation.
         return raw_obs, [{"obs_info": info} for info in infos["obs_info"]]
 
@@ -619,7 +636,7 @@ class BehaviorEnv(gym.Env):
             "task_descriptions": [self.task_description for _ in range(self.num_envs)],
             "states": torch.stack(
                 [obs["state"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, 32]
+            ),  # [N_ENV, proprio_dim]
         }
         return obs
 
