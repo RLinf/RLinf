@@ -11,8 +11,10 @@ build:
       - uv pip install .[embodied]
       - uv pip install .[agentic]
       - uv pip install --no-deps sglang==0.5.12.post1
-      - uv pip install fastapi
-      - uv pip install -r requirements/docs/requirements.txt
+
+python:
+  install:
+    - requirements: requirements/docs/requirements.txt
 
 sphinx:
   configuration: docs/source-zh/conf.py
