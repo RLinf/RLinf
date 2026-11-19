@@ -23,5 +23,4 @@ class PrefixAlgorithmRequirements:
     actor_distribution: Literal["stochastic", "deterministic"]
     min_q_heads: int = 2
     requires_action_noise: bool = False
-    uses_target_actor: bool = False
     delayed_policy_updates: bool = False

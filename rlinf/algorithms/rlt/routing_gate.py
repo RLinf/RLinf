@@ -85,9 +85,6 @@ class RoutingGate(Protocol):
     ) -> None:
         """Reset matching gate state."""
 
-    def empty_diagnostics(self, batch_size: int) -> dict[str, torch.Tensor]:
-        """Return stack-compatible diagnostics without advancing state."""
-
     def empty_phase_features(self, batch_size: int) -> torch.Tensor:
         """Return stack-compatible phase features without advancing state."""
 

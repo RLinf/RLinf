@@ -51,8 +51,6 @@ class OpenPiPrefixMixin:
         from rlinf.models.embodiment.prefix_features import pool_prefix
 
         pool = self._resolved_prefix_pool()
-        if pool not in ("masked_mean", "mean", "last"):
-            pool = "masked_mean" if self.rlt_cfg.rlt_use_mask else "mean"
         mask = prefix_mask if pool in ("masked_mean", "last") else None
         return pool_prefix(prefix_output, mask, mode=pool)
 

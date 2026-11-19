@@ -46,10 +46,10 @@ FlexRLT：冻结 VLA 特征与可插拔 Policy
 
 各层的职责边界按「谁拥有什么」划分：
 
-* **特征模型**决定原始观测如何变成 ``{z_rl, proprio, ref_chunk}``。它保持冻结，不带优化器，也不接收梯度。
+* **特征模型** 决定原始观测如何变成 ``{z_rl, proprio, ref_chunk}``。它保持冻结，不带优化器，也不接收梯度。
 * **policy** 决定这三个张量如何拼成 policy state 和 reference 输入。``prefix_policy`` 自身不增加参数，只组合两个 head，并暴露 worker 所需的 ``BasePolicy`` forward 类型。
 * **head** 拥有网络本身。actor 和 critic 是两个独立对象、两套独立注册表，因此可以把随机 actor 配 CrossQ critic，或只替换其中一侧。
-* **算法**拥有 loss 和更新调度。它读取 head 在 ``capabilities`` 中声明的能力，拒绝无法训练的搭配。
+* **算法** 拥有 loss 和更新调度。它读取 head 在 ``capabilities`` 中声明的能力，拒绝无法训练的搭配。
 
 配置校验按**观测契约**而不是按名字把 policy 与 ``prefix_off_policy`` 匹配，所以新 policy 以 ``obs_contract=ObsContract.PREFIX`` 注册后，无需修改 ``rlinf/config.py`` 就能通过校验。它仍需满足 :ref:`flexrlt-policy-contract` 中的 policy 契约。
 
@@ -423,7 +423,6 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
        requirements = PrefixAlgorithmRequirements(
            actor_distribution="deterministic",
            requires_action_noise=True,
-           uses_target_actor=True,
        )
 
        def actor_loss(self, context, batch):

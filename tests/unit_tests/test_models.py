@@ -4873,10 +4873,6 @@ def test_steam_gate_maps_processor_cameras_to_env_observations():
 def test_dual_franka_rlt_stage2_builds_prefix_policy(monkeypatch):
     from hydra import compose, initialize_config_dir
 
-    from rlinf.algorithms.prefix_off_policy.config import (
-        get_prefix_feature_model_config,
-    )
-
     root = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
     with initialize_config_dir(
@@ -4889,7 +4885,7 @@ def test_dual_franka_rlt_stage2_builds_prefix_policy(monkeypatch):
     algorithm = build_prefix_off_policy_algorithm(cfg)
     assert algorithm.actor_capabilities.distribution == "stochastic"
     assert algorithm.num_q_heads == 2
-    feature_cfg = get_prefix_feature_model_config(cfg)
+    feature_cfg = cfg.rollout.prefix_feature_model
     assert feature_cfg.openpi.config_name == "pi05_dualfranka_tcp_rot6d"
     assert feature_cfg.openpi.action_env_dim == 20
     assert feature_cfg.openpi.action_chunk == 20
@@ -4904,6 +4900,8 @@ def test_dual_franka_rlt_stage2_builds_prefix_policy(monkeypatch):
     actions, info = model.predict_action_batch(obs, mode="eval")
     assert actions.shape == (2, 10, 20)
     assert info["prev_logprobs"].shape == (2, 200)
+
+
 def _gr00t_npu_patch_modules():
     from rlinf.models.embodiment.gr00t.gr00t_n1d5 import npu_patches as n1d5
     from rlinf.models.embodiment.gr00t.gr00t_n1d6 import npu_patches as n1d6
@@ -5480,16 +5478,22 @@ def test_pool_prefix_masked_mean():
     torch.testing.assert_close(pooled[1], torch.tensor([2.0, 0.0]))
 
 
-def test_pool_prefix_mean_and_last():
+@pytest.mark.parametrize(
+    "mask,expected_indices",
+    [
+        ([[True, True, False, False], [True, True, True, False]], [1, 2]),
+        ([[True, False, True, False], [False, True, False, True]], [2, 3]),
+        ([[False, False, False, False], [True, False, False, False]], [0, 0]),
+    ],
+)
+def test_pool_prefix_mean_and_last(mask, expected_indices):
     hidden = torch.arange(24, dtype=torch.float32).reshape(2, 4, 3)
     mean = pool_prefix(hidden, None, mode="mean")
     torch.testing.assert_close(mean, hidden.mean(dim=1))
     last = pool_prefix(hidden, None, mode="last")
     torch.testing.assert_close(last, hidden[:, -1])
-    mask = torch.tensor([[True, True, False, False], [True, True, True, False]])
-    last_valid = pool_prefix(hidden, mask, mode="last")
-    torch.testing.assert_close(last_valid[0], hidden[0, 1])
-    torch.testing.assert_close(last_valid[1], hidden[1, 2])
+    last_valid = pool_prefix(hidden, torch.tensor(mask), mode="last")
+    torch.testing.assert_close(last_valid, hidden[torch.arange(2), expected_indices])
 
 
 def test_prefix_feature_model_protocol_and_policy():
@@ -5690,6 +5694,53 @@ def test_prefix_td3_exploration_adds_noise_before_clamping(raw):
     actual.sum().backward()
     expected_grad = ((raw + noise).abs() < 1).sum().float().reshape(1)
     torch.testing.assert_close(linear.bias.grad, expected_grad)
+
+
+@pytest.mark.parametrize(
+    "negative_limit,boundary,has_phase,expected_negative",
+    [
+        (4, 4, True, [16, 17, 18, 19]),
+        (2, 4, True, [18, 19]),
+        (8, 4, True, [0, 5, 10, 15, 16, 17, 18, 19]),
+        (4, 0, True, [0, 6, 13, 19]),
+        (0, 4, True, list(range(20))),
+        (4, 4, False, [0, 8, 15, 23]),
+        (0, 4, False, list(range(24))),
+    ],
+)
+def test_steam_calibration_training_samples_respect_negative_budget(
+    tmp_path, negative_limit, boundary, has_phase, expected_negative
+):
+    from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
+    from toolkits.rlt.calibrate_steam_gates import EpisodeRef, build_training_tensors
+
+    trace_path = tmp_path / "trace_0.pt"
+    zeros = torch.zeros(24, 1)
+    geometry = torch.arange(24)[:, None] >= (20 if has_phase else 24)
+    torch.save(
+        {
+            RLT_PHASE_FEATURE_KEY: torch.arange(24).reshape(24, 1, 1, 1).float(),
+            "rlt_gate_score_min": zeros,
+            "rlt_gate_score_ready": torch.ones(24, 1, dtype=torch.bool),
+            "rlt_gate_actor_active": zeros.bool(),
+            "geometry_critical_active": geometry,
+            "rlt_oracle_expert_active": zeros.bool(),
+            "reward_sum": zeros,
+        },
+        trace_path,
+    )
+    ref = EpisodeRef("episode", trace_path, 0, 0, 24, 10, None)
+    features, labels = build_training_tensors(
+        [ref],
+        positive_window_chunks=4,
+        max_negative_chunks=negative_limit,
+        boundary_negative_chunks=boundary,
+    )
+    expected_indices = expected_negative + (list(range(20, 24)) if has_phase else [])
+    torch.testing.assert_close(
+        features.flatten(), torch.tensor(expected_indices, dtype=features.dtype)
+    )
+    torch.testing.assert_close(labels, geometry[expected_indices, 0].float())
 
 
 def test_steam_gate_uses_head_metadata_and_warns_on_overrides(tmp_path, caplog):
@@ -6031,6 +6082,8 @@ def test_steam_gate_preserves_source_state_across_rebatching(tmp_path):
     assert step([30], [source(9)]).expert_requested.all()
     # All ready rows still share one batched STEAM inference.
     assert 3 in gate.model.prediction_batch_sizes
+
+
 def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessing):
     from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 

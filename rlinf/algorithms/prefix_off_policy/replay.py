@@ -216,11 +216,7 @@ class PrefixReplayService:
         self,
         trajectory: Trajectory,
     ) -> tuple[list[Trajectory], int]:
-        if (
-            trajectory.actions is None
-            or trajectory.rewards is None
-            or self.replay_buffer is None
-        ):
+        if trajectory.actions is None or trajectory.rewards is None:
             return [], 0
 
         flat = self.replay_buffer._flatten_trajectory(trajectory)
@@ -272,8 +268,9 @@ class PrefixReplayService:
                         )
                 forward_inputs = flat.get("forward_inputs")
                 if isinstance(forward_inputs, dict):
-                    row_value = self._row_tensor_dict(forward_inputs, index)
-                    transition.forward_inputs = row_value
+                    transition.forward_inputs = self._row_tensor_dict(
+                        forward_inputs, index
+                    )
 
                 curr_obs = self._prefix_obs_from_flat_dict(flat, "curr_obs", index)
                 if curr_obs is None:

@@ -37,7 +37,6 @@ class PrefixTD3Algorithm(PrefixOffPolicyAlgorithm):
     requirements = PrefixAlgorithmRequirements(
         actor_distribution="deterministic",
         requires_action_noise=True,
-        uses_target_actor=True,
         delayed_policy_updates=True,
     )
 

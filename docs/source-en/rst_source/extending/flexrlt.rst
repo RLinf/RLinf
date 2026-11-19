@@ -423,7 +423,6 @@ This example reuses the shared BC/Q objective with minimum-Q aggregation and get
        requirements = PrefixAlgorithmRequirements(
            actor_distribution="deterministic",
            requires_action_noise=True,
-           uses_target_actor=True,
        )
 
        def actor_loss(self, context, batch):

@@ -68,32 +68,6 @@ def _flatten_action_chunk(actions: torch.Tensor) -> torch.Tensor:
     return actions.reshape(actions.shape[0], -1)
 
 
-def _normalize_rlt_switch_flags(
-    actions: torch.Tensor,
-    rlt_switch_flags: torch.Tensor | None,
-    *,
-    default: bool,
-) -> torch.Tensor:
-    if rlt_switch_flags is None:
-        rlt_switch_flags = torch.full(
-            (actions.shape[0], actions.shape[1]),
-            bool(default),
-            dtype=torch.bool,
-            device=actions.device,
-        )
-    else:
-        rlt_switch_flags = torch.as_tensor(
-            rlt_switch_flags, device=actions.device
-        ).bool()
-    if rlt_switch_flags.dim() == 1:
-        rlt_switch_flags = rlt_switch_flags[:, None]
-    if rlt_switch_flags.shape[1] > 1:
-        rlt_switch_flags = rlt_switch_flags[:, -1:]
-    if actions.shape[1] > 1:
-        rlt_switch_flags = rlt_switch_flags.expand(-1, actions.shape[1])
-    return rlt_switch_flags.reshape(actions.shape[0], actions.shape[1], 1)
-
-
 def _base_ref_actions(
     ref_chunk: torch.Tensor,
     *,
@@ -272,11 +246,6 @@ class SimulatorPrefixRoute(PrefixRoute):
         )
         forward_inputs = result["forward_inputs"]
         if expert_takeover.any():
-            if ctx.expert_model is None:
-                raise RuntimeError(
-                    "ManiSkill RLT expert takeover was requested, but expert_model "
-                    "is not configured."
-                )
             expert_actions = predict_expert_actions(
                 ctx.expert_model,
                 ctx.env_obs,

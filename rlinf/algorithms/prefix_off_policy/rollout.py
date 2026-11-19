@@ -18,10 +18,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.algorithms.prefix_off_policy.config import (
-    get_prefix_feature_model_config,
-    is_gate_trace_enabled,
-)
+from rlinf.algorithms.prefix_off_policy.config import is_gate_trace_enabled
 from rlinf.algorithms.prefix_off_policy.route import (
     PrefixRouteContext,
     build_prefix_route,
@@ -56,12 +53,6 @@ class PrefixRolloutRuntime:
         gate: Any = None,
         expert_model: Any = None,
     ) -> None:
-        self.cfg = cfg
-        self.model_cfg = (
-            cfg.rollout.model
-            if cfg.get("runner", {}).get("only_eval", False)
-            else cfg.actor.model
-        )
         self.policy_model = policy_model
         self.feature_model = feature_model
         self.gate = gate
@@ -78,7 +69,9 @@ class PrefixRolloutRuntime:
         from rlinf.algorithms.expert import build_expert_model_config
         from rlinf.models import get_model
 
-        feature_cfg = get_prefix_feature_model_config(cfg)
+        feature_cfg = OmegaConf.select(
+            cfg, "rollout.prefix_feature_model", default=None
+        )
         gate_cfg = OmegaConf.select(cfg, "rollout.routing_gate", default=None)
         if feature_cfg is None:
             if gate_cfg is not None and gate_cfg.get("enable", False):
@@ -135,8 +128,8 @@ class PrefixRolloutRuntime:
         return extract_prefix_obs(self.feature_model, obs)
 
     @torch.no_grad()
-    def prepare_transitions(self, request: PolicyInput, *, mode: str = "train") -> None:
-        """Peek terminal observations before any current-episode reset or commit."""
+    def prepare_transitions(self, request: PolicyInput) -> None:
+        """Cache post-action features for completed environment steps."""
         self._terminal_features.clear()
         if not request.env_parts:
             return
@@ -171,7 +164,7 @@ class PrefixRolloutRuntime:
         stage_id: int = 0,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Infer actions after resolving old-episode terminal features."""
-        self.prepare_transitions(request, mode=mode)
+        self.prepare_transitions(request)
         sources = request.sources
         if not sources:
             batch_size = next(

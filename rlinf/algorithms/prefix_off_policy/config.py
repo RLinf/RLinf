@@ -31,8 +31,3 @@ def is_gate_trace_enabled(cfg: Any) -> bool:
     return bool(
         OmegaConf.select(cfg, "algorithm.rlt_gate_calibration.enable", default=False)
     )
-
-
-def get_prefix_feature_model_config(cfg: Any) -> Any | None:
-    """Return the canonical frozen feature-model config, if configured."""
-    return OmegaConf.select(cfg, "rollout.prefix_feature_model", default=None)

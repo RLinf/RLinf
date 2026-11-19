@@ -122,9 +122,6 @@ class PrefixPolicy(nn.Module, BasePolicy):
         reference = reference[:, : self.chunk_len]
         return reference.reshape(reference.shape[0], -1)
 
-    def _format_chunk_actions(self, actions: torch.Tensor) -> torch.Tensor:
-        return actions.reshape(-1, self.chunk_len, self.step_action_dim)
-
     def forward(
         self,
         forward_type: ForwardType = ForwardType.DEFAULT,
@@ -288,7 +285,7 @@ class PrefixPolicy(nn.Module, BasePolicy):
             deterministic=(mode == "eval"),
             apply_action_noise=(mode != "eval"),
         )
-        chunk_actions = self._format_chunk_actions(actions)
+        chunk_actions = actions.reshape(-1, self.chunk_len, self.step_action_dim)
         forward_inputs = {"action": actions, "model_action": actions}
         if return_obs:
             forward_inputs.update(obs)

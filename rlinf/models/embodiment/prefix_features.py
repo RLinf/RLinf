@@ -36,9 +36,8 @@ PREFIX_POOL_MODES = ("masked_mean", "mean", "last", "rlt_token")
 class PrefixObs(TypedDict):
     """Observation consumed by a trainable prefix policy.
 
-    ``z_rl`` contains the frozen feature model output and optional state
-    history. ``proprio`` is the current robot state, and ``ref_chunk`` is the
-    reference action chunk produced by the feature model.
+    ``z_rl`` contains the frozen feature model output. ``proprio`` is the current
+    robot state, and ``ref_chunk`` is the feature model's reference action chunk.
     """
 
     z_rl: torch.Tensor
@@ -113,9 +112,10 @@ def pool_prefix(
                 f"pool_prefix mask shape {tuple(keep.shape)} does not match "
                 f"hidden [B={batch_size}, T={seq_len}]."
             )
-        lengths = keep.long().sum(dim=1).clamp(min=1) - 1
+        positions = torch.arange(seq_len, device=hidden.device)
+        last_index = positions.expand_as(keep).masked_fill(~keep, 0).amax(dim=1)
         batch_index = torch.arange(batch_size, device=hidden.device)
-        return hidden[batch_index, lengths]
+        return hidden[batch_index, last_index]
 
     if mode != "masked_mean":
         raise ValueError(

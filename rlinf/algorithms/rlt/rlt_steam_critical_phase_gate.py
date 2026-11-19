@@ -277,32 +277,6 @@ class SteamRoutingGate:
                 setattr(state, field_name, getattr(state, field_name).to(device))
         return self
 
-    def empty_diagnostics(self, batch_size: int) -> dict[str, torch.Tensor]:
-        """Return a non-decision row for rollout bootstrap bookkeeping."""
-        bool_keys = {
-            "rlt_gate_entered",
-            "rlt_gate_score_ready",
-            "rlt_gate_actor_active",
-            "rlt_route_expert_entered",
-        }
-        long_keys = {
-            "rlt_gate_entry_step",
-            "rlt_route_expert_entry_step",
-        }
-        diagnostics = {}
-        for key in RLT_GATE_INFO_KEYS:
-            dtype = torch.float32
-            if key in bool_keys:
-                dtype = torch.bool
-            elif key in long_keys:
-                dtype = torch.long
-            diagnostics[key] = torch.zeros(
-                (int(batch_size), 1),
-                dtype=dtype,
-                device=self.device,
-            )
-        return diagnostics
-
     def empty_phase_features(self, batch_size: int) -> torch.Tensor:
         """Return a stack-compatible placeholder for non-decision rows."""
         model_config = getattr(self.model, "config", None)

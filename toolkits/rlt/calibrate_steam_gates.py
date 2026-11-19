@@ -304,8 +304,8 @@ def split_episode_refs(
     return ordered[:-validation_size], ordered[-validation_size:]
 
 
-def _uniform_subset(indices: torch.Tensor, limit: int) -> torch.Tensor:
-    if limit <= 0 or indices.numel() <= limit:
+def _uniform_subset(indices: torch.Tensor, limit: int | None) -> torch.Tensor:
+    if limit is None or indices.numel() <= limit:
         return indices
     positions = torch.linspace(0, indices.numel() - 1, steps=limit).round().long()
     return indices[positions]
@@ -322,9 +322,10 @@ def _sample_phase_indices(
     valid_indices = torch.nonzero(ready, as_tuple=False).reshape(-1)
     if valid_indices.numel() == 0:
         return valid_indices
+    negative_limit = max_negative_chunks if max_negative_chunks > 0 else None
     geometry_indices = torch.nonzero(geometry_active, as_tuple=False).reshape(-1)
     if geometry_indices.numel() == 0:
-        return _uniform_subset(valid_indices, max_negative_chunks)
+        return _uniform_subset(valid_indices, negative_limit)
     entry = int(geometry_indices[0].item())
     negative = valid_indices[valid_indices < entry]
     positive = valid_indices[
@@ -333,7 +334,11 @@ def _sample_phase_indices(
     ]
     hard_negative = negative[negative >= entry - max(0, boundary_negative_chunks)]
     remaining_negative = negative[negative < entry - max(0, boundary_negative_chunks)]
-    remaining_budget = max(max_negative_chunks - int(hard_negative.numel()), 0)
+    if negative_limit is not None:
+        hard_negative = hard_negative[-negative_limit:]
+    remaining_budget = (
+        None if negative_limit is None else negative_limit - int(hard_negative.numel())
+    )
     sampled_negative = torch.cat(
         [_uniform_subset(remaining_negative, remaining_budget), hard_negative]
     )
@@ -1000,7 +1005,13 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--validation-fraction", type=float, default=0.2)
     parser.add_argument("--phase-positive-window-chunks", type=int, default=4)
-    parser.add_argument("--phase-max-negative-chunks", type=int, default=8)
+    parser.add_argument(
+        "--phase-max-negative-chunks",
+        type=int,
+        default=8,
+        help="Maximum negative samples per episode, including boundary samples; "
+        "non-positive values keep all negatives.",
+    )
     parser.add_argument("--phase-boundary-negative-chunks", type=int, default=4)
     parser.add_argument("--phase-thresholds", default="auto")
     parser.add_argument(

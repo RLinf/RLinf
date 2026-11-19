@@ -40,7 +40,6 @@ class ActorHeadCapabilities:
 
     distribution: Literal["stochastic", "deterministic"]
     supports_action_noise: bool = False
-    supports_reference_dropout: bool = True
 
 
 @dataclass(frozen=True)
