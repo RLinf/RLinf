@@ -24,7 +24,10 @@ from rlinf.models.embodiment.openpi.checkpoint import (
     resolve_full_weights,
     resolve_model_safetensors,
 )
-from rlinf.models.embodiment.openpi.modules.utils import set_torch_compile
+from rlinf.models.embodiment.openpi.modules.utils import (
+    inductor_available,
+    set_torch_compile,
+)
 from rlinf.models.embodiment.openpi.rlt_config import build_rlt_config
 from rlinf.utils.logging import get_logger
 
@@ -52,7 +55,10 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     model_cfg = cfg.openpi
-    set_torch_compile(bool(OmegaConf.select(model_cfg, "torch_compile", default=True)))
+    set_torch_compile(
+        bool(OmegaConf.select(model_cfg, "torch_compile", default=True))
+        and inductor_available()
+    )
     # Existing Pi0.5 templates predate the explicit switch, so preserve their
     # behavior by default. Pi0 templates set this field to False explicitly.
     pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
@@ -102,6 +108,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
+        "pytorch_numerics": bool(
+            OmegaConf.select(model_cfg, "pytorch_numerics", default=False)
+        ),
     }
     discrete_state_input = OmegaConf.select(
         model_cfg, "discrete_state_input", default=None
@@ -156,6 +165,13 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             config_name=config_name,
             state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
             rlt_cfg=rlt_cfg,
+            eval_batch_size=OmegaConf.select(
+                model_cfg, "eval_batch_size", default=None
+            ),
+            eval_seed=OmegaConf.select(model_cfg, "eval_seed", default=None),
+            sample_compile=bool(
+                OmegaConf.select(model_cfg, "sample_compile", default=False)
+            ),
             rtc_enabled=bool(OmegaConf.select(model_cfg, "rtc_enabled", default=False)),
             rtc_guidance_mode=str(
                 OmegaConf.select(model_cfg, "rtc_guidance_mode", default="approx")

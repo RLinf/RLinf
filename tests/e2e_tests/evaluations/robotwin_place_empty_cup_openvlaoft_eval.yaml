@@ -62,7 +62,7 @@ rollout:
     repetition_penalty: 1.0
 
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   pipeline_stage_num: 1
 
   model:
