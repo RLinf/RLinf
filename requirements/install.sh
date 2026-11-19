@@ -2657,7 +2657,8 @@ EOF
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            uv pip install "${RAY_COMPAT_DEPS[@]}"
+            # The SDK installs Hub 1.x, but OpenPI's Transformers requires Hub <1 at import.
+            uv pip install "${RAY_COMPAT_DEPS[@]}" "huggingface-hub>=0.34.4,<1"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -3861,10 +3862,24 @@ install_behavior_env() {
     local behavior_dir
     behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/StanfordVL/BEHAVIOR-1K.git -b v3.9.3-post2 --depth 1)
 
+    # The SDK installs LeRobot from a moving Git branch with pip. Pin the
+    # Python 3.11-compatible revision in its requirement before setup runs.
+    if grep -Fq 'wensi-ai/lerobot@release/b1k"' "$behavior_dir/OmniGibson/setup.py"; then
+        if [[ -n "${BEHAVIOR_PATH:-}" || "$(realpath "$behavior_dir/OmniGibson/setup.py")" != "$(realpath "$VENV_DIR")/BEHAVIOR-1K/OmniGibson/setup.py" ]]; then
+            # Keep editable packages in this venv when the source checkout is shared.
+            local checkout="$behavior_dir"
+            behavior_dir=$(mktemp -d "$VENV_DIR/BEHAVIOR-1K-install.XXXXXX")
+            tar -C "$checkout" --dereference --exclude-vcs --exclude=appdata --exclude=__pycache__ \
+                -cf - setup.sh bddl3 joylo OmniGibson | tar -C "$behavior_dir" -xf -
+            ln -s "$checkout/datasets" "$checkout/docs" "$behavior_dir/"
+        fi
+        sed -i 's|wensi-ai/lerobot@release/b1k"|wensi-ai/lerobot@436812bd8ee39b768c645c248c91f1330834e687"|' "$behavior_dir/OmniGibson/setup.py"
+    fi
     pushd "$behavior_dir" >/dev/null
     ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula
-    # Install the evaluation utilities used by RLinf without running the challenge evaluator.
-    uv pip install "dm_tree>=0.1.9" "hydra-core>=1.3.2" "websockets>=15.0.1" "msgpack>=1.1.0" "gspread>=6.2.1" "open3d>=0.19.0" av "numpy<2"
+    # OmniGibson imports warp at startup and pins it in its primitives extra.
+    # Install it alongside the evaluation utilities used by RLinf.
+    uv pip install "warp-lang==1.12.0" "dm_tree>=0.1.9" "hydra-core>=1.3.2" "websockets>=15.0.1" "msgpack>=1.1.0" "gspread>=6.2.1" "open3d>=0.19.0" av "numpy<2"
     popd >/dev/null
     uv pip uninstall flash-attn || true
     uv pip install ml_dtypes==0.5.3 "${RAY_COMPAT_DEPS[@]}"
