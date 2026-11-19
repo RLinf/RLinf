@@ -7,14 +7,12 @@
 
    BEHAVIOR 基准（图片来源：`BEHAVIOR <https://behavior.stanford.edu>`__）。
 
-`BEHAVIOR <https://behavior.stanford.edu>`__ 是一个基于 NVIDIA IsaacSim / OmniGibson 的日常
-家居活动基准。双臂 R1 Pro 机器人执行长程操作任务；RLinf 借助它对视觉-语言-动作（VLA）策略进行
-强化学习微调。
+`2026 BEHAVIOR 挑战 <https://behavior.stanford.edu/challenge/index.html>`__ 使用 OmniGibson 3.9.3 和 NVIDIA Isaac Sim 5.1 模拟家居任务。RLinf 的示例用双臂移动机器人 R1 Pro 训练视觉语言动作模型（VLA）。
 
 概览
 ----------------------------------------
 
-在 BEHAVIOR 家居任务上用 PPO 对 VLA 进行强化学习微调。
+在 RLinf 环境中准备 2026 仿真资产，并为目标任务选择 PPO 训练或独立评测配置。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -32,15 +30,15 @@
    .. grid-item-card:: 任务
       :text-align: center
 
-      50 个 BEHAVIOR-1K 任务
+      2026 挑战 · 100 个任务
 
    .. grid-item-card:: 硬件
       :text-align: center
 
       1 节点 · 支持光追的 GPU
 
-| **你将完成：** 安装 IsaacSim 依赖 → 下载资产与基座模型 → 运行 ``run_embodiment.sh`` → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · IsaacSim 4.5 与 BEHAVIOR-1K 资产（>30 GB）· 基座检查点（见下文步骤）。
+| **你将完成：** 核对仿真版本 → 下载 2026 仿真资产与模型 → 选择 RLinf 配置。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Python 3.11 · OmniGibson 3.9.3 · Isaac Sim 5.1。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -52,9 +50,9 @@
    * - 字段
      - 说明
    * - 任务
-     - 来自 BEHAVIOR-1K 的 50 个家居操作任务（通过 ``task_idx`` 0–49 选择）。
+     - 官方挑战包含 100 个家居任务。本分支的任务说明表收录了 50 个名称，从中选一个填入 ``omni_config.task.activity_name`` 即可。默认任务为 ``turning_on_radio``\ 。
    * - 机器人
-     - IsaacSim / OmniGibson 上的双臂 R1 Pro。
+     - RLinf 示例和官方默认配置都使用双臂移动机器人 R1 Pro。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -65,10 +63,12 @@
 
    * - 字段
      - 说明
-   * - 观测 (Observation)
-     - 头部相机 RGB（720×720）以及左右腕部 RealSense RGB（480×480）。
+   * - RLinf 观测
+     - 头部 RGB 图像（720×720）、左右腕部 RGB 图像（各 480×480）、机器人本体状态和任务指令。
+   * - 官方评测观测
+     - 默认模式提供三路 224×224 RGB 和本体状态。全分辨率模式提供头部 720×720、两腕各 480×480 的 RGB 和深度图，以及本体状态。详见 `官方评测说明 <https://behavior.stanford.edu/challenge/evaluation.html>`_\ 。
    * - 动作 (Action)
-     - 23 维连续动作：3 自由度底盘（x, y, rz）、4 自由度躯干、2×7 自由度手臂、2×1 自由度平行夹爪。
+     - R1 Pro 的 23 维连续控制量包括底盘的 3 维速度、躯干的 4 个关节目标、每条手臂的 7 个关节目标，以及每侧夹爪的 1 个开合命令。
 
 
 安装
@@ -76,91 +76,54 @@
 
 .. warning::
 
-   安装前先检查 IsaacSim 软硬件要求：
-
-   - https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html
-   - https://docs.omniverse.nvidia.com/dev-guide/latest/common/technical-requirements.html
-
-   Hopper 架构 GPU 需要 NVIDIA driver 570 或更高版本。A100、H100 等不支持光线追踪的 GPU
-   可能会让 BEHAVIOR 场景出现严重渲染伪影。优先使用 RTX 30/40 系列或更新的 GPU，以获得更稳定的视觉效果和训练体验。
+   使用配有 RT Core 的 NVIDIA GPU。操作系统、驱动和显存要求见 `Isaac Sim 5.1 系统要求 <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`_\ 。
 
 .. include:: _setup_common.rst
+   :end-before: 然后，使用下列两种方式之一
 
-**选项 1：Docker 镜像** — BEHAVIOR 提供 **两个独立镜像**，每个对应一个模型：
-``agentic-rlinf0.4-behavior``\ （OpenVLA-OFT）和 ``agentic-rlinf0.4-behavior-openpi``
-（OpenPI）。每个镜像只内置各自的虚拟环境，因此请根据要训练的模型拉取对应镜像
-（两者之间无法通过 ``switch_env`` 互相切换）：
+**选项 1：Docker 镜像** — BEHAVIOR 3.9.3 镜像待发布。
 
-.. code-block:: bash
-
-   # OpenVLA-OFT 模型：
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-behavior
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
-
-   # OpenPI 模型（独立镜像）：
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-
-   # 两个镜像都会默认激活各自对应的虚拟环境。
-
-**选项 2：自定义环境** — 安装 ``--env behavior`` 依赖组合：
+**选项 2：自定义环境** — RLinf 的 ``--env behavior`` 安装入口尚待适配 3.9.3。已有对应版本的 RLinf 环境时，激活它并核对版本。以下命令假设环境位于仓库的 ``.venv`` 目录。
 
 .. code-block:: bash
 
-   # 国内用户可以添加 --use-mirror 加速下载。
-   bash requirements/install.sh embodied --model openvla-oft --env behavior
-   # 或安装 OpenPI 环境：
-   # bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
+   python -c "from importlib.metadata import version; print(version('omnigibson'), version('isaacsim'))"
+
+输出为 OmniGibson 3.9.3 和 Isaac Sim 5.1.x 时，可使用下节的 SDK 下载命令。尚未安装 SDK 时，也可先下载下节列出的三个压缩包。
 
 
 下载资产
 ----------------------------------------
 
-下载 IsaacSim 4.5，并在每次运行前设置 ``ISAAC_PATH``：
+首次下载时，为 2026 仿真资产选择独立的根目录。已有完整资产时，可直接使用现有目录。每次启动 RLinf 前，在同一终端导出 ``OMNIGIBSON_DATA_PATH`` 环境变量。
 
 .. code-block:: bash
 
-   export ISAAC_PATH=/path/to/isaac-sim
-   mkdir -p $ISAAC_PATH && cd $ISAAC_PATH
-   curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o isaac-sim.zip
-   unzip isaac-sim.zip && rm isaac-sim.zip
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
 
-下载 BEHAVIOR-1K 资产，并在每次运行前设置 ``OMNIGIBSON_DATA_PATH``：
+在已激活的 RLinf 环境中运行以下命令，可下载或补齐 3.9.3 所需的资产。
 
 .. code-block:: bash
 
-   # 数据集会占用超过 30 GB。
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   # 之后的 python 命令会下载数据集到 $OMNIGIBSON_DATA_PATH 中。
-   mkdir -p $OMNIGIBSON_DATA_PATH
-
-   # 在已激活的 venv 中运行。国内用户可设置 HF_ENDPOINT=https://hf-mirror.com。
+   mkdir -p "$OMNIGIBSON_DATA_PATH"
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
-   python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
-   python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
+   python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets()"
+   python -c "from omnigibson.utils.asset_utils import download_2026_challenge_task_instances; download_2026_challenge_task_instances()"
 
 **这些命令会：**
 
-1. 下载 OmniGibson 需要的 IsaacSim runtime。
-2. 下载 BEHAVIOR 机器人资产、任务资产和 2025 challenge instances。
-3. 创建训练和评估脚本需要的两个环境变量。
+1. 将机器人模型包 ``omnigibson-robot-assets-3.8.2.zip`` 解压到 ``omnigibson-robot-assets/`` 目录。
+2. 将场景与物体包 ``behavior-1k-assets-3.9.0.zip`` 解压到 ``behavior-1k-assets/`` 目录，并将密钥 ``omnigibson.key`` 保存到资产根目录。
+3. 将任务实例包 ``2026-challenge-task-instances.zip`` 解压到 ``2026-challenge-task-instances/`` 目录。其中包含初始场景布局和 100 项任务清单。
+
+如需提前准备资产，可从 `官方仿真资产仓库 <https://huggingface.co/datasets/behavior-1k/zipped-datasets/tree/main>`_ 下载上述三个压缩包，分别解压到对应目录。安装 SDK 后，运行上方调用 ``download_behavior_1k_assets()`` 的命令即可获取密钥。
 
 
 下载模型
 ----------------------------------------
 
-下载对应模型族的检查点（任选一种方式）：
+RLinf 于 2025 年发布了以下两个 BEHAVIOR checkpoint。选择模型后，用以下任一方式下载。
 
 .. code-block:: bash
 
@@ -204,12 +167,11 @@
      - PPO
      - ``behavior_ppo_openpi_pi05.yaml``
 
-使用 ``run_embodiment.sh`` 启动一个配置：
+RLinf 的 3.9.3 环境适配完成后，可用原有入口启动训练：
 
 .. code-block:: bash
 
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
    bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
 
 **这个命令会：**
@@ -222,15 +184,14 @@
    :class: note
 
    - BEHAVIOR 吞吐调优 → 先增加 env GPU 数量，再调 ``env.num_env_subprocess`` 和 ``env.train.total_num_envs``。
-   - 每个 BEHAVIOR 进程可能占用约 10 GiB 显存；请按 GPU 显存调节 subprocess 数量。
+   - 按可用 GPU 显存和所选场景的显存占用设置仿真子进程数。
    - 缓存任务实例 → 使用 ``rlinf/envs/sim/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
    - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
    - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
 
 .. warning::
 
-   已知问题：在当前 BEHAVIOR 设置下，OpenVLA-OFT / π₀ 的训练成功率
-   （``env/success_once``）可能保持为 0。该问题会在后续版本修复。
+   OpenVLA-OFT 和 π₀ 在 BEHAVIOR 3.9.3 上的训练成功率待验证。
 
 独立评测
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -259,9 +220,7 @@ OpenPI-Comet 作为示例来源：
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
 
-独立评估请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
-该指南负责 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、
-``behavior_openpi_pi05_eval`` 启动命令和结果解读。
+请先按本页说明准备 2026 仿真资产。:doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>` 说明如何设置模型路径、使用 ``behavior_openpi_pi05_eval`` 启动独立评测、读取成功率指标 ``eval/success_once`` 以及查看日志和视频。
 
 --------------
 
@@ -282,10 +241,11 @@ checkpoint，即由 OpenPI checkpoint 转换器
 归一化统计从转换后 checkpoint 中打包的
 ``physical-intelligence/behavior/norm_stats.json`` 读取。
 
+RLinf 环境完成 3.9.3 适配后，可用以下命令运行独立评测。
+
 .. code:: bash
 
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
@@ -313,8 +273,8 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
    * - ``omni_config.task.type`` / ``omni_config.scene.type``
      - 显式保留 ``BehaviorTask`` / ``InteractiveTraversableScene``，以确保覆盖后选中预期的上游
        OmniGibson 类。
-   * - ``task_idx``
-     - 当前任务 id（0–49）。RLinf 将其映射到 ``task.activity_name``\ （见 ``behavior_env.py``）。
+   * - ``omni_config.task.activity_name``
+     - 任务名称，例如 ``turning_on_radio``\ 。同一任务的初始布局由 ``omni_config.task.activity_instance_id`` 指定。
    * - ``omni_config.task.instance_resample_mode``
      - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``
        （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——
@@ -330,18 +290,16 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
    * - ``omni_config.scene.partial_scene_load``
      - 为 ``true`` 时自动按 ``activity_name`` 填充 ``scene.load_room_types``\ （减少启动时间与内存），
        需要 ``activity_name`` 与 ``scene_model``。为 ``false``/省略时需显式设置 ``load_room_types``。
-   * - ``camera.head_resolution`` / ``camera.wrist_resolution``
+   * - ``omni_config.camera.head_resolution`` / ``omni_config.camera.wrist_resolution``
      - 头部 / 腕部相机分辨率（默认 720×720 / 480×480，应用到 R1Pro 传感器）。
    * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``
-     - 动作 / 渲染 / 物理步进频率（常用默认 30 / 30 / 120）。越高越慢。
+     - RLinf 的 R1 Pro 配置将动作、渲染和物理步进频率分别设为 60、60 和 120 Hz。越高越慢。
    * - ``omni_config.env.automatic_reset``
      - 保持 ``False``——reset 由 RLinf 训练/评估循环显式控制。
    * - ``omni_config.env.flatten_obs_space`` / ``flatten_action_space``
      - 保持 ``False`` 以保留结构化的观测 / 动作空间。
    * - ``omni_config.macro.use_gpu_dynamics``
      - ``False`` 通常更快；仅在需要粒子 / 流体时启用。
-   * - ``omni_config.macro.enable_flatcache``
-     - ``True`` 通常提升大场景性能。
    * - ``omni_config.macro.enable_object_states``
      - 保持 ``True``——``BehaviorTask`` 依赖物体状态。
    * - ``omni_config.macro.enable_transition_rules``
@@ -362,8 +320,8 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
 ``rlinf/envs/sim/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
 ``*_template.json`` 与 ``*_template-tro_state.json`` 文件（它读取 ``scene_model``、
 ``activity_name``、``activity_definition_id``、机器人配置与房间加载设置，并临时切换为在线物体采样）。
-若设置了 ``activity_instance_dir`` 则写入该目录，否则写入 ``OMNIGIBSON_DATA_PATH`` 默认的
-``2025-challenge-task-instances`` 目录；可用 ``--output-dir`` 覆盖。
+
+2026 资产已包含官方评测实例。以下命令用于生成额外的训练布局。3.9.3 的默认输出目录仍待适配。使用以下命令前，先在 ``behavior_r1pro.yaml`` 中将 ``omni_config.task.activity_instance_dir`` 设为训练布局的输出目录。
 
 .. code-block:: bash
 
