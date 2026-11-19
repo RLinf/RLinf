@@ -52,12 +52,34 @@ class FSDP2Strategy(FSDPStrategyBase):
         mixed_precision_config = self.cfg.fsdp_config.mixed_precision
         param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
         reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
-        cast_forward_inputs = mixed_precision_config.get("cast_forward_inputs", True)
+        fp32_residual = bool(mixed_precision_config.get("fp32_residual", False))
+        # When fp32_residual=True, keep forward inputs uncast so the residual
+        # stream stays in fp32 across FSDP2 transformer layers (PEAR patch 0030).
+        cast_forward_inputs = (
+            False
+            if fp32_residual
+            else mixed_precision_config.get("cast_forward_inputs", True)
+        )
+        fp32_modules = tuple(mixed_precision_config.get("fp32_modules", None) or ())
+        if fp32_modules and bool(
+            mixed_precision_config.get("fp32_modules_tf32", False)
+        ):
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype,
             reduce_dtype=reduce_dtype,
             cast_forward_inputs=cast_forward_inputs,
+        )
+        fp32_mp_policy = (
+            MixedPrecisionPolicy(
+                param_dtype=torch.float32,
+                reduce_dtype=torch.float32,
+                cast_forward_inputs=cast_forward_inputs,
+            )
+            if fp32_modules
+            else None
         )
 
         offload_policy = (
@@ -73,6 +95,8 @@ class FSDP2Strategy(FSDPStrategyBase):
             mp_policy=mp_policy,
             offload_policy=offload_policy,
             reshard_after_forward=self.cfg.fsdp_config.reshard_after_forward,
+            fp32_modules=fp32_modules,
+            fp32_mp_policy=fp32_mp_policy,
         )
 
         return fsdp2_model

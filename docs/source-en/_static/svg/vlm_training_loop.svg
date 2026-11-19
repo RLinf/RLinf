@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 620" width="1040" height="620" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="tr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#1d4ed8"/>
+    </marker>
+    <marker id="tr-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0f766e"/>
+    </marker>
+    <marker id="tr-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="620" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <text x="28" y="30" font-size="15" font-weight="700" fill="#0f172a">One Online RL Training Step in RLinf</text>
+  <text x="28" y="50" font-size="12" fill="#64748b">Sample → collect &amp; filter → optimize → sync weights</text>
+
+  <!-- Legend -->
+  <line x1="560" y1="26" x2="592" y2="26" stroke="#1d4ed8" stroke-width="2.5" marker-end="url(#tr-blue)"/>
+  <text x="600" y="30" font-size="11" fill="#334155">data / trajectory</text>
+  <line x1="720" y1="26" x2="752" y2="26" stroke="#0f766e" stroke-width="2.5" marker-end="url(#tr-teal)"/>
+  <text x="760" y="30" font-size="11" fill="#334155">actions / tokens</text>
+  <line x1="880" y1="26" x2="912" y2="26" stroke="#c2410c" stroke-width="3" marker-end="url(#tr-orange)"/>
+  <text x="920" y="30" font-size="11" fill="#334155">CUDA-IPC weights</text>
+
+  <!-- Orchestrator -->
+  <rect x="28" y="64" width="984" height="40" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+  <text x="520" y="90" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">EmbodiedRunner · Weight Sync → SGLang Resume → DAPO Loop → Release Memory → 1 Optimizer Step</text>
+
+  <!-- ========== STAGE 1 ========== -->
+  <rect x="28" y="120" width="984" height="168" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>
+  <rect x="28" y="120" width="8" height="168" rx="4" fill="#2563eb"/>
+  <text x="52" y="144" font-size="12" font-weight="700" fill="#1e40af">STAGE 1 · Sample episodes in parallel</text>
+
+  <!-- Env -->
+  <rect x="52" y="158" width="280" height="110" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <text x="192" y="182" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">Env Workers</text>
+  <text x="192" y="200" text-anchor="middle" font-size="11" fill="#64748b">LIBERO sims + PD/OSC</text>
+  <text x="68" y="224" font-size="11.5" fill="#334155">Emit frames, base-frame vlm_state,</text>
+  <text x="68" y="242" font-size="11.5" fill="#334155">vlm_finished, reset_mask, EnvPart</text>
+
+  <!-- arrows Env <-> Rollout -->
+  <line x1="332" y1="190" x2="368" y2="190" stroke="#1d4ed8" stroke-width="2.5" marker-end="url(#tr-blue)"/>
+  <text x="350" y="182" text-anchor="middle" font-size="10" font-weight="600" fill="#1d4ed8">obs</text>
+  <line x1="368" y1="228" x2="332" y2="228" stroke="#0f766e" stroke-width="2.5" marker-end="url(#tr-teal)"/>
+  <text x="350" y="248" text-anchor="middle" font-size="10" font-weight="600" fill="#0f766e">8-D act</text>
+
+  <!-- Rollout -->
+  <rect x="372" y="158" width="280" height="110" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+  <text x="512" y="182" text-anchor="middle" font-size="13" font-weight="700" fill="#4c1d95">Rollout Workers</text>
+  <text x="512" y="200" text-anchor="middle" font-size="11" fill="#64748b">SGLang adapter</text>
+  <text x="388" y="224" font-size="11.5" fill="#334155">Incremental tokens · sticky sessions</text>
+  <text x="388" y="242" font-size="11.5" fill="#334155">response_budget · skip finished envs</text>
+
+  <!-- arrows Rollout <-> SGLang -->
+  <line x1="652" y1="190" x2="688" y2="190" stroke="#1d4ed8" stroke-width="2.5" marker-end="url(#tr-blue)"/>
+  <text x="670" y="182" text-anchor="middle" font-size="10" font-weight="600" fill="#1d4ed8">HTTP</text>
+  <line x1="688" y1="228" x2="652" y2="228" stroke="#0f766e" stroke-width="2.5" marker-end="url(#tr-teal)"/>
+  <text x="670" y="248" text-anchor="middle" font-size="10" font-weight="600" fill="#0f766e">ids</text>
+
+  <!-- SGLang -->
+  <rect x="692" y="158" width="296" height="110" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+  <text x="840" y="182" text-anchor="middle" font-size="13" font-weight="700" fill="#9a3412">SGLang Servers (TP8)</text>
+  <text x="840" y="200" text-anchor="middle" font-size="11" fill="#64748b">patched · sticky KV</text>
+  <text x="708" y="224" font-size="11.5" fill="#334155">Prefix reuse · memory saver</text>
+  <text x="708" y="242" font-size="11.5" fill="#334155">fp32 visual / A_log / lm_head</text>
+
+  <!-- Stage connector 1 -> 2 -->
+  <line x1="512" y1="288" x2="512" y2="318" stroke="#1d4ed8" stroke-width="2.5" marker-end="url(#tr-blue)"/>
+  <rect x="430" y="292" width="164" height="20" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+  <text x="512" y="306" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1d4ed8">PolicyPart + EnvPart</text>
+
+  <!-- ========== STAGE 2 ========== -->
+  <rect x="28" y="322" width="984" height="88" rx="12" fill="#f0fdfa" stroke="#99f6e4" stroke-width="1.2"/>
+  <rect x="28" y="322" width="8" height="88" rx="4" fill="#0d9488"/>
+  <text x="52" y="346" font-size="12" font-weight="700" fill="#115e59">STAGE 2 · Collect trajectories &amp; DAPO filter</text>
+
+  <rect x="200" y="358" width="640" height="36" rx="8" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <text x="520" y="381" text-anchor="middle" font-size="13" font-weight="700" fill="#115e59">Trajectory Collector · drop zero-variance groups · stream shards</text>
+
+  <!-- Stage connector 2 -> 3 -->
+  <line x1="512" y1="410" x2="512" y2="440" stroke="#1d4ed8" stroke-width="2.5" marker-end="url(#tr-blue)"/>
+  <rect x="448" y="414" width="128" height="20" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1"/>
+  <text x="512" y="428" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1d4ed8">group shards</text>
+
+  <!-- ========== STAGE 3 ========== -->
+  <rect x="28" y="444" width="984" height="88" rx="12" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.2"/>
+  <rect x="28" y="444" width="8" height="88" rx="4" fill="#4f46e5"/>
+  <text x="52" y="468" font-size="12" font-weight="700" fill="#3730a3">STAGE 3 · One policy-gradient update</text>
+
+  <rect x="200" y="480" width="640" height="36" rx="8" fill="#ffffff" stroke="#4f46e5" stroke-width="2"/>
+  <text x="520" y="503" text-anchor="middle" font-size="13" font-weight="700" fill="#3730a3">FSDP2 Actor · GRPO + pear_reinforce · global token-mean</text>
+
+  <!-- Stage connector 3 -> 4 -->
+  <line x1="512" y1="532" x2="512" y2="556" stroke="#c2410c" stroke-width="3" marker-end="url(#tr-orange)"/>
+
+  <!-- ========== STAGE 4 ========== -->
+  <rect x="28" y="560" width="984" height="44" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-width="1.4"/>
+  <rect x="28" y="560" width="8" height="44" rx="4" fill="#ea580c"/>
+  <text x="52" y="588" font-size="12" font-weight="700" fill="#9a3412">STAGE 4 · CUDA-IPC weight sync → SGLang (fp32_modules) for the next step</text>
+</svg>

@@ -230,6 +230,31 @@ def _pi0_fast_dtype_auto_wrap_policy(
     return _module_has_single_floating_dtype(module)
 
 
+def _default_no_split_module_names(module):
+    """HF classes FSDP should wrap, including a policy that holds the model."""
+    if hasattr(module, "language_model"):
+        names = list(getattr(module.language_model, "_no_split_modules", None) or [])
+        visual = getattr(module, "visual", None)
+        if visual is not None:
+            names.extend(getattr(visual, "_no_split_modules", None) or [])
+        if names:
+            return names
+
+    names = getattr(module, "_no_split_modules", None)
+    if names:
+        return list(names)
+
+    # QwenVLMPolicy keeps the HF model on ``.model``. The policy itself has
+    # no ``_no_split_modules``, so without this lookup FSDP flattens the
+    # entire checkpoint into one parameter.
+    inner = getattr(module, "model", None)
+    if isinstance(inner, torch.nn.Module) and inner is not module:
+        inner_names = getattr(inner, "_no_split_modules", None)
+        if inner_names:
+            return list(inner_names)
+    return None
+
+
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
@@ -267,21 +292,7 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         )
 
     else:
-        if hasattr(module, "language_model"):
-            # For VLA models, get transformer classes from language_model submodule
-            default_transformer_cls_names_to_wrap = getattr(
-                module.language_model, "_no_split_modules", None
-            )
-            if hasattr(module, "visual"):
-                default_transformer_cls_names_to_wrap.extend(
-                    getattr(module.visual, "_no_split_modules", [])
-                )
-
-        else:
-            # For standard models, get transformer classes directly from module
-            default_transformer_cls_names_to_wrap = getattr(
-                module, "_no_split_modules", None
-            )
+        default_transformer_cls_names_to_wrap = _default_no_split_module_names(module)
 
         fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
             default_transformer_cls_names_to_wrap
@@ -451,6 +462,21 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         return functools.partial(_or_policy, policies=policies)
 
 
+def _matches_fp32_module(name: str, fp32_modules: tuple[str, ...]) -> bool:
+    """Return whether module path ``name`` belongs to any configured fp32 prefix."""
+    if not name or not fp32_modules:
+        return False
+    for target in fp32_modules:
+        if (
+            name == target
+            or name.startswith(f"{target}.")
+            or f".{target}" in name
+            and (name.endswith(f".{target}") or f".{target}." in name)
+        ):
+            return True
+    return False
+
+
 def apply_fsdp2_to_model(
     module,
     config: dict,
@@ -458,6 +484,8 @@ def apply_fsdp2_to_model(
     mp_policy: MixedPrecisionPolicy,
     offload_policy: CPUOffloadPolicy,
     reshard_after_forward: bool,
+    fp32_modules: tuple[str, ...] = (),
+    fp32_mp_policy: Optional[MixedPrecisionPolicy] = None,
 ):
     """
     FSDP2 version of module sharding application, corresponding to FSDP1's auto_wrap_policy logic
@@ -494,18 +522,7 @@ def apply_fsdp2_to_model(
             wrap_policy_config.get("no_split_names")
         )
     else:
-        if hasattr(module, "language_model"):
-            default_transformer_cls_names_to_wrap = getattr(
-                module.language_model, "_no_split_modules", None
-            )
-            if hasattr(module, "visual"):
-                default_transformer_cls_names_to_wrap.extend(
-                    getattr(module.visual, "_no_split_modules", [])
-                )
-        else:
-            default_transformer_cls_names_to_wrap = getattr(
-                module, "_no_split_modules", None
-            )
+        default_transformer_cls_names_to_wrap = _default_no_split_module_names(module)
         fsdp_transformer_layer_cls_to_wrap = _normalize_wrap_targets(
             default_transformer_cls_names_to_wrap
         )
@@ -530,8 +547,15 @@ def apply_fsdp2_to_model(
     )
 
     modules_to_shard = []
+    fp32_targets = tuple(fp32_modules or ())
 
     for name, submodule in module.named_modules():
+        is_fp32_root = bool(
+            fp32_targets
+            and any(
+                name == target or name.endswith(f".{target}") for target in fp32_targets
+            )
+        )
         if (
             submodule.__class__.__name__ in transformer_cls_names
             or (custom_module_classes and isinstance(submodule, custom_module_classes))
@@ -540,17 +564,28 @@ def apply_fsdp2_to_model(
                 and getattr(submodule, "_fsdp_wrap_name", None) in no_split_name_set
             )
             or (isinstance(submodule, torch.nn.Embedding) and wrap_embeddings)
+            or is_fp32_root
         ):
-            modules_to_shard.append((name, submodule, "transformer_or_embedding"))
+            use_fp32 = fp32_mp_policy is not None and _matches_fp32_module(
+                name, fp32_targets
+            )
+            modules_to_shard.append(
+                (name, submodule, "fp32" if use_fp32 else "transformer_or_embedding")
+            )
 
     # named_modules() returns submodules outermost-first, but fully_shard should
     # be applied inside-out. Reversing ensures child modules are wrapped first,
     # so the parent only shards the remaining (non-wrapped) parameters.
     for name, submodule, module_type in reversed(modules_to_shard):
+        sub_mp_policy = (
+            fp32_mp_policy
+            if module_type == "fp32" and fp32_mp_policy is not None
+            else mp_policy
+        )
         fully_shard(
             submodule,
             mesh=device_mesh,
-            mp_policy=mp_policy,
+            mp_policy=sub_mp_policy,
             offload_policy=offload_policy,
             reshard_after_forward=reshard_after_forward,
         )

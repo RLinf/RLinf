@@ -360,13 +360,14 @@ def preprocess_loss_inputs(
                 f"{tuple(logprobs.shape)}, got {mask_shape}"
             )
         token_mask = logprob_mask.to(device=logprobs.device, dtype=torch.bool)
-        advantages = advantages.unsqueeze(-1)
+        advantages = _squeeze_trailing_singletons(advantages).unsqueeze(-1)
         if loss_mask is not None:
+            loss_mask = _squeeze_trailing_singletons(loss_mask)
             loss_mask = loss_mask.unsqueeze(-1).to(dtype=torch.bool) & token_mask
         else:
             loss_mask = token_mask
         if loss_mask_sum is not None:
-            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+            loss_mask_sum = _squeeze_trailing_singletons(loss_mask_sum).unsqueeze(-1)
 
     elif logprob_type == "token_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
@@ -455,6 +456,13 @@ def postprocess_loss_metric(metrics_data: dict) -> dict:
         elif isinstance(v, (float, int)):
             metrics_data[k] = v
     return metrics_data
+
+
+def _squeeze_trailing_singletons(tensor: torch.Tensor) -> torch.Tensor:
+    """Drop chunk axes of size one so an episode mask broadcasts over tokens."""
+    while tensor.ndim > 1 and tensor.shape[-1] == 1:
+        tensor = tensor.squeeze(-1)
+    return tensor
 
 
 def expand_to_target_dim(tensor, target_shape):

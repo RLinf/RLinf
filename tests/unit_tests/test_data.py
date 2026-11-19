@@ -1765,6 +1765,31 @@ def test_trajectory_owns_step_materialization_splitting_and_batching():
     assert torch.equal(batch["forward_inputs"]["action"], trajectory.actions)
 
 
+def test_trajectory_pads_growing_logprob_spans_across_turns():
+    steps = [
+        TrajectoryStep(
+            actions=torch.zeros(2, 1, 1),
+            rewards=torch.ones(2, 1),
+            prev_logprobs=torch.ones(2, 4),
+            versions=torch.full((2, 4), 3.0),
+        ),
+        TrajectoryStep(
+            actions=torch.zeros(2, 1, 1),
+            rewards=torch.ones(2, 1),
+            prev_logprobs=torch.full((2, 6), 2.0),
+            versions=torch.full((2, 6), 3.0),
+        ),
+    ]
+
+    trajectory = Trajectory.from_steps(steps, max_episode_length=2)
+
+    assert trajectory.prev_logprobs.shape == (2, 2, 6)
+    assert trajectory.versions.shape == (2, 2, 6)
+    assert torch.equal(trajectory.prev_logprobs[0, :, :4], torch.ones(2, 4))
+    assert torch.equal(trajectory.prev_logprobs[0, :, 4:], torch.zeros(2, 2))
+    assert torch.equal(trajectory.prev_logprobs[1], torch.full((2, 6), 2.0))
+
+
 def test_policy_input_methods_replace_legacy_routing_helpers():
     policy_input = PolicyInput(
         obs={"states": torch.arange(8).reshape(4, 2)},

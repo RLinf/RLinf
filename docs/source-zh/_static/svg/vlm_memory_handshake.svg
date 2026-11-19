@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 215" width="1040" height="215" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr-m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1.2 L 9 5 L 0 8.8 z" fill="#334155"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="215" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="28" y="32" font-size="15" font-weight="700" fill="#0f172a">Two-Stage GPU Memory Handshake (Collocated Mode)</text>
+
+  <!-- Stage 1 -->
+  <rect x="28" y="54" width="212" height="96" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.8"/>
+  <text x="134" y="78" text-anchor="middle" font-size="12.5" font-weight="700" fill="#9a3412">Stage 1: Resume Weights</text>
+  <text x="134" y="100" text-anchor="middle" font-size="11.5" fill="#334155">SGLang resumes weights only</text>
+  <text x="134" y="118" text-anchor="middle" font-size="11.5" fill="#334155">CUDA-IPC copies FSDP params</text>
+  <text x="134" y="136" text-anchor="middle" font-size="11.5" fill="#64748b">Actor then offloads params</text>
+
+  <line x1="240" y1="102" x2="278" y2="102" stroke="#334155" stroke-width="2" marker-end="url(#arr-m)"/>
+
+  <!-- Stage 2 -->
+  <rect x="282" y="54" width="212" height="96" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.8"/>
+  <text x="388" y="78" text-anchor="middle" font-size="12.5" font-weight="700" fill="#115e59">Stage 2: Resume KV &amp; Graph</text>
+  <text x="388" y="100" text-anchor="middle" font-size="11.5" fill="#334155">SGLang resumes kv_cache</text>
+  <text x="388" y="118" text-anchor="middle" font-size="11.5" fill="#334155">and cuda_graph</text>
+  <text x="388" y="136" text-anchor="middle" font-size="11.5" fill="#64748b">Actor stays offloaded on CPU</text>
+
+  <line x1="494" y1="102" x2="532" y2="102" stroke="#334155" stroke-width="2" marker-end="url(#arr-m)"/>
+
+  <!-- Stage 3 -->
+  <rect x="536" y="54" width="212" height="96" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.8"/>
+  <text x="642" y="78" text-anchor="middle" font-size="12.5" font-weight="700" fill="#4c1d95">Stage 3: Rollout &amp; Release</text>
+  <text x="642" y="100" text-anchor="middle" font-size="11.5" fill="#334155">SGLang generates episodes</text>
+  <text x="642" y="118" text-anchor="middle" font-size="11.5" fill="#334155">Closes sessions, releases "all"</text>
+  <text x="642" y="136" text-anchor="middle" font-size="11.5" fill="#64748b">GPU memory freed for training</text>
+
+  <line x1="748" y1="102" x2="786" y2="102" stroke="#334155" stroke-width="2" marker-end="url(#arr-m)"/>
+
+  <!-- Stage 4 -->
+  <rect x="790" y="54" width="222" height="96" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.8"/>
+  <text x="901" y="78" text-anchor="middle" font-size="12.5" font-weight="700" fill="#3730a3">Stage 4: FSDP Actor Update</text>
+  <text x="901" y="100" text-anchor="middle" font-size="11.5" fill="#334155">Actor onloads params &amp; optim</text>
+  <text x="901" y="118" text-anchor="middle" font-size="11.5" fill="#334155">Runs 1 global-batch update</text>
+  <text x="901" y="136" text-anchor="middle" font-size="11.5" fill="#64748b">Offloads optimizer before sync</text>
+
+  <!-- Loop back -->
+  <path d="M 901 150 L 901 186 L 134 186 L 134 154" fill="none" stroke="#64748b" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#arr-m)"/>
+  <rect x="424" y="173" width="192" height="24" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="520" y="189" text-anchor="middle" font-size="11.5" font-weight="600" fill="#475569">Next RL step (weight sync)</text>
+</svg>

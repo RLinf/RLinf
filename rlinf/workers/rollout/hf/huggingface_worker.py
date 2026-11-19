@@ -174,6 +174,10 @@ class MultiStepRolloutWorker(Worker):
                 "rollout.value_only_bootstrap=True requires a policy implementing "
                 f"predict_value_batch, got {type(self.hf_model).__name__}."
             )
+        if str(self.cfg.rollout.get("generation_backend", "")) == "sglang" and hasattr(
+            self.hf_model, "attach_sglang"
+        ):
+            self.hf_model.attach_sglang(self.cfg.rollout.get("sglang", {}))
 
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
@@ -696,6 +700,8 @@ class MultiStepRolloutWorker(Worker):
 
         applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
         self.version = applied_version
+        if hasattr(self.hf_model, "on_weights_synced"):
+            self.hf_model.on_weights_synced(int(applied_version))
         if self.finished_episodes is None:
             self.finished_episodes = (
                 self.version * self.total_num_train_envs * self.rollout_epoch
@@ -1100,6 +1106,22 @@ class MultiStepRolloutWorker(Worker):
 
             if self.enable_offload:
                 self.offload_model()
+
+    def resume_sglang_memory(self) -> None:
+        """Put the external SGLang server back on GPU before a rollout."""
+        if not hasattr(self.hf_model, "resume_sglang_memory"):
+            return
+        if self._rank == 0 and getattr(self.hf_model, "_sglang", None) is not None:
+            self.hf_model._sglang.resume_gpu_memory()
+        self.hf_model.resume_sglang_memory()
+
+    def release_sglang_memory(self) -> None:
+        """Free the external SGLang server before FSDP training."""
+        if not hasattr(self.hf_model, "release_sglang_memory"):
+            return
+        self.hf_model.release_sglang_memory()
+        if self._rank == 0 and getattr(self.hf_model, "_sglang", None) is not None:
+            self.hf_model._sglang.release_gpu_memory()
 
     def offload_model(self):
         if self.enable_cuda_graph:

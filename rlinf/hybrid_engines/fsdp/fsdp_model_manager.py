@@ -40,10 +40,12 @@ from rlinf.hybrid_engines.fsdp import (
     FSDPModule,
 )
 from rlinf.hybrid_engines.fsdp.optim import (
+    StreamedAdamW,
     build_adamw,
     validate_adam_mixed_precision,
 )
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
+from rlinf.hybrid_engines.fsdp.ulysses import build_ulysses_sp_groups
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
@@ -109,6 +111,9 @@ class FSDPModelManager:
 
         self._device_mesh = create_device_mesh(world_size)
         self._dp_group = gradient_reduction_group(self._device_mesh)
+        sp_size = int(self._cfg.fsdp_config.get("ulysses_sp_size", 1))
+        self._sp_group, self._sp_size = build_ulysses_sp_groups(world_size, sp_size)
+        self._streamed_adamw: StreamedAdamW | None = None
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
@@ -317,9 +322,16 @@ class FSDPModelManager:
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        if self._sp_group is not None and hasattr(self.model, "set_ulysses_sp_group"):
+            self.model.set_ulysses_sp_group(self._sp_group)
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0
         )
+        if self._cfg.optim.get("streamed_adamw", False):
+            chunk_bytes = self._cfg.optim.get("streamed_adamw_chunk_bytes", None)
+            self._streamed_adamw = StreamedAdamW(
+                self.optimizer, chunk_bytes=chunk_bytes
+            )
 
         self.lr_scheduler = self.build_lr_scheduler(
             optimizer=self.optimizer, optim_config=self._cfg.optim
@@ -443,6 +455,9 @@ class FSDPModelManager:
         """
         Offload optimizer states to CPU.
         """
+        if getattr(self, "_streamed_adamw", None) is not None:
+            self.is_optimizer_offloaded = True
+            return
         self._strategy.offload_optimizer(self.optimizer)
         self.is_optimizer_offloaded = True
 
@@ -453,6 +468,9 @@ class FSDPModelManager:
         Args:
             device_id: the target device id to load optimizer states.
         """
+        if getattr(self, "_streamed_adamw", None) is not None:
+            self.is_optimizer_offloaded = False
+            return
         self._strategy.onload_optimizer(self.optimizer, device_id)
         self.is_optimizer_offloaded = False
 
@@ -473,6 +491,12 @@ class FSDPModelManager:
             self._logger.warning(
                 f"[FSDP] Non-finite grad norm {grad_norm} detected. Skipping optimizer step."
             )
+        elif (
+            getattr(self, "_streamed_adamw", None) is not None
+            and not self.grad_scaler.is_enabled()
+            and self._streamed_adamw.is_ready()
+        ):
+            self._streamed_adamw.step()
         else:
             self.grad_scaler.step(optimizer=self.optimizer)
 
@@ -614,11 +638,13 @@ class FSDPModelManager:
             model, use_fp32_master_params=use_fp32_master_params
         )
 
+        use_streamed_adamw = bool(self._cfg.optim.get("streamed_adamw", False))
         # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
-        # for NO_SHARD models. Sharded scalar parameters cannot use this path.
+        # for NO_SHARD models. Sharded scalar parameters and StreamedAdamW cannot use this path.
         all_params = [p for group in param_groups for p in group["params"]]
         use_fused_adamw = (
             not use_fp32_master_params
+            and not use_streamed_adamw
             and self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
             == "no_shard"
             and Worker.torch_device_type == "cuda"
@@ -635,8 +661,9 @@ class FSDPModelManager:
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict
-        # in save/load_checkpoint calls
-        warmup_optimizer_state(optimizer)
+        # in save/load_checkpoint calls (StreamedAdamW allocates pinned host state directly)
+        if not use_streamed_adamw:
+            warmup_optimizer_state(optimizer)
         return optimizer
 
     def build_optimizers(

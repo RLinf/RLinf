@@ -200,6 +200,9 @@ class LiberoEnv(gym.Env):
 
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
+        self._vlm_native_steps = np.zeros(self.num_envs, dtype=np.int32)
+        self._vlm_finished = np.zeros(self.num_envs, dtype=bool)
+        self._vlm_outcome = np.zeros(self.num_envs, dtype=np.int64)
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
@@ -527,6 +530,10 @@ class LiberoEnv(gym.Env):
             else:
                 task_descriptions.append(task.language)
 
+        if self.cfg.get("vlm_action_mode", False):
+            from rlinf.models.embodiment.qwen_vlm.protocol import mirror_instruction
+
+            task_descriptions = [mirror_instruction(text) for text in task_descriptions]
         self.task_descriptions = task_descriptions
         self._pert_init_folders = pert_init_folders
         return env_fn_params
@@ -784,6 +791,9 @@ class LiberoEnv(gym.Env):
             self.returns[mask] = 0
             self.success_episode_len[mask] = 0
             self._elapsed_steps[env_idx] = 0
+            self._vlm_native_steps[env_idx] = 0
+            self._vlm_finished[env_idx] = False
+            self._vlm_outcome[env_idx] = 0
         else:
             self.prev_step_reward[:] = 0
             self.success_once[:] = False
@@ -791,6 +801,9 @@ class LiberoEnv(gym.Env):
             self.returns[:] = 0.0
             self.success_episode_len[:] = 0
             self._elapsed_steps[:] = 0
+            self._vlm_native_steps[:] = 0
+            self._vlm_finished[:] = False
+            self._vlm_outcome[:] = 0
 
     def _record_metrics(
         self,
@@ -959,9 +972,14 @@ class LiberoEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         self._reconfigure(reset_state_ids, env_idx)
-        # Preserve LIBERO's existing 15-step settling behavior unless a model
-        # explicitly requests a different reset wait (FastWAM uses 30).
-        num_steps_wait = int(self.cfg.get("num_steps_wait", 15))
+        # VLM-policy episodes settle for 10 steps. Other LIBERO runs keep 15 unless the
+        # config sets num_steps_wait (FastWAM uses 30).
+        from rlinf.models.embodiment.qwen_vlm.protocol import reset_wait_steps
+
+        num_steps_wait = reset_wait_steps(
+            bool(self.cfg.get("vlm_action_mode", False)),
+            self.cfg.get("num_steps_wait", None),
+        )
         for _ in range(num_steps_wait):
             zero_actions = np.zeros((len(env_idx), 7))
             if self.cfg.reset_gripper_open:
@@ -978,6 +996,11 @@ class LiberoEnv(gym.Env):
         if self.is_libero_mem:
             self.env.reset_memory_progress(id=env_idx)
         obs = self._wrap_obs(self.current_raw_obs)
+        if self.cfg.get("vlm_action_mode", False):
+            self._attach_vlm_state(obs)
+            obs["reset_mask"] = torch.zeros(self.num_envs, dtype=torch.bool)
+            obs["reset_mask"][list(env_idx)] = True
+            obs["vlm_finished"] = to_tensor(self._vlm_finished.copy())
         if self.short_memory is not None:
             for index in env_idx:
                 self._observation_history[index].clear()
@@ -1032,6 +1055,8 @@ class LiberoEnv(gym.Env):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
+        if self.cfg.get("vlm_action_mode", False):
+            return self._vlm_macro_step(actions, auto_reset=auto_reset)
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, info_lists = self.env.step(actions)
@@ -1068,6 +1093,123 @@ class LiberoEnv(gym.Env):
         return (
             obs,
             to_tensor(step_reward),
+            to_tensor(terminations),
+            to_tensor(truncations),
+            infos,
+        )
+
+    def _vlm_suite_name(self, env_id: int) -> str:
+        names = getattr(self.task_suite, "task_suite_names", None)
+        task_id = int(self.task_ids[env_id])
+        if names is not None:
+            return str(names[task_id])
+        return str(self.cfg.task_suite_name).lower()
+
+    def _vlm_native_budgets(self) -> np.ndarray:
+        from rlinf.models.embodiment.qwen_vlm.protocol import native_step_budget
+
+        budgets = [
+            native_step_budget(self._vlm_suite_name(index))
+            for index in range(self.num_envs)
+        ]
+        return np.asarray(budgets, dtype=np.int32)
+
+    def _attach_vlm_state(self, obs: dict[str, Any]) -> None:
+        states = self.env.vlm_observe()
+        rows = []
+        for state in states:
+            arm = state["arm"]
+            rows.append(
+                [
+                    arm["x"],
+                    arm["y"],
+                    arm["z"],
+                    arm["roll"],
+                    arm["pitch"],
+                    arm["yaw"],
+                    state["gripper"]["width"],
+                ]
+            )
+        obs["vlm_state"] = to_tensor(np.asarray(rows, dtype=np.float32))
+
+    def _vlm_macro_step(
+        self,
+        actions: np.ndarray,
+        auto_reset: bool,
+    ) -> tuple[
+        dict[str, Any] | None, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]
+    ]:
+        """Execute one relative VLM macro action in every environment."""
+        if self._vlm_finished.all():
+            self._elapsed_steps += 1
+            rewards = np.zeros(self.num_envs, dtype=np.float32)
+            truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+            terminations = np.ones(self.num_envs, dtype=bool) & ~truncations
+            obs = self._wrap_obs(self.current_raw_obs)
+            self._attach_vlm_state(obs)
+            obs["reset_mask"] = torch.zeros(self.num_envs, dtype=torch.bool)
+            obs["vlm_finished"] = to_tensor(self._vlm_finished.copy())
+            infos = self._record_metrics(
+                rewards, np.zeros(self.num_envs, dtype=bool), {}
+            )
+            infos["vlm_native_steps"] = to_tensor(self._vlm_native_steps.copy())
+            infos["vlm_outcome"] = to_tensor(self._vlm_outcome.copy())
+            return (
+                obs,
+                to_tensor(rewards),
+                to_tensor(terminations),
+                to_tensor(truncations),
+                infos,
+            )
+        self._elapsed_steps += 1
+        remaining = np.maximum(self._vlm_native_budgets() - self._vlm_native_steps, 0)
+        # A finished episode stays put. The VLM policy does not take another action after
+        # success, a bad action, or the suite's native-step budget.
+        remaining = np.where(self._vlm_finished, 0, remaining)
+        already_finished = self._vlm_finished.copy()
+        results = self.env.vlm_macro(actions, native_budget=remaining)
+        rewards = np.asarray([result["reward"] for result in results], dtype=np.float32)
+        success = np.asarray([result["success"] for result in results], dtype=bool)
+        parse_failure = np.asarray(
+            [result["outcome"] == "parse" for result in results], dtype=bool
+        )
+        episode_done = np.asarray([result["done"] for result in results], dtype=bool)
+        terminations = success | parse_failure | episode_done
+        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        terminations = terminations & ~truncations
+        self._vlm_finished |= terminations | truncations
+        for index, result in enumerate(results):
+            if result["observation"] is not None:
+                self.current_raw_obs[index] = result["observation"]
+        obs = self._wrap_obs(self.current_raw_obs)
+        self._attach_vlm_state(obs)
+        obs["reset_mask"] = torch.zeros(self.num_envs, dtype=torch.bool)
+        obs["vlm_finished"] = to_tensor(self._vlm_finished.copy())
+        infos = self._record_metrics(rewards, success, {})
+        outcome_codes = {
+            "parse": 0,
+            "reached": 1,
+            "stopped": 2,
+            "done": 3,
+            "budget": 4,
+            "timeout": 5,
+        }
+        self._vlm_native_steps += np.asarray(
+            [result["native_steps"] for result in results], dtype=np.int32
+        )
+        infos["vlm_native_steps"] = to_tensor(self._vlm_native_steps.copy())
+        new_outcome = np.asarray(
+            [outcome_codes[result["outcome"]] for result in results],
+            dtype=np.int64,
+        )
+        self._vlm_outcome = np.where(already_finished, self._vlm_outcome, new_outcome)
+        infos["vlm_outcome"] = to_tensor(self._vlm_outcome.copy())
+        dones = terminations | truncations
+        if dones.any() and auto_reset and self.auto_reset:
+            obs, infos, _ = self._handle_auto_reset(dones, obs, infos)
+        return (
+            obs,
+            to_tensor(rewards),
             to_tensor(terminations),
             to_tensor(truncations),
             infos,

@@ -4,7 +4,7 @@
 本节展示了 **RLinf 目前支持的示例集合**，
 展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
 
-具身智能是 RLinf 的核心方向。具身示例被拆分为以下七个入口，便于按你的实际起点快速定位：
+具身智能是 RLinf 的核心方向。具身示例按下面这些入口组织，便于按你的实际起点快速定位：
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -38,6 +38,12 @@
       :link-type: doc
 
       构建用于仿真与真实机器人强化学习流程的奖励模型。
+
+   .. grid-item-card:: VLM-as-Policy
+      :link: embodied/vlm_as_policy
+      :link-type: doc
+
+      用在线强化学习把推理 VLM 直接训练为多轮机器人 policy。
 
    .. grid-item-card:: SFT
       :link: sft_index
@@ -83,6 +89,7 @@
    具身模型 <vla_wam_index>
    世界模型 <world_model_index>
    奖励模型 <embodied/reward_model_index>
+   VLM-as-Policy <embodied/vlm_as_policy>
    SFT <sft_index>
    RL <methods_index>
    图像与视频生成 <video_models>

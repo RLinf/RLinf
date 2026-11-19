@@ -42,6 +42,18 @@ def main(cfg) -> None:
         cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path
     )
     component_placement = HybridComponentPlacement(cfg, cluster)
+    sglang_server_placement = None
+    if cfg.rollout.get("rollout_backend", "huggingface") == "sglang" and bool(
+        cfg.rollout.sglang.get("apply_rlinf_patch", False)
+    ):
+        from rlinf.workers.rollout.sglang.ipc_placement import (
+            configure_collocated_sglang,
+        )
+
+        # Stamp actor world and engine node count before any worker copies cfg.
+        sglang_server_placement = configure_collocated_sglang(
+            cfg, cluster, component_placement
+        )
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
@@ -116,6 +128,8 @@ def main(cfg) -> None:
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    sglang_server_group = None
+    sglang_router_group = None
     if rollout_backend == "phyai":
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
@@ -126,16 +140,48 @@ def main(cfg) -> None:
         )
 
         rollout_worker_cls = MultiStepRolloutWorker
+    elif rollout_backend == "sglang":
+        from rlinf.workers.rollout.sglang.launcher import (
+            launch_sglang_router_and_server,
+        )
+        from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+            SGLangEmbodiedWorker,
+        )
+
+        rollout_worker_cls = SGLangEmbodiedWorker
     else:
         raise ValueError(
-            "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "
-            f"embodied training, got {rollout_backend!r}."
+            "Expected rollout.rollout_backend 'huggingface', 'phyai', or "
+            f"'sglang' for embodied training, got {rollout_backend!r}."
         )
-    rollout_group = rollout_worker_cls.create_group(cfg).launch(
-        cluster,
-        name=cfg.rollout.group_name,
-        placement_strategy=rollout_placement,
-    )
+    if rollout_backend == "sglang":
+        rollout_group = rollout_worker_cls.create_group(
+            cfg, component_placement
+        ).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
+        sglang_cfg = cfg.rollout.sglang
+        sglang_server_group, sglang_router_group = launch_sglang_router_and_server(
+            config=cfg,
+            cluster=cluster,
+            rollout_hardware_ranks=component_placement.get_hardware_ranks("actor"),
+            router_server_args=sglang_cfg,
+            placement_strategy=sglang_server_placement,
+        )
+        server_urls = [
+            url for url in sglang_server_group.get_server_url().wait() if url
+        ]
+        rollout_group.set_sglang_server_urls(server_urls).wait()
+        if bool(sglang_cfg.get("apply_rlinf_patch", False)):
+            sglang_server_group.init_rlinf_weight_sync().wait()
+    else:
+        rollout_group = rollout_worker_cls.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
@@ -202,6 +248,10 @@ def main(cfg) -> None:
         router_group.stop().wait()
     if server_group is not None:
         server_group.stop().wait()
+    if sglang_router_group is not None:
+        sglang_router_group.stop().wait()
+    if sglang_server_group is not None:
+        sglang_server_group.stop().wait()
 
 
 if __name__ == "__main__":

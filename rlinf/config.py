@@ -135,6 +135,7 @@ SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+SupportedModel.QWEN_VLM = SupportedModel.register("qwen_vlm", force=True)
 
 DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
@@ -168,6 +169,7 @@ EMBODIED_MODEL = set(
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
         SupportedModel.EVO1,
+        SupportedModel.QWEN_VLM,
     }
 )
 
@@ -1199,6 +1201,21 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if model_type == SupportedModel.QWEN_VLM and not only_eval:
+        if int(model_cfg.get("num_action_chunks", 1)) != 1:
+            raise ValueError("Qwen VLM policy emits one macro action per turn.")
+        if int(model_cfg.get("action_dim", 8)) != 8:
+            raise ValueError(
+                "LIBERO VLM actions are 7 relative quantities plus a validity flag."
+            )
+        if algorithm_cfg.get("logprob_type") != "sequence_token_level":
+            raise ValueError(
+                "Qwen VLM GRPO requires algorithm.logprob_type=sequence_token_level."
+            )
+        if float(cfg.rollout.sampling_params.get("temperature_train", 1.0)) != 1.0:
+            raise ValueError(
+                "Qwen VLM token replay requires rollout temperature_train=1.0."
+            )
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
             assert cfg.env.eval.get("short_memory") is not None, (
@@ -1278,9 +1295,10 @@ def validate_embodied_cfg(cfg):
             SupportedModel.OPENVLA_OFT,
             SupportedModel.OPENPI,
             SupportedModel.LINGBOTVLAV2,
+            SupportedModel.QWEN_VLM,
         ], (
-            f"algorithm.recompute_logprobs supports "
-            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value, SupportedModel.OPENPI.value, SupportedModel.LINGBOTVLAV2.value]}, "
+            "algorithm.recompute_logprobs supports openvla, openvla_oft, "
+            "openpi, lingbotvlav2, and qwen_vlm, "
             f"got '{model_cfg.model_type}'."
         )
         assert algorithm_cfg.get("adv_type", None) != "opd", (

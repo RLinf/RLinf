@@ -1365,6 +1365,21 @@ class ScopedTimer:
         self._timer.reset()
         return durations
 
+    def take_duration(self, name: str) -> float:
+        """Remove one finished measurement so the same name can be timed again.
+
+        The named timer is reset with the log entry. Add the returned seconds
+        back with ``add_duration`` after the last repeat if the metric should
+        be the total, as DAPO does for extra rollout batches in one step.
+        """
+        duration = float(self._duration_log.pop(name))
+        self._timer.reset(name)
+        return duration
+
+    def add_duration(self, name: str, seconds: float) -> None:
+        """Add seconds onto a finished measurement without starting the timer."""
+        self._duration_log[name] = self._duration_log.get(name, 0.0) + float(seconds)
+
     @contextmanager
     def __call__(self, name: str, trace_args: Optional[dict] = None):
         """Time a section of code, also emitting a trace event if the tracer is initialized."""
