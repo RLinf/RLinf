@@ -98,6 +98,7 @@ jobs:
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_ogpo_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'

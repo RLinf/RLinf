@@ -105,6 +105,7 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    :maxdepth: 2
 
    SAC-Flow <embodied/sac_flow>
+   OGPO <embodied/ogpo>
    DSRL <embodied/dsrl>
    RECAP <embodied/recap>
    STEAM <embodied/steam>

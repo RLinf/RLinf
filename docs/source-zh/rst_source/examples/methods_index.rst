@@ -105,6 +105,7 @@ RL
    :maxdepth: 2
 
    SAC-Flow <embodied/sac_flow>
+   OGPO <embodied/ogpo>
    DSRL <embodied/dsrl>
    RECAP <embodied/recap>
    STEAM <embodied/steam>

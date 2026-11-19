@@ -20,14 +20,11 @@ from .utils import get_act_func, make_mlp
 
 
 class QHead(nn.Module):
-    """
-    Q-value head for SAC critic networks.
-    Processes state and action separately before fusion to handle dimension imbalance.
+    """Q-value MLP over concatenated state and action features.
 
-    Architecture:
-        - State pathway: projects from hidden_size to 256
-        - Action pathway: projects from action_dim to 256
-        - Fusion: concatenate [256, 256] -> 512 -> 256 -> 128 -> 1
+    The default initializer uses activation-specific hidden-layer weights and
+    a normal output layer with std=0.02. ``xavier_uniform`` uses gain=1 for all
+    Q-value MLP linear layers, including the output layer.
     """
 
     def __init__(
@@ -37,13 +34,15 @@ class QHead(nn.Module):
         hidden_dims,
         output_dim=1,
         train_action_encoder=False,
+        activation: str = "tanh",
+        initializer: str = "default",
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.action_feature_dim = action_feature_dim
         self.train_action_encoder = train_action_encoder
 
-        self.nonlinearity = "tanh"
+        self.nonlinearity = activation.lower()
 
         if self.train_action_encoder:
             self.action_encoder = nn.Sequential(
@@ -69,9 +68,25 @@ class QHead(nn.Module):
             )
         )
 
-        self._init_weights(self.nonlinearity)
+        self._init_weights(self.nonlinearity, initializer)
 
-    def _init_weights(self, nonlinearity="relu"):
+    def _init_weights(self, nonlinearity="relu", initializer="default"):
+        if initializer not in {"default", "xavier_uniform"}:
+            raise ValueError(
+                f"Expected initializer 'default' or 'xavier_uniform', got {initializer!r}"
+            )
+        if initializer == "xavier_uniform":
+            for m in self.net:
+                if isinstance(m, nn.Linear):
+                    nn.init.xavier_uniform_(m.weight)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+            return
+        if nonlinearity not in {"tanh", "relu"}:
+            raise ValueError(
+                "The default initializer requires activation 'tanh' or 'relu', "
+                f"got {nonlinearity!r}; use initializer='xavier_uniform'."
+            )
         if nonlinearity == "tanh":
             gain = nn.init.calculate_gain("tanh")
         else:
@@ -130,6 +145,8 @@ class MultiQHead(nn.Module):
         num_q_heads=2,
         output_dim=1,
         train_action_encoder=False,
+        activation: str = "tanh",
+        initializer: str = "default",
     ):
         super().__init__()
 
@@ -143,6 +160,8 @@ class MultiQHead(nn.Module):
                     hidden_dims,
                     output_dim,
                     train_action_encoder,
+                    activation=activation,
+                    initializer=initializer,
                 )
             )
         self.qs = nn.ModuleList(qs)
