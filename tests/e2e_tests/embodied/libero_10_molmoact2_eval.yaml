@@ -70,7 +70,7 @@ rollout:
     repetition_penalty: 1.0
 
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: False
   # MolmoAct2 keeps one action queue per batch index, so the batch composition
   # must stay stable across calls: keep a single pipeline stage.

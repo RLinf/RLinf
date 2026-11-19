@@ -35,6 +35,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 ## 最新动态
 
 - [2026/11] 🔥 RLinf 支持在 [DexJoCo](https://github.com/brave-eai/dexjoco) 灵巧操作基准上对 CNN 和 π₀.₅ 策略进行 SFT 和 PPO 训练，PPO 把 π₀.₅ 在 `water_plant` 上的成功率从 SFT 后的 78.1% 提升到 98.4%。文档：[基于 DexJoCo 的强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexjoco.html)。
+- [2026/11] 🔥 RLinf 支持 Intel GPU。支持的模型与环境组合见[硬件支持矩阵](#硬件支持)，PR：[Intel GPU 支持（#1832）](https://github.com/RLinf/RLinf/pull/1832)。
 - [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
 - [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，率先在 Robbyant R2 上支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
@@ -368,18 +369,23 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
 
 #### 硬件支持
 
-RLinf 通过统一的底层抽象屏蔽了异构硬件之间的差异，使同一套训练栈能够无缝运行在 NVIDIA、AMD GPU，以及华为昇腾、摩尔线程、昆仑芯等国产加速卡上。用户在不同计算节点间迁移训练任务时，可实现模型与算法的“零改动”。同时，加速卡厂商只需完成极简的接口适配，便能将完整的具身智能与智能体 RL 训练生态平移至自家硬件，彻底免去了维护框架定制分支的繁琐工作。
+RLinf 用统一的底层接口屏蔽异构硬件差异，同一套训练栈可运行在 NVIDIA、AMD、Intel GPU 以及华为昇腾、摩尔线程、昆仑芯、沐曦、壁仞等加速卡上。跨节点迁移训练任务无需改动模型与算法代码；加速卡厂商只需适配精简的设备与通信接口，不必单独维护分支。
 
-请先选择所需的模型与环境组合，随后点击相应链接即可获取详细的硬件运行指南。每一款硬件后端均已完美适配其所在行列出的所有环境。
+点击模型或环境链接查看训练示例及已提供的硬件配置说明。✅ 表示已验证的组合（覆盖同行全部环境）；`—` 表示尚未测试，并非不支持。
 
-| 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm |
-|---|---|:---:|:---:|:---:|:---:|
-| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [OpenVLA-OFT](docs/source-zh/rst_source/examples/embodied/openvla_oft.rst) | [Wan 世界模型](docs/source-zh/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
-| [GR00T N1.5](docs/source-zh/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [π₀ / π₀.₅ (OpenPI)](docs/source-zh/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [StarVLA (QwenOFT)](docs/source-zh/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-| [DreamZero](docs/source-zh/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — |
+| 模型 | 环境 | NVIDIA CUDA | 华为昇腾 CANN | 摩尔线程 MUSA | AMD ROCm | Intel XPU | 昆仑芯 XPU | 沐曦 MACA | 壁仞 SUPA |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| [OpenVLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html) | ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html#openvla-oft-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html) | [Wan 世界模型](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/wan.html#wan-hardware) | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/openvla_oft.html) · [π₀ / π₀.₅](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html) · [LingbotVLA 1.0](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html) | [RoboTwin](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robotwin.html#robotwin-hardware) | ✅ | — | — | ✅ | — | — | — | — |
+| [GR00T N1.5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html#gr00t-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [GR00T N1.7](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html) | LIBERO · ManiSkill | ✅ | — | — | — | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | LIBERO | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html) | SFT（LeRobot 数据集） | ✅ | — | — | — | — | — | — | ✅ |
+| [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
+| [DreamZero](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT（LeRobot 数据集） | ✅ | ✅ | — | — | — | — | — | — |
 
 ### 智能体强化学习
 
