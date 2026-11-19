@@ -326,6 +326,7 @@ class MultiStepRolloutWorker(Worker):
         infer_batch_size_fn: Optional[Callable[[Any], int]] = None,
         timeout_time: float = 0.02,
         recv_queue_size: int = 0,
+        max_items: int | None = None,
     ):
         """Receive routed batch shards and record their return routes.
 
@@ -356,6 +357,8 @@ class MultiStepRolloutWorker(Worker):
                 arrives. The first shard is not limited by this deadline.
             recv_queue_size: Number of receive queue entries used when building the
                 receive plan.
+            max_items: Optional upper bound on the shards pulled in this call,
+                capped by the receive plan size.
 
         Returns:
 
@@ -413,6 +416,8 @@ class MultiStepRolloutWorker(Worker):
 
         key = plan.entries[0].key
         max_item_num = len(plan.entries)
+        if max_items is not None:
+            max_item_num = min(max_item_num, max_items)
         received_items: list[Any] = []
         deadline: float | None = None
         while len(received_items) < max_item_num:
@@ -762,7 +767,7 @@ class MultiStepRolloutWorker(Worker):
         return [cls._decompress_policy_input(item) for item in policy_inputs]
 
     async def _receive_decoupled_policy_inputs(
-        self, channel: Channel
+        self, channel: Channel, max_items: int | None = None
     ) -> tuple[list[PolicyInput], list[int]]:
         """Receive one round of decompressed decoupled requests, in route order."""
         return await self.recv_from_and_record_batch_routes_with_timeout(
@@ -774,6 +779,7 @@ class MultiStepRolloutWorker(Worker):
             infer_batch_size_fn=self._infer_policy_input_batch_size,
             timeout_time=0.02,
             recv_queue_size=self.rollout_queue_size,
+            max_items=max_items,
         )
 
     def _can_predict_value_only(self) -> bool:
@@ -1104,7 +1110,7 @@ class MultiStepRolloutWorker(Worker):
             epoch_end = self.decoupled_requests_per_step * (epoch + 1) // epochs
             while served < epoch_end:
                 requests, split_sizes = await self._receive_decoupled_policy_inputs(
-                    input_channel
+                    input_channel, max_items=epoch_end - served
                 )
                 if any(request.is_last for request in requests):
                     raise ValueError("Received a final input in the policy stream.")

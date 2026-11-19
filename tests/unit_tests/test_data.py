@@ -3323,6 +3323,74 @@ def test_decoupled_rollout_workers_split_any_step_among_themselves():
     assert sum(shares) == 400
 
 
+def test_decoupled_step_caps_receive_so_odd_shares_never_overshoot(monkeypatch):
+    from omegaconf import OmegaConf
+
+    import rlinf.scheduler as scheduler_module
+    from rlinf.envs.layout import EnvLayout
+
+    items = [
+        {"batch_index": f"{i}_0_train_policy", "batch": _policy_input()}
+        for i in range(6)
+    ]
+
+    class _QueueChannel:
+        def __init__(self):
+            self.index = 0
+
+        def get(self, key, async_op=True):
+            del key, async_op
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            future.set_result(items[self.index])
+            self.index += 1
+            return _HangingGet(future)
+
+    plan = SimpleNamespace(entries=[SimpleNamespace(key=("route",))] * 2)
+    monkeypatch.setattr(scheduler_module, "get_group_world_size", lambda *_: 8)
+    monkeypatch.setattr(scheduler_module, "decoupled_build_recv_plan", lambda **_: plan)
+
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
+    rollout._world_size = 3
+    rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
+    rollout._manager_proxy = None
+    rollout.batch_router = {"policy": []}
+    rollout.train_batch_size = 32
+    rollout.rollout_queue_size = 2
+    rollout.train_layout = EnvLayout(
+        OmegaConf.create(
+            {
+                "env_type": "maniskill",
+                "total_num_envs": 8,
+                "rollout_epoch": 1,
+                "max_steps_per_rollout_epoch": 50,
+                "max_episode_steps": 50,
+                "auto_reset": True,
+                "ignore_terminations": False,
+            }
+        ),
+        world_size=8,
+        path="env.train",
+    )
+    rollout.decoupled_requests_per_step = 5
+    rollout.update_dagger_beta = Mock()
+    rollout._serve_policy_inputs = Mock()
+    channel = _QueueChannel()
+
+    asyncio.run(
+        inspect.unwrap(MultiStepRolloutWorker._serve_decoupled_step)(
+            rollout, channel, None, None
+        )
+    )
+
+    batch_sizes = [
+        len(call.args[0]) for call in rollout._serve_policy_inputs.call_args_list
+    ]
+    assert batch_sizes == [2, 2, 1]
+    assert channel.index == 5
+
+
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
     rollout.batch_bootstrap_inference = False
@@ -3354,6 +3422,7 @@ def test_decoupled_policy_route_round_trip():
         infer_batch_size_fn=rollout._infer_policy_input_batch_size,
         timeout_time=0.02,
         recv_queue_size=0,
+        max_items=None,
     )
     sent_output = rollout.send_to_recorded_batch_routes.call_args.kwargs["data"]
     assert torch.equal(sent_output, output)

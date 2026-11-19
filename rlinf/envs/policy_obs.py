@@ -96,6 +96,8 @@ class PolicyObsSpec:
                 and self._image_size is not None
             ):
                 value = self._resize(value)
+            elif key == "history" and isinstance(value, dict):
+                value = self.apply(value)
             conformed[key] = value
         return conformed
 

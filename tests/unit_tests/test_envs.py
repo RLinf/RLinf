@@ -373,6 +373,16 @@ def _training_cfg(algorithm=None, runner=None, **envs):
             None,
             r"heterogeneous NFT needs algorithm.env_weighting='sample'",
         ),
+        (
+            {"envs": {"libero": {"loss_weight": 0.0}}},
+            None,
+            r"Expected a positive loss_weight for env.train.envs.libero, got 0.0",
+        ),
+        (
+            {"envs": {"maniskill": {"loss_weight": -0.5}}},
+            None,
+            r"Expected a positive loss_weight for env.train.envs.maniskill, got -0.5",
+        ),
         ({}, {"use_training_pipeline": True}, r"runner.use_training_pipeline"),
     ],
 )
@@ -573,21 +583,87 @@ def test_policy_obs_spec_resizes_stacked_views_and_keeps_pixel_values():
     assert conformed["states"] is obs["states"]
 
 
-def test_policy_obs_spec_passes_control_entries_through():
+def test_policy_obs_spec_passes_control_entries_through_and_conforms_history():
     active_mask = torch.tensor([True, False])
-    history = {"main_images": torch.zeros(2, 3, 4, 4, 3)}
+    frame_mask = torch.ones(2, 3, dtype=torch.bool)
+    history = {
+        "main_images": torch.zeros(2, 3, 4, 4, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(2, 3, 4, 4, 3, dtype=torch.uint8),
+        "frame_mask": frame_mask,
+    }
     obs = {
-        "main_images": torch.zeros(2, 4, 4, 3),
+        "main_images": torch.zeros(2, 4, 4, 3, dtype=torch.uint8),
         "states": torch.zeros(2, 8),
         "active_mask": active_mask,
         "history": history,
     }
 
-    conformed = PolicyObsSpec(keys=["main_images"]).apply(obs)
+    conformed = PolicyObsSpec(keys=["main_images"], image_size=[2, 2]).apply(obs)
 
     assert conformed["states"] is None
     assert conformed["active_mask"] is active_mask
-    assert conformed["history"] is history
+    assert conformed["history"]["main_images"].shape == (2, 3, 2, 2, 3)
+    assert conformed["history"]["wrist_images"] is None
+    assert conformed["history"]["frame_mask"] is frame_mask
+    assert history["main_images"].shape == (2, 3, 4, 4, 3)
+
+
+@pytest.mark.parametrize("only_eval", [True, False])
+def test_psi0_validation_checks_each_listed_env(only_eval):
+    from rlinf.config import _validate_psi0_eval_cfg, _validate_psi0_train_cfg
+
+    mode = "eval" if only_eval else "train"
+    cfg = OmegaConf.create(
+        {
+            "runner": {
+                "only_eval": only_eval,
+                "val_check_interval": -1,
+                "rtc": {"enabled": False},
+                "enable_decoupled_mode": False,
+            },
+            "rollout": {
+                "rollout_backend": "huggingface",
+                "collect_prev_infos": not only_eval,
+                "recompute_logprobs": False,
+            },
+            "actor": {
+                "model": {
+                    "num_action_chunks": 24,
+                    "action_dim": 36,
+                    "add_value_head": True,
+                    "psi0": {
+                        "plan_horizon": 30,
+                        "overlap_horizon": 6,
+                        "sampler": (
+                            "deterministic_euler"
+                            if only_eval
+                            else "stochastic_transition"
+                        ),
+                        "rtc": {"enabled": True},
+                    },
+                },
+                "fsdp_config": {"use_orig_params": True},
+            },
+            "algorithm": {"adv_type": "gae", "loss_type": "actor_critic"},
+            "critic": {"use_critic_model": False},
+            "env": {
+                mode: {
+                    "envs": {
+                        "a": {"env_type": "simple", "total_num_envs": 1},
+                        "b": {"env_type": "simple", "total_num_envs": 1},
+                    }
+                }
+            },
+        }
+    )
+    OmegaConf.set_struct(cfg, True)
+    validator = _validate_psi0_eval_cfg if only_eval else _validate_psi0_train_cfg
+
+    validator(cfg, cfg.actor.model, only_eval)
+
+    cfg.env[mode].envs.b.env_type = "libero"
+    with pytest.raises(AssertionError, match=r"env_type='simple'"):
+        validator(cfg, cfg.actor.model, only_eval)
 
 
 def test_policy_obs_spec_rejects_keys_the_policy_batch_does_not_carry():

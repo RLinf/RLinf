@@ -1031,10 +1031,10 @@ def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
         "Psi0 SIMPLE Eval requires psi0.rtc.enabled=true."
     )
 
-    eval_cfg = cfg.env.get("eval", None)
-    assert eval_cfg is not None and eval_cfg.env_type == "simple", (
-        "Psi0 Eval requires env.eval.env_type='simple'."
-    )
+    eval_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("eval", None), "env.eval")
+    assert eval_env_cfgs and all(
+        env_cfg.get("env_type") == "simple" for env_cfg in eval_env_cfgs.values()
+    ), "Psi0 Eval requires env_type='simple' on every eval env."
 
 
 def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
@@ -1084,9 +1084,10 @@ def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
     assert psi0_cfg.get("rtc", {}).get("enabled", False), (
         "Psi0 SIMPLE training requires psi0.rtc.enabled=true."
     )
-    assert cfg.env.train.env_type == "simple", (
-        "Psi0 training requires env.train.env_type='simple'."
-    )
+    train_env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    assert train_env_cfgs and all(
+        env_cfg.get("env_type") == "simple" for env_cfg in train_env_cfgs.values()
+    ), "Psi0 training requires env_type='simple' on every train env."
     assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
         "actor_critic"
     ), "Psi0 supports PPO with GAE and actor_critic loss only."
@@ -1253,6 +1254,12 @@ def validate_env_training_cfg(
         assert not unknown, (
             f"algorithm.envs.{name} may set {list(EnvSpec.ALGORITHM_FIELDS)}, "
             f"got {sorted(unknown)}."
+        )
+    for spec in layout.specs:
+        loss_weight = spec.algorithm_cfg(algorithm_cfg).get("loss_weight", 1.0)
+        assert loss_weight > 0, (
+            f"Expected a positive loss_weight for {layout.spec_path(spec)}, "
+            f"got {loss_weight!r}."
         )
     adv_type = algorithm_cfg.get("adv_type")
     adv_norm_scope = algorithm_cfg.get("adv_norm_scope", "env")
@@ -1737,11 +1744,17 @@ def validate_embodied_cfg(cfg):
             "Psi0 SIMPLE requires equal env and rollout worker counts: "
             "each rollout worker maintains RTC state for one environment."
         )
-        psi0_env_cfg = cfg.env.eval if only_eval else cfg.env.train
-        assert psi0_env_cfg.total_num_envs == env_world_size, (
+        psi0_mode = "eval" if only_eval else "train"
+        psi0_total_num_envs = sum(
+            env_cfg.total_num_envs
+            for env_cfg in EnvLayout.env_cfgs(
+                cfg.env[psi0_mode], f"env.{psi0_mode}"
+            ).values()
+        )
+        assert psi0_total_num_envs == env_world_size, (
             "Psi0 SIMPLE requires exactly one environment per EnvWorker: "
             f"total_num_envs must equal the environment worker count ({env_world_size}), "
-            f"got {psi0_env_cfg.total_num_envs}."
+            f"got {psi0_total_num_envs}."
         )
 
     if not only_eval:
