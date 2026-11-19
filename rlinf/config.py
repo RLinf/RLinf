@@ -18,6 +18,7 @@ import logging
 import math
 import os
 from dataclasses import asdict
+from enum import Enum
 from typing import TYPE_CHECKING, Callable, ClassVar, Optional
 
 import torch
@@ -44,6 +45,13 @@ if TYPE_CHECKING:
     from megatron.core.transformer.transformer_config import TransformerConfig
 
 logging.getLogger().setLevel(logging.INFO)
+
+
+class ObsContract(Enum):
+    """Observation shape a policy consumes at its training entry point."""
+
+    STATE = "state"
+    PREFIX = "prefix"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -132,6 +140,18 @@ SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+
+# Policies whose training entry point reads a contract other than ``obs["states"]``.
+# ``register_model`` fills this for out-of-tree models through ``obs_contract``.
+MODEL_OBS_CONTRACT: dict[SupportedModel, ObsContract] = {
+    SupportedModel.PREFIX_POLICY: ObsContract.PREFIX,
+}
+
+
+def get_model_obs_contract(model_type: SupportedModel) -> ObsContract:
+    """Return the observation contract a registered model declares."""
+    return MODEL_OBS_CONTRACT.get(model_type, ObsContract.STATE)
+
 
 DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
@@ -1196,9 +1216,12 @@ def validate_embodied_cfg(cfg):
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     if algorithm_cfg.get("loss_type") == "prefix_off_policy":
-        assert model_type == SupportedModel.PREFIX_POLICY, (
-            "algorithm.loss_type=prefix_off_policy requires "
-            "actor.model.model_type=prefix_policy."
+        observed = get_model_obs_contract(model_type)
+        assert observed == ObsContract.PREFIX, (
+            "algorithm.loss_type=prefix_off_policy requires a policy with "
+            f"obs_contract={ObsContract.PREFIX.value}, but "
+            f"model_type={model_type.value!r} declares "
+            f"obs_contract={observed.value}."
         )
         for path in ("actor_head.name", "critic_head.name"):
             assert OmegaConf.select(model_cfg, path, default=None), (
@@ -1327,9 +1350,9 @@ def validate_embodied_cfg(cfg):
         )
         if not only_eval:
             loss_type = algorithm_cfg.get("loss_type")
-            assert loss_type not in {"embodied_dagger", "rlt_ac", "rlt_td3"}, (
-                "Expected an algorithm.loss_type other than embodied_dagger, "
-                f"rlt_ac, or rlt_td3 for rollout_backend='phyai', got {loss_type!r}."
+            assert loss_type not in {"embodied_dagger", "prefix_off_policy"}, (
+                "Expected an algorithm.loss_type other than embodied_dagger or "
+                f"prefix_off_policy for rollout_backend='phyai', got {loss_type!r}."
             )
             adv_type = algorithm_cfg.get("adv_type")
             assert adv_type != "opd", (

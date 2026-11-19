@@ -670,7 +670,7 @@ For pooled features instead of a learned RLT representation, use ``maniskill_pre
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and ``twin_q_mlp``. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. :doc:`FlexRLT <flexrlt>` explains the published threshold's validation limits and how to collect calibration traces.
+The learner still uses ``algorithm.name: td3``, ``deterministic_mlp``, and a two-head ``multi_q_mlp`` critic. ``rollout.routing_gate.type: steam`` selects the learned base-to-actor gate. Expert takeover stays in ``shadow`` mode: its decisions are recorded but its actions are not executed. :doc:`FlexRLT <flexrlt>` explains the published threshold's validation limits and how to collect calibration traces.
 
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
 freezes ``rollout.prefix_feature_model`` and only synchronizes the Stage 2 MLP

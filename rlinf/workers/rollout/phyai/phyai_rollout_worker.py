@@ -29,6 +29,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
+from rlinf.algorithms.prefix_off_policy.config import is_prefix_off_policy_loss
 from rlinf.config import torch_dtype_from_precision
 from rlinf.data.schema.embodied_types import (
     EnvPart,
@@ -53,7 +54,6 @@ from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
 from rlinf.models.embodiment.openpi.transforms.pipeline import (
     build_openpi_transforms,
 )
-from rlinf.models.embodiment.prefix.config import is_prefix_off_policy_loss
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
     new_to_old_state_dict,

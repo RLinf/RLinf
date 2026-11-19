@@ -35,7 +35,7 @@ class OpenPiPrefixMixin:
         )
 
     def _resolved_prefix_pool(self) -> str:
-        from rlinf.models.embodiment.prefix.config import resolve_prefix_pool
+        from rlinf.models.embodiment.prefix_features import resolve_prefix_pool
 
         return resolve_prefix_pool(
             use_rlt=self.rlt_cfg.use_rlt,
@@ -48,7 +48,7 @@ class OpenPiPrefixMixin:
     def _encode_vlm_prefix_flat(
         self, prefix_output: torch.Tensor, prefix_mask: torch.Tensor
     ) -> torch.Tensor:
-        from rlinf.models.embodiment.prefix.pool import pool_prefix
+        from rlinf.models.embodiment.prefix_features import pool_prefix
 
         pool = self._resolved_prefix_pool()
         if pool not in ("masked_mean", "mean", "last"):

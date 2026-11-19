@@ -4204,7 +4204,7 @@ def test_action_payload_routes_feedback_and_preserves_plain_action_responses():
     assert EnvWorker._consume_action_payload(response, env) is actions
     assert EnvWorker._merge_action_batches([response]) is response
     worker = object.__new__(EnvWorker)
-    worker.collect_rlt_gate_trace = True
+    worker.export_trajectory_infos = True
     selected = worker._select_trajectory_infos(
         {"custom_sensor": actions, "unexported": actions}, env
     )

@@ -21,6 +21,10 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.algorithms.prefix_off_policy.config import (
+    is_gate_trace_enabled,
+    is_prefix_off_policy_loss,
+)
 from rlinf.data.schema.embodied_types import (
     ActionPayload,
     EnvOutput,
@@ -34,7 +38,6 @@ from rlinf.envs import SupportedEnvType, get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
-from rlinf.models.embodiment.prefix.config import is_prefix_off_policy_loss
 from rlinf.scheduler import Channel, Cluster, Worker, merge_batches
 from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.nested_dict_process import (
@@ -79,12 +82,9 @@ class EnvWorker(Worker):
         self.enable_prefix = is_prefix_off_policy_loss(
             OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
         )
-        self.collect_rlt_gate_trace = bool(
-            OmegaConf.select(
-                self.cfg,
-                "algorithm.rlt_gate_calibration.enable",
-                default=False,
-            )
+        # Env-declared diagnostics ride the trajectory only for a trace consumer.
+        self.export_trajectory_infos = self.enable_prefix and is_gate_trace_enabled(
+            self.cfg
         )
         self.use_training_pipeline = self.cfg.runner.get("use_training_pipeline", False)
         # Optional lossless compression of image observations before they are
@@ -383,13 +383,6 @@ class EnvWorker(Worker):
                     resume=bool(getattr(env_cfg.data_collection, "resume", False)),
                     streaming=getattr(env_cfg.data_collection, "streaming", False),
                 )
-            gate_cfg = OmegaConf.select(self.cfg, "rollout.routing_gate", default=None)
-            if gate_cfg is not None and gate_cfg.get("enable", False):
-                if not callable(get_env_attr(env, "set_rollout_infos")):
-                    raise ValueError(
-                        f"rollout.routing_gate requires {type(env).__name__} to implement "
-                        "RolloutInfoReceiver.set_rollout_infos(infos)."
-                    )
             env_list.append(env)
         return env_list
 
@@ -860,7 +853,7 @@ class EnvWorker(Worker):
         env: Any,
     ) -> dict[str, torch.Tensor] | None:
         """Export only the diagnostic fields declared by the environment."""
-        if not self.collect_rlt_gate_trace or not isinstance(env_infos, dict):
+        if not self.export_trajectory_infos or not isinstance(env_infos, dict):
             return None
         export_spec = get_env_attr(env, "trajectory_info_spec")
         if not callable(export_spec):
@@ -1177,7 +1170,14 @@ class EnvWorker(Worker):
         """Apply optional rollout diagnostics and return executable actions."""
         if isinstance(payload, ActionPayload):
             if payload.rollout_infos:
-                get_env_attr(env, "set_rollout_infos")(payload.rollout_infos)
+                receiver = get_env_attr(env, "set_rollout_infos")
+                if not callable(receiver):
+                    raise ValueError(
+                        f"Rollout sent infos {sorted(payload.rollout_infos)}, but "
+                        f"{type(env).__name__} does not implement "
+                        "set_rollout_infos(infos)."
+                    )
+                receiver(payload.rollout_infos)
             return payload.actions
         # Other rollout backends may return their own action response object.
         if hasattr(payload, "actions"):

@@ -18,6 +18,7 @@ from typing import Any
 import torch
 
 from rlinf.algorithms.prefix_off_policy import build_prefix_off_policy_algorithm
+from rlinf.algorithms.prefix_off_policy.config import is_gate_trace_enabled
 from rlinf.algorithms.prefix_off_policy.replay import PrefixReplayService
 from rlinf.algorithms.prefix_off_policy.schedule import (
     PrefixUpdatePlan,
@@ -38,12 +39,13 @@ class PrefixOffPolicyRuntime:
 
     def _init_prefix_runtime(self, cfg: Any) -> None:
         self.algorithm_component = build_prefix_off_policy_algorithm(cfg)
-        trace_cfg = cfg.algorithm.get("rlt_gate_calibration", {}) or {}
         trace_writer = None
-        if bool(trace_cfg.get("enable", False)):
+        if is_gate_trace_enabled(cfg):
             from rlinf.algorithms.rlt.rlt_steam_gate_trace import RLTGateTraceWriter
 
-            trace_writer = RLTGateTraceWriter(trace_cfg, rank=self._rank)
+            trace_writer = RLTGateTraceWriter(
+                cfg.algorithm.rlt_gate_calibration, rank=self._rank
+            )
         self.replay_service = PrefixReplayService(cfg, trace_writer=trace_writer)
         self.update_schedule = PrefixUpdateSchedule(cfg)
         self._last_replay_metrics: dict[str, float] = {}

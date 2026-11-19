@@ -628,7 +628,7 @@ replay 路径，仅将 Stage 2 策略和更新目标替换为直接 TD3 actor �
 
    bash examples/embodiment/run_embodiment.sh maniskill_prefix_stage2_td3_mlp_steam
 
-learner 仍使用 ``algorithm.name: td3``、``deterministic_mlp`` 和 ``twin_q_mlp``，``rollout.routing_gate.type: steam`` 选择学习到的 base-to-actor gate。expert takeover 保持 ``shadow`` 模式，只记录判断，不执行接管动作。已发布阈值的验证限制和校准数据的采集方法见 :doc:`FlexRLT <flexrlt>`。
+learner 仍使用 ``algorithm.name: td3``、``deterministic_mlp`` 和 ``num_q_heads: 2`` 的 ``multi_q_mlp``，``rollout.routing_gate.type: steam`` 选择学习到的 base-to-actor gate。expert takeover 保持 ``shadow`` 模式，只记录判断，不执行接管动作。已发布阈值的验证限制和校准数据的采集方法见 :doc:`FlexRLT <flexrlt>`。
 
 这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结
 ``rollout.prefix_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route

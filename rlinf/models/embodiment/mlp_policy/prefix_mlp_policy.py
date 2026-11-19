@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MLP actor-critic over prefix features and a reference action chunk.
+
+The policy consumes the :class:`~rlinf.models.embodiment.prefix_features.PrefixObs`
+of a frozen model and owns only the heads that are trained online.
+"""
+
 from typing import Any
 
 import torch
@@ -19,11 +25,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
-from rlinf.models.embodiment.prefix.heads.registry import (
+from rlinf.models.embodiment.mlp_policy.heads import (
     build_prefix_actor,
     build_prefix_critic,
 )
-from rlinf.models.embodiment.prefix.types import PrefixForwardType
+from rlinf.models.embodiment.prefix_features import get_prefix_feature_dim
 
 
 class PrefixPolicy(nn.Module, BasePolicy):
@@ -76,7 +82,7 @@ class PrefixPolicy(nn.Module, BasePolicy):
             cfg=actor_head_cfg,
         )
         # SAC optimizer filtering and target updates identify critic parameters
-        # through the stable ``q_head`` path.
+        # through the stable ``q_head`` attribute.
         self.q_head = build_prefix_critic(
             critic_name,
             state_dim=self.state_dim,
@@ -121,20 +127,17 @@ class PrefixPolicy(nn.Module, BasePolicy):
 
     def forward(
         self,
-        forward_type: PrefixForwardType | ForwardType = ForwardType.DEFAULT,
+        forward_type: ForwardType = ForwardType.DEFAULT,
         **kwargs: Any,
     ) -> (
         torch.Tensor
         | tuple[torch.Tensor, torch.Tensor | None]
         | tuple[torch.Tensor, torch.Tensor, None]
     ):
-        """Dispatch actor or critic calls without exposing the critic backend.
+        """Dispatch actor and critic calls through the shared SAC forward types.
 
-        Prefix actor calls return ``(actions, log_probs, None)``. Prefix critic
-        calls return ``(current_q, next_q)``; ``next_q`` is ``None`` for a
-        non-joint critic. SAC and CrossQ forward types are not accepted; the
-        Prefix worker routes every actor and critic call through
-        ``PrefixForwardType``.
+        ``SAC`` returns ``(actions, log_probs, None)``. The critic returns Q
+        values for ``SAC_Q``, and ``(current_q, next_q)`` for ``CROSSQ_Q``.
         """
         obs = kwargs.get("obs")
         if obs is not None:
@@ -143,12 +146,12 @@ class PrefixPolicy(nn.Module, BasePolicy):
         if next_obs is not None:
             kwargs["next_obs"] = self.preprocess_env_obs(next_obs)
 
-        if forward_type == PrefixForwardType.ACTOR:
+        if forward_type == ForwardType.SAC:
             return self.sac_forward(**kwargs)
-        if forward_type == PrefixForwardType.CRITIC:
-            if self.q_head.capabilities.supports_cross_q:
-                return self.crossq_q_forward(**kwargs)
-            return self.sac_q_forward(**kwargs), None
+        if forward_type == ForwardType.SAC_Q:
+            return self.sac_q_forward(**kwargs)
+        if forward_type == ForwardType.CROSSQ_Q:
+            return self.crossq_q_forward(**kwargs)
         if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
         if forward_type == ForwardType.DEFAULT:
@@ -312,3 +315,20 @@ class PrefixPolicy(nn.Module, BasePolicy):
         """Set critic parameter trainability."""
         for parameter in self.q_head.parameters():
             parameter.requires_grad_(requires_grad)
+
+
+def get_model(cfg: Any, torch_dtype=torch.bfloat16) -> PrefixPolicy:
+    """Build a prefix policy from registered actor and critic heads."""
+    del torch_dtype
+    return PrefixPolicy(
+        prefix_dim=get_prefix_feature_dim(cfg),
+        proprio_dim=cfg.proprio_dim,
+        action_dim=cfg.action_dim,
+        num_action_chunks=cfg.num_action_chunks,
+        ref_num_action_chunks=cfg.get(
+            "ref_num_action_chunks",
+            cfg.num_action_chunks,
+        ),
+        actor_head_cfg=cfg.actor_head,
+        critic_head_cfg=cfg.critic_head,
+    )

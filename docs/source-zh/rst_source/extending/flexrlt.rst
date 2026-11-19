@@ -14,6 +14,81 @@ FlexRLT：冻结 VLA 特征与可插拔 Policy
 
 与 RLT 专属的 AC、TD3 policy 和 worker 相比，FlexRLT 使用同一个 ``prefix_policy`` 模型和 ``prefix_off_policy`` worker，在配置中分别选择 actor head、critic head 和算法。chunk reward 折扣、BC target 和权重 schedule 由 AC、TD3 共用。比较新的特征或 head 时，可以保留训练循环，只替换对应组件。pooling 和 RLT token 的任务效果仍需在相同设置下比较。
 
+各部分如何组合
+----------------
+
+一次 FlexRLT 运行由四个互相独立的选择构成。每一项都有自己的配置字段和注册位置，因此替换时只改你真正要换的那一层。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 26 22 32
+
+   * - 选择
+     - 配置字段
+     - 注册方式
+     - 代码位置
+   * - 冻结特征模型
+     - ``rollout.prefix_feature_model``
+     - ``register_model(..., category="embodied")``
+     - 任何实现 ``extract_prefix_obs`` 的模块
+   * - 可训练 policy
+     - ``actor.model.model_type``
+     - ``register_model(..., obs_contract=ObsContract.PREFIX)``
+     - ``rlinf/models/embodiment/mlp_policy/prefix_mlp_policy.py``
+   * - actor 与 critic head
+     - ``actor.model.actor_head.name``、``critic_head.name``
+     - ``register_prefix_actor`` / ``register_prefix_critic``
+     - ``rlinf/models/embodiment/mlp_policy/heads.py``
+   * - 更新规则
+     - ``algorithm.name``（配合 ``loss_type: prefix_off_policy``）
+     - ``register_prefix_off_policy_algorithm``
+     - ``rlinf/algorithms/prefix_off_policy/``
+
+各层的职责边界按「谁拥有什么」划分：
+
+* **特征模型**决定原始观测如何变成 ``{z_rl, proprio, ref_chunk}``。它保持冻结，不带优化器，也不接收梯度。
+* **policy** 决定这三个张量如何拼成 policy state 和 reference 输入。``prefix_policy`` 自身不增加参数，只组合两个 head，并暴露 worker 所需的 ``BasePolicy`` forward 类型。
+* **head** 拥有网络本身。actor 和 critic 是两个独立对象、两套独立注册表，因此可以把随机 actor 配 CrossQ critic，或只替换其中一侧。
+* **算法**拥有 loss 和更新调度。它读取 head 在 ``capabilities`` 中声明的能力，拒绝无法训练的搭配。
+
+配置校验按**观测契约**而不是按名字把 policy 与 ``prefix_off_policy`` 匹配，所以新 policy 以 ``obs_contract=ObsContract.PREFIX`` 注册后，无需修改 ``rlinf/config.py`` 就能通过校验。它仍需满足 :ref:`flexrlt-policy-contract` 中的 policy 契约。
+
+如何扩展
+^^^^^^^^
+
+找到你要改的那一行，只改那一行：
+
+* **换 VLA** —— 写一个提供 ``z_dim`` 和 ``extract_prefix_obs`` 的 adapter，按具身模型注册，再把 ``rollout.prefix_feature_model`` 指过去。policy、head、算法和 replay 格式都不变。见 :ref:`扩展 BaseVLA 特征模型 <flexrlt-feature-model>`。
+* **换网络** —— 继承 ``PrefixActorHead`` 或 ``PrefixCriticHead``，声明 capabilities 后注册。rollout 运行时、replay 格式和训练循环都不受影响。见 :ref:`扩展 MLP Actor 与 Critic <flexrlt-heads>`。
+* **换更新规则** —— 继承 ``PrefixOffPolicyAlgorithm``，实现 ``actor_loss`` 和 ``target_actions``，并声明 ``requirements``。chunk 折扣、BC target 和权重调度继续共享。见 :ref:`扩展 FlexRLT 算法 <flexrlt-algorithm>`。
+* **在同一特征上换 policy** —— 例如换成循环（recurrent）actor。继承 ``BasePolicy``，满足下面的契约，以 ``obs_contract=ObsContract.PREFIX`` 注册，再设置 ``actor.model.model_type``。算法、replay 格式和 rollout 运行时保持不变。
+
+.. _flexrlt-policy-contract:
+
+Policy 契约
+^^^^^^^^^^^
+
+算法、FSDP worker 和 rollout 运行时会直接调用 policy，所以替换 ``prefix_policy`` 的 policy 必须提供它们用到的接口：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 要求
+     - 使用方
+   * - 接受 ``actor.model.actor_head`` 和 ``critic_head``，其 ``name`` 为已注册的名字
+     - 配置校验和算法读取这两个 head 名字，检查 actor distribution、action noise 和 Q head 数量。policy 应构建这两个 head，至少要与它们声明的 capabilities 行为一致。
+   * - ``forward(forward_type=ForwardType.SAC, obs=...)`` 返回 ``actions, logprobs, None``
+     - actor loss 和 target action。``actions`` 是展平的 ``[B, num_action_chunks * action_dim]``；调用还会传入 ``deterministic``、``apply_action_noise``、``apply_reference_dropout`` 和 ``reference_dropout_prob``。
+   * - ``ForwardType.SAC_Q`` 返回 ``[B, num_q_heads]``；``ForwardType.CROSSQ_Q`` 返回 ``current_q, next_q``
+     - critic loss 和 actor loss 中的 Q 项。只有 critic head 声明 ``supports_cross_q`` 时才需要 ``CROSSQ_Q``。两者都接受 ``detach_encoder``。
+   * - critic 参数放在 ``q_head`` 属性下
+     - worker 把名字中含 ``q_head``、``encoder``、``encoders`` 或 ``state_proj`` 的参数放进 critic 优化器，其余放进 actor 优化器。不要把只属于 actor 的模块命名为 ``encoder``。
+   * - ``predict_action_batch(env_obs, mode=..., return_obs=True)``
+     - rollout。返回 ``[B, num_action_chunks, action_dim]`` 的动作，并在 ``forward_inputs`` 中放入 ``action`` 以及 ``z_rl``、``proprio``、``ref_chunk``，它们会成为 replay transition。
+
+有状态的 policy（例如循环 actor）没有按环境重置的 rollout 接口；应把状态放进特征模型返回的观测中。
+
 运行示例
 --------
 
@@ -80,12 +155,13 @@ critic 按 ``gamma`` 对 chunk 内 reward 折扣，再用 ``gamma ** chunk_horiz
          activation: tanh
          fixed_std: 0.002
        critic_head:
-         name: twin_q_mlp
+         name: multi_q_mlp
          hidden_dims: [256, 256, 256]
+         num_q_heads: 2
 
-``actor.model.z_dim`` 是追加 state history 之前的特征宽度。``proprio_dim`` 对应返回的机器人状态，``action_dim`` 对应环境的单步动作维度，``num_action_chunks`` 对应实际执行的 chunk 长度。reference 至少要覆盖这些动作；``ref_num_action_chunks`` 可以更长。
+``actor.model.z_dim`` 是特征模型 ``z_rl`` 输出的宽度。``proprio_dim`` 对应返回的机器人状态，``action_dim`` 对应环境的单步动作维度，``num_action_chunks`` 对应实际执行的 chunk 长度。reference 至少要覆盖这些动作；``ref_num_action_chunks`` 可以更长。
 
-配置校验要求 ``loss_type: prefix_off_policy``、``actor.model.model_type: prefix_policy``、两个已注册的 head name 和已注册的 ``algorithm.name``。actor distribution、action noise 支持和 Q head 数量不匹配时，会在 worker 启动前报错。
+配置校验要求 ``loss_type: prefix_off_policy``、观测契约为 ``prefix`` 的 policy、两个已注册的 head name 和已注册的 ``algorithm.name``。actor distribution、action noise 支持和 Q head 数量不匹配时，会在 worker 启动前报错。``prefix_policy`` 是仓库内满足该契约的 policy；任何以 ``obs_contract=ObsContract.PREFIX`` 注册的模型都会被接受。
 
 当前实现
 --------
@@ -95,12 +171,15 @@ critic 按 ``gamma`` 对 chunk 内 reward 折扣，再用 ``gamma ** chunk_horiz
 冻结 VLA 如何生成 Prefix observation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-rollout worker 将环境原始 observation 传给 ``extract_prefix_obs``。特征模型通过 ``z_dim`` 声明输出宽度，并返回一个 ``PrefixObs``。接口定义在 ``rlinf.models.embodiment.prefix.contracts``：
+rollout worker 将环境原始 observation 传给 ``extract_prefix_obs``。特征模型通过 ``z_dim`` 声明输出宽度，并返回一个 ``PrefixObs``。接口定义在 ``rlinf/models/embodiment/prefix_features.py``，与 ``base_policy.py`` 同层。它和模型架构无关，任何 VLA 都可以实现：
 
 .. code:: python
 
    from typing import Any, Protocol
-   from rlinf.models.embodiment.prefix.types import PrefixObs
+   from rlinf.models.embodiment.prefix_features import (
+       PrefixFeatureModel,
+       PrefixObs,
+   )
 
    class PrefixFeatureModel(Protocol):
        @property
@@ -110,7 +189,7 @@ rollout worker 将环境原始 observation 传给 ``extract_prefix_obs``。特�
            self, env_obs: dict[str, Any]
        ) -> PrefixObs: ...
 
-``PrefixObs`` 包含三个 batch-first tensor。下表是特征模型的原始输出，尚未追加 state history：
+``PrefixObs`` 包含三个 batch-first tensor。下表是特征模型的输出：
 
 .. list-table::
    :header-rows: 1
@@ -145,32 +224,21 @@ Prefix pooling
 
 rollout 启动时检查特征模型的 ``z_dim`` 与 ``actor.model.z_dim`` 是否一致，每次提取特征时还会检查 ``z_rl`` 的实际宽度是否符合模型声明。
 
-State history
-^^^^^^^^^^^^^
-
-如果 policy 还需要最近的运动状态，设置 ``actor.model.state_history.enable: true``。``StateHistoryBuffer`` 按 policy decision rate 保存最近 ``steps`` 个 proprio，展平后追加到 ``z_rl``。``pad`` 可选 ``zero`` 或 ``repeat``；episode reset 会清理对应环境的历史。
-
-.. code:: text
-
-   runtime_z_dim = z_dim + steps * proprio_dim  # state_history.enable=true
-   runtime_z_dim = z_dim                         # state_history.enable=false
-
-``get_prefix_feature_dim`` 计算追加后的宽度。rollout 和 actor 共用 ``actor.model.state_history``，因此 ``actor.model.z_dim`` 仍填写特征模型的原始输出宽度。
-
-历史按 mode、环境 rank、pipeline stage 和 source-row offset 索引。terminal observation 会在当前 observation 重置或推进历史前读取上一 episode 的历史，且不提交修改。evaluation 的历史与训练分开保存。 STEAM gate 的图像历史和 routing latch 也按同一 source 身份保存，请求拆分或行顺序变化不会重置其他环境。
-
 PrefixPolicy 的 forward contract
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``PrefixPolicy`` 将展平后的 ``z_rl`` 和 ``proprio`` 拼成 policy state，再截取 ``ref_chunk`` 的前 ``num_action_chunks`` 个动作，展平后用作 actor 的 reference 输入和 BC target。它只持有 actor、critic head；冻结 VLA、可选 expert 和 gate，以及 train/eval 历史由 ``PrefixRolloutRuntime`` 管理。FSDP worker 通过 ``q_head`` 路径识别 critic 参数。
+``PrefixPolicy`` 位于 ``rlinf/models/embodiment/mlp_policy/prefix_mlp_policy.py``。它把展平后的 ``z_rl`` 和 ``proprio`` 拼成 policy state，截取 ``ref_chunk`` 的前 ``num_action_chunks`` 个动作并展平，用作 actor 的 reference 输入和 BC target。它自身不增加参数：全部权重来自按配置构建的 actor 和 critic head。冻结 VLA、可选 expert 和 gate，以及 terminal 特征缓存由 ``PrefixRolloutRuntime`` 管理。FSDP worker 通过 ``q_head`` 属性识别 critic 参数。
 
-它通过 ``BasePolicy`` 接口提供以下调用：
+它使用标准 ``ForwardType``，与 ``MLPPolicy`` 相同：
 
-* ``PrefixForwardType.ACTOR``：返回 actor head 的 ``actions, logprobs, None``。
-* ``PrefixForwardType.CRITIC``：返回 ``current_q, next_q``，每个 Q head 对应一个值；非 joint critic 的 ``next_q`` 为 ``None``。
+* ``ForwardType.SAC``：返回 actor head 的 ``actions, logprobs, None``。
+* ``ForwardType.SAC_Q``：返回当前状态的 Q 值，按 head 拼接。
+* ``ForwardType.CROSSQ_Q``：joint CrossQ critic 返回 ``current_q, next_q``。
 * ``predict_action_batch``：将 action reshape 为 ``[B, num_action_chunks, action_dim]``，并在 ``forward_inputs`` 中返回 action 和特征 observation。
 
-``PrefixPolicy`` 在内部选择普通 Q 或 joint CrossQ critic。算法对两种后端发起相同的 actor、critic 请求，所有训练调用都经过 FSDP 包装后的 ``forward``。
+算法依据 critic head 的 ``supports_cross_q`` 能力选择 ``SAC_Q`` 或 ``CROSSQ_Q``，两种后端都落到同一个 policy 方法。所有训练调用都经过 FSDP 包装后的 ``forward``。
+
+.. _flexrlt-feature-model:
 
 扩展 BaseVLA 特征模型
 ---------------------
@@ -185,7 +253,7 @@ PrefixPolicy 的 forward contract
 .. code:: python
 
    import torch
-   from rlinf.models.embodiment.prefix.pool import pool_prefix
+   from rlinf.models.embodiment.prefix_features import pool_prefix
 
    class MyBaseVLAAdapter(torch.nn.Module):
        def __init__(self, base_vla):
@@ -215,6 +283,8 @@ rollout worker 通过 ``get_model`` 创建 ``rollout.prefix_feature_model``。�
 
 每个 worker 进程都要执行注册：仓库内的 builder 由 ``rlinf/models/__init__.py`` 导入，外部组件则通过 ``RLINF_EXT_MODULE`` 加载注册模块。完整流程见 :doc:`new_model_fsdp`。接入后可以保留现有 ``prefix_policy``、算法和 replay 格式，再通过 rollout 路径检查 adapter 的 batch shape、device、dtype、reset 行为和 action chunk。
 
+.. _flexrlt-heads:
+
 扩展 MLP Actor 与 Critic
 ------------------------
 
@@ -229,10 +299,11 @@ rollout worker 通过 ``get_model`` 创建 ``rollout.prefix_feature_model``。�
 
    import torch
    from torch import nn
-   from rlinf.models.embodiment.prefix.heads.base import (
-       ActorHeadCapabilities, PrefixActorHead,
+   from rlinf.models.embodiment.mlp_policy.heads import (
+       ActorHeadCapabilities,
+       PrefixActorHead,
+       register_prefix_actor,
    )
-   from rlinf.models.embodiment.prefix.heads.registry import register_prefix_actor
 
    class CustomMLPActor(PrefixActorHead):
        capabilities = ActorHeadCapabilities(
@@ -282,10 +353,11 @@ critic 需要声明 ``CriticHeadCapabilities`` 和 ``num_q_heads``。下面的�
 
    import torch
    from torch import nn
-   from rlinf.models.embodiment.prefix.heads.base import (
-       CriticHeadCapabilities, PrefixCriticHead,
+   from rlinf.models.embodiment.mlp_policy.heads import (
+       CriticHeadCapabilities,
+       PrefixCriticHead,
+       register_prefix_critic,
    )
-   from rlinf.models.embodiment.prefix.heads.registry import register_prefix_critic
 
    class CustomTwinCritic(PrefixCriticHead):
        capabilities = CriticHeadCapabilities(fixed_num_q_heads=2)
@@ -314,9 +386,9 @@ critic 需要声明 ``CriticHeadCapabilities`` 和 ``num_q_heads``。下面的�
    def make_custom_twin_critic(state_dim, action_dim, cfg):
        return CustomTwinCritic(state_dim, action_dim, cfg)
 
-它的 ``forward`` 返回 ``[B, 2]``。内置 ``multi_q_mlp`` 可以配置 head 数量，``twin_q_mlp`` 固定为两个，``cross_q_mlp`` 支持联合计算当前和下一状态的 Q。选择时要满足算法要求的 capabilities。
+它的 ``forward`` 返回 ``[B, 2]``。``multi_q_mlp`` 基于共享的 ``MultiQHead`` 构建 ``num_q_heads`` 个独立 Q head，``cross_q_mlp`` 用 batch renormalization 联合计算当前和下一状态的 Q。TD3 的双 Q critic 就是 ``num_q_heads: 2`` 的 ``multi_q_mlp``。选择时要满足算法要求的 capabilities。
 
-在 registry 的 ``_load_builtin_heads`` 中导入仓库内新增的 head，确保每个 worker 进程都完成注册，再在配置中选择注册名：
+仓库内的 head 放在 ``rlinf/models/embodiment/mlp_policy/heads.py``，模块被导入时即完成注册；构建 policy 或算法时就会触发这次导入。出树的 head 在通过 ``RLINF_EXT_MODULE`` 加载的模块里注册，确保每个 worker 进程都执行到。然后在配置中选择注册名：
 
 .. code:: yaml
 
@@ -328,6 +400,8 @@ critic 需要声明 ``CriticHeadCapabilities`` 和 ``num_q_heads``。下面的�
          name: custom_twin
 
 这会替换两个网络，保留特征模型和训练 worker。只要 Q head 数量满足要求，AC 和 TD3 都可以使用 ``multi_q_mlp``。
+
+.. _flexrlt-algorithm:
 
 扩展 FlexRLT Algorithm
 ----------------------
@@ -342,7 +416,7 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
        PrefixAlgorithmRequirements, PrefixOffPolicyAlgorithm,
        register_prefix_off_policy_algorithm,
    )
-   from rlinf.models.embodiment.prefix import PrefixForwardType
+   from rlinf.models.embodiment.base_policy import ForwardType
 
    @register_prefix_off_policy_algorithm("my_algorithm")
    class MyAlgorithm(PrefixOffPolicyAlgorithm):
@@ -363,7 +437,7 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
 
        def target_actions(self, context, next_obs):
            actions, _, _ = context.target_model(
-               forward_type=PrefixForwardType.ACTOR,
+               forward_type=ForwardType.SAC,
                obs=next_obs,
            )
            return actions
@@ -391,14 +465,14 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
 
    * - 组件
      - 代码位置
-   * - ``PrefixObs`` 与 feature contract
-     - ``rlinf/models/embodiment/prefix/contracts.py``、``types.py``
-   * - pooling、state history、配置解析
-     - ``rlinf/models/embodiment/prefix/pool.py``、``history.py``、``config.py``
+   * - ``PrefixObs``、feature contract、pooling、policy 输入宽度
+     - ``rlinf/models/embodiment/prefix_features.py``
    * - trainable policy
-     - ``rlinf/models/embodiment/prefix/policy.py``
+     - ``rlinf/models/embodiment/mlp_policy/prefix_mlp_policy.py``
    * - actor/critic heads 与 registry
-     - ``rlinf/models/embodiment/prefix/heads/``
+     - ``rlinf/models/embodiment/mlp_policy/heads.py``
+   * - 运行时配置解析
+     - ``rlinf/algorithms/prefix_off_policy/config.py``
    * - off-policy algorithms
      - ``rlinf/algorithms/prefix_off_policy/``
    * - rollout 生命周期与 replay/scheduling
@@ -408,4 +482,4 @@ actor objective、critic target 或下一动作的生成规则发生变化时，
    * - FSDP actor worker
      - ``rlinf/workers/actor/fsdp_prefix_off_policy_worker.py``
 
-遇到 shape 错误，先比较特征模型的 ``z_dim``、policy 的运行时宽度 ``z_dim + history.extra_dim`` 和环境 flat action 宽度 ``num_action_chunks * action_dim``。动作尺度不对时，检查每个 checkpoint 使用的 OpenPI data config 和 ``norm_stats.json``。使用 RLT token 的特征模型还必须从 Stage 1 checkpoint 加载完整 ``rlt_module``，对应步骤见 :doc:`../examples/embodied/rlt`。
+遇到 shape 错误，先比较特征模型的 ``z_dim``、``actor.model.z_dim`` 和环境 flat action 宽度 ``num_action_chunks * action_dim``。动作尺度不对时，检查每个 checkpoint 使用的 OpenPI data config 和 ``norm_stats.json``。使用 RLT token 的特征模型还必须从 Stage 1 checkpoint 加载完整 ``rlt_module``，对应步骤见 :doc:`../examples/embodied/rlt`。

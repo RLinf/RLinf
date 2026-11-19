@@ -23,6 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from rlinf.algorithms.expert import build_expert_model_config
+from rlinf.algorithms.prefix_off_policy.config import is_prefix_off_policy_loss
 from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
 from rlinf.algorithms.prefix_off_policy.transition import (
     extract_prefix_obs_from_forward_inputs,
@@ -39,9 +40,6 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
-from rlinf.models.embodiment.prefix.config import (
-    is_prefix_off_policy_loss,
-)
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.pinned_offload import pinned_offload_context
@@ -611,6 +609,23 @@ class MultiStepRolloutWorker(Worker):
             )
         return self.predict(request.obs, mode=mode)
 
+    def _predict_eval_actions(
+        self, env_output: dict[str, Any], stage_id: int = 0
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Predict eval actions; only the Prefix runtime needs a ``PolicyInput``."""
+        if self.prefix_runtime is None:
+            return self.predict(env_output["obs"], mode="eval")
+        return self._predict_rollout_actions(
+            PolicyInput(
+                obs=env_output["obs"],
+                rlt_switch_flags=env_output.get("rlt_switch_flags"),
+                intervene_flags=env_output.get("intervene_flags"),
+                dones=env_output.get("dones"),
+            ),
+            mode="eval",
+            stage_id=stage_id,
+        )
+
     def _build_policy_output(
         self, actions: torch.Tensor, result: dict[str, Any]
     ) -> PolicyOutput:
@@ -900,7 +915,7 @@ class MultiStepRolloutWorker(Worker):
                         policy_input,
                         stage_id=stage_id,
                     )
-                    diagnostics = result.get("trajectory_infos")
+                    diagnostics = result.get("rollout_infos")
                     forward_inputs = result.get("forward_inputs")
                     policy_output = self._build_policy_output(actions, result)
                     self._send_actions(
@@ -985,17 +1000,9 @@ class MultiStepRolloutWorker(Worker):
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
-                actions, result = self._predict_rollout_actions(
-                    PolicyInput(
-                        obs=env_output["obs"],
-                        rlt_switch_flags=env_output.get("rlt_switch_flags"),
-                        intervene_flags=env_output.get("intervene_flags"),
-                        dones=env_output.get("dones"),
-                    ),
-                    mode="eval",
-                )
+                actions, result = self._predict_eval_actions(env_output)
                 payload = self._build_action_payload(
-                    actions, result.get("trajectory_infos")
+                    actions, result.get("rollout_infos")
                 )
                 self.send_to_recorded_batch_routes(
                     group_name=self.cfg.env.group_name,
@@ -1037,19 +1044,11 @@ class MultiStepRolloutWorker(Worker):
                         if env_output.get("eval_epoch_done"):
                             eval_epoch_done = True
                             break
-                        actions, result = self._predict_rollout_actions(
-                            PolicyInput(
-                                obs=env_output["obs"],
-                                rlt_switch_flags=env_output.get("rlt_switch_flags"),
-                                intervene_flags=env_output.get("intervene_flags"),
-                                dones=env_output.get("dones"),
-                            ),
-                            mode="eval",
-                            stage_id=stage_id,
+                        actions, result = self._predict_eval_actions(
+                            env_output, stage_id
                         )
                         payload = self._build_action_payload(
-                            actions,
-                            result.get("trajectory_infos"),
+                            actions, result.get("rollout_infos")
                         )
                         self.send_to(
                             group_name=self.cfg.env.group_name,

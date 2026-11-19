@@ -313,7 +313,7 @@ AC and TD3 are two ways to update the actor and critic, and they need different 
      - ``q1``
    * - ``actor.model.critic_head.name``
      - ``multi_q_mlp`` with ``num_q_heads: 2``
-     - ``twin_q_mlp``
+     - ``multi_q_mlp`` with ``num_q_heads: 2`` and ``activation: relu``
 
 AC uses a stochastic actor. Its preset sets ``fixed_std: 0.002``, the fixed standard deviation. The TD3 preset follows the `RLT paper <https://arxiv.org/html/2604.23073>`_ by sampling fixed-variance Gaussian actions during both rollout and actor updates, with ``noise_sigma: 0.1``. Actor updates optimize Q1 while retaining BC and reference dropout. Target policy smoothing uses one clipped Gaussian sample, with ``algorithm.target_policy_noise: 0.1`` and ``algorithm.target_noise_clip: 0.5``. The actor and both target networks update together every two critic updates. Copy the head block from the matching preset when you switch, including those scales.
 
@@ -326,7 +326,7 @@ The head is the small network attached to the frozen feature. To change its widt
 
 Stay with that preset's critic head until you have a reason to study another value estimator. ``multi_q_mlp`` lets you set the number of Q networks. ``cross_q_mlp`` evaluates the current and next state together. Config validation checks the Q-head count and the other conditions the algorithm requires.
 
-If the current proprio state is not enough to describe the motion, give the policy a short history. Set ``actor.model.state_history.enable``, the number of steps in ``steps``, and the padding in ``pad`` (``zero`` or ``repeat``). History advances once per policy decision and is cleared when that environment resets. ``actor.model.z_dim`` stays the original feature width. The extra width from history is computed from the config.
+``actor.model.z_dim`` and ``proprio_dim`` must match what the feature model returns. If the current proprio state is not enough to describe the motion, extend the feature model's ``proprio`` output rather than adding history to the policy.
 
 Adjust the Objective and Update Rate
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

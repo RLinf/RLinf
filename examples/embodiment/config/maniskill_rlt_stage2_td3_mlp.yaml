@@ -343,8 +343,9 @@ actor:
       activation: relu
       noise_sigma: 0.1
     critic_head:
-      name: twin_q_mlp
+      name: multi_q_mlp
       hidden_dims: [256, 256]
+      num_q_heads: 2
       activation: relu
     is_lora: False
     lora_rank: 32

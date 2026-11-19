@@ -17,9 +17,9 @@ from typing import Any, Optional
 import torch
 
 from rlinf.envs import SupportedEnvType
+from rlinf.models.embodiment.prefix_features import PREFIX_OBS_KEYS
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
-PREFIX_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
 PREFIX_TRANSITION_PREFIX = "rlt_transition_"
 
 

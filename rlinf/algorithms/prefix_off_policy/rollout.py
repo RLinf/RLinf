@@ -18,6 +18,10 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.prefix_off_policy.config import (
+    get_prefix_feature_model_config,
+    is_gate_trace_enabled,
+)
 from rlinf.algorithms.prefix_off_policy.route import (
     PrefixRouteContext,
     build_prefix_route,
@@ -32,21 +36,16 @@ from rlinf.data.schema.embodied_types import (
     PolicyInput,
     TrajectoryKey,
     TrajectorySource,
-    merge_batch_values,
     split_batch_value,
 )
-from rlinf.models.embodiment.prefix.config import (
-    build_state_history_buffer,
-    get_prefix_feature_model_config,
-)
-from rlinf.models.embodiment.prefix.contracts import (
+from rlinf.models.embodiment.prefix_features import (
     check_prefix_feature_dim,
     extract_prefix_obs,
 )
 
 
 class PrefixRolloutRuntime:
-    """Own frozen features, routing, and source-indexed train/eval history."""
+    """Own the frozen feature model, routing, and terminal feature cache."""
 
     def __init__(
         self,
@@ -68,7 +67,7 @@ class PrefixRolloutRuntime:
         self.gate = gate
         self.expert_model = expert_model
         self.route = build_prefix_route(cfg)
-        self.histories = {}
+        self.collect_gate_trace = is_gate_trace_enabled(cfg)
         self._terminal_features = {}
 
     @classmethod
@@ -118,51 +117,22 @@ class PrefixRolloutRuntime:
         )
 
     def reset(self, mode: Literal["train", "eval"]) -> None:
-        """Clear only the requested mode's routing and history state."""
+        """Clear only the requested mode's routing and cached terminal features."""
         if self.gate is not None:
             self.gate.reset(mode=mode)
-        for key in list(self.histories):
-            if key[0] == mode:
-                del self.histories[key]
         self._terminal_features.clear()
 
     def to(self, device: Any) -> None:
-        """Move every runtime-owned model and retained history together."""
+        """Move every runtime-owned model to ``device``."""
         self.feature_model.to(device)
         if self.expert_model is not None:
             self.expert_model.to(device)
         if self.gate is not None:
             self.gate.to(device)
-        for history in self.histories.values():
-            history.to(device)
         self._terminal_features.clear()
 
-    def _features(
-        self,
-        obs: dict,
-        sources: list[TrajectorySource],
-        mode: str,
-        *,
-        commit: bool,
-        dones: torch.Tensor | None = None,
-    ) -> dict:
-        features = extract_prefix_obs(self.feature_model, obs)
-        sizes = [source.size for source in sources]
-        feature_parts = split_batch_value(features, sizes)
-        done_parts = split_batch_value(dones, sizes)
-        for source, part, done in zip(sources, feature_parts, done_parts):
-            key = (mode, source.key.env_rank, source.key.stage_id)
-            history = self.histories.get(key)
-            if history is None:
-                history = build_state_history_buffer(self.model_cfg)
-                if commit:
-                    self.histories[key] = history
-            rows = torch.arange(source.offset, source.offset + source.size)
-            if commit and done is not None:
-                mask = done.reshape(source.size, -1).any(dim=-1)
-                history.reset(mask=mask, indices=rows)
-            part.update(history.fuse(part, commit=commit, indices=rows))
-        return merge_batch_values(feature_parts)
+    def _features(self, obs: dict) -> dict:
+        return extract_prefix_obs(self.feature_model, obs)
 
     @torch.no_grad()
     def prepare_transitions(self, request: PolicyInput, *, mode: str = "train") -> None:
@@ -174,16 +144,13 @@ class PrefixRolloutRuntime:
         for part, obs in zip(request.env_parts, observations):
             if part is not None and (part.requires_inference or request.is_last):
                 self._terminal_features[id(part)] = self._features(
-                    part.next_obs if part.next_obs is not None else obs,
-                    part.sources,
-                    mode,
-                    commit=False,
+                    part.next_obs if part.next_obs is not None else obs
                 )
 
     def transition_obs(
         self, part: EnvPart, policy_obs: dict | None, current_features: dict | None
     ) -> dict:
-        """Return post-action features without advancing an environment's history."""
+        """Return post-action features for a completed environment step."""
         cached = self._terminal_features.pop(id(part), None)
         if cached is not None:
             return cached
@@ -192,7 +159,7 @@ class PrefixRolloutRuntime:
         obs = part.next_obs if part.next_obs is not None else policy_obs
         if obs is None:
             raise ValueError("Prefix transition requires a post-action observation.")
-        return self._features(obs, part.sources, "train", commit=False)
+        return self._features(obs)
 
     @torch.no_grad()
     def predict(
@@ -224,9 +191,7 @@ class PrefixRolloutRuntime:
                     size=batch_size,
                 )
             ]
-        features = self._features(
-            request.obs, sources, mode, commit=True, dones=request.dones
-        )
+        features = self._features(request.obs)
         actions, result = self.policy_model.predict_action_batch(
             env_obs=features, mode=mode, return_obs=True
         )
@@ -250,7 +215,11 @@ class PrefixRolloutRuntime:
             if self.gate.controls_actor_routing:
                 actor_switch = decision.actor_switch
             expert_requested = decision.expert_requested
-            result["trajectory_infos"] = decision.trajectory_infos
+            # ``rollout_infos`` feeds the env; ``trajectory_infos`` rides the
+            # actor channel and is consumed only by the calibration trace writer.
+            result["rollout_infos"] = decision.trajectory_infos
+            if self.collect_gate_trace:
+                result["trajectory_infos"] = decision.trajectory_infos
         output = self.route.route(
             PrefixRouteContext(
                 env_obs=request.obs,

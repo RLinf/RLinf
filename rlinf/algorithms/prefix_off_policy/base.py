@@ -24,11 +24,11 @@ from rlinf.algorithms.prefix_off_policy.capabilities import (
 from rlinf.algorithms.prefix_off_policy.transition import (
     use_simulator_transition_replay,
 )
-from rlinf.models.embodiment.prefix.heads.registry import (
+from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.mlp_policy.heads import (
     get_prefix_actor_spec,
     get_prefix_critic_spec,
 )
-from rlinf.models.embodiment.prefix.types import PrefixForwardType
 
 ActorQAggregation = Literal["min", "q1", "mean"]
 ACTOR_Q_AGGREGATIONS: tuple[ActorQAggregation, ...] = ("min", "q1", "mean")
@@ -355,23 +355,23 @@ class PrefixOffPolicyAlgorithm(ABC):
         with torch.no_grad():
             next_actions = self.target_actions(context, next_obs)
             if not joint_critic:
-                all_qf_next, _ = context.target_model(
-                    forward_type=PrefixForwardType.CRITIC,
+                all_qf_next = context.target_model(
+                    forward_type=ForwardType.SAC_Q,
                     obs=next_obs,
                     actions=next_actions,
                 )
 
         if joint_critic:
             all_data_q_values, all_qf_next = context.model(
-                forward_type=PrefixForwardType.CRITIC,
+                forward_type=ForwardType.CROSSQ_Q,
                 obs=curr_obs,
                 actions=actions,
                 next_obs=next_obs,
                 next_actions=next_actions,
             )
         else:
-            all_data_q_values, _ = context.model(
-                forward_type=PrefixForwardType.CRITIC,
+            all_data_q_values = context.model(
+                forward_type=ForwardType.SAC_Q,
                 obs=curr_obs,
                 actions=actions,
             )
@@ -412,7 +412,7 @@ class PrefixOffPolicyAlgorithm(ABC):
             self.cfg.algorithm.get("reference_dropout_prob", 0.0)
         )
         pi, log_pi, _ = context.model(
-            forward_type=PrefixForwardType.ACTOR,
+            forward_type=ForwardType.SAC,
             obs=curr_obs,
             apply_reference_dropout=apply_reference_dropout,
             reference_dropout_prob=reference_dropout_prob,
@@ -422,12 +422,20 @@ class PrefixOffPolicyAlgorithm(ABC):
             log_pi = log_pi.unsqueeze(-1)
         log_pi = log_pi.sum(dim=-1, keepdim=True)
 
-        all_qf_pi, _ = context.model(
-            forward_type=PrefixForwardType.CRITIC,
-            obs=curr_obs,
-            actions=pi,
-            detach_encoder=True,
-        )
+        if self.critic_capabilities.supports_cross_q:
+            all_qf_pi, _ = context.model(
+                forward_type=ForwardType.CROSSQ_Q,
+                obs=curr_obs,
+                actions=pi,
+                detach_encoder=True,
+            )
+        else:
+            all_qf_pi = context.model(
+                forward_type=ForwardType.SAC_Q,
+                obs=curr_obs,
+                actions=pi,
+                detach_encoder=True,
+            )
 
         metrics = {
             f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item()

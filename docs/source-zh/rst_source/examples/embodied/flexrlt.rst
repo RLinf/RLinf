@@ -313,7 +313,7 @@ AC 和 TD3 是两种更新 actor 与 critic 的算法，它们使用的动作生
      - ``q1``
    * - ``actor.model.critic_head.name``
      - ``multi_q_mlp``，``num_q_heads: 2``
-     - ``twin_q_mlp``
+     - ``multi_q_mlp``，``num_q_heads: 2`` 且 ``activation: relu``
 
 AC 使用随机 actor，preset 里的 ``fixed_std: 0.002`` 是固定标准差。TD3 preset 按 `RLT 论文 <https://arxiv.org/html/2604.23073>`_ 使用固定方差高斯策略，rollout 和 actor 更新都采样动作，标准差为 ``noise_sigma: 0.1``。actor 优化 Q1，保留 BC 和 reference dropout。target policy smoothing 只加入一次截断高斯噪声，配置为 ``algorithm.target_policy_noise: 0.1``、``algorithm.target_noise_clip: 0.5``。actor 和两个 target 网络每两次 critic 更新一起更新一次。切换时从对应 preset 复制整个 head 配置，包括这些尺度。
 
@@ -326,7 +326,7 @@ AC 使用随机 actor，preset 里的 ``fixed_std: 0.002`` 是固定标准差。
 
 先沿用该 preset 的 critic head。需要研究其他价值估计时，再用 ``multi_q_mlp`` 配置 Q 网络数量，或用 ``cross_q_mlp`` 联合处理当前状态和下一状态。配置校验会检查 Q 网络数量以及算法要求的其他条件。
 
-如果当前本体状态不足以描述运动，可以给 policy 加上一段近期历史。设置 ``actor.model.state_history.enable``、历史步数 ``steps``，以及填充方式 ``pad``，取 ``zero`` 或 ``repeat``。历史按 policy 每次决策更新，并在对应环境重置时清理。``actor.model.z_dim`` 仍填写原始特征宽度，历史增加的宽度由配置计算。
+``actor.model.z_dim`` 和 ``proprio_dim`` 必须与特征模型返回的一致。如果当前本体状态不足以描述运动，应由特征模型扩展 ``proprio`` 输出，而不是在 policy 侧拼接历史。
 
 调整训练目标与更新频率
 ~~~~~~~~~~~~~~~~~~~~~~

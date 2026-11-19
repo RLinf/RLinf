@@ -39,6 +39,7 @@ from rlinf.algorithms.prefix_off_policy import build_prefix_off_policy_algorithm
 from rlinf.config import SupportedModel, validate_embodied_cfg
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
+from rlinf.models.embodiment.mlp_policy.prefix_mlp_policy import PrefixPolicy
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
@@ -56,16 +57,12 @@ from rlinf.models.embodiment.openpi.modules.siglip import (
     Encoder1DBlock,
     SigLIPViT,
 )
-from rlinf.models.embodiment.prefix import (
+from rlinf.models.embodiment.prefix_features import (
     PREFIX_OBS_KEYS,
     PrefixFeatureModel,
-    PrefixForwardType,
-    StateHistoryBuffer,
     extract_prefix_obs,
-    get_state_history_config,
     pool_prefix,
 )
-from rlinf.models.embodiment.prefix.policy import PrefixPolicy
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -2764,8 +2761,6 @@ def test_phyai_training_requires_bucket_weight_sync(phyai_example_cfg):
     ("path", "value"),
     [
         ("algorithm.loss_type", "embodied_dagger"),
-        ("algorithm.loss_type", "rlt_ac"),
-        ("algorithm.loss_type", "rlt_td3"),
         ("algorithm.adv_type", "opd"),
     ],
 )
@@ -2924,7 +2919,7 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
             "maniskill_prefix_stage2_td3_mlp_steam",
             "td3",
             "deterministic_mlp",
-            "twin_q_mlp",
+            "multi_q_mlp",
             2,
             [],
         ),
@@ -2932,7 +2927,7 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
             "maniskill_rlt_stage2_td3_mlp",
             "td3",
             "deterministic_mlp",
-            "twin_q_mlp",
+            "multi_q_mlp",
             2,
             [],
         ),
@@ -3123,7 +3118,7 @@ def test_prefix_algorithm_extends_only_losses_and_target_actions():
         PrefixAlgorithmRequirements,
         PrefixOffPolicyAlgorithm,
     )
-    from rlinf.models.embodiment.prefix import PrefixForwardType
+    from rlinf.models.embodiment.base_policy import ForwardType
 
     class ScaledCriticAlgorithm(PrefixOffPolicyAlgorithm):
         requirements = PrefixAlgorithmRequirements(actor_distribution="stochastic")
@@ -3138,9 +3133,7 @@ def test_prefix_algorithm_extends_only_losses_and_target_actions():
             )
 
         def target_actions(self, context, next_obs):
-            actions, _, _ = context.model(
-                forward_type=PrefixForwardType.ACTOR, obs=next_obs
-            )
+            actions, _, _ = context.model(forward_type=ForwardType.SAC, obs=next_obs)
             return actions
 
     original, context, batch = _make_prefix_training_case("ac", "multi_q_mlp")
@@ -3164,45 +3157,42 @@ def test_prefix_algorithm_extends_only_losses_and_target_actions():
     )
 
 
-@pytest.mark.parametrize("critic_head", ["twin_q_mlp", "multi_q_mlp", "cross_q_mlp"])
-def test_prefix_policy_forward_selects_critic_backend(critic_head):
+@pytest.mark.parametrize("activation", ["relu", "tanh", "gelu"])
+def test_multi_q_mlp_critic_accepts_only_activations_with_init_gain(activation):
+    from rlinf.models.embodiment.mlp_policy.heads import build_prefix_critic
+
+    cfg = OmegaConf.create({"activation": activation, "hidden_dims": [8]})
+    if activation == "gelu":
+        with pytest.raises(ValueError, match=r"\('relu', 'tanh'\), got 'gelu'"):
+            build_prefix_critic("multi_q_mlp", state_dim=4, action_dim=2, cfg=cfg)
+        return
+    critic = build_prefix_critic("multi_q_mlp", state_dim=4, action_dim=2, cfg=cfg)
+    assert critic(torch.zeros(3, 4), torch.zeros(3, 2)).shape == (3, 2)
+
+
+@pytest.mark.parametrize("critic_head", ["multi_q_mlp", "cross_q_mlp"])
+def test_prefix_policy_forward_types(critic_head):
     from rlinf.models.embodiment.base_policy import ForwardType
-    from rlinf.models.embodiment.prefix import PrefixForwardType
 
     _, context, batch = _make_prefix_training_case("td3", critic_head)
-    model = context.model
+    model, obs = context.model, batch["curr_obs"]
     actions, log_probs, extra = model(
-        forward_type=PrefixForwardType.ACTOR,
-        obs=batch["curr_obs"],
-        deterministic=True,
-        apply_action_noise=False,
+        forward_type=ForwardType.SAC, obs=obs, deterministic=True
     )
     assert actions.shape == batch["actions"].shape
     assert log_probs.shape[0] == actions.shape[0] and extra is None
+    q = model(forward_type=ForwardType.SAC_Q, obs=obs, actions=batch["actions"])
+    assert q.shape == (3, 2)
     current_q, next_q = model(
-        forward_type=PrefixForwardType.CRITIC,
-        obs=batch["curr_obs"],
+        forward_type=ForwardType.CROSSQ_Q,
+        obs=obs,
         actions=batch["actions"],
+        next_obs=batch["next_obs"],
+        next_actions=actions,
     )
-    assert current_q.shape == (3, 2)
-    if critic_head == "cross_q_mlp":
-        current_q, next_q = model(
-            forward_type=PrefixForwardType.CRITIC,
-            obs=batch["curr_obs"],
-            actions=batch["actions"],
-            next_obs=batch["next_obs"],
-            next_actions=actions,
-        )
-        assert current_q.shape == next_q.shape == (3, 2)
-    else:
-        assert next_q is None
-    for forward_type in (ForwardType.SAC, ForwardType.SAC_Q, ForwardType.CROSSQ_Q):
-        with pytest.raises(NotImplementedError, match="Unsupported forward_type"):
-            model(
-                forward_type=forward_type,
-                obs=batch["curr_obs"],
-                actions=batch["actions"],
-            )
+    assert current_q.shape == next_q.shape == (3, 2)
+    with pytest.raises(NotImplementedError):
+        model(forward_type=ForwardType.DEFAULT, obs=obs)
 
 
 @pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
@@ -3211,8 +3201,8 @@ def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
     import torch.distributed as dist
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
+    from rlinf.models.embodiment.base_policy import ForwardType
     from rlinf.models.embodiment.modules.batch_renorm import BatchRenorm
-    from rlinf.models.embodiment.prefix import PrefixForwardType
 
     if not dist.is_available() or not dist.is_gloo_available():
         pytest.skip("CPU FSDP coverage requires the Gloo distributed backend")
@@ -3238,29 +3228,30 @@ def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
 
         def record_online(module, args, kwargs, output):
             online_calls.append(kwargs["forward_type"])
-            if kwargs["forward_type"] == PrefixForwardType.CRITIC:
-                current_q, next_q = output
-                current_q.retain_grad()
-                if next_q is not None and next_q.requires_grad:
-                    next_q.retain_grad()
+            if kwargs["forward_type"] == ForwardType.SAC_Q:
+                output = (output, None)
+            if kwargs["forward_type"] in (ForwardType.SAC_Q, ForwardType.CROSSQ_Q):
+                for q in output:
+                    if q is not None and q.requires_grad:
+                        q.retain_grad()
                 critic_outputs.append(output)
 
         def record_target(module, args, kwargs, output):
             target_calls.append(kwargs["forward_type"])
-            if kwargs["forward_type"] == PrefixForwardType.ACTOR:
+            if kwargs["forward_type"] == ForwardType.SAC:
                 assert kwargs["deterministic"] is True
                 assert kwargs["apply_action_noise"] is False
 
         context.model.register_forward_hook(record_online, with_kwargs=True)
         context.target_model.register_forward_hook(record_target, with_kwargs=True)
         renorms = [m for m in raw_model.modules() if isinstance(m, BatchRenorm)]
+        critic_type = ForwardType.CROSSQ_Q if renorms else ForwardType.SAC_Q
         critic_loss, _ = algorithm.critic_loss(context, batch)
-        assert online_calls == (
-            [PrefixForwardType.ACTOR] if algorithm_name == "ac" else []
-        ) + [PrefixForwardType.CRITIC]
+        actor_calls = [ForwardType.SAC] if algorithm_name == "ac" else []
+        assert online_calls == actor_calls + [critic_type]
         assert target_calls == (
-            [PrefixForwardType.ACTOR] if algorithm_name == "td3" else []
-        ) + ([] if renorms else [PrefixForwardType.CRITIC])
+            [ForwardType.SAC] if algorithm_name == "td3" else []
+        ) + ([] if renorms else [ForwardType.SAC_Q])
         assert all(m.steps.item() == 1 for m in renorms)
         current_q, next_q = critic_outputs[0]
         if renorms:
@@ -3289,7 +3280,7 @@ def test_prefix_losses_use_fsdp_forward(tmp_path, algorithm_name, critic_head):
         context.model.zero_grad(set_to_none=True)
         actor_loss, entropy, metrics = algorithm.actor_loss(context, batch)
         assert torch.isfinite(actor_loss) and torch.isfinite(entropy)
-        assert online_calls[-2:] == [PrefixForwardType.ACTOR, PrefixForwardType.CRITIC]
+        assert online_calls[-2:] == [ForwardType.SAC, critic_type]
         assert metrics["bc_weight"] == pytest.approx(0.6)
         assert metrics["q_weight"] == pytest.approx(0.5)
         actor_loss.backward()
@@ -3575,7 +3566,17 @@ def test_steam_calibration_preset_collects_without_a_phase_head(monkeypatch):
     assert not training_cfg.algorithm.rlt_gate_calibration.enable
 
 
+def test_prefix_off_policy_loss_requires_prefix_obs_contract():
+    from rlinf.config import ObsContract, SupportedModel, get_model_obs_contract
+
+    assert get_model_obs_contract(SupportedModel.PREFIX_POLICY) == ObsContract.PREFIX
+    for model_type in (SupportedModel.MLP_POLICY, SupportedModel.OPENPI):
+        assert get_model_obs_contract(model_type) == ObsContract.STATE
+
+
 def test_prefix_e2e_config_builds_current_policy_and_algorithm(monkeypatch):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     cfg = _compose_prefix_config(
         monkeypatch, "tests/e2e_tests/embodied", "maniskill_rlt_stage2_ac_mlp"
     )
@@ -3593,7 +3594,7 @@ def test_prefix_e2e_config_builds_current_policy_and_algorithm(monkeypatch):
     }
     actions = algorithm.target_actions(SimpleNamespace(model=model), obs)
     assert actions.shape == (2, 80)
-    q_values, _ = model(forward_type=PrefixForwardType.CRITIC, obs=obs, actions=actions)
+    q_values = model(forward_type=ForwardType.SAC_Q, obs=obs, actions=actions)
     assert q_values.shape == (2, 2)
     assert cfg.runner.max_epochs == 1
     assert cfg.env.train.total_num_envs == 8
@@ -3631,7 +3632,7 @@ def test_build_rlt_config_rejects_openpi_pooling_fields(legacy_key):
 
 
 def test_prefix_feature_width_must_match_policy_z_dim():
-    from rlinf.models.embodiment.prefix import (
+    from rlinf.models.embodiment.prefix_features import (
         check_prefix_feature_dim,
         extract_prefix_obs,
     )
@@ -3792,7 +3793,9 @@ def test_steam_gate_maps_processor_cameras_to_env_observations():
 def test_dual_franka_rlt_stage2_builds_prefix_policy(monkeypatch):
     from hydra import compose, initialize_config_dir
 
-    from rlinf.models.embodiment.prefix.config import get_prefix_feature_model_config
+    from rlinf.algorithms.prefix_off_policy.config import (
+        get_prefix_feature_model_config,
+    )
 
     root = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
@@ -4074,6 +4077,8 @@ def test_pool_prefix_mean_and_last():
 
 
 def test_prefix_feature_model_protocol_and_policy():
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     feature = _PrefixFeatureModel()
     assert isinstance(feature, PrefixFeatureModel)
     obs = extract_prefix_obs(feature, {"states": torch.zeros(2, 3)})
@@ -4087,125 +4092,8 @@ def test_prefix_feature_model_protocol_and_policy():
         actor_head_cfg={"name": "fixed_std_mlp", "hidden_dims": [8, 8]},
         critic_head_cfg={"name": "multi_q_mlp", "hidden_dims": [8, 8]},
     )
-    action, _, _ = policy(forward_type=PrefixForwardType.ACTOR, obs=obs)
+    action, _, _ = policy(forward_type=ForwardType.SAC, obs=obs)
     assert action.shape == (2, 28)
-
-
-def test_history_disabled_is_identity():
-    obs = _PrefixFeatureModel().extract_prefix_obs({"states": torch.ones(1, 3)})
-    hist = StateHistoryBuffer(enable=False, steps=4, proprio_dim=3)
-    fused = hist.fuse(obs)
-    assert fused["z_rl"].shape[-1] == 8
-    assert hist.extra_z_dim == 0
-    cfg = OmegaConf.create({"z_dim": 2048, "state_history": {"enable": False}})
-    assert get_state_history_config(cfg).extra_dim == 0
-
-
-def test_history_enabled_concat_reset_and_pad():
-    hist = StateHistoryBuffer(enable=True, steps=4, proprio_dim=2, pad="zero")
-    prefix = torch.zeros(1, 8)
-    obs = {
-        "z_rl": prefix,
-        "proprio": torch.ones(1, 2),
-        "ref_chunk": torch.zeros(1, 1, 1),
-    }
-    fused = hist.fuse(obs)
-    assert fused["z_rl"].shape[-1] == 8 + 8
-    torch.testing.assert_close(fused["z_rl"][0, 8:14], torch.zeros(6))
-    torch.testing.assert_close(fused["z_rl"][0, 14:], torch.ones(2))
-
-    hist.reset(mask=torch.tensor([True]))
-    obs2 = {
-        "z_rl": prefix,
-        "proprio": torch.full((1, 2), 5.0),
-        "ref_chunk": torch.zeros(1, 1, 1),
-    }
-    fused2 = hist.fuse(obs2)
-    torch.testing.assert_close(fused2["z_rl"][0, 8:14], torch.zeros(6))
-    torch.testing.assert_close(fused2["z_rl"][0, 14:], torch.full((2,), 5.0))
-
-    repeat = StateHistoryBuffer(enable=True, steps=4, proprio_dim=2, pad="repeat")
-    fused_repeat = repeat.fuse(obs)
-    torch.testing.assert_close(fused_repeat["z_rl"][0, 8:], torch.ones(8))
-
-
-def test_history_peek_does_not_commit():
-    hist = StateHistoryBuffer(enable=True, steps=2, proprio_dim=1, pad="zero")
-    obs_t = {
-        "z_rl": torch.zeros(1, 2),
-        "proprio": torch.tensor([[1.0]]),
-        "ref_chunk": torch.zeros(1, 1, 1),
-    }
-    hist.fuse(obs_t)
-    peek = hist.fuse(
-        {
-            "z_rl": torch.zeros(1, 2),
-            "proprio": torch.tensor([[9.0]]),
-            "ref_chunk": torch.zeros(1, 1, 1),
-        },
-        commit=False,
-    )
-    torch.testing.assert_close(peek["z_rl"][0, 2:], torch.tensor([1.0, 9.0]))
-    committed = hist.fuse(
-        {
-            "z_rl": torch.zeros(1, 2),
-            "proprio": torch.tensor([[9.0]]),
-            "ref_chunk": torch.zeros(1, 1, 1),
-        }
-    )
-    torch.testing.assert_close(committed["z_rl"][0, 2:], torch.tensor([1.0, 9.0]))
-
-
-def test_prefix_policy_consumes_fused_history():
-    feature = _PrefixFeatureModel()
-    hist = StateHistoryBuffer(enable=True, steps=4, proprio_dim=3)
-    obs = hist.fuse(feature.extract_prefix_obs({"states": torch.zeros(2, 3)}))
-    policy = PrefixPolicy(
-        prefix_dim=feature.z_dim + hist.extra_z_dim,
-        proprio_dim=3,
-        action_dim=7,
-        num_action_chunks=4,
-        ref_num_action_chunks=4,
-        actor_head_cfg={"name": "fixed_std_mlp", "hidden_dims": [8, 8]},
-        critic_head_cfg={"name": "multi_q_mlp", "hidden_dims": [8, 8]},
-    )
-    action, _, _ = policy(forward_type=PrefixForwardType.ACTOR, obs=obs)
-    assert action.shape == (2, 28)
-
-
-@pytest.mark.parametrize("enabled", [False, True])
-def test_prefix_policy_history_dimension_is_derived_without_mutating_config(enabled):
-    from rlinf.models.embodiment.prefix import (
-        build_state_history_buffer,
-        get_prefix_feature_dim,
-    )
-
-    cfg = OmegaConf.create(
-        {
-            "model_type": "prefix_policy",
-            "precision": "fp32",
-            "is_lora": False,
-            "z_dim": 8,
-            "proprio_dim": 3,
-            "action_dim": 7,
-            "num_action_chunks": 4,
-            "state_history": {"enable": enabled, "steps": 4},
-            "actor_head": {"name": "fixed_std_mlp", "hidden_dims": [8, 8]},
-            "critic_head": {"name": "multi_q_mlp", "hidden_dims": [8, 8]},
-        }
-    )
-    before = OmegaConf.to_container(cfg, resolve=True)
-    policy = get_model(cfg)
-    history = build_state_history_buffer(cfg)
-    expected_width = 20 if enabled else 8
-    assert policy.prefix_dim == get_prefix_feature_dim(cfg) == expected_width
-    obs = history.fuse(
-        _PrefixFeatureModel().extract_prefix_obs({"states": torch.zeros(2, 3)})
-    )
-    assert obs["z_rl"].shape == (2, expected_width)
-    actions, _ = policy.predict_action_batch(obs, mode="eval")
-    assert actions.shape == (2, 4, 7)
-    assert OmegaConf.to_container(cfg, resolve=True) == before
 
 
 @pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
@@ -4213,13 +4101,15 @@ def test_prefix_policy_history_dimension_is_derived_without_mutating_config(enab
 def test_prefix_actor_reference_dropout_only_enabled_for_positive_probability(
     algorithm_name, probability
 ):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     _, context, batch = _make_prefix_training_case(algorithm_name, "multi_q_mlp")
     context.cfg.algorithm.reference_dropout_prob = probability
     algorithm = build_prefix_off_policy_algorithm(context.cfg)
     actor_requests = []
 
     def record_request(module, args, kwargs):
-        if kwargs["forward_type"] == PrefixForwardType.ACTOR:
+        if kwargs["forward_type"] == ForwardType.SAC:
             actor_requests.append(kwargs)
 
     handle = context.model.register_forward_pre_hook(record_request, with_kwargs=True)
@@ -4264,10 +4154,12 @@ def test_prefix_pool_selection_and_parent_configuration(use_rlt, pool, expected)
 
 @pytest.mark.parametrize("algorithm_name", ["ac", "td3"])
 def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm_name):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     _, context, batch = _make_prefix_training_case(algorithm_name, "multi_q_mlp")
     rng_state = torch.get_rng_state()
     with_dropout = context.model(
-        forward_type=PrefixForwardType.ACTOR,
+        forward_type=ForwardType.SAC,
         obs=batch["curr_obs"],
         apply_reference_dropout=True,
         reference_dropout_prob=0.0,
@@ -4275,11 +4167,13 @@ def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm
     rng_after_dropout = torch.get_rng_state()
     torch.set_rng_state(rng_state)
     without_dropout = context.model(
-        forward_type=PrefixForwardType.ACTOR,
+        forward_type=ForwardType.SAC,
         obs=batch["curr_obs"],
         apply_reference_dropout=False,
         reference_dropout_prob=0.0,
     )
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     torch.testing.assert_close(with_dropout, without_dropout, rtol=0, atol=0)
     assert torch.equal(torch.get_rng_state(), rng_after_dropout)
 
@@ -4288,6 +4182,8 @@ def test_prefix_zero_reference_dropout_preserves_actor_outputs_and_rng(algorithm
     "noise_sigma,noise_clip", [(0.2, 0.5), (1.0, 0.2), (0.0, 0.5), (0.2, 0.0)]
 )
 def test_prefix_td3_target_policy_smoothing(noise_sigma, noise_clip):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
     context.cfg.algorithm.target_policy_noise = noise_sigma
     context.cfg.algorithm.target_noise_clip = noise_clip
@@ -4302,7 +4198,7 @@ def test_prefix_td3_target_policy_smoothing(noise_sigma, noise_clip):
         ]
         linears[-1].bias.copy_(torch.tensor([-0.95, 0.0, 0.0, 0.95]))
         actions, _, _ = context.target_model(
-            forward_type=PrefixForwardType.ACTOR,
+            forward_type=ForwardType.SAC,
             obs=batch["next_obs"],
             deterministic=True,
             apply_action_noise=False,
@@ -4326,6 +4222,8 @@ def test_prefix_td3_target_policy_smoothing(noise_sigma, noise_clip):
 
 @pytest.mark.parametrize("sample_actions", [True, False])
 def test_prefix_td3_actor_uses_q1_with_optional_rlt_sampling(sample_actions):
+    from rlinf.models.embodiment.base_policy import ForwardType
+
     algorithm, context, batch = _make_prefix_training_case("td3", "multi_q_mlp")
     context.cfg.algorithm.reference_dropout_prob = 0.0
     if not sample_actions:
@@ -4338,15 +4236,13 @@ def test_prefix_td3_actor_uses_q1_with_optional_rlt_sampling(sample_actions):
     rng_after_loss = torch.get_rng_state().clone()
     torch.set_rng_state(rng_state)
     actions, _, _ = context.model(
-        forward_type=PrefixForwardType.ACTOR,
+        forward_type=ForwardType.SAC,
         obs=batch["curr_obs"],
         apply_action_noise=sample_actions,
         apply_reference_dropout=False,
     )
-    q_values, _ = context.model(
-        forward_type=PrefixForwardType.CRITIC,
-        obs=batch["curr_obs"],
-        actions=actions,
+    q_values = context.model(
+        forward_type=ForwardType.SAC_Q, obs=batch["curr_obs"], actions=actions
     )
     torch.testing.assert_close(loss, -q_values[..., 0].mean())
     assert torch.equal(torch.get_rng_state(), rng_after_loss)
@@ -4355,7 +4251,7 @@ def test_prefix_td3_actor_uses_q1_with_optional_rlt_sampling(sample_actions):
 
 @pytest.mark.parametrize("raw", [-1.2, 1.2])
 def test_prefix_td3_exploration_adds_noise_before_clamping(raw):
-    from rlinf.models.embodiment.prefix.heads.mlp import DeterministicMLPActor
+    from rlinf.models.embodiment.mlp_policy.heads import DeterministicMLPActor
 
     actor = DeterministicMLPActor(1, 1, 1, {"hidden_dims": [], "noise_sigma": 0.5})
     linear = next(m for m in actor.mlp.modules() if isinstance(m, torch.nn.Linear))
@@ -4425,105 +4321,6 @@ def test_steam_gate_uses_head_metadata_and_warns_on_overrides(tmp_path, caplog):
         gate = SteamRoutingGate(_FakeSteamCritic(), cfg)
     assert gate.enter_threshold == 0.1
     assert "actor_switch.enter_threshold" in caplog.text
-
-
-def test_prefix_runtime_terminal_history_is_source_scoped_and_nonmutating():
-    from rlinf.algorithms.prefix_off_policy.rollout import PrefixRolloutRuntime
-    from rlinf.data.schema.embodied_types import (
-        EnvPart,
-        EnvTransition,
-        PolicyInput,
-        TrajectoryKey,
-        TrajectorySource,
-    )
-
-    class Features:
-        z_dim = 2
-
-        def extract_prefix_obs(self, obs):
-            states = obs["states"]
-            return {
-                "z_rl": torch.zeros(len(states), 2),
-                "proprio": states,
-                "ref_chunk": torch.zeros(len(states), 1, 1),
-            }
-
-    cfg = OmegaConf.create(
-        {
-            "actor": {
-                "model": {
-                    "model_type": "prefix_policy",
-                    "z_dim": 2,
-                    "proprio_dim": 1,
-                    "action_dim": 1,
-                    "num_action_chunks": 1,
-                    "actor_head": {"name": "deterministic_mlp", "hidden_dims": [4]},
-                    "critic_head": {"name": "multi_q_mlp", "hidden_dims": [4]},
-                    "state_history": {"enable": True, "steps": 3},
-                }
-            },
-            "algorithm": {},
-            "env": {"train": {"env_type": "maniskill_rlt"}},
-        }
-    )
-    policy = PrefixPolicy(
-        prefix_dim=5,
-        proprio_dim=1,
-        action_dim=1,
-        num_action_chunks=1,
-        ref_num_action_chunks=1,
-        actor_head_cfg=cfg.actor.model.actor_head,
-        critic_head_cfg=cfg.actor.model.critic_head,
-    )
-    runtime = PrefixRolloutRuntime(cfg, policy, Features())
-
-    def source(offset, size, chunk):
-        return TrajectorySource(
-            TrajectoryKey(0, 0, 3, 0, chunk), size=size, offset=offset
-        )
-
-    def request(states, sources, **kwargs):
-        return PolicyInput(
-            obs={"states": torch.tensor(states).float().reshape(-1, 1)},
-            sources=sources,
-            **kwargs,
-        )
-
-    runtime.predict(request([1, 10], [source(0, 2, 0)]))
-    runtime.predict(request([2, 20], [source(0, 2, 1)]))
-    terminal = EnvPart(
-        sources=[source(1, 1, 1)],
-        transition=EnvTransition(),
-        next_obs={"states": torch.tensor([[30.0]])},
-        requires_inference=True,
-    )
-    nonterminal = EnvPart(sources=[source(0, 1, 1)], transition=EnvTransition())
-    current = request(
-        [100, 3],
-        [source(1, 1, 2), source(0, 1, 2)],
-        dones=torch.tensor([[True], [False]]),
-        env_parts=[terminal, nonterminal],
-        request_sizes=[1, 1],
-    )
-    _, result = runtime.predict(current)
-    old = runtime.transition_obs(terminal, None, None)
-    torch.testing.assert_close(old["z_rl"][0, 2:], torch.tensor([10.0, 20.0, 30.0]))
-    new = result["forward_inputs"]["z_rl"][:, 2:]
-    torch.testing.assert_close(new, torch.tensor([[0.0, 0.0, 100.0], [1.0, 2.0, 3.0]]))
-    final_part = EnvPart(sources=[source(0, 1, 2)], transition=EnvTransition())
-    final = request([4], [], env_parts=[final_part], request_sizes=[1], is_last=True)
-    runtime.prepare_transitions(final)
-    final_features = runtime.transition_obs(final_part, None, None)
-    torch.testing.assert_close(
-        final_features["z_rl"][0, 2:], torch.tensor([2.0, 3.0, 4.0])
-    )
-    # A different-sized terminal peek and eval cannot erase the merged train rows.
-    runtime.predict(request([99, 999], [source(0, 2, 0)]), mode="eval")
-    _, result = runtime.predict(request([101, 5], [source(1, 1, 3), source(0, 1, 3)]))
-    torch.testing.assert_close(
-        result["forward_inputs"]["z_rl"][:, 2:],
-        torch.tensor([[0.0, 100.0, 101.0], [2.0, 3.0, 5.0]]),
-    )
 
 
 @pytest.mark.parametrize(

@@ -146,3 +146,4 @@ reward:
 
 critic:
   use_critic_model: False
+

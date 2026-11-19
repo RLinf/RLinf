@@ -27,7 +27,7 @@ from rlinf.algorithms.prefix_off_policy.capabilities import (
 from rlinf.algorithms.prefix_off_policy.registry import (
     register_prefix_off_policy_algorithm,
 )
-from rlinf.models.embodiment.prefix.types import PrefixForwardType
+from rlinf.models.embodiment.base_policy import ForwardType
 
 
 @register_prefix_off_policy_algorithm("td3")
@@ -105,7 +105,7 @@ class PrefixTD3Algorithm(PrefixOffPolicyAlgorithm):
     ) -> torch.Tensor:
         """Return target-actor actions with clipped target policy smoothing."""
         actions, _, _ = context.target_model(
-            forward_type=PrefixForwardType.ACTOR,
+            forward_type=ForwardType.SAC,
             obs=next_obs,
             deterministic=True,
             apply_action_noise=False,

@@ -26,7 +26,7 @@ from rlinf.algorithms.prefix_off_policy.capabilities import (
 from rlinf.algorithms.prefix_off_policy.registry import (
     register_prefix_off_policy_algorithm,
 )
-from rlinf.models.embodiment.prefix.types import PrefixForwardType
+from rlinf.models.embodiment.base_policy import ForwardType
 
 
 @register_prefix_off_policy_algorithm("ac")
@@ -61,7 +61,7 @@ class PrefixACAlgorithm(PrefixOffPolicyAlgorithm):
     ) -> torch.Tensor:
         """Sample next-state actions from the online actor."""
         actions, _, _ = context.model(
-            forward_type=PrefixForwardType.ACTOR,
+            forward_type=ForwardType.SAC,
             obs=next_obs,
         )
         return actions
