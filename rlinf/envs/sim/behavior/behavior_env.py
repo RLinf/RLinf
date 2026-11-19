@@ -66,7 +66,7 @@ class BehaviorProcess:
         pipeline_stage_num: int,
     ):
         _preload_numba_llvmlite()
-        from omnigibson.envs import VectorEnvironment
+        from omnigibson.envs import Environment
 
         self.logger = get_logger()
         self.pipeline_stage_num = pipeline_stage_num
@@ -86,7 +86,8 @@ class BehaviorProcess:
             omni_cfg_dict["env"]["physics_frequency"] = (
                 omni_cfg_dict["env"]["physics_frequency"] / pipeline_stage_num
             )
-        self.env = VectorEnvironment(num_envs, omni_cfg_dict)
+        omni_cfg_dict["env"]["num_envs"] = num_envs
+        self.env = Environment(configs=omni_cfg_dict)
         apply_runtime_renderer_settings()
         wrapper_name = OmegaConf.select(omni_cfg, "env.env_wrapper")
         self.env = apply_env_wrapper(self.env, wrapper_name)
@@ -219,7 +220,8 @@ class BehaviorProcess:
             return None, None
 
         raw_obs, infos = result
-        return list(raw_obs), list(infos)
+        # 3.9.3 batches observation info; RLinf pairs one info dict with each observation.
+        return raw_obs, [{"obs_info": info} for info in infos["obs_info"]]
 
     def close(self):
         if self.env is not None:

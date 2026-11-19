@@ -87,18 +87,36 @@ def sync_robot_after_pose_override(robot) -> None:
     robot.keep_still()
 
 
-def set_camera_resolution(camera_cfg: dict | None) -> None:
+def set_camera_resolution(
+    camera_cfg: DictConfig | None,
+    robot_cfg: DictConfig,
+    r1pro: DictConfig | None = None,
+) -> None:
     if camera_cfg is None:
         return
 
-    import omnigibson.learning.utils.eval_utils as eval_utils
+    # OmniGibson 3.9.3 fixes camera sizes at sensor creation.
+    if r1pro is None:
+        import omnigibson as og
 
-    head_resolution = camera_cfg.get("head_resolution")
-    wrist_resolution = camera_cfg.get("wrist_resolution")
-    if head_resolution is not None:
-        eval_utils.HEAD_RESOLUTION = tuple(head_resolution)
-    if wrist_resolution is not None:
-        eval_utils.WRIST_RESOLUTION = tuple(wrist_resolution)
+        r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+    sensors = robot_cfg.get("sensor_config") or {}
+    for role, name in r1pro.eval.camera_sensor_names.items():
+        resolution = camera_cfg.get(
+            "head_resolution" if role == "head" else "wrist_resolution"
+        )
+        if resolution is None:
+            continue
+        height, width = resolution
+        link = name.split(":", 1)[1]
+        # A per-link entry takes precedence over the shared VisionSensor settings.
+        current = sensors.get(link, sensors.get("VisionSensor", {}))
+        size = {"image_height": height, "image_width": width}
+        OmegaConf.update(
+            robot_cfg,
+            f"sensor_config.{link}",
+            OmegaConf.merge(current, {"sensor_kwargs": size}),
+        )
 
 
 def apply_runtime_renderer_settings() -> None:
@@ -180,9 +198,7 @@ def apply_env_wrapper(vec_env, wrapper_name: str | None):
         return vec_env
     patch_omnigibson_wrapper_reset_signature()
     wrapper_cls = get_env_wrapper(wrapper_name)
-    for i in range(vec_env.num_envs):
-        vec_env.envs[i] = wrapper_cls(vec_env.envs[i])
-    return vec_env
+    return wrapper_cls(vec_env)
 
 
 def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: str):
@@ -279,7 +295,6 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     # setup omnigibson macros, according to configuration yaml
     macro_cfg = OmegaConf.select(omni_cfg, "macro")
     gm.HEADLESS = macro_cfg.headless
-    gm.ENABLE_FLATCACHE = macro_cfg.enable_flatcache
     gm.ENABLE_OBJECT_STATES = macro_cfg.enable_object_states
     gm.USE_GPU_DYNAMICS = macro_cfg.use_gpu_dynamics
     gm.ENABLE_TRANSITION_RULES = macro_cfg.enable_transition_rules
@@ -288,7 +303,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
 
     # setup head/wrist camera resolutions
     camera_cfg = OmegaConf.select(omni_cfg, "camera")
-    set_camera_resolution(camera_cfg)
+    set_camera_resolution(camera_cfg, omni_cfg.robots[0])
 
     # override behavior's termination config `max_steps` field
     max_episode_steps = (
