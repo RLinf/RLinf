@@ -218,7 +218,7 @@ rollout
       repetition_penalty: 1.0
 
     group_name: "RolloutGroup"
-    backend: "huggingface"
+    rollout_backend: "huggingface"
     enable_offload: True
     pipeline_stage_num: 1
     rollout_queue_size: 0
@@ -246,7 +246,7 @@ rollout
      - 对重复 token 的惩罚。
    * - ``rollout.group_name``
      - Rollout Worker 组的逻辑名称。
-   * - ``rollout.backend``
+   * - ``rollout.rollout_backend``
      - 模型后端（例如 ``huggingface``）。
    * - ``rollout.enable_offload``
      - 卸载 rollout 模型以降低显存占用。

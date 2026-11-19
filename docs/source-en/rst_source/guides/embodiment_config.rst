@@ -232,7 +232,7 @@ rollout
       repetition_penalty: 1.0
 
     group_name: "RolloutGroup"
-    backend: "huggingface"
+    rollout_backend: "huggingface"
     enable_offload: True
     pipeline_stage_num: 1
     rollout_queue_size: 0
@@ -260,7 +260,7 @@ OpenPI, GR00T, etc.) do not use ``rollout.sampling_params``.
      - Penalize repeated tokens.
    * - ``rollout.group_name``
      - Logical name for the rollout worker group.
-   * - ``rollout.backend``
+   * - ``rollout.rollout_backend``
      - Model backend (e.g., ``huggingface``).
    * - ``rollout.enable_offload``
      - Offload the rollout model to reduce GPU memory usage.
