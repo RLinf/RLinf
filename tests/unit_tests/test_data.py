@@ -22,6 +22,9 @@ import json
 import pickle
 import random
 import shutil
+import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -3088,6 +3091,8 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -3387,6 +3392,8 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3493,6 +3500,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3732,10 +3741,16 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
-def test_rollout_runs_requested_terminal_inference_without_a_value_head():
+@pytest.mark.parametrize("value_only", [False, True])
+def test_rollout_runs_requested_terminal_inference_without_a_value_head(value_only):
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = value_only
     rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
     rollout.model_cfg = SimpleNamespace(model_type="openpi")
+    rollout.hf_model = SimpleNamespace()
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3766,6 +3781,8 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
 def test_rollout_reuses_policy_obs_for_transition_next_obs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = False
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3789,6 +3806,8 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = True
+    rollout.value_only_bootstrap = True
     rollout.enable_rlt = True
     rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
@@ -3822,6 +3841,8 @@ def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
 
 def test_rollout_keeps_next_forward_inputs_only_for_rlt():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = True
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3852,6 +3873,78 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
         forward_inputs["rlt_transition_z_rl"],
     )
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
+
+
+@pytest.mark.parametrize("batch_bootstrap", [False, True])
+def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstrap):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = batch_bootstrap
+    rollout.value_only_bootstrap = True
+    rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.model_cfg = SimpleNamespace(model_type="openvla")
+    rollout.collect_transitions = True
+    rollout.n_train_chunk_steps = 0
+    rollout.num_pipeline_stages = 1
+    rollout.env_decoupled_mode = False
+    rollout.update_dagger_beta = lambda: None
+
+    class ValuePolicy:
+        value_head = object()
+
+        def predict_value_batch(self, env_obs):
+            return env_obs["states"][:, :1].float() * 2
+
+    rollout.hf_model = ValuePolicy()
+    sizes = [1, 1, 2]
+    keys = [TrajectoryKey(0, rank, 0, 0, 1) for rank in range(3)]
+    sources = [TrajectorySource(key, size) for key, size in zip(keys, sizes)]
+    parts = [
+        EnvPart(
+            sources=[sources[0]],
+            transition=EnvTransition(truncations=torch.ones(1, 1, dtype=torch.bool)),
+            next_obs={"states": torch.tensor([[9]])},
+            requires_inference=True,
+        ),
+        EnvPart(sources=[sources[1]], transition=EnvTransition()),
+        EnvPart(
+            sources=[sources[2]],
+            transition=EnvTransition(),
+            requires_inference=True,
+        ),
+    ]
+    request = PolicyInput(
+        obs={"states": torch.tensor([[0], [1], [2], [3]])},
+        env_parts=parts,
+        request_sizes=sizes,
+        is_last=True,
+    )
+    rollout._receive_policy_input = AsyncMock(return_value=(request, None))
+
+    class ActorChannel:
+        def __init__(self):
+            self.parts = []
+
+        def put(self, item, *, async_op):
+            self.parts.append(item)
+
+    actor_channel = ActorChannel()
+    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
+    while hasattr(generate_one_epoch, "__wrapped__"):
+        generate_one_epoch = generate_one_epoch.__wrapped__
+    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
+
+    completed = actor_channel.parts
+    assert [part.sources for part in completed] == [[source] for source in sources]
+    assert all(not part.requires_inference for part in completed)
+    assert completed[0].transition is parts[0].transition
+    assert completed[0].next_obs["states"].tolist() == [[9]]
+    assert completed[0].bootstrap_values.tolist() == [[18.0]]
+    assert completed[1].bootstrap_values is None
+    assert completed[1].next_obs["states"].tolist() == [[1]]
+    assert completed[2].next_obs["states"].tolist() == [[2], [3]]
+    assert completed[2].final_prev_values.tolist() == [[4.0], [6.0]]
 
 
 @pytest.mark.parametrize("use_chat_template", [False, True])
@@ -4399,9 +4492,18 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
         returns=torch.ones(2, 4),
     )
-    batch = result.to_actor_batch(4, 0)
-    batch["loss_scales"] = batch["response_mask"].float()
-    assert (batch["response_mask"][0] & batch["response_mask"][1]).sum() == 1
+    for key in ("values", "returns", "advantages"):
+        setattr(
+            result,
+            key,
+            [
+                row[: len(ids)]
+                for row, ids in zip(getattr(result, key), result.input_ids)
+            ],
+        )
+    batch = result.to_actor_batch()
+    batch["loss_scales"] = [mask.float() for mask in batch["response_mask"]]
+    assert (batch["response_mask"][0] & batch["response_mask"][1][:3]).sum() == 1
     packed = DynamicRolloutResult.pack_traj_batch({}, batch)
     assert packed["idx_to_traj"] == [0, 0]
     for key in (
@@ -4414,3 +4516,567 @@ def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
         "loss_scales",
     ):
         torch.testing.assert_close(packed[key], batch[key])
+
+
+@pytest.mark.parametrize("advantage_mode", ["turn", "trajectory"])
+def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
+    """Preserve response spans and loss weights when prefix turns are folded."""
+    from rlinf.algorithms.advantages import compute_grpo_turn_advantages
+    from rlinf.algorithms.loss_scales import agent_scale, group_scale, turn_scale
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    lengths = [5, 9, 14, 7]
+    result = DynamicRolloutResult(
+        num_sequence=4,
+        group_size=2,
+        idx_to_traj=[0, 0, 0, 1],
+        input_ids=[list(range(n)) for n in lengths],
+        prompt_lengths=[3, 7, 12, 4],
+        response_lengths=[2, 2, 2, 3],
+        is_end=[False, False, True, True],
+        rewards=[1.0, 1.0, 1.0, 0.0],
+        recomputed_logprobs=[torch.arange(n) * 0.1 for n in lengths],
+        extra_fields_train={"idx_to_sub_traj": [0] * 4},
+    )
+    ragged = result.to_actor_batch()
+    values = compute_grpo_turn_advantages(
+        ragged["rewards"], 2, ragged["idx_to_traj"], advantage_mode
+    )
+    ragged["advantages"] = [
+        mask.float() * value for mask, value in zip(ragged["response_mask"], values)
+    ]
+    ragged["loss_scales"] = [mask.float() for mask in ragged["response_mask"]]
+    context = {
+        "folding_scale": [],
+        "actor_global_batch_size": 2,
+        "data_parallel_world_size": 1,
+    }
+    for scale in (group_scale, agent_scale, turn_scale):
+        ragged = scale(context, ragged)
+    folded = DynamicRolloutResult.pack_traj_batch(context, ragged)
+    assert [len(row) for row in folded["input_ids"]] == [14, 7]
+    expected_positions = ([3, 4, 7, 8, 12, 13], [4, 5, 6])
+    for i, (row, positions) in enumerate(zip(folded["input_ids"], expected_positions)):
+        torch.testing.assert_close(row, torch.arange(len(row)))
+        mask = torch.zeros(len(row), dtype=torch.bool)
+        mask[list(positions)] = True
+        torch.testing.assert_close(folded["response_mask"][i], mask)
+        torch.testing.assert_close(
+            folded["recomputed_logprobs"][i],
+            torch.arange(len(row)) * 0.1 * (mask if i == 0 else torch.ones_like(mask)),
+        )
+        torch.testing.assert_close(folded["loss_scales"][i], mask.float() * 0.5)
+        torch.testing.assert_close(
+            folded["advantages"][i], mask * values[0 if i == 0 else 3] * 2
+        )
+    assert folded["prompt_lengths"].tolist() == [3, 4]
+    assert folded["response_lengths"].tolist() == [11, 3]
+
+
+@pytest.mark.parametrize(
+    ("adv_type", "advantage_mode"),
+    [
+        ("grpo_dynamic", "turn"),
+        ("grpo_dynamic", "trajectory"),
+    ],
+)
+def test_ragged_advantage_dispatch_matches_dense(adv_type, advantage_mode):
+    """Keep the configured advantage algorithm when inputs have real lengths."""
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    lengths = [5, 9, 6, 8]
+    masks = [torch.arange(n) >= 3 for n in lengths]
+    logprobs = [torch.linspace(-0.8, -0.2, n) for n in lengths]
+    reference = [row - 0.1 for row in logprobs]
+    common = {
+        "task_type": "reasoning",
+        "adv_type": adv_type,
+        "advantage_mode": advantage_mode,
+        "rewards": torch.tensor([0.25, 0.5, 1.0, 0.0]),
+        "group_size": 2,
+        "num_sequence": 4,
+        "idx_to_traj": [0, 0, 1, 1],
+        "sequence_length": 32,
+        "kl_beta": 0.1,
+        "kl_penalty_type": "low_var_kl",
+        "use_reinpp_baseline": False,
+    }
+    ragged, ragged_returns = calculate_adv_and_returns(
+        **common, loss_mask=masks, logprob=logprobs, ref_logprob=reference
+    )
+
+    from rlinf.algorithms.advantages import compute_grpo_turn_advantages
+
+    scalars = compute_grpo_turn_advantages(
+        common["rewards"], 2, common["idx_to_traj"], advantage_mode
+    )
+    assert ragged_returns is None
+    for actual, mask, scalar, length in zip(ragged, masks, scalars, lengths):
+        assert actual.shape == (length,)
+        torch.testing.assert_close(actual, mask * scalar)
+
+
+def test_ragged_loss_materialization_preserves_gradients():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    leaves = [torch.randn(n, requires_grad=True) for n in (101, 201, 301)]
+    batch = DynamicRolloutResult.materialize_actor_batch({"logprobs": leaves}, 8192, 0)
+    batch["logprobs"].square().sum().backward()
+    for row in leaves:
+        torch.testing.assert_close(row.grad, 2 * row.detach())
+
+
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_ragged_loss_materialization_preserves_output_devices(device):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    rows = [torch.ones(n, device=device, requires_grad=True) for n in (1, 5)]
+    batch = DynamicRolloutResult.materialize_actor_batch(
+        {"log_probs": rows, "entropy": rows}, 8, 0, device
+    )
+    for values in batch.values():
+        assert values.device == rows[0].device and values.shape == (2, 8)
+        assert values.requires_grad
+
+
+@pytest.mark.parametrize("key", ["log_probs", "entropy"])
+def test_ragged_loss_materialization_does_not_truncate_outputs(key):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    with pytest.raises(RuntimeError, match="negative"):
+        DynamicRolloutResult.materialize_actor_batch({key: [torch.ones(9)]}, 8, 0)
+
+
+@pytest.mark.parametrize("has_response", [False, True])
+@pytest.mark.parametrize("fast_path", [False, True])
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+def test_ragged_loss_with_empty_first_row(has_response, aggregation, fast_path):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.utils.utils import get_loss_agg_func
+
+    leaves = [torch.zeros(n, requires_grad=True) for n in (1, 5)]
+    mask = [torch.zeros(1, dtype=torch.bool), torch.full((5,), has_response)]
+    batch = DynamicRolloutResult.materialize_actor_batch(
+        {"logprobs": leaves, "response_mask": mask}, 32, 0
+    )
+    loss, _ = compute_ppo_actor_loss(
+        logprobs=batch["logprobs"],
+        old_logprobs=batch["logprobs"].detach(),
+        advantages=torch.ones_like(batch["logprobs"]),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_mask=batch["response_mask"],
+        loss_agg_func=get_loss_agg_func(aggregation),
+        fast_path_zero_loss_mask=fast_path,
+    )
+    gradient = -1.0 if aggregation == "seq-mean-token-sum" else -0.2
+    assert loss.item() == pytest.approx(5 * gradient if has_response else 0.0)
+    loss.backward()
+    torch.testing.assert_close(leaves[0].grad, torch.zeros_like(leaves[0]))
+    expected = torch.full((5,), gradient) if has_response else torch.zeros(5)
+    torch.testing.assert_close(leaves[1].grad, expected)
+
+
+def test_ragged_logprobs_survive_result_merge_and_split():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = [
+        DynamicRolloutResult(
+            num_sequence=1,
+            group_size=1,
+            idx_to_traj=[0],
+            input_ids=[list(range(n))],
+            prompt_lengths=[1],
+            response_lengths=[n - 1],
+            is_end=[True],
+            rewards=[1.0],
+            recomputed_logprobs=[torch.arange(n).float()],
+            ref_logprobs=[torch.arange(n).float() - 0.1],
+        )
+        for n in (101, 201, 301)
+    ]
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [1, 1, 1])
+    for original, result in zip(results, restored):
+        assert result.input_ids == original.input_ids
+        assert result.prompt_lengths == original.prompt_lengths
+        assert result.response_lengths == original.response_lengths
+        assert result.rewards == [1.0]
+        torch.testing.assert_close(
+            result.recomputed_logprobs[0], original.recomputed_logprobs[0]
+        )
+        torch.testing.assert_close(result.ref_logprobs[0], original.ref_logprobs[0])
+
+
+@pytest.mark.parametrize("ragged", [False, True])
+@pytest.mark.parametrize("count", [0, 1, 5])
+def test_ragged_batch_size_accepts_dense_and_list_rows(ragged, count):
+    from rlinf.data.schema.reasoning_requests import get_batch_size
+
+    rows = [torch.arange(n + 1) for n in range(count)]
+    value = rows if ragged else torch.zeros(count, 8)
+    assert get_batch_size({"input_ids": value}) == count
+    assert get_batch_size({"responses": value}, "responses") == count
+
+
+@pytest.mark.parametrize(
+    ("count", "num_splits", "enforce_divisible", "sizes"),
+    [
+        (5, 2, False, [3, 2]),
+        (5, 3, False, [2, 2, 1]),
+        (5, [2, 2, 1], False, [2, 2, 1]),
+        (10, 4, False, [3, 3, 2, 2]),
+        (14, 4, False, [4, 4, 3, 3]),
+        (12, 4, True, [3, 3, 3, 3]),
+        (3, 5, False, [1, 1, 1, 0, 0]),
+        (0, 4, True, [0, 0, 0, 0]),
+    ],
+)
+@pytest.mark.parametrize("tensor_metadata", [False, True])
+@pytest.mark.parametrize("shuffle", [False, True])
+def test_ragged_fixed_split_preserves_every_row(
+    count, num_splits, enforce_divisible, sizes, tensor_metadata, shuffle
+):
+    from rlinf.utils.data_iter_utils import get_iterator_k_split
+
+    rows = [torch.full((n + 1,), n) for n in range(count)]
+    batch = {"input_ids": rows, "logprobs": [row.float() for row in rows]}
+    if tensor_metadata:
+        batch["rewards"] = torch.arange(count)
+    chunks = list(
+        get_iterator_k_split(
+            batch,
+            num_splits,
+            enforce_divisible_batch=enforce_divisible,
+            shuffle=shuffle,
+            shuffle_seed=42,
+        )
+    )
+    assert [len(chunk["input_ids"]) for chunk in chunks] == sizes
+    seen = []
+    for chunk in chunks:
+        for row, logprobs in zip(chunk["input_ids"], chunk["logprobs"], strict=True):
+            identity = row[0].item()
+            torch.testing.assert_close(row, rows[identity])
+            torch.testing.assert_close(logprobs, rows[identity].float())
+            seen.append(identity)
+        if tensor_metadata:
+            identities = torch.tensor(
+                [row[0] for row in chunk["input_ids"]], dtype=torch.long
+            )
+            torch.testing.assert_close(chunk["rewards"], identities)
+    expected = (
+        torch.randperm(count, generator=torch.Generator().manual_seed(42)).tolist()
+        if shuffle
+        else list(range(count))
+    )
+    assert seen == expected
+
+
+@pytest.mark.parametrize("count", [3, 10, 14])
+def test_ragged_list_split_requires_divisible_rows(count):
+    from rlinf.utils.data_iter_utils import split_list
+
+    with pytest.raises(AssertionError, match="divisible"):
+        split_list(list(range(count)), 4)
+
+
+@pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])
+def test_multi_turn_batch_rejects_dense_only_advantages(adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    with pytest.raises(ValueError, match=f"grpo_dynamic.*got {adv_type!r}"):
+        validate_searchr1_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("dynamic", "adv_type"),
+    [(True, "grpo_dynamic"), (False, "grpo"), (False, "reinpp"), (False, "raw")],
+)
+def test_batch_validation_preserves_supported_advantages(dynamic, adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": dynamic},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    before = OmegaConf.to_container(cfg)
+    assert validate_searchr1_cfg(cfg) is cfg
+    assert OmegaConf.to_container(cfg) == before
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_multi_turn_batch_validation_survives_python_optimization(optimized):
+    script = textwrap.dedent(
+        """
+        from omegaconf import OmegaConf
+        from rlinf.config import validate_searchr1_cfg
+
+        for adv_type in ("grpo", "reinpp", "raw"):
+            cfg = OmegaConf.create({
+                "agentloop": {"is_dynamic_rollout_batch": True},
+                "algorithm": {"adv_type": adv_type},
+            })
+            try:
+                validate_searchr1_cfg(cfg)
+            except ValueError as error:
+                if "grpo_dynamic" not in str(error) or repr(adv_type) not in str(error):
+                    raise
+            else:
+                raise RuntimeError(f"Expected ValueError for {adv_type!r}.")
+
+        cfg.algorithm.adv_type = "grpo_dynamic"
+        validate_searchr1_cfg(cfg)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, *(["-O"] if optimized else []), "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])
+def test_multi_turn_shared_registry_keeps_dense_reasoning_layout(adv_type):
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    rewards = torch.tensor([1.0, 3.0, 2.0, 4.0])
+    mask = torch.ones(4, 8, dtype=torch.bool)
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type=adv_type,
+        rewards=rewards,
+        loss_mask=mask,
+        group_size=2,
+    )
+    expected = {
+        "grpo": torch.tensor([-1.0, 1.0, -1.0, 1.0]) / (2**0.5 + 1e-6),
+        "reinpp": torch.tensor([-1.5, 0.5, -0.5, 1.5]) / (1.25**0.5),
+        "raw": rewards,
+    }[adv_type]
+    assert isinstance(advantages, torch.Tensor) and returns is None
+    torch.testing.assert_close(advantages, expected[:, None].expand(4, 8))
+
+
+def test_multi_turn_batch_preserves_real_lengths_through_merge_and_split():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = []
+    for lengths in ((5, 9), (7, 11)):
+        results.append(
+            DynamicRolloutResult(
+                num_sequence=2,
+                group_size=2,
+                idx_to_traj=[0, 1],
+                input_ids=[list(range(n)) for n in lengths],
+                prompt_lengths=[2, 3],
+                response_lengths=[lengths[0] - 2, lengths[1] - 3],
+                is_end=[True, True],
+                rewards=[1.0, 0.0],
+                rollout_logprobs=[
+                    [-0.5] * (lengths[0] - 2),
+                    [-0.25] * (lengths[1] - 3),
+                ],
+                recomputed_logprobs=[torch.full((n,), -0.4) for n in lengths],
+                ref_logprobs=[torch.full((n,), -0.6) for n in lengths],
+                advantages=[torch.ones(n) for n in lengths],
+            )
+        )
+    merged = DynamicRolloutResult.merge_batches(
+        [result.to_actor_batch() for result in results], 2
+    )
+    assert merged["idx_to_traj"] == [0, 1, 2, 3]
+    for key in (
+        "input_ids",
+        "attention_mask",
+        "position_ids",
+        "response_mask",
+        "rollout_logprobs",
+        "recomputed_logprobs",
+        "ref_logprobs",
+        "advantages",
+    ):
+        assert [len(row) for row in merged[key]] == [5, 9, 7, 11]
+        assert all(row.device.type == "cpu" for row in merged[key])
+    assert merged["rewards"].shape == (4,)
+
+
+@pytest.mark.parametrize(
+    "critic,adv_type", [(False, "grpo_dynamic"), (True, "gae_dynamic")]
+)
+def test_dynamic_advantage_contract_with_critic(critic, adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "critic": {"use_critic_model": critic},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    assert validate_searchr1_cfg(cfg) is cfg
+
+
+def test_dynamic_ppo_targets_survive_group_roundtrip():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = []
+    for length in (3, 7):
+        result = DynamicRolloutResult(
+            num_sequence=1,
+            group_size=1,
+            idx_to_traj=[0],
+            input_ids=[list(range(length))],
+            prompt_lengths=[1],
+            response_lengths=[length - 1],
+            is_end=[True],
+            rewards=[1.0],
+            values=[torch.arange(length).float()],
+            returns=[torch.arange(length).float() + 1],
+            advantages=[torch.arange(length).float() - 1],
+        )
+        results.append(result)
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [1, 1])
+    for original, result in zip(results, restored):
+        batch = result.to_actor_batch()
+        for key in ("values", "returns", "advantages"):
+            torch.testing.assert_close(batch[key], getattr(original, key))
+            assert len(batch[key][0]) == len(original.input_ids[0])
+
+
+@pytest.mark.parametrize("versioned", [False, True])
+def test_dynamic_versions_and_training_rows_share_merge_split_order(versioned):
+    results = []
+    for group, lengths in enumerate(([3, 6], [5])):
+        results.append(
+            DynamicRolloutResult(
+                num_sequence=len(lengths),
+                group_size=1,
+                idx_to_traj=[0] * len(lengths),
+                input_ids=[[group + i] * n for i, n in enumerate(lengths)],
+                prompt_lengths=[1] * len(lengths),
+                response_lengths=[n - 1 for n in lengths],
+                is_end=[True] * len(lengths),
+                rewards=[float(group)] * len(lengths),
+                advantages=[torch.arange(n).float() + group for n in lengths],
+                recomputed_logprobs=[torch.arange(n).float() - group for n in lengths],
+                version_start=[group + i + 5 for i in range(len(lengths))]
+                if versioned
+                else None,
+                version_end=[group + i + 6 for i in range(len(lengths))]
+                if versioned
+                else None,
+                group_id=group,
+                task_name="searchr1",
+            )
+        )
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [2, 1])
+    for actual, expected in zip(restored, results):
+        assert actual.version_start == expected.version_start
+        assert actual.version_end == expected.version_end
+        assert actual.input_ids == expected.input_ids
+        torch.testing.assert_close(actual.advantages, expected.advantages)
+        torch.testing.assert_close(
+            actual.recomputed_logprobs, expected.recomputed_logprobs
+        )
+        # Cross-group merge/split is a training operation, not buffer routing.
+        assert actual.group_id is None and actual.task_name is None
+
+
+def test_rollout_value_only_bootstrap_checks_policy_capability_and_config(monkeypatch):
+    from rlinf.config import validate_embodied_cfg
+    from rlinf.models.embodiment.base_policy import BasePolicy
+    from rlinf.workers.rollout.hf import huggingface_worker as hf_mod
+
+    class _NoValuePolicy(torch.nn.Module, BasePolicy):
+        def default_forward(self, **kwargs):
+            return {}
+
+        def predict_action_batch(self, **kwargs):
+            return np.zeros((1, 1, 1)), {}
+
+    class _CustomValuePolicy(_NoValuePolicy):
+        def predict_value_batch(self, env_obs):
+            return torch.ones(1, 1)
+
+    assert not _NoValuePolicy().supports_value_only_bootstrap()
+    assert _CustomValuePolicy().supports_value_only_bootstrap()
+
+    def _make_worker(policy_cls):
+        worker = object.__new__(MultiStepRolloutWorker)
+        worker.model_cfg = OmegaConf.create({"model_type": "openvla"})
+        worker.cfg = OmegaConf.create(
+            {
+                "rollout": {
+                    "model": {"model_type": "openvla"},
+                    "enable_torch_compile": False,
+                },
+                "runner": {},
+            }
+        )
+        worker.value_only_bootstrap = True
+        worker.enable_opd = False
+        worker.enable_cuda_graph = False
+        worker.enable_offload = False
+        worker.rlt_feature_model = None
+        worker.expert_model = None
+        worker.setup_sample_params = lambda: None
+        monkeypatch.setattr(hf_mod, "get_model", lambda cfg: policy_cls())
+        return worker
+
+    with pytest.raises(ValueError, match="predict_value_batch"):
+        _make_worker(_NoValuePolicy).init_worker()
+
+    ok_worker = _make_worker(_CustomValuePolicy)
+    ok_worker.init_worker()
+    ok_worker.enable_rlt = False
+    ok_worker.enable_dagger = False
+    assert torch.equal(
+        ok_worker._predict_bootstrap({"states": torch.zeros(1, 2)})["prev_values"],
+        torch.ones(1, 1),
+    )
+
+    bad_type_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "huggingface",
+                "value_only_bootstrap": "yes",
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(
+        ValueError, match="Expected bool for rollout.value_only_bootstrap"
+    ):
+        validate_embodied_cfg(bad_type_cfg)
+
+    bad_backend_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "vllm",
+                "batch_bootstrap_inference": True,
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(ValueError, match="rollout_backend='huggingface'"):
+        validate_embodied_cfg(bad_backend_cfg)
