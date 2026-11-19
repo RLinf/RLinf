@@ -81,26 +81,19 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
 安装
 ----
 
-在仓库根目录安装并激活 diffusion 环境：
+按 :ref:`安装说明 <diffusion-model-setup>` 准备 diffusion 环境，再按 :ref:`模型下载说明 <diffusion-model-checkpoints>` 下载 SD3.5 Medium。
+
+下载 ImageReward 和提示词
+-------------------------
+
+下载 ImageReward 权重、tokenizer 和官方提示词文件：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
-
-下载模型和数据
---------------
-
-在 Hugging Face 接受 SD3.5 的模型协议并运行 ``hf auth login``，然后下载生成模型、ImageReward 权重、分词器和官方提示词数据：
-
-.. code-block:: bash
-
-   export SD3_MODEL="$PWD/models/stable-diffusion-3.5-medium"
    export IR_MODEL="$PWD/models/ImageReward"
    export IR_DATA="$PWD/data/ImageReward"
-   mkdir -p "$SD3_MODEL" "$IR_MODEL" "$IR_DATA"
+   mkdir -p "$IR_MODEL" "$IR_DATA"
 
-   hf download stabilityai/stable-diffusion-3.5-medium --local-dir "$SD3_MODEL"
    hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
    python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
 
@@ -115,24 +108,21 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
 运行
 ----
 
-使用 ``examples/diffusion/config/sd3_refl_imagereward.yaml``，在 GPU 0–3 上训练 50 步。每步训练 512 个样本，全局 batch size 为 64，对应 8 次奖励更新：
+编辑 ``examples/diffusion/config/sd3_refl_imagereward.yaml``。将 ``actor.model.model_path`` 设为 SD3.5 Medium 目录。将 ``actor.refl_reward_model.model_path`` 和 ``actor.refl_reward_model.med_config`` 分别设为下载的 ``ImageReward.pt`` 和 ``med_config.json`` 文件路径。
+
+将 ``actor.refl_data.path`` 设为 ``refl_data.json`` 路径，``actor.refl_data.exclude_path`` 和 ``env.eval.dataset.path`` 均设为 ``test.json`` 路径。在同一 YAML 中配置 GPU 0–3：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       actor,env,rollout: 0-3
+
+默认配置训练 50 步，每步 512 个样本，全局 batch size 为 64，对应 8 次奖励更新。在仓库根目录启动训练：
 
 .. code-block:: bash
 
-   REFL_ARGS=(
-     'cluster.component_placement={actor\,env\,rollout:0-3}'
-     actor.model.model_path="$SD3_MODEL"
-     actor.refl_reward_model.model_path="$IR_MODEL/ImageReward.pt"
-     actor.refl_reward_model.med_config="$IR_MODEL/med_config.json"
-     actor.refl_data.path="$IR_DATA/refl_data.json"
-     actor.refl_data.exclude_path="$IR_DATA/test.json"
-     env.eval.dataset.path="$IR_DATA/test.json"
-   )
-
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
-     "${REFL_ARGS[@]}" \
-     runner.logger.experiment_name=sd3_refl_reward_only
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
 默认 ``algorithm.refl_pre_loss_weight=0.0``，只使用奖励损失。每 10 步评估并保存一次 checkpoint，评估分数记录为 ``eval/image_reward``。日志和 checkpoint 写入 ``logs/<timestamp>-sd3_refl_imagereward/``。actor checkpoint 位于其中的 ``<experiment_name>/checkpoints/global_step_<N>/actor/``，每份约占 9.4 GiB。将 ``runner.resume_dir`` 设为上一级 ``global_step_<N>`` 目录，即可恢复训练状态，包括数据位置和采样随机状态。
 
@@ -229,22 +219,15 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
      --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
      --timeout=60 --retries=2 --enable_wandb=False
 
-下载后的图像和描述文件位于 ``$PRE_DATA``，训练加载时缩放并中心裁剪到 512 × 512。配置中的 ``actor.refl_pre_data.caption_prefix`` 为 ``"The image shows "``，用于去掉 PD3M 描述开头的这段文字。要保留自己的描述原文，将该配置项设为 ``""``。
+下载后的图像和描述文件位于 ``$PRE_DATA``。训练加载时将图像缩放并中心裁剪到 512 × 512。配置中的 ``actor.refl_pre_data.caption_prefix`` 为 ``"The image shows "``，用于去掉 PD3M 描述开头的这段文字。要保留自己的描述原文，将该配置项设为 ``""``。
 
-分别运行 Lpre 权重为 ``0.1`` 和 ``0.01`` 的训练：
+在同一 YAML 中，将 ``actor.refl_pre_data.path`` 设为下载后的 ``images_512`` 目录，``algorithm.refl_pre_loss_weight`` 设为 ``0.01``；对比实验使用 ``0.1``。每组实验都用以下命令启动：
 
 .. code-block:: bash
 
-   for WEIGHT in 0.1 0.01; do
-     CUDA_VISIBLE_DEVICES=0,1,2,3 \
-     bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
-       "${REFL_ARGS[@]}" \
-       actor.refl_pre_data.path="$PRE_DATA" \
-       algorithm.refl_pre_loss_weight="$WEIGHT" \
-       runner.logger.experiment_name="sd3_refl_pre${WEIGHT}"
-   done
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
-每步包含 8 次监督更新和 8 次奖励更新。建议使用 Lpre 权重 ``0.01``，下方实验中它的评估分数高于 ``0.1``。
+每步包含 8 次监督更新和 8 次奖励更新。建议使用 Lpre 权重 ``0.01``。下方实验中，这组的评估分数比 ``0.1`` 组高。
 
 预期实验结果
 ------------

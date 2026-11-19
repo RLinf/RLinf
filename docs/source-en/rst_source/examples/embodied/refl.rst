@@ -88,27 +88,20 @@ This recipe applies the method from the
 Installation
 ------------
 
-Install and activate the diffusion environment from the repository root:
+Follow the shared :ref:`installation <diffusion-model-setup>` and
+:ref:`model download <diffusion-model-checkpoints>` instructions for SD3.5 Medium.
+
+Download ImageReward and Prompts
+--------------------------------
+
+Download the ImageReward checkpoint, tokenizer, and official prompt files:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model diffusion
-   source .venv/bin/activate
-
-Download the Model and Data
----------------------------
-
-Accept the SD3.5 license on Hugging Face and run ``hf auth login``. Download
-the generator, ImageReward checkpoint, tokenizer, and official prompt files:
-
-.. code-block:: bash
-
-   export SD3_MODEL="$PWD/models/stable-diffusion-3.5-medium"
    export IR_MODEL="$PWD/models/ImageReward"
    export IR_DATA="$PWD/data/ImageReward"
-   mkdir -p "$SD3_MODEL" "$IR_MODEL" "$IR_DATA"
+   mkdir -p "$IR_MODEL" "$IR_DATA"
 
-   hf download stabilityai/stable-diffusion-3.5-medium --local-dir "$SD3_MODEL"
    hf download zai-org/ImageReward ImageReward.pt med_config.json --local-dir "$IR_MODEL"
    python -c 'from transformers import BertTokenizer; BertTokenizer.from_pretrained("bert-base-uncased")'
 
@@ -125,26 +118,28 @@ those prompts from training.
 Run It
 ------
 
-Use ``examples/diffusion/config/sd3_refl_imagereward.yaml`` to train for 50 steps
-on GPUs 0–3. Each step trains on 512 samples in global batches of 64,
-for eight reward updates:
+Edit ``examples/diffusion/config/sd3_refl_imagereward.yaml``. Set
+``actor.model.model_path`` to the SD3.5 Medium directory. Set
+``actor.refl_reward_model.model_path`` and ``actor.refl_reward_model.med_config``
+to the downloaded ``ImageReward.pt`` and ``med_config.json`` files.
+
+Set ``actor.refl_data.path`` to ``refl_data.json``. Point both
+``actor.refl_data.exclude_path`` and ``env.eval.dataset.path`` to ``test.json``.
+To use GPUs 0–3, set the placement in the same YAML:
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       actor,env,rollout: 0-3
+
+The default config trains for 50 steps with 512 samples per step. A global
+batch size of 64 gives eight reward updates per step. Launch from the repository
+root:
 
 .. code-block:: bash
 
-   REFL_ARGS=(
-     'cluster.component_placement={actor\,env\,rollout:0-3}'
-     actor.model.model_path="$SD3_MODEL"
-     actor.refl_reward_model.model_path="$IR_MODEL/ImageReward.pt"
-     actor.refl_reward_model.med_config="$IR_MODEL/med_config.json"
-     actor.refl_data.path="$IR_DATA/refl_data.json"
-     actor.refl_data.exclude_path="$IR_DATA/test.json"
-     env.eval.dataset.path="$IR_DATA/test.json"
-   )
-
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
-     "${REFL_ARGS[@]}" \
-     runner.logger.experiment_name=sd3_refl_reward_only
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
 The default ``algorithm.refl_pre_loss_weight=0.0`` trains with the reward loss
 alone. The run evaluates and saves a checkpoint every 10 steps, and reports
@@ -194,10 +189,11 @@ subdirectories:
 
 The results below use 20,000 image-caption pairs from
 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_. Prepare them in a
-separate environment. The script samples the first two metadata shards with seed
-``42``, keeping images with license information, at least 512 pixels on each side,
-and with an aspect ratio at most 2:1. It excludes iNaturalist images and captions
-that describe monochrome images or documents:
+separate environment. The script samples image-caption pairs from the first two
+metadata shards using seed ``42``. It keeps images with license information, a
+width and height of at least 512 pixels, and an aspect ratio of at most 2:1. It
+excludes iNaturalist images and captions that describe monochrome images or
+documents:
 
 .. code-block:: bash
 
@@ -256,25 +252,21 @@ that describe monochrome images or documents:
      --timeout=60 --retries=2 --enable_wandb=False
 
 The downloader writes image-caption pairs under ``$PRE_DATA``. The loader
-resizes and center-crops them to 512 × 512. The config sets
+resizes and center-crops the images to 512 × 512. The config sets
 ``actor.refl_pre_data.caption_prefix`` to ``"The image shows "`` to remove that
 opening from PD3M captions; set it to ``""`` to keep your own captions unchanged.
 
-Run with Lpre weights of ``0.1`` and ``0.01``:
+In the same YAML, set ``actor.refl_pre_data.path`` to the downloaded
+``images_512`` directory and ``algorithm.refl_pre_loss_weight`` to ``0.01``.
+Use ``0.1`` for the other comparison run. Launch each run with:
 
 .. code-block:: bash
 
-   for WEIGHT in 0.1 0.01; do
-     CUDA_VISIBLE_DEVICES=0,1,2,3 \
-     bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
-       "${REFL_ARGS[@]}" \
-       actor.refl_pre_data.path="$PRE_DATA" \
-       algorithm.refl_pre_loss_weight="$WEIGHT" \
-       runner.logger.experiment_name="sd3_refl_pre${WEIGHT}"
-   done
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward
 
-Each step has eight supervised updates and eight reward updates. Start with
-Lpre weight ``0.01``, which scores higher than ``0.1`` in the results below.
+Each step has eight supervised updates and eight reward updates. Start with an
+Lpre weight of ``0.01``. In the results below, this run scores higher than the
+``0.1`` run.
 
 Expected Results
 ----------------
