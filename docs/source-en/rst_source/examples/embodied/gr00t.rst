@@ -48,7 +48,7 @@ Fine-tune GR00T (N1.5 / N1.6 / N1.7) on LIBERO with PPO (actor-critic).
    .. grid-item-card:: Hardware
       :text-align: center
 
-      NVIDIA CUDA · :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <gr00t-hardware>` (N1.5, LIBERO · ManiSkill)
+      NVIDIA CUDA · :ref:`AMD ROCm · Huawei Ascend CANN · Moore Threads MUSA <gr00t-hardware>` (N1.5, LIBERO · ManiSkill; N1.7 evaluation on Ascend 950, LIBERO-Spatial)
 
 | **You'll do:** install the target GR00T version → download the SFT / task checkpoint → pick a config → launch ``run_embodiment.sh`` → watch ``env/success_once``.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a GR00T LIBERO checkpoint (steps below).
@@ -610,6 +610,19 @@ pins, and skips CUDA flash-attention. RLinf applies the version-specific NPU
 patches when loading the model.
 
 .. include:: _ascend_torch.rst
+
+For N1.7 evaluation on Ascend 950, use a host or container with CANN 9.1 and
+the matching NPU driver, then install the N1.7 environment:
+
+.. code-block:: bash
+
+   ASCEND_CHIP=Ascend950PR bash requirements/install.sh --platform ascend embodied --model gr00t_n1d7 --env libero
+   source .venv/bin/activate
+
+This selects torch 2.10.0 and ``torch-npu`` 2.10.0.post4. Download the official
+LIBERO-Spatial task checkpoint and Cosmos-Reason2-2B backbone, then follow
+:ref:`GR00T N1.7 evaluation <libero-gr00t-n1d7-eval>` for model paths, software
+rendering, two-NPU placement, and RL checkpoint loading.
 
 Moore Threads MUSA
 ~~~~~~~~~~~~~~~~~~

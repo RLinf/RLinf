@@ -44,7 +44,7 @@ GR00T模型强化学习训练
    .. grid-item-card:: 硬件
       :text-align: center
 
-      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <gr00t-hardware>` （N1.5，LIBERO · ManiSkill）
+      NVIDIA CUDA · :ref:`AMD ROCm · 华为昇腾 CANN · 摩尔线程 MUSA <gr00t-hardware>` （N1.5，LIBERO · ManiSkill；昇腾 950 上的 N1.7 评测，LIBERO-Spatial）
 
 | **你将完成：** 安装目标 GR00T 版本 → 下载 SFT / 任务 checkpoint → 选择配置 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 GR00T LIBERO checkpoint（见下文）。
@@ -594,6 +594,15 @@ N1.6 或 N1.7 使用 ``--model gr00t_n1d6`` 或 ``--model gr00t_n1d7``，环境�
 中国大陆用户可添加 ``--use-mirror``。安装脚本在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，并跳过 CUDA flash-attention。加载模型时，RLinf 会应用各版本对应的 NPU 补丁。
 
 .. include:: _ascend_torch.rst
+
+在昇腾 950 上评测 N1.7 时，使用已安装 CANN 9.1 和匹配 NPU 驱动的宿主机或容器，再安装 N1.7 环境：
+
+.. code-block:: bash
+
+   ASCEND_CHIP=Ascend950PR bash requirements/install.sh --platform ascend embodied --model gr00t_n1d7 --env libero
+   source .venv/bin/activate
+
+该命令选择 torch 2.10.0 与 ``torch-npu`` 2.10.0.post4。下载官方 LIBERO-Spatial 任务 checkpoint 与 Cosmos-Reason2-2B backbone 后，按 :ref:`GR00T N1.7 评测 <libero-gr00t-n1d7-eval>` 设置模型路径、软件渲染、双 NPU placement 和 RL checkpoint 加载。
 
 摩尔线程 MUSA
 ~~~~~~~~~~~~~

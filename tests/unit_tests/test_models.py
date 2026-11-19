@@ -5041,3 +5041,34 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
         )
 
     assert seen_devices == [torch.device("cpu"), None, None]
+
+
+def _openpi_cfg(**fields):
+    return OmegaConf.create(dict(fields))
+
+
+def test_openpi_compiles_fused_kernels_on_cuda_by_default(monkeypatch):
+    from rlinf.models.embodiment import openpi
+    from rlinf.models.embodiment.openpi import resolve_torch_compile
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cuda", raising=False)
+    monkeypatch.setattr(openpi, "inductor_available", lambda: True)
+
+    assert resolve_torch_compile(_openpi_cfg(task="rl")) is True
+    assert resolve_torch_compile(_openpi_cfg(torch_compile=False)) is False
+    # Without Triton there is nothing to compile the kernels with.
+    monkeypatch.setattr(openpi, "inductor_available", lambda: False)
+    assert resolve_torch_compile(_openpi_cfg(task="rl")) is False
+
+
+def test_openpi_never_compiles_fused_kernels_on_npu(monkeypatch):
+    from rlinf.models.embodiment.openpi import resolve_torch_compile
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "npu", raising=False)
+
+    # Triton has no NPU backend, so even an explicit request cannot be honoured:
+    # the shared pi0_5 template sets torch_compile for every platform.
+    assert resolve_torch_compile(_openpi_cfg(task="rl")) is False
+    assert resolve_torch_compile(_openpi_cfg(torch_compile=True)) is False
