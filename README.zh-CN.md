@@ -34,11 +34,11 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 ## 最新动态
 
+- [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中通过可微世界模型训练 Unitree G1 全身动作跟踪 policy。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 支持 Robbyant R2 轮式双臂人形机器人的真机强化学习、全身 PICO VR 遥操作，以及双臂、夹爪或灵巧手、躯干与全向底盘的协同控制。文档：[Robbyant R2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/r2.html)。
 - [2026/11] 🔥 RLinf 新增真机机器人容错接口与自动恢复机制，率先在 Robbyant R2 上支持零阻塞健康诊断、分级故障恢复与急停安全锁存、无跳变运动恢复，以及强化学习采样中断时的自动 episode 截断。文档：[机器人接口](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/concepts/robotics.html)。
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) 接入 RLinf 作为分布式 rollout 与训练运行时，并集成了[示范协同训练（Co-Training）](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)用于 VLA 强化学习后训练。
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
-- [2026/11] 🔥 RLinf 支持 SuperMimic，在 MuJoCo Warp 中通过可微世界模型训练 Unitree G1 全身动作跟踪 policy。文档：[SuperMimic](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/supermimic.html)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
