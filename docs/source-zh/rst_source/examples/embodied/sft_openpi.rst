@@ -93,7 +93,7 @@ BEHAVIOR / dual-Franka 的流式 SFT 加载器目前仍用 ``num_action_chunks``
 ``precision: null`` 对应 BF16 激活。
 单独配置 FSDP：前向和反向计算使用 BF16 参数，梯度归约和 buffer 使用 FP32。
 共享模型模板使用 ``precision: null``，采用 OpenPI 的选择性 BF16/FP32 参数 dtype。
-BEHAVIOR、RoboTwin、dual-Franka 和 RLT Stage 1 SFT 配置设置 ``precision: fp32``。
+OpenPI 的所有 SFT 配置都设置 ``precision: fp32``。
 
 选择 ``hybrid_engines/openpi_fsdp``，让 projection、RMSNorm 权重和视觉 embedding
 使用 FP32。该配置保留 FP32 的 action/time 输入及自适应 norm 条件，主干使用 BF16 计算。

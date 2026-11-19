@@ -113,8 +113,8 @@ for BF16 backbone activations and residuals. If omitted or null,
 activations. Configure FSDP separately: BF16 parameters
 for forward/backward computation, FP32 gradient reduction, and FP32 buffers.
 The shared model templates use ``precision: null`` for OpenPI's selective
-BF16/FP32 parameter dtypes. BEHAVIOR, RoboTwin, dual-Franka, and RLT Stage 1
-SFT configurations set ``precision: fp32``.
+BF16/FP32 parameter dtypes, and every OpenPI SFT configuration sets
+``precision: fp32``.
 
 Select ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm weights,
 and vision embeddings in FP32. The profile preserves FP32 action/time inputs
