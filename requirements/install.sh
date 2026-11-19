@@ -187,7 +187,7 @@ Common options:
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
     --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14,
                            or 3.12.12 for agentic on the torch 2.11 stack.
-                           Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
+                           Must be >=3.10. Some envs (e.g. d4rl) require 3.10 and will override this.
     --use-mirror           Use mirrors for faster downloads. GitHub downloads go through
                            the proxy in the GITHUB_PREFIX environment variable
                            (default https://gh-proxy.com/).
@@ -1151,7 +1151,7 @@ configure_metax() {
 
 
 # Envs that need a different torch than the project default (Isaac Sim /
-# OmniGibson need 2.5.1) declare it here, so configure_platform and
+# OmniGibson 3.9.3 use 2.7.0) declare it here, so configure_platform and
 # apply_torch_override re-point TORCH_VERSION, the wheel index and
 # UV_TORCH_BACKEND together instead of a mid-install `uv pip install torch==...`
 # that leaves a mixed torch tree. An explicit --torch always wins.
@@ -1159,7 +1159,7 @@ apply_env_default_torch() {
     [ -n "$TORCH_VERSION" ] && return 0
     local env_torch=""
     case "$ENV_NAME" in
-        behavior) env_torch="2.5.1" ;;
+        behavior) env_torch="2.7.0" ;;
         robolab) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
@@ -2525,7 +2525,7 @@ install_openvla_oft_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openvla-oft.git@RLinf/v0.1 --no-build-isolation
             ;;
         behavior)
-            PYTHON_VERSION="3.10"
+            PYTHON_VERSION="3.11.14"
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
@@ -2652,7 +2652,7 @@ EOF
             install_flash_attn
             ;;
         behavior)
-            PYTHON_VERSION="3.10"
+            PYTHON_VERSION="3.11.14"
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
@@ -3253,9 +3253,7 @@ install_dreamzero_deps() {
 install_dreamzero_model() {
     case "$ENV_NAME" in
         behavior)
-            # BEHAVIOR/OmniGibson currently requires Python 3.10 and installs
-            # its own Torch 2.5.1 stack inside install_behavior_env.
-            PYTHON_VERSION="3.10"
+            PYTHON_VERSION="3.11.14"
             create_and_sync_venv
             install_common_embodied_deps
             install_behavior_env
@@ -3861,21 +3859,15 @@ install_behavior_env() {
     # Use BEHAVIOR_PATH as the checkout location if set (shared, cloned on first use);
     # otherwise clone into the venv.
     local behavior_dir
-    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.2 --depth 1)
+    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/StanfordVL/BEHAVIOR-1K.git -b v3.9.3-post2 --depth 1)
 
     pushd "$behavior_dir" >/dev/null
-    UV_LINK_MODE=hardlink ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula --use-uv
-    # OmniGibson's eval deps need another commit of lerobot, which is in conflict with which rlinf needs.
-    # We actually does not use OmniGibson's lerobot deps, so just install other deps in OmniGibson's eval deps. 
+    ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula
+    # Install the evaluation utilities used by RLinf without running the challenge evaluator.
     uv pip install "dm_tree>=0.1.9" "hydra-core>=1.3.2" "websockets>=15.0.1" "msgpack>=1.1.0" "gspread>=6.2.1" "open3d>=0.19.0" av "numpy<2"
     popd >/dev/null
     uv pip uninstall flash-attn || true
-    uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
-    uv pip install click==8.2.1
-    uv pip install llvmlite==0.47.0 numba==0.65.1
-    # Re-assert the pin after OmniGibson's setup, which otherwise leaves a torch
-    # tree mixing two versions (inductor then fails in _pad_mm_init).
-    uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+    uv pip install ml_dtypes==0.5.3 "${RAY_COMPAT_DEPS[@]}"
 }
 
 install_geniesim_env() {
