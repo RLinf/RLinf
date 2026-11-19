@@ -292,9 +292,10 @@ Counts and times cover the step; bytes and queue sizes are snapshots.
      - Generate requests forwarded in the step, with their total and mean
        latency.
    * - ``prefix_continuous``, ``prefix_rewritten``, ``prefix_underreported``
-     - How each prompt relates to the previous turn. The last two should
-       stay at 0. Non-zero means the agent changes its history between
-       turns.
+     - How each prompt relates to the previous turn.
+       ``prefix_underreported`` should stay at 0. ``prefix_rewritten``
+       counts turns whose history the agent changed; agents that send token
+       ids should keep it at 0, while chat agents may raise it.
    * - ``payload_write_failed``
      - Groups voided by a failed write. Should stay at 0.
    * - ``pending_payload_bytes``
@@ -305,6 +306,10 @@ Counts and times cover the step; bytes and queue sizes are snapshots.
      - Data waiting in the payload channels. ``payload_queued_groups``
        should equal or slightly exceed ``rollout/buffer/size``. A gap that
        keeps growing means data is not being released.
+   * - ``chat_reasoning_responses``, ``chat_tool_call_responses``,
+       ``chat_tool_call_parse_failed``
+     - Chat completions responses with parsed reasoning, with parsed tool
+       calls, and with a tool-call block the parser could not read.
 
 Check Correctness
 ^^^^^^^^^^^^^^^^^
@@ -339,6 +344,22 @@ response, with reasoning and tool calls parsed into ``reasoning_content``
 and ``tool_calls``. Reasoning is split out only for models whose tokenizer
 has reasoning markers, such as Qwen3 and GLM-4.7.
 
+Set ``agentloop.agentic_tokenizer`` to the model family, and
+``rollout.sglang.tool_call_parser`` to the parser it pairs with. Startup
+checks the pair:
+
+.. code-block:: yaml
+
+   agentloop:
+     agentic_tokenizer: qwen     # glm47 for GLM-4.7
+   rollout:
+     sglang:
+       tool_call_parser: qwen25  # glm47 for GLM-4.7
+
+The other values are ``glm47`` and ``default``; ``default`` renders the
+messages but does not parse tool calls. Without
+``agentloop.agentic_tokenizer``, chat requests fail with 500.
+
 To use it, write an agent loop that runs each trajectory itself, as in the
 example below. The agent loop still opens and closes the sessions, reports
 rewards, and drops failed groups; your code only runs one trajectory on a
@@ -346,37 +367,45 @@ session that is already open:
 
 .. code-block:: python
 
-   from openai import AsyncOpenAI
+   from openai import AsyncOpenAI, BadRequestError
 
-   from rlinf.workers.agent.agent_loop import AgentLoopWorker
+   from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
 
 
-   class MyChatAgentLoopWorker(AgentLoopWorker):
+   class MyChatAgentLoopWorker(MultiAgentLoopWorker):
        async def run_session_trajectory(self, binding, input_dict, answer):
-           client = AsyncOpenAI(
-               base_url=self.session_server_client.session_base_url(
-                   binding.group_id, binding.session_id
-               ),
-               api_key="EMPTY",
-               max_retries=0,  # a retried request is sampled again
+           base_url = self.session_server_client.session_base_url(
+               binding.group_id, binding.session_id
            )
            messages = build_messages(input_dict)  # your prompt
+           message = None
            num_responses = 0
-           for _ in range(MAX_TURNS):
-               response = await client.chat.completions.create(
-                   model="policy", messages=messages, tools=TOOLS
-               )
-               num_responses += 1
-               message = response.choices[0].message
-               messages.append(message.model_dump(exclude_none=True))
-               if not message.tool_calls:
-                   break
-               for call in message.tool_calls:
-                   result = await run_tool(call)  # your tool
-                   messages.append(
-                       {"role": "tool", "tool_call_id": call.id, "content": result}
-                   )
-           reward = score(message.content, answer)  # your reward
+           async with AsyncOpenAI(
+               base_url=base_url,
+               api_key="EMPTY",
+               max_retries=0,  # a retried request is sampled again
+           ) as client:
+               for _ in range(MAX_TURNS):
+                   try:
+                       response = await client.chat.completions.create(
+                           model="policy", messages=messages, tools=TOOLS
+                       )
+                   except BadRequestError as exc:
+                       if exc.code != "context_length_exceeded":
+                           raise
+                       break  # no room left for another turn
+                   num_responses += 1
+                   message = response.choices[0].message
+                   messages.append(message.model_dump(exclude_none=True))
+                   if not message.tool_calls:
+                       break
+                   for call in message.tool_calls:
+                       result = await run_tool(call)  # your tool
+                       messages.append(
+                           {"role": "tool", "tool_call_id": call.id, "content": result}
+                       )
+           content = (message.content or "") if message is not None else ""
+           reward = score(content, answer)  # your reward
            close_fields = {
                # One value per response received: one agent per trajectory.
                "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
@@ -391,6 +420,10 @@ agent loop.
 
 Set ``max_retries=0`` on the client. A retried request is sampled again,
 and only one of the two answers is trained.
+
+A prompt that leaves no room in ``runner.seq_length`` gets a 400 with the
+code ``context_length_exceeded``. The example ends the trajectory there and
+scores the last answer.
 
 The session server reuses the tokens of earlier turns. A turn's prompt is the
 previous turn's prompt and output tokens, exactly as the engine produced

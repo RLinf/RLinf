@@ -212,13 +212,16 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
    * - ``forward_count``、``forward_time_total_s``、``forward_time_avg_s``
      - 这一步转发的 generate 请求数，以及总耗时和平均耗时。
    * - ``prefix_continuous``、``prefix_rewritten``、``prefix_underreported``
-     - 每一轮 prompt 与上一轮的关系。后两个应当一直为 0。不为 0 说明 agent 在轮与轮之间改动了历史。
+     - 每一轮 prompt 与上一轮的关系。``prefix_underreported`` 应当一直为 0。``prefix_rewritten`` 统计 agent 改动了历史的轮；发 token id 的 agent 应当一直为 0，chat agent 则可能不为 0。
    * - ``payload_write_failed``
      - 因写入失败而作废的组数。应当一直为 0。
    * - ``pending_payload_bytes``
      - 还在写入的字节数。如果一直接近 ``max_pending_payload_bytes``，调大这个上限，或者增加 ``num_servers`` 或 ``payload_shards``。
    * - ``payload_queued_groups``、``payload_queued_bytes``
      - payload channel 里等待取走的数据。``payload_queued_groups`` 应当等于或略大于 ``rollout/buffer/size``。如果差值不断增大，说明有数据没有释放。
+   * - ``chat_reasoning_responses``、``chat_tool_call_responses``、
+       ``chat_tool_call_parse_failed``
+     - 解析出推理内容、解析出 tool call、以及 tool-call 块解析失败的 chat completions 回答数。
 
 检查正确性
 ^^^^^^^^^^
@@ -239,43 +242,63 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 
 每个 session server 也在 ``/sessions/<session id>/v1/chat/completions`` 提供 OpenAI chat completions 接口。基于 OpenAI API 编写的 agent 可以向它发送消息，不必发送 token id。session server 用 ``agentloop.agentic_tokenizer`` 指定的模型族的 chat 模板把消息渲染成 token id，再像 ``generate`` 请求那样发给引擎。返回时用 OpenAI 的 ``chat.completion`` 格式，推理与工具调用分别解析到 ``reasoning_content`` 和 ``tool_calls``。只有词表里带推理标记的模型（Qwen3、GLM-4.7 等）才拆分推理内容。
 
+``agentloop.agentic_tokenizer`` 填模型族，``rollout.sglang.tool_call_parser`` 填与之配套的 parser，启动时会校验这一对：
+
+.. code-block:: yaml
+
+   agentloop:
+     agentic_tokenizer: qwen     # GLM-4.7 填 glm47
+   rollout:
+     sglang:
+       tool_call_parser: qwen25  # GLM-4.7 填 glm47
+
+另外两个取值是 ``glm47`` 和 ``default``；``default`` 只渲染消息，不解析 tool call。不设 ``agentloop.agentic_tokenizer`` 时，chat 请求回 500。
+
 使用时，写一个自行执行每条轨迹的 agent loop，写法见下面的示例。创建和关闭 session、上报 reward、丢弃失败的组仍由 agent loop 负责，你的代码只需在已经打开的 session 上执行一条轨迹：
 
 .. code-block:: python
 
-   from openai import AsyncOpenAI
+   from openai import AsyncOpenAI, BadRequestError
 
-   from rlinf.workers.agent.agent_loop import AgentLoopWorker
+   from rlinf.workers.agent.agent_loop import MultiAgentLoopWorker
 
 
-   class MyChatAgentLoopWorker(AgentLoopWorker):
+   class MyChatAgentLoopWorker(MultiAgentLoopWorker):
        async def run_session_trajectory(self, binding, input_dict, answer):
-           client = AsyncOpenAI(
-               base_url=self.session_server_client.session_base_url(
-                   binding.group_id, binding.session_id
-               ),
-               api_key="EMPTY",
-               max_retries=0,  # a retried request is sampled again
+           base_url = self.session_server_client.session_base_url(
+               binding.group_id, binding.session_id
            )
-           messages = build_messages(input_dict)  # your prompt
+           messages = build_messages(input_dict)  # 你的 prompt
+           message = None
            num_responses = 0
-           for _ in range(MAX_TURNS):
-               response = await client.chat.completions.create(
-                   model="policy", messages=messages, tools=TOOLS
-               )
-               num_responses += 1
-               message = response.choices[0].message
-               messages.append(message.model_dump(exclude_none=True))
-               if not message.tool_calls:
-                   break
-               for call in message.tool_calls:
-                   result = await run_tool(call)  # your tool
-                   messages.append(
-                       {"role": "tool", "tool_call_id": call.id, "content": result}
-                   )
-           reward = score(message.content, answer)  # your reward
+           async with AsyncOpenAI(
+               base_url=base_url,
+               api_key="EMPTY",
+               max_retries=0,  # 重发的请求会被重新采样
+           ) as client:
+               for _ in range(MAX_TURNS):
+                   try:
+                       response = await client.chat.completions.create(
+                           model="policy", messages=messages, tools=TOOLS
+                       )
+                   except BadRequestError as exc:
+                       if exc.code != "context_length_exceeded":
+                           raise
+                       break  # 没有空间再跑一轮
+                   num_responses += 1
+                   message = response.choices[0].message
+                   messages.append(message.model_dump(exclude_none=True))
+                   if not message.tool_calls:
+                       break
+                   for call in message.tool_calls:
+                       result = await run_tool(call)  # 你的工具
+                       messages.append(
+                           {"role": "tool", "tool_call_id": call.id, "content": result}
+                       )
+           content = (message.content or "") if message is not None else ""
+           reward = score(content, answer)  # 你的打分
            close_fields = {
-               # One value per response received: one agent per trajectory.
+               # 每收到一个回答给一个值：一条轨迹一个 agent。
                "extra_fields_train": {"idx_to_sub_traj": [0] * num_responses}
            }
            return None, close_fields, reward
@@ -283,6 +306,8 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
 
 客户端要设置 ``max_retries=0``：重发的请求会被重新采样，两次回答只有一次参与训练。
+
+prompt 已经占满 ``runner.seq_length`` 时，请求会得到 400，错误码为 ``context_length_exceeded``。示例在这时结束这条轨迹，用最后一条回答打分。
 
 session server 会复用之前各轮的 token：一轮的 prompt 是上一轮的 prompt 加上输出 token，再接上新消息；这些输出 token 与引擎生成的完全一致。如果按文本重新渲染历史，得到的 token 可能不同。session server 按以下三种情况处理请求：
 
