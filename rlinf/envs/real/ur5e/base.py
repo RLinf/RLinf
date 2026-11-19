@@ -388,8 +388,6 @@ class URCollectionEnv(gym.Env):
             )
 
         try:
-            self._get_observation()
-            start = self.get_tcp_pose().astype(np.float64)
             if (
                 self.config.open_gripper_on_reset
                 and self._with_gripper
@@ -397,7 +395,6 @@ class URCollectionEnv(gym.Env):
             ):
                 self._gripper_action(1.0)
                 time.sleep(0.6)
-                start = self.get_tcp_pose().astype(np.float64)
             target = np.concatenate(
                 [
                     self.config.reset_ee_pose[:3],
@@ -405,6 +402,7 @@ class URCollectionEnv(gym.Env):
                 ]
             )
             if not reached() or self._arm_was_driving:
+                start = self.get_tcp_pose().astype(np.float64)
                 distance = np.max(np.abs(target[:3] - start[:3]))
                 angle = (
                     R.from_quat(target[3:]) * R.from_quat(start[3:]).inv()
