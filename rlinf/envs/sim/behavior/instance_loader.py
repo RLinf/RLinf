@@ -158,20 +158,16 @@ def load_activity_instance_tro_state(
     instance_id: int,
     tro_file_path: str,
     reset_scene: bool = False,
-    *,
-    env_idx: int = 0,
-    finalize: bool = True,
 ) -> None:
-    """Apply a cached tro_state file to an existing OmniGibson env.
+    """Apply a cached task instance to scene 0, save its initial state, and optionally reset."""
+    _apply_tro_state(env, 0, instance_id, tro_file_path)
+    _settle_instance_scenes(env, [0])
+    if reset_scene:
+        env.scenes[0].reset()
 
-    Args:
-        env: OmniGibson environment to mutate in place.
-        instance_id: Activity instance id represented by ``tro_file_path``.
-        tro_file_path: Path to a ``*_template-tro_state.json`` file.
-        reset_scene: Reset the selected scene after saving its initial state.
-        env_idx: Scene within the batched OmniGibson environment.
-        finalize: Settle and save now. A batch caller does this after all scenes are placed.
-    """
+
+def _apply_tro_state(env, env_idx: int, instance_id: int, tro_file_path: str) -> None:
+    """Place one instance before the shared physics step for the batch."""
     from omnigibson.tasks.behavior_task import get_presampled_robot_poses
     from omnigibson.utils.python_utils import recursively_convert_to_torch
 
@@ -190,23 +186,18 @@ def load_activity_instance_tro_state(
         )
         if entity is robot:
             continue
+        root_link = state.get("root_link") if isinstance(state, dict) else None
         if (
             scene.idx != 0
-            and isinstance(state, dict)
-            and isinstance(state.get("root_link"), dict)
-            and "pos" in state["root_link"]
-            and "ori" in state["root_link"]
+            and isinstance(root_link, dict)
+            and "pos" in root_link
+            and "ori" in root_link
         ):
-            rebased_state = dict(state)
-            rebased_root_link = dict(state["root_link"])
-            rebased_pos, rebased_ori = scene.convert_scene_relative_pose_to_world(
-                rebased_root_link["pos"],
-                rebased_root_link["ori"],
+            root_link["pos"], root_link["ori"] = (
+                scene.convert_scene_relative_pose_to_world(
+                    root_link["pos"], root_link["ori"]
+                )
             )
-            rebased_root_link["pos"] = rebased_pos
-            rebased_root_link["ori"] = rebased_ori
-            rebased_state["root_link"] = rebased_root_link
-            state = rebased_state
         entity.load_state(state, serialized=False)
 
     if robot_poses is not None:
@@ -223,11 +214,6 @@ def load_activity_instance_tro_state(
     scene.write_task_metadata(key="robot_poses", data=robot_poses)
     if env.num_envs == 1:
         env.task.activity_instance_id = instance_id
-
-    if finalize:
-        _settle_instance_scenes(env, [env_idx])
-        if reset_scene:
-            scene.reset()
 
 
 def _settle_instance_scenes(env, env_indices):
@@ -498,11 +484,7 @@ class ActivityInstanceLoader:
         env_indices,
     ) -> None:
         for idx, instance_file in zip(env_indices, instance_files, strict=True):
-            load_activity_instance_tro_state(
-                vec_env,
-                instance_id=instance_file.instance_id,
-                tro_file_path=instance_file.path,
-                env_idx=idx,
-                finalize=False,
+            _apply_tro_state(
+                vec_env, idx, instance_file.instance_id, instance_file.path
             )
         _settle_instance_scenes(vec_env, env_indices)

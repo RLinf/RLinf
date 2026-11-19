@@ -36,6 +36,11 @@ mp.set_start_method("spawn", force=True)
 )
 def main(cfg) -> None:
     cfg.runner.task_type = "embodied_eval"
+    step_limit_resolver = OmegaConf.select(cfg, "env.eval.step_limit_resolver")
+    if step_limit_resolver:
+        hydra.utils.get_method(step_limit_resolver)(
+            cfg.env.eval, cfg.rollout.model.num_action_chunks
+        )
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 

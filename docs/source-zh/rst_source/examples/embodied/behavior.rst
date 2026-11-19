@@ -50,7 +50,7 @@
    * - 字段
      - 说明
    * - 任务
-     - 官方挑战包含 100 个家居任务。本分支的任务说明表收录了 50 个名称，从中选一个填入 ``omni_config.task.activity_name`` 即可。默认任务为 ``turning_on_radio``\ 。
+     - 任务说明表收录了全部 100 个挑战任务。选择要评测的任务，将其名称填入 ``omni_config.task.activity_name`` 即可。默认任务为 ``turning_on_radio``\ 。
    * - 机器人
      - RLinf 示例和官方默认配置都使用双臂移动机器人 R1 Pro。
 
@@ -215,14 +215,14 @@ OpenPI-Comet 作为示例来源：
 转换完成后，按如下方式更新 ``behavior_openpi_pi05_eval.yaml``：
 
 1. 将 ``rollout.model.model_path`` 设置为转换后的模型目录。
-2. 如需更长轨迹，提高 ``env.eval`` 的 ``max_episode_steps`` 与 ``max_steps_per_rollout_epoch``，例如设置为 ``4096``。
+2. 两个步数字段保持 ``null`` 即可使用所选任务的官方超时。RLinf 将每轮采样步数向上取整到动作块长度的整数倍。
 
 .. code-block:: yaml
 
    env:
      eval:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
+       max_episode_steps: null
+       max_steps_per_rollout_epoch: null
 
 请先按本页说明准备 2026 仿真资产。:doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>` 说明如何设置模型路径、使用 ``behavior_openpi_pi05_eval`` 启动独立评测、读取成功率指标 ``eval/success_once`` 以及查看日志和视频。
 

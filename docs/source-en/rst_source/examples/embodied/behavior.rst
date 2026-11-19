@@ -52,7 +52,7 @@ Tasks
    * - Field
      - Detail
    * - Tasks
-     - The challenge covers 100 household tasks. Set ``omni_config.task.activity_name`` to one of the 50 names in this branch's task list. The default is ``turning_on_radio``.
+     - The task list includes all 100 challenge tasks. Set ``omni_config.task.activity_name`` to the name of the task to evaluate. The default is ``turning_on_radio``.
    * - Robot
      - The RLinf recipes and the default challenge configuration use the dual-arm R1 Pro mobile robot.
 
@@ -224,15 +224,15 @@ helps reproducibility and evaluation in RLinf.
 After conversion, update ``behavior_openpi_pi05_eval.yaml`` as follows:
 
 1. Set ``rollout.model.model_path`` to the converted model directory.
-2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in
-   ``env.eval`` if you need longer trajectories (for example, ``4096``).
+2. Keep both step limits at ``null`` to use the official timeout for the selected task.
+   RLinf rounds the rollout budget up to a whole number of action chunks.
 
 .. code-block:: yaml
 
    env:
      eval:
-       max_episode_steps: 4096
-       max_steps_per_rollout_epoch: 4096
+       max_episode_steps: null
+       max_steps_per_rollout_epoch: null
 
 Prepare the 2026 simulation assets as described on this page. The
 :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>` explains how to set the model path,
