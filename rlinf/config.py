@@ -2586,7 +2586,16 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                 f"{component}.model.attn_implementation=ascend_fusion requires "
                 f"{component}.training_backend=fsdp and {component}.fsdp_config.strategy=fsdp2."
             )
-        if not (
+        uses_ma_actor = component == "actor" and bool(
+            cfg.get("agentloop")
+            and cfg.agentloop.get("is_dynamic_rollout_batch", False)
+        )
+        if uses_ma_actor and not cfg.runner.get("enable_dynamic_batch_size", False):
+            raise ValueError(
+                "ascend_fusion with agentloop.is_dynamic_rollout_batch=True "
+                "requires runner.enable_dynamic_batch_size=True."
+            )
+        if not uses_ma_actor and not (
             component_cfg.model.get("variable_seq_lengths", False)
             or cfg.runner.get("enable_dynamic_batch_size", False)
         ):

@@ -272,6 +272,7 @@ jobs:
       - name: Train SearchR1 with SGLang MA-FSDP on Ascend
         timeout-minutes: 30
         env:
+          HCCL_INTRA_ROCE_ENABLE: 1
           HCCL_HOST_SOCKET_PORT_RANGE: 60000-60050
           HCCL_NPU_SOCKET_PORT_RANGE: 61000-61050
           RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES: 1

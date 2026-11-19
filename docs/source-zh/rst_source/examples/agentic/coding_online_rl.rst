@@ -191,6 +191,12 @@
          # 启动训练服务
          bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
+在 NVIDIA GPU 上使用 FSDP 运行离线 LLM judge 训练时，先在 FSDP 配置中填写模型和数据路径，并按前文设置 judge 服务。然后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh qwen2.5-1.5b-grpo-llm_judge-fsdp
+
 使用 Continue
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -271,17 +277,23 @@
 运行于不同硬件后端
 ------------------
 
-NVIDIA CUDA
-~~~~~~~~~~~
-
-在 NVIDIA GPU 上使用 FSDP 运行离线 LLM judge 训练时，选择 ``qwen2.5-1.5b-grpo-llm_judge-fsdp`` 配置，通过 ``run_main_coding_rl_llm_judge.sh`` 启动，并沿用上述模型、数据和 judge 服务设置。
-
 Huawei Ascend CANN
 ~~~~~~~~~~~~~~~~~~
 
 .. include:: _ascend_agentic.rst
 
-此配方使用 LLM judge 运行离线训练。准备 Code-FIM 数据和 Qwen2.5-Coder checkpoint，配置 judge 服务所需的 ``LLMASJUDGE_API_URL``、``LLMASJUDGE_API_KEY`` 和 ``LLMASJUDGE_MODEL``。修改 ``qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend.yaml`` 中的路径后运行：
+此配方使用 LLM judge 运行离线训练。准备 Code-FIM 数据和 Qwen2.5-Coder checkpoint，配置 judge 服务所需的 ``LLMASJUDGE_API_URL``、``LLMASJUDGE_API_KEY`` 和 ``LLMASJUDGE_MODEL``。Ascend 配置从基础配方继承模型和数据集路径。在 ``examples/agent/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend.yaml`` 中按下例覆盖继承的路径设置。将 ``model`` 添加到已有的 ``rollout`` 下，保留 ``sglang``，不要重复添加顶层 ``rollout``：
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ["/path/to/code-fim/train.jsonl"]
+     val_data_paths: ["/path/to/code-fim/test.jsonl"]
+   rollout:
+     model:
+       model_path: /path/to/Qwen2.5-Coder-1.5B
+
+使用 Ascend 配置启动训练：
 
 .. code-block:: bash
 

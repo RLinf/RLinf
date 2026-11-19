@@ -191,6 +191,12 @@ Start Training Service
         # Start training service
         bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
+To run offline LLM-judge training with FSDP on NVIDIA GPUs, fill in the model and data paths in the FSDP config and use the judge-service settings above. Then run:
+
+.. code-block:: bash
+
+   bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh qwen2.5-1.5b-grpo-llm_judge-fsdp
+
 Use Continue
 ~~~~~~~~~~~~
 
@@ -271,17 +277,23 @@ Use this setup as the online loop: Continue sends requests, RLinf collects feedb
 Run on Different Hardware Backends
 ----------------------------------
 
-NVIDIA CUDA
-~~~~~~~~~~~
-
-For offline LLM-judge training with FSDP on NVIDIA GPUs, use ``qwen2.5-1.5b-grpo-llm_judge-fsdp`` with ``run_main_coding_rl_llm_judge.sh`` and the same model, data, and judge-service settings.
-
 Huawei Ascend CANN
 ~~~~~~~~~~~~~~~~~~
 
 .. include:: _ascend_agentic.rst
 
-This recipe runs offline training with an LLM judge. Prepare Code-FIM data and the Qwen2.5-Coder checkpoint, and configure ``LLMASJUDGE_API_URL``, ``LLMASJUDGE_API_KEY``, and ``LLMASJUDGE_MODEL`` for your judge service. Edit the paths in ``qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend.yaml`` and run:
+This recipe runs offline training with an LLM judge. Prepare Code-FIM data and the Qwen2.5-Coder checkpoint, and configure ``LLMASJUDGE_API_URL``, ``LLMASJUDGE_API_KEY``, and ``LLMASJUDGE_MODEL`` for your judge service. The Ascend config inherits its model and dataset paths. In ``examples/agent/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge-fsdp_ascend.yaml``, override the inherited paths with the values below. Merge ``model`` into the existing ``rollout`` mapping, preserving ``sglang``; do not add a second ``rollout`` key:
+
+.. code-block:: yaml
+
+   data:
+     train_data_paths: ["/path/to/code-fim/train.jsonl"]
+     val_data_paths: ["/path/to/code-fim/test.jsonl"]
+   rollout:
+     model:
+       model_path: /path/to/Qwen2.5-Coder-1.5B
+
+Launch training with the Ascend config:
 
 .. code-block:: bash
 

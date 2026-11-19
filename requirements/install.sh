@@ -1256,6 +1256,9 @@ EOF
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
         echo "source /usr/local/Ascend/ascend-toolkit/set_env.sh" >> "$VENV_DIR/bin/activate"
     fi
+    if [ -f /usr/local/Ascend/nnal/atb/set_env.sh ]; then
+        echo "source /usr/local/Ascend/nnal/atb/set_env.sh" >> "$VENV_DIR/bin/activate"
+    fi
     # A later `uv pip install` (lerobot, GR00T extras, …) may still pull a
     # CUDA torchcodec wheel. Uninstall it when import fails so GR00T's
     # optional `import torchcodec` raises ImportError (caught) rather than
