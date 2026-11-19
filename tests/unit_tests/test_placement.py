@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.config import validate_cfg
 from rlinf.scheduler import (
     FlexiblePlacementStrategy,
     NodePlacementStrategy,
@@ -526,6 +527,86 @@ class TestHybridComponentPlacement:
 
         rollout_placements = placement.get_strategy("rollout").get_placement(cluster)
         assert [p.cluster_node_rank for p in rollout_placements] == [1]
+
+
+@pytest.mark.parametrize(
+    ("task_type", "split"),
+    [("embodied", "train"), ("embodied_eval", "eval"), ("offline", "eval")],
+)
+@pytest.mark.parametrize(
+    ("env_workers", "stage_num", "total_num_envs", "error"),
+    [
+        (2, 1, 6, None),
+        (2, 2, 8, None),
+        (2, 2, 6, r"env\.{split}\.total_num_envs.*multiple of 4.*got 6\."),
+        (2, 2, 2, r"env\.{split}\.total_num_envs.*multiple of 4.*got 2\."),
+        (2, 2, 0, r"env\.{split}\.total_num_envs.*got 0\."),
+        (2, 0, 8, r"rollout\.pipeline_stage_num.*got 0\."),
+        (2, 2.0, 8, r"rollout\.pipeline_stage_num.*got 2\.0\."),
+        (2, 2, 8.0, r"env\.{split}\.total_num_envs.*got 8\.0\."),
+        (2, True, 8, r"rollout\.pipeline_stage_num.*got True\."),
+        (1, 1, True, r"env\.{split}\.total_num_envs.*got True\."),
+    ],
+    ids=[
+        "single-stage",
+        "even-shards",
+        "remainder",
+        "empty-shards",
+        "zero-environments",
+        "zero-stages",
+        "float-stages",
+        "float-environments",
+        "bool-stages",
+        "bool-environments",
+    ],
+)
+def test_env_pipeline_shard_validation(
+    monkeypatch, task_type, split, env_workers, stage_num, total_num_envs, error
+):
+    cluster = create_fake_cluster(num_nodes=1, accelerators_per_node=env_workers)
+    monkeypatch.setattr("rlinf.config.Cluster", lambda **kwargs: cluster)
+
+    model = {"model_type": "openvla", "num_action_chunks": 2}
+    cfg = OmegaConf.create(
+        {
+            "cluster": {
+                "num_nodes": 1,
+                "component_placement": {"actor,env,rollout": "all"},
+            },
+            "runner": {
+                "task_type": task_type,
+                "only_eval": False,
+                "val_check_interval": 1 if task_type == "offline" else -1,
+                "local_update_steps": 1,
+                "max_steps": 1,
+            },
+            "actor": {
+                "training_backend": "fsdp",
+                "fsdp_config": {"mixed_precision": {}},
+                "global_batch_size": 4,
+                "micro_batch_size": 2,
+                "seed": 0,
+                "model": model,
+            },
+            "algorithm": {"adv_type": "gae", "loss_type": "actor", "gamma": 0.9},
+            "rollout": {"pipeline_stage_num": stage_num, "model": model},
+            "env": {
+                split: {
+                    "env_type": "libero",
+                    "total_num_envs": total_num_envs,
+                    "group_size": 1,
+                    "max_steps_per_rollout_epoch": 8,
+                }
+            },
+        }
+    )
+
+    if error is None:
+        validate_cfg(cfg)
+        return
+
+    with pytest.raises(ValueError, match=error.format(split=split)):
+        validate_cfg(cfg)
 
 
 class TestModelParallelComponentPlacement:
