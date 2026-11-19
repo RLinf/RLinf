@@ -59,7 +59,14 @@ exclude_patterns = [
 ]  # underscore-prefixed files are reusable includes, not standalone pages
 default_role = "code"
 autosummary_generate = True
-autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
+autodoc_mock_imports = [
+    "sglang",
+    "megatron",
+    "prismatic",
+    "libero",
+    "lerobot",
+    "fastapi",
+]
 autodoc_class_signature = "separated"
 autodoc_typehints = "description"
 # autoclass_content = "both"
