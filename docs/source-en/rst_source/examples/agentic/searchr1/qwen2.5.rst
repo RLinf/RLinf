@@ -227,7 +227,9 @@ Huawei Ascend CANN
 
 The Ascend recipe uses FP16 with dynamic gradient scaling and an initial scale of ``32768`` to reduce overflow during the first updates. The scaler continues to adapt during training.
 
-Prepare the retriever using the setup above; it can run on a separate machine. The Ascend config inherits its model, dataset, and retriever settings. In ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml``, override the inherited paths and retriever endpoint with the values below. Merge ``model`` into the existing ``rollout`` mapping, preserving ``sglang``; do not add a second ``rollout`` key:
+The bundled FAISS and Qdrant retrieval servers require CUDA. Follow :doc:`index` to set up retrieval on a separate CUDA GPU host, or use an existing retrieval endpoint reachable from the Ascend workers. Set ``tools.search.server_addr`` to that endpoint.
+
+The Ascend config inherits its model, dataset, and retriever settings. In ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml``, override the inherited paths and retriever endpoint with the values below. Merge ``model`` into the existing ``rollout`` mapping, preserving ``sglang``; do not add a second ``rollout`` key:
 
 .. code-block:: yaml
 

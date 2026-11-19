@@ -140,8 +140,9 @@ Huawei Ascend CANN
      --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
      -r requirements/agentic/agentlightning_npu.txt
 
-准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径，然后运行：
+FSDP 配方使用 BF16 参数和 FP32 梯度归约，关闭梯度缩放。准备相同的 calc_x 数据集，并修改 ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml`` 中的路径。从仓库根目录进入示例目录后启动训练，使相对输出路径 ``../results`` 位于仓库内部：
 
 .. code-block:: bash
 
-   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend
+   cd examples/agent/agentlightning/calc_x
+   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend

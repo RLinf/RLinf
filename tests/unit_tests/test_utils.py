@@ -824,6 +824,18 @@ def test_attn_implementation_survives_a_probe_that_raises(monkeypatch):
     assert resolve_attn_implementation("flash_attention_2") == "sdpa"
 
 
+def test_attn_implementation_registers_ascend_fusion():
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+    from rlinf.hybrid_engines.fsdp.ascend_attention import (
+        ascend_fusion_attention_forward,
+    )
+    from rlinf.utils.attention import resolve_attn_implementation
+
+    assert resolve_attn_implementation("ascend_fusion") == "ascend_fusion"
+    assert ALL_ATTENTION_FUNCTIONS["ascend_fusion"] is ascend_fusion_attention_forward
+
+
 def test_attn_implementation_passes_through_non_flash_choices(monkeypatch):
     from rlinf.utils.attention import resolve_attn_implementation
 

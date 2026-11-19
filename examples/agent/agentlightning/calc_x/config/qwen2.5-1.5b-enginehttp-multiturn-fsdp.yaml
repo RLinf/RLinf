@@ -68,4 +68,4 @@ actor:
       enabled: False
       precision: fp16
     grad_scaler:
-      enabled: True
+      enabled: False

@@ -53,6 +53,10 @@ def resolve_attn_implementation(preferred: str = "flash_attention_2") -> str:
     flash-attn (Ascend, MUSA) ship neither, so a hard-coded ``flash_attention_2``
     fails there. Fall back to another installed flash variant when there is one,
     and to ``sdpa`` otherwise.
+
+    ``ascend_fusion`` is returned unchanged after registering the Ascend fused
+    attention with Transformers in this process. ``validate_cfg`` checks its
+    NPU placement, FSDP2 backend, and packed-input requirements.
     """
     if preferred == "ascend_fusion":
         from rlinf.hybrid_engines.fsdp.ascend_attention import (

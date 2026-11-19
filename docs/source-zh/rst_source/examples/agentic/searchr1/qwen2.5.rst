@@ -204,7 +204,9 @@ Huawei Ascend CANN
 
 Ascend 配方使用 FP16 和动态梯度缩放，初始 scale 为 ``32768``，以减少训练初期的梯度溢出。训练过程中 scaler 会继续自动调整 scale。
 
-按前文步骤准备检索服务，服务可以运行在另一台机器上。Ascend 配置从基础配方继承模型、数据集和检索服务设置。在 ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` 中按下例覆盖继承的路径和检索服务地址。将 ``model`` 添加到已有的 ``rollout`` 下，保留 ``sglang``，不要重复添加顶层 ``rollout``：
+仓库提供的 FAISS 和 Qdrant 检索服务需要 CUDA。请按 :doc:`index` 在独立的 CUDA GPU 机器上部署检索服务，或使用 Ascend worker 可以访问的已有检索服务，并将 ``tools.search.server_addr`` 设为该服务的地址。
+
+Ascend 配置从基础配方继承模型、数据集和检索服务设置。在 ``examples/agent/searchr1/config/train_qwen2.5_ascend.yaml`` 中按下例覆盖继承的路径和检索服务地址。将 ``model`` 添加到已有的 ``rollout`` 下，保留 ``sglang``，不要重复添加顶层 ``rollout``：
 
 .. code-block:: yaml
 

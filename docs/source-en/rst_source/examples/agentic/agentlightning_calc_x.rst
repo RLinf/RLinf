@@ -148,8 +148,9 @@ Install the calculator dependencies while preserving the Ascend package versions
      --override requirements/agentic/sglang_0.5.12.post1_npu_overrides.txt \
      -r requirements/agentic/agentlightning_npu.txt
 
-Prepare the same calc_x dataset, update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``, and run:
+The FSDP recipe uses BF16 parameters and FP32 gradient reduction with gradient scaling disabled. Prepare the same calc_x dataset and update paths in ``qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend.yaml``. From the repository root, enter the example directory and launch training so that the relative ``../results`` output stays inside the checkout:
 
 .. code-block:: bash
 
-   bash examples/agent/agentlightning/calc_x/run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend
+   cd examples/agent/agentlightning/calc_x
+   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn-fsdp_ascend

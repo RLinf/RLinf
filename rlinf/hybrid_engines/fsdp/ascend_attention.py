@@ -93,7 +93,8 @@ def ascend_fusion_attention_forward(
     if query.dtype not in (torch.float16, torch.bfloat16):
         raise ValueError(
             "ascend_fusion requires FP16 or BF16 query/key/value; "
-            "set actor.model.precision to fp16 or bf16."
+            "set fsdp_config.mixed_precision.param_dtype to fp16 or bf16 "
+            "on the actor or critic using this attention implementation."
         )
 
     position_ids = kwargs.get("position_ids")
