@@ -259,7 +259,7 @@ class Pi0Eval(EnvIO, Pi0):
                 generator=rng,
             )
 
-        attention = self.prepare_suffix_attention(prefix_mask)
+        attention = self.prepare_suffix_attention(prefix_mask, noise.shape[1])
         x_t = noise
         dt = -1.0 / self.num_steps
         t = 1.0

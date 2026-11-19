@@ -203,7 +203,7 @@ class Pi0RL(EnvIO, Pi0):
             )
 
         prefix_out, prefix_mask, kv_cache = self.build_prefix_cache(observation)
-        attention = self.prepare_suffix_attention(prefix_mask)
+        attention = self.prepare_suffix_attention(prefix_mask, noise.shape[1])
         vlm_value = None
         if rl_cfg.add_value_head and rl_cfg.value_after_vlm:
             vlm_value = rl_sampler.value_from_prefix(
@@ -436,7 +436,7 @@ class Pi0RL(EnvIO, Pi0):
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
             observation
         )
-        attention = self.prepare_suffix_attention(prefix_mask)
+        attention = self.prepare_suffix_attention(prefix_mask, chains.shape[-2])
 
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
         if rl_cfg.joint_logprob:

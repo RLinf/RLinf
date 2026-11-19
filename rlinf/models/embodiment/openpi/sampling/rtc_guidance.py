@@ -113,7 +113,7 @@ def sample_actions_with_rtc_guidance(
 
     prefix_out, prefix_mask, kv_cache = pi0_model.build_prefix_cache(observation)
     del prefix_out
-    attention = pi0_model.prepare_suffix_attention(prefix_mask)
+    attention = pi0_model.prepare_suffix_attention(prefix_mask, noise.shape[1])
 
     prev_remaining = (
         rtc_context.get_prev_remaining() if rtc_context is not None else None

@@ -1344,10 +1344,16 @@ def test_openpi_reuses_prepared_attention():
 
 @pytest.mark.parametrize("mode", ["joint", "prefix", "cached_suffix"])
 @pytest.mark.parametrize(
-    "pi05,backend",
-    [(False, "eager"), (True, "eager"), (True, "flash_attention_2")],
+    "pi05,backend,action_length",
+    [
+        (False, "eager", 3),
+        (True, "eager", 3),
+        (True, "eager", 2),
+        (True, "flash_attention_2", 3),
+        (True, "flash_attention_2", 2),
+    ],
 )
-def test_openpi_prepares_attention_layout(pi05, backend, mode):
+def test_openpi_prepares_attention_layout(pi05, backend, mode, action_length):
     from rlinf.models.embodiment.openpi.modules.flash_attention import (
         FlashAttentionMetadata,
     )
@@ -1368,9 +1374,9 @@ def test_openpi_prepares_attention_layout(pi05, backend, mode):
         policy.action_time_mlp_out = torch.nn.Linear(8, 8)
     observation = Observation(images={}, image_masks={}, state=torch.randn(2, 4))
     suffix_tokens, _ = policy.embed_suffix(
-        observation, torch.randn(2, 3, 4), torch.tensor([0.2, 0.7])
+        observation, torch.randn(2, action_length, 4), torch.tensor([0.2, 0.7])
     )
-    suffix_length = 3 if pi05 else 4
+    suffix_length = action_length + int(not pi05)
     assert suffix_tokens.shape == (2, suffix_length, 8)
     prefix_mask = torch.tensor([[True, False, True], [False, False, False]])
     prefix_length = prefix_mask.shape[1]
@@ -1393,10 +1399,10 @@ def test_openpi_prepares_attention_layout(pi05, backend, mode):
         activities=[torch.profiler.ProfilerActivity.CPU], record_shapes=True
     ) as profile:
         if mode == "cached_suffix":
-            attention = policy.prepare_suffix_attention(prefix_mask)
+            attention = policy.prepare_suffix_attention(prefix_mask, action_length)
         else:
             attention = policy.prepare_attention(
-                prefix_mask, include_suffix=mode == "joint"
+                prefix_mask, suffix_len=suffix_length if mode == "joint" else 0
             )
     torch.testing.assert_close(attention.positions, expected_positions)
     if backend == "eager":

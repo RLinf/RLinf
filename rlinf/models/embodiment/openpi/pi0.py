@@ -411,7 +411,9 @@ class Pi0(model.BaseModel):
         # One forward pass for prefix + suffix
         prefix_tokens, prefix_mask = self.embed_prefix(observation)
         suffix_tokens, adarms_cond = self.embed_suffix(observation, x_t, time)
-        attention = self.prepare_attention(prefix_mask, include_suffix=True)
+        attention = self.prepare_attention(
+            prefix_mask, suffix_len=suffix_tokens.shape[1]
+        )
 
         prefix_out, suffix_out = self.llm(
             [prefix_tokens, suffix_tokens],
@@ -455,11 +457,10 @@ class Pi0(model.BaseModel):
         self,
         prefix_mask: torch.Tensor,
         *,
-        include_suffix: bool = False,
+        suffix_len: int = 0,
         cached: bool = False,
     ) -> AttentionInputs:
         """Define prefix/suffix visibility once for eager and fused attention."""
-        suffix_len = self.action_horizon + int(not self.pi05) if include_suffix else 0
         suffix_mask = prefix_mask.new_ones((prefix_mask.shape[0], suffix_len))
         valid = torch.cat([prefix_mask, suffix_mask], dim=-1)
         positions = valid.int().cumsum(dim=-1) - 1
@@ -474,7 +475,7 @@ class Pi0(model.BaseModel):
             )
         else:
             ar_mask = prefix_mask.new_zeros(valid.shape[-1])
-            if include_suffix:
+            if suffix_len:
                 start = prefix_mask.shape[-1]
                 ar_mask[start : start + (1 if self.pi05 else 2)] = True
             mask = make_attn_mask(
@@ -484,9 +485,13 @@ class Pi0(model.BaseModel):
             positions = positions[:, prefix_mask.shape[-1] :]
         return AttentionInputs(mask, positions, metadata)
 
-    def prepare_suffix_attention(self, prefix_mask: torch.Tensor) -> AttentionInputs:
+    def prepare_suffix_attention(
+        self, prefix_mask: torch.Tensor, action_length: int
+    ) -> AttentionInputs:
         """Prepare attention once for all denoising steps of a prefix cache."""
-        return self.prepare_attention(prefix_mask, include_suffix=True, cached=True)
+        return self.prepare_attention(
+            prefix_mask, suffix_len=action_length + int(not self.pi05), cached=True
+        )
 
     def run_suffix(
         self,
@@ -505,7 +510,9 @@ class Pi0(model.BaseModel):
         """
         suffix_tokens, adarms_cond = self.embed_suffix(observation, x_t, t_tensor)
         if attention is None:
-            attention = self.prepare_suffix_attention(prefix_mask)
+            attention = self.prepare_attention(
+                prefix_mask, suffix_len=suffix_tokens.shape[1], cached=True
+            )
         outputs, _ = self.llm(
             [None, suffix_tokens],
             positions=attention.positions,
@@ -599,7 +606,7 @@ class Pi0(model.BaseModel):
             )
 
         _, prefix_mask, kv_cache = self.build_prefix_cache(observation)
-        attention = self.prepare_suffix_attention(prefix_mask)
+        attention = self.prepare_suffix_attention(prefix_mask, noise.shape[1])
 
         x_t = noise
         t = 1.0
@@ -859,7 +866,9 @@ class Pi0(model.BaseModel):
 
         prefix_tokens, prefix_mask = self.embed_prefix(observation)
         suffix_tokens, adarms_cond = self.embed_suffix(observation, x_t, time)
-        attention = self.prepare_attention(prefix_mask, include_suffix=True)
+        attention = self.prepare_attention(
+            prefix_mask, suffix_len=suffix_tokens.shape[1]
+        )
 
         prefix_out, suffix_out = self.llm(
             [prefix_tokens, suffix_tokens],
