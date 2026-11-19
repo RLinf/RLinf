@@ -86,11 +86,11 @@ python3 "$SKILLS/route.py" check --base "$BASE"            # every touched area'
 python3 "$SKILLS/create-pr/lint_pr.py" lint --pr "$N"      # PR title and description
 ```
 
-`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do. For docs, `check.py` only inspects build, markup, and prose—not command blocks or workflow design—so you must read every changed page in full in both languages, inspect every command block for simplicity and standard RLinf usage, and compare recipes side by side against their closest model- or domain-family siblings on `main` (and any shared setup page they link to). A script's finding becomes a review finding once step 7 settles it, filed under the category of its rule:
+`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do. For docs, `check.py` only inspects build, markup, and prose—not command blocks, workflow design, or page density—so you must read every changed page in full in both languages, inspect every command block for simplicity and standard RLinf usage, check that the page favors simplicity and scannability over verbosity, and compare recipes side by side against their closest model- or domain-family siblings on `main` (and any shared setup page they link to). When a missing detail would clutter a recipe or guide, ask the author to fix the YAML default, move multi-step logic into a script, or link to Reference rather than adding more prose or workarounds to the page. A script's finding becomes a review finding once step 7 settles it, filed under the category of its rule:
 
 - `tests`: `code/ci-filter`, `code/test-layout`, and every `install/*` rule;
 - `docs`: `docs/symbol`, `docs/rtd-link`, `docs/parity`, docs-to-code checks, sibling workflow alignment, setup reuse, and command usability from the docs judgment list and reproduction;
-- `docs-style`: `docs/build`, `docs/markup`, `docs/zh-hard-wrap`, and the prose/structure checks of page reading;
+- `docs-style`: `docs/build`, `docs/markup`, `docs/zh-hard-wrap`, verbosity/scannability, and the prose/structure checks of page reading;
 - `style`: `code/pre-commit`, `code/init`, `code/license`, and the PR lint.
 
 When an area's script cannot run, for example without a docs virtualenv or without GPUs for the install Verify step, the report says it did not run and what it needs. Never leave a routed area out.
