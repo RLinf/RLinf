@@ -1115,6 +1115,113 @@ def test_openpi_factory_separates_parameter_and_activation_dtypes(
     torch.testing.assert_close(model.img.stem.weight, source.img.stem.weight)
 
 
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "libero_sft_openpi",
+        "custom_sft_openpi",
+        "realworld_bin_relocation_sft_openpi",
+        "realworld_sft_openpi_so101",
+    ],
+)
+def test_openpi_sft_configs_keep_updates_below_bf16_resolution(
+    tmp_path, monkeypatch, config_name
+):
+    """OpenPI SFT configs store trainable weights in FP32 and compute in BF16.
+
+    AdamW writes each update into the stored weight, so with BF16 storage a
+    step smaller than half the BF16 spacing of a weight rounds back to it.
+    """
+    from pathlib import Path
+
+    from hydra import compose, initialize_config_dir
+    from omegaconf import open_dict
+
+    from rlinf.hybrid_engines.fsdp.optim import build_adamw
+    from rlinf.models import get_model
+    from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+    from rlinf.utils.precision import torch_dtype_from_precision
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(repo / "examples/sft"))
+    monkeypatch.setenv("REPO_PATH", str(repo))
+    with initialize_config_dir(
+        config_dir=str(repo / "examples/sft/config"), version_base="1.1"
+    ):
+        cfg = compose(config_name=config_name)
+    actor = validate_fsdp_cfg(cfg.actor)
+
+    # Shrink the network; storage and compute dtypes come from the config.
+    monkeypatch.setattr(gemma, "PALIGEMMA_VOCAB_SIZE", 32)
+    monkeypatch.setattr(utils, "_torch_compile_enabled", False)
+    monkeypatch.setattr(
+        siglip,
+        "_decode_variant",
+        lambda variant: {
+            "width": 32,
+            "depth": 1,
+            "num_heads": 4,
+            "mlp_dim": 64,
+            "patch_size": (14, 14),
+        },
+    )
+    model_cfg = actor.model
+    with open_dict(model_cfg):
+        model_cfg.model_path = str(tmp_path)
+        model_cfg.openpi.torch_compile = False
+        model_cfg.openpi.action_horizon = 2
+        model_cfg.openpi.max_token_len = 4
+        model_cfg.openpi.paligemma_variant = "dummy"
+        model_cfg.openpi.action_expert_variant = "dummy"
+    source = Pi0(
+        Pi0Config(
+            pi05=bool(model_cfg.get("pi05", True)),
+            paligemma_variant="dummy",
+            action_expert_variant="dummy",
+            action_horizon=2,
+            max_token_len=4,
+        )
+    )
+    torch.save(source.state_dict(), tmp_path / "full_weights.pt")
+
+    model = get_model(model_cfg)
+
+    weights = [param for param in model.parameters() if param.requires_grad]
+    assert {param.dtype for param in weights} == {torch.float32}, (
+        f"{config_name} should store trainable weights in fp32, found "
+        f"{sorted({str(param.dtype) for param in weights})}"
+    )
+    assert model.embed_dtype == torch.bfloat16
+    mixed_precision = actor.fsdp_config.mixed_precision
+    assert torch_dtype_from_precision(mixed_precision.param_dtype) == torch.bfloat16
+    assert torch_dtype_from_precision(mixed_precision.reduce_dtype) == torch.float32
+
+    with torch.no_grad():
+        for param in weights:
+            param.fill_(1.0)
+            param.grad = torch.ones_like(param)
+    optim = actor.optim
+    optimizer = build_adamw(
+        [
+            {
+                "params": weights,
+                "lr": optim.lr,
+                "betas": (optim.adam_beta1, optim.adam_beta2),
+            }
+        ],
+        eps=optim.adam_eps,
+        weight_decay=optim.weight_decay,
+    )
+    optimizer.step()
+
+    for param in weights:
+        assert (param != 1.0).all()
+        # The step is below BF16 resolution at 1.0: BF16 storage would drop it.
+        assert (param.to(torch.bfloat16) == 1.0).all()
+
+
 def test_openpi_sft_uses_activation_checkpointing(monkeypatch):
     from rlinf.models.embodiment.base_policy import ForwardType
     from rlinf.models.embodiment.openpi.modules import gemma, siglip, utils
