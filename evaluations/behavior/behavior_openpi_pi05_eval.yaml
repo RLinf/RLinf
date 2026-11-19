@@ -38,6 +38,7 @@ env:
   group_name: "EnvGroup"
 
   eval:
+    use_eval_utils_cfg: True
     rollout_epoch: 4
     total_num_envs: 4
     max_episode_steps: 4096

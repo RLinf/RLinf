@@ -259,16 +259,16 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
 
-    # automatically set task-relevant rooms to ``scene.load_room_types`` via gello.
-    # (mirrored from OmniGibson ``learning/eval.py``)
+    # Select task-relevant rooms when partial scene loading is enabled.
     partial_scene_load = OmegaConf.select(omni_cfg, "scene.partial_scene_load")
     if partial_scene_load is not None:
         with open_dict(omni_cfg.scene):
             omni_cfg.scene.pop("partial_scene_load", None)
-        if partial_scene_load:
-            from gello.robots.sim_robot.og_teleop_utils import (
+        if partial_scene_load and omni_cfg.scene.get("load_room_instances") is None:
+            from gello.utils.og_teleop_utils import (
                 augment_rooms,
                 get_task_relevant_room_types,
+                load_available_tasks,
             )
 
             activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
@@ -279,15 +279,26 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                     f"in omni_config; got activity_name={activity_name!r}, "
                     f"scene_model={scene_model!r}."
                 )
-            relevant_rooms = get_task_relevant_room_types(activity_name=activity_name)
-            relevant_rooms = augment_rooms(relevant_rooms, scene_model, activity_name)
-            relevant_rooms.sort()
-            OmegaConf.update(
-                omni_cfg,
-                "scene.load_room_types",
-                relevant_rooms,
-                merge=False,
-            )
+            relevant_rooms = None
+            if cfg.get("use_eval_utils_cfg", False):
+                # Challenge room instances are specific to the official task scene.
+                tasks = load_available_tasks().get(activity_name, {})
+                definition_id = omni_cfg.task.get("activity_definition_id", 0)
+                if tasks.get(definition_id, {}).get("scene_model") == scene_model:
+                    from omnigibson.eval.utils.eval_utils import TASK_NAMES_TO_ROOMS
+
+                    relevant_rooms = TASK_NAMES_TO_ROOMS.get(activity_name)
+            if relevant_rooms is None:
+                relevant_rooms = get_task_relevant_room_types(
+                    activity_name=activity_name
+                )
+                relevant_rooms = augment_rooms(
+                    relevant_rooms, scene_model, activity_name
+                )
+                relevant_rooms.sort()
+                omni_cfg.scene.load_room_types = relevant_rooms
+            else:
+                omni_cfg.scene.load_room_instances = relevant_rooms
             get_logger().info(
                 f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}"
             )

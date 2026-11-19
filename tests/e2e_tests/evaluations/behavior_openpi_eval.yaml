@@ -38,6 +38,7 @@ env:
   group_name: "EnvGroup"
 
   eval:
+    use_eval_utils_cfg: True
     rollout_epoch: 1
     total_num_envs: 2
     # BEHAVIOR subtracts one, so 33 env steps fit one 32-step action chunk.
