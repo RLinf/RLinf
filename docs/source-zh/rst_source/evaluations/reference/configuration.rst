@@ -36,7 +36,7 @@
          save_video: True
 
    rollout:
-     generation_backend: "huggingface"
+     rollout_backend: "huggingface"
      model:
        model_path: "/path/to/model"   # 必填：模型权重路径
        model_type: "openpi"

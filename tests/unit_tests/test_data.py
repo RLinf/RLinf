@@ -74,6 +74,7 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.scheduler import AcceleratorType
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -1259,6 +1260,34 @@ def test_env_output_preserves_nested_observations():
             shard.obs["history"]["main_images"],
             output.obs["history"]["main_images"][index : index + 1],
         )
+
+
+@pytest.mark.parametrize(
+    "reset_config, expected_updates",
+    [({}, 1), ({"use_fixed_reset_state_ids": True}, 0)],
+    ids=["optional-setting-absent", "fixed-reset-ids"],
+)
+def test_env_worker_finishes_eval_with_optional_fixed_reset_ids(
+    reset_config, expected_updates
+):
+    class EvalEnv:
+        reset_updates = 0
+
+        def update_reset_state_ids(self):
+            self.reset_updates += 1
+
+    worker = object.__new__(EnvWorker)
+    worker.stage_num = 1
+    worker.eval_env_list = [EvalEnv()]
+    worker.cfg = OmegaConf.create(
+        {"env": {"eval": {"auto_reset": False, "video_cfg": {"save_video": False}}}}
+    )
+    worker.cfg.env.eval.update(reset_config)
+    OmegaConf.set_struct(worker.cfg, True)
+
+    worker.finish_rollout(mode="eval")
+
+    assert worker.eval_env_list[0].reset_updates == expected_updates
 
 
 @pytest.mark.parametrize("array_type", [torch.tensor, np.array])
@@ -3062,6 +3091,8 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -3361,6 +3392,8 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3467,6 +3500,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -3596,6 +3631,35 @@ def test_decoupled_final_completion_uses_next_bootstrap():
     assert policy_input.env_parts == [completion]
 
 
+@pytest.mark.parametrize("chunked", [False, True])
+def test_reward_request_forwards_done_masks_and_final_info(chunked):
+    worker = object.__new__(EnvWorker)
+    worker._accelerator_type = AcceleratorType.NO_ACCEL
+    worker._timer_metrics = {}
+    worker.reward_mode = "per_step"
+    worker.env_infos_reward_keys = ("success", "episode", "final_info", "_final_info")
+    worker.cfg = OmegaConf.create({"reward": {"group_name": "reward"}})
+    worker.env_decoupled_mode = False
+    worker.train_batch_size = 2
+    worker.send_to = Mock()
+    worker.recv_from = Mock()
+    done = torch.tensor([True, False])
+    valid = torch.tensor([False, True])
+    dones = torch.stack([done, torch.zeros_like(done)], dim=-1) if chunked else done
+    env_output = EnvOutput(
+        obs={"states": torch.zeros(2, 1)},
+        transition=EnvTransition(dones=dones),
+        env_infos={"final_info": {"success": done}, "_final_info": valid},
+    )
+
+    worker.get_reward_model_output(env_output, Mock(), Mock())
+
+    payload = worker.send_to.call_args.kwargs["data"]
+    assert torch.equal(payload["dones"], done)
+    assert torch.equal(payload["env_infos"]["_final_info"], valid)
+    assert torch.equal(payload["env_infos"]["final_info"]["success"], done)
+
+
 def test_env_closes_reward_stream_with_final_chunk():
     env = object.__new__(EnvWorker)
     env.rollout_epoch = 2
@@ -3677,10 +3741,16 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
-def test_rollout_runs_requested_terminal_inference_without_a_value_head():
+@pytest.mark.parametrize("value_only", [False, True])
+def test_rollout_runs_requested_terminal_inference_without_a_value_head(value_only):
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = value_only
     rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
     rollout.model_cfg = SimpleNamespace(model_type="openpi")
+    rollout.hf_model = SimpleNamespace()
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3711,6 +3781,8 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
 def test_rollout_reuses_policy_obs_for_transition_next_obs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = False
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3734,6 +3806,8 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = True
+    rollout.value_only_bootstrap = True
     rollout.enable_rlt = True
     rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
@@ -3767,6 +3841,8 @@ def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
 
 def test_rollout_keeps_next_forward_inputs_only_for_rlt():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = True
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3797,6 +3873,129 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
         forward_inputs["rlt_transition_z_rl"],
     )
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
+
+
+@pytest.mark.parametrize("batch_bootstrap", [False, True])
+def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstrap):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = batch_bootstrap
+    rollout.value_only_bootstrap = True
+    rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.model_cfg = SimpleNamespace(model_type="openvla")
+    rollout.collect_transitions = True
+    rollout.n_train_chunk_steps = 0
+    rollout.num_pipeline_stages = 1
+    rollout.env_decoupled_mode = False
+    rollout.update_dagger_beta = lambda: None
+
+    class ValuePolicy:
+        value_head = object()
+
+        def predict_value_batch(self, env_obs):
+            return env_obs["states"][:, :1].float() * 2
+
+    rollout.hf_model = ValuePolicy()
+    sizes = [1, 1, 2]
+    keys = [TrajectoryKey(0, rank, 0, 0, 1) for rank in range(3)]
+    sources = [TrajectorySource(key, size) for key, size in zip(keys, sizes)]
+    parts = [
+        EnvPart(
+            sources=[sources[0]],
+            transition=EnvTransition(truncations=torch.ones(1, 1, dtype=torch.bool)),
+            next_obs={"states": torch.tensor([[9]])},
+            requires_inference=True,
+        ),
+        EnvPart(sources=[sources[1]], transition=EnvTransition()),
+        EnvPart(
+            sources=[sources[2]],
+            transition=EnvTransition(),
+            requires_inference=True,
+        ),
+    ]
+    request = PolicyInput(
+        obs={"states": torch.tensor([[0], [1], [2], [3]])},
+        env_parts=parts,
+        request_sizes=sizes,
+        is_last=True,
+    )
+    rollout._receive_policy_input = AsyncMock(return_value=(request, None))
+
+    class ActorChannel:
+        def __init__(self):
+            self.parts = []
+
+        def put(self, item, *, async_op):
+            self.parts.append(item)
+
+    actor_channel = ActorChannel()
+    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
+    while hasattr(generate_one_epoch, "__wrapped__"):
+        generate_one_epoch = generate_one_epoch.__wrapped__
+    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
+
+    completed = actor_channel.parts
+    assert [part.sources for part in completed] == [[source] for source in sources]
+    assert all(not part.requires_inference for part in completed)
+    assert completed[0].transition is parts[0].transition
+    assert completed[0].next_obs["states"].tolist() == [[9]]
+    assert completed[0].bootstrap_values.tolist() == [[18.0]]
+    assert completed[1].bootstrap_values is None
+    assert completed[1].next_obs["states"].tolist() == [[1]]
+    assert completed[2].next_obs["states"].tolist() == [[2], [3]]
+    assert completed[2].final_prev_values.tolist() == [[4.0], [6.0]]
+
+
+@pytest.mark.parametrize("use_chat_template", [False, True])
+def test_vlm_trend_sft_uses_inference_prefix_without_trailing_assistant(
+    use_chat_template,
+):
+    from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+
+    class Processor:
+        video_token = "<|video_pad|>"
+        assistant_prefix = "<|im_start|>assistant\n"
+
+        def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+            assert not tokenize
+            text = "".join(
+                f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+                for msg in messages
+            )
+            return text + self.assistant_prefix if add_generation_prompt else text
+
+        def __call__(self, *, text, **kwargs):
+            input_ids = torch.tensor([[ord(char) for char in text[0]]])
+            return {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            }
+
+    dataset = object.__new__(VLMTrendRewardSFTDataset)
+    dataset._processor = Processor()
+    dataset.system_prompt = "Score the attempt."
+    dataset.use_chat_template = use_chat_template
+    dataset._video_fps = 24.0
+    videos = [torch.zeros(2, 3, 2, 2), torch.zeros(1, 3, 2, 2)]
+    question, answer = "Did the robot finish?", "Yes"
+    prompt, prefix, _ = dataset.process_inputs(
+        dataset._processor, dataset.system_prompt, use_chat_template, [question], videos
+    )
+    ids, length, attention_mask, label_mask, _ = dataset.encode_prompt(
+        question, videos, answer
+    )
+
+    assert prompt.count(dataset._processor.video_token) == 2
+    assert prompt.endswith(dataset._processor.assistant_prefix)
+    assert label_mask.shape == prefix["input_ids"].shape
+    prefix_length = int(label_mask.sum())
+    torch.testing.assert_close(ids[:prefix_length], prefix["input_ids"][0])
+    assert (
+        "".join(chr(token) for token in ids[prefix_length:].tolist())
+        == "Yes<|im_end|>\n"
+    )
+    assert length == int(attention_mask.sum())
 
 
 def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
@@ -4797,3 +4996,87 @@ def test_dynamic_versions_and_training_rows_share_merge_split_order(versioned):
         )
         # Cross-group merge/split is a training operation, not buffer routing.
         assert actual.group_id is None and actual.task_name is None
+
+
+def test_rollout_value_only_bootstrap_checks_policy_capability_and_config(monkeypatch):
+    from rlinf.config import validate_embodied_cfg
+    from rlinf.models.embodiment.base_policy import BasePolicy
+    from rlinf.workers.rollout.hf import huggingface_worker as hf_mod
+
+    class _NoValuePolicy(torch.nn.Module, BasePolicy):
+        def default_forward(self, **kwargs):
+            return {}
+
+        def predict_action_batch(self, **kwargs):
+            return np.zeros((1, 1, 1)), {}
+
+    class _CustomValuePolicy(_NoValuePolicy):
+        def predict_value_batch(self, env_obs):
+            return torch.ones(1, 1)
+
+    assert not _NoValuePolicy().supports_value_only_bootstrap()
+    assert _CustomValuePolicy().supports_value_only_bootstrap()
+
+    def _make_worker(policy_cls):
+        worker = object.__new__(MultiStepRolloutWorker)
+        worker.model_cfg = OmegaConf.create({"model_type": "openvla"})
+        worker.cfg = OmegaConf.create(
+            {
+                "rollout": {
+                    "model": {"model_type": "openvla"},
+                    "enable_torch_compile": False,
+                },
+                "runner": {},
+            }
+        )
+        worker.value_only_bootstrap = True
+        worker.enable_opd = False
+        worker.enable_cuda_graph = False
+        worker.enable_offload = False
+        worker.rlt_feature_model = None
+        worker.expert_model = None
+        worker.setup_sample_params = lambda: None
+        monkeypatch.setattr(hf_mod, "get_model", lambda cfg: policy_cls())
+        return worker
+
+    with pytest.raises(ValueError, match="predict_value_batch"):
+        _make_worker(_NoValuePolicy).init_worker()
+
+    ok_worker = _make_worker(_CustomValuePolicy)
+    ok_worker.init_worker()
+    ok_worker.enable_rlt = False
+    ok_worker.enable_dagger = False
+    assert torch.equal(
+        ok_worker._predict_bootstrap({"states": torch.zeros(1, 2)})["prev_values"],
+        torch.ones(1, 1),
+    )
+
+    bad_type_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "huggingface",
+                "value_only_bootstrap": "yes",
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(
+        ValueError, match="Expected bool for rollout.value_only_bootstrap"
+    ):
+        validate_embodied_cfg(bad_type_cfg)
+
+    bad_backend_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "vllm",
+                "batch_bootstrap_inference": True,
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(ValueError, match="rollout_backend='huggingface'"):
+        validate_embodied_cfg(bad_backend_cfg)
