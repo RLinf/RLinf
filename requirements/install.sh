@@ -1971,7 +1971,7 @@ ensure_uv_python() {
         echo "[install.sh] WARNING: uv could not install Python ${PYTHON_VERSION}; the venv step will fail." >&2
 }
 
-create_and_sync_venv() {
+create_or_activate_venv() {
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
     local venv_args=()
@@ -2025,6 +2025,10 @@ EOF
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
     fi
+}
+
+create_and_sync_venv() {
+    create_or_activate_venv
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
@@ -4760,12 +4764,10 @@ install_agentic() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    install_engine_requirements "$(agentic_requirements_file vllm "$(agentic_latest_version vllm)")"
-    install_sglang "$AGENTIC_DEFAULT_SGLANG_VERSION"
-    uv sync --extra embodied --active --inexact "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/docs/requirements.txt
-    uv pip uninstall pynvml || true
+    # Sphinx mocks RLinf's runtime dependencies (docs/autodoc_mock.py), so the
+    # docs venv only needs Sphinx and its extensions.
+    create_or_activate_venv
+    uv pip install -r "$SCRIPT_DIR/docs/requirements.txt"
 }
 
 main() {
@@ -4776,6 +4778,11 @@ main() {
         exit 1
     fi
     validate_python_version
+    if [ "$TARGET" = "docs" ]; then
+        setup_mirror
+        install_docs
+        return 0
+    fi
     validate_engine
     apply_model_default_torch
     apply_env_default_torch
@@ -4885,10 +4892,6 @@ main() {
             fi
             create_and_sync_venv
             install_agentic
-            ;;
-        docs)
-            create_and_sync_venv
-            install_docs
             ;;
         *)
 			echo "Unknown target: $TARGET" >&2
