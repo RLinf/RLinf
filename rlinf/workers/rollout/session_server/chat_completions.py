@@ -90,7 +90,9 @@ class ChatCompletions:
 
         Fields the entry ignores (the model is fixed by config, training
         logprobs ride the payload, ``seed`` has no engine support) are
-        simply never read.
+        simply never read. A field sent as ``null`` counts as unset, as in
+        the OpenAI API, so clients that send every optional parameter as
+        ``null`` still get the configured sampling.
 
         Args:
             body: The request body.
@@ -110,18 +112,19 @@ class ChatCompletions:
                 "separate sessions"
             )
         for field in ("temperature", "top_p", "top_k"):
-            if field in body and body[field] != sampling_params.get(field):
+            value = body.get(field)
+            if value is not None and value != sampling_params.get(field):
                 return (
                     f"{field} must equal the configured value "
                     f"({sampling_params.get(field)!r}); training logprobs are "
                     f"computed under the configured sampling"
                 )
-        tool_choice = body.get("tool_choice", "auto")
+        tool_choice = body.get("tool_choice") or "auto"
         if tool_choice not in ("auto", "none"):
             return (
                 f"tool_choice {tool_choice!r} is not supported; only 'auto' and 'none'"
             )
-        if "response_format" in body:
+        if body.get("response_format") is not None:
             return "response_format is not supported by this endpoint"
         if body.get("chat_template_kwargs") not in (
             None,
@@ -135,14 +138,20 @@ class ChatCompletions:
 
     @staticmethod
     def sampling_overrides(body: dict) -> dict:
-        """Map the request's token-limit and stop fields onto sampling."""
+        """Map the request's token-limit and stop fields onto sampling.
+
+        A field sent as ``null`` is unset, as in check_request: a null
+        ``max_completion_tokens`` does not hide the ``max_tokens`` next to it.
+        """
         overrides: dict = {}
         for field in ("max_completion_tokens", "max_tokens"):
-            if field in body:
-                overrides["max_new_tokens"] = body[field]
+            value = body.get(field)
+            if value is not None:
+                overrides["max_new_tokens"] = value
                 break
-        if "stop" in body:
-            overrides["stop"] = body["stop"]
+        stop = body.get("stop")
+        if stop is not None:
+            overrides["stop"] = stop
         return overrides
 
     def render(
@@ -207,6 +216,41 @@ class ChatCompletions:
             ),
             rollback=rollback,
         )
+
+    def decode_output(self, output_ids: list[int], matched_stop: Any = None) -> str:
+        """Decode the output token ids into the text the engine would return.
+
+        With ``rollout.detokenize: false`` the engines start with
+        ``skip_tokenizer_init`` and return only ``output_ids``; without this
+        decoding, every chat response would carry an empty message. The
+        decoding uses the engine's default detokenizer settings and removes a
+        matched stop string or stop token the same way the engine does, so
+        the text equals what the engine returns with detokenization on.
+
+        Args:
+            output_ids: The turn's output token ids.
+            matched_stop: The ``matched`` field of the engine's
+                ``finish_reason``: the stop string or stop token id that
+                ended the turn, or None.
+
+        Returns:
+            The decoded text.
+        """
+        if isinstance(matched_stop, int) and output_ids:
+            # The engine drops the matched stop token before decoding.
+            output_ids = output_ids[:-1]
+        text = self._tokenizer.tokenizer.decode(
+            output_ids,
+            skip_special_tokens=True,
+            spaces_between_special_tokens=True,
+        )
+        if isinstance(matched_stop, str) and matched_stop:
+            # The engine cuts a matched stop string from its text but keeps
+            # the matching tokens in output_ids.
+            cut = text.find(matched_stop)
+            if cut != -1:
+                text = text[:cut]
+        return text
 
     def parse(
         self,

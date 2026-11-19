@@ -31,7 +31,6 @@ import copy
 import os
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -207,10 +206,14 @@ class SessionServerWorker(Worker):
         # end instead of hanging on a server that never listened.
         self._serve_ended = False
         self._serve_error: Optional[BaseException] = None
-        # Reported groups, most recent last, bounded; a late abort for one of
-        # them must not produce a second record for the buffer worker.
-        self._reported_group_ids: set[int] = set()
-        self._reported_group_order: deque = deque()
+        # Recently delivered groups, oldest first, with their session ids.
+        # The group state is gone after delivery, so this is what answers
+        # late calls for it: an abort must not add a second record for the
+        # buffer worker, and a close or reward that the client resends after
+        # losing the response must still succeed.
+        self._reported_groups: dict[int, tuple[str, ...]] = {}
+        # Session id to its delivered group, for the resent close and reward.
+        self._reported_sessions: dict[str, int] = {}
         self._fatal_error: Optional[RuntimeError] = None
         self._chat_template_kwargs = dict(session_server_cfg.chat_template_kwargs)
         # The chat route's format converter, built by _setup_chat when the
@@ -923,11 +926,20 @@ class SessionServerWorker(Worker):
             )
             if error is not None:
                 return self._openai_error(*error, "generation_failed")
+            text = result.get("text")
+            if text is None:
+                # The engines were started without a tokenizer
+                # (rollout.detokenize off), so the response has no text to
+                # parse: decode the ids here instead.
+                text = self._chat_entry.decode_output(
+                    result["output_ids"],
+                    (result.get("finish_reason") or {}).get("matched"),
+                )
             parsed = self._chat_entry.parse(
-                result.get("text"),
+                text,
                 rendered.input_ids,
                 tools,
-                body.get("tool_choice", "auto"),
+                body.get("tool_choice") or "auto",
             )
             if parsed.has_reasoning:
                 self._metrics["session_server/chat_reasoning_responses"] += 1
@@ -1029,6 +1041,10 @@ class SessionServerWorker(Worker):
     # Lifecycle routes
     # ------------------------------------------------------------------
     async def _close_session(self, sid: str, body: dict) -> JSONResponse:
+        if sid in self._reported_sessions:
+            # A close resent after its response was lost: the group it
+            # belonged to is already delivered, so nothing is left to close.
+            return JSONResponse(content={})
         session, error = self._session(sid)
         if error is not None:
             return self._error(*error)
@@ -1118,6 +1134,10 @@ class SessionServerWorker(Worker):
         return JSONResponse(content={})
 
     async def _reward(self, sid: str, body: dict) -> JSONResponse:
+        if sid in self._reported_sessions:
+            # A reward resent after its response was lost: the group is
+            # already delivered, so nothing is left to record.
+            return JSONResponse(content={"group_complete": True})
         session, error = self._session(sid)
         if error is not None:
             return self._error(*error)
@@ -1142,7 +1162,7 @@ class SessionServerWorker(Worker):
             return self._error(400, "reason must be a non-empty string")
         group = self._groups.get(group_id)
         if group is None:
-            if group_id in self._reported_group_ids:
+            if group_id in self._reported_groups:
                 # Already reported complete; a second record would make the
                 # buffer worker fail the run.
                 return JSONResponse(content={})
@@ -1287,10 +1307,14 @@ class SessionServerWorker(Worker):
             self._fail_serving(f"GroupMetadata put for group {group_id}", exc)
             return False
         group.reported = True
-        self._remember_reported(group_id)
-        for session in group.sessions.values():
-            if session.session_id is not None:
-                self._sessions.pop(session.session_id, None)
+        session_ids = tuple(
+            session.session_id
+            for session in group.sessions.values()
+            if session.session_id is not None
+        )
+        self._remember_reported(group_id, session_ids)
+        for sid in session_ids:
+            self._sessions.pop(sid, None)
         self._groups.pop(group_id, None)
         return True
 
@@ -1356,17 +1380,23 @@ class SessionServerWorker(Worker):
         self.log_error(f"{context} failed ({exc!r}); stopping the session server.")
         self._http_server.should_exit = True
 
-    def _remember_reported(self, group_id: int) -> None:
-        """Track recently reported groups, bounded.
+    def _remember_reported(self, group_id: int, session_ids: tuple[str, ...]) -> None:
+        """Track recently reported groups and their sessions, bounded.
 
-        A straggler abort for one of them must not produce a second record,
-        which would make the buffer worker fail the run, and the group state is
-        gone by then; this bounded history is the only memory of it.
+        The group state is gone once it is delivered, so this history is the
+        only memory of it: a straggler abort for one of them must not produce
+        a second record, which would make the buffer worker fail the run, and
+        a close or reward whose success response was lost is resent by the
+        client, so it must still be answered with success. Groups are dropped
+        oldest first, together with their session ids.
         """
-        self._reported_group_ids.add(group_id)
-        self._reported_group_order.append(group_id)
-        if len(self._reported_group_order) > _REPORTED_HISTORY_LIMIT:
-            self._reported_group_ids.discard(self._reported_group_order.popleft())
+        self._reported_groups[group_id] = session_ids
+        for sid in session_ids:
+            self._reported_sessions[sid] = group_id
+        while len(self._reported_groups) > _REPORTED_HISTORY_LIMIT:
+            evicted = next(iter(self._reported_groups))
+            for sid in self._reported_groups.pop(evicted):
+                self._reported_sessions.pop(sid, None)
 
     # ------------------------------------------------------------------
     # Helpers

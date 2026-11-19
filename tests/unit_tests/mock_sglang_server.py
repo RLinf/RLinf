@@ -108,6 +108,10 @@ class MockSGLangServer:
         # the script runs out. Empty means every response derives its text
         # from the ids.
         self.scripted_texts: list[str] = []
+        # Output ids answered as-is with no text, for an engine started
+        # without a tokenizer (``rollout.detokenize`` off). Takes
+        # precedence over the two text attributes above.
+        self.scripted_output_ids: list[int] = []
         # ("first turn text", "later turn text"): a request whose input is no
         # longer than the first one seen is a conversation's opening turn and
         # gets the first text, a longer one continues it and gets the second.
@@ -176,6 +180,11 @@ class MockSGLangServer:
                 [-0.01 * index, token_id] for index, token_id in enumerate(output_ids)
             ]
         response = {"output_ids": output_ids, "meta_info": meta_info}
+        if self.scripted_output_ids:
+            # An engine without a tokenizer answers ids only: no "text" key
+            # at all, which is what a caller decoding them itself must see.
+            response["output_ids"] = list(self.scripted_output_ids)
+            return response
         if self.scripted_by_turn is not None:
             first_text, later_text = self.scripted_by_turn
             input_len = len(body.get("input_ids", []))

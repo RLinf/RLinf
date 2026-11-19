@@ -243,7 +243,10 @@ def _build_env(
             },
             "agentloop": {"task_name": TASK_NAME},
             "rollout_buffer": {
-                "max_inflight_groups": 8,
+                # Every test in the module shares this stack, and a test that
+                # leaves its group undelivered keeps that group's in-flight
+                # slot, so the limit leaves room for all of them.
+                "max_inflight_groups": 32,
                 "max_buffered_groups": 16,
                 "max_dropped_groups_per_step": 8,
             },
@@ -668,6 +671,32 @@ class TestNormalCompletion:
         assert poll_channel(channel, key=group_id, timeout_s=1) is None
         # The group is spent: its sessions answer unknown from now on.
         assert generate(env, sids[0], [1]).status_code == 404
+
+    def test_retried_close_and_reward_after_delivery_answer_success(self, env):
+        """The client resends a close or reward whose response was lost.
+
+        The group is delivered by then and its sessions are gone, so the
+        retried call has nothing left to do; it must still succeed, and it
+        must not make the buffer see a second record for the group.
+        """
+        request = next_request(env)
+        group_id, _turns, sids = run_group(env, request, rewards=(1.0, 0.5))
+        env.buffer.release_batch(version=0).wait()
+        delivery = poll_channel(env.rollout)
+        assert isinstance(delivery, GroupDelivery)
+        assert delivery.group_id == group_id
+
+        # run_group's reward on the last session completed the group: that
+        # is the call whose response the client can lose.
+        retried_reward = reward(env, sids[1], 0.5)
+        assert retried_reward.status_code == 200, retried_reward.text
+        assert retried_reward.json() == {"group_complete": True}
+        retried_close = close(env, sids[0])
+        assert retried_close.status_code == 200, retried_close.text
+        assert retried_close.json() == {}
+
+        # One record for the group, and only one.
+        assert poll_channel(env.rollout, timeout_s=1) is None
 
 
 class TestAgentLoopSessionTransport:
@@ -1377,6 +1406,84 @@ class TestChatCompletions:
         # configured default, and the forwarded limit is exactly the room.
         assert 0 < room < DEFAULT_MAX_NEW_TOKENS
         assert forward["body"]["sampling_params"]["max_new_tokens"] == room
+
+    def test_null_fields_count_as_unset(self, chat_env):
+        """A client that serializes every optional parameter as null is
+        served the configured sampling instead of a 400 or a 500.
+
+        The group id is outside the buffer worker's sequence, like the
+        rejected-request cases below: this scenario admits nothing.
+        """
+        env = chat_env
+        env.mock.scripted_texts = ["Fine."]
+        sid = create_session(env, 4311, 0)
+
+        response = self._chat(
+            env,
+            sid,
+            {
+                "messages": self._messages(),
+                "temperature": None,
+                "top_p": None,
+                "top_k": None,
+                "tool_choice": None,
+                "response_format": None,
+                "stop": None,
+                "max_completion_tokens": None,
+                "max_tokens": 4,
+            },
+        )
+        assert response.status_code == 200, response.text
+        forward = [r for r in env.mock.request_log if r["path"] == "/generate"][-1]
+        # The null max_completion_tokens does not shadow max_tokens, and
+        # the null stop adds no stop string.
+        assert forward["body"]["sampling_params"]["max_new_tokens"] == 4
+        assert "stop" not in forward["body"]["sampling_params"]
+
+    def test_output_ids_without_text_are_decoded(self, chat_env):
+        """An engine started without a tokenizer answers ids only.
+
+        The session server decodes them itself, so a tool call parses out of the
+        response exactly as it does when the engine sends its own text.
+        This scenario admits nothing either; its two sessions share one
+        group so both halves compare under the same conditions.
+        """
+        env = chat_env
+        from rlinf.models.tokenization.hf import hf_tokenizer
+
+        text = (
+            '<tool_call>\n{"name": "search", "arguments": {"query": "RL"}}\n'
+            "</tool_call>"
+        )
+
+        env.mock.scripted_texts = [text]
+        with_text = self._chat(
+            env,
+            create_session(env, 4312, 0),
+            {"messages": self._messages(), "tools": CHAT_TOOLS},
+        )
+        assert with_text.status_code == 200, with_text.text
+
+        tokenizer = hf_tokenizer(_chat_model_dir("qwen"), trust_remote_code=False)
+        env.mock.scripted_texts = []
+        env.mock.scripted_output_ids = tokenizer.encode(text, add_special_tokens=False)
+        with_ids = self._chat(
+            env,
+            create_session(env, 4312, 1),
+            {"messages": self._messages(), "tools": CHAT_TOOLS},
+        )
+        env.mock.scripted_output_ids = []
+        assert with_ids.status_code == 200, with_ids.text
+
+        def calls(response):
+            message = response.json()["choices"][0]["message"]
+            return [
+                (call["function"]["name"], call["function"]["arguments"])
+                for call in message["tool_calls"]
+            ]
+
+        assert with_ids.json()["choices"][0]["finish_reason"] == "tool_calls"
+        assert calls(with_ids) == calls(with_text) == [("search", '{"query": "RL"}')]
 
     def test_prompt_that_does_not_fit_is_rejected(self, chat_env):
         """A prompt that alone exceeds the training length gets a 400 and
