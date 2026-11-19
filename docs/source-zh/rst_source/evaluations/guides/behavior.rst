@@ -17,28 +17,9 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
 当前 ``evaluations/behavior/`` 仅提供 OpenPI π₀.₅ 示例；训练侧还支持 OpenVLA-OFT，可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
-**硬件与 Isaac Sim**
+**仿真环境与资产**
 
-BEHAVIOR 依赖 Isaac Sim 4.5，对 GPU 与驱动有额外要求，详见训练文档中的 `Isaac Sim 依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_。要点如下：
-
-- 建议配备支持 Ray Tracing 的 GPU（如 RTX 30/40 系列）；A100、H100 等无 RT 能力的卡渲染质量较差，画面可能出现马赛克或模糊。
-- Hopper 及以上架构 GPU 需使用 570 及以上版本 NVIDIA 驱动。
-
-也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.4-behavior`` 运行评测，详见 :doc:`../../examples/embodied/behavior`。
-
-**环境变量**
-
-每次评测前须设置 ``ISAAC_PATH`` 与 OmniGibson 数据路径（``run_eval.sh`` 会自动补全 ``OMNIGIBSON_DATASET_PATH`` 等衍生变量，以及 ``EXP_PATH``、``CARB_APP_PATH``）：
-
-.. code-block:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/
-   export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson.key
-   export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/
-
-BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../../examples/embodied/behavior` 中的「资源下载」一节。
+评测使用 OmniGibson 3.9.3 和 Isaac Sim 5.1。GPU 要求及 2026 仿真资产下载步骤见 :doc:`../../examples/embodied/behavior`\ 。将 ``OMNIGIBSON_DATA_PATH`` 设为包含 ``2026-challenge-task-instances/`` 的目录。
 
 示例配置
 --------
@@ -66,11 +47,7 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
 .. code-block:: bash
 
    source .venv/bin/activate
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/
-   export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson.key
-   export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
 
 **Step 2：准备模型**
 
@@ -89,6 +66,17 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model
 
+RLinf 默认加载基础布局 0。要评测“打开收音机”任务的首个公开测试实例（索引为 0），请将实例编号设为 301。
+
+.. code-block:: bash
+
+   scene=house_double_floor_lower
+   instances="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/$scene/json"
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+     rollout.model.model_path=/path/to/model \
+     "env.eval.omni_config.task.activity_instance_dir=$instances/${scene}_task_turning_on_radio_instances" \
+     env.eval.omni_config.task.activity_instance_id=301
+
 **Step 5：查看结果**
 
 终端输出 ``eval/success_once``；日志与视频见 :doc:`../reference/results`。
@@ -98,12 +86,12 @@ BEHAVIOR 资源体积超过 30 GB，下载与 license 配置步骤见 :doc:`../.
 评测配置详解
 ------------
 
-BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.activity_name`` 指定），不会在一次启动中自动遍历全部 50 个任务。以下字段共同决定并行规模、单条轨迹长度与初始场景实例。
+BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.activity_name`` 指定），不会在一次启动中自动遍历全部 100 个任务。以下字段共同决定并行规模、单条轨迹长度与初始场景实例。
 
 评测协议概述
 ~~~~~~~~~~~~
 
-BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/behavior/behavior_task.jsonl``）。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
+2026 挑战共有 100 个任务。RLinf 提供全部 100 个任务的指令。``behavior_r1pro`` preset 默认任务为 ``turning_on_radio``\ ，场景为 ``house_double_floor_lower``\ 。
 
 每条评测轨迹由以下配置唯一确定：
 
@@ -114,7 +102,7 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/be
 ``instance_resample_mode`` 支持三种模式：
 
 - ``disabled`` （默认）：每次 reset 加载 ``activity_instance_id`` 对应的固定实例；若设置了 ``activity_instance_dir``，则从该目录读取对应 JSON。
-- ``offline``：每次 reset 从 ``activity_instance_dir`` 中 **随机** 选取一个缓存实例（需先下载官方 ``2025-challenge-task-instances`` 或用 ``instance_generator.py`` 生成）。
+- ``offline``\ ：每次重置时，从 ``activity_instance_dir`` 指向的任务目录中随机选取一个缓存布局。
 - ``online``：reset 时在线重采样物体布局（需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``，启动较慢）。
 
 .. note::
@@ -198,7 +186,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
      eval:
        omni_config:
          task:
-           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances
+           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
            instance_file_format: tro_state
            instance_resample_mode: offline
        rollout_epoch: 5
@@ -223,7 +211,6 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 --------
 
 - **数据下载：** BEHAVIOR 资源体积较大，请按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。
-- **ISAAC_PATH 未设置：** 请将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录，否则 Isaac Sim 无法启动。
 - **Headless 模式：** ``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
 - **显存不足：** 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
 - **渲染马赛克/模糊：** 当前 GPU 无 Ray Tracing 能力，建议换用 RTX 30/40 系列或更高。

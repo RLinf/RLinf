@@ -17,28 +17,9 @@ Environment Setup
 
 ``evaluations/behavior/`` currently ships an OpenPI π₀.₅ example only. Training also supports OpenVLA-OFT; you can derive an eval YAML from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`).
 
-**Hardware and Isaac Sim**
+**Simulator and assets**
 
-BEHAVIOR depends on Isaac Sim 4.5 and has additional GPU and driver requirements; see the `Isaac Sim requirements <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_ in the training doc. Key points:
-
-- A GPU with Ray Tracing support (e.g. RTX 30/40 series) is recommended. GPUs without RT (A100, H100, etc.) produce poor rendering quality with visible artifacts.
-- Hopper and newer GPUs require NVIDIA driver 570 or later.
-
-You can also run evaluation inside the official Docker image ``rlinf/rlinf:agentic-rlinf0.4-behavior``; see :doc:`../../examples/embodied/behavior`.
-
-**Environment variables**
-
-Set ``ISAAC_PATH`` and OmniGibson data paths before every run (``run_eval.sh`` auto-fills derived variables such as ``OMNIGIBSON_DATASET_PATH``, ``EXP_PATH``, and ``CARB_APP_PATH``):
-
-.. code-block:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/
-   export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson.key
-   export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/
-
-BEHAVIOR assets exceed 30 GB; see the "Resource download" section in :doc:`../../examples/embodied/behavior` for download and license setup.
+Use OmniGibson 3.9.3 and Isaac Sim 5.1. See :doc:`../../examples/embodied/behavior` for GPU requirements and how to download the 2026 simulation assets. Set ``OMNIGIBSON_DATA_PATH`` to the directory containing ``2026-challenge-task-instances/``.
 
 Example Configs
 ---------------
@@ -66,11 +47,7 @@ End-to-End Workflow
 .. code-block:: bash
 
    source .venv/bin/activate
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   export OMNIGIBSON_DATASET_PATH=${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/
-   export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson.key
-   export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
 
 **Step 2: Prepare the model**
 
@@ -89,6 +66,17 @@ The OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` must match training (``a
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model
 
+RLinf loads base layout ``0`` by default. To run the first public test instance for the radio task, select instance ID ``301``, which corresponds to public test index ``0``.
+
+.. code-block:: bash
+
+   scene=house_double_floor_lower
+   instances="$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/scene_test/public/$scene/json"
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+     rollout.model.model_path=/path/to/model \
+     "env.eval.omni_config.task.activity_instance_dir=$instances/${scene}_task_turning_on_radio_instances" \
+     env.eval.omni_config.task.activity_instance_id=301
+
 **Step 5: Check results**
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs and videos.
@@ -98,12 +86,12 @@ The terminal prints ``eval/success_once``; see :doc:`../reference/results` for l
 Evaluation Configuration
 --------------------------
 
-BEHAVIOR evaluation runs **one task per launch** (selected by ``omni_config.task.activity_name``). A single run does not automatically sweep all 50 tasks. The fields below control parallel scale, trajectory length, and initial scene instances.
+BEHAVIOR evaluation runs **one task per launch** (selected by ``omni_config.task.activity_name``). A single run does not automatically sweep all 100 tasks. The fields below control parallel scale, trajectory length, and initial scene instances.
 
 Evaluation protocol
 ~~~~~~~~~~~~~~~~~~~
 
-BEHAVIOR-1K defines 50 household tasks (names listed in ``rlinf/envs/sim/behavior/behavior_task.jsonl``). The ``behavior_r1pro`` preset defaults to ``turning_on_radio`` on scene ``house_double_floor_lower``.
+The 2026 challenge covers 100 tasks. RLinf provides instructions for all 100 tasks. The ``behavior_r1pro`` preset defaults to ``turning_on_radio`` on scene ``house_double_floor_lower``.
 
 Each evaluation trajectory is determined by:
 
@@ -114,7 +102,7 @@ Each evaluation trajectory is determined by:
 ``instance_resample_mode`` supports three values:
 
 - ``disabled`` (default): every reset loads the fixed instance for ``activity_instance_id``; if ``activity_instance_dir`` is set, the matching JSON is read from that directory.
-- ``offline``: every reset **randomly** picks a cached instance from ``activity_instance_dir`` (download official ``2025-challenge-task-instances`` or generate files with ``instance_generator.py``).
+- ``offline``: each reset randomly selects a cached layout from the task directory you set in ``activity_instance_dir``.
 - ``online``: online object resampling on reset (requires ``online_object_sampling: True`` and ``use_presampled_robot_pose: False``; slower startup).
 
 .. note::
@@ -198,7 +186,7 @@ Advanced Usage
      eval:
        omni_config:
          task:
-           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances
+           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
            instance_file_format: tro_state
            instance_resample_mode: offline
        rollout_epoch: 5
@@ -223,7 +211,6 @@ FAQ
 ---
 
 - **Data download:** BEHAVIOR assets are large; complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation.
-- **ISAAC_PATH not set:**  Export it to the Isaac Sim install, or Isaac Sim will fail to start.
 - **Headless mode:** ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
 - **Out of memory:** Lower ``total_num_envs`` or ``num_env_subprocess``; each env uses about 10 GiB VRAM.
 - **Blurry or blocky rendering:** The GPU lacks Ray Tracing; use RTX 30/40 series or newer.
