@@ -24,7 +24,7 @@ takes, how many epochs a training step runs, and when its episodes end. Rollout
 collects the observations of all env workers into one batch, runs the policy
 once, and sends each worker the actions for its own envs. Each worker converts
 those actions for its simulator or robot and steps it. A worker whose env
-configuration finishes its epochs early simply drops out of the batch, and the
+configuration finishes its epochs early drops out of the batch, and the
 training step ends when every env configuration has finished. The actor then
 computes each env configuration's advantages with that configuration's settings
 before it trains on all trajectories together.
@@ -133,7 +133,8 @@ of each env configuration, where a trajectory is one env's rollout epoch. In the
 example above, that is 64 LIBERO-Goal trajectories of up to 320 steps and 128
 ManiSkill trajectories of 80 steps. These counts set how much each env
 configuration contributes, and a step takes as long as its slowest env
-configuration; ``time/env/<name>/interact`` shows how long each one takes.
+configuration. To see how long each one takes, set ``runner.per_worker_log: True``
+and read ``time/env/interact`` of the env workers that run it.
 
 By default every trajectory counts the same in the loss, however long its env's
 episodes are, so ManiSkill gets two thirds of the gradient in the example. These
@@ -288,8 +289,9 @@ Limitations
   from. Only OpenVLA-OFT can unnormalize actions per env configuration.
 - NFT training needs every env configuration to send one observation format;
   use ``policy_obs`` to make them match.
-- The training pipeline (``runner.use_training_pipeline``) and online LeRobot
-  collection for DAgger need a single env configuration.
+- The training pipeline (``runner.use_training_pipeline``), online LeRobot
+  collection for DAgger, DiffusionART training, and the PhyAI rollout backend
+  (``rollout.rollout_backend: phyai``) need a single env configuration.
 - PPO and SAC share one critic across env configurations; RLinf does not
   normalize rewards per env, so set ``reward_scale`` when reward scales differ.
   SAC tunes one entropy temperature per env configuration, except for samples

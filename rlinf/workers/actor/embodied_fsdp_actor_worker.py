@@ -14,6 +14,7 @@
 
 import math
 from collections import defaultdict
+from functools import cached_property
 from typing import Any, Callable, Iterator
 
 import numpy as np
@@ -128,11 +129,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        self._rollout_geometry = RolloutGeometry.from_cfg(cfg)
-        self._env_algorithm_cfgs = {
-            spec.name: spec.algorithm_cfg(cfg.algorithm)
-            for spec in self._rollout_geometry.layout.specs
-        }
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
@@ -141,6 +137,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self._rollout_all_ranks = list(
             range(self._component_placement.get_world_size("rollout"))
         )
+
+    # Built on first use: offline actors have no env.train and never read them.
+    @cached_property
+    def _rollout_geometry(self) -> RolloutGeometry:
+        return RolloutGeometry.from_cfg(self.cfg)
+
+    @cached_property
+    def _env_algorithm_cfgs(self) -> dict[str | None, DictConfig]:
+        return {
+            spec.name: spec.algorithm_cfg(self.cfg.algorithm)
+            for spec in self._rollout_geometry.layout.specs
+        }
 
     def init_worker(self) -> None:
         """

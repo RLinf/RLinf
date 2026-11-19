@@ -1225,7 +1225,7 @@ def test_fp32_trainable_weights_beside_frozen_bf16_keep_small_updates(
     assert (after != before).all()
 
 
-def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1):
+def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=None):
     """An embodied FSDP actor holding only the state its batch planning reads."""
     from rlinf.data.schema.embodied_trajectory import RolloutGeometry
     from rlinf.envs.layout import EnvLayout
@@ -1244,7 +1244,7 @@ def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1):
     )
     cfg.actor.mix_envs = mix_envs
     layout = EnvLayout(cfg.env.train, len(mode_cfg.get("envs", {})) or 1, "p")
-    actor = object.__new__(EmbodiedFSDPActor)
+    actor = object.__new__(actor_cls or EmbodiedFSDPActor)
     actor.cfg = cfg
     actor._rank, actor._world_size = rank, world_size
     actor._rollout_geometry = RolloutGeometry(
@@ -1279,6 +1279,39 @@ def _embodied_batch(steps, trajectories, marker=0.0, done_at=None):
         "rewards": torch.ones(steps, trajectories, 1),
         "dones": dones,
     }
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="masked_normalization runs on CUDA"
+)
+@pytest.mark.parametrize("scope", ["env", "all"])
+def test_async_ppo_normalizes_advantages_over_the_configured_scope(scope):
+    from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+    # Both envs send one observation format, so their rows share a pool.
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}}),
+        actor_cls=AsyncPPOEmbodiedFSDPActor,
+    )
+    actor.cfg.algorithm.adv_norm_scope = scope
+    actor.env_batches = {"a": _embodied_batch(2, 2), "b": _embodied_batch(2, 2)}
+    actor.env_batches["a"]["advantages"] = torch.arange(4.0).reshape(2, 2, 1)
+    actor.env_batches["b"]["advantages"] = 10 * torch.arange(1.0, 5.0).reshape(2, 2, 1)
+    actor.rollout_batches = actor._merge_env_batches()
+
+    actor._normalize_advantages_across_ranks()
+
+    [pool] = actor.rollout_batches
+    # The PPO loss takes float32 advantages.
+    assert pool["advantages"].dtype == torch.float32
+    # Rows keep env order until the training batch is shuffled.
+    a, b = pool["advantages"][:4], pool["advantages"][4:]
+    groups = [a, b] if scope == "env" else [torch.cat([a, b])]
+    for values in groups:
+        assert abs(values.mean().item()) < 1e-4
+        assert abs(values.std(unbiased=False).item() - 1) < 1e-4
+    if scope == "all":
+        assert a.mean() < 0 < b.mean()
 
 
 def test_one_env_trains_on_the_same_batch_and_loss_weights_as_before():

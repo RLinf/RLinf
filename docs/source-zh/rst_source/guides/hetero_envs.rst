@@ -81,7 +81,7 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 平衡各环境的训练
 ----------------
 
-每个训练 step 包含每份环境配置的 ``total_num_envs`` 乘以 ``rollout_epoch`` 条轨迹，一条轨迹就是一个环境的一个 rollout epoch。在上面的例子里，这是 64 条最长 320 步的 LIBERO-Goal 轨迹和 128 条 80 步的 ManiSkill 轨迹。这些数量决定了每份环境配置的数据量；一个 step 的耗时取决于最慢的那份环境配置， ``time/env/<name>/interact`` 记录了每份配置用了多长时间。
+每个训练 step 包含每份环境配置的 ``total_num_envs`` 乘以 ``rollout_epoch`` 条轨迹，一条轨迹就是一个环境的一个 rollout epoch。在上面的例子里，这是 64 条最长 320 步的 LIBERO-Goal 轨迹和 128 条 80 步的 ManiSkill 轨迹。这些数量决定了每份环境配置的数据量；一个 step 的耗时取决于最慢的那份环境配置。要查看每份配置用了多长时间，请设置 ``runner.per_worker_log: True`` ，再看运行这份配置的 env worker 的 ``time/env/interact`` 。
 
 默认情况下，无论环境的 episode 有多长，每条轨迹在 loss 中的分量都相同，所以在这个例子里 ManiSkill 占梯度的三分之二。下面这些设置可以调整这一点：
 
@@ -177,7 +177,7 @@ actor worker 会把每份环境配置的轨迹平均分给各自，因此每个 
 
 - policy 只有一种动作格式，也无法得知某个样本来自哪个环境。只有 OpenVLA-OFT 能按环境配置分别还原动作。
 - NFT 训练要求各份环境配置发送同一种观测格式，请用 ``policy_obs`` 让它们一致。
-- training pipeline（ ``runner.use_training_pipeline`` ）和 DAgger 的在线 LeRobot 采集需要单份环境配置。
+- training pipeline（ ``runner.use_training_pipeline`` ）、DAgger 的在线 LeRobot 采集、DiffusionART 训练和 PhyAI rollout 后端（ ``rollout.rollout_backend: phyai`` ）需要单份环境配置。
 - PPO 和 SAC 在各环境配置之间共享一个 critic；RLinf 不会按环境自动归一化奖励，奖励尺度不同时请设置 ``reward_scale`` 。SAC 为每份环境配置分别调节 entropy temperature，但与 demo buffer 混合采样的样本使用各 temperature 的平均值。
 - 在 env-decoupled 模式下，每个 rollout worker 从共享队列中处理一个 step 里相同份额的请求，并对收到的请求按观测格式分别运行前向计算。
 - 平滑干预（ ``smooth_intervene`` ）和实时控制评估（ ``runner.rtc`` ）只支持单份环境配置；RLT 仿真 replay 要求训练中的每份环境配置都是 ``maniskill_rlt`` 。配置不满足这些要求时，RLinf 会在启动阶段停止。

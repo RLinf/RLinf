@@ -93,6 +93,7 @@ from rlinf.utils.obs_compression import (
     is_compressed_image,
     is_compression_enabled,
 )
+from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACReplayMixin
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward.reward_worker import FSDPRewardWorker
@@ -166,6 +167,55 @@ def test_env_replay_buffer_draws_one_env_per_batch_when_envs_do_not_mix():
         assert {values.item() for values in batches} == {1.0, 2.0}
     finally:
         env_buffer.close()
+
+
+def test_rlt_transition_replay_files_each_step_under_its_env():
+    def env(auto_reset: bool) -> dict:
+        return {"env_type": "maniskill", "total_num_envs": 1, "auto_reset": auto_reset}
+
+    worker = object.__new__(RLTACReplayMixin)
+    worker.cfg = OmegaConf.create(
+        {"env": {"train": {"envs": {"once": env(False), "reset": env(True)}}}}
+    )
+    worker._rollout_geometry = RolloutGeometry(
+        layout=EnvLayout(worker.cfg.env.train, 2, "env.train"),
+        stage_num=1,
+        num_action_chunks=1,
+        actor_world_size=1,
+    )
+    worker.replay_buffer = EnvReplayBuffer(
+        {
+            name: TrajectoryReplayBuffer(seed=0, sample_window_size=100)
+            for name in ("once", "reset")
+        },
+        {"once": 1.0, "reset": 1.0},
+    )
+    try:
+        # Both steps end an episode; only the env that auto-resets keeps the second.
+        for name, steps in (("once", 1), ("reset", 2)):
+            trajectory = Trajectory(
+                max_episode_length=2,
+                env_name=name,
+                actions=torch.zeros(2, 1, 1),
+                rewards=torch.ones(2, 1, 1),
+                dones=torch.ones(3, 1, 1, dtype=torch.bool),
+                forward_inputs={
+                    "record_transition": torch.ones(2, 1, 1, dtype=torch.bool)
+                },
+                curr_obs={"z_rl": torch.zeros(2, 1, 3)},
+                next_obs={"z_rl": torch.zeros(2, 1, 3)},
+            )
+            transitions, _ = worker._transition_replay_trajectories(trajectory)
+            assert [transition.env_name for transition in transitions] == [name] * steps
+            worker.replay_buffer.add_trajectories(transitions)
+
+        stats = worker.replay_buffer.get_stats()
+        assert (stats["once/num_trajectories"], stats["reset/num_trajectories"]) == (
+            1,
+            2,
+        )
+    finally:
+        worker.replay_buffer.close()
 
 
 def test_memory_checkpoint_indexes_only_cached_trajectories(tmp_path):
@@ -1346,6 +1396,7 @@ def test_env_worker_finishes_eval_with_optional_fixed_reset_ids(
     )
     worker.cfg.env.eval.update(reset_config)
     OmegaConf.set_struct(worker.cfg, True)
+    worker.eval_assignment = EnvAssignment(None, worker.cfg.env.eval, 0, 1)
 
     worker.finish_rollout(mode="eval")
 
@@ -3739,6 +3790,50 @@ def test_rollout_keeps_envs_with_different_policy_fields_in_separate_forward_pas
     assert actions.squeeze(-1).tolist() == [0.0, 1.0, 1.0, 0.0, 0.0, 0.0]
 
 
+def test_rollout_bootstraps_each_env_final_with_its_policy_fields():
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="env"))
+    rollout.train_layout = _policy_field_layout("env.train")
+    rollout.train_batch_size = 2
+    rollout._source_budgets = Mock(return_value={0: {0: 1, 1: 1}})
+    rollout.batch_bootstrap_inference = True
+    rollout.value_only_bootstrap = False
+    rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openvla_oft")
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    finals = [
+        PolicyInput(
+            obs={},
+            env_parts=[
+                EnvPart(
+                    sources=[TrajectorySource(TrajectoryKey(0, 0, rank, 0, 0), 1)],
+                    transition=EnvTransition(),
+                    next_obs={"states": torch.zeros(1, 2)},
+                    requires_inference=True,
+                )
+            ],
+            request_sizes=[1],
+            is_last=True,
+        )
+        for rank in (0, 1)
+    ]
+    rollout.recv_from = Mock(
+        return_value=SimpleNamespace(async_wait=AsyncMock(return_value=finals))
+    )
+    serve_step = MultiStepRolloutWorker._serve_step
+    while hasattr(serve_step, "__wrapped__"):
+        serve_step = serve_step.__wrapped__
+
+    asyncio.run(serve_step(rollout, Mock(), Mock(), Mock()))
+
+    # Same observation format, but each env's terminal values use its own fields.
+    assert sorted(calls, key=str) == [(1, {"unnorm_key": "bridge_orig"}), (1, {})]
+
+
 class _StopServing(Exception):
     pass
 
@@ -3754,6 +3849,13 @@ def _eval_rollout(decoupled: bool) -> MultiStepRolloutWorker:
     rollout.eval_batch_size = 3
     rollout.rollout_queue_size = 0
     return rollout
+
+
+def _received(recv_kwargs: dict, shards: list[dict]) -> SimpleNamespace:
+    """Stand in for ``recv_from``, which merges the peers' shards with ``merge_fn``."""
+    return SimpleNamespace(
+        async_wait=AsyncMock(return_value=recv_kwargs["merge_fn"](shards))
+    )
 
 
 def _unwrapped_evaluate():
@@ -3795,13 +3897,12 @@ def test_eval_receives_envs_with_different_policy_fields_separately():
     rollout._predict_rollout_actions = _record_predictions(calls)
     rollout._source_budgets = Mock(return_value={0: {0: 1, 1: 1}})
     rollout.recv_from = Mock(
-        side_effect=lambda **kwargs: SimpleNamespace(
-            async_wait=AsyncMock(
-                return_value={
-                    "obs": {"states": torch.zeros(len(kwargs["peer_ranks"]), 2)},
-                    "eval_epoch_done": False,
-                }
-            )
+        side_effect=lambda **kwargs: _received(
+            kwargs,
+            [
+                {"obs": {"states": torch.zeros(1, 2)}, "eval_epoch_done": False}
+                for _ in kwargs["peer_ranks"]
+            ],
         )
     )
     rollout.send_to = Mock()
@@ -3817,6 +3918,41 @@ def test_eval_receives_envs_with_different_policy_fields_separately():
     ]
 
 
+def test_eval_runs_one_forward_pass_per_observation_format():
+    rollout = _eval_rollout(decoupled=False)
+    # Both envs use the model's own policy fields but send different states.
+    rollout.eval_layout = EnvLayout(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "libero": {"env_type": "libero", "total_num_envs": 1},
+                    "maniskill": {"env_type": "maniskill", "total_num_envs": 1},
+                }
+            }
+        ),
+        2,
+        "env.eval",
+    )
+    rollout._source_budgets = Mock(return_value={0: {0: 1, 1: 1}})
+    calls = []
+    rollout._predict_rollout_actions = _record_predictions(calls)
+    shards = [
+        {"obs": {"states": torch.full((1, dim), float(rank))}, "eval_epoch_done": False}
+        for rank, dim in [(0, 2), (1, 3)]
+    ]
+    rollout.recv_from = Mock(side_effect=lambda **kwargs: _received(kwargs, shards))
+    rollout.send_to = Mock()
+
+    asyncio.run(_unwrapped_evaluate()(rollout, Mock(), Mock()))
+
+    assert rollout.recv_from.call_args.kwargs["peer_ranks"] == [0, 1]
+    assert calls == [(1, {}), (1, {})]
+    # Actions go back in env rank order.
+    sent = rollout.send_to.call_args.kwargs
+    assert sent["data"].squeeze(-1).tolist() == [0.0, 1.0]
+    assert sent["peer_ranks"] == [0, 1]
+
+
 def test_eval_skips_the_rest_of_an_epoch_an_env_worker_ended_early():
     rollout = _eval_rollout(decoupled=False)
     rollout.eval_layout = EnvLayout(
@@ -3829,18 +3965,12 @@ def test_eval_skips_the_rest_of_an_epoch_an_env_worker_ended_early():
     rollout._predict_rollout_actions = _record_predictions(calls)
     # Epoch 0 ends after two answered requests; epoch 1 runs all four steps.
     done_flags = [False, False, True, False, False, False, False]
+    flags = iter(done_flags)
     rollout.recv_from = Mock(
-        side_effect=[
-            SimpleNamespace(
-                async_wait=AsyncMock(
-                    return_value={
-                        "obs": {"states": torch.zeros(1, 2)},
-                        "eval_epoch_done": done,
-                    }
-                )
-            )
-            for done in done_flags
-        ]
+        side_effect=lambda **kwargs: _received(
+            kwargs,
+            [{"obs": {"states": torch.zeros(1, 2)}, "eval_epoch_done": next(flags)}],
+        )
     )
     rollout.send_to = Mock()
 
@@ -4112,7 +4242,9 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head(value_on
 
     rollout._publish_env_part(completion, None, None, actor_channel)
 
-    rollout._predict_rollout_actions.assert_called_once_with(completion.next_obs)
+    rollout._predict_rollout_actions.assert_called_once_with(
+        completion.next_obs, policy_kwargs=None
+    )
     part = actor_channel.put.call_args.args[0]
     assert torch.equal(part.bootstrap_values, torch.zeros(1, 1))
     assert torch.equal(part.final_prev_values, torch.zeros(1, 1))
@@ -4271,10 +4403,8 @@ def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstra
             self.parts.append(item)
 
     actor_channel = ActorChannel()
-    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
-    while hasattr(generate_one_epoch, "__wrapped__"):
-        generate_one_epoch = generate_one_epoch.__wrapped__
-    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
+    serve_step = _serve_one_source(rollout, request)
+    asyncio.run(serve_step(rollout, Mock(), Mock(), actor_channel))
 
     completed = actor_channel.parts
     assert [part.sources for part in completed] == [[source] for source in sources]

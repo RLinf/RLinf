@@ -1065,6 +1065,8 @@ def test_get_model_folds_scaled_lora_adapters_into_the_base_weights(tmp_path):
 
     assert torch.allclose(model.proj.weight, base.proj.weight + 0.5 * update, atol=1e-6)
     assert not any("lora" in name for name, _ in model.named_parameters())
+    # Without a trainable LoRA on top, the merged weights are fully fine-tuned.
+    assert all(param.requires_grad for param in model.parameters())
 
 
 def _clone_module(module: torch.nn.Module) -> torch.nn.Module:

@@ -1298,6 +1298,47 @@ def validate_env_training_cfg(
         )
 
 
+def validate_eval_env_cfg(
+    cfg: DictConfig, env_world_size: int, stage_num: int, num_action_chunks: int
+) -> int:
+    """Resolve ``env.eval`` and check its env counts and horizons.
+
+    Args:
+        cfg: The run configuration.
+        env_world_size: Number of env workers.
+        stage_num: ``rollout.pipeline_stage_num``.
+        num_action_chunks: Action chunks the policy emits per step.
+
+    Returns:
+        The number of eval envs each env worker runs per pipeline stage.
+    """
+    resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
+    assert cfg.env.eval.total_num_envs > 0, (
+        "Total number of parallel environments for evaluation must be greater than 0"
+    )
+    assert cfg.env.eval.total_num_envs % env_world_size == 0, (
+        "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
+    )
+    assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
+        "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
+    )
+    assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
+        "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
+    )
+    eval_envs_per_stage = cfg.env.eval.total_num_envs // env_world_size // stage_num
+    for env_path, eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").items():
+        assert eval_envs_per_stage % eval_env_cfg.group_size == 0, (
+            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
+            f"must be divisible by {env_path}.group_size"
+        )
+        assert eval_env_cfg.max_steps_per_rollout_epoch % num_action_chunks == 0, (
+            f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
+            f"actor.model.num_action_chunks ({num_action_chunks}), got "
+            f"{eval_env_cfg.max_steps_per_rollout_epoch}."
+        )
+    return eval_envs_per_stage
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1448,6 +1489,16 @@ def validate_embodied_cfg(cfg):
                 f"Expected model.openpi.{field}={expected!r} for "
                 f"rollout_backend='phyai', got {configured!r}."
             )
+        listed = [
+            f"env.{mode}.envs"
+            for mode in ("train", "eval")
+            if cfg.env.get(mode) is not None
+            and EnvLayout.is_heterogeneous(cfg.env[mode])
+        ]
+        assert not listed, (
+            "Expected one env configuration per mode for rollout_backend='phyai', "
+            f"got envs listed under {listed}."
+        )
         num_images = openpi_cfg.get("num_images_in_input", 3)
         assert 1 <= num_images <= 3, (
             "Expected model.openpi.num_images_in_input in [1, 3] for "
@@ -1654,6 +1705,10 @@ def validate_embodied_cfg(cfg):
         )
 
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_art":
+        assert not EnvLayout.is_heterogeneous(cfg.env.train), (
+            "DiffusionART expects one env configuration, got envs "
+            f"{list(cfg.env.train.envs)} under env.train.envs."
+        )
         assert not algorithm_cfg.get("filter_rewards", False), (
             "DiffusionART requires algorithm.filter_rewards=False; got True."
         )
@@ -1818,38 +1873,12 @@ def validate_embodied_cfg(cfg):
             "env.eval config is required when runner.val_check_interval > 0, "
             "runner.only_eval=True, or runner.task_type=embodied_eval."
         )
-        resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
+        eval_envs_per_stage = validate_eval_env_cfg(
+            cfg, env_world_size, stage_num, model_cfg.num_action_chunks
         )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-        eval_envs_per_stage = cfg.env.eval.total_num_envs // env_world_size // stage_num
         for env_path, eval_env_cfg in EnvLayout.env_cfgs(
             cfg.env.eval, "env.eval"
         ).items():
-            assert eval_envs_per_stage % eval_env_cfg.group_size == 0, (
-                "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
-                f"must be divisible by {env_path}.group_size"
-            )
-        for env_path, eval_env_cfg in EnvLayout.env_cfgs(
-            cfg.env.eval, "env.eval"
-        ).items():
-            assert (
-                eval_env_cfg.max_steps_per_rollout_epoch % model_cfg.num_action_chunks
-                == 0
-            ), (
-                f"{env_path}.max_steps_per_rollout_epoch must be divisible by "
-                f"actor.model.num_action_chunks ({model_cfg.num_action_chunks}), got "
-                f"{eval_env_cfg.max_steps_per_rollout_epoch}."
-            )
             if not eval_env_cfg.early_stop_on_done:
                 continue
             assert not eval_env_cfg.auto_reset, (
@@ -2032,32 +2061,8 @@ def validate_offline_cfg(cfg: DictConfig) -> DictConfig:
         component_placement = HybridComponentPlacement(cfg, Cluster())
         stage_num = cfg.rollout.pipeline_stage_num
         env_world_size = component_placement.get_world_size("env")
-        resolve_env_mode_cfg(cfg.env.eval, "env.eval", env_world_size)
-        assert cfg.env.eval.total_num_envs > 0, (
-            "Total number of parallel environments for evaluation must be greater than 0"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes"
-        )
-        assert cfg.env.eval.total_num_envs % env_world_size % stage_num == 0, (
-            "Total number of parallel environments for evaluation must be divisible by the number of environment processes and the number of pipeline stages"
-        )
-        assert cfg.env.eval.total_num_envs // env_world_size // stage_num > 0, (
-            "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be greater than 0"
-        )
-        eval_envs_per_stage = cfg.env.eval.total_num_envs // env_world_size // stage_num
-        for env_path, eval_env_cfg in EnvLayout.env_cfgs(
-            cfg.env.eval, "env.eval"
-        ).items():
-            assert eval_envs_per_stage % eval_env_cfg.group_size == 0, (
-                "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
-                f"must be divisible by {env_path}.group_size"
-            )
-        assert (
-            cfg.env.eval.max_steps_per_rollout_epoch % cfg.actor.model.num_action_chunks
-            == 0
-        ), (
-            "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
+        validate_eval_env_cfg(
+            cfg, env_world_size, stage_num, cfg.actor.model.num_action_chunks
         )
     return cfg
 

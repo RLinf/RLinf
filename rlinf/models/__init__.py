@@ -391,15 +391,21 @@ def merge_lora(model, path: str, scale: float):
         scale: Fraction of the adapter's update to merge.
 
     Returns:
-        ``model`` with the scaled update merged into its weights.
+        ``model`` with the scaled update merged into its weights, each
+        parameter as trainable as it was before.
     """
     from peft import PeftModel
 
+    # Loading an adapter for inference freezes every parameter of the model.
+    trainable = {name: param.requires_grad for name, param in model.named_parameters()}
     peft_model = PeftModel.from_pretrained(model, path)
     for name, param in peft_model.named_parameters():
         if "lora_B" in name:
             param.data.mul_(scale)
-    return peft_model.merge_and_unload()
+    merged = peft_model.merge_and_unload()
+    for name, param in merged.named_parameters():
+        param.requires_grad_(trainable[name])
+    return merged
 
 
 def get_model(cfg: DictConfig):

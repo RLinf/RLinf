@@ -494,7 +494,8 @@ class RLTACReplayMixin:
         traj_len = int(trajectory.actions.shape[0])
         bsz = int(trajectory.actions.shape[1])
         num_rows = int(actions.shape[0])
-        auto_reset = bool(self.cfg.env.train.get("auto_reset", False))
+        env_cfg = self._rollout_geometry.layout.spec(trajectory.env_name).cfg
+        auto_reset = bool(env_cfg.get("auto_reset", False))
 
         for env_idx in range(bsz):
             for t in range(traj_len):
@@ -507,6 +508,7 @@ class RLTACReplayMixin:
                 transition = Trajectory(
                     max_episode_length=1,
                     model_weights_id=trajectory.model_weights_id,
+                    env_name=trajectory.env_name,
                 )
                 for field_name in tensor_fields:
                     value = flat.get(field_name)

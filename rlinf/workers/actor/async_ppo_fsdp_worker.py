@@ -225,14 +225,18 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
     @torch.inference_mode()
     def compute_proximal_logprobs(self) -> None:
+        """Recompute each env batch's logprobs with the current actor weights."""
         assert not self.is_weight_offloaded, (
             "Weight offloading is not supported when recomputing proximal logprobs."
         )
+        for batch in self.env_batches.values():
+            self._compute_proximal_logprobs(batch)
 
-        t_dim = self.rollout_batch["prev_logprobs"].shape[0]
-        b_dim = self.rollout_batch["prev_logprobs"].shape[1]
+    def _compute_proximal_logprobs(self, batch: dict[str, Any]) -> None:
+        t_dim = batch["prev_logprobs"].shape[0]
+        b_dim = batch["prev_logprobs"].shape[1]
 
-        flat = flatten_rollout_batch_for_train(self.rollout_batch, shuffle_id=None)
+        flat = flatten_rollout_batch_for_train(batch, shuffle_id=None)
         total = flat["prev_logprobs"].shape[0]
         micro_batch_size = self.cfg.actor.micro_batch_size
         num_splits = (total + micro_batch_size - 1) // micro_batch_size
@@ -279,9 +283,39 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         proximal_logprobs = torch.cat(proximal_logprobs_list, dim=0).view(
             t_dim,
             b_dim,
-            *self.rollout_batch["prev_logprobs"].shape[2:],
+            *batch["prev_logprobs"].shape[2:],
         )
-        self.rollout_batch["proximal_logprobs"] = proximal_logprobs
+        batch["proximal_logprobs"] = proximal_logprobs
+
+    def _normalize_advantages_across_ranks(self) -> None:
+        """Normalize advantages again, with statistics over every actor rank.
+
+        Each env's rows share one mean and standard deviation, or all rows do
+        when ``algorithm.adv_norm_scope`` is ``all``, as in
+        :meth:`compute_advantages_and_returns`.
+        """
+        env_rows = list(self._env_rows.values())
+        if self.cfg.algorithm.get("adv_norm_scope", "env") == "all":
+            groups = [env_rows]
+        else:
+            groups = [[rows] for rows in env_rows]
+        pools = self.rollout_batches
+        advantages = [pool["advantages"].clone() for pool in pools]
+        for group in groups:
+            parts = [
+                (pool_index, slice(first, first + rows))
+                for pool_index, first, rows in group
+            ]
+            normalized = masked_normalization(
+                torch.cat([pools[index]["advantages"][part] for index, part in parts]),
+                torch.cat([pools[index]["loss_mask"][part] for index, part in parts]),
+            ).cpu()
+            for (index, part), values in zip(
+                parts, normalized.split([part.stop - part.start for _, part in parts])
+            ):
+                advantages[index][part] = values
+        for pool, pool_advantages in zip(pools, advantages):
+            pool["advantages"] = pool_advantages
 
     def run_training(self) -> dict[str, Any]:
         if self.is_weight_offloaded:
@@ -289,12 +323,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
-        self._order_training_batch()
         if self.cfg.algorithm.normalize_advantages:
-            for pool in self.rollout_batches:
-                pool["advantages"] = masked_normalization(
-                    pool["advantages"], pool.get("loss_mask", None)
-                )
+            self._normalize_advantages_across_ranks()
+        self._order_training_batch()
 
         self.model.train()
 

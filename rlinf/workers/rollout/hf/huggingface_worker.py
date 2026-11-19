@@ -803,7 +803,9 @@ class MultiStepRolloutWorker(Worker):
             return self.hf_model.supports_value_only_bootstrap()
         return callable(getattr(self.hf_model, "predict_value_batch", None))
 
-    def _predict_bootstrap(self, env_obs: dict[str, Any]) -> dict[str, Any]:
+    def _predict_bootstrap(
+        self, env_obs: dict[str, Any], policy_kwargs: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         if self.model_cfg.model_type == SupportedModel.PSI0.value or (
             self.value_only_bootstrap
             and not self.enable_rlt
@@ -812,7 +814,7 @@ class MultiStepRolloutWorker(Worker):
             and self._can_predict_value_only()
         ):
             return {"prev_values": self.hf_model.predict_value_batch(env_obs)}
-        _, result = self._predict_rollout_actions(env_obs)
+        _, result = self._predict_rollout_actions(env_obs, policy_kwargs=policy_kwargs)
         return result
 
     def _publish_env_part(
@@ -822,6 +824,7 @@ class MultiStepRolloutWorker(Worker):
         next_rlt_obs: dict[str, Any] | None,
         actor_channel: Channel,
         bootstrap_result: dict[str, Any] | None = None,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> None:
         next_obs = env_part.next_obs if env_part.next_obs is not None else policy_obs
         final_prev_values = None
@@ -834,7 +837,7 @@ class MultiStepRolloutWorker(Worker):
             result = (
                 bootstrap_result
                 if bootstrap_result is not None
-                else self._predict_bootstrap(next_obs)
+                else self._predict_bootstrap(next_obs, policy_kwargs)
             )
             values = result.get("prev_values")
             if (
@@ -861,8 +864,13 @@ class MultiStepRolloutWorker(Worker):
         policy_input: PolicyInput,
         forward_inputs: dict[str, Any] | None,
         actor_channel: Channel,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Complete attached environment parts without duplicating request data."""
+        """Complete attached environment parts without duplicating request data.
+
+        ``policy_kwargs`` are the policy fields of the envs that sent
+        ``policy_input``, for their terminal inference.
+        """
         if not policy_input.env_parts:
             return
         if len(policy_input.env_parts) != len(policy_input.request_sizes):
@@ -923,7 +931,7 @@ class MultiStepRolloutWorker(Worker):
                         continue
                     group_indices = [index for index, _ in group]
                     result = self._predict_bootstrap(
-                        merge_batch_values([obs for _, obs in group])
+                        merge_batch_values([obs for _, obs in group]), policy_kwargs
                     )
                     results = split_batch_value(
                         {"prev_values": result.get("prev_values")},
@@ -944,6 +952,7 @@ class MultiStepRolloutWorker(Worker):
                     next_features,
                     actor_channel,
                     bootstrap_result,
+                    policy_kwargs,
                 )
 
     def _send_actions(
@@ -1041,7 +1050,9 @@ class MultiStepRolloutWorker(Worker):
             ]
             for index, shard in zip(indices, torch.split(actions, sizes, dim=0)):
                 request_actions[index] = shard
-            published.append((policy_input, actions, forward_inputs, policy_output))
+            published.append(
+                (policy_input, actions, forward_inputs, policy_output, policy_fields)
+            )
 
         # The env runs the actions it supplied, so nothing goes back.
         replied = [
@@ -1062,7 +1073,13 @@ class MultiStepRolloutWorker(Worker):
                 split_sizes,
                 peer_ranks,
             )
-        for policy_input, actions, forward_inputs, policy_output in published:
+        for (
+            policy_input,
+            actions,
+            forward_inputs,
+            policy_output,
+            policy_fields,
+        ) in published:
             # Omit raw observations when the collector does not consume them.
             transition_obs = policy_input.obs if self.collect_raw_transition_obs else {}
             if not policy_input.requires_inference:
@@ -1081,7 +1098,9 @@ class MultiStepRolloutWorker(Worker):
             # arrives later through an EnvPart with the same key.
             actor_channel.put(trajectory_part, async_op=True)
             # Attached parts close previously executed chunks.
-            self._publish_env_parts(policy_input, forward_inputs, actor_channel)
+            self._publish_env_parts(
+                policy_input, forward_inputs, actor_channel, dict(policy_fields)
+            )
 
     @Worker.timer("serve_decoupled_step")
     async def _serve_decoupled_step(
@@ -1225,22 +1244,33 @@ class MultiStepRolloutWorker(Worker):
                         request_ranks.append(env_rank)
                         continue
                     # The final message closes the last chunk without requesting actions.
-                    finals.append(item)
+                    finals.append(
+                        (self._env_policy_fields(self.train_layout, [env_rank]), item)
+                    )
                     left[env_rank] -= 1
                 if self.batch_bootstrap_inference and len(finals) > 1:
                     final_groups: dict[Any, list[PolicyInput]] = {}
-                    for item in finals:
+                    for policy_fields, item in finals:
                         final_groups.setdefault(
-                            (item.requires_inference, batch_format(item.obs)), []
+                            (
+                                item.requires_inference,
+                                batch_format(item.obs),
+                                policy_fields,
+                            ),
+                            [],
                         ).append(item)
-                    for group in final_groups.values():
+                    for (_, _, policy_fields), group in final_groups.items():
                         merged = (
                             PolicyInput.merge(group) if len(group) > 1 else group[0]
                         )
-                        self._publish_env_parts(merged, None, actor_channel)
+                        self._publish_env_parts(
+                            merged, None, actor_channel, dict(policy_fields)
+                        )
                 else:
-                    for item in finals:
-                        self._publish_env_parts(item, None, actor_channel)
+                    for policy_fields, item in finals:
+                        self._publish_env_parts(
+                            item, None, actor_channel, dict(policy_fields)
+                        )
                 if not requests:
                     continue
                 epochs = {item.sources[0].key.epoch_id for item in requests}
@@ -1310,9 +1340,8 @@ class MultiStepRolloutWorker(Worker):
                     ).append(index)
                 shard_actions: list[torch.Tensor | None] = [None] * len(shards)
                 for policy_fields, indices in groups.items():
-                    actions = self._predict_eval_actions(
-                        self._merge_obs_batches([shards[index] for index in indices]),
-                        policy_fields,
+                    actions = self._predict_eval_shards(
+                        [shards[index] for index in indices], policy_fields
                     )
                     sizes = [split_sizes[index] for index in indices]
                     for index, shard in zip(indices, torch.split(actions, sizes)):
@@ -1338,18 +1367,18 @@ class MultiStepRolloutWorker(Worker):
                     peers = [rank for rank, count in left.items() if count > 0]
                     groups = self._group_env_ranks(self.eval_layout, peers)
                     for policy_fields, group in groups.items():
-                        env_output = await self.recv_from(
+                        shards = await self.recv_from(
                             group_name=self.cfg.env.group_name,
                             channel=input_channel,
                             tag="eval_rollout_results",
                             route_key=stage_id,
                             async_op=True,
                             batch_size=self.eval_batch_size,
-                            merge_fn=self._merge_obs_batches,
+                            merge_fn=list,
                             infer_batch_size_fn=self._infer_env_batch_size,
                             peer_ranks=group,
                         ).async_wait()
-                        if env_output["eval_epoch_done"]:
+                        if any(shard.get("eval_epoch_done") for shard in shards):
                             # The env workers ended this epoch early and await no
                             # actions; they owe only their remaining whole epochs.
                             for rank in group:
@@ -1361,7 +1390,7 @@ class MultiStepRolloutWorker(Worker):
                         self.send_to(
                             group_name=self.cfg.env.group_name,
                             channel=output_channel,
-                            data=self._predict_eval_actions(env_output, policy_fields),
+                            data=self._predict_eval_shards(shards, policy_fields),
                             tag="eval_rollout_results",
                             route_key=stage_id,
                             async_op=True,
@@ -1373,6 +1402,31 @@ class MultiStepRolloutWorker(Worker):
 
             if self.enable_offload:
                 self.offload_model()
+
+    def _predict_eval_shards(
+        self,
+        shards: list[dict[str, Any]],
+        policy_fields: tuple[tuple[str, Any], ...],
+    ) -> torch.Tensor:
+        """Return the CPU actions for eval shards that share policy fields.
+
+        Shards whose observations differ in format run separate forward passes,
+        as training requests do. The actions follow the shard order.
+        """
+        shards = [decompress_obs(shard) for shard in shards]
+        formats: dict[Any, list[int]] = {}
+        for index, shard in enumerate(shards):
+            formats.setdefault(batch_format(shard.get("obs", shard)), []).append(index)
+        shard_actions: list[torch.Tensor | None] = [None] * len(shards)
+        for indices in formats.values():
+            actions = self._predict_eval_actions(
+                self._merge_obs_batches([shards[index] for index in indices]),
+                policy_fields,
+            )
+            sizes = [self._infer_env_batch_size(shards[index]) for index in indices]
+            for index, shard in zip(indices, torch.split(actions, sizes)):
+                shard_actions[index] = shard
+        return torch.cat(shard_actions, dim=0)
 
     def _predict_eval_actions(
         self,

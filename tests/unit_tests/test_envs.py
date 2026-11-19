@@ -24,6 +24,7 @@ from rlinf.config import (
     resolve_env_mode_cfg,
     validate_env_policy_fields,
     validate_env_training_cfg,
+    validate_eval_env_cfg,
 )
 from rlinf.data.schema.embodied_types import PolicyInput
 from rlinf.envs.layout import EnvLayout
@@ -359,6 +360,33 @@ def test_config_rejects_per_env_settings_the_run_cannot_honor(algorithm, runner,
 
     with pytest.raises(AssertionError, match=match):
         validate_env_training_cfg(cfg, layout, stage_num=1, actor_world_size=2)
+
+
+@pytest.mark.parametrize(("maniskill_steps", "accepted"), [(80, True), (84, False)])
+def test_config_checks_the_horizon_of_each_eval_env(maniskill_steps, accepted):
+    # The envs' horizons differ, so env.eval itself carries none.
+    cfg = OmegaConf.create(
+        {
+            "env": {
+                "eval": {
+                    "envs": {
+                        "libero": _env("libero", 8, max_steps_per_rollout_epoch=320),
+                        "maniskill": _env(
+                            "maniskill", 8, max_steps_per_rollout_epoch=maniskill_steps
+                        ),
+                    }
+                }
+            }
+        }
+    )
+
+    if accepted:
+        assert validate_eval_env_cfg(cfg, 2, 1, num_action_chunks=8) == 8
+        return
+    with pytest.raises(
+        AssertionError, match=r"env.eval.envs.maniskill.max_steps_per_rollout_epoch"
+    ):
+        validate_eval_env_cfg(cfg, 2, 1, num_action_chunks=8)
 
 
 def test_config_needs_each_env_split_evenly_across_actors_in_whole_groups():
