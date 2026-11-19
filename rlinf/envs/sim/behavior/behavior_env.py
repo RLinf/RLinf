@@ -17,6 +17,7 @@ import inspect
 import json
 import os
 import time
+from bisect import bisect_left
 from typing import ClassVar
 
 import gymnasium as gym
@@ -64,13 +65,11 @@ class BehaviorProcess:
         self,
         cfg: DictConfig,
         num_envs: int,
-        pipeline_stage_num: int,
     ):
         _preload_numba_llvmlite()
         from omnigibson.envs import Environment
 
         self.logger = get_logger()
-        self.pipeline_stage_num = pipeline_stage_num
         omni_cfg = setup_omni_cfg(cfg)
         self.use_legacy_proprio = omni_cfg.robots[0].proprio_obs == R1PRO_PROPRIO_KEYS
         self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
@@ -91,13 +90,6 @@ class BehaviorProcess:
                 omni_cfg_dict["task"]["activity_instance_id"] = 0
             else:
                 scene_cfg["scene_file"] = instances[0].path
-        # When pipeline stages > 1, each stage independently advances the
-        # global physics per chunk step.  Divide physics_frequency so the
-        # total physics rate stays at the configured value.
-        if pipeline_stage_num > 1:
-            omni_cfg_dict["env"]["physics_frequency"] = (
-                omni_cfg_dict["env"]["physics_frequency"] / pipeline_stage_num
-            )
         omni_cfg_dict["env"]["num_envs"] = num_envs
         self.env = Environment(configs=omni_cfg_dict)
         apply_runtime_renderer_settings()
@@ -130,13 +122,6 @@ class BehaviorProcess:
             self.logger.warning(
                 "skip_intermediate_renders is True but OmniGibson env step does not "
                 "support get_obs; this config will be ignored."
-            )
-
-        if self.pipeline_stage_num > 1 and not self.step_supports_env_indices:
-            self.logger.warning(
-                "pipeline_stage_num > 1 but OmniGibson env step does not support env_indices; "
-                "this may cause inefficiency since every pipeline step will still "
-                "advance every env with zeroed-out actions for inactive envs."
             )
 
     def get_activity_name(self):
@@ -290,8 +275,6 @@ class BehaviorProcessPool:
 
         idx = cls._pipeline_next_idx
         global_offset = idx * num_envs
-        cls._pipeline_next_idx += 1
-        cls._shared_refcount += 1
 
         pool = cls._shared_pool
 
@@ -300,6 +283,8 @@ class BehaviorProcessPool:
                 f"BehaviorEnv slice [{global_offset}, {global_offset + num_envs}) "
                 f"exceeds pool total_num_envs={pool.total_num_envs}."
             )
+        cls._pipeline_next_idx += 1
+        cls._shared_refcount += 1
         return pool, global_offset
 
     @classmethod
@@ -320,6 +305,17 @@ class BehaviorProcessPool:
         num_env_subprocess: int,
         pipeline_stage_num: int,
     ):
+        if not 1 <= pipeline_stage_num <= num_env_subprocess <= total_num_envs:
+            raise ValueError(
+                "BEHAVIOR needs at least one simulator process per pipeline stage and "
+                "one environment per process on each worker. "
+                f"Got pipeline_stage_num={pipeline_stage_num}, "
+                f"num_env_subprocess={num_env_subprocess}, total_num_envs={total_num_envs}."
+            )
+        if total_num_envs % pipeline_stage_num:
+            raise ValueError(
+                "Each pipeline stage must have the same number of environments."
+            )
         if total_num_envs % num_env_subprocess != 0:
             raise ValueError(
                 f"total_num_envs({total_num_envs}) must be divisible by num_env_subprocess({num_env_subprocess})"
@@ -328,8 +324,18 @@ class BehaviorProcessPool:
         self.logger = get_logger()
         self.cfg = cfg
         self.total_num_envs = total_num_envs
-        self.num_env_subprocess = num_env_subprocess
-        self.num_env_shard = total_num_envs // num_env_subprocess
+        # OmniGibson 3.9.3 advances every scene in a process, including on reset
+        # for the first observation. Give each stage its own processes.
+        envs_per_stage = total_num_envs // pipeline_stage_num
+        procs_per_stage, extra_procs = divmod(num_env_subprocess, pipeline_stage_num)
+        self.env_shards = []
+        for stage in range(pipeline_stage_num):
+            count = procs_per_stage + int(stage < extra_procs)
+            start = stage * envs_per_stage
+            for proc in range(count):
+                self.env_shards.append(
+                    range(start + proc, start + envs_per_stage, count)
+                )
         self.skip_intermediate_renders = bool(
             OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
@@ -350,12 +356,8 @@ class BehaviorProcessPool:
         for attempt in range(1, max_attempts + 1):
             try:
                 self.env_processes = [
-                    BehaviorProcess.remote(
-                        self.cfg,
-                        self.num_env_shard,
-                        pipeline_stage_num,
-                    )
-                    for _ in range(self.num_env_subprocess)
+                    BehaviorProcess.remote(self.cfg, len(shard))
+                    for shard in self.env_shards
                 ]
 
                 # Wait for all instances to initialize and fetch their activity name
@@ -407,19 +409,14 @@ class BehaviorProcessPool:
         ``slice_positions`` are indices inside the caller's slice and
         ``local_rows`` are the matching rows owned by that subprocess.
         """
-        slice_positions_by_proc = [[] for _ in range(self.num_env_subprocess)]
-        local_rows_by_proc = [[] for _ in range(self.num_env_subprocess)]
-        for pos in range(num_envs):
-            global_idx = global_start + pos
-            sp = global_idx % self.num_env_subprocess
-            slice_positions_by_proc[sp].append(pos)
-            local_rows_by_proc[sp].append(global_idx // self.num_env_subprocess)
-
-        return [
-            (sp, slice_positions_by_proc[sp], local_rows_by_proc[sp])
-            for sp in range(self.num_env_subprocess)
-            if slice_positions_by_proc[sp]
-        ]
+        plan = []
+        for sp, shard in enumerate(self.env_shards):
+            first = bisect_left(shard, global_start)
+            last = bisect_left(shard, global_start + num_envs)
+            if first < last:
+                positions = [idx - global_start for idx in shard[first:last]]
+                plan.append((sp, positions, list(range(first, last))))
+        return plan
 
     def env_reset_slice(self, global_start: int, num_envs: int):
         """Reset envs in ``[global_start, global_start + num_envs)``."""
@@ -456,7 +453,7 @@ class BehaviorProcessPool:
         refs = []
         for sp, positions, local_rows in plan:
             actions_j = torch.zeros(
-                self.num_env_shard,
+                len(self.env_shards[sp]),
                 chunk_size,
                 action_dim,
                 dtype=chunk_actions.dtype,
