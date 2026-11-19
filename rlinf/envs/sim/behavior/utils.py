@@ -398,7 +398,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     )
     r1pro = None
     if override_proprio_obs is None:
-        if cfg.get("use_eval_utils_cfg", False):
+        if cfg.get("use_2026_eval_proprio_and_rooms", False):
             # Match the official 61-value state in 2026 evaluation and demonstrations.
             r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
             override_proprio_obs = r1pro.proprio_obs
@@ -429,7 +429,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                     f"scene_model={scene_model!r}."
                 )
             relevant_rooms = None
-            if cfg.get("use_eval_utils_cfg", False):
+            if cfg.get("use_2026_eval_proprio_and_rooms", False):
                 # Challenge room instances are specific to the official task scene.
                 tasks = load_available_tasks().get(activity_name, {})
                 definition_id = omni_cfg.task.get("activity_definition_id", 0)

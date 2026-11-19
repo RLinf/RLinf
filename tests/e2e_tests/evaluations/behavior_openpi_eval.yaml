@@ -1,9 +1,12 @@
 defaults:
-  - env/behavior_r1pro_eval
+  - env/behavior_r1pro@env.eval
   - model/pi0_5@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
+  callbacks:
+    step_limits:
+      _target_: rlinf.envs.sim.behavior.utils.BehaviorEvalStepLimits
   run:
     dir: .
   output_subdir: null
@@ -38,6 +41,7 @@ env:
   group_name: "EnvGroup"
 
   eval:
+    use_2026_eval_proprio_and_rooms: True
     rollout_epoch: 1
     total_num_envs: 2
     # BEHAVIOR subtracts one, so 33 env steps fit one 32-step action chunk.
