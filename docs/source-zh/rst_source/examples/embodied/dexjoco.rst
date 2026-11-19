@@ -47,7 +47,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
    :widths: 20 20 60
 
    * - 任务
-     - 回合上限
+     - episode 步数上限
      - 描述
    * - ``water_plant``
      - 1000 步
@@ -127,7 +127,7 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
    * - CNN 评测
      - ``evaluations/dexjoco/dexjoco_cnn_eval.yaml``
      - 8 × H100（80 GB）
-     - 64 个回合
+     - 64 个 episode
    * - π₀.₅ + SFT
      - ``examples/sft/config/dexjoco_sft_openpi_pi05.yaml``
      - 16 × H100（80 GB）
@@ -139,9 +139,9 @@ policy 根据前视和腕部图像抓取水壶，再给植物浇水。
    * - π₀.₅ 评测
      - ``evaluations/dexjoco/dexjoco_openpi_pi05_eval.yaml``
      - 8 × H100（80 GB）
-     - 64 个回合
+     - 64 个 episode
 
-SFT 的“步”指一次优化器更新；PPO 的“轮”指一次轨迹采样及随后的训练，其中包含多次优化器更新。下文的训练进度和 checkpoint 分别按这两种方式计数，评测规模按回合数计。
+SFT 的“步”指一次优化器更新；PPO 的“轮”指一次轨迹采样及随后的训练，其中包含多次优化器更新。下文的训练进度和 checkpoint 分别按这两种方式计数，评测规模按 episode 数计。
 
 每次启动训练，脚本都会在仓库根目录下创建 ``logs/<timestamp>-<config>``\ 。checkpoint 保存在该目录下的 ``<experiment_name>/checkpoints/global_step_<N>``\ 。下文中的 ``/path/to/RLinf`` 填写仓库根目录，``<sft-timestamp>`` 和 ``<ppo-timestamp>`` 分别填写对应训练目录的时间戳。每次运行的 ``run_embodiment.log`` 都记录了包含日志路径的启动命令。
 
@@ -176,7 +176,7 @@ CNN：SFT 与 PPO
 
    bash examples/sft/run_vla_sft.sh dexjoco_sft_cnn
 
-20,000 步训练共保存 10 个 checkpoint。记录中的 SFT 评测逐个检查了这些权重，每次用一个 worker 运行 64 个回合。10 个 NLL checkpoint 中，第 8000 步的成功率最高，为 50/64（78.1%），因此选它作为 PPO 起点。下文的 8 个 worker 评测配置测得这个起点的成功率为 42/64（65.6%）。比较 SFT 与 PPO 时，应沿用相同的评测配置。
+20,000 步训练共保存 10 个 checkpoint。记录中的 SFT 评测逐个检查了这些权重，每次用一个 worker 运行 64 个 episode。10 个 NLL checkpoint 中，第 8000 步的成功率最高，为 50/64（78.1%），因此选它作为 PPO 起点。下文的 8 个 worker 评测配置测得这个起点的成功率为 42/64（65.6%）。比较 SFT 与 PPO 时，应沿用相同的评测配置。
 
 在 ``examples/embodiment/config/dexjoco_ppo_cnn.yaml`` 中填写模型、归一化统计量和选定 checkpoint 的路径：
 
@@ -209,7 +209,7 @@ PPO 将 checkpoint 保存在 ``logs/<ppo-timestamp>-dexjoco_ppo_cnn/dexjoco_ppo_
        model_path: /path/to/RLinf-ResNet10-pretrained
        action_norm_stats: /path/to/dexjoco/dexjoco_cnn_datasets/water_plant/meta.json
 
-下面的命令在 8 张 GPU 上运行 64 个回合：
+下面的命令在 8 张 GPU 上运行 64 个 episode：
 
 .. code:: bash
 
@@ -271,7 +271,7 @@ SFT 的全局批大小为 32，每张 GPU 的微批大小为 2，学习率按 30
    bash evaluations/run_eval.sh dexjoco dexjoco_openpi_pi05_eval \
      runner.logger.experiment_name=dexjoco_pi05_sft5000_eval
 
-评测配置使用 8 个 worker，共运行 64 个回合，随机种子为 10000。每次预测执行 10 个动作，模型采样使用 5 步去噪，每个回合最多执行 1000 步动作。下文评测 PPO checkpoint 时沿用这套配置。
+评测配置使用 8 个 worker，共运行 64 个 episode，随机种子为 10000。每次预测执行 10 个动作，模型采样使用 5 步去噪，每个 episode 最多执行 1000 步动作。下文评测 PPO checkpoint 时沿用这套配置。
 
 用同一个 SFT checkpoint 初始化 PPO。在 ``examples/embodiment/config/dexjoco_ppo_openpi_pi05.yaml`` 中设置：
 
@@ -345,14 +345,14 @@ CNN：复现 MSE 对照
    :width: 100%
    :alt: CNN 分别经过 MSE、NLL SFT 后在 water_plant 上的 PPO 成功率。
 
-   CNN 分别经过 MSE、NLL SFT 后在 ``water_plant`` 上的 PPO 成功率（64 个评测回合）。
+   CNN 分别经过 MSE、NLL SFT 后在 ``water_plant`` 上的 PPO 成功率（64 个评测 episode）。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/dc2607a2769dfd49cca117cdf42e5ef3f70b8dcf/pic/dexjoco_pi05_sft_ppo.png
    :align: center
    :width: 100%
    :alt: π₀.₅ 在 water_plant 上经过 5000 步 SFT 和 150 轮 PPO 的成功率。
 
-   π₀.₅ 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测回合）。
+   π₀.₅ 在 ``water_plant`` 上的 SFT + PPO 成功率（64 个评测 episode）。
 
 .. list-table::
    :header-rows: 1
