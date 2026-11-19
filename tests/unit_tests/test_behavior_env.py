@@ -14,6 +14,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import hydra
@@ -55,8 +56,14 @@ def actors(monkeypatch):
 
 @pytest.mark.parametrize(
     "num_envs,num_processes,num_stages",
-    [(4, 2, 2), (4, 2, 1), (6, 3, 2)],
-    ids=["isolated-stages", "single-stage-round-robin", "uneven-stage-process-count"],
+    [(4, 2, 2), (4, 2, 1), (6, 3, 2), (4, 1, 2), (6, 2, 3)],
+    ids=[
+        "isolated-stages",
+        "single-stage-round-robin",
+        "uneven-stage-process-count",
+        "two-stages-one-process",
+        "three-stages-two-processes",
+    ],
 )
 def test_stage_dispatch_and_result_order(actors, num_envs, num_processes, num_stages):
     cfg = OmegaConf.create({})
@@ -67,12 +74,14 @@ def test_stage_dispatch_and_result_order(actors, num_envs, num_processes, num_st
         start = stage * count
         observations, _ = pool.env_reset_slice(start, count)
         assert len(set(observations)) == count
-        if num_stages == 1:
+        if num_stages == 1 or num_processes < num_stages:
             assert observations == [
-                (i % num_processes, i // num_processes) for i in range(count)
+                (i % num_processes, i // num_processes)
+                for i in range(start, start + count)
             ]
         active = {actor for actor, row in observations}
-        assert owners.isdisjoint(active)
+        if num_processes >= num_stages:
+            assert owners.isdisjoint(active)
         owners.update(active)
 
         actions = torch.arange(start + 1, start + count + 1).reshape(count, 1, 1)
@@ -85,10 +94,111 @@ def test_stage_dispatch_and_result_order(actors, num_envs, num_processes, num_st
     assert owners == set(range(num_processes))
 
 
-def test_too_few_processes_fails_before_launch(actors):
-    with pytest.raises(ValueError, match="one simulator process per pipeline stage"):
-        behavior_env.BehaviorProcessPool(OmegaConf.create({}), 4, 1, 2)
+def test_unequal_stage_sizes_fail_before_launch(actors):
+    with pytest.raises(ValueError, match="same positive number of environments"):
+        behavior_env.BehaviorProcessPool(OmegaConf.create({}), 4, 1, 3)
     assert not actors
+
+
+@pytest.mark.parametrize("automatic_reset", [False, True])
+def test_shared_stages_step_only_their_own_scenes(monkeypatch, automatic_reset):
+    og = pytest.importorskip("omnigibson")
+    from omnigibson.envs import Environment
+    from omnigibson.tasks.behavior_task import BehaviorTask
+    from omnigibson.tasks.task_base import BaseTask
+
+    # Use the SDK's real step, reward, timeout and automatic reset. Only the
+    # physical scene, observations and goal predicate need a simulator.
+    sim = Mock()
+    monkeypatch.setattr(og, "sim", sim)
+    env = Environment.__new__(Environment)
+    env.num_envs = 4
+    env._scenes = [Mock(robots=[Mock(action_dim=1)]) for _ in range(env.num_envs)]
+    env._scene_graph_builders = []
+    env._current_steps = torch.zeros(env.num_envs, dtype=torch.int32)
+    env._current_episodes = torch.zeros_like(env._current_steps)
+    env._automatic_reset = automatic_reset
+    env._num_rerenders_on_reset = 0
+    env._loaded = False
+
+    def get_obs(env_indices=None):
+        rows = range(env.num_envs) if env_indices is None else env_indices
+        return list(rows), [{} for _ in rows]
+
+    env.get_obs = get_obs
+    task = env._task = BehaviorTask.__new__(BehaviorTask)
+    BaseTask.__init__(
+        task, termination_config={"max_steps": 2}, reward_config={"r_potential": 1.0}
+    )
+    task._loaded = True
+    task._num_envs = env.num_envs
+    task.use_presampled_robot_pose = False
+    task.object_scopes = [{"goal": False} for _ in env.scenes]
+
+    def check_goal(evaluate):
+        achieved = evaluate("goal")
+        return achieved, {
+            "satisfied": [0] if achieved else [],
+            "unsatisfied": [] if achieved else [0],
+        }
+
+    monkeypatch.setattr(
+        BehaviorTask,
+        "_evaluate_predicate",
+        lambda self, row, key: self.object_scopes[row][key],
+    )
+    task.compiled_task = SimpleNamespace(check_goal=check_goal)
+    env.reset(get_obs=False)
+    env._current_steps[0] = 2
+    env._current_steps[3] = 1
+    # Scene 0 reaches its goal while waiting for stage 1; its reward must survive.
+    task.object_scopes[0]["goal"] = True
+
+    cls = behavior_env.BehaviorProcess.__ray_metadata__.modified_class
+    worker = cls.__new__(cls)
+    worker.env = env
+    worker.step_supports_env_indices = False
+    worker.skip_intermediate_renders = False
+    worker.use_legacy_proprio = False
+    actions = torch.arange(1.0, 9.0).reshape(4, 2, 1)
+    obs, _, terms, truncs, _ = worker.chunk_step(actions, [2, 3])
+    assert obs == ([2, 3], [2, 3])
+    assert not torch.stack(terms).any()
+    assert torch.stack(truncs).tolist() == [[False, False], [False, True]]
+    assert env.episode_steps.tolist() == [2, 0, 2, 1 if automatic_reset else 3]
+    assert env._current_episodes.tolist() == [1, 1, 1, 1 + automatic_reset]
+    env.scenes[0].robots[0].apply_action.assert_not_called()
+    env.scenes[1].robots[0].apply_action.assert_not_called()
+    assert [
+        call.args[0].item()
+        for call in env.scenes[3].robots[0].apply_action.call_args_list
+    ] == [7, 8]
+    assert task._termination_conditions["predicate"].goal_status[0] == {
+        "satisfied": [],
+        "unsatisfied": [],
+    }
+    assert sim.step.call_count == 2 + automatic_reset
+
+    obs, rewards, terms, truncs, infos = worker.chunk_step(actions[:, :1], [0, 1])
+    assert obs == ([0, 1],)
+    assert terms[0].tolist() == truncs[0].tolist() == [True, False]
+    assert infos[0][0]["reward"]["reward_breakdown"]["potential"] == 1.0
+    assert env._current_episodes.tolist() == [
+        1 + automatic_reset,
+        1,
+        1,
+        1 + automatic_reset,
+    ]
+    assert env.scenes[2].reset.call_count == 1
+
+    # Replay scene 0's own step through the unmodified SDK under identical conditions.
+    task.object_scopes[0]["goal"] = False
+    env.reset(get_obs=False)
+    env._current_steps[0] = 2
+    task.object_scopes[0]["goal"] = True
+    _, expected_rewards, _, _, expected_infos = env.step(actions[:, 0])
+    assert torch.equal(rewards[0], expected_rewards[:2])
+    assert infos[0][0] == expected_infos[0]
 
 
 @pytest.mark.parametrize(

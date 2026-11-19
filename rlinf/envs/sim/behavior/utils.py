@@ -15,6 +15,8 @@
 import inspect
 import json
 import os
+from contextlib import contextmanager
+from copy import copy
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -215,6 +217,79 @@ def apply_env_wrapper(vec_env, wrapper_name: str | None):
     patch_omnigibson_wrapper_reset_signature()
     wrapper_cls = get_env_wrapper(wrapper_name)
     return wrapper_cls(vec_env)
+
+
+@contextmanager
+def selected_scene_batch(env, indices: list[int]):
+    """Use the SDK step on a subset of scenes for one action chunk.
+
+    The view shares live robots and physics. Only the selected scenes' episode
+    counters, rewards and termination history are written back to the task.
+    """
+    batch = copy(env)
+    batch.num_envs = len(indices)
+    batch._scenes = [env.scenes[i] for i in indices]
+    if env._scene_graph_builders:
+        batch._scene_graph_builders = [env._scene_graph_builders[i] for i in indices]
+
+    # Camera tiles and sensor maps are indexed by the original scene number.
+    def get_obs(env_indices=None):
+        rows = indices if env_indices is None else [indices[i] for i in env_indices]
+        return env.get_obs(env_indices=rows)
+
+    batch.get_obs = get_obs
+    task = batch._task = copy(env.task)
+    task._env = batch
+    task._num_envs = batch.num_envs
+    task.object_scopes = [env.task.object_scopes[i] for i in indices]
+    # The SDK binds the goal and reward callbacks to their owning task.
+    task._termination_conditions = task._create_termination_conditions()
+    task._reward_functions = task._create_reward_functions()
+
+    fields = []
+
+    def select_rows(source, target, *names):
+        for name in names:
+            state = getattr(source, name)
+            if isinstance(state, list):
+                selected = [state[i] for i in indices]
+            else:
+                selected = state[indices] if state is not None else None
+            setattr(target, name, selected)
+            fields.append((source, target, name))
+
+    select_rows(env, batch, "_current_episodes", "_current_steps")
+    select_rows(env.task, task, "_reward", "_done", "_success", "_info")
+    for name, condition in task._termination_conditions.items():
+        condition._num_envs = batch.num_envs
+        original = env.task._termination_conditions[name]
+        select_rows(original, condition, "_done")
+        if name == "predicate":
+            select_rows(original, condition, "_goal_status")
+    potential = task._reward_functions["potential"]
+    potential._num_envs = batch.num_envs
+    select_rows(
+        env.task._reward_functions["potential"],
+        potential,
+        "_potential",
+        "_reward",
+        "_info",
+    )
+
+    try:
+        yield batch
+    finally:
+        for source, target, name in fields:
+            state, selected = getattr(source, name), getattr(target, name)
+            if torch.is_tensor(state):
+                state[indices] = selected
+            elif state is not None or selected is not None:
+                # Task.reset clears its info, and Task.step rebuilds it.
+                if state is None:
+                    state = [{} for _ in range(env.num_envs)]
+                    setattr(source, name, state)
+                for pos, idx in enumerate(indices):
+                    state[idx] = {} if selected is None else selected[pos]
 
 
 def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: str):

@@ -17,6 +17,7 @@ import inspect
 import json
 import os
 import time
+from contextlib import nullcontext
 from typing import ClassVar
 
 import gymnasium as gym
@@ -30,6 +31,7 @@ from rlinf.envs.sim.behavior.utils import (
     apply_env_wrapper,
     apply_runtime_renderer_settings,
     convert_uint8_rgb,
+    selected_scene_batch,
     setup_omni_cfg,
 )
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
@@ -161,16 +163,18 @@ class BehaviorProcess:
         actions: torch.Tensor,
         env_indices: list[int],
         need_obs: bool,
+        batch=None,
     ):
         """Step one shard for a single chunk timestep.
 
-        ``actions`` is the zero-padded ``[num_shard, action_dim]`` action
-        tensor (inactive rows already carry zero actions). ``env_indices``
-        is the ascending list of local rows that should advance.
+        ``actions`` contains the process's rows, or only the selected rows
+        when stepping a scene batch. ``env_indices`` uses process-local IDs.
 
         Returns outputs only for ``env_indices``, in that same order.
         """
-        if self.step_supports_env_indices:
+        if batch is not None:
+            raw_obs, rewards, terminates, truncates, infos = batch.step(actions)
+        elif self.step_supports_env_indices:
             raw_obs, rewards, terminates, truncates, infos = self._call_step(
                 [actions[i] for i in env_indices],
                 env_indices=env_indices,
@@ -183,12 +187,6 @@ class BehaviorProcess:
                 get_obs=need_obs,
                 render=need_obs,
             )
-            if need_obs:
-                raw_obs = [raw_obs[i] for i in env_indices]
-            rewards = [rewards[i] for i in env_indices]
-            terminates = [terminates[i] for i in env_indices]
-            truncates = [truncates[i] for i in env_indices]
-            infos = [infos[i] for i in env_indices]
 
         if need_obs:
             self._restore_legacy_base_velocity(raw_obs, env_indices)
@@ -211,13 +209,19 @@ class BehaviorProcess:
         """
         _, chunk_size, _ = actions.shape
 
+        scenes = nullcontext()
+        if not self.step_supports_env_indices and len(env_indices) < self.env.num_envs:
+            scenes = selected_scene_batch(self.env.unwrapped, env_indices)
+            actions = actions[env_indices]
+
         results: list[tuple] = []
-        for t in range(chunk_size):
-            is_last = t == chunk_size - 1
-            need_obs = not self.skip_intermediate_renders or is_last
-            results.append(
-                self._step_shard(actions[:, t], env_indices, need_obs=need_obs)
-            )
+        with scenes as batch:
+            for t in range(chunk_size):
+                is_last = t == chunk_size - 1
+                need_obs = not self.skip_intermediate_renders or is_last
+                results.append(
+                    self._step_shard(actions[:, t], env_indices, need_obs, batch)
+                )
         return tuple(zip(*results))
 
     def reset(self, reset_indices=None, get_obs=True):
@@ -304,7 +308,15 @@ class BehaviorProcessPool:
         num_env_subprocess: int,
         pipeline_stage_num: int,
     ):
-        if total_num_envs % num_env_subprocess != 0:
+        if (
+            pipeline_stage_num < 1
+            or total_num_envs < 1
+            or total_num_envs % pipeline_stage_num
+        ):
+            raise ValueError(
+                "Each pipeline stage must have the same positive number of environments."
+            )
+        if num_env_subprocess < 1 or total_num_envs % num_env_subprocess != 0:
             raise ValueError(
                 f"total_num_envs({total_num_envs}) must be divisible by num_env_subprocess({num_env_subprocess})"
             )
@@ -397,17 +409,16 @@ class BehaviorProcessPool:
         slice_positions_by_proc = [[] for _ in range(self.num_env_subprocess)]
         local_rows_by_proc = [[] for _ in range(self.num_env_subprocess)]
         for pos in range(num_envs):
-            stage, stage_env = divmod(global_start + pos, envs_per_stage)
-            # A 3.9.3 step advances the whole process. Round-robin only within this stage.
-            first_proc = stage * procs_per_stage + min(stage, extra_procs)
-            proc_count = procs_per_stage + int(stage < extra_procs)
-            if proc_count == 0:
-                raise ValueError(
-                    f"Cannot route environment {global_start + pos} in stage {stage}: "
-                    "BEHAVIOR needs one simulator process per pipeline stage."
-                )
-            local_row, stage_proc = divmod(stage_env, proc_count)
-            sp = first_proc + stage_proc
+            global_idx = global_start + pos
+            if procs_per_stage:
+                stage, stage_env = divmod(global_idx, envs_per_stage)
+                first_proc = stage * procs_per_stage + min(stage, extra_procs)
+                proc_count = procs_per_stage + int(stage < extra_procs)
+                local_row, stage_proc = divmod(stage_env, proc_count)
+                sp = first_proc + stage_proc
+            else:
+                # Stages share processes in round-robin order.
+                local_row, sp = divmod(global_idx, self.num_env_subprocess)
             slice_positions_by_proc[sp].append(pos)
             local_rows_by_proc[sp].append(local_row)
 
