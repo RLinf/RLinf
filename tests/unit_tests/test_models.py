@@ -5041,3 +5041,242 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
         )
 
     assert seen_devices == [torch.device("cpu"), None, None]
+
+
+def _openpi_image_reference(images, *, wrist, rng, functional):
+    outputs = []
+    for image in images:
+        image = image.permute(2, 0, 1) / 2.0 + 0.5
+        if not wrist:
+            height, width = image.shape[-2:]
+            crop_height, crop_width = int(height * 0.95), int(width * 0.95)
+            top = torch.randint(0, height - crop_height + 1, (1,), generator=rng).item()
+            left = torch.randint(0, width - crop_width + 1, (1,), generator=rng).item()
+            image = functional.resize(
+                functional.crop(image, top, left, crop_height, crop_width),
+                [height, width],
+                antialias=True,
+            )
+            angle = torch.rand(1, generator=rng).item() * 10 - 5
+            image = functional.rotate(image, angle, fill=0)
+        brightness = 1.0 + (torch.rand(1, generator=rng).item() * 2 - 1) * 0.3
+        contrast = 1.0 + (torch.rand(1, generator=rng).item() * 2 - 1) * 0.4
+        saturation = 1.0 + (torch.rand(1, generator=rng).item() * 2 - 1) * 0.5
+        image = functional.adjust_brightness(image, brightness)
+        image = functional.adjust_contrast(image, contrast)
+        image = functional.adjust_saturation(image, saturation)
+        outputs.append(image.permute(1, 2, 0) * 2.0 - 1.0)
+    return torch.stack(outputs)
+
+
+@pytest.mark.parametrize(
+    "batch,shape,channels,channels_first",
+    [
+        (1, (16, 24), 3, False),
+        (4, (31, 47), 3, True),
+        (3, (24, 32), 1, False),
+        (2, (224, 224), 3, False),
+    ],
+)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("explicit_rng", [False, True])
+def test_openpi_preprocessing_matches_per_image_transforms(
+    batch, shape, channels, channels_first, dtype, explicit_rng
+):
+    functional = pytest.importorskip("torchvision.transforms.functional")
+    from rlinf.models.embodiment.openpi.modules.model import (
+        Observation,
+        preprocess_observation,
+    )
+
+    source_rng = torch.Generator().manual_seed(42)
+    height, width = shape
+    source = (
+        torch.rand(
+            batch, height * 2, width * 2, channels, generator=source_rng, dtype=dtype
+        )
+        * 2
+        - 1
+    )[:, ::2, ::2, :]
+    image_keys = ("base_0_rgb", "left_wrist_0_rgb")
+    reference_inputs = {key: source.detach().requires_grad_(True) for key in image_keys}
+    candidate_inputs = {
+        key: source.permute(0, 3, 1, 2).detach().requires_grad_(True)
+        if channels_first
+        else source.detach().requires_grad_(True)
+        for key in image_keys
+    }
+    observation = Observation(
+        images=candidate_inputs,
+        image_masks={"base_0_rgb": [True] * batch},
+        state=torch.zeros(batch, 32),
+        tokenized_prompt=torch.ones(batch, 8, dtype=torch.long),
+        tokenized_prompt_mask=torch.ones(batch, 8, dtype=torch.bool),
+    )
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(123)
+        reference_rng = torch.Generator().manual_seed(123) if explicit_rng else None
+        expected = {
+            key: _openpi_image_reference(
+                value, wrist="wrist" in key, rng=reference_rng, functional=functional
+            )
+            for key, value in reference_inputs.items()
+        }
+        expected_rng = (
+            reference_rng.get_state() if explicit_rng else torch.get_rng_state()
+        )
+        torch.manual_seed(123)
+        candidate_rng = torch.Generator().manual_seed(123) if explicit_rng else None
+        actual = preprocess_observation(
+            observation,
+            train=True,
+            image_keys=image_keys,
+            image_resolution=shape,
+            rng=candidate_rng,
+        )
+        actual_rng = (
+            candidate_rng.get_state() if explicit_rng else torch.get_rng_state()
+        )
+        assert torch.equal(actual_rng, expected_rng)
+
+    assert actual.state is observation.state
+    assert actual.tokenized_prompt is observation.tokenized_prompt
+    assert actual.tokenized_prompt_mask is observation.tokenized_prompt_mask
+    for key in image_keys:
+        torch.testing.assert_close(actual.images[key], expected[key], rtol=0, atol=2e-6)
+        assert actual.images[key].dtype == dtype
+        assert actual.images[key].is_contiguous()
+        assert actual.image_masks[key].dtype == torch.bool
+        assert actual.image_masks[key].all()
+    coefficients = {
+        key: torch.randn(value.shape, generator=source_rng, dtype=dtype)
+        for key, value in expected.items()
+    }
+    sum((value * coefficients[key]).sum() for key, value in expected.items()).backward()
+    sum(
+        (value * coefficients[key]).sum() for key, value in actual.images.items()
+    ).backward()
+    for key in image_keys:
+        candidate_grad = candidate_inputs[key].grad
+        if channels_first:
+            candidate_grad = candidate_grad.permute(0, 2, 3, 1)
+        torch.testing.assert_close(
+            candidate_grad, reference_inputs[key].grad, rtol=0, atol=3e-6
+        )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA GEMM rounding")
+def test_openpi_preprocessing_cuda_rotation_matches_per_image():
+    functional = pytest.importorskip("torchvision.transforms.functional")
+    from rlinf.models.embodiment.openpi.modules.model import (
+        Observation,
+        preprocess_observation,
+    )
+
+    source = (
+        torch.rand(4, 224, 224, 3, generator=torch.Generator().manual_seed(71)) * 2 - 1
+    ).cuda()
+    precision = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision("highest")
+        expected = _openpi_image_reference(
+            source,
+            wrist=False,
+            rng=torch.Generator().manual_seed(2),
+            functional=functional,
+        )
+        actual = preprocess_observation(
+            Observation(
+                images={"base_0_rgb": source},
+                image_masks={},
+                state=torch.zeros(4, 32, device=source.device),
+            ),
+            train=True,
+            image_keys=("base_0_rgb",),
+            rng=torch.Generator().manual_seed(2),
+        )
+        torch.testing.assert_close(
+            actual.images["base_0_rgb"], expected, rtol=0, atol=2e-6
+        )
+    finally:
+        torch.set_float32_matmul_precision(precision)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_openpi_preprocessing_half_wrist_matches_scalar_factors(dtype):
+    functional = pytest.importorskip("torchvision.transforms.functional")
+    from rlinf.models.embodiment.openpi.modules.model import (
+        Observation,
+        preprocess_observation,
+    )
+
+    source = (
+        torch.rand(4, 16, 24, 3, generator=torch.Generator().manual_seed(0)) * 2 - 1
+    ).to(dtype)
+    reference = source.detach().requires_grad_(True)
+    candidate = source.detach().requires_grad_(True)
+    expected = _openpi_image_reference(
+        reference,
+        wrist=True,
+        rng=torch.Generator().manual_seed(3),
+        functional=functional,
+    )
+    actual = preprocess_observation(
+        Observation(
+            images={"wrist": candidate}, image_masks={}, state=torch.ones(4, 32)
+        ),
+        train=True,
+        image_keys=("wrist",),
+        image_resolution=(16, 24),
+        rng=torch.Generator().manual_seed(3),
+    ).images["wrist"]
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    coefficients = torch.randn(
+        actual.shape, generator=torch.Generator().manual_seed(4), dtype=dtype
+    )
+    (expected * coefficients).sum().backward()
+    (actual * coefficients).sum().backward()
+    torch.testing.assert_close(candidate.grad, reference.grad, rtol=0, atol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA autocast")
+@pytest.mark.parametrize("wrist", [False, True])
+def test_openpi_preprocessing_autocast_matches_per_image(wrist):
+    functional = pytest.importorskip("torchvision.transforms.functional")
+    from rlinf.models.embodiment.openpi.modules.model import (
+        Observation,
+        preprocess_observation,
+    )
+
+    source = (
+        torch.rand(4, 224, 224, 3, generator=torch.Generator().manual_seed(71)) * 2 - 1
+    ).cuda()
+    reference = source.detach().requires_grad_(True)
+    candidate = source.detach().requires_grad_(True)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        expected = _openpi_image_reference(
+            reference,
+            wrist=wrist,
+            rng=torch.Generator().manual_seed(2),
+            functional=functional,
+        )
+        actual = preprocess_observation(
+            Observation(
+                images={"wrist_0_rgb" if wrist else "base_0_rgb": candidate},
+                image_masks={},
+                state=torch.ones(4, 32, device=source.device),
+            ),
+            train=True,
+            image_keys=("wrist_0_rgb" if wrist else "base_0_rgb",),
+            rng=torch.Generator().manual_seed(2),
+        ).images["wrist_0_rgb" if wrist else "base_0_rgb"]
+    torch.testing.assert_close(actual, expected, rtol=0, atol=2e-6)
+    # CUDA spatial resampling backward uses nondeterministic atomic accumulation.
+    if not wrist:
+        return
+    coefficients = torch.randn(
+        actual.shape, generator=torch.Generator().manual_seed(4)
+    ).cuda()
+    (expected * coefficients).sum().backward()
+    (actual * coefficients).sum().backward()
+    torch.testing.assert_close(candidate.grad, reference.grad, rtol=0, atol=2e-6)
