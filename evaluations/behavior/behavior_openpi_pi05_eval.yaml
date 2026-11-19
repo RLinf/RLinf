@@ -41,8 +41,8 @@ env:
     use_eval_utils_cfg: True
     rollout_epoch: 4
     total_num_envs: 4
-    max_episode_steps: 4096
-    max_steps_per_rollout_epoch: 4096
+    max_episode_steps: null  # Use the selected task's official 2026 timeout.
+    max_steps_per_rollout_epoch: null  # Request enough action chunks for one episode.
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval

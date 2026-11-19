@@ -135,9 +135,9 @@ BEHAVIOR-1K 共 50 个 household 任务（任务名列表见 ``rlinf/envs/sim/be
    * - ``rollout_epoch``
      - 评测轮次，相同配置下重复运行并取指标平均；示例默认 ``2``。
    * - ``max_episode_steps``
-     - 单条轨迹步数上限。π₀.₅ 示例使用 ``4096`` （preset 默认 ``2000`` 偏短，长 horizon 任务建议调大）。
+     - π₀.₅ 评测留空时采用该任务的官方时限。SDK 从 0 开始计数，达到人类示范平均步数的 1.5 倍（向下取整）时判定超时。也可以直接填写本回合允许执行的动作数。
    * - ``max_steps_per_rollout_epoch``
-     - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。无 ``auto_reset`` 时通常等于 ``max_episode_steps``。
+     - 留空时按整组动作计算足够覆盖回合时限的采样预算。默认配置下，最后一组只执行回合剩余的动作。手动填写的预算必须能被 ``rollout.model.num_action_chunks`` 整除。
    * - ``num_env_subprocess``
      - 单个 env worker 内划分的 Isaac 仿真子进程数（默认 ``1``）。适当增大可缓解步进瓶颈，但会成倍增加显存与进程开销；``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
    * - ``skip_intermediate_renders``

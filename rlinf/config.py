@@ -1718,6 +1718,10 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num must be divisible by the group size"
         )
+        if only_eval and cfg.env.eval.env_type == SupportedEnvType.BEHAVIOR.value:
+            from rlinf.envs.sim.behavior.utils import resolve_eval_step_limits
+
+            resolve_eval_step_limits(cfg.env.eval, model_cfg.num_action_chunks)
         assert (
             cfg.env.eval.max_steps_per_rollout_epoch % model_cfg.num_action_chunks == 0
         ), (

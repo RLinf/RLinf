@@ -135,9 +135,9 @@ Generic ``env.eval`` fields
    * - ``rollout_epoch``
      - Number of eval rounds with the same config; metrics are averaged. The example defaults to ``2``.
    * - ``max_episode_steps``
-     - Max steps per trajectory. The π₀.₅ example uses ``4096`` (the preset default ``2000`` may be too short for long-horizon tasks).
+     - Leave unset in the π₀.₅ evaluation to use the official timeout for the task. The SDK checks a zero-based counter against 1.5 times the mean human demonstration length, rounded down. Set an integer to specify the number of actions directly.
    * - ``max_steps_per_rollout_epoch``
-     - Total interaction steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks``. Without ``auto_reset``, usually equals ``max_episode_steps``.
+     - Leave unset to request enough whole action chunks to reach the episode limit. With the default fixed episode, only the remaining actions in the last chunk are executed. An explicit budget must be divisible by ``rollout.model.num_action_chunks``.
    * - ``num_env_subprocess``
      - Isaac sim subprocesses per env worker (default ``1``). Increasing this can reduce stepping bottlenecks but multiplies VRAM and process overhead; ``total_num_envs`` must be divisible by ``num_env_subprocess × pipeline_stage_num``.
    * - ``skip_intermediate_renders``

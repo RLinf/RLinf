@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import inspect
+import json
 import os
+from importlib.util import find_spec
+from pathlib import Path
 
 import torch
 import yaml
@@ -212,6 +215,45 @@ def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: s
             if omni_sub_cfg is None
             else OmegaConf.merge(omni_sub_cfg, override_sub_cfg),
         )
+
+
+def resolve_eval_step_limits(cfg: DictConfig, chunk_size: int) -> None:
+    if cfg.max_episode_steps is None:
+        # Read the official task statistics without importing the simulator on the driver.
+        root = Path(
+            os.environ.get("OMNIGIBSON_DATA_PATH", "../../datasets")
+        ).expanduser()
+        if not root.is_absolute():
+            package = find_spec("omnigibson")
+            if package is None:
+                raise ModuleNotFoundError(
+                    "Set OMNIGIBSON_DATA_PATH or install OmniGibson."
+                )
+            root = Path(package.origin).resolve().parent / root
+        stats = root / "2026-challenge-task-instances" / "metadata" / "task.jsonl"
+        task = cfg.omni_config.task.activity_name
+        with stats.open() as file:
+            for line in file:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row["task_name"] == task:
+                    # The SDK tests its zero-based step counter before incrementing it.
+                    cfg.max_episode_steps = int(row["length"] * 1.5) + 1
+                    break
+            else:
+                raise ValueError(
+                    f"No human demonstration length for {task!r} in {stats}"
+                )
+    chunks = (cfg.max_episode_steps + chunk_size - 1) // chunk_size
+    episode_budget = chunks * chunk_size
+    budget = cfg.max_steps_per_rollout_epoch
+    if budget is None:
+        cfg.max_steps_per_rollout_epoch = episode_budget
+    elif not cfg.auto_reset and budget % chunk_size == 0:
+        # Each fixed episode ends at its first timeout. Extra chunks would run
+        # after termination. Misaligned overrides are checked by validate_embodied_cfg.
+        cfg.max_steps_per_rollout_epoch = min(budget, episode_budget)
 
 
 def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
