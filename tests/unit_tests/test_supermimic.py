@@ -369,6 +369,31 @@ def test_evaluation_config_needs_the_policy_weights(monkeypatch, ckpt_path):
         validate_supermimic_cfg(cfg, only_eval=True)
 
 
+def test_exported_config_records_the_motion_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("SUPERMIMIC_MOTION_PATH", "/data/lafan1_g1")
+    from rlinf.runners.supermimic_eval_runner import export_eval_results
+
+    cfg = OmegaConf.create(
+        {
+            "runner": {
+                "ckpt_path": "/data/full_weights.pt",
+                "logger": {"experiment_name": "supermimic_lafan1_eval"},
+            },
+            "env": {"eval": {"motion_path": "${oc.env:SUPERMIMIC_MOTION_PATH}"}},
+        }
+    )
+    export_eval_results(
+        tmp_path,
+        cfg,
+        {"tasks": ["tracking"], "num_clips": 1, "num_jobs": 1},
+        {"normalized_return": 1.0},
+        {},
+        {},
+    )
+    saved = OmegaConf.load(tmp_path / "config.yaml")
+    assert saved.env.eval.motion_path == "/data/lafan1_g1"
+
+
 def test_evaluation_entry_picks_workers_without_an_algorithm_section():
     from rlinf.runners import get_embodied_eval_runner
     from rlinf.workers.env import get_env_worker

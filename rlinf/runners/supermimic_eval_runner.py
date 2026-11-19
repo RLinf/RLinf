@@ -82,7 +82,7 @@ def export_eval_results(
             writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
             writer.writeheader()
             writer.writerows(rows)
-    OmegaConf.save(cfg, out / "config.yaml")
+    OmegaConf.save(cfg, out / "config.yaml", resolve=True)
     return out
 
 

@@ -72,7 +72,7 @@ SuperMimic 评测
      - 存放 ``summary.json``、``per_clip.csv`` 或 ``per_trial.csv`` 以及 ``config.yaml`` 的目录
    * - ``runner.logger.log_path``
      - ``../results/eval``
-     - 评测日志目录
+     - 评测日志目录。直接调用 Python 时用这个 YAML 默认值。``evaluations/run_eval.sh`` 会设成 ``logs/<时间戳>-<配置名>/``
    * - ``actor.model.representation``
      - ``gencoord``
      - 用 MaxCoord 训练的 checkpoint 要设为 ``maxcoord``

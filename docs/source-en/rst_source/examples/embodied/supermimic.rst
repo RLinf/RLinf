@@ -236,13 +236,16 @@ update 6000:
        "${GPU_PLACEMENT[@]}"
 
 The log ends with ``Wrote SuperMimic evaluation results to`` and the output
-folder. To evaluate update 2000 or 4000, replace ``6000`` in both paths.
+folder. Results go under ``$RUN_DIR/eval_6000/``. ``evaluations/run_eval.sh``
+writes the evaluation log under ``logs/<timestamp>-supermimic_lafan1_eval/``.
+To evaluate update 2000 or 4000, replace ``6000`` in both paths.
 :doc:`supermimic_eval` defines the metrics and adds standing push recovery.
 
 Find the Outputs
 ~~~~~~~~~~~~~~~~
 
-Everything from this run is under ``RUN_DIR``:
+Training files and the evaluation results are under ``RUN_DIR``. The
+evaluation log is under ``logs/``:
 
 .. list-table::
    :header-rows: 1

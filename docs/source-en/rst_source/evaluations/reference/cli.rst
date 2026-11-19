@@ -76,7 +76,8 @@ The arguments below apply to the two SuperMimic configs,
        and ``config.yaml``
    * - ``runner.logger.log_path``
      - ``../results/eval``
-     - Folder for the evaluation logs
+     - Evaluation logs. Calling Python directly uses this YAML default.
+       ``evaluations/run_eval.sh`` sets ``logs/<timestamp>-<config>/``
    * - ``actor.model.representation``
      - ``gencoord``
      - ``maxcoord`` for a checkpoint trained with MaxCoord

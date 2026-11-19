@@ -180,12 +180,12 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
        runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
        "${GPU_PLACEMENT[@]}"
 
-日志最后一行是 ``Wrote SuperMimic evaluation results to`` 加输出目录。要评测第 2000 或 4000 次更新，把两个路径里的 ``6000`` 换掉即可。指标定义和站立推力恢复见 :doc:`supermimic_eval`。
+日志最后一行是 ``Wrote SuperMimic evaluation results to`` 加输出目录。评测结果写到 ``$RUN_DIR/eval_6000/``。``evaluations/run_eval.sh`` 把评测日志写到 ``logs/<时间戳>-supermimic_lafan1_eval/``。要评测第 2000 或 4000 次更新，把两个路径里的 ``6000`` 换掉即可。指标定义和站立推力恢复见 :doc:`supermimic_eval`。
 
 查看输出
 ~~~~~~~~
 
-这次运行的所有文件都在 ``RUN_DIR`` 下：
+训练文件和评测结果在 ``RUN_DIR`` 下，评测日志在 ``logs/`` 下：
 
 .. list-table::
    :header-rows: 1
