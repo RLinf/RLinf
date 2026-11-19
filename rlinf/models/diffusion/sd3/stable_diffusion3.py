@@ -366,6 +366,8 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
                 data["images"].to(device=device, dtype=vae.dtype)
             ).latent_dist.sample()
         latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+        if self.config.offload_auxiliary_modules:
+            move_auxiliary_modules(self.pipeline, device="cpu")
 
         # Logit-normal t with the scheduler shift, as SD3 pre-training samples it.
         shift = self.pipeline.scheduler.config.shift

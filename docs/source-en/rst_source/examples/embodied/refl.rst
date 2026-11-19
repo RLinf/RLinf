@@ -138,18 +138,7 @@ for eight reward updates:
      actor.refl_reward_model.med_config="$IR_MODEL/med_config.json"
      actor.refl_data.path="$IR_DATA/refl_data.json"
      actor.refl_data.exclude_path="$IR_DATA/test.json"
-     actor.refl_samples_per_step=512
-     actor.global_batch_size=64
-     actor.micro_batch_size=1
-     actor.refl_pre_data.num_workers=0
      env.eval.dataset.path="$IR_DATA/test.json"
-     env.eval.total_num_envs=4
-     env.eval.rollout_epoch=128
-     env.eval.reward.batch_size=1
-     runner.max_epochs=50
-     runner.max_steps=50
-     runner.val_check_interval=10
-     runner.save_interval=10
    )
 
    CUDA_VISIBLE_DEVICES=0,1,2,3 \
@@ -203,14 +192,77 @@ subdirectories:
      00001.png
      00001.txt
 
-The experiments below use a subset of
-`PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_. Replace
-``<image_text_dir>`` with your image-caption directory and run with Lpre weights
-of ``0.1`` and ``0.01``:
+The results below use 20,000 image-caption pairs from
+`PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_. Prepare them in a
+separate environment. The script samples the first two metadata shards with seed
+``42``, keeping images with license information, at least 512 pixels on each side,
+and with an aspect ratio at most 2:1. It excludes iNaturalist images and captions
+that describe monochrome images or documents:
 
 .. code-block:: bash
 
-   export PRE_DATA="<image_text_dir>"
+   export PD3M_DIR="$PWD/data/PD3M"
+   uv venv --python 3.10 "$PD3M_DIR/.venv"
+   uv pip install --python "$PD3M_DIR/.venv/bin/python" \
+     huggingface_hub pyarrow img2dataset==1.47.0
+
+   "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
+     metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
+     --repo-type dataset --local-dir "$PD3M_DIR"
+
+   "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
+   import random
+   import re
+   import sys
+
+   import pyarrow as pa
+   import pyarrow.parquet as pq
+
+   root = sys.argv[1]
+   columns = ["id", "url", "caption", "width", "height", "license", "source"]
+   rows = []
+   for shard in ("00", "01"):
+       rows += pq.read_table(
+           f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
+       ).to_pylist()
+
+   mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
+   document = re.compile(
+       r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
+       re.I,
+   )
+   selected = [
+       row for row in rows
+       if row["license"]
+       and row["source"] != "iNaturalist"
+       and min(row["width"], row["height"]) >= 512
+       and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
+       and not mono.search(row["caption"])
+       and not document.search(row["caption"])
+   ]
+   random.Random(42).shuffle(selected)
+   pairs = [{key: row[key] for key in ("id", "url", "caption")}
+            for row in selected[:20000]]
+   pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
+   PYTHON
+
+   export PRE_DATA="$PD3M_DIR/images_512"
+   "$PD3M_DIR/.venv/bin/img2dataset" \
+     --url_list="$PD3M_DIR/pd3m_refl.parquet" \
+     --input_format=parquet --url_col=url --caption_col=caption \
+     --output_format=files --output_folder="$PRE_DATA" \
+     --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
+     --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
+     --timeout=60 --retries=2 --enable_wandb=False
+
+The downloader writes image-caption pairs under ``$PRE_DATA``. The loader
+resizes and center-crops them to 512 × 512. The config sets
+``actor.refl_pre_data.caption_prefix`` to ``"The image shows "`` to remove that
+opening from PD3M captions; set it to ``""`` to keep your own captions unchanged.
+
+Run with Lpre weights of ``0.1`` and ``0.01``:
+
+.. code-block:: bash
 
    for WEIGHT in 0.1 0.01; do
      CUDA_VISIBLE_DEVICES=0,1,2,3 \

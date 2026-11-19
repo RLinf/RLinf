@@ -126,18 +126,7 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
      actor.refl_reward_model.med_config="$IR_MODEL/med_config.json"
      actor.refl_data.path="$IR_DATA/refl_data.json"
      actor.refl_data.exclude_path="$IR_DATA/test.json"
-     actor.refl_samples_per_step=512
-     actor.global_batch_size=64
-     actor.micro_batch_size=1
-     actor.refl_pre_data.num_workers=0
      env.eval.dataset.path="$IR_DATA/test.json"
-     env.eval.total_num_envs=4
-     env.eval.rollout_epoch=128
-     env.eval.reward.batch_size=1
-     runner.max_epochs=50
-     runner.max_steps=50
-     runner.val_check_interval=10
-     runner.save_interval=10
    )
 
    CUDA_VISIBLE_DEVICES=0,1,2,3 \
@@ -182,11 +171,69 @@ ReFL 先采样到去噪后期，再用一步预测得到干净图像。冻结的
      00001.png
      00001.txt
 
-下方实验使用 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_ 图文子集。将 ``<image_text_dir>`` 替换为准备好的图文目录，分别运行 Lpre 权重为 ``0.1`` 和 ``0.01`` 的训练：
+下方实验使用 `PD3M <https://huggingface.co/datasets/Spawning/PD3M>`_ 的 20,000 对图文数据。下面的命令在独立环境中准备数据。脚本读取前两个元数据分片，保留有授权信息、宽高均不小于 512 像素、长边不超过短边两倍的图像。排除 iNaturalist 来源及描述单色图像或文档的样本，再以随机种子 ``42`` 打乱，取前 20,000 条。
 
 .. code-block:: bash
 
-   export PRE_DATA="<image_text_dir>"
+   export PD3M_DIR="$PWD/data/PD3M"
+   uv venv --python 3.10 "$PD3M_DIR/.venv"
+   uv pip install --python "$PD3M_DIR/.venv/bin/python" \
+     huggingface_hub pyarrow img2dataset==1.47.0
+
+   "$PD3M_DIR/.venv/bin/hf" download Spawning/PD3M \
+     metadata/pd3m.00.parquet metadata/pd3m.01.parquet \
+     --repo-type dataset --local-dir "$PD3M_DIR"
+
+   "$PD3M_DIR/.venv/bin/python" - "$PD3M_DIR" <<'PYTHON'
+   import random
+   import re
+   import sys
+
+   import pyarrow as pa
+   import pyarrow.parquet as pq
+
+   root = sys.argv[1]
+   columns = ["id", "url", "caption", "width", "height", "license", "source"]
+   rows = []
+   for shard in ("00", "01"):
+       rows += pq.read_table(
+           f"{root}/metadata/pd3m.{shard}.parquet", columns=columns
+       ).to_pylist()
+
+   mono = re.compile(r"black[- ]and[- ]white|grayscale|sepia|monochrome", re.I)
+   document = re.compile(
+       r"\b(book|page|newspaper|document|letter|map|poster|stamp|coin|text (on|at|in))\b",
+       re.I,
+   )
+   selected = [
+       row for row in rows
+       if row["license"]
+       and row["source"] != "iNaturalist"
+       and min(row["width"], row["height"]) >= 512
+       and max(row["width"], row["height"]) <= 2 * min(row["width"], row["height"])
+       and not mono.search(row["caption"])
+       and not document.search(row["caption"])
+   ]
+   random.Random(42).shuffle(selected)
+   pairs = [{key: row[key] for key in ("id", "url", "caption")}
+            for row in selected[:20000]]
+   pq.write_table(pa.Table.from_pylist(pairs), f"{root}/pd3m_refl.parquet")
+   PYTHON
+
+   export PRE_DATA="$PD3M_DIR/images_512"
+   "$PD3M_DIR/.venv/bin/img2dataset" \
+     --url_list="$PD3M_DIR/pd3m_refl.parquet" \
+     --input_format=parquet --url_col=url --caption_col=caption \
+     --output_format=files --output_folder="$PRE_DATA" \
+     --image_size=512 --resize_mode=keep_ratio --resize_only_if_bigger=True \
+     --number_sample_per_shard=1000 --processes_count=16 --thread_count=32 \
+     --timeout=60 --retries=2 --enable_wandb=False
+
+下载后的图像和描述文件位于 ``$PRE_DATA``，训练加载时缩放并中心裁剪到 512 × 512。配置中的 ``actor.refl_pre_data.caption_prefix`` 为 ``"The image shows "``，用于去掉 PD3M 描述开头的这段文字。要保留自己的描述原文，将该配置项设为 ``""``。
+
+分别运行 Lpre 权重为 ``0.1`` 和 ``0.01`` 的训练：
+
+.. code-block:: bash
 
    for WEIGHT in 0.1 0.01; do
      CUDA_VISIBLE_DEVICES=0,1,2,3 \

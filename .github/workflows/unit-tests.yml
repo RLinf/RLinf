@@ -62,7 +62,7 @@ jobs:
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
           UV_TORCH_BACKEND=cpu uv pip install gymnasium imageio opencv-python "torchvision==0.26.0"
-          uv pip install "transformers<=5.9.0" "diffusers==0.38.0" "peft==0.18.1"
+          uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
         timeout-minutes: 40

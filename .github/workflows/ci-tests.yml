@@ -199,9 +199,6 @@ jobs:
               # sampler), so env changes have to trigger this job.
               - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
-              # CPU diffusion tests use the SD3 model and compose its example config.
-              - 'rlinf/models/diffusion/**'
-              - 'examples/diffusion/config/**'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               # The agent loop, rollout buffer, agentic tokenizer, Megatron MA actor
               # and async agent runner have unit tests that import them.
