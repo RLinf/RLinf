@@ -1288,6 +1288,20 @@ def validate_embodied_cfg(cfg):
         assert algorithm_cfg.get("adv_type", None) != "opd", (
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
+    for bootstrap_flag in ("batch_bootstrap_inference", "value_only_bootstrap"):
+        flag_value = cfg.rollout.get(bootstrap_flag, False)
+        if not isinstance(flag_value, bool):
+            raise ValueError(
+                f"Expected bool for rollout.{bootstrap_flag}, got {flag_value!r}."
+            )
+    if (
+        cfg.rollout.get("batch_bootstrap_inference", False)
+        or cfg.rollout.get("value_only_bootstrap", False)
+    ) and cfg.rollout.get("rollout_backend", "huggingface") != "huggingface":
+        raise ValueError(
+            "rollout.batch_bootstrap_inference and rollout.value_only_bootstrap "
+            "require rollout.rollout_backend='huggingface'."
+        )
     if cfg.rollout.get("rollout_backend", "huggingface") == "phyai":
         assert model_type == SupportedModel.OPENPI, (
             "Expected model_type='openpi' for rollout_backend='phyai', "
@@ -1782,6 +1796,11 @@ def validate_embodied_cfg(cfg):
             if cfg.env.get("eval", None) is not None
             else None
         )
+        if eval_env_type == SupportedEnvType.MANISKILL:
+            with open_dict(cfg.env.eval):
+                cfg.env.eval._reconfigure_on_full_reset = (
+                    cfg.env.eval.use_fixed_reset_state_ids
+                )
         if (
             train_env_type == SupportedEnvType.MANISKILL
             or eval_env_type == SupportedEnvType.MANISKILL
@@ -2055,6 +2074,19 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
 def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
     """Validate SearchR1 multi-agent training requirements before launch."""
+    expected_adv_type = (
+        "gae_dynamic"
+        if OmegaConf.select(cfg, "critic.use_critic_model", default=False)
+        else "grpo_dynamic"
+    )
+    if (
+        OmegaConf.select(cfg, "agentloop.is_dynamic_rollout_batch", default=False)
+        and cfg.algorithm.adv_type != expected_adv_type
+    ):
+        raise ValueError(
+            f"Multi-turn training requires algorithm.adv_type={expected_adv_type!r}, "
+            f"got {cfg.algorithm.adv_type!r}."
+        )
     reward_cfg = cfg.get("reward", None)
     if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
         return cfg
@@ -2063,8 +2095,6 @@ def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
         cfg.agentloop.setdefault("truncate_response", True)
     if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
         raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
-    if not cfg.actor.get("enable_dp_load_balance", False):
-        raise ValueError("SearchR1 requires actor.enable_dp_load_balance=True.")
     if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(
         "importance_sampling_fix", False
     ):

@@ -252,20 +252,10 @@ def preprocess_reasoning_advantages_inputs(
             }
         )
 
-    elif kwargs["adv_type"] == "grpo_dynamic":
-        grouped_rewards = (
-            rewards.reshape(-1, kwargs["num_sequence"]).transpose(0, 1).contiguous()
-        )
-        kwargs.update(
-            {
-                "rewards": grouped_rewards,
-            }
-        )
-
     elif kwargs["adv_type"] == "reinpp":
         kwargs.update({"rewards": rewards.unsqueeze(0)})
 
-    elif kwargs["adv_type"] in ("raw", "gae_dynamic"):
+    elif kwargs["adv_type"] == "raw":
         kwargs.update({"rewards": rewards})
 
     else:
@@ -274,17 +264,16 @@ def preprocess_reasoning_advantages_inputs(
     if values is not None:  # [bsz, seq_len]
         assert values.ndim == 2, f"Unsupported values shape {values.shape}"
         values = values.transpose(0, 1)  # [seq_len, bsz]
-        if kwargs["adv_type"] != "gae_dynamic":
-            # pad values with zeros at the end for bootstrapping
-            values = torch.cat(
-                [
-                    values,
-                    torch.zeros(
-                        (1, values.shape[-1]), dtype=values.dtype, device=values.device
-                    ),
-                ],
-                dim=0,
-            )  # [seq_len+1, bsz]
+        # Pad values with zeros at the end for bootstrapping.
+        values = torch.cat(
+            [
+                values,
+                torch.zeros(
+                    (1, values.shape[-1]), dtype=values.dtype, device=values.device
+                ),
+            ],
+            dim=0,
+        )  # [seq_len+1, bsz]
 
         kwargs.update({"values": values})
 

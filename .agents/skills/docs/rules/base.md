@@ -34,6 +34,15 @@ Rewrite such a sentence around the behavior instead of trimming it:
 - The first sentence after the title, or after a leading figure, says what the page lets the reader do, understand, or look up. Background comes after it, never before.
 - Describe what exists now. Leave out the history of a change and sentences whose only content is that something is not needed, not included, or no longer used; state the requirement positively. Keep a negative only when it answers a decision the reader is making ("the controller computer needs no GPU").
 
+## Prefer simplicity and readability over verbosity
+
+When completeness and readability pull in opposite directions, cut from the main flow rather than piling more text onto the page. A shorter page that gets the reader cleanly through the common path beats an exhaustive page that lists every option, default, and caveat.
+
+- **Apply the delete test.** Every section, paragraph, table row, and note must earn its space. If removing it still lets a reader finish the task (recipe or guide) or grasp the idea (concept), cut it or link to Reference.
+- **Say each thing once.** State a fact or config key once, where the reader acts on it; do not repeat it across the intro, command prose, tables, and results.
+- **Write for scanning.** Keep paragraphs short (1–3 sentences on recipes and guides) and code blocks clean. Never dump a long list of config keys or parameter overrides into a dense prose paragraph; show only the few keys the reader changes and leave the rest to YAML defaults.
+- **Use progressive disclosure.** Lead with one clean common path; push optional variants and advanced tuning to the end or to a separate guide or reference page.
+
 ## Be accurate
 
 - Check every name, command, config key, path, and value against the code before you write it. Model and env names are the string values of `SupportedModel` in `rlinf/config.py` and `SupportedEnvType` in `rlinf/envs/__init__.py`.
