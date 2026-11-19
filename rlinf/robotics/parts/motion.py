@@ -427,7 +427,7 @@ class SetpointStreamer:
         t = np.asarray(target, dtype=np.float64).reshape(self.dim)
         self._finish_move(completed=False)
         self._move = (self._q.copy(), t.copy(), float(now), max(float(duration), 1e-6))
-        self._move_done.clear()
+        self._move_done = threading.Event()
         self._move_completed = False
         self._goal = t.copy()
         self._goal_time = None
@@ -643,11 +643,12 @@ class JointStream:
             )
             done = streamer.start_move(target_arr, time.monotonic(), move_s)
         # The slack covers loop ticks that run late.
-        finished = done.wait(timeout=move_s + 1.0)
+        done.wait(timeout=move_s + 1.0)
         with self._lock:
-            if not finished:
+            if not done.is_set():
                 streamer.abort_move()
-            return finished and streamer.move_completed
+                return False
+            return streamer._move_done is done and streamer.move_completed
 
     def brake(self) -> Optional[np.ndarray]:
         """End any running move and bring the joints to rest within the limits.
