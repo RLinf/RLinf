@@ -24,7 +24,7 @@ Choose ``<model>`` and ``<env>`` to match your target benchmark:
      - ``fastwam``
      - ``libero`` or ``liberoplus``
    * - RoboTwin
-     - ``openvla-oft`` / ``openpi`` / ``lingbotvla``
+     - ``openvla-oft`` / ``openpi`` / ``lingbotvla`` / ``lingbotvlav2``
      - ``robotwin``
    * - BEHAVIOR-1K
      - ``openpi``

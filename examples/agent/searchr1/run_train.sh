@@ -8,7 +8,7 @@ export RAY_DEDUP_LOGS=0
 
 CONFIG_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_PATH=$(dirname $(dirname $(dirname "$CONFIG_PATH")))
-MEGATRON_PATH=/opt/Megatron-LM
+MEGATRON_PATH=/opt/venv/reason/Megatron-LM
 export PYTHONPATH=${REPO_PATH}:${MEGATRON_PATH}:${REPO_PATH}/examples:$PYTHONPATH
 
 if [ -z "$1" ]; then

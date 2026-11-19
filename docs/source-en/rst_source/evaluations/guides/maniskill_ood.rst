@@ -1,7 +1,7 @@
 ManiSkill OOD Evaluation
 ========================
 
-ManiSkill OOD evaluation measures how well VLA policies generalize to out-of-distribution ManiSkill scenes. It is built on the **Put-on-Plate** task family (placing a carrot on a plate) and follows the OOD test protocol from `rl4vla <https://arxiv.org/abs/2505.19789>`_, with scenes grouped into **Vision**, **Semantic**, and **Execution** categories.
+ManiSkill OOD evaluation measures how well VLA policies generalize to out-of-distribution ManiSkill scenes. It is built on the **Put-on-Plate** task family (placing a carrot on a plate) and follows the OOD test protocol from `rl4vla <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_, with scenes grouped into **Vision**, **Semantic**, and **Execution** categories.
 
 Related training doc: :doc:`../../examples/embodied/maniskill`
 
@@ -85,7 +85,7 @@ ManiSkill evaluation selects scenes via ``id`` (environment ID) and ``obj_set`` 
 Protocol Overview
 ~~~~~~~~~~~~~~~~~
 
-RLinf's ManiSkill OOD protocol matches `rl4vla <https://arxiv.org/abs/2505.19789>`_ for fair comparison with published results.
+RLinf's ManiSkill OOD protocol matches `rl4vla <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_ for fair comparison with published results.
 
 - **In-distribution**: ``PutOnPlateInScene25Main-v3`` + ``obj_set=train`` (the plate-25-main training task);
 - **Out-of-distribution**: 13 variant environments + ``obj_set=test``, split into Vision / Semantic / Execution;

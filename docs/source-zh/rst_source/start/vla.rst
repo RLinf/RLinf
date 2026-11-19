@@ -29,7 +29,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
    hf download gen-robot/openvla-7b-rlvla-warmup \
    --local-dir /path/to/model/openvla-7b-rlvla-warmup/
 
-该模型已在论文中引用：`paper <https://arxiv.org/abs/2505.19789>`_
+该模型已在论文中引用：`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_
 
 若使用 **OpenVLA-OFT** 模型，请运行以下命令：
 

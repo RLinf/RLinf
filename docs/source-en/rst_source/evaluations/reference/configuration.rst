@@ -36,7 +36,7 @@ Eval configs are Hydra YAML files under ``evaluations/<benchmark>/``. The core s
          save_video: True
 
    rollout:
-     generation_backend: "huggingface"
+     rollout_backend: "huggingface"
      model:
        model_path: "/path/to/model"   # Required: model weights path
        model_type: "openpi"

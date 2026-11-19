@@ -24,7 +24,7 @@ runner:
     log_path: /workspace/results/robotwin_grpo_lingbotvla
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 1
   max_steps: -1
@@ -102,7 +102,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
 

@@ -42,7 +42,12 @@ def init_global_config_reasoning(config, component_placement) -> None:
     for component in component_placement._components:
         if component == "reward":
             continue
-        instance_num = getattr(component_placement, f"{component}_dp_size")
+        if component == "rollout":
+            # Rollout instances may span multiple nodes (server mode), so
+            # the instance count is exposed under a dedicated property.
+            instance_num = component_placement.rollout_num_model_instances
+        else:
+            instance_num = getattr(component_placement, f"{component}_dp_size")
         world_size = getattr(component_placement, f"{component}_world_size")
         model_parallel_size = world_size // instance_num
 

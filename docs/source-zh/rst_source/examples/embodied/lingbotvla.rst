@@ -1,4 +1,4 @@
-Lingbot-VLA模型强化学习
+LingbotVLA 1.0 模型强化学习
 ========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -10,16 +10,16 @@ Lingbot-VLA模型强化学习
    :align: center
    :width: 90%
 
-   Lingbot-VLA 在 RoboTwin 上（图片来源：`RLinf <https://github.com/RLinf>`__）。
+   LingbotVLA 1.0 在 RoboTwin 上（图片来源：`RLinf <https://github.com/RLinf>`__）。
 
-`Lingbot-VLA <https://huggingface.co/robbyant/lingbot-vla-4b>`__ 是一个基于 Qwen2.5-VL 的
+`LingbotVLA 1.0 <https://huggingface.co/robbyant/lingbot-vla-4b>`__ 是一个基于 Qwen2.5-VL 的
 视觉-语言-动作模型，以自回归方式生成连续动作块。RLinf 将其原生接入——嵌入 RLinf 的 Python
 内存空间，实现零延迟的 Tensor 级交互——并支持在 RoboTwin 2.0 仿真器上进行全参数 SFT 与 GRPO 微调。
 
 概览
 ----------------------------------------
 
-先 SFT、再用 GRPO 微调 Lingbot-VLA，完成 RoboTwin 2.0 双臂操作任务。
+先 SFT、再用 GRPO 微调 LingbotVLA 1.0，完成 RoboTwin 2.0 双臂操作任务。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -45,7 +45,7 @@ Lingbot-VLA模型强化学习
       1–2 节点 · 8–16 GPU
 
 | **你将完成：** 原生安装 → 克隆 RoboTwin 与资产 → 下载检查点 → SFT → GRPO → 观察 ``env/success_once``。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboTwin 仓库与资产 · Lingbot-VLA 与 Qwen 底座检查点（见下文步骤）。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboTwin 仓库与资产 · LingbotVLA 1.0 与 Qwen 底座检查点（见下文步骤）。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -125,7 +125,7 @@ Lingbot-VLA模型强化学习
 
 **选项 2：自定义环境**
 
-在本地环境中一键安装 Lingbot-VLA 原生环境与 RoboTwin 基础依赖：
+在本地环境中一键安装 LingbotVLA 1.0 原生环境与 RoboTwin 基础依赖：
 
 .. code-block:: bash
 
@@ -148,7 +148,7 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 下载模型
 ----------------------------------------
 
-开始训练前，请从 HuggingFace 下载 Lingbot-VLA 基础权重、RoboTwin SFT 权重和 Qwen 底座模型。进行 RoboTwin SFT 或强化学习实验时，请使用下面固定 revision 的 RoboTwin SFT 权重，不要直接使用 HuggingFace ``main`` 分支的最新权重。
+开始训练前，请从 HuggingFace 下载 LingbotVLA 1.0 基础权重、RoboTwin SFT 权重和 Qwen 底座模型。进行 RoboTwin SFT 或强化学习实验时，请使用下面固定 revision 的 RoboTwin SFT 权重，不要直接使用 HuggingFace ``main`` 分支的最新权重。
 
 .. code-block:: bash
 
@@ -178,7 +178,7 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 配置文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 支持对 Lingbot-VLA 进行全参监督微调（SFT）与强化学习对齐（GRPO）。相关配置文件如下：
+RLinf 支持对 LingbotVLA 1.0 进行全参监督微调（SFT）与强化学习对齐（GRPO）。相关配置文件如下：
 
 * **SFT (行为克隆)**:
   ``examples/sft/config/robotwin_sft_lingbotvla.yaml``
@@ -217,7 +217,7 @@ SFT 阶段的核心在于指定离线数据集格式（LeRobot Parquet 格式）
 
 GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``actor.model`` 下覆写了强化学习所需的核心 SDE 采样参数。
 
-**注意**：由于 Lingbot-VLA 使用的是 ``robotwin_50.json`` 中统一的全局归一化键值（如 ``action.arm.position``），因此在不同任务间切换时，**无需再配置或覆写** ``unnorm_key``，实现了真正的多任务平滑迁移。
+**注意**：由于 LingbotVLA 1.0 使用的是 ``robotwin_50.json`` 中统一的全局归一化键值（如 ``action.arm.position``），因此在不同任务间切换时，**无需再配置或覆写** ``unnorm_key``，实现了真正的多任务平滑迁移。
 
 .. code-block:: yaml
 
@@ -287,7 +287,7 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 ----------------------------------------
 
 独立评估请走 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`。
-使用 Lingbot-VLA 评测配置，例如 ``robotwin_click_bell_lingbotvla_eval`` 和
+使用 LingbotVLA 1.0 评测配置，例如 ``robotwin_click_bell_lingbotvla_eval`` 和
 ``robotwin_place_shoe_lingbotvla_eval``；该指南负责 ``ROBOT_PLATFORM=ALOHA``、
 ``ROBOTWIN_PATH``、assets、启动命令和结果解读。
 
@@ -298,7 +298,7 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 
 .. code:: bash
 
-   tensorboard --logdir ../results --port 6006
+   tensorboard --logdir ./logs --port 6006
 
 关键指标是 ``env/success_once``。完整指标说明见
 :doc:`训练指标 <../../reference/metrics>`。
@@ -311,7 +311,7 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
      save_video: True
      video_base_dir: ${runner.logger.log_path}/video/eval
 
-.. list-table:: Lingbot-VLA 在 RoboTwin 任务上的评估结果
+.. list-table:: LingbotVLA 1.0 在 RoboTwin 任务上的评估结果
    :header-rows: 1
 
    * - 任务
@@ -332,4 +332,4 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 
 .. note::
 
-   Lingbot-VLA 结果使用 ``demo_randomized`` 设置。任务级仿真选项见 `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__。
+   LingbotVLA 1.0 结果使用 ``demo_randomized`` 设置。任务级仿真选项见 `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__。

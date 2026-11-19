@@ -407,12 +407,12 @@ Arm Compliance
 
 The collection config sets one shared ``compliance`` mapping on the
 ``DualFranka`` hardware entry: translational stiffness 1000 N/m, rotational
-stiffness 40 Nm/rad, translational clip 0.02 m, rotational clip 0.3 rad,
-per-step translation limit 0.02 m, per-step rotation limit 0.30 rad, and
-``max_delta_tau`` 0.2. Rotational stiffness, rotational clip, and the per-step
-rotation limit match the Franky script. ``max_step`` 0.03 m at 10 Hz can trip
-``joint_velocity_violation`` with a Robotiq payload, so the translational step
-stays at 0.02 m. The DAgger config omits this mapping and therefore uses
+stiffness 56 Nm/rad, translational clip 0.024 m, rotational clip 0.15 rad,
+per-step translation limit 0.06 m, per-step rotation limit 0.15 rad.
+``max_delta_tau`` is omitted and uses the default 0.3 Nm per control cycle. ``max_step`` 0.03 m at 10 Hz can trip
+``joint_velocity_violation`` with a Robotiq payload; reduce ``max_step`` if
+this occurs with your payload and control rate. The DAgger config omits this
+mapping and therefore uses
 Franky's defaults; copy the collection mapping onto the DAgger hardware entry
 when the two should feel the same. Defaults and reset requests are described in
 :ref:`Configure Arm Motion <franka-motion-settings>`.

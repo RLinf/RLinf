@@ -1,7 +1,7 @@
 ManiSkill OOD 评测
 ==================
 
-ManiSkill OOD 评测用于检验 VLA 策略在 ManiSkill 分布外（Out-of-Distribution）场景上的泛化能力。评测基于 **Put-on-Plate** 任务族（将胡萝卜放到盘子上），沿用 `rl4vla <https://arxiv.org/abs/2505.19789>`_ 论文中的 OOD 测试协议，将场景划分为 **Vision**、**Semantic**、**Execution** 三类。
+ManiSkill OOD 评测用于检验 VLA 策略在 ManiSkill 分布外（Out-of-Distribution）场景上的泛化能力。评测基于 **Put-on-Plate** 任务族（将胡萝卜放到盘子上），沿用 `rl4vla <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_ 论文中的 OOD 测试协议，将场景划分为 **Vision**、**Semantic**、**Execution** 三类。
 
 相关训练文档：:doc:`../../examples/embodied/maniskill`
 
@@ -85,7 +85,7 @@ ManiSkill 评测在 ``env.eval.init_params`` 下通过 ``id`` （环境 ID）与
 评测协议概述
 ~~~~~~~~~~~~
 
-RLinf 的 ManiSkill OOD 协议与 `rl4vla <https://arxiv.org/abs/2505.19789>`_ 保持一致，便于与已发表结果对比。
+RLinf 的 ManiSkill OOD 协议与 `rl4vla <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_ 保持一致，便于与已发表结果对比。
 
 - **训练分布内（In-Distribution）**：``PutOnPlateInScene25Main-v3`` + ``obj_set=train``，即 plate-25-main 主训练任务；
 - **分布外（OOD）**：13 个变体环境 + ``obj_set=test``，按 Vision / Semantic / Execution 划分；

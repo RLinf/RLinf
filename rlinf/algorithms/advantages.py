@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
 
 import torch
 
 from rlinf.algorithms.registry import register_advantage
 from rlinf.algorithms.utils import kl_penalty, safe_normalize
 from rlinf.utils.utils import masked_mean
+
+if TYPE_CHECKING:
+    from rlinf.data.schema.actor_batch import TokenRows
 
 
 @register_advantage("gae")
@@ -84,6 +89,140 @@ def compute_gae_advantages_and_returns(
         returns = safe_normalize(returns, loss_mask=loss_mask)
 
     return advantages, returns
+
+
+def _episode_action_indices(
+    loss_mask: TokenRows, idx_to_traj: list[int], prompt_lengths: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Map each generated token to its time and trajectory in a complete batch."""
+    if len(idx_to_traj) != len(loss_mask) or not idx_to_traj:
+        raise ValueError("Agent GAE requires one trajectory index per generated turn.")
+    if min(idx_to_traj) < 0:
+        raise ValueError("Agent GAE requires nonnegative trajectory indices.")
+    if prompt_lengths.shape != (len(idx_to_traj),):
+        raise ValueError("Agent GAE requires one prompt length per generated turn.")
+    prompts = prompt_lengths.tolist()
+    num_trajectories = max(idx_to_traj) + 1
+    lengths = [0] * num_trajectories
+    last_turns = [-1] * num_trajectories
+    offsets = [0] * len(idx_to_traj)
+    for turn in sorted(range(len(idx_to_traj)), key=lambda i: prompts[i]):
+        trajectory = idx_to_traj[turn]
+        length = int(loss_mask[turn].sum())
+        if length == 0:
+            raise ValueError("Agent GAE requires nonempty generated turns.")
+        previous = last_turns[trajectory]
+        if previous >= 0 and prompts[previous] == prompts[turn]:
+            raise ValueError(
+                "Agent GAE requires distinct prompt lengths within an episode."
+            )
+        offsets[turn] = lengths[trajectory]
+        lengths[trajectory] += length
+        last_turns[trajectory] = turn
+    if any(length == 0 for length in lengths):
+        raise ValueError(
+            "Agent GAE requires contiguous trajectory indices starting at zero."
+        )
+
+    device = loss_mask[0].device
+    times = torch.cat(
+        [
+            torch.arange(int(mask.sum()), device=device) + offset
+            for mask, offset in zip(loss_mask, offsets)
+        ]
+    )
+    trajectories = torch.cat(
+        [
+            torch.full((int(mask.sum()),), trajectory, device=device, dtype=torch.long)
+            for mask, trajectory in zip(loss_mask, idx_to_traj)
+        ]
+    )
+    return (
+        times,
+        trajectories,
+        torch.tensor(lengths, device=device),
+        torch.tensor(last_turns, device=device),
+    )
+
+
+@register_advantage("gae_dynamic")
+def compute_gae_dynamic_advantages_and_returns(
+    rewards: torch.Tensor,
+    values: TokenRows,
+    loss_mask: TokenRows,
+    idx_to_traj: list[int],
+    prompt_lengths: torch.Tensor,
+    group_size: int = 1,
+    gamma: float = 1.0,
+    gae_lambda: float = 1.0,
+    normalize_advantages: bool = True,
+    **kwargs,
+) -> tuple[TokenRows, TokenRows]:
+    """Compute GAE across complete multi-turn episodes.
+
+    Args:
+        rewards: Episode rewards repeated on each turn, shaped [num_turns].
+        values: Fixed old action values, as real-length token rows.
+        loss_mask: Generated action positions, with the same shape as values.
+        idx_to_traj: Trajectory owning each turn; rows may arrive out of order.
+        prompt_lengths: Growing conversation lengths used to order each episode.
+        group_size: Number of complete trajectories per prompt.
+        gamma: Discount per generated action.
+        gae_lambda: GAE decay per generated action.
+        normalize_advantages: Normalize over all actions in the rollout batch.
+
+    Returns:
+        Advantages and returns in the original turn layout, zero outside actions.
+        The final turn's reward is applied once; completed episodes bootstrap zero.
+    """
+    times, trajectories, lengths, last_turns = _episode_action_indices(
+        loss_mask, idx_to_traj, prompt_lengths
+    )
+    if group_size <= 0 or len(lengths) % group_size != 0:
+        raise ValueError(
+            f"Agent GAE requires the trajectory count ({len(lengths)}) to be "
+            f"divisible by a positive group_size ({group_size})."
+        )
+    episode_values = values[0].new_zeros(
+        (int(lengths.max()), len(lengths)), dtype=torch.float32
+    )
+    episode_values[times, trajectories] = torch.cat(
+        [row[mask] for row, mask in zip(values, loss_mask)]
+    ).float()
+    episode_mask = (
+        torch.arange(len(episode_values), device=values[0].device)[:, None] < lengths
+    )
+    episode_rewards = torch.zeros_like(episode_values)
+    episode_rewards[
+        lengths - 1, torch.arange(len(lengths), device=values[0].device)
+    ] = rewards[last_turns]
+    values_with_bootstrap = torch.nn.functional.pad(episode_values, (0, 0, 0, 1))
+    dones = torch.zeros_like(values_with_bootstrap, dtype=torch.bool)
+    dones[lengths, torch.arange(len(lengths), device=values[0].device)] = True
+    advantages, returns = compute_gae_advantages_and_returns(
+        rewards=episode_rewards,
+        values=values_with_bootstrap,
+        dones=dones,
+        gamma=gamma,
+        gae_lambda=gae_lambda,
+        normalize_advantages=False,
+    )
+    if normalize_advantages:
+        valid = advantages[episode_mask].double()
+        mean, variance = valid.mean(), valid.var(unbiased=False)
+        advantages = (advantages - mean.float()) / variance.sqrt().clamp_min(
+            1e-8
+        ).float()
+
+    turn_advantages = [torch.zeros_like(row, dtype=torch.float32) for row in values]
+    turn_returns = [torch.zeros_like(row) for row in turn_advantages]
+    offset = 0
+    for adv, ret, mask in zip(turn_advantages, turn_returns, loss_mask):
+        end = offset + int(mask.sum())
+        adv[mask] = advantages[times[offset:end], trajectories[offset:end]]
+        ret[mask] = returns[times[offset:end], trajectories[offset:end]]
+        offset = end
+    return turn_advantages, turn_returns
 
 
 @register_advantage("grpo")
@@ -164,46 +303,13 @@ def compute_grpo_video_advantages(
     return advantages * loss_mask, None
 
 
-@register_advantage("grpo_dynamic")
-def compute_grpo_dynamic_advantages(
+def compute_grpo_turn_advantages(
     rewards: torch.Tensor,
-    loss_mask: torch.Tensor,
     group_size: int,
     idx_to_traj: list[int],
-    advantage_mode: str = "turn",  # "trajectory" or "turn"
-    **kwargs,
-):
-    """
-    Compute GRPO advantages for multi-turn multi-agent scenarios.
-
-    IMPORTANT: This function computes advantages PER QUESTION, not globally.
-    - idx_to_traj maps turn_idx -> global_traj_idx (e.g., [0,0,1,1,2,2,3,3,4,4,...,15,15])
-    - Trajectories 0-3 belong to question 0, 4-7 to question 1, etc.
-    - We must compute GRPO separately for each question's group_size trajectories
-
-    Two advantage computation modes:
-    1. "trajectory": Trajectory-level GRPO (Method 1)
-       - Compute mean/std over group_size trajectory rewards per question
-       - Broadcast same advantage to all turns in a trajectory
-       - Example: Q0 has 4 trajs with 1,2,3,4 turns. Compute GRPO over 4 traj rewards,
-                  then assign traj0_adv to its 1 turn, traj1_adv to its 2 turns, etc.
-
-    2. "turn": Turn-level GRPO (Method 2)
-       - Compute mean/std over all turns within each question
-       - Example: Q0 has 4 trajs with 1,2,3,4 turns = 10 turns total.
-                  Compute GRPO over these 10 turn rewards (currently all same within traj).
-       - Future-proof: works when turns have different rewards within same trajectory
-
-    Args:
-        rewards: Shape [num_sequence, 1] after preprocessing (num_sequence = total turns)
-        loss_mask: Shape [seq_len, num_sequence] after preprocessing
-        group_size: Number of trajectories per question (e.g., 4)
-        idx_to_traj: List mapping turn_idx -> global_traj_idx
-        advantage_mode: "trajectory" or "turn"
-
-    Returns:
-        advantages: Shape [seq_len, num_sequence]
-    """
+    advantage_mode: str = "turn",
+) -> torch.Tensor:
+    """Normalize turn rewards within complete question groups."""
     num_sequence = len(idx_to_traj)
 
     rewards_flat = rewards.squeeze(-1)
@@ -291,12 +397,57 @@ def compute_grpo_dynamic_advantages(
             f"Invalid advantage_mode: {advantage_mode}. Must be 'trajectory' or 'turn'"
         )
 
-    advantages = torch.zeros_like(
-        loss_mask, dtype=rewards.dtype
-    ) + turn_advantages.view(1, -1)
-    advantages = advantages * loss_mask
+    return turn_advantages
 
-    return advantages, None
+
+@register_advantage("grpo_dynamic")
+def compute_grpo_dynamic_advantages(
+    rewards: torch.Tensor,
+    loss_mask: TokenRows,
+    group_size: int,
+    idx_to_traj: list[int],
+    advantage_mode: str = "turn",  # "trajectory" or "turn"
+    **kwargs,
+) -> tuple[TokenRows, None]:
+    """
+    Compute GRPO advantages for multi-turn multi-agent scenarios.
+
+    IMPORTANT: This function computes advantages PER QUESTION, not globally.
+    - idx_to_traj maps turn_idx -> global_traj_idx (e.g., [0,0,1,1,2,2,3,3,4,4,...,15,15])
+    - Trajectories 0-3 belong to question 0, 4-7 to question 1, etc.
+    - We must compute GRPO separately for each question's group_size trajectories
+
+    Two advantage computation modes:
+    1. "trajectory": Trajectory-level GRPO (Method 1)
+       - Compute mean/std over group_size trajectory rewards per question
+       - Broadcast same advantage to all turns in a trajectory
+       - Example: Q0 has 4 trajs with 1,2,3,4 turns. Compute GRPO over 4 traj rewards,
+                  then assign traj0_adv to its 1 turn, traj1_adv to its 2 turns, etc.
+
+    2. "turn": Turn-level GRPO (Method 2)
+       - Compute mean/std over all turns within each question
+       - Example: Q0 has 4 trajs with 1,2,3,4 turns = 10 turns total.
+                  Compute GRPO over these 10 turn rewards (currently all same within traj).
+       - Future-proof: works when turns have different rewards within same trajectory
+
+    Args:
+        rewards: Shape [num_sequence, 1] after preprocessing (num_sequence = total turns)
+        loss_mask: Real-length token rows, one per sequence
+        group_size: Number of trajectories per question (e.g., 4)
+        idx_to_traj: List mapping turn_idx -> global_traj_idx
+        advantage_mode: "trajectory" or "turn"
+
+    Returns:
+        advantages: TokenRows in the input row order, masked at absolute token positions
+    """
+    turn_advantages = compute_grpo_turn_advantages(
+        rewards, group_size, idx_to_traj, advantage_mode
+    )
+
+    return [
+        mask.to(rewards.dtype) * value
+        for mask, value in zip(loss_mask, turn_advantages)
+    ], None
 
 
 @register_advantage("reinpp")
