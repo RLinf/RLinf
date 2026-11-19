@@ -161,7 +161,6 @@ def load_activity_instance_tro_state(
     *,
     env_idx: int = 0,
     finalize: bool = True,
-    default_robot_poses: dict | None = None,
 ) -> None:
     """Apply a cached tro_state file to an existing OmniGibson env.
 
@@ -172,7 +171,6 @@ def load_activity_instance_tro_state(
         reset_scene: Reset the selected scene after saving its initial state.
         env_idx: Scene within the batched OmniGibson environment.
         finalize: Settle and save now. A batch caller does this after all scenes are placed.
-        default_robot_poses: Base template poses for instances without robot poses.
     """
     from omnigibson.tasks.behavior_task import get_presampled_robot_poses
     from omnigibson.utils.python_utils import recursively_convert_to_torch
@@ -184,12 +182,6 @@ def load_activity_instance_tro_state(
     robot = env.task.get_agent(env, env_idx)
     object_scope = env.task.object_scopes[env_idx]
     robot_poses = tro_state.pop("robot_poses", None)
-    placement = robot_poses or default_robot_poses
-    if placement is None and env.task.use_presampled_robot_pose:
-        placement = scene.get_task_metadata("robot_poses")
-    # The file restores the base pose. Clear joint, controller and grasp state from the last episode.
-    robot.reset()
-
     for tro_key, state in tro_state.items():
         entity = object_scope.get(tro_key)
         assert entity is not None, (
@@ -217,9 +209,10 @@ def load_activity_instance_tro_state(
             state = rebased_state
         entity.load_state(state, serialized=False)
 
-    if placement is not None:
+    if robot_poses is not None:
+        robot.reset()
         robot_pose = get_presampled_robot_poses(
-            placement, robot.model, env.task.presampled_pose_key
+            robot_poses, robot.model, env.task.presampled_pose_key
         )[0]
         robot.set_position_orientation(
             robot_pose["position"],
@@ -227,10 +220,7 @@ def load_activity_instance_tro_state(
             frame="scene",
         )
         sync_robot_after_pose_override(robot)
-    scene.write_task_metadata(
-        key="robot_poses",
-        data=placement if env.task.use_presampled_robot_pose else robot_poses,
-    )
+    scene.write_task_metadata(key="robot_poses", data=robot_poses)
     if env.num_envs == 1:
         env.task.activity_instance_id = instance_id
 
@@ -272,7 +262,6 @@ class ActivityInstanceLoader:
         self.activity_instance_id = activity_instance_id
         self.instance_resample_mode = instance_resample_mode
         self.activity_instances = activity_instances
-        self._default_robot_poses = {}
 
     @classmethod
     def from_omni_cfg(cls, omni_cfg: DictConfig) -> "ActivityInstanceLoader":
@@ -414,8 +403,7 @@ class ActivityInstanceLoader:
             import omnigibson as og
 
             # The 3.9.3 online sampler is bound to a single scene and stops physics on exit.
-            scene = vec_env.scenes[0]
-            scene.reset()
+            vec_env.scenes[0].reset()
             try:
                 success, feedback = vec_env.task.sampler.sample_states(
                     vec_env.task.compiled_task
@@ -510,24 +498,11 @@ class ActivityInstanceLoader:
         env_indices,
     ) -> None:
         for idx, instance_file in zip(env_indices, instance_files, strict=True):
-            # A pose-less cache must fall back to the base template even after a posed episode.
-            if idx not in self._default_robot_poses:
-                poses = (
-                    vec_env.scenes[idx].get_task_metadata("robot_poses")
-                    if vec_env.task.use_presampled_robot_pose
-                    else None
-                )
-                if not poses:
-                    robot = vec_env.task.get_agent(vec_env, idx)
-                    pos, ori = robot.get_position_orientation(frame="scene")
-                    poses = {"robot": [{"position": pos, "orientation": ori}]}
-                self._default_robot_poses[idx] = poses
             load_activity_instance_tro_state(
                 vec_env,
                 instance_id=instance_file.instance_id,
                 tro_file_path=instance_file.path,
                 env_idx=idx,
                 finalize=False,
-                default_robot_poses=self._default_robot_poses[idx],
             )
         _settle_instance_scenes(vec_env, env_indices)
