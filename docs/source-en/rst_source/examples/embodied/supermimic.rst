@@ -303,7 +303,11 @@ return of 0.82 on these clips.
    :alt: SuperMimic GenCoord training curves
    :width: 100%
 
-   Training curves of the same run.
+   Training curves of the same run. The simulated reward is at most 0.1 per
+   control step, and the policy takes 50 control steps per second, so it
+   reaches at most 5 per second. The imagined return in the top right also
+   adds the critic's value at the end of each imagined rollout, so it runs
+   above 5.
 
 Compare with the Official Code
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
