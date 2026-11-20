@@ -110,10 +110,11 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     ) -> RolloutResult | DynamicRolloutResult:
         """Fetch one rollout result, assembling delivered groups.
 
-        Overrides MegatronWorker's hook (plain channel.get): when the
-        buffer delivers a GroupDelivery, the group's data sits behind its
-        payload ref, fetched and assembled here, before get_batch
-        broadcasts the result to the other ranks.
+        Overrides DynamicMegatronBatchMixin's hook (plain channel.get): when
+        the buffer delivers a GroupDelivery, the group's data sits behind its
+        payload ref and is fetched and assembled here, before get_batch
+        balances the groups across data-parallel ranks and broadcasts them
+        to the model-parallel ranks.
         """
         result = channel.get()
         if isinstance(result, GroupDelivery):

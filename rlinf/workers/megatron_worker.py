@@ -269,16 +269,6 @@ class MegatronWorker(MegatronModelManager, Worker):
         self._offload_weight_and_optimizer()
         torch.distributed.barrier()
 
-    def _receive_rollout_result(
-        self, channel: Channel
-    ) -> RolloutResult | DynamicRolloutResult:
-        """Fetch one rollout result from ``channel``.
-
-        A subclass may override this to transform the result on the
-        fetching rank before get_batch broadcasts it.
-        """
-        return channel.get()
-
     def get_batch(
         self, channel: Channel, tag: Optional[str] = None
     ) -> tuple[dict[str, torch.Tensor], RolloutResult | DynamicRolloutResult]:
@@ -288,10 +278,10 @@ class MegatronWorker(MegatronModelManager, Worker):
         if channel.is_local:
             # Local channel, every process will put its own data locally
             # No need to broadcast
-            result: RolloutResult = self._receive_rollout_result(channel)
+            result: RolloutResult = channel.get()
         else:
             if self.is_data_io_rank:
-                result: RolloutResult = self._receive_rollout_result(channel)
+                result: RolloutResult = channel.get()
             else:
                 result = None
             result = self.broadcast(
@@ -1413,6 +1403,16 @@ class MegatronWorker(MegatronModelManager, Worker):
 class DynamicMegatronBatchMixin:
     """Shared real-length group transport and microbatch scheduling."""
 
+    def _receive_rollout_result(
+        self, channel: Channel
+    ) -> RolloutResult | DynamicRolloutResult:
+        """Fetch one rollout result from ``channel``.
+
+        A subclass may override this to transform the result on the
+        fetching rank before get_batch broadcasts it.
+        """
+        return channel.get()
+
     def get_batch(
         self, channel: Channel
     ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
@@ -1423,7 +1423,7 @@ class DynamicMegatronBatchMixin:
         )
         results = None
         if channel.is_local or self.is_data_io_rank:
-            results = [channel.get() for _ in range(count)]
+            results = [self._receive_rollout_result(channel) for _ in range(count)]
             if not channel.is_local:
                 for result in results:
                     result.extra_fields_train["source_dp"] = [

@@ -110,6 +110,69 @@ class TestExtractVersionedTrajectoryRecords:
         )
 
 
+class _LocalDeliveryChannel:
+    """A local input channel that hands out one delivered group."""
+
+    is_local = True
+
+    def __init__(self, delivery):
+        self._delivery = delivery
+        self.get_count = 0
+
+    def get(self):
+        self.get_count += 1
+        return self._delivery
+
+
+def test_get_batch_assembles_delivered_groups(monkeypatch):
+    """The batch fetch goes through the actor's result hook.
+
+    A group the session server delivered is a GroupDelivery whose data sits
+    behind its payload ref; only MAMegatronActor._receive_rollout_result
+    turns it into training data. get_batch fetches through that hook, so a
+    hook that is bypassed hands the GroupDelivery to the batch code instead
+    and the first training step fails.
+    """
+    pytest.importorskip("megatron.core")
+    from megatron.core import parallel_state
+
+    from rlinf.data.schema.reasoning_results import GroupDelivery, PayloadRef
+    from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
+
+    actor = MAMegatronActor.__new__(MAMegatronActor)
+    actor.cfg = OmegaConf.create(
+        {"data": {"rollout_batch_size": 1}, "algorithm": {"group_size": 1}}
+    )
+    delivery = GroupDelivery(
+        group_id=7,
+        task_name="searchr1",
+        payload_ref=PayloadRef(locator="channel://Payload", key=7, parts={}),
+    )
+    assembled = DynamicRolloutResult(
+        num_sequence=1,
+        group_size=1,
+        idx_to_traj=[0],
+        input_ids=[[1, 2, 3]],
+        prompt_lengths=[2],
+        response_lengths=[1],
+        is_end=[True],
+        rewards=[0.0],
+    )
+    assembled_calls = []
+    monkeypatch.setattr(
+        actor, "_assemble_delivery", lambda delivery: assembled_calls.append(delivery)
+        or assembled
+    )
+    monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: 1)
+    channel = _LocalDeliveryChannel(delivery)
+
+    _batch, results = actor.get_batch(channel)
+
+    assert assembled_calls == [delivery]
+    assert results == [assembled]
+    assert channel.get_count == 1
+
+
 def _versioned_group(identity):
     lengths = [3 + identity, 5 + identity]
     return DynamicRolloutResult(
