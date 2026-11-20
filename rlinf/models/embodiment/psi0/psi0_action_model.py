@@ -165,6 +165,10 @@ class Psi0Policy(torch.nn.Module, BasePolicy):
             raise ValueError(f"Unsupported Psi0 policy mode: {mode!r}.")
         return self._predict_eval(processed)
 
+    def supports_value_only_bootstrap(self) -> bool:
+        """Return whether this Psi0 policy has a critic head for bootstrap."""
+        return hasattr(self, "value_head")
+
     @torch.no_grad()
     def predict_value_batch(self, env_obs: dict[str, Any]) -> torch.Tensor:
         """Evaluate the critic without resetting or sampling an RTC plan."""

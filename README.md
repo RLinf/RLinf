@@ -35,6 +35,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 ## What's NEW!
 
+- [2026/11] 🔥 RLinf supports Intel GPUs. See the [hardware support matrix](#hardware-support) and PR: [Intel GPU support (#1832)](https://github.com/RLinf/RLinf/pull/1832).
 - [2026/11] 🔥 RLinf supports the Robbyant R2 wheeled humanoid robot for real-world RL, whole-body PICO VR teleoperation, and coordinated control across dual arms, grippers or dexterous hands, torso, and omnidirectional base. Doc: [Robbyant R2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/r2.html).
 - [2026/11] 🔥 RLinf adds a hardware fault-tolerance interface for real-world robots, available first on the Robbyant R2: non-blocking health diagnosis, severity-based automatic recovery with emergency-stop latching, jump-free motion resumption, and episode truncation for interrupted RL rollouts. Doc: [Robotics Interface](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/robotics.html).
 - [2026/11] 🎉 NVIDIA [Isaac RL Post-Training](https://github.com/nvidia-isaac/isaac-rlpt) adopts RLinf as a distributed rollout and training runtime and integrates [demonstration co-training](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/co_training.html) for VLA RL post-training.
@@ -366,18 +367,23 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 #### Hardware Support
 
-RLinf hides the differences between heterogeneous hardware behind one unified low-level abstraction, so the same training stack runs seamlessly on NVIDIA and AMD GPUs and on domestic accelerators such as Huawei Ascend, Moore Threads, and Kunlunxin. Moving a training job between compute nodes takes zero changes to models and algorithms. Accelerator vendors, in turn, only have to adapt a minimal interface to bring the complete embodied and agentic RL training ecosystem onto their own hardware, with none of the burden of maintaining a customized fork of the framework.
+RLinf hides hardware differences behind one low-level accelerator interface, so the same training stack runs on NVIDIA, AMD, and Intel GPUs as well as Huawei Ascend, Moore Threads, Kunlunxin, MetaX, and Biren accelerators. You can move a training job across accelerators without changing models or algorithms, and hardware vendors adapt a small device and collective interface without maintaining a fork.
 
-Choose the model and environment combination you need, then follow the corresponding link for detailed hardware instructions. Every hardware backend fully supports all the environments listed in its row.
+Follow a model or environment link for its training recipe and available backend setup instructions. ✅ marks verified combinations across all environments in the row; `—` means untested, not necessarily unsupported.
 
-| Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm |
-|---|---|:---:|:---:|:---:|:---:|
-| [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [OpenVLA-OFT](docs/source-en/rst_source/examples/embodied/openvla_oft.rst) | [Wan world model](docs/source-en/rst_source/examples/embodied/wan.rst#wan-hardware) | ✅ | ✅ | — | — |
-| [GR00T N1.5](docs/source-en/rst_source/examples/embodied/gr00t.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [π₀ / π₀.₅ (OpenPI)](docs/source-en/rst_source/examples/embodied/pi0.rst) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ |
-| [StarVLA (QwenOFT)](docs/source-en/rst_source/examples/embodied/starvla.rst#starvla-hardware) | LIBERO | ✅ | ✅ | — | — |
-| [DreamZero](docs/source-en/rst_source/examples/embodied/sft_dreamzero.rst#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — |
+| Model | Environment | NVIDIA CUDA | Huawei Ascend CANN | Moore Threads MUSA | AMD ROCm | Intel XPU | Kunlunxin XPU | MetaX MACA | Biren SUPA |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| [OpenVLA](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html) | ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html#openvla-oft-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | — | — | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html) | [Wan world model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html#wan-hardware) | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | — |
+| [OpenVLA-OFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/openvla_oft.html) · [π₀ / π₀.₅](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html) · [LingbotVLA 1.0](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html) | [RoboTwin](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robotwin.html#robotwin-hardware) | ✅ | — | — | ✅ | — | — | — | — |
+| [GR00T N1.5](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html#gr00t-hardware) | LIBERO · ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [GR00T N1.7](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html) | LIBERO · ManiSkill | ✅ | — | — | — | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | LIBERO | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html#pi0-hardware) | ManiSkill | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
+| [π₀ / π₀.₅ (OpenPI)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html) | SFT (LeRobot datasets) | ✅ | — | — | — | — | — | — | ✅ |
+| [StarVLA (QwenOFT)](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html#starvla-hardware) | LIBERO | ✅ | ✅ | — | — | — | — | — | — |
+| [DreamZero](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html#sft-dreamzero-hardware) | SFT (LeRobot datasets) | ✅ | ✅ | — | — | — | — | — | — |
 
 ### Agentic AI
 

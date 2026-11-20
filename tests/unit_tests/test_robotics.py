@@ -2708,6 +2708,21 @@ def test_the_pico_transport_links_calibrates_and_tracks_motion():
         # it back from there rather than from ``made``, or this test only
         # passes when it runs first.
         zmq = transport.zmq
+        # Blocking recv on an empty fake socket must pace like RCVTIMEO instead
+        # of spinning a recv thread at 100% CPU and starving other threads.
+        from robot_mocks.teleop import vr
+
+        fresh_zmq = vr()
+        probe = fresh_zmq.Context().socket(fresh_zmq.SUB)
+        started = time.monotonic()
+        for _ in range(5):
+            with pytest.raises(fresh_zmq.error.Again):
+                probe.recv()
+        assert time.monotonic() - started >= 0.008
+        with pytest.raises(fresh_zmq.error.Again):
+            probe.recv(fresh_zmq.NOBLOCK)
+        probe.close()
+
         pico = PicoTcp(gripper=True, side=0, hand="right", zmq_addr="tcp://x:1")
         pico.connect()
         try:
@@ -8093,6 +8108,9 @@ def test_setpoint_streamer_moves_within_limits_and_smooths_irregular_goals():
     done = streamer.start_move([0.0, 0.0], 2.0, 1.0)
     streamer.set_goal([0.3, 0.1], 2.1)
     assert done.is_set() and not streamer.move_completed
+    first_done = streamer.start_move([0.0, 0.0], 2.2, 1.0)
+    second_done = streamer.start_move([0.2, 0.0], 2.3, 1.0)
+    assert first_done.is_set() and not second_done.is_set()
 
 
 def test_motion_profile_sizes_moves_and_rejects_bad_limits():
@@ -8181,6 +8199,17 @@ def test_joint_stream_streams_limited_setpoints_for_any_driver():
         started = time.monotonic()
         assert stream.move([0.45, 0.25], duration=0.3)
         assert time.monotonic() - started >= 0.29
+
+        # A newer move preempts a running move without losing its own completion.
+        first_result: list[bool] = []
+        first_thread = threading.Thread(
+            target=lambda: first_result.append(stream.move([0.0, 0.0], duration=0.4))
+        )
+        first_thread.start()
+        assert _wait_until(lambda: sent[-1][1][0] < 0.445)
+        assert stream.move([0.45, 0.25], duration=0.15)
+        first_thread.join(timeout=2.0)
+        assert first_result == [False]
 
         # A fault stops sending and ends a move as not arrived.
         fault.set()

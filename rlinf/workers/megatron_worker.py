@@ -30,6 +30,7 @@ import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
 )
+from rlinf.data.schema.actor_batch import DynamicActorBatch, pad_actor_batch_rows
 from rlinf.data.schema.reasoning_requests import get_batch_size, get_seq_length
 from rlinf.data.schema.reasoning_results import (
     BatchResizingIterator,
@@ -56,6 +57,7 @@ from rlinf.utils.data_iter_utils import (
 from rlinf.utils.distributed import (
     RolloutDataBalance,
     all_reduce_int,
+    balance_rollout_groups,
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
@@ -296,9 +298,7 @@ class MegatronWorker(MegatronModelManager, Worker):
             )
 
         if isinstance(result, DynamicRolloutResult):
-            batch = result.to_actor_batch(
-                self.role_cfg.model.encoder_seq_length, self.tokenizer.eos_token_id
-            )
+            batch = result.to_actor_batch()
         else:
             batch = result.to_actor_batch(
                 self.cfg.data.max_prompt_length,
@@ -1398,3 +1398,176 @@ class MegatronWorker(MegatronModelManager, Worker):
                 }
             )
         return rollout_metrics
+
+
+class DynamicMegatronBatchMixin:
+    """Shared real-length group transport and microbatch scheduling."""
+
+    def get_batch(
+        self, channel: Channel
+    ) -> tuple[DynamicActorBatch, list[DynamicRolloutResult]]:
+        """Balance raw groups once, then broadcast them to model-parallel peers."""
+        count = (
+            self.cfg.data.rollout_batch_size
+            // parallel_state.get_data_parallel_world_size()
+        )
+        results = None
+        if channel.is_local or self.is_data_io_rank:
+            results = [channel.get() for _ in range(count)]
+            if not channel.is_local:
+                for result in results:
+                    result.extra_fields_train["source_dp"] = [
+                        parallel_state.get_data_parallel_rank()
+                    ] * result.num_sequence
+            if not channel.is_local and self.enable_dp_load_balance:
+                with self.worker_timer("ragged_dp_balance"):
+                    results = balance_rollout_groups(
+                        results, parallel_state.get_data_parallel_group()
+                    )
+        if not channel.is_local:
+            with self.worker_timer("ragged_model_broadcast"):
+                results = self.broadcast(
+                    results,
+                    groups=[
+                        (self._group_name, parallel_state._MODEL_PARALLEL_GLOBAL_RANKS)
+                    ],
+                )
+                results = self.broadcast(
+                    results,
+                    groups=[
+                        (
+                            self._group_name,
+                            parallel_state._CONTEXT_PARALLEL_GLOBAL_RANKS,
+                        )
+                    ],
+                )
+        batch = DynamicRolloutResult.merge_batches(
+            [result.to_actor_batch() for result in results],
+            self.cfg.algorithm.group_size,
+        )
+        return batch, results
+
+    def _pad_ragged_rows(self, batch: DynamicActorBatch) -> DynamicActorBatch:
+        """Align every column with the minibatch and microbatch schedule."""
+        return pad_actor_batch_rows(
+            batch,
+            self.num_train_steps * self.role_cfg.micro_batch_size,
+            parallel_state.get_data_parallel_group(),
+            self.torch_platform.current_device(),
+        )
+
+    def _get_num_microbatches(
+        self, batch: DynamicActorBatch, forward_only: bool
+    ) -> int:
+        """Include partial inference microbatches; retain the training schedule."""
+        if not forward_only:
+            return super()._get_num_microbatches(batch, forward_only)
+        micro_batch_size = self.logprob_forward_micro_batch_size
+        return max(
+            1, (len(batch["input_ids"]) + micro_batch_size - 1) // micro_batch_size
+        )
+
+    def run_forward_backward(self, batch: DynamicActorBatch, forward_only=True):
+        """Run the forward and backward pass on the model.
+
+        Args:
+            batch (dict): Real-length token rows and per-sequence metadata.
+            forward_only (bool): If True, only run the forward pass without backpropagation.
+        """
+        clear_memory()
+        row_count = len(batch["input_ids"])
+        if forward_only:
+            vpp_size = parallel_state.get_virtual_pipeline_model_parallel_world_size()
+            divisor = (
+                self.transformer_config.microbatch_group_size_per_vp_stage
+                if vpp_size is not None and vpp_size > 1
+                else 1
+            )
+            batch = pad_actor_batch_rows(
+                batch,
+                divisor,
+                parallel_state.get_data_parallel_group(),
+                self.torch_platform.current_device(),
+            )
+        if self.enable_dynamic_batch_size:
+            alignment = parallel_state.get_tensor_model_parallel_world_size() * (
+                2 * parallel_state.get_context_parallel_world_size()
+                if parallel_state.get_context_parallel_world_size() > 1
+                else 1
+            )
+            batch_iter, total_seqlen, num_microbatches, self.dbs_indices = (
+                split_dynamic_batch_size(
+                    batch=batch,
+                    cp_world_size=parallel_state.get_context_parallel_world_size(),
+                    vpp_world_size=parallel_state.get_virtual_pipeline_model_parallel_world_size(),
+                    max_tokens_per_mbs=self.max_tokens_per_mbs,
+                    microbatch_group_size_per_vp_stage=self.transformer_config.microbatch_group_size_per_vp_stage,
+                    seq_len_effective=(
+                        (
+                            torch.tensor(list(map(len, batch["input_ids"])))
+                            + alignment
+                            - 1
+                        )
+                        // alignment
+                        * alignment
+                    ),
+                )
+            )
+        else:
+            total_seqlen = sum(map(len, batch["input_ids"]))
+            num_microbatches = self._get_num_microbatches(batch, forward_only)
+            batch_iter = get_iterator_k_split(
+                batch, num_splits=num_microbatches, enforce_divisible_batch=False
+            )
+
+        fwd_bwd_function = get_forward_backward_func()
+        self.num_microbatches = num_microbatches
+        self.return_loss = not forward_only
+
+        self.log_debug(f"{total_seqlen=}, {num_microbatches=}")
+
+        if self.use_profiler:
+            self.profiler.start(forward_only=forward_only)
+            forward_backward_record = (
+                self.forward_only_record
+                if forward_only
+                else self.megatron_forward_backward_record
+            )
+            forward_backward_record.start()
+        forward_outputs = fwd_bwd_function(
+            forward_step_func=self.get_forward_step_func(),
+            data_iterator=self.make_data_iterator_list(batch_iter),
+            model=self.model,
+            num_microbatches=num_microbatches,
+            forward_only=forward_only,
+            seq_length=total_seqlen,
+            micro_batch_size=1,
+            collect_non_loss_data=forward_only,
+        )
+        if self.use_profiler:
+            forward_backward_record.stop()
+            self.profiler.stop(forward_only=forward_only)
+
+        outputs = self._process_fwd_bwd_outputs(forward_outputs, forward_only)
+
+        return outputs[:row_count] if forward_only else outputs
+
+    def _process_fwd_bwd_outputs(self, forward_outputs, forward_only):
+        if not forward_only:
+            return super()._process_fwd_bwd_outputs(forward_outputs, forward_only)
+        rows = [row for microbatch in forward_outputs for row in microbatch]
+        if self.enable_dynamic_batch_size:
+            indices = sum(self.dbs_indices, [])
+            restored = [None] * len(rows)
+            for index, row in zip(indices, rows):
+                restored[index] = row
+            rows = restored
+        if parallel_state.get_pipeline_model_parallel_world_size() == 1:
+            return rows
+        lengths = broadcast_tensor_within_pp(
+            torch.tensor([len(row) for row in rows], dtype=torch.int64)
+            if rows
+            else None
+        )
+        values = broadcast_tensor_within_pp(torch.cat(rows) if rows else None)
+        return list(values.cpu().split(lengths.cpu().tolist()))
