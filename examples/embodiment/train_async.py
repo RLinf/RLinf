@@ -61,9 +61,17 @@ def main(cfg) -> None:
         actor_worker_cls = AsyncRLTACFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_dagger":
         from rlinf.models.embodiment import get_dagger_actor_class
-        from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 
-        runner_cls = AsyncEmbodiedRunner
+        if cfg.actor.model.model_type == "cosmos3":
+            from rlinf.models.embodiment.cosmos3.async_dagger_runner import (
+                Cosmos3AsyncDAggerRunner,
+            )
+
+            runner_cls = Cosmos3AsyncDAggerRunner
+        else:
+            from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+
+            runner_cls = AsyncEmbodiedRunner
         actor_worker_cls = get_dagger_actor_class(
             cfg.actor.model.model_type, asynchronous=True
         )

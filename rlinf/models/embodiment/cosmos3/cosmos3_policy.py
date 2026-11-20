@@ -63,6 +63,51 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         self._rollout_config = dict(rollout_config or {})
         self._action_normalizer = None
 
+    @staticmethod
+    def get_weight_sync_param_names(module: nn.Module) -> list[str]:
+        """Resolve Cosmos checkpoint-wrapper names in the outermost model state dict."""
+        trainable = {
+            id(param): name
+            for name, param in module.named_parameters(remove_duplicate=False)
+            if param.requires_grad
+        }
+        persistent_buffers: dict[int, str] = {}
+        for module_name, submodule in module.named_modules(remove_duplicate=False):
+            non_persistent_buffers = getattr(
+                submodule, "_non_persistent_buffers_set", set()
+            )
+            for buffer_name, buffer in submodule.named_buffers(
+                recurse=False, remove_duplicate=False
+            ):
+                if buffer_name not in non_persistent_buffers:
+                    full_name = (
+                        buffer_name
+                        if not module_name
+                        else f"{module_name}.{buffer_name}"
+                    )
+                    persistent_buffers[id(buffer)] = full_name
+
+        # Checkpoint wrappers expose canonical state keys while traversal names include
+        # wrapper modules. keep_vars preserves identity without copying tensor storage.
+        state_dict = module.state_dict(keep_vars=True)
+        state_ids = {id(value) for value in state_dict.values()}
+        selected = trainable | persistent_buffers
+        missing = selected.keys() - state_ids
+        if missing:
+            names = sorted(selected[identity] for identity in missing)
+            raise RuntimeError(
+                f"State dict does not preserve selected tensor identities: {names}"
+            )
+        trainable_names = [
+            name for name, value in state_dict.items() if id(value) in trainable
+        ]
+        buffer_names = [
+            name
+            for name, value in state_dict.items()
+            if id(value) in persistent_buffers and id(value) not in trainable
+        ]
+        return trainable_names + buffer_names
+
     @property
     def device(self) -> torch.device:
         return next(self.omni.parameters()).device

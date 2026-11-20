@@ -129,8 +129,6 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
     def run(self):
         start_step = self.global_step
         start_time = time.time()
-        self.actor.set_global_step(self.global_step).wait()
-        self.rollout.set_global_step(self.global_step).wait()
         self.env.set_global_step(self.global_step).wait()
         # Rollout must start from the actor's exact initial/resumed weights, so
         # this first sync always blocks even when overlap is enabled.
@@ -148,16 +146,11 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             actor_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
-        background_handles = {
-            "Environment interaction": env_handle,
-            "Rollout generation": rollout_handle,
-        }
         if self.reward is not None:
             reward_handle: Handle = self.reward.compute_rewards_async(
                 input_channel=self.reward_channel,
                 output_channel=self.env_channel,
             )
-            background_handles["Reward computation"] = reward_handle
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
             input_channel=self.actor_channel
         )
@@ -181,7 +174,6 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
                 if not skip_step:
                     self.global_step += 1
-                    self.actor.set_global_step(self.global_step).wait()
                     if self.global_step % self.weight_sync_interval == 0:
                         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
@@ -305,4 +297,3 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
-        self._finish_run()
