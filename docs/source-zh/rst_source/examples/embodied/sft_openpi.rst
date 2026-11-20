@@ -103,11 +103,11 @@ RLT Stage 1 配置还让 ``rlt_module`` 使用 FP32。
 
 使用 FlashAttention 时保持 ``pytorch_numerics=False``。原生 OpenPI Torch 数值模式要求 ``attention_backend: eager``，以保留其舍入和全遮罩 query 的梯度行为。
 
-Hopper GPU 可设置 ``attention_backend: flash_attention_3``，并安装官方 FlashAttention-3：
+在使用 CUDA Toolkit 12.3 或更高版本的 Hopper GPU 上，将 ``attention_backend`` 设为 ``flash_attention_3``，并在已激活的 OpenPI 环境中安装官方 FlashAttention-3。
 
 .. code-block:: bash
 
-   pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
+   uv pip install --no-build-isolation 'git+https://github.com/Dao-AILab/flash-attention.git@bd26bc8e10e7c8f10dce6e17276156accecd2994#subdirectory=hopper'
 
 OpenPI 支持 FSDP1 的 ``no_shard``、``shard_grad_op`` 和 ``full_shard``，
 均使用 ``use_orig_params: true``。``no_shard`` 复制全部训练状态；
