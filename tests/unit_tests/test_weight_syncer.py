@@ -1829,7 +1829,6 @@ def test_async_embodied_runner_startup_sync_is_blocking() -> None:
     runner.rollout_metric_channel = None
     runner.update_rollout_weights = MagicMock()
     runner.drain_pending_rollout_weight_sync = MagicMock()
-    runner._finish_run = MagicMock()
 
     runner.run()
 
