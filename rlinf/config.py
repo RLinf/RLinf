@@ -1297,7 +1297,12 @@ def validate_embodied_cfg(cfg):
             )
 
     kl_stop = algorithm_cfg.get("kl_stop") or {}
-    if not only_eval and kl_stop.get("enabled", False):
+    kl_stop_enabled = kl_stop.get("enabled", False)
+    if not only_eval and not isinstance(kl_stop_enabled, bool):
+        raise ValueError(
+            f"Expected boolean algorithm.kl_stop.enabled, got {kl_stop_enabled!r}."
+        )
+    if not only_eval and kl_stop_enabled:
         cache_prefix = kl_stop.get("cache_prefix", False)
         if not isinstance(cache_prefix, bool):
             raise ValueError(

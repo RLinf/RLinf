@@ -53,13 +53,18 @@ class UpdateKLProbe:
         self._score = score
         self._group = group
         self._target_kl = target_kl
-        self.cache_prefix = cache_prefix
+        self._cache_prefix = cache_prefix
+        self.capture_kwargs: dict[str, Any] = {"denoise_probe": "capture"}
         self._remaining = 0
         self._captured: list[_CapturedBatch] = []
         self._reference: _ProbeReference | None = None
         self.valid_count = 0
         self.last_kl: float | None = None
         self.stopped = False
+
+    def configure_capture(self, choose_cache: Callable[[bool], str]) -> None:
+        """Resolve the model's replay cache before the optimizer freezes parameters."""
+        self.capture_kwargs["replay_cache"] = choose_cache(self._cache_prefix)
 
     def begin_round(self, batch_size_per_rank: int) -> None:
         """Select the leading samples of the first optimizer batch as the probe."""

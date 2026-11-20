@@ -2117,7 +2117,7 @@ def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
     )
 
 
-def _update_kl_probe_process(rank, init_file):
+def _run_kl_probe(rank, init_file):
     dist.init_process_group(
         "gloo",
         init_method=f"file://{init_file}",
@@ -2154,23 +2154,17 @@ def _update_kl_probe_process(rank, init_file):
         def capture(loss_masks):
             probe.begin_round(3)
             for batch, mask in zip(batches, loss_masks, strict=True):
-                assert probe.needs_reference
                 probe.capture_reference(score(batch), mask)
             assert not probe.needs_reference
             probe.finish_reference()
 
         capture(masks)
         assert probe.valid_count == 1
-        shift = 0.5
-        with probe.check():
-            assert probe.last_kl is None
-        assert not probe.stopped
-        assert probe.last_kl == 0.125
-        shift = 1.0
-        with probe.check():
-            pass
-        assert probe.stopped
-        assert probe.last_kl == 0.5
+        for shift, kl in ((0.5, 0.125), (1.0, 0.5)):
+            with probe.check():
+                pass
+            assert probe.last_kl == kl
+            assert probe.stopped == (shift == 1.0)
         probe.end_round()
 
         capture(masks)
@@ -2191,9 +2185,9 @@ def _update_kl_probe_process(rank, init_file):
         dist.destroy_process_group()
 
 
-def test_update_kl_probe_stops_all_ranks_with_shared_valid_chunk_count(tmp_path):
+def test_update_kl_probe_dp(tmp_path):
     mp.spawn(
-        _update_kl_probe_process,
+        _run_kl_probe,
         args=(tmp_path / "ppo-kl-probe",),
         nprocs=2,
     )

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import einops
 import torch
@@ -37,6 +37,7 @@ from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.rlt_config import OpenPiPytorchRLTConfig
 
 ImageFeatures = tuple[tuple[torch.Tensor, torch.Tensor], ...]
+ReplayCache = Literal["observation", "vision", "prefix"]
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -939,41 +940,38 @@ class Pi0(model.BaseModel):
                 yield final_norm
 
     @staticmethod
-    def _has_active_dropout(module: nn.Module) -> bool:
+    def _has_dropout(module: nn.Module) -> bool:
         return any(
-            child.training
-            and (
-                isinstance(child, nn.Dropout)
-                and child.p > 0
-                or isinstance(child, nn.MultiheadAttention)
-                and child.dropout > 0
-            )
+            (isinstance(child, nn.Dropout) and child.p > 0)
+            or (isinstance(child, nn.MultiheadAttention) and child.dropout > 0)
             for child in module.modules()
         )
 
-    def can_reuse_image_features(self) -> bool:
-        """Return whether the vision encoder is frozen with dropout inactive."""
-        return not any(
-            parameter.requires_grad for parameter in self.img.parameters()
-        ) and not self._has_active_dropout(self.img)
+    def select_replay_cache(self, cache_prefix: bool) -> ReplayCache:
+        """Select cached replay inputs from the actor's training-time freeze plan."""
+        if not cache_prefix:
+            if any(p.requires_grad for p in self.img.parameters()) or self._has_dropout(
+                self.img
+            ):
+                return "observation"
+            return "vision"
 
-    def validate_prefix_reuse(self) -> None:
-        """Raise if the prefix can change between forwards on the same input."""
         modules = list(self._vlm_modules())
         if self.pcd:
             modules.append(self.pointnet)
         modules.extend(block.dropout for block in self.llm.layers)
         for module in modules:
-            if any(parameter.requires_grad for parameter in module.parameters()):
+            if any(p.requires_grad for p in module.parameters()):
                 raise ValueError(
                     "Prefix KV reuse requires frozen parameters, "
                     f"got trainable parameters in {type(module).__name__}."
                 )
-            if self._has_active_dropout(module):
+            if self._has_dropout(module):
                 raise ValueError(
-                    "Prefix KV reuse requires inactive dropout, "
-                    f"got active dropout in {type(module).__name__}."
+                    "Prefix KV reuse requires dropout-free training, "
+                    f"got dropout in {type(module).__name__}."
                 )
+        return "prefix"
 
     def freeze_vlm(self, freeze_action_expert: bool = False) -> int:
         """Freeze PaliGemma (vision + LLM expert-0). Optionally freeze expert-1.

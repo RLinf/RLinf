@@ -30,7 +30,7 @@ from rlinf.models.embodiment.openpi.modules.model import (
     Observation,
     preprocess_observation,
 )
-from rlinf.models.embodiment.openpi.pi0 import ImageFeatures, Pi0
+from rlinf.models.embodiment.openpi.pi0 import ImageFeatures, Pi0, ReplayCache
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.sampling import rl_sampler
 from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
@@ -468,7 +468,7 @@ class Pi0RL(EnvIO, Pi0):
         forward_inputs: dict[str, torch.Tensor] | _DenoiseProbeInputs,
         *,
         denoise_probe: Literal["capture", "score"] | None = None,
-        cache_prefix: bool = False,
+        replay_cache: ReplayCache = "observation",
         **kwargs,
     ) -> dict[str, Any]:
         """Score the stored chain, optionally collecting or scoring a KL probe."""
@@ -481,7 +481,7 @@ class Pi0RL(EnvIO, Pi0):
         compute_values = kwargs.get("compute_values", True)
         image_features = None
         prefix_kv = None
-        capture_prefix_kv = denoise_probe == "capture" and cache_prefix
+        capture_prefix_kv = denoise_probe == "capture" and replay_cache == "prefix"
         if isinstance(forward_inputs, _DenoiseProbeInputs):
             chains = forward_inputs.chains
             denoise_inds = forward_inputs.denoise_inds
@@ -492,9 +492,7 @@ class Pi0RL(EnvIO, Pi0):
             chains = forward_inputs["chains"]
             denoise_inds = forward_inputs["denoise_inds"]
             observation = self._observation_from_forward_inputs(forward_inputs)
-            if capture_prefix_kv:
-                self.validate_prefix_reuse()
-            elif denoise_probe == "capture" and self.can_reuse_image_features():
+            if denoise_probe == "capture" and replay_cache == "vision":
                 with torch.no_grad():
                     image_features = self.embed_images(observation)
         B = chains.shape[0]

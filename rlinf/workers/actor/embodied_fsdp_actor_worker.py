@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from contextlib import nullcontext
+from itertools import chain, repeat
 from typing import Any
 
 import numpy as np
@@ -162,6 +163,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             model.load_state_dict(model_dict)
 
+        if self._update_kl_probe is not None:
+            self._update_kl_probe.configure_capture(model.select_replay_cache)
         return model
 
     def get_rollout_state_dict(self) -> dict:
@@ -636,9 +639,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     @torch.no_grad()
     def _score_update_kl_probe(self, forward_inputs: Any) -> dict[str, Any]:
-        device = self.torch_platform.current_device()
         with (
-            torch.random.fork_rng(devices=[device], device_type=self.torch_device_type),
+            torch.random.fork_rng(
+                devices=[self.device], device_type=self.torch_device_type
+            ),
             self.amp_context,
         ):
             return self.model(forward_inputs=forward_inputs, denoise_probe="score")
@@ -696,9 +700,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             if self._update_kl_probe is not None:
                 self._update_kl_probe.end_round()
 
-        # put LR scheduler step here
         self.lr_scheduler.step()
-        self.optimizer.zero_grad()
         clear_memory()
         explained_variance_stats = pop_critic_explained_variance_stats(metrics)
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
@@ -725,76 +727,42 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if kl_probe is not None:
             kl_probe.begin_round(batch_size_per_rank)
 
+        global_batches = split_dict_to_chunk(
+            self.rollout_batch, rollout_size // batch_size_per_rank
+        )
         updates_used = 0
-        stopped_by_kl = False
-        for _ in range(self.update_epoch):
-            rollout_dataloader_iter = split_dict_to_chunk(
-                self.rollout_batch,
-                rollout_size // batch_size_per_rank,
+        self.optimizer.zero_grad()
+        for global_batch in chain.from_iterable(
+            repeat(global_batches, self.update_epoch)
+        ):
+            micro_batches = split_dict_to_chunk(
+                global_batch, self.gradient_accumulation
             )
-            for train_global_batch in rollout_dataloader_iter:
-                # split batch into micro_batches
-                train_global_batch_size = train_global_batch["prev_logprobs"].shape[0]
-                assert (
-                    train_global_batch_size
-                    == self.cfg.actor.global_batch_size
-                    // torch.distributed.get_world_size()
+            for idx, batch in enumerate(micro_batches):
+                self.train_micro_batch(
+                    micro_batch=batch,
+                    metrics=metrics,
+                    is_last=(idx + 1) == self.gradient_accumulation,
+                    kl_probe=kl_probe
+                    if kl_probe is not None and kl_probe.needs_reference
+                    else None,
                 )
-                assert train_global_batch_size % self.cfg.actor.micro_batch_size == 0, (
-                    f"{train_global_batch_size=}, {self.cfg.actor.micro_batch_size}"
-                )
+                # Drop device tensors before staging the next microbatch.
+                micro_batches[idx] = None
+                del batch
 
-                train_micro_batch = split_dict_to_chunk(
-                    train_global_batch,
-                    train_global_batch_size // self.cfg.actor.micro_batch_size,
-                )
+            if kl_probe is not None and updates_used == 0:
+                with self.worker_timer("update_kl_reference"):
+                    kl_probe.finish_reference()
 
-                self.optimizer.zero_grad()
-                for idx, batch in enumerate(train_micro_batch):
-                    self.train_micro_batch(
-                        micro_batch=batch,
-                        metrics=metrics,
-                        is_last=(idx + 1) == self.gradient_accumulation,
-                        kl_probe=kl_probe
-                        if kl_probe is not None and kl_probe.needs_reference
-                        else None,
-                    )
-                    # avoid gpu memory leak
-                    train_micro_batch[idx] = None
-                    del batch
-
-                if kl_probe is not None and updates_used == 0:
-                    with self.worker_timer("update_kl_reference"):
-                        kl_probe.finish_reference()
-
-                self.torch_platform.empty_cache()
-
-                grad_norm, lr_list = self.optimizer_step()
-                if kl_probe is not None:
-                    updates_used += 1
-                    self.optimizer.zero_grad()
-                with (
-                    self.worker_timer("update_kl_probe")
-                    if kl_probe is not None
-                    else nullcontext(),
-                    kl_probe.check() if kl_probe is not None else nullcontext(),
-                ):
-                    data = {
-                        "actor/grad_norm": grad_norm,
-                        "actor/lr": lr_list[0],
-                    }
-                    if len(lr_list) > 1:
-                        data["critic/lr"] = lr_list[1]
-                    append_to_dict(metrics, data)
-                if kl_probe is not None and kl_probe.stopped:
-                    stopped_by_kl = True
-                    break
-            if stopped_by_kl:
+            self.finish_global_batch(metrics, kl_probe=kl_probe)
+            updates_used += 1
+            if kl_probe is not None and kl_probe.stopped:
                 break
 
         if kl_probe is not None:
             metrics["actor/optimizer_steps_used"] = [updates_used]
-            metrics["actor/update_kl_stopped"] = [int(stopped_by_kl)]
+            metrics["actor/update_kl_stopped"] = [int(kl_probe.stopped)]
             metrics["actor/update_kl_probe_count"] = [kl_probe.valid_count]
             if kl_probe.last_kl is not None:
                 metrics["actor/update_kl"] = [kl_probe.last_kl]
@@ -817,10 +785,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         loss_mask_sum = micro_batch.get("loss_mask_sum", None)
         forward_inputs = micro_batch.get("forward_inputs", None)
 
-        kwargs = {}
-        if kl_probe is not None:
-            kwargs["denoise_probe"] = "capture"
-            kwargs["cache_prefix"] = kl_probe.cache_prefix
+        kwargs = kl_probe.capture_kwargs.copy() if kl_probe is not None else {}
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
@@ -971,14 +936,26 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
 
-    def finish_global_batch(self, metrics: dict[str, list[float]]) -> None:
+    def finish_global_batch(
+        self,
+        metrics: dict[str, list[float]],
+        *,
+        kl_probe: UpdateKLProbe | None = None,
+    ) -> None:
+        """Apply the optimizer step and optionally check the updated policy."""
         self.torch_platform.empty_cache()
         grad_norm, lr_list = self.optimizer_step()
         self.optimizer.zero_grad()
-        metric_data = {
-            "actor/grad_norm": grad_norm,
-            "actor/lr": lr_list[0],
-        }
-        if len(lr_list) > 1:
-            metric_data["critic/lr"] = lr_list[1]
-        append_to_dict(metrics, metric_data)
+        with (
+            self.worker_timer("update_kl_probe")
+            if kl_probe is not None
+            else nullcontext(),
+            kl_probe.check() if kl_probe is not None else nullcontext(),
+        ):
+            metric_data = {
+                "actor/grad_norm": grad_norm,
+                "actor/lr": lr_list[0],
+            }
+            if len(lr_list) > 1:
+                metric_data["critic/lr"] = lr_list[1]
+            append_to_dict(metrics, metric_data)
