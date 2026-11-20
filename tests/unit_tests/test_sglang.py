@@ -227,7 +227,9 @@ def test_sglang_server_args_with_installed_vendor(sglang_args_worker):
 @pytest.mark.parametrize(
     "args_api,backup,resume_dir,processor_key,enabled",
     [
-        ("dataclass-old", False, None, None, False),
+        ("dataclass-old", None, None, None, False),
+        ("dataclass-old", False, "/checkpoint", None, False),
+        ("dataclass-old", True, "/checkpoint", None, False),
         ("dataclass-new", True, "/checkpoint", None, False),
         ("struct", False, "/checkpoint", None, False),
         ("dataclass-new", False, None, "enable_shared_multi_modal_processor", True),
@@ -278,14 +280,24 @@ def test_sglang_server_args_preserve_loading_and_processor_settings(
         else "cuda_graph_max_bs_decode"
     )
     server_args.__struct_fields__ = (graph_field, "chunked_prefill_size")
+    if args_api != "dataclass-old":
+        server_args.__struct_fields__ += ("enable_weights_cpu_backup",)
     worker = sglang_args_worker
     worker._cfg.runner.resume_dir = resume_dir
-    worker._cfg_rollout.sglang.enable_weights_cpu_backup = backup
+    if backup is not None:
+        worker._cfg_rollout.sglang.enable_weights_cpu_backup = backup
+    if args_api == "dataclass-old" and backup:
+        with pytest.raises(ValueError, match="does not support enable_weights_cpu_backup"):
+            sglang_worker.SGLangWorker._build_server_args(worker)
+        return
     if processor_key is not None:
         worker._cfg_rollout.sglang[processor_key] = enabled
     args = sglang_worker.SGLangWorker._build_server_args(worker)
     assert args["disable_overlap_schedule"] is True
-    assert args["enable_weights_cpu_backup"] is bool(backup)
+    if args_api == "dataclass-old":
+        assert "enable_weights_cpu_backup" not in args
+    else:
+        assert args["enable_weights_cpu_backup"] is bool(backup)
     assert args["load_format"] == ("auto" if backup or resume_dir is None else "dummy")
     assert args[graph_field] == 2
     assert args["chunked_prefill_size"] == 4096

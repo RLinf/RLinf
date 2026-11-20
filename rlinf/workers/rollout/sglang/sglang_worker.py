@@ -286,6 +286,13 @@ class SGLangWorker(Worker):
         )
 
         # Back up pretrained parameters that the actor does not synchronize.
+        if "enable_weights_cpu_backup" in server_fields:
+            version_dependent_args["enable_weights_cpu_backup"] = enable_weights_cpu_backup
+        elif enable_weights_cpu_backup:
+            raise ValueError(
+                f"SGLang {sglang_version} does not support enable_weights_cpu_backup. "
+                "Disable it or install a release with CPU weight backup support."
+            )
         if enable_weights_cpu_backup:
             load_format = "auto"
 
@@ -315,7 +322,6 @@ class SGLangWorker(Worker):
             moe_dense_tp_size=self._cfg_rollout.sglang.get("moe_dense_tp_size", None),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
-            enable_weights_cpu_backup=enable_weights_cpu_backup,
             enable_custom_logit_processor=self._cfg_rollout.sglang.get(
                 "enable_custom_logit_processor", False
             ),

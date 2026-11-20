@@ -54,7 +54,10 @@ class MAMegatronCritic(DynamicMegatronBatchMixin, MegatronCritic):
         )
         assert self.enable_dp_load_balance or cfg.critic.get(
             "expect_multi_modal_inputs", False
-        ), "Multi-agent critic requires enable_dp_load_balance=True."
+        ), (
+            "Multi-agent critic requires enable_dp_load_balance=True "
+            "or critic.expect_multi_modal_inputs=True."
+        )
         self.pack_traj = cfg.actor.get("pack_traj", True)
 
     def get_forward_step_func(self):
