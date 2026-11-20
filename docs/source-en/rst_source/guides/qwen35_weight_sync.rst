@@ -46,9 +46,15 @@ Add these settings to your Megatron/SGLang task configuration. Replace ``<checkp
        mm_enable_dp_encoder: true
        disable_radix_cache: true
 
-``actor.model.load_mtp`` defaults to ``true``. It loads MTP into the actor and enables SGLang's NEXTN speculative decoding with the same checkpoint as the draft model. SGLang normalizes NEXTN to EAGLE internally. Let ``actor.model.load_mtp`` select the speculative decoding algorithm and draft checkpoint. The supported MTP structure has one prediction layer and shares embeddings with the main model.
+``actor.model.load_mtp`` defaults to ``true``. With MTP enabled, the actor loads its prediction branch and SGLang uses NEXTN speculative decoding with the rollout checkpoint as the draft model. SGLang treats NEXTN as EAGLE. Explicit NEXTN or EAGLE settings, draft checkpoint paths, and decoding parameters take precedence. Other speculative decoding algorithms fail configuration validation while actor MTP is enabled. The supported MTP architecture has one prediction layer and shares embeddings with the main model.
 
-Set ``actor.model.load_mtp: false`` to load and synchronize only the vision and language branches. The main model still includes its vision encoder and merger. Keep ``rollout.sglang.disable_radix_cache: true`` for the Qwen3.5 NEXTN setup; this is the integration's default for this model.
+Set ``actor.model.load_mtp: false`` to load and synchronize the language model, vision encoder, and merger without MTP. Requesting this checkpoint's MTP draft while disabling actor MTP fails configuration validation. A separately configured external draft remains independent of actor MTP synchronization.
+
+An external draft loads its own checkpoint at startup. In SGLang 0.5.12.post1, the main model and draft share a load format, so the main model also loads its checkpoint before receiving actor weights. This adds checkpoint I/O at startup, including when resuming training.
+
+With actor MTP enabled, the default for ``rollout.sglang.disable_radix_cache`` depends on the Mamba scheduling mode: ``true`` for ``no_buffer``, or ``false`` for ``extra_buffer``. Explicit values take precedence, and SGLang checks compatibility with the scheduling mode. With actor MTP disabled, SGLang's default applies unless you set the value explicitly.
+
+When the actor supplies all main-model and draft weights, SGLang uses dummy initialization unless checkpoint-reference validation is enabled. It receives actor weights before rollout. Enabling ``rollout.validate_weight_first_sync`` loads the checkpoint first and checks both the main model and the enabled MTP draft after synchronization. This built-in check compares position-aware norms with a tolerance; use byte comparisons for bitwise verification. Resuming training disables the first-sync checkpoint comparison because the actor's resumed weights can differ from the initial checkpoint.
 
 Choose the Vision Layout
 ------------------------------------------------
@@ -80,8 +86,10 @@ Run the component tests in the agentic environment from the repository root:
 
    PYTHONPATH=.:tests/unit_tests python -m pytest tests/unit_tests/test_ckpt_convertor.py -q
 
-With the tested dependencies installed, all 123 tests should pass. Inspect skipped tests if you use a different environment: if SGLang or Megatron dependencies are missing, passing tests do not verify loading weights with those libraries.
+With the tested dependencies installed, the component tests should pass. Inspect skipped tests if you use a different environment: if SGLang or Megatron dependencies are missing, passing tests do not verify loading weights with those libraries. CPU tests check SGLang configuration forwarding, external draft checkpoint loading, and detection of incorrect MTP weights during first-sync validation.
+
+CPU tests also send two successive weight updates to dedicated Megatron inference workers and compare every received parameter byte after each update. The tests use small parameter sets, real Gloo collectives, and Megatron parallel groups. Process queues replace transport between workers. Coverage includes equal and unequal tensor parallel sizes, redistribution across pipeline stages, virtual pipeline chunks, context and data parallel replicas, and expert parallel layouts. The tests check weight transfer and loading without running a model forward pass.
 
 Full-model checks compare every destination parameter's shape, dtype, and raw bytes with an independent reference loaded through SGLang's full-checkpoint loader. They cover initial weights and deliberately changed weights, colocated and disaggregated placement, unequal actor/rollout TP, actor PP/VP, attention DP, and vision DP. The 4B checks also cover shared output embeddings and MTP disabled. These checks establish weight loading correctness, not generated-output equality, training convergence, or speculative decoding speedup.
 
-Asynchronous weight updates while inference requests are running, context parallelism, and multi-node synchronization still require integration tests. Use the existing task's pause and resume lifecycle when integrating asynchronous training.
+Asynchronous weight updates while inference requests are running, full-model context parallelism, and multi-node synchronization still require integration tests. Use the existing task's pause and resume lifecycle when integrating asynchronous training.

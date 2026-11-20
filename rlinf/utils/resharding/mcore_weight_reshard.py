@@ -18,10 +18,13 @@ import inspect
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.transformer_layer import (
     get_transformer_layer_offset,
 )
 from megatron.training.training import unwrap_model
+
+from rlinf.scheduler import Worker
 
 from .reshard_config import ReshardConfig
 from .utils import (
@@ -128,7 +131,8 @@ class MegatronCoreWeightReshard:
         every rank in the group agrees and the merge stays symmetric.
         """
         return pp_size > 1 and (
-            self.config.reshard_tp_size != tp_size
+            self.config.reshard_weights_format == "mcore"
+            or self.config.reshard_tp_size != tp_size
             or self.config.reshard_pp_size != pp_size
         )
 
@@ -140,9 +144,12 @@ class MegatronCoreWeightReshard:
         them equal. A padded bucket joins the merge and is sent like any other.
         """
         pp_group = parallel_state.get_pipeline_model_parallel_group()
-        bucket_count = torch.tensor(
-            [len(model_bucket_list)], device=torch.cuda.current_device()
+        device = (
+            "cpu"
+            if torch.distributed.get_backend(pp_group) == "gloo"
+            else Worker.torch_platform.current_device()
         )
+        bucket_count = torch.tensor([len(model_bucket_list)], device=device)
         torch.distributed.all_reduce(
             bucket_count, op=torch.distributed.ReduceOp.MAX, group=pp_group
         )
@@ -418,6 +425,7 @@ class MegatronCoreWeightReshard:
         dst_ep_rank=None,
         dst_lm_head_rank=None,
         dst_shared_rank=None,
+        dst_expert_tp=None,
     ):
         """Slice a gathered full state dict for one target. Pure local.
 
@@ -436,7 +444,7 @@ class MegatronCoreWeightReshard:
             "shared": (dst_shared_rank, self.config.rollout_full_tp_size),
             "full_tp": (dst_shared_rank, self.config.rollout_full_tp_size),
             "lm_head": (dst_lm_head_rank, self.config.rollout_lm_head_tp_size),
-            "expert_tp": (dst_tp_rank, reshard_tp_size),
+            "expert_tp": dst_expert_tp or (dst_tp_rank, reshard_tp_size),
             "vision": (
                 dst_tp_rank % self.config.rollout_vision_tp_size,
                 self.config.rollout_vision_tp_size,
@@ -514,3 +522,65 @@ class MegatronCoreWeightReshard:
         if self.config.convert_fn is not None:
             out = self.config.convert_fn(out)
         return out
+
+    @staticmethod
+    def get_model_weight_layout(
+        model: list[torch.nn.Module], model_config: TransformerConfig
+    ) -> dict:
+        """Describe a receiver's TP ranks and global-to-local chunk names."""
+        from rlinf.utils.ckpt_convertor.megatron_convertor.utils.mg_moe_groupgemm import (
+            moe_te_group_to_seq,
+        )
+
+        expert_offset = 0
+        if model_config.num_moe_experts is not None:
+            expert_offset = (
+                model_config.num_moe_experts
+                // parallel_state.get_expert_model_parallel_world_size()
+                * parallel_state.get_expert_model_parallel_rank()
+            )
+        chunks = []
+        for idx, chunk in enumerate(unwrap_model(model)):
+            names = {
+                key: key
+                for key, value in chunk.state_dict().items()
+                if torch.is_tensor(value) and "_extra_state" not in key
+            }
+            names = moe_te_group_to_seq(names)
+            offset = _layer_offset(model_config, idx)
+            global_names = {}
+            for key, local_name in names.items():
+                key = _apply_layer_offset(key, offset)
+                if ".local_experts." in key:
+                    prefix, expert = key.split(".local_experts.", 1)
+                    index, suffix = expert.split(".", 1)
+                    key = (
+                        f"{prefix}.local_experts.{int(index) + expert_offset}.{suffix}"
+                    )
+                global_names[key] = local_name
+            chunks.append(global_names)
+        return {
+            "tp_rank": parallel_state.get_tensor_model_parallel_rank(),
+            "tp_size": parallel_state.get_tensor_model_parallel_world_size(),
+            "expert_tp": (
+                parallel_state.get_expert_tensor_parallel_rank(),
+                parallel_state.get_expert_tensor_parallel_world_size(),
+            ),
+            "chunks": chunks,
+        }
+
+    def narrow_to_model(self, full_sd: dict, layout: dict) -> dict:
+        """Select this bucket's weights in a Megatron receiver's chunk layout."""
+        needed = {key for chunk in layout["chunks"] for key in chunk}
+        local = self.narrow_to_target(
+            {key: value for key, value in full_sd.items() if key in needed},
+            layout["tp_rank"],
+            dst_expert_tp=layout["expert_tp"],
+        )
+        chunks = [
+            {name: local[key] for key, name in chunk.items() if key in local}
+            for chunk in layout["chunks"]
+        ]
+        if len(chunks) == 1:
+            return chunks[0]
+        return {f"model{idx}": chunk for idx, chunk in enumerate(chunks)}

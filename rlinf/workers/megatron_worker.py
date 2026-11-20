@@ -22,6 +22,7 @@ from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.transformer import TransformerConfig
 from megatron.training.global_vars import get_args
 from megatron.training.training import unwrap_model
 from omegaconf import DictConfig
@@ -47,6 +48,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
     get_scheduler_response_queue,
     get_valid_dp_sizes,
 )
+from rlinf.scheduler.worker.routing import get_group_world_size
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_last_rank,
@@ -236,6 +238,11 @@ class MegatronWorker(MegatronModelManager, Worker):
     def init_worker_customize(self):
         pass
 
+    @property
+    def reshard_model_config(self) -> TransformerConfig:
+        """Configuration of the model whose parameters are being resharded."""
+        return self.provider if self.mbridge else self.transformer_config
+
     def init_worker(self):
         self.setup_model_and_optimizer()
 
@@ -249,9 +256,11 @@ class MegatronWorker(MegatronModelManager, Worker):
         self.init_worker_customize()
 
         if self.component_placement.has_dedicated_inference_for_role(self.role):
+            model_config = self.reshard_model_config
             inference_reshard_config = ReshardConfig(
                 model_type=self.inference_cfg.model_type,
-                model_config=self.transformer_config,
+                model_config=model_config,
+                vision_config=getattr(model_config, "vision_config", None),
                 reshard_weights_format="mcore",
                 reshard_tp_size=self.inference_cfg.model.tensor_model_parallel_size,
                 reshard_pp_size=self.inference_cfg.model.pipeline_model_parallel_size,
@@ -1116,54 +1125,15 @@ class MegatronWorker(MegatronModelManager, Worker):
 
     # Inference
     def _setup_inference_weight_dst_ranks(self):
-        self._weight_dst_rank_in_inference = self.get_inference_weight_dst_ranks(
-            self.inference_cfg.model.tensor_model_parallel_size,
-            self.inference_cfg.model.pipeline_model_parallel_size,
+        inference_world_size = get_group_world_size(
+            self._manager_proxy, self.inference_cfg.group_name
         )
-        # Map the actor's TP rank into the inference TP group, so that narrow()
-        # stays in bounds when actor_tp > inference_tp.
-        inference_tp_size = self.inference_cfg.model.tensor_model_parallel_size
-        self.inference_dst_tp_rank = (
-            parallel_state.get_tensor_model_parallel_rank() % inference_tp_size
+        self._weight_dst_rank_in_inference = list(
+            range(self._rank, inference_world_size, self._world_size)
         )
+        self._inference_weight_layouts = None
 
-    def get_inference_weight_dst_ranks(self, inference_tp, inference_pp):
-        """
-        Calculate the list of ranks corresponding to the first complete inference model parallel group after resharding.
-
-        Returns:
-            List of ranks for the first complete inference model parallel group after resharding
-        """
-
-        model_parallel_size = inference_tp * inference_pp
-        # After resharding, the number of GPUs in a complete model parallel group = new TP × new PP
-        # The first complete model parallel group consists of consecutive ranks starting from 0
-        return list(range(model_parallel_size))
-
-    def _get_inference_model_state_dict(self):
-        """Get the state dictionary of the model for inference."""
-        model = unwrap_model(self.model)
-        model_state_dict = {}
-        for key, val in model[0].state_dict().items():
-            if "_extra_state" in key:
-                continue
-            model_state_dict[key] = val
-        # Same parallel layout (actor tp/pp == inference tp/pp): each actor
-        # rank sends its local shard to the matching inference rank, and that
-        # shard is exactly what the receiver needs. Skip the redundant
-        # all_gather and narrow, which also avoids producing a non-contiguous
-        # row-parallel slice.
-        if (
-            self.role_cfg.model.tensor_model_parallel_size
-            == self.inference_cfg.model.tensor_model_parallel_size
-            and self.role_cfg.model.pipeline_model_parallel_size
-            == self.inference_cfg.model.pipeline_model_parallel_size
-        ):
-            return model_state_dict
-        return self.inference_weights_reshard.gather_and_reshard_model(
-            model_state_dict, self.inference_dst_tp_rank
-        )
-
+    @torch.no_grad()
     def sync_model_to_inference(self):
         if not self.is_running:
             return
@@ -1172,11 +1142,65 @@ class MegatronWorker(MegatronModelManager, Worker):
         with self.device_lock:
             self.onload_model_weights_and_grad(load_grad=False)
 
-        inference_state_dict = self._get_inference_model_state_dict()
+        if self._inference_weight_layouts is None:
+            self._inference_weight_layouts = {
+                rank: self.recv(self.inference_cfg.group_name, rank)
+                for rank in self._weight_dst_rank_in_inference
+            }
+            self._inference_local_layout = (
+                MegatronCoreWeightReshard.get_model_weight_layout(
+                    self.model, self.reshard_model_config
+                )
+            )
+            local_layout = self._inference_local_layout
+            local_keys = {key for chunk in local_layout["chunks"] for key in chunk}
+            local_sync = all(
+                all(
+                    layout[key] == local_layout[key]
+                    for key in ("tp_rank", "tp_size", "expert_tp")
+                )
+                and all(set(chunk) <= local_keys for chunk in layout["chunks"])
+                for layout in self._inference_weight_layouts.values()
+            )
+            device = (
+                "cpu"
+                if torch.distributed.get_backend() == "gloo"
+                else self.torch_platform.current_device()
+            )
+            local_sync = torch.tensor(int(local_sync), device=device)
+            torch.distributed.all_reduce(local_sync, op=torch.distributed.ReduceOp.MIN)
+            self._inference_local_sync = bool(local_sync.item())
 
+        resharder = self.inference_weights_reshard
+        if self._inference_local_sync:
+            local_state = {}
+            for model, names in zip(
+                unwrap_model(self.model),
+                self._inference_local_layout["chunks"],
+                strict=True,
+            ):
+                state = model.state_dict()
+                local_state.update(
+                    {key: (state[name], None) for key, name in names.items()}
+                )
+            for rank, layout in self._inference_weight_layouts.items():
+                self.send(1, self.inference_cfg.group_name, rank)
+                self.send(
+                    resharder.narrow_to_model(local_state, layout),
+                    self.inference_cfg.group_name,
+                    rank,
+                )
+            return
+
+        buckets = resharder.divide_model_to_bucket(self.model)
         for rank in self._weight_dst_rank_in_inference:
-            if self._rank == rank:
-                self.send(inference_state_dict, self.inference_cfg.group_name, rank)
+            self.send(len(buckets), self.inference_cfg.group_name, rank)
+        for bucket in buckets:
+            # Ranks without a destination still participate in model collectives.
+            full_state = resharder.gather_full_model(bucket)
+            for rank, layout in self._inference_weight_layouts.items():
+                state = resharder.narrow_to_model(full_state, layout)
+                self.send(state, self.inference_cfg.group_name, rank)
 
         self.log_debug(
             f"{self.__class__.__name__}: sync_model_to_inference resharding done."

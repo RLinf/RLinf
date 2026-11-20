@@ -111,8 +111,7 @@ class MegatronActor(MegatronWorker):
         # The model gather hook supplies the layout for a tied head.
         _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
         _rollout_lm_head_tp = _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
-        qwen35 = self.cfg.rollout.model.model_type == "qwen3_5"
-        model_config = self.provider if qwen35 else self.transformer_config
+        model_config = self.reshard_model_config
         rollout_reshard_config = ReshardConfig(
             model_type=self.cfg.rollout.model.model_type,
             model_config=model_config,
@@ -396,9 +395,9 @@ class MegatronActor(MegatronWorker):
         )
 
         # When the only target wants exactly this rank's TP shard, the gather
-        # can clone local shards instead of all_gathering. The decision must be
-        # unanimous, or ranks would disagree about whether a collective runs,
-        # so a single no vote collapses the TP group back to the full gather.
+        # can clone matching local shards; model hooks handle independent grids.
+        # The decision must be unanimous, or ranks disagree about collectives.
+        # A single no vote sends the TP group through the full gather.
         # dst_tp_rank is a scalar when collocated, a list when disaggregated,
         # and an empty list for an actor rank that has no target.
         if isinstance(self.dst_tp_rank, list):
@@ -406,8 +405,7 @@ class MegatronActor(MegatronWorker):
         else:
             dst_tp_rank_scalar = self.dst_tp_rank
         local_ok = (
-            self.rollout_weights_reshard.config.model_type != "qwen3_5"
-            and not self.rollout_weights_reshard.config.enable_dp_attention
+            not self.rollout_weights_reshard.config.enable_dp_attention
             and self.num_weight_targets == 1
             and self.rollout_weights_reshard.config.reshard_tp_size
             == parallel_state.get_tensor_model_parallel_world_size()

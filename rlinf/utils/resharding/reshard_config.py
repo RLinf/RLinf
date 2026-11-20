@@ -133,6 +133,7 @@ class ReshardConfig:
                 self.tp_gather_fn = partial(
                     self.tp_gather_fn,
                     model_config=self.model_config,
+                    target_vision_tp_size=self.rollout_vision_tp_size,
                     enable_dp_attention=self.enable_dp_attention,
                     replicate_output_layer=(
                         self.enable_dp_attention

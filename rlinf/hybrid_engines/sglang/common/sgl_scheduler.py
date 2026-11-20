@@ -36,6 +36,7 @@ from sglang.srt.managers.scheduler import (
     run_scheduler_process as _run_scheduler_process,
 )
 
+from rlinf.config import sglang_syncs_mtp
 from rlinf.scheduler import Worker, WorkerAddress
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
@@ -415,7 +416,16 @@ class Scheduler(_Scheduler):
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
             model = self.tp_worker.worker.model_runner.model
-            diff_keys = validate_weight_diff(model, self.weight_norm_dict)
+            sync_models = {"target": model}
+            if self._sync_draft_model is not None:
+                sync_models["draft"] = self._sync_draft_model
+            diff_keys = [
+                f"{branch}.{key}"
+                for branch, sync_model in sync_models.items()
+                for key in validate_weight_diff(
+                    sync_model, self.weight_norm_dict[branch]
+                )
+            ]
             if len(diff_keys) != 0:
                 raise RuntimeError(
                     f"sglang: validate_weight failed in first sync. diff_keys = {diff_keys}"
@@ -564,9 +574,8 @@ class Scheduler(_Scheduler):
                 self.cfg.rollout.model.model_type == "qwen3_5"
                 and self.cfg.actor.training_backend == "megatron"
             ):
-                load_mtp = self.cfg.actor.model.get("load_mtp", True)
                 patch_sglang_presharded_weights(model)
-                if load_mtp:
+                if sglang_syncs_mtp(self.cfg.actor, self.cfg.rollout):
                     self._sync_draft_model = get_mtp_draft_model(self.draft_worker)
                     patch_sglang_presharded_weights(self._sync_draft_model)
             # it's important to use load_weight to load resharded weight from megatron
@@ -588,7 +597,11 @@ class Scheduler(_Scheduler):
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
                 validate_weight_first_sync = False
             if validate_weight_first_sync:
-                self.weight_norm_dict = validate_weight_init(model)
+                self.weight_norm_dict = {"target": validate_weight_init(model)}
+                if self._sync_draft_model is not None:
+                    self.weight_norm_dict["draft"] = validate_weight_init(
+                        self._sync_draft_model
+                    )
 
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, "

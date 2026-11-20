@@ -140,9 +140,8 @@ def preprocess_packed_seqs(
             start_idx = cu_seqlens_padded[i] // cp_size
             # split to 2 chunks
             d = input_ids[i, attention_mask[i]]
-            input_ids_rmpad[start_idx : start_idx + half_seqlen] = d[
-                half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)
-            ]
+            first_half = d[half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)]
+            input_ids_rmpad[start_idx : start_idx + first_half.shape[0]] = first_half
 
             remain_start = seqlens_in_batch_padded[i] - half_seqlen * (cp_rank + 1)
             remain_end = seqlens_in_batch_padded[i] - half_seqlen * cp_rank
@@ -166,6 +165,60 @@ def preprocess_packed_seqs(
         return input_ids_rmpad.unsqueeze(0), packed_seq_params
     else:
         return input_ids, packed_seq_params
+
+
+def prepare_packed_model_inputs(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    pre_process: bool,
+    padding_seqlen: Optional[int] = None,
+) -> tuple[torch.Tensor, Optional[torch.Tensor], PackedSeqParams]:
+    """Prepare local token shards for models consuming packed inputs."""
+    tokens, params = preprocess_packed_seqs(
+        input_ids, attention_mask, pre_process, padding_seqlen
+    )
+    return tokens.contiguous(), None, params
+
+
+def prepare_full_model_inputs(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    pre_process: bool,
+    padding_seqlen: Optional[int] = None,
+) -> tuple[torch.Tensor, torch.Tensor, PackedSeqParams]:
+    """Keep complete sequences for models that pack and CP-split embeddings.
+
+    Fixed-size trailing padding is a separate dummy sequence, so the model's
+    internal packing produces the same local extent as RLinf's padded labels.
+    """
+    mask = attention_mask.bool()
+    tokens = input_ids
+    tp = parallel_state.get_tensor_model_parallel_world_size()
+    cp = parallel_state.get_context_parallel_world_size()
+    alignment = tp * cp * 2 if cp > 1 else tp
+    # Materialize alignment zeros before Bridge slices; a short source slice
+    # otherwise broadcasts a single token across the padded half-chunk.
+    pad_counts = (-mask.sum(-1)) % alignment
+    width = int(pad_counts.max())
+    if width:
+        tokens = torch.nn.functional.pad(tokens, (0, width))
+        padding_mask = (
+            torch.arange(width, device=mask.device)[None, :] < pad_counts[:, None]
+        )
+        mask = torch.cat((mask, padding_mask), dim=1)
+    if padding_seqlen is not None:
+        lengths = mask.sum(-1)
+        packed_length = ((lengths + alignment - 1) // alignment * alignment).sum()
+        extra = padding_seqlen * input_ids.shape[0] - int(packed_length)
+        if extra > 0:
+            width = max(tokens.shape[1], extra)
+            tokens = torch.nn.functional.pad(tokens, (0, width - tokens.shape[1]))
+            mask = torch.nn.functional.pad(mask, (0, width - mask.shape[1]))
+            tokens = torch.cat((tokens, tokens.new_zeros((1, width))))
+            dummy_mask = torch.arange(width, device=mask.device) < extra
+            mask = torch.cat((mask, dummy_mask.unsqueeze(0)))
+    _, params = preprocess_packed_seqs(tokens, mask, pre_process=False)
+    return tokens, mask, params
 
 
 def postprocess_packed_seqs(

@@ -18,6 +18,7 @@ import math
 import torch
 
 from rlinf.config import SupportedModel
+from rlinf.scheduler import Worker
 
 
 def get_tp_gather_fn(model_type: str):
@@ -98,8 +99,9 @@ def reshard_tensor_by_rank(tensor, dim, rank, world_size):
 # ``cat`` labels the destination shard grid: "attn" / "dense" / "shared" for
 # the DPA split; non-DPA callers pass "attn", the single grid.
 #
-# ``tp_gather_is_identity`` means the only target wants exactly this rank's
-# shard, so every all_gather is skipped and the local shard is cloned instead.
+# ``tp_gather_is_identity`` identifies matching ranks on the primary TP grid.
+# Model hooks clone matching shards and still gather independently laid-out
+# parameters, such as a replicated MTP projection or a DP vision encoder.
 
 
 def _gather_tp_param(value, dim, tp_group, cat, tp_gather_is_identity):
@@ -166,7 +168,11 @@ def pp_merge_params(params, pp_group, layer_offset=0):
 
     pp_rank = torch.distributed.get_rank(pp_group)
     group_ranks = torch.distributed.get_process_group_ranks(pp_group)
-    device = torch.cuda.current_device()
+    device = (
+        "cpu"
+        if torch.distributed.get_backend(pp_group) == "gloo"
+        else Worker.torch_platform.current_device()
+    )
 
     own_params = {
         _apply_layer_offset(key, layer_offset): value for key, value in params.items()
@@ -254,13 +260,16 @@ def tp_gather_fn_qwen2_5(
             assert False, f"Unknown parameter: {k}"
 
         # Fused fc1: split gate/up per rank, then gather each half to full.
-        # split_fc1=False (mcore-format inference reshard) keeps the fused
-        # linear_fc1 key instead, through the generic path below.
-        if split_fc1 and "linear_fc1" in k:
+        # Megatron targets keep the fused name and per-rank gate/up ordering.
+        if "linear_fc1" in k:
             gate, up = _gather_fused_fc1(v, tp_group, tp_gather_is_identity)
-            spec = None if tp_gather_is_identity else ("slice", 0, cat)
-            full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
-            full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            if split_fc1:
+                spec = None if tp_gather_is_identity else ("slice", 0, cat)
+                full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
+                full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            else:
+                spec = None if tp_gather_is_identity else ("fused_glu", cat)
+                full_state_dict[k] = (torch.cat((gate, up)), spec)
             continue
 
         full_state_dict[k] = _gather_tp_param(
@@ -313,13 +322,16 @@ def tp_gather_fn_qwen3_dense(
             assert False, f"Unknown parameter: {k}"
 
         # Fused fc1: split gate/up per rank, then gather each half to full.
-        # split_fc1=False (mcore-format inference reshard) keeps the fused
-        # linear_fc1 key instead, through the generic path below.
-        if split_fc1 and "linear_fc1" in k:
+        # Megatron targets keep the fused name and per-rank gate/up ordering.
+        if "linear_fc1" in k:
             gate, up = _gather_fused_fc1(v, tp_group, tp_gather_is_identity)
-            spec = None if tp_gather_is_identity else ("slice", 0, cat)
-            full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
-            full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            if split_fc1:
+                spec = None if tp_gather_is_identity else ("slice", 0, cat)
+                full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
+                full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            else:
+                spec = None if tp_gather_is_identity else ("fused_glu", cat)
+                full_state_dict[k] = (torch.cat((gate, up)), spec)
             continue
 
         full_state_dict[k] = _gather_tp_param(
@@ -338,6 +350,7 @@ def tp_gather_fn_qwen3_5(
     model_config=None,
     enable_dp_attention: bool = False,
     replicate_output_layer: bool = False,
+    target_vision_tp_size: int | None = None,
 ) -> dict:
     """Gather Qwen3.5 language, vision, merger and MTP parameters."""
     tp_size = torch.distributed.get_world_size(tp_group)
@@ -351,15 +364,20 @@ def tp_gather_fn_qwen3_5(
     for key, tensor in model_state_dict.items():
         vision = key.startswith("vision_model.")
         target_cat = "vision" if vision else cat
+        local_shard = tp_gather_is_identity and (
+            not vision or target_vision_tp_size == tp_size
+        )
         if not vision and enable_dp_attention and ".mlp." in key:
             target_cat = "full_tp"
         if key.endswith(
             (
                 "self_attention.in_proj.weight",
                 "self_attention.conv1d.weight",
-                "self_attention.conv1d.bias",
             )
         ):
+            if local_shard:
+                full_state_dict[key] = (tensor.clone(), None)
+                continue
             sizes = (
                 (qk, qk, v, v, heads, heads)
                 if key.endswith("in_proj.weight")
@@ -395,7 +413,8 @@ def tp_gather_fn_qwen3_5(
         )
         if key == "vision_model.pos_embed.weight":
             # Megatron replicates the table; SGLang uses VocabParallelEmbedding.
-            full_state_dict[key] = (tensor.clone(), ("slice", 0, target_cat))
+            spec = ("slice", 0, target_cat) if split_fc1 else None
+            full_state_dict[key] = (tensor.clone(), spec)
         elif not vision and (
             (key.endswith("word_embeddings.weight") and enable_dp_attention)
             or (key.endswith("output_layer.weight") and replicate_output_layer)
@@ -403,6 +422,9 @@ def tp_gather_fn_qwen3_5(
             # With one rollout PP stage, a tied head aliases the DPA embedding.
             full_state_dict[key] = (all_gather_tensor(tensor, 0, tp_group), None)
         elif not vision and key.endswith("self_attention.linear_qkv.weight"):
+            if local_shard and tp_size <= model_config.num_query_groups:
+                full_state_dict[key] = (tensor.clone(), None)
+                continue
             full_state_dict[key] = (
                 all_gather_tensor(tensor, 0, tp_group),
                 (
@@ -415,14 +437,25 @@ def tp_gather_fn_qwen3_5(
         elif replicated:
             full_state_dict[key] = (tensor.clone(), None)
         elif key.endswith("eh_proj.weight"):
-            # SGLang's MTP fusion projection is replicated on every draft rank.
-            full_state_dict[key] = (all_gather_tensor(tensor, 0, tp_group), None)
+            # Megatron shards the fusion projection; SGLang replicates it.
+            if not split_fc1:
+                full_state_dict[key] = _gather_tp_param(
+                    tensor, 0, tp_group, target_cat, local_shard
+                )
+            else:
+                full_state_dict[key] = (all_gather_tensor(tensor, 0, tp_group), None)
         elif not vision and key.endswith("mlp.linear_fc1.weight"):
-            gate, up = _gather_fused_fc1(tensor, tp_group, False)
-            for name, value in (("gate_proj", gate), ("up_proj", up)):
-                full_state_dict[key.replace("linear_fc1", name)] = (
-                    value,
-                    ("slice", 0, target_cat),
+            gate, up = _gather_fused_fc1(tensor, tp_group, local_shard)
+            if split_fc1:
+                for name, value in (("gate_proj", gate), ("up_proj", up)):
+                    full_state_dict[key.replace("linear_fc1", name)] = (
+                        value,
+                        None if local_shard else ("slice", 0, target_cat),
+                    )
+            else:
+                full_state_dict[key] = (
+                    torch.cat((gate, up), dim=0),
+                    None if local_shard else ("fused_glu", target_cat),
                 )
         elif key.endswith(
             (
@@ -436,9 +469,8 @@ def tp_gather_fn_qwen3_5(
                 "self_attention.dt_bias",
             )
         ):
-            full_state_dict[key] = (
-                all_gather_tensor(tensor, 0, tp_group),
-                ("slice", 0, target_cat),
+            full_state_dict[key] = _gather_tp_param(
+                tensor, 0, tp_group, target_cat, local_shard
             )
         elif key.endswith(
             (
@@ -447,9 +479,8 @@ def tp_gather_fn_qwen3_5(
                 "out_proj.weight",
             )
         ):
-            full_state_dict[key] = (
-                all_gather_tensor(tensor, 1, tp_group),
-                ("slice", 1, target_cat),
+            full_state_dict[key] = _gather_tp_param(
+                tensor, 1, tp_group, target_cat, local_shard
             )
         else:
             assert False, f"Unknown parameter: {key}"
@@ -573,11 +604,15 @@ def tp_gather_fn_deepseek_v3(
         # Unified fused fc1 (dense + shared): split gate/up per rank, then
         # gather each half to full. split_fc1=False (mcore-format inference
         # reshard) keeps the fused key instead.
-        if split_fc1 and "linear_fc1" in k:
+        if "linear_fc1" in k:
             gate, up = _gather_fused_fc1(v, tp_group, tp_gather_is_identity)
-            spec = None if tp_gather_is_identity else ("slice", 0, cat)
-            full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
-            full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            if split_fc1:
+                spec = None if tp_gather_is_identity else ("slice", 0, cat)
+                full_state_dict[k.replace("linear_fc1", "gate_proj")] = (gate, spec)
+                full_state_dict[k.replace("linear_fc1", "up_proj")] = (up, spec)
+            else:
+                spec = None if tp_gather_is_identity else ("fused_glu", cat)
+                full_state_dict[k] = (torch.cat((gate, up)), spec)
             continue
 
         full_state_dict[k] = _gather_tp_param(

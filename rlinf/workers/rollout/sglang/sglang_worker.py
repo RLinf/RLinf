@@ -23,7 +23,7 @@ from omegaconf import DictConfig
 from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
-from rlinf.config import torch_dtype_from_precision
+from rlinf.config import sglang_syncs_mtp, torch_dtype_from_precision
 from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
 from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
@@ -185,7 +185,17 @@ class SGLangWorker(Worker):
                 # validate_weight_first_sync compare hf weights with megatron weights,
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
                 validate_weight_first_sync = False
-            if self._cfg_rollout.validate_weight or validate_weight_first_sync:
+            independent_draft = self._cfg_rollout.sglang.get(
+                "speculative_algorithm"
+            ) is not None and not sglang_syncs_mtp(
+                self._cfg.get("actor"), self._cfg_rollout
+            )
+            # SGLang shares load_format between target and draft runners.
+            if (
+                self._cfg_rollout.validate_weight
+                or validate_weight_first_sync
+                or independent_draft
+            ):
                 load_format = "auto"
         else:
             load_format = "auto"
@@ -200,39 +210,12 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
-        if (
-            self._cfg_rollout.model.model_type == "qwen3_5"
-            and self.weight_reload == "sync"
-            and self._cfg.actor.training_backend == "megatron"
-        ):
-            # The vision tower and optional MTP must exist before graph capture.
-            load_format = "auto"
-            qwen_args = {
-                "mm_enable_dp_encoder": self._cfg_rollout.sglang.get(
-                    "mm_enable_dp_encoder", False
-                ),
-                # Qwen3.5 NEXTN with SGLang's no_buffer Mamba scheduler
-                # requires prefix caching to be disabled.
-                "disable_radix_cache": self._cfg_rollout.sglang.get(
-                    "disable_radix_cache", True
-                ),
-            }
-            if self._cfg.actor.model.get("load_mtp", True):
-                # load_mtp owns the algorithm and checkpoint for the MTP branch.
-                qwen_args.update(
-                    speculative_algorithm="NEXTN",
-                    speculative_num_steps=self._cfg_rollout.sglang.get(
-                        "speculative_num_steps", 1
-                    ),
-                    speculative_num_draft_tokens=self._cfg_rollout.sglang.get(
-                        "speculative_num_draft_tokens", 2
-                    ),
-                    speculative_eagle_topk=self._cfg_rollout.sglang.get(
-                        "speculative_eagle_topk", 1
-                    ),
-                    speculative_draft_model_path=self._cfg_rollout.model.model_path,
-                )
-            version_dependent_args.update(qwen_args)
+        for name, value in self._cfg_rollout.sglang.items():
+            if name in (
+                "mm_enable_dp_encoder",
+                "disable_radix_cache",
+            ) or name.startswith(("speculative_", "mamba_")):
+                version_dependent_args[name] = value
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
                 continue

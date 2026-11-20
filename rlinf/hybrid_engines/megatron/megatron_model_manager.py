@@ -19,7 +19,7 @@ import itertools
 import os
 from contextlib import contextmanager, nullcontext
 from functools import partial
-from typing import TYPE_CHECKING, Iterator, Optional
+from typing import TYPE_CHECKING, Callable, Iterator, Optional
 
 import megatron
 import torch
@@ -38,6 +38,8 @@ from rlinf.utils.utils import clear_memory
 
 from .utils import (
     postprocess_packed_seqs,
+    prepare_full_model_inputs,
+    prepare_packed_model_inputs,
     preprocess_packed_seqs,
     recover_left_padding,
     remove_left_padding,
@@ -341,6 +343,9 @@ class MegatronModelManager:
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
         if _model_type == "qwen3_5":
+            self.custom_forward = partial(
+                self.custom_forward, prepare_inputs=prepare_full_model_inputs
+            )
             text_config = provider.hf_text_config
             if self._cfg.model.get("load_mtp", True):
                 mtp_layers = text_config.mtp_num_hidden_layers
@@ -692,6 +697,7 @@ class MegatronModelManager:
         padding_seqlen: Optional[int] = None,
         keep_left_padding: bool = False,
         packed_seq_params: Optional[PackedSeqParams] = None,
+        prepare_inputs: Callable = prepare_packed_model_inputs,
         **model_forward_kwargs,
     ):
         """Default forward pass for GPT models with optional sequence packing."""
@@ -711,7 +717,7 @@ class MegatronModelManager:
             return output
         if pack_seqs:
             batch_size, seq_len = attention_mask.shape[:2]
-            input_ids_rmpad, packed_seq_params = preprocess_packed_seqs(
+            input_ids_rmpad, model_attention_mask, packed_seq_params = prepare_inputs(
                 input_ids,
                 attention_mask,
                 pre_process=pre_process,
@@ -720,7 +726,7 @@ class MegatronModelManager:
             input_ids_rmpad = input_ids_rmpad.contiguous()
             output_orig = model(
                 input_ids=input_ids_rmpad,
-                attention_mask=None,
+                attention_mask=model_attention_mask,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,

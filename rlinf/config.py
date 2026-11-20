@@ -378,10 +378,59 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         )
         if cfg.rollout_backend == "sglang":
             cfg.sglang = validate_sglang_cfg(cfg.sglang)
+            if (
+                cfg.model.model_type == "qwen3_5"
+                and actor_cfg is not None
+                and actor_cfg.get("training_backend") == "megatron"
+            ):
+                algorithm = cfg.sglang.get("speculative_algorithm")
+                draft_path = cfg.sglang.get("speculative_draft_model_path")
+                if load_mtp:
+                    assert algorithm is None or algorithm.upper() in (
+                        "NEXTN",
+                        "EAGLE",
+                    ), (
+                        "actor.model.load_mtp=True requires NEXTN or its EAGLE "
+                        f"alias, got speculative_algorithm={algorithm!r}."
+                    )
+                    defaults = {
+                        "speculative_algorithm": "NEXTN",
+                        "speculative_draft_model_path": cfg.model.model_path,
+                        "speculative_num_steps": 1,
+                        "speculative_num_draft_tokens": 2,
+                        "speculative_eagle_topk": 1,
+                        "disable_radix_cache": cfg.sglang.get(
+                            "mamba_scheduler_strategy", "no_buffer"
+                        )
+                        == "no_buffer",
+                    }
+                    for name, value in defaults.items():
+                        if cfg.sglang.get(name) is None:
+                            cfg.sglang[name] = value
+                elif (
+                    algorithm is not None
+                    and algorithm.upper() in ("NEXTN", "EAGLE")
+                    and draft_path in (None, cfg.model.model_path)
+                ):
+                    assert False, (
+                        "The Qwen3.5 checkpoint's MTP draft requires "
+                        "actor.model.load_mtp=True for weight synchronization; "
+                        f"got load_mtp=False and speculative_algorithm={algorithm!r}."
+                    )
         else:
             cfg.vllm = validate_vllm_cfg(cfg.vllm)
 
     return cfg
+
+
+def sglang_syncs_mtp(actor_cfg: Optional[DictConfig], rollout_cfg: DictConfig) -> bool:
+    """Whether the actor supplies weights for SGLang's MTP draft."""
+    return (
+        actor_cfg is not None
+        and actor_cfg.get("training_backend") == "megatron"
+        and rollout_cfg.model.model_type == "qwen3_5"
+        and actor_cfg.model.get("load_mtp", True)
+    )
 
 
 def hf_rope_parameters(hf_config) -> dict:
@@ -693,6 +742,11 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
     with open_dict(cfg):
+        if cfg.model.get("model_type") == SupportedModel.QWEN3_5.value:
+            assert cfg.megatron.get("mbridge", False), (
+                "Qwen3.5's Megatron model requires megatron.mbridge=True, "
+                f"got {cfg.megatron.get('mbridge', False)!r}."
+            )
         cfg.mcore_gpt = cfg.get("mcore_gpt", True)
         spec_name = cfg.get("spec_name", "local_gpt")
         cfg.spec_name = spec_name

@@ -46,9 +46,15 @@ Megatron actor 可以向 SGLang rollout 同步稠密 Qwen3.5 的视觉编码器�
        mm_enable_dp_encoder: true
        disable_radix_cache: true
 
-``actor.model.load_mtp`` 默认为 ``true``\ ：actor 加载 MTP，SGLang 启用 NEXTN 投机解码，并用同一份 checkpoint 构建 draft model。SGLang 内部会将 NEXTN 规范化为 EAGLE。由 ``actor.model.load_mtp`` 设置投机解码算法和 draft checkpoint。支持的 MTP 结构包含一个预测层，并与主模型共享 embedding。
+``actor.model.load_mtp`` 默认为 ``true``\ 。开启后，actor 加载 MTP 分支，SGLang 默认启用 NEXTN 投机解码，draft model 使用 rollout checkpoint。SGLang 将 NEXTN 按 EAGLE 处理。显式指定的 NEXTN 或 EAGLE、draft checkpoint 路径和解码参数优先于默认值；开启 actor MTP 后选择其他投机解码算法会报配置错误。支持的 MTP 结构只有一个预测层，与主模型共享 embedding。
 
-设置 ``actor.model.load_mtp: false`` 后，只加载和同步视觉分支与语言分支。主模型仍然包含视觉编码器和 merger。Qwen3.5 使用 NEXTN 时，保留 ``rollout.sglang.disable_radix_cache: true``\ ，这也是该模型接入时的默认值。
+设置 ``actor.model.load_mtp: false`` 后，只加载和同步语言模型、视觉编码器及 merger，不包含 MTP。关闭 actor MTP 却要求使用同一 checkpoint 的 MTP draft，会在配置校验时报错。单独配置的外部 draft 不受 actor MTP 权重同步控制。
+
+外部 draft 在启动时读取自己的 checkpoint。SGLang 0.5.12.post1 的主模型和 draft 共用加载格式，因此主模型也会先读取 checkpoint，再接收 actor 权重。启动和恢复训练时都会增加 checkpoint I/O。
+
+开启 actor MTP 后，\ ``rollout.sglang.disable_radix_cache`` 的默认值取决于 Mamba 调度模式：\ ``no_buffer`` 对应 ``true``\ ，\ ``extra_buffer`` 对应 ``false``\ 。显式设置的值优先，由 SGLang 检查是否与调度模式兼容。关闭 actor MTP 后，这一配置沿用 SGLang 默认值，也可以显式设置。
+
+主模型和 draft 的权重均由 actor 提供、且未开启 checkpoint 对照校验时，SGLang 用 dummy 权重初始化，在 rollout 前接收 actor 参数。开启 ``rollout.validate_weight_first_sync`` 后，SGLang 先加载 checkpoint，首次同步后同时校验主模型和已启用的 MTP draft。内置校验比较带位置信息的范数并允许一定误差；逐 bit 验证需要另行比较参数字节。恢复训练会关闭首次同步的 checkpoint 对照，因为 actor 恢复的权重可能与初始 checkpoint 不同。
 
 选择视觉分支布局
 ----------------
@@ -80,8 +86,10 @@ Megatron actor 可以向 SGLang rollout 同步稠密 Qwen3.5 的视觉编码器�
 
    PYTHONPATH=.:tests/unit_tests python -m pytest tests/unit_tests/test_ckpt_convertor.py -q
 
-安装测试所用的依赖后，123 个用例应全部通过。使用其他环境时应检查跳过的用例；缺少 SGLang 或 Megatron 依赖时，即使其余测试通过，也没有验证这些库的权重加载流程。
+安装测试所用的依赖后，组件测试应全部通过。使用其他环境时应检查跳过的用例；缺少 SGLang 或 Megatron 依赖时，即使其余测试通过，也没有验证这些库的权重加载流程。CPU 测试检查 SGLang 能否收到配置、外部 draft 能否读取 checkpoint，以及首次同步校验能否发现错误的 MTP 权重。
+
+CPU 测试还会向独立的 Megatron 推理 worker 连续发送两次权重更新，每次更新后逐字节比较收到的全部参数。测试使用少量参数、真实 Gloo 通信和 Megatron 并行组，用进程队列替代 worker 之间的传输。测试覆盖相同和不同的张量并行大小、流水线阶段之间的层重分配、虚拟流水线分块、上下文并行和数据并行副本，以及专家并行布局。这些用例验证权重传输与加载，不执行模型前向。
 
 全量模型验证会用 SGLang 的完整 checkpoint 加载流程生成独立参考值，再逐一比较目标参数的形状、数据类型和原始字节。测试覆盖初始权重、主动修改后的权重、同卡与分离部署、Actor/Rollout 不同 TP、Actor PP/VP、attention DP 和视觉 DP。4B 测试还覆盖共享输出 embedding 和关闭 MTP。这些检查证明权重加载的一致性，不代表生成输出一致、训练收敛或投机解码加速。
 
-仍需单独开展集成测试，验证推理请求运行期间的异步权重更新、上下文并行和多节点同步。接入异步训练时，应沿用任务已有的暂停与恢复流程。
+仍需单独开展集成测试，验证推理请求运行期间的异步权重更新、全量模型的上下文并行和多节点同步。接入异步训练时，应沿用任务已有的暂停与恢复流程。
