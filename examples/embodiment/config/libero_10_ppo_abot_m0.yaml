@@ -133,6 +133,9 @@ actor:
       param_dtype: "bf16"
       reduce_dtype: "bf16"
       buffer_dtype: "bf16"
+      # Preserve the FP32 log-probabilities from rollout autocast.
+      cast_forward_inputs: False
+      cast_root_forward_inputs: False
 
 reward:
   use_reward_model: false
