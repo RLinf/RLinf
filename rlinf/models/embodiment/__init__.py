@@ -12,32 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING
+from omegaconf import DictConfig, OmegaConf
 
-if TYPE_CHECKING:
+
+def get_dagger_component_class(default_cls: type, cfg: DictConfig | None) -> type:
+    """Resolve a model-specific implementation for a built-in DAgger component."""
+    if (
+        not isinstance(cfg, DictConfig)
+        or OmegaConf.select(cfg, "algorithm.loss_type") != "embodied_dagger"
+        or OmegaConf.select(cfg, "actor.model.model_type") != "cosmos3"
+    ):
+        return default_cls
+
+    from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+
+    if default_cls is AsyncEmbodiedRunner:
+        from rlinf.models.embodiment.cosmos3.async_dagger_runner import (
+            Cosmos3AsyncDAggerRunner,
+        )
+
+        return Cosmos3AsyncDAggerRunner
+
     from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
-
-def get_dagger_actor_class(
-    model_type: str, *, asynchronous: bool = False
-) -> "type[EmbodiedDAGGERFSDPPolicy]":
-    """Select the training actor used by an embodied DAgger launcher."""
-    if model_type == "cosmos3":
-        if asynchronous:
-            from rlinf.models.embodiment.cosmos3.async_dagger_actor import (
-                Cosmos3AsyncDAggerActor,
-            )
-
-            return Cosmos3AsyncDAggerActor
+    if default_cls is EmbodiedDAGGERFSDPPolicy:
         from rlinf.models.embodiment.cosmos3.dagger_actor import Cosmos3DAggerActor
 
         return Cosmos3DAggerActor
-    if asynchronous:
-        from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
-            AsyncEmbodiedDAGGERFSDPPolicy,
+
+    from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
+        AsyncEmbodiedDAGGERFSDPPolicy,
+    )
+
+    if default_cls is AsyncEmbodiedDAGGERFSDPPolicy:
+        from rlinf.models.embodiment.cosmos3.async_dagger_actor import (
+            Cosmos3AsyncDAggerActor,
         )
 
-        return AsyncEmbodiedDAGGERFSDPPolicy
-    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
+        return Cosmos3AsyncDAggerActor
 
-    return EmbodiedDAGGERFSDPPolicy
+    return default_cls

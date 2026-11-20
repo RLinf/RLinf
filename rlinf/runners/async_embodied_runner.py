@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
+from rlinf.models.embodiment import get_dagger_component_class
 from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
@@ -40,6 +41,9 @@ if TYPE_CHECKING:
 
 
 class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
+    def __new__(cls, cfg: DictConfig | None = None, *args, **kwargs):
+        return super().__new__(get_dagger_component_class(cls, cfg))
+
     def __init__(
         self,
         cfg: DictConfig,
