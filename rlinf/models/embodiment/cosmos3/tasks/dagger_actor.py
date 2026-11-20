@@ -23,7 +23,7 @@ import torch
 from rlinf.data.datasets.dagger import RollingLeRobotDataset
 from rlinf.models import get_model
 from rlinf.models.embodiment.cosmos3 import load_inference_checkpoint
-from rlinf.models.embodiment.cosmos3.dagger import Cosmos3DAggerAdapter
+from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerAdapter
 from rlinf.scheduler import Worker
 from rlinf.utils import drq
 from rlinf.utils.metric_utils import append_to_dict

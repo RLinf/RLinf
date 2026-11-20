@@ -27,7 +27,7 @@ def get_dagger_component_class(default_cls: type, cfg: DictConfig | None) -> typ
     from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 
     if default_cls is AsyncEmbodiedRunner:
-        from rlinf.models.embodiment.cosmos3.async_dagger_runner import (
+        from rlinf.models.embodiment.cosmos3.tasks.async_dagger_runner import (
             Cosmos3AsyncDAggerRunner,
         )
 
@@ -36,7 +36,9 @@ def get_dagger_component_class(default_cls: type, cfg: DictConfig | None) -> typ
     from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
     if default_cls is EmbodiedDAGGERFSDPPolicy:
-        from rlinf.models.embodiment.cosmos3.dagger_actor import Cosmos3DAggerActor
+        from rlinf.models.embodiment.cosmos3.tasks.dagger_actor import (
+            Cosmos3DAggerActor,
+        )
 
         return Cosmos3DAggerActor
 
@@ -45,7 +47,7 @@ def get_dagger_component_class(default_cls: type, cfg: DictConfig | None) -> typ
     )
 
     if default_cls is AsyncEmbodiedDAGGERFSDPPolicy:
-        from rlinf.models.embodiment.cosmos3.async_dagger_actor import (
+        from rlinf.models.embodiment.cosmos3.tasks.async_dagger_actor import (
             Cosmos3AsyncDAggerActor,
         )
 
