@@ -53,6 +53,8 @@
 
    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash examples/agent/qwen35/run_replay_update.sh /path/to/Qwen3.5-4B
 
+若只使用两张卡，将上例的卡号换成两张空闲卡，例如 ``CUDA_VISIBLE_DEVICES=4,5``。这个配置使用 TP=2、DP=1。
+
 此处用固定优势值和回报检验训练链路。策略效果需要单独评估。
 
 接入智能体

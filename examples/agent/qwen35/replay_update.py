@@ -26,6 +26,7 @@ from omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Cluster
+from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NvidiaGPUManager
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
@@ -91,9 +92,12 @@ def update(worker, rows_file, critic):
         raise RuntimeError(
             f"Optimizer update failed: loss={loss.item()}, grad_norm={norm}, changed={changed}"
         )
-    return dict(
-        rank=worker._rank, loss=loss.item(), grad_norm=float(norm), changed=changed
-    )
+    return {
+        "rank": worker._rank,
+        "loss": loss.item(),
+        "grad_norm": float(norm),
+        "changed": changed,
+    }
 
 
 class ReplayActor(MAMegatronActor):
@@ -121,7 +125,10 @@ if __name__ == "__main__":
     cards = torch.cuda.device_count()
     if cards not in (2, 8):
         parser.error("Select two or eight local GPUs with CUDA_VISIBLE_DEVICES")
-    cfg.cluster.component_placement = {"actor,critic,rollout,reward": "all"}
+    devices = sorted(NvidiaGPUManager.get_visible_devices() or range(cards))
+    cfg.cluster.component_placement = {
+        "actor,critic,rollout,reward": ",".join(map(str, devices))
+    }
     cfg.data.rollout_batch_size = 4
     cfg.actor.global_batch_size = 8
     cfg.actor.model.lm_head_chunk_size = 256 if args.role == "chunked" else 0
@@ -137,13 +144,15 @@ if __name__ == "__main__":
     cluster = Cluster(cluster_cfg=cfg.cluster)
     placement = ModelParallelComponentPlacement(cfg, cluster)
     role = "critic" if args.role == "critic" else "actor"
-    if placement.get_world_size(role) != cards:
-        raise RuntimeError("Use a single-node Ray cluster with only the selected GPUs.")
+    strategy = placement.get_strategy(role)
+    slots = strategy.get_placement(cluster)
+    if len(slots) != cards or {s.local_accelerator_rank for s in slots} != set(devices):
+        raise RuntimeError("Ray placement differs from the selected GPUs.")
     cls = ReplayCritic if role == "critic" else ReplayActor
     group = cls.create_group(cfg, placement).launch(
         cluster,
         name=f"ImageReplay{args.role}",
-        placement_strategy=placement.get_strategy(role),
+        placement_strategy=strategy,
     )
     group.init_worker().wait()
     print(

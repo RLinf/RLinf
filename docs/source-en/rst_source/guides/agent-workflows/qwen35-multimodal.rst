@@ -71,6 +71,9 @@ changed parameter count for every rank.
 
    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash examples/agent/qwen35/run_replay_update.sh /path/to/Qwen3.5-4B
 
+For a two-GPU run, pass the indices of the available pair, for example
+``CUDA_VISIBLE_DEVICES=4,5``. The learner uses TP=2 and DP=1.
+
 The check uses fixed advantages and returns to exercise the optimizer. The
 result is a training-path check. Policy quality requires a separate evaluation.
 
