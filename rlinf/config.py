@@ -1383,6 +1383,31 @@ def validate_eval_env_cfg(
     return eval_envs_per_stage
 
 
+def validate_refl_cfg(cfg: DictConfig) -> None:
+    """Validate ReFL sampling and the sample budget of each runner step."""
+    if cfg.env.get("train") is not None:
+        raise ValueError("ReFL reads actor.refl_data; expected env.train=null.")
+    if cfg.actor.refl_data.type != "visual.prompt_dataset":
+        raise ValueError("ReFL requires actor.refl_data.type=visual.prompt_dataset.")
+    if cfg.algorithm.update_epoch != 1 or cfg.algorithm.group_size != 1:
+        raise ValueError("ReFL requires update_epoch=1 and group_size=1.")
+    if cfg.runner.get("use_training_pipeline", False) or cfg.runner.get(
+        "overlap_env_bootstrap", False
+    ):
+        raise ValueError(
+            "ReFL does not use the embodied training pipeline or env bootstrap."
+        )
+    if (cfg.get("reward") or {}).get("use_reward_model", False):
+        raise ValueError("ReFL uses actor.refl_reward_model, not a reward worker.")
+    sample_count = cfg.actor.refl_samples_per_step
+    batch_size = cfg.actor.global_batch_size
+    if batch_size <= 0 or sample_count <= 0 or sample_count % batch_size:
+        raise ValueError(
+            f"ReFL samples per step ({sample_count}) must be a positive "
+            f"multiple of actor.global_batch_size ({batch_size})."
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -1392,6 +1417,8 @@ def validate_embodied_cfg(cfg):
         validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
+    if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
+        validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
@@ -1963,7 +1990,7 @@ def validate_embodied_cfg(cfg):
                 f"{env_path}.early_stop_on_done does not support decoupled mode."
             )
 
-    if not only_eval:
+    if not only_eval and algorithm_cfg.get("loss_type") != "embodied_refl":
         resolve_env_mode_cfg(cfg.env.train, "env.train", env_world_size)
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
