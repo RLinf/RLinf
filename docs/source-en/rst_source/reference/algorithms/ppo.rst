@@ -130,6 +130,24 @@ This mode requires synchronous, non-pipelined embodied training with
 ``actor/behav_approx_kl``, and ``actor/recomputed_logprob_abs_diff`` to measure
 rollout-actor divergence.
 
+KL-Adaptive Clip Bounds
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Use ``algorithm.kl_clip_target`` to narrow the policy ratio bounds for individual action chunks. For each chunk, the actor computes the conditional KL from the rollout policy to the current policy on the selected denoising transition.
+
+Chunks at or below the target keep the configured bounds. Above the target, both distances from 1 shrink by the square root of (target KL / measured KL), down to one quarter of the configured distances. With a target of 0.05, a chunk at KL 0.20 uses half of the original distances.
+
+OpenPI supports this option in synchronous FSDP PPO and GRPO with Hugging Face rollout. Use chunk-level rewards and log probabilities. Use Flow-SDE with positive noise, disable joint log probabilities, and match the actor and rollout denoising step counts. Keep ``algorithm.recompute_logprobs`` off so the policy ratio uses the rollout log probabilities.
+
+Set a finite positive target in the training YAML. Omit the key or set it to ``null`` to turn the option off.
+
+.. code:: yaml
+
+  algorithm:
+    kl_clip_target: 0.05
+
+Watch ``train/actor/conditional_kl_mean`` for mean KL across valid chunks and ``train/actor/kl_clip_tightened_fraction`` for the fraction with narrower bounds. The training config still determines the update budget.
+
 3.2. LLM Reasoning Tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
