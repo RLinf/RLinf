@@ -4611,6 +4611,8 @@ install_mbridge() {
     uv pip uninstall rlinf-megatron-bridge || true
     uv pip install --no-deps "megatron-bridge==0.5.0"
     uv pip install "nvidia-modelopt==0.45.0"
+    # Megatron's GDN layers use FLA's kernels and normalization modules.
+    uv pip install "fla-core==0.6.0"
 
     local mbridge_ver modelopt_ver
     mbridge_ver=$(uv pip show megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')

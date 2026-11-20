@@ -107,14 +107,17 @@ class MegatronActor(MegatronWorker):
         _rollout_attn_tp = self.component_placement.rollout_attn_tp_size
         _rollout_ep = self.component_placement.rollout_ep_size
         _rollout_moe_dense_tp = _sglang.get("moe_dense_tp_size", None)
-        # sglang's ParallelLMHead uses the full engine TP group, or the attn_tp
-        # group when enable_dp_lm_head is on. Either way the actor gathers to
-        # full and slices to rollout_lm_head_tp_size, so one path covers both.
+        # An independent SGLang head uses engine TP or attention TP.
+        # The model gather hook supplies the layout for a tied head.
         _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
         _rollout_lm_head_tp = _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
+        qwen35 = self.cfg.rollout.model.model_type == "qwen3_5"
+        model_config = self.provider if qwen35 else self.transformer_config
         rollout_reshard_config = ReshardConfig(
             model_type=self.cfg.rollout.model.model_type,
-            model_config=self.transformer_config,
+            model_config=model_config,
+            vision_config=getattr(model_config, "vision_config", None),
+            mm_enable_dp_encoder=_sglang.get("mm_enable_dp_encoder", False),
             reshard_tp_size=_rollout_attn_tp,
             reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
             mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
@@ -403,7 +406,8 @@ class MegatronActor(MegatronWorker):
         else:
             dst_tp_rank_scalar = self.dst_tp_rank
         local_ok = (
-            not self.rollout_weights_reshard.config.enable_dp_attention
+            self.rollout_weights_reshard.config.model_type != "qwen3_5"
+            and not self.rollout_weights_reshard.config.enable_dp_attention
             and self.num_weight_targets == 1
             and self.rollout_weights_reshard.config.reshard_tp_size
             == parallel_state.get_tensor_model_parallel_world_size()

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from functools import wraps
 from importlib.metadata import version
 from typing import Any, Callable, Literal, Optional
 
@@ -71,6 +72,84 @@ def patch_glm4_moe_lite_shared_expert_tp1():
         Glm4MoeLiteSparseMoeBlock._shared_expert_tp1 = False
 
 
+def patch_sglang_presharded_weights(model: torch.nn.Module) -> None:
+    """Adapt unquantized Qwen3.5 shards to SGLang's native parameter loaders.
+
+    Full-checkpoint loads retain their original behavior. The adapters only
+    handle the packed inputs and local tensors missing from 0.5.12.post1.
+    """
+    from sglang.srt.layers.linear import QKVParallelLinear
+    from sglang.srt.model_loader.weight_utils import default_weight_loader
+    from sglang.srt.models.qwen3_5 import Qwen3_5GatedDeltaNet
+
+    def packed_loader(module, original):
+        @wraps(original)
+        def load(param, weight, shard_id=None):
+            if module.use_presharded_weights and isinstance(shard_id, tuple):
+                sizes = [module.output_sizes[i] // module.tp_size for i in shard_id]
+                dim = param.output_dim
+                for index, chunk in zip(
+                    shard_id, weight.split(sizes, dim), strict=True
+                ):
+                    original(param, chunk, index)
+            else:
+                original(param, weight, shard_id)
+
+        return load
+
+    def local_loader(module, original):
+        @wraps(original)
+        def load(param, weight):
+            if module.use_presharded_weights:
+                default_weight_loader(param, weight)
+            else:
+                original(param, weight)
+
+        return load
+
+    def qkv_loader(module, original):
+        @wraps(original)
+        def load(param, weight, shard_id=None):
+            if module.use_presharded_weights and shard_id is None:
+                sizes = (
+                    module.num_heads * module.head_size,
+                    module.num_kv_heads * module.head_size,
+                    module.num_kv_heads * module.v_head_size,
+                )
+                dim = param.output_dim
+                for index, chunk in zip("qkv", weight.split(sizes, dim), strict=True):
+                    original(param, chunk, index)
+            else:
+                original(param, weight, shard_id)
+
+        return load
+
+    for module in model.modules():
+        if getattr(module, "_rlinf_presharded_loader_patched", False):
+            continue
+        if isinstance(module, Qwen3_5GatedDeltaNet):
+            projection = module.in_proj_qkvz
+            projection.weight.weight_loader = packed_loader(
+                projection, projection.weight.weight_loader
+            )
+            for param in (module.A_log, module.dt_bias, module.conv1d.weight):
+                param.weight_loader = local_loader(projection, param.weight_loader)
+        elif isinstance(module, QKVParallelLinear):
+            for param in (module.weight, module.bias):
+                if param is not None:
+                    param.weight_loader = qkv_loader(module, param.weight_loader)
+        else:
+            continue
+        module._rlinf_presharded_loader_patched = True
+
+
+def get_mtp_draft_model(draft_worker: Any) -> torch.nn.Module:
+    """Resolve the MTP runner through SGLang's supported worker wrappers."""
+    if draft_worker.server_args.disable_overlap_schedule:
+        return draft_worker.draft_model_runner.model
+    return draft_worker.draft_worker.draft_runner.model
+
+
 class Scheduler(_Scheduler):
     """
     Overridden class of SGLang's TP worker class _Scheduler.
@@ -105,6 +184,8 @@ class Scheduler(_Scheduler):
         # not. is_weight_offloaded above still gates the sync path.
         self.offloaded_tags: dict = dict.fromkeys(GPU_MEMORY_ALL_TYPES, False)
         self.weight_norm_dict = None
+        self._sync_draft_model = None
+        self._draft_static_state = None
 
         try:
             sglang_version = parse(version("sglang"))
@@ -146,6 +227,12 @@ class Scheduler(_Scheduler):
             f"{sorted(already_offloaded)} already offloaded. "
             f"offload_state={self.offloaded_tags}"
         )
+        if self._sync_draft_model is not None and "weights" in requested_tags:
+            from sglang.srt.managers.scheduler_update_weights_mixin import (
+                _export_static_state,
+            )
+
+            self._draft_static_state = _export_static_state(self._sync_draft_model)
         for tag in requested_tags:
             self.offloaded_tags[tag] = True
         self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
@@ -166,6 +253,13 @@ class Scheduler(_Scheduler):
             self.offloaded_tags[tag] = False
         self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
         result = super().resume_memory_occupation(recv_req)
+        if self._sync_draft_model is not None and "weights" in requested_tags:
+            from sglang.srt.managers.scheduler_update_weights_mixin import (
+                _import_static_state,
+            )
+
+            _import_static_state(self._sync_draft_model, self._draft_static_state)
+            self._draft_static_state = None
         if self.weight_reload == "cpu":
             model = self.tp_worker.worker.model_runner.model
             model.load_state_dict(self.cpu_state_dict)
@@ -233,10 +327,29 @@ class Scheduler(_Scheduler):
                 batch_weight.append((rename(name), tensor))
 
         model.load_weights(batch_weight)
+        if self._sync_draft_model is not None:
+            self._sync_draft_model.load_weights(
+                [
+                    (name, weight)
+                    for name, weight in batch_weight
+                    if name.startswith("mtp.")
+                ]
+            )
 
         for name, weight in batch_weight:
             del weight
         batch_weight.clear()
+
+    @torch.no_grad()
+    def _sync_draft_embed_and_head(self) -> None:
+        """Refresh the draft's copies of target embeddings and output weights."""
+        target = self.tp_worker.worker.model_runner.model
+        draft = self._sync_draft_model
+        for source, dest in zip(
+            target.get_embed_and_head(), draft.get_embed_and_head(), strict=True
+        ):
+            if source.data_ptr() != dest.data_ptr():
+                dest.copy_(source)
 
     def sync_hf_weight(self, recv_req: SyncHFWeightInput):
         assert self.weight_reload == "sync", (
@@ -296,6 +409,8 @@ class Scheduler(_Scheduler):
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
         state_dict = None
+        if self._sync_draft_model is not None:
+            self._sync_draft_embed_and_head()
 
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
@@ -313,6 +428,11 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
+        if self.model_config.is_multimodal:
+            from sglang.srt.managers import mm_utils
+
+            if mm_utils.embedding_cache is not None:
+                mm_utils.embedding_cache.clear()
         self._handle_cache_after_sync(recv_req.pause_mode)
         return SyncHFWeightOutput()
 
@@ -440,10 +560,25 @@ class Scheduler(_Scheduler):
                 False if self.cfg.actor.training_backend == "fsdp" else True
             )
             model = self.tp_worker.worker.model_runner.model
+            if (
+                self.cfg.rollout.model.model_type == "qwen3_5"
+                and self.cfg.actor.training_backend == "megatron"
+            ):
+                load_mtp = self.cfg.actor.model.get("load_mtp", True)
+                patch_sglang_presharded_weights(model)
+                if load_mtp:
+                    self._sync_draft_model = get_mtp_draft_model(self.draft_worker)
+                    patch_sglang_presharded_weights(self._sync_draft_model)
             # it's important to use load_weight to load resharded weight from megatron
-            for _, module in model.named_modules():
-                if hasattr(module, "use_presharded_weights"):
-                    module.use_presharded_weights = use_presharded_weights
+            sync_models = (
+                (model,)
+                if self._sync_draft_model is None
+                else (model, self._sync_draft_model)
+            )
+            for sync_model in sync_models:
+                for module in sync_model.modules():
+                    if hasattr(module, "use_presharded_weights"):
+                        module.use_presharded_weights = use_presharded_weights
 
             validate_weight_first_sync = self.cfg.rollout.get(
                 "validate_weight_first_sync", False

@@ -306,7 +306,7 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
+        if _model_type in ("deepseek_v3", "glm4_moe_lite", "qwen3_5"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -317,6 +317,7 @@ class MegatronModelManager:
                 "sequence_parallel",
                 "tensor_model_parallel_size",
                 "pipeline_model_parallel_size",
+                "virtual_pipeline_model_parallel_size",
                 "expert_model_parallel_size",
                 "context_parallel_size",
                 "gradient_accumulation_fusion",
@@ -339,6 +340,18 @@ class MegatronModelManager:
         provider.position_embedding_type = position_embedding_type
         if hasattr(provider, "vision_config"):
             provider.vision_config._attn_implementation = resolve_attn_implementation()
+        if _model_type == "qwen3_5":
+            text_config = provider.hf_text_config
+            if self._cfg.model.get("load_mtp", True):
+                mtp_layers = text_config.mtp_num_hidden_layers
+                assert (
+                    mtp_layers == 1 and not text_config.mtp_use_dedicated_embeddings
+                ), "Qwen3.5 weight sync requires one MTP layer with shared embeddings."
+                provider.mtp_num_layers = mtp_layers
+            else:
+                provider.mtp_num_layers = 0
+                # Bridge exports the HF config alongside the loaded parameters.
+                text_config.mtp_num_hidden_layers = 0
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(

@@ -200,6 +200,39 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
+        if (
+            self._cfg_rollout.model.model_type == "qwen3_5"
+            and self.weight_reload == "sync"
+            and self._cfg.actor.training_backend == "megatron"
+        ):
+            # The vision tower and optional MTP must exist before graph capture.
+            load_format = "auto"
+            qwen_args = {
+                "mm_enable_dp_encoder": self._cfg_rollout.sglang.get(
+                    "mm_enable_dp_encoder", False
+                ),
+                # Qwen3.5 NEXTN with SGLang's no_buffer Mamba scheduler
+                # requires prefix caching to be disabled.
+                "disable_radix_cache": self._cfg_rollout.sglang.get(
+                    "disable_radix_cache", True
+                ),
+            }
+            if self._cfg.actor.model.get("load_mtp", True):
+                # load_mtp owns the algorithm and checkpoint for the MTP branch.
+                qwen_args.update(
+                    speculative_algorithm="NEXTN",
+                    speculative_num_steps=self._cfg_rollout.sglang.get(
+                        "speculative_num_steps", 1
+                    ),
+                    speculative_num_draft_tokens=self._cfg_rollout.sglang.get(
+                        "speculative_num_draft_tokens", 2
+                    ),
+                    speculative_eagle_topk=self._cfg_rollout.sglang.get(
+                        "speculative_eagle_topk", 1
+                    ),
+                    speculative_draft_model_path=self._cfg_rollout.model.model_path,
+                )
+            version_dependent_args.update(qwen_args)
         for name in list(version_dependent_args):
             if name in _SERVER_ARGS_FIELDS:
                 continue

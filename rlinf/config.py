@@ -88,6 +88,7 @@ class SupportedModel:
 SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
+SupportedModel.QWEN3_5 = SupportedModel.register("qwen3_5", force=True)
 SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
@@ -335,6 +336,15 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
         assert cfg.rollout_backend in SUPPORTED_ROLLOUT_BACKENDS, (
             f"rollout_backend must be one of {SUPPORTED_ROLLOUT_BACKENDS}."
         )
+        if (
+            cfg.model.model_type == "qwen3_5"
+            and actor_cfg is not None
+            and actor_cfg.get("training_backend") == "megatron"
+        ):
+            load_mtp = actor_cfg.model.get("load_mtp", True)
+            assert isinstance(load_mtp, bool), (
+                f"actor.model.load_mtp must be a boolean, got {load_mtp!r}."
+            )
         cfg.return_logprobs = cfg.return_logprobs or algorithm_cfg.get(
             "importance_sampling_fix", False
         )
@@ -396,6 +406,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         or "Qwen3MoeForCausalLM" in hf_config.architectures
         or "Qwen3VLForConditionalGeneration" in hf_config.architectures
         or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForConditionalGeneration" in hf_config.architectures
+        or "Qwen3_5ForCausalLM" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -413,7 +425,9 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             # reported as rope_scaling=None and so left this untouched.
             cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
-        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5") and hasattr(
+            hf_config, "text_config"
+        ):
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
             hf_config = hf_config.text_config
 
