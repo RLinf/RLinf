@@ -106,6 +106,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
+        self._training_round = 0
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
@@ -544,7 +545,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         """
         g = torch.Generator()
         g.manual_seed(self.cfg.actor.seed + self._rank)
-        self._training_round = getattr(self, "_training_round", 0) + 1
+        self._training_round += 1
         batch_size_per_rank = self.cfg.actor.global_batch_size // self._world_size
         pool_rows = [pool["prev_logprobs"].shape[0] for pool in self.rollout_batches]
         assert sum(pool_rows) % batch_size_per_rank == 0, (

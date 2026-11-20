@@ -176,6 +176,8 @@ class MultiStepRolloutWorker(Worker):
                 "policy": [],
                 "rollout_results": [],
             }
+        self._decoupled_step = 0
+        self._decoupled_deferred: list[tuple[PolicyInput, int, Any]] = []
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
     @property
@@ -546,9 +548,7 @@ class MultiStepRolloutWorker(Worker):
 
     def _dagger_beta_for_source(self, source: Any) -> float | None:
         """Compute DAgger expert-sampling beta from the source's own epoch."""
-        if getattr(self, "expert_model", None) is None or not getattr(
-            self, "enable_dagger", False
-        ):
+        if self.expert_model is None or not self.enable_dagger:
             return None
         schedule = self._dagger_sampling_params["beta_schedule"]
         if schedule != "exponential":
@@ -1045,9 +1045,7 @@ class MultiStepRolloutWorker(Worker):
                     {source.key.env_rank for source in request.sources},
                     request.obs,
                 ),
-                self._dagger_beta_for_source(request.sources[0])
-                if request.sources
-                else None,
+                self._dagger_beta_for_source(request.sources[0]),
             )
             for request in requests
         )
@@ -1196,6 +1194,10 @@ class MultiStepRolloutWorker(Worker):
             request.env_parts = []
         return closed_finals
 
+    def _decoupled_pending_finals(self) -> set[tuple[int, int]]:
+        """Return ``(env_rank, stage_id)`` finals to close before ending a decoupled step."""
+        return set()
+
     @Worker.timer("serve_decoupled_step")
     async def _serve_decoupled_step(
         self,
@@ -1209,27 +1211,12 @@ class MultiStepRolloutWorker(Worker):
         share of the current step's requests. Requests arriving early for a
         later step have any previous-step transitions finalized immediately and
         are deferred until that step, so a fast env cannot steal budget from a
-        slower env or stall weight syncs under ``staleness_threshold=0``.
+        slower env.
         """
-        current_step = getattr(self, "_decoupled_step", 0)
-        deferred: list[tuple[PolicyInput, int, Any]] = list(
-            getattr(self, "_decoupled_deferred", [])
-        )
+        current_step = self._decoupled_step
+        deferred = list(self._decoupled_deferred)
         still_deferred: list[tuple[PolicyInput, int, Any]] = []
-        track_finals = (
-            self._world_size == 1
-            and getattr(self, "staleness_threshold", None) is not None
-        )
-        pending_finals: set[tuple[int, int]] = (
-            {
-                (env_rank, stage_id)
-                for spec in self.train_layout.specs
-                for env_rank in spec.ranks
-                for stage_id in range(getattr(self, "num_pipeline_stages", 1))
-            }
-            if track_finals
-            else set()
-        )
+        pending_finals = self._decoupled_pending_finals()
         served = 0
 
         def serve_items(items: list[tuple[PolicyInput, int, Any]]) -> None:
@@ -1249,9 +1236,8 @@ class MultiStepRolloutWorker(Worker):
         ready_from_deferred: list[tuple[PolicyInput, int, Any]] = []
         for entry in deferred:
             req = entry[0]
-            req_step = req.sources[0].key.step_id if req.sources else current_step
             if (
-                req_step <= current_step
+                req.sources[0].key.step_id <= current_step
                 and len(ready_from_deferred) < self.decoupled_requests_per_step
             ):
                 ready_from_deferred.append(entry)
@@ -1280,11 +1266,8 @@ class MultiStepRolloutWorker(Worker):
 
             ready: list[tuple[PolicyInput, int, Any]] = []
             for request, size, route in zip(requests, split_sizes, routes):
-                req_step = (
-                    request.sources[0].key.step_id if request.sources else current_step
-                )
                 if (
-                    req_step <= current_step
+                    request.sources[0].key.step_id <= current_step
                     and served + len(ready) < self.decoupled_requests_per_step
                 ):
                     ready.append((request, size, route))

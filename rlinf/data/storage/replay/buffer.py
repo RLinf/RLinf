@@ -921,6 +921,11 @@ class TrajectoryReplayBuffer:
         """Return total number of samples across all trajectories."""
         return self._total_samples
 
+    @property
+    def min_env_samples(self) -> int:
+        """Smallest transition count held by any env buffer."""
+        return self._total_samples
+
     def is_ready(self, min_size: int) -> bool:
         """Check if buffer has enough samples for training."""
         return self.size >= min_size

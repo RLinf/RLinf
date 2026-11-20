@@ -3438,7 +3438,15 @@ def test_decoupled_step_caps_receive_so_odd_shares_never_overshoot(monkeypatch):
     from rlinf.envs.layout import EnvLayout
 
     items = [
-        {"batch_index": f"{i}_0_train_policy", "batch": _policy_input()}
+        {
+            "batch_index": f"{i}_0_train_policy",
+            "batch": PolicyInput(
+                sources=[TrajectorySource(TrajectoryKey(0, 0, i % 8, 0, 0), 1)],
+                obs={"states": torch.zeros(1, 2)},
+                env_parts=[None],
+                request_sizes=[1],
+            ),
+        }
         for i in range(6)
     ]
 
@@ -3482,7 +3490,8 @@ def test_decoupled_step_caps_receive_so_odd_shares_never_overshoot(monkeypatch):
         path="env.train",
     )
     rollout.decoupled_requests_per_step = 5
-    rollout.update_dagger_beta = Mock()
+    rollout._decoupled_step = 0
+    rollout._decoupled_deferred = []
     rollout._serve_policy_inputs = Mock()
     channel = _QueueChannel()
 
@@ -3570,7 +3579,7 @@ def test_decoupled_step_defers_future_step_requests_and_finalizes_prev_env_parts
     monkeypatch.setattr(scheduler_module, "get_group_world_size", lambda *_: 2)
     monkeypatch.setattr(scheduler_module, "decoupled_build_recv_plan", lambda **_: plan)
 
-    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout = object.__new__(AsyncMultiStepRolloutWorker)
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout._world_size = 1
     rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
@@ -3580,6 +3589,8 @@ def test_decoupled_step_defers_future_step_requests_and_finalizes_prev_env_parts
     rollout.rollout_queue_size = 1
     rollout.num_pipeline_stages = 1
     rollout.staleness_threshold = 0
+    rollout._decoupled_step = 0
+    rollout._decoupled_deferred = []
     rollout.model_cfg = SimpleNamespace(num_action_chunks=1)
     rollout.train_layout = EnvLayout(
         OmegaConf.create(
@@ -4013,6 +4024,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.expert_model = None
+    rollout.enable_dagger = False
     rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
@@ -4104,6 +4117,8 @@ def test_rollout_runs_one_forward_pass_per_observation_format():
     rollout.train_layout = EnvLayout(OmegaConf.create({}), 3, "env.train")
     rollout.collect_transitions = False
     rollout.enable_rlt = False
+    rollout.expert_model = None
+    rollout.enable_dagger = False
     rollout._send_actions = Mock()
     rollout._publish_env_parts = Mock()
     rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
@@ -4170,6 +4185,8 @@ def test_rollout_keeps_envs_with_different_policy_fields_in_separate_forward_pas
     rollout.train_layout = _policy_field_layout("env.train")
     rollout.collect_transitions = False
     rollout.enable_rlt = False
+    rollout.expert_model = None
+    rollout.enable_dagger = False
     rollout._send_actions = Mock()
     rollout._publish_env_parts = Mock()
     rollout._build_policy_output = Mock(return_value=PolicyOutput(forward_inputs={}))
@@ -4398,6 +4415,8 @@ def test_rollout_routes_external_input_without_model_inference():
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.expert_model = None
+    rollout.enable_dagger = False
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()

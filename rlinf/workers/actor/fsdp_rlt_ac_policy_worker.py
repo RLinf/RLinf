@@ -719,9 +719,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
             },
             op=torch.distributed.ReduceOp.SUM,
         )
-        replay_size = getattr(
-            self.replay_buffer, "min_env_samples", self.replay_buffer.total_samples
-        )
+        replay_size = self.replay_buffer.min_env_samples
         minimums = all_reduce_dict(
             {
                 "min_replay_size": float(replay_size),

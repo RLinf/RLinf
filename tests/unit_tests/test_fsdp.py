@@ -1247,6 +1247,7 @@ def _embodied_actor(mode_cfg, *, mix_envs=True, rank=0, world_size=1, actor_cls=
     actor = object.__new__(actor_cls or EmbodiedFSDPActor)
     actor.cfg = cfg
     actor._rank, actor._world_size = rank, world_size
+    actor._training_round = 0
     actor._rollout_geometry = RolloutGeometry(
         layout=layout, stage_num=1, num_action_chunks=1, actor_world_size=world_size
     )
