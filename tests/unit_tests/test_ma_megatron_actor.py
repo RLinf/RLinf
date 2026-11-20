@@ -466,6 +466,7 @@ def scoring_actor(tmp_path, monkeypatch):
     actor.transformer_config = SimpleNamespace(sequence_parallel=False)
     actor.tokenizer = SimpleNamespace(eos_token_id=0)
     actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = 3.0, 0.2, 0.2
+    actor.response_only_logits = False
     actor.kl_beta = 0.0
     actor.loss_agg_func = masked_mean
     actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
@@ -494,8 +495,10 @@ def scoring_actor(tmp_path, monkeypatch):
         dist.destroy_process_group()
 
 
-def test_actor_entropy_bonus_uses_response_predictors(scoring_actor):
+@pytest.mark.parametrize("response_only", [False, True])
+def test_actor_entropy_bonus_uses_response_predictors(scoring_actor, response_only):
     actor, batch = scoring_actor
+    actor.response_only_logits = response_only
     actor.calculate_entropy = actor.calculate_entropy_loss = actor.return_loss = True
     model = _DecoderStage()
     # Responses at 1 and 3 are predicted from tokens 0 and 2.
@@ -574,3 +577,98 @@ def _check_tp_entropy_gradient(rank, init_file):
 def test_tp_entropy_and_log_probs_match_dense_gradient(tmp_path):
     pytest.importorskip("megatron.core")
     mp.spawn(_check_tp_entropy_gradient, args=(str(tmp_path / "tp"),), nprocs=2)
+
+
+@pytest.mark.parametrize("chunk_size,temperature", [(0, 1.0), (3, 0.7)])
+def test_vocab_log_probs_match_dense_gradient(
+    tmp_path, monkeypatch, chunk_size, temperature
+):
+    pytest.importorskip("megatron.core")
+    import torch.distributed as dist
+    from megatron.core import parallel_state
+
+    from rlinf.utils.distributed import vocab_parallel_log_probs_from_logits
+
+    dist.init_process_group(
+        "gloo", init_method=(tmp_path / "softmax").as_uri(), rank=0, world_size=1
+    )
+    try:
+        monkeypatch.setattr(
+            parallel_state, "_TENSOR_MODEL_PARALLEL_GROUP", dist.group.WORLD
+        )
+        torch.manual_seed(31)
+        logits = torch.randn(2, 7, 13, requires_grad=True)
+        labels = torch.randint(13, (2, 7))
+        scale = torch.randn(2, 7)
+        expected = (
+            (logits / temperature)
+            .log_softmax(-1)
+            .gather(-1, labels[..., None])
+            .squeeze(-1)
+        )
+        gradient = torch.autograd.grad((expected * scale).sum(), logits)[0]
+        actual = vocab_parallel_log_probs_from_logits(
+            logits.clone(), labels, chunk_size=chunk_size, temperature=temperature
+        )
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(
+            torch.autograd.grad((actual * scale).sum(), logits)[0], gradient
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+def test_actor_uses_wrapper_precision_argument_when_supported(scoring_actor):
+    actor, batch = scoring_actor
+    actor.response_only_logits = True
+    actor.calculate_entropy = actor.return_loss = False
+
+    class LegacyWrapper(torch.nn.Module):
+        pre_process = post_process = True
+
+        def __init__(self):
+            super().__init__()
+            self.module = _DecoderStage().bfloat16()
+
+        @property
+        def output_layer(self):
+            return self.module.output_layer
+
+        def forward(self, **kwargs):
+            return self.module(**kwargs)
+
+    class PrecisionWrapper(LegacyWrapper):
+        def forward(self, fp32_output=True, **kwargs):
+            assert fp32_output is False
+            return super().forward(**kwargs)
+
+    for wrapper in (LegacyWrapper, PrecisionWrapper):
+        scores, collect = actor.get_forward_step_func()(iter([batch]), wrapper())
+        row = collect(scores)[0]
+        expected = (torch.diag(torch.tensor([1.0, 2.0, 3.0])) * 2).log_softmax(-1)
+        torch.testing.assert_close(row[[1, 3]], expected[[0, 2], 1])
+
+
+@pytest.mark.parametrize(
+    "backend,dynamic,cp,message",
+    [
+        ("fsdp", True, 1, "dynamic Megatron"),
+        ("megatron", False, 1, "dynamic Megatron"),
+        ("megatron", True, 2, "context_parallel_size=1"),
+    ],
+)
+def test_response_projection_rejects_unsupported_actor(backend, dynamic, cp, message):
+    from rlinf.config import validate_reasoning_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "training_backend": backend,
+                "response_only_logits": True,
+                "model": {"context_parallel_size": cp},
+            },
+            "agentloop": {"is_dynamic_rollout_batch": dynamic},
+        }
+    )
+    with pytest.raises(ValueError, match=message):
+        validate_reasoning_cfg(cfg)

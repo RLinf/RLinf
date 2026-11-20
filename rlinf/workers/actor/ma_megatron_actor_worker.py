@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Optional
 
@@ -37,8 +38,10 @@ from rlinf.data.schema.actor_batch import (
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.hybrid_engines.megatron.utils import (
     align_next_token_scores,
+    output_layer_positions,
     postprocess_ragged_seqs,
     preprocess_ragged_seqs,
+    supports_fp32_output,
 )
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
@@ -70,6 +73,8 @@ from rlinf.workers.actor.megatron_actor_worker import (
 )
 from rlinf.workers.megatron_worker import DynamicMegatronBatchMixin
 
+_RESPONSE_LOGPROB_CHUNK_SIZE = 256
+
 
 class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     """The class for running the actor training using Megatron."""
@@ -78,6 +83,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         self, cfg: DictConfig, placement: ModelParallelComponentPlacement, role="actor"
     ):
         super().__init__(cfg, placement)
+        self.response_only_logits = cfg.actor.get("response_only_logits", False)
         self._init_auto_scheduler(role)
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
@@ -105,6 +111,71 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.torch_platform.current_device(),
         )
 
+    def _score_packed_tokens(
+        self, model, input_ids, position_ids, packed_params, label, label_mask
+    ):
+        """Project packed tokens and return scores in their original positions."""
+        module = unwrap_model(model)
+        temperature = self.cfg.algorithm.sampling_params.temperature
+        positions = None
+        projection = nullcontext()
+        if self.response_only_logits and module.post_process:
+            positions = label_mask[0].nonzero(as_tuple=True)[0]
+            if positions.numel() == 0:
+                positions = positions.new_zeros(1)
+            projection = output_layer_positions(module, positions)
+
+        chunk_size = self.cfg.actor.get("logprob_chunk_size", 0)
+        scale_in_softmax = self.response_only_logits and not self.calculate_entropy
+
+        def process_logits(logits, label, label_mask):
+            assert logits.shape[:2] == label.shape == label_mask.shape
+            if self.calculate_entropy:
+                entropy, log_probs = vocab_parallel_entropy_and_log_probs(
+                    logits, label, calculate_entropy_loss=self.calculate_entropy_loss
+                )
+                output = {"entropy": entropy}
+            else:
+                log_probs = vocab_parallel_log_probs_from_logits(
+                    logits,
+                    label,
+                    chunk_size=chunk_size
+                    or (_RESPONSE_LOGPROB_CHUNK_SIZE if scale_in_softmax else 0),
+                    temperature=temperature if scale_in_softmax else 1.0,
+                )
+                output = {}
+            output["log_probs"] = log_probs.masked_fill(~label_mask, 0.0)
+            return output
+
+        with projection:
+            output = self.custom_forward(
+                model,
+                input_ids,
+                None,
+                position_ids,
+                sequence_parallel=self.transformer_config.sequence_parallel,
+                logits_processor=process_logits,
+                logits_processor_args={
+                    "label": label if positions is None else label[:, positions],
+                    "label_mask": label_mask
+                    if positions is None
+                    else label_mask[:, positions],
+                },
+                temperature=1.0 if scale_in_softmax else temperature,
+                packed_seq_params=packed_params,
+                **(
+                    {"fp32_output": False}
+                    if scale_in_softmax and supports_fp32_output(model)
+                    else {}
+                ),
+            )
+        if positions is None:
+            return output
+        return {
+            key: value.new_zeros(label.shape).index_copy(1, positions, value)
+            for key, value in output.items()
+        }
+
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
 
@@ -122,41 +193,19 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
-            label_mask, _ = preprocess_ragged_seqs(
-                [torch.arange(n, device=input_ids.device) < n - 1 for n in lengths]
-            )
-
-            def logits_processor(logits, label, label_mask):
-                assert logits.shape[:2] == label.shape[:2]
-                assert label.shape == label_mask.shape
-
-                if self.calculate_entropy:
-                    entropy, log_probs = vocab_parallel_entropy_and_log_probs(
-                        logits,
-                        label,
-                        calculate_entropy_loss=self.calculate_entropy_loss,
-                    )
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs, "entropy": entropy}
-                else:
-                    log_probs = vocab_parallel_log_probs_from_logits(logits, label)
-                    log_probs = log_probs.masked_fill(~label_mask, 0.0)
-                    ret = {"log_probs": log_probs}
-
-                return ret
-
-            logits_processor_args = {"label": label, "label_mask": label_mask}
-
-            output = self.custom_forward(
-                model,
-                input_ids,
-                None,
-                position_ids,
-                sequence_parallel=self.transformer_config.sequence_parallel,
-                logits_processor=logits_processor,
-                logits_processor_args=logits_processor_args,
-                temperature=self.cfg.algorithm.sampling_params.temperature,
-                packed_seq_params=packed_params,
+            if self.response_only_logits:
+                # Shift in each trajectory before the packing step inserts TP padding.
+                masks = [
+                    torch.cat((mask[1:], mask.new_zeros(1))).to(input_ids.device)
+                    for mask in batch["response_mask"]
+                ]
+            else:
+                masks = [
+                    torch.arange(n, device=input_ids.device) < n - 1 for n in lengths
+                ]
+            label_mask, _ = preprocess_ragged_seqs(masks)
+            output = self._score_packed_tokens(
+                model, input_ids, position_ids, packed_params, label, label_mask
             )
 
             if unwrap_model(model).post_process:

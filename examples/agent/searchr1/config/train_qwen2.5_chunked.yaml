@@ -1,0 +1,10 @@
+defaults:
+  - train_qwen2.5
+  - _self_
+
+runner:
+  experiment_name: searchr1-grpo-qwen2.5-chunked
+
+actor:
+  response_only_logits: true
+  logprob_chunk_size: 256
