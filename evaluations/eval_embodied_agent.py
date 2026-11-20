@@ -49,7 +49,15 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
-    if rollout_backend == "apxinf":
+    if rollout_backend == "dream":
+        from rlinf.envs.sim.robotwin.dream_env import DreamEnvWorker
+        from rlinf.workers.rollout.dream_worker import DreamRolloutWorker
+
+        env_worker_cls = DreamEnvWorker
+        rollout_group = DreamRolloutWorker.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+    elif rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
         rollout_group = ApxInfRolloutWorker.create_group(cfg).launch(
