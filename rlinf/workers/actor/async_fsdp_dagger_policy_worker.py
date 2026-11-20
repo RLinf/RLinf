@@ -25,33 +25,21 @@ from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPoli
 
 
 class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self.should_stop = False
-        self._lerobot_ingest_lock = threading.RLock()
-        self._recv_error: Exception | None = None
-
-    def _check_receiver(self):
-        if self._recv_error is not None:
-            raise RuntimeError(
-                "The DAgger trajectory receiver failed."
-            ) from self._recv_error
+    should_stop = False
 
     async def recv_rollout_trajectories(self, input_channel):
-        self._check_receiver()
-        if self.should_stop or input_channel is None:
-            return
         if self.enable_online_lerobot:
             if (
                 getattr(self, "_recv_lerobot_thread", None) is None
                 or not self._recv_lerobot_thread.is_alive()
             ):
-                self._recv_lerobot_thread = threading.Thread(
-                    target=self._recv_lerobot_thread_main,
-                    args=(input_channel,),
-                    daemon=True,
-                )
-                self._recv_lerobot_thread.start()
+                if input_channel is not None:
+                    self._recv_lerobot_thread = threading.Thread(
+                        target=self._recv_lerobot_thread_main,
+                        args=(input_channel,),
+                        daemon=True,
+                    )
+                    self._recv_lerobot_thread.start()
             return
         if getattr(self, "_recv_queue", None) is None:
             self._recv_queue = queue.Queue()
@@ -74,45 +62,21 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         ``algorithm.dagger.online_lerobot.finalize_interval`` and are not part of training
         readiness.
         """
-        try:
-            while not self.should_stop:
-                received_any = self._recv_lerobot_episodes_from_channel(input_channel)
-                if self.dataset.is_ready():
-                    self._ensure_lerobot_loader()
-                if not received_any:
-                    time.sleep(0.1)
-        except Exception as error:
-            self._recv_error = error
-
-    def _append_lerobot_episode(self, ep_frames):
-        # A checkpoint must not rotate the archive path during a memory append.
-        with self._lerobot_ingest_lock:
-            return super()._append_lerobot_episode(ep_frames)
-
-    def _archive_pending_lerobot_episodes(self):
-        with self._lerobot_ingest_lock:
-            return super()._archive_pending_lerobot_episodes()
+        while not self.should_stop:
+            received_any = self._recv_lerobot_episodes_from_channel(input_channel)
+            if self.dataset.is_ready():
+                self._ensure_lerobot_loader()
+            if not received_any:
+                time.sleep(0.1)
 
     def _recv_rollout_thread_main(self, input_channel):
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(send_num, recv_num)
-        try:
-            while not self.should_stop:
-                received_any = False
-                for _ in range(split_num):
-                    if self.should_stop:
-                        break
-                    try:
-                        trajectory = input_channel.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    self._recv_queue.put(trajectory)
-                    received_any = True
-                if not received_any:
-                    time.sleep(0.1)
-        except Exception as error:
-            self._recv_error = error
+        while not self.should_stop:
+            for _ in range(split_num):
+                trajectory = input_channel.get()
+                self._recv_queue.put(trajectory)
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
@@ -140,8 +104,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
-        while not self.should_stop:
-            self._check_receiver()
+        while True:
             self._drain_received_trajectories(
                 max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
             )
@@ -152,7 +115,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     @Worker.timer("run_training")
     async def run_training(self):
         """Run async DAgger updates with replay-buffer samples."""
-        self._check_receiver()
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -163,9 +125,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
         elif self._skip_lerobot_training():
-            return {}
-
-        if self.should_stop:
             return {}
 
         assert (
@@ -183,22 +142,15 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
         for _ in range(update_epoch):
-            if self._dagger_adapter is None:
-                await asyncio.sleep(0)
+            await asyncio.sleep(0)
             metrics_data = self.update_one_epoch()
             append_to_dict(metrics, metrics_data)
-            # The adapter advances its step only when the optimizer succeeds.
-            if self._dagger_adapter is None:
-                self.update_step += 1
+            self.update_step += 1
 
-        self.torch_platform.synchronize()
+        torch.cuda.synchronize()
         torch.distributed.barrier()
-        self.torch_platform.empty_cache()
+        torch.cuda.empty_cache()
         return self.process_train_metrics(metrics)
-
-    def save_checkpoint(self, save_base_path, step):
-        self._check_receiver()
-        return super().save_checkpoint(save_base_path, step)
 
     async def stop(self):
         self.should_stop = True
@@ -208,6 +160,3 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         lerobot_thread = getattr(self, "_recv_lerobot_thread", None)
         if lerobot_thread is not None and lerobot_thread.is_alive():
             await asyncio.to_thread(lerobot_thread.join, 5)
-        if self.enable_online_lerobot:
-            await asyncio.to_thread(self._archive_pending_lerobot_episodes)
-        self._check_receiver()

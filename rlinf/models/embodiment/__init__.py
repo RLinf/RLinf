@@ -15,13 +15,29 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rlinf.models.embodiment.cosmos3.dagger import Cosmos3DAggerAdapter
+    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
-def get_dagger_adapter(model_type: str) -> "type[Cosmos3DAggerAdapter] | None":
-    """Return the model-specific DAgger adapter when the policy needs one."""
+def get_dagger_actor_class(
+    model_type: str, *, asynchronous: bool = False
+) -> "type[EmbodiedDAGGERFSDPPolicy]":
+    """Select the training actor used by an embodied DAgger launcher."""
     if model_type == "cosmos3":
-        from rlinf.models.embodiment.cosmos3.dagger import Cosmos3DAggerAdapter
+        if asynchronous:
+            from rlinf.models.embodiment.cosmos3.async_dagger_actor import (
+                Cosmos3AsyncDAggerActor,
+            )
 
-        return Cosmos3DAggerAdapter
-    return None
+            return Cosmos3AsyncDAggerActor
+        from rlinf.models.embodiment.cosmos3.dagger_actor import Cosmos3DAggerActor
+
+        return Cosmos3DAggerActor
+    if asynchronous:
+        from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
+            AsyncEmbodiedDAGGERFSDPPolicy,
+        )
+
+        return AsyncEmbodiedDAGGERFSDPPolicy
+    from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
+
+    return EmbodiedDAGGERFSDPPolicy

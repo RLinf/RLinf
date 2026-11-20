@@ -84,12 +84,3 @@ class Cosmos3DAggerAdapter:
             if key != "loss" and torch.is_tensor(value) and value.numel() == 1
         }
         return output["loss"], metrics
-
-    @staticmethod
-    def after_optimizer_step(model: torch.nn.Module, step: int) -> None:
-        model.set_global_step(step)
-
-    @staticmethod
-    def restore_optimizer_step(model: torch.nn.Module, step: int) -> None:
-        """Restore the iteration without an EMA update on resume or version changes."""
-        model.set_global_step(step, update_ema=False)

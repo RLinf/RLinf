@@ -60,13 +60,13 @@ def main(cfg) -> None:
         runner_cls = AsyncEmbodiedRunner
         actor_worker_cls = AsyncRLTACFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_dagger":
+        from rlinf.models.embodiment import get_dagger_actor_class
         from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
-        from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
-            AsyncEmbodiedDAGGERFSDPPolicy,
-        )
 
         runner_cls = AsyncEmbodiedRunner
-        actor_worker_cls = AsyncEmbodiedDAGGERFSDPPolicy
+        actor_worker_cls = get_dagger_actor_class(
+            cfg.actor.model.model_type, asynchronous=True
+        )
     elif cfg.algorithm.loss_type == "decoupled_actor_critic":
         from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
         from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor

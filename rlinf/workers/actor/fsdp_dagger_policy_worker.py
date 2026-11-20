@@ -28,8 +28,6 @@ from rlinf.data.datasets.dagger import (
 )
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
-from rlinf.models import get_inference_checkpoint_loader, get_model
-from rlinf.models.embodiment import get_dagger_adapter
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -41,20 +39,8 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
-    def model_provider_func(self) -> torch.nn.Module:
-        checkpoint = self.cfg.runner.get("ckpt_path")
-        load_checkpoint = get_inference_checkpoint_loader(
-            self.cfg.actor.model.model_type
-        )
-        if not checkpoint or load_checkpoint is None:
-            return super().model_provider_func()
-        model = get_model(self.cfg.actor.model)
-        load_checkpoint(model, checkpoint)
-        return model
-
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
-        self._dagger_adapter = get_dagger_adapter(cfg.actor.model.model_type)
         self.replay_buffer = None
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
@@ -90,17 +76,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             raise ValueError(
                 "algorithm.dagger.online_lerobot.lerobot_num_workers must be non-negative."
             )
-        require_all_intervene = self.cfg.algorithm.dagger.get("only_save_expert", False)
-        window_options = {"chunk_size": self.cfg.actor.model.num_action_chunks}
-        if self._dagger_adapter is not None:
-            window_options = self._dagger_adapter.lerobot_window_options(
-                self.cfg.actor.model, online_lerobot_cfg, require_all_intervene
-            )
         self.dataset = RollingLeRobotDataset(
             root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
+            chunk_size=self.cfg.actor.model.num_action_chunks,
             min_frames=online_lerobot_cfg.get("min_frames", 1),
             wait_interval_s=online_lerobot_cfg.get("wait_interval_s", 10.0),
-            require_all_intervene=require_all_intervene,
+            require_all_intervene=self.cfg.algorithm.dagger.get(
+                "only_save_expert", False
+            ),
             window_size=online_lerobot_cfg.get("rolling_lerobot_window_size", None),
             in_memory_mode=True,
             fps=int(
@@ -108,7 +91,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
                 )
             ),
-            **window_options,
         )
 
     def _discover_lerobot_resume_shards(self) -> list[dict]:
@@ -130,10 +112,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 shard_id = int(child.name.removeprefix("id_"))
             except ValueError:
                 continue
-            # An incomplete archive still occupies its directory name.
-            self._next_lerobot_archive_id = max(
-                self._next_lerobot_archive_id, shard_id + 1
-            )
             shard_info = self.dataset.archived_shard_info(child)
             if shard_info is None:
                 self.log_info(f"Skipping invalid LeRobot resume shard: {child}")
@@ -461,7 +439,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             writer.add_episode(ep_frames)
         writer.finalize()
 
-    @Worker.timer("prepare_sft_inputs")
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
         if not self.enable_online_lerobot:
@@ -483,14 +460,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             data=data,
             use_action_chunk_loss=use_action_chunk_loss,
         )
-
-    def set_global_step(self, global_step: int) -> None:
-        """Keep rollout versions separate from policy optimizer steps."""
-        adapter = self._dagger_adapter
-        if adapter is None:
-            return super().set_global_step(global_step)
-        self.version = global_step
-        adapter.restore_optimizer_step(self.model, self.update_step)
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
@@ -519,16 +488,35 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 drq.apply_drq(batch["next_obs"], pad=4)
             train_micro_batch_list[idx] = batch
 
-        return self._update_sft_batches(
-            (batch["forward_inputs"] for batch in train_micro_batch_list),
-            self.gradient_accumulation,
+        self.optimizer.zero_grad()
+        gbs_actor_loss = []
+        for mb_idx, batch in enumerate(train_micro_batch_list):
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
+            )
+            with self.amp_context:
+                actor_loss = self.forward_actor(batch["forward_inputs"])
+            actor_loss = actor_loss / self.gradient_accumulation
+            with backward_ctx:
+                self.grad_scaler.scale(actor_loss).backward()
+            gbs_actor_loss.append(actor_loss.item() * self.gradient_accumulation)
+
+        actor_grad_norm = self.model.clip_grad_norm_(
+            max_norm=self.cfg.actor.optim.clip_grad
         )
+        self.optimizer.step()
+        self.lr_scheduler.step()
+
+        return {
+            "dagger/actor_loss": np.mean(gbs_actor_loss),
+            "actor/lr": self.optimizer.param_groups[0]["lr"],
+            "actor/grad_norm": actor_grad_norm,
+        }
 
     def update_lerobot_one_epoch(self):
         """Run one LeRobot update epoch."""
 
-        adapter = self._dagger_adapter
-        use_policy_batch = adapter is not None and not self.enable_drq
         with self.worker_timer("prepare_micro_batches"):
             with self._lerobot_loader_lock:
                 num_batches = len(self._lerobot_loader)
@@ -536,77 +524,45 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     next(self._lerobot_iter) for _ in range(num_batches)
                 ]
             for idx, batch in enumerate(train_micro_batch_list):
-                if use_policy_batch:
-                    train_micro_batch_list[idx] = adapter.stage_lerobot_batch(
-                        batch, self.device
-                    )
-                    continue
-
                 batch = put_tensor_device(batch, device=self.device)
                 if self.enable_drq:
                     drq.apply_drq(batch["curr_obs"], pad=4)
                 train_micro_batch_list[idx] = batch
 
-        result = self._update_sft_batches(train_micro_batch_list, num_batches)
+        self.optimizer.zero_grad()
+        gbs_actor_loss = []
+
+        for idx, batch in enumerate(train_micro_batch_list):
+            # set the gradient accumulation backward_ctx
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == num_batches,
+            )
+
+            with self.amp_context:
+                actor_loss = self.forward_actor(batch)
+
+            actor_loss = actor_loss / num_batches
+            with backward_ctx:
+                self.grad_scaler.scale(actor_loss).backward()
+            gbs_actor_loss.append(actor_loss.item() * num_batches)
+
+        actor_grad_norm = self.model.clip_grad_norm_(
+            max_norm=self.cfg.actor.optim.clip_grad
+        )
+        self.optimizer.step()
+        self.lr_scheduler.step()
+
         with self._lerobot_loader_lock:
             self._data_epoch += 1
             if hasattr(self._lerobot_loader.sampler, "set_epoch"):
                 self._lerobot_loader.sampler.set_epoch(self._data_epoch)
             self._lerobot_iter = iter(self._lerobot_loader)
-        return result
-
-    def _update_sft_batches(self, batches, num_batches):
-        """Accumulate one global batch and update the policy once."""
-        adapter = self._dagger_adapter
-        self.optimizer.zero_grad()
-        gbs_actor_loss = []
-        metrics = {}
-        for idx, batch in enumerate(batches):
-            backward_ctx = self.before_micro_batch(
-                self.model, is_last_micro_batch=(idx + 1) == num_batches
-            )
-            if adapter is None:
-                with self.amp_context:
-                    actor_loss = self.forward_actor(batch)
-                actor_loss = actor_loss / num_batches
-                with backward_ctx:
-                    self.grad_scaler.scale(actor_loss).backward()
-            else:
-                with backward_ctx:
-                    with self.amp_context:
-                        actor_loss, step_metrics = adapter.loss_and_metrics(
-                            self.forward_actor(batch)
-                        )
-                    actor_loss = actor_loss / num_batches
-                    self.grad_scaler.scale(actor_loss).backward()
-                append_to_dict(metrics, step_metrics)
-            gbs_actor_loss.append(actor_loss.item() * num_batches)
-
-        if adapter is None:
-            grad_norm = self.model.clip_grad_norm_(
-                max_norm=self.cfg.actor.optim.clip_grad
-            )
-            self.optimizer.step()
-            self.lr_scheduler.step()
-        else:
-            grad_norm, _ = self.optimizer_step()
-            successful = bool(torch.isfinite(torch.as_tensor(grad_norm)).all())
-            if successful:
-                self.lr_scheduler.step()
-                self.update_step += 1
-                adapter.after_optimizer_step(self.model, self.update_step)
-            self.optimizer.zero_grad(set_to_none=True)
-            metrics["dagger/update_skipped"] = [float(not successful)]
-
-        result = {key: float(np.mean(values)) for key, values in metrics.items()}
-        result.update(
-            {
-                "dagger/actor_loss": np.mean(gbs_actor_loss),
-                "actor/lr": self.optimizer.param_groups[0]["lr"],
-                "actor/grad_norm": grad_norm,
-            }
-        )
-        return result
+        return {
+            "dagger/actor_loss": np.mean(gbs_actor_loss),
+            "actor/lr": self.optimizer.param_groups[0]["lr"],
+            "actor/grad_norm": actor_grad_norm,
+        }
 
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
@@ -706,12 +662,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         for _ in range(update_epoch):
             metrics_data = self.update_one_epoch()
             append_to_dict(metrics, metrics_data)
-            if self._dagger_adapter is None:
-                self.update_step += 1
+            self.update_step += 1
 
-        self.torch_platform.synchronize()
+        torch.cuda.synchronize()
         torch.distributed.barrier()
-        self.torch_platform.empty_cache()
+        torch.cuda.empty_cache()
         return self.process_train_metrics(metrics)
 
     @Worker.timer("actor/compute_adv")
@@ -755,12 +710,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
         )
-        adapter = self._dagger_adapter
-        if adapter is not None:
-            # The scheduler is checkpointed and advances once per successful update.
-            self.update_step = max(0, int(self.lr_scheduler.last_epoch))
-            self.optimizer_steps = self.update_step
-            adapter.restore_optimizer_step(self.model, self.update_step)
 
         if not self.enable_online_lerobot:
             buffer_load_path = os.path.join(
