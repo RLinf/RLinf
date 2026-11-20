@@ -114,11 +114,19 @@ class InferenceHTTPClient:
         sampling_params: Optional[list[dict] | dict] = None,
         return_logprob: list[bool] | bool = False,
         image_data: Optional[list] = None,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict | list:
         return self.post(
             "/generate",
             self._generate_body(
-                prompt, input_ids, sampling_params, return_logprob, image_data
+                prompt,
+                input_ids,
+                sampling_params,
+                return_logprob,
+                image_data,
+                return_prompt_token_ids,
+                mm_token_expansion_start_len,
             ),
         )
 
@@ -152,11 +160,19 @@ class InferenceHTTPClient:
         sampling_params: Optional[list[dict] | dict] = None,
         return_logprob: list[bool] | bool = False,
         image_data: Optional[list] = None,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict | list:
         return await self._apost(
             "/generate",
             self._generate_body(
-                prompt, input_ids, sampling_params, return_logprob, image_data
+                prompt,
+                input_ids,
+                sampling_params,
+                return_logprob,
+                image_data,
+                return_prompt_token_ids,
+                mm_token_expansion_start_len,
             ),
         )
 
@@ -261,16 +277,43 @@ class InferenceHTTPClient:
         sampling_params: Optional[list[dict] | dict],
         return_logprob: list[bool] | bool,
         image_data: Optional[list] = None,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
         body: dict = {"return_logprob": return_logprob}
+        if return_prompt_token_ids:
+            body["return_prompt_token_ids"] = True
+        if mm_token_expansion_start_len is not None:
+            body["mm_token_expansion_start_len"] = mm_token_expansion_start_len
         if prompt is not None:
             body["text"] = prompt
         if input_ids is not None:
             body["input_ids"] = input_ids
         if sampling_params is not None:
+            if isinstance(sampling_params, dict):
+                sampling_params = dict(sampling_params)
+                processor = sampling_params.pop("custom_logit_processor", None)
+                if processor is not None:
+                    body["custom_logit_processor"] = processor
+            else:
+                sampling_params = [dict(params) for params in sampling_params]
+                processors = [
+                    params.pop("custom_logit_processor", None)
+                    for params in sampling_params
+                ]
+                if any(processor is not None for processor in processors):
+                    body["custom_logit_processor"] = processors
             body["sampling_params"] = sampling_params
         if image_data is not None:
-            body["image_data"] = image_data
+
+            def encode_image(value):
+                if isinstance(value, bytes):
+                    return base64.b64encode(value).decode("ascii")
+                if isinstance(value, list):
+                    return [encode_image(item) for item in value]
+                return value
+
+            body["image_data"] = encode_image(image_data)
         return body
 
     def post(

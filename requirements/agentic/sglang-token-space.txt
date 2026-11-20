@@ -1,0 +1,11 @@
+# Experimental input-contract stack, selected by --sglang token-space.
+# Build kernels through install.sh; keep it separate from default agentic envs.
+# Source builds require Rust and CUDA 13.
+sglang @ git+https://github.com/sgl-project/sglang.git@18a44326f6de5134fe921927d760d81f8ee48fc9#subdirectory=python
+torch==2.14.1
+transformers==5.19.0
+cuda-toolkit[nvcc,cccl]==13.0.3
+# Match Ray's protobuf 6 runtime and the Torch and ModelOpt build dependencies.
+grpcio-health-checking==1.81.1
+grpcio-reflection==1.81.1
+setuptools==84.2.1

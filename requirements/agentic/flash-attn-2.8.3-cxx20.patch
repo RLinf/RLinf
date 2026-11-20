@@ -1,0 +1,47 @@
+--- a/setup.py
++++ b/setup.py
+@@ -198,7 +198,7 @@
+ 
+     nvcc_flags = [
+     "-O3",
+-    "-std=c++17",
++    "-std=c++20",
+     "-U__CUDA_NO_HALF_OPERATORS__",
+     "-U__CUDA_NO_HALF_CONVERSIONS__",
+     "-U__CUDA_NO_HALF2_OPERATORS__",
+@@ -217,7 +217,7 @@
+     # "-DFLASHATTENTION_DISABLE_LOCAL",
+     ]
+ 
+-    compiler_c17_flag=["-O3", "-std=c++17"]
++    compiler_c17_flag=["-O3", "-std=c++20"]
+     # Add Windows-specific flags
+     if sys.platform == "win32" and os.getenv('DISTUTILS_USE_SDK') == '1':
+         nvcc_flags.extend(["-Xcompiler", "/Zc:__cplusplus"])
+@@ -374,7 +374,7 @@
+                         "csrc/flash_attn_ck/mha_varlen_bwd.cu",
+                         "csrc/flash_attn_ck/mha_varlen_fwd.cu"] + glob.glob(f"build/fmha_*wd*.cu")
+ 
+-        cc_flag += ["-O3","-std=c++17",
++        cc_flag += ["-O3","-std=c++20",
+                     "-DCK_TILE_FMHA_FWD_FAST_EXP2=1",
+                     "-fgpu-flush-denormals-to-zero",
+                     "-DCK_ENABLE_BF16",
+@@ -406,7 +406,7 @@
+             cc_flag += ["-mllvm", "-amdgpu-coerce-illegal-types=1"]
+ 
+         extra_compile_args = {
+-            "cxx": ["-O3", "-std=c++17"] + generator_flag,
++            "cxx": ["-O3", "-std=c++20"] + generator_flag,
+             "nvcc": cc_flag + generator_flag,
+         }
+ 
+@@ -535,6 +535,8 @@
+             "dist",
+             "docs",
+             "benchmarks",
++            # This wheel provides FA2 only. CuTe is the separate FA4 backend.
++            "flash_attn.cute*",
+             "flash_attn.egg-info",
+         )
+     ),

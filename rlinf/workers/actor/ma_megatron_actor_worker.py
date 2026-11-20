@@ -124,20 +124,14 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             self.torch_platform.current_device(),
         )
 
-    def _score_packed_tokens(
-        self, model, input_ids, position_ids, packed_params, label, label_mask
-    ):
+    def _score_packed_tokens(self, model, module, model_inputs, label, label_mask):
         """Project packed tokens and return scores in their original positions."""
-        module = unwrap_model(model)
         temperature = self.cfg.algorithm.sampling_params.temperature
         if self.scoring_forward is not None:
             return self.scoring_forward(
                 model,
                 module,
-                input_ids=input_ids,
-                attention_mask=None,
-                position_ids=position_ids,
-                packed_seq_params=packed_params,
+                **model_inputs,
                 temperature=temperature,
                 label=label,
                 label_mask=label_mask,
@@ -175,9 +169,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         with projection:
             output = self.custom_forward(
                 model,
-                input_ids,
-                None,
-                position_ids,
+                **model_inputs,
                 sequence_parallel=self.transformer_config.sequence_parallel,
                 logits_processor=process_logits,
                 logits_processor_args={
@@ -187,7 +179,6 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     else label_mask[:, positions],
                 },
                 temperature=1.0 if scale_in_softmax else temperature,
-                packed_seq_params=packed_params,
                 **(
                     {"fp32_output": False}
                     if scale_in_softmax and supports_fp32_output(model)
@@ -229,11 +220,15 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
                     torch.arange(n, device=input_ids.device) < n - 1 for n in lengths
                 ]
             label_mask, _ = preprocess_ragged_seqs(masks)
-            output = self._score_packed_tokens(
-                model, input_ids, position_ids, packed_params, label, label_mask
-            )
+            module = unwrap_model(model)
+            with self.ragged_model_inputs(
+                batch, module, input_ids, position_ids, packed_params
+            ) as model_inputs:
+                output = self._score_packed_tokens(
+                    model, module, model_inputs, label, label_mask
+                )
 
-            if unwrap_model(model).post_process:
+            if module.post_process:
                 output_rows = {
                     key: postprocess_ragged_seqs(value, packed_params, lengths)
                     for key, value in output.items()

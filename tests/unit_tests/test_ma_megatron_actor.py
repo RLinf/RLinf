@@ -142,6 +142,8 @@ def _distributed_staleness_process(rank, counts, balance, missing, init_file):
     try:
         first = sum(counts[:rank])
         results = [_versioned_group(i) for i in range(first, first + counts[rank])]
+        for result in results:
+            result.multi_modal_inputs = [None, {"image_id": result.group_id}]
         if missing and rank == 1:
             results[0].version_start = results[0].version_end = None
         if balance:
@@ -164,6 +166,10 @@ def _distributed_staleness_process(rank, counts, balance, missing, init_file):
             assert metrics[f"data_staleness_{5 - i}/ratio"] == 0.25
         for result in results:
             assert result.task_name == "searchr1"
+            assert result.to_actor_batch()["multi_modal_inputs"] == [
+                None,
+                {"image_id": result.group_id},
+            ]
             assert result.version_start == [5 + result.group_id] * 2
     finally:
         dist.destroy_process_group()
@@ -378,6 +384,7 @@ def _training_rows_process(rank, counts, micro_batch_size, target, init_file):
             "advantages": [torch.ones_like(row, dtype=torch.float32) for row in rows],
             "rewards": torch.arange(count).float(),
             "idx_to_traj": list(range(count)),
+            "multi_modal_inputs": [{"image_id": int(row[0])} for row in rows],
         }
         original = copy.deepcopy(batch)
         padded = actor._pad_ragged_rows(batch)
@@ -389,6 +396,7 @@ def _training_rows_process(rank, counts, micro_batch_size, target, init_file):
                     torch.testing.assert_close(actual, expected)
             else:
                 torch.testing.assert_close(padded[key][:count], value)
+        assert padded["multi_modal_inputs"][count:] == [None] * (target - count)
         for row in padded["attention_mask"][count:]:
             assert row.tolist() == [True]
         for key in ("response_mask", "advantages", "recomputed_logprobs"):

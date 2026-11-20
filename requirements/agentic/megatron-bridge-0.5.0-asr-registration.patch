@@ -1,0 +1,20 @@
+--- a/megatron/bridge/models/qwen3_asr/hf_qwen3_asr/__init__.py
++++ b/megatron/bridge/models/qwen3_asr/hf_qwen3_asr/__init__.py
+@@ -29,12 +29,14 @@
+ # register the Auto classes ourselves below.
+ 
+ from transformers import AutoConfig, AutoModel, AutoProcessor
++from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+ 
+ from .configuration_qwen3_asr import Qwen3ASRAudioEncoderConfig, Qwen3ASRConfig, Qwen3ASRThinkerConfig
+ from .modeling_qwen3_asr import Qwen3ASRAudioEncoder, Qwen3ASRForConditionalGeneration
+ from .processing_qwen3_asr import Qwen3ASRProcessor
+ 
+ 
+-AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
+-AutoModel.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
+-AutoProcessor.register(Qwen3ASRConfig, Qwen3ASRProcessor)
++if "qwen3_asr" not in CONFIG_MAPPING:
++    AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
++    AutoModel.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
++    AutoProcessor.register(Qwen3ASRConfig, Qwen3ASRProcessor)

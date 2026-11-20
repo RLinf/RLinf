@@ -320,6 +320,7 @@ class MegatronModelManager:
                 "virtual_pipeline_model_parallel_size",
                 "expert_model_parallel_size",
                 "context_parallel_size",
+                "attention_backend",
                 "gradient_accumulation_fusion",
                 "moe_aux_loss_coeff",
                 "moe_router_bias_update_rate",
@@ -352,6 +353,9 @@ class MegatronModelManager:
                 provider.mtp_num_layers = 0
                 # Bridge exports the HF config alongside the loaded parameters.
                 text_config.mtp_num_hidden_layers = 0
+
+        if self.is_dedicated_critic_model:
+            provider.register_pre_wrap_hook(self._attach_value_head)
 
         # the Mbridge run the qwen3-vl-moe model will freeze the language model and vision model by default.
         provider.freeze_language_model = getattr(
@@ -471,16 +475,39 @@ class MegatronModelManager:
             )
 
         if self.is_dedicated_critic_model and post_process:
-            # replace lm head with value head if this is a critic model
-            model.output_layer = LinearForLastLayer(
-                input_size=self._cfg.model.hidden_size,
-                output_size=1,
-                sequence_parallel=self._cfg.model.sequence_parallel,
-                weight_init=self._cfg.get("value_head_init", "normal"),
-                init_std=self._cfg.model.get("init_method_std", 0.02),
+            model.output_layer = self._value_head(
+                self._cfg.model.hidden_size, self._cfg.model.sequence_parallel
             )
 
         return model
+
+    def _value_head(self, hidden_size: int, sequence_parallel: bool) -> torch.nn.Module:
+        """Return the scalar projection that replaces a critic's language-model head."""
+        return LinearForLastLayer(
+            input_size=hidden_size,
+            output_size=1,
+            sequence_parallel=sequence_parallel,
+            weight_init=self._cfg.get("value_head_init", "normal"),
+            init_std=self._cfg.model.get("init_method_std", 0.02),
+        )
+
+    def _attach_value_head(self, model_chunks: list) -> list:
+        """Replace the language-model head of bridge-built critic chunks."""
+        for chunk in model_chunks:
+            if not chunk.post_process:
+                continue
+            head = self._value_head(
+                chunk.config.hidden_size, chunk.config.sequence_parallel
+            ).to(next(chunk.parameters()).device)
+            if hasattr(chunk, "output_layer"):
+                # A value head never shares the input embedding weights.
+                chunk.share_embeddings_and_output_weights = False
+                chunk.output_layer = head
+            else:
+                # A vision-language chunk keeps its head on the language model.
+                chunk.language_model.share_embeddings_and_output_weights = False
+                chunk.language_model.output_layer = head
+        return model_chunks
 
     def optimizer_step(self, increment):
         success, grad_norm, num_zeros_in_grad = self.optimizer.step()
@@ -702,7 +729,7 @@ class MegatronModelManager:
         if packed_seq_params is not None:
             output = model(
                 input_ids=input_ids.contiguous(),
-                attention_mask=None,
+                attention_mask=attention_mask,
                 position_ids=position_ids,
                 packed_seq_params=packed_seq_params,
                 **model_forward_kwargs,

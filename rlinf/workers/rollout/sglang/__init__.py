@@ -33,13 +33,28 @@ sglang_version = None
 
 if package_version is None:
     raise ValueError("sglang is not installed.")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.19"):
+elif parse("0.4.4") <= package_version <= parse("0.5.19"):
     sglang_version = package_version
 else:
-    raise ValueError(
-        f"sglang version {package_version} is not supported "
-        "(supported range: >=0.4.4, <=0.5.19)."
-    )
+    from rlinf.hybrid_engines.sglang.multimodal.token_space import is_token_space_build
+
+    if not is_token_space_build():
+        raise ValueError(
+            f"sglang version {package_version} is not supported "
+            "(supported range: >=0.4.4, <=0.5.19 or the pinned token-space build)."
+        )
+    sglang_version = package_version
+
+
+def require_supported_sglang(*, token_space: bool = False) -> None:
+    """Restrict the pinned development build to explicit token-space rollout."""
+    if not parse("0.4.4") <= sglang_version <= parse("0.5.19") and not token_space:
+        raise ValueError(
+            "The pinned experimental SGLang build requires "
+            "rollout.sglang.enable_shared_multi_modal_processor=true. "
+            "Use a supported release for other rollout, reward and embodied servers."
+        )
+
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from rlinf.hybrid_engines.sglang.common import io_struct
@@ -89,6 +104,56 @@ __all__ = [
     "launch_sglang_api",
     "launch_sglang_router_and_server",
 ]
+
+
+def multimodal_server_args(cfg, server_fields) -> dict:
+    """Resolve shared image preprocessing options supported by the installed server."""
+    import os
+
+    from rlinf.config import shared_multi_modal_processor_enabled
+
+    arguments = {}
+    shared_processor = shared_multi_modal_processor_enabled(cfg)
+    if shared_processor and str(sglang_version) == "0.5.12.post1":
+        if os.environ.get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE") != (
+            "rlinf.hybrid_engines.sglang.multimodal"
+        ):
+            raise ValueError(
+                "Release image capture requires the RLinf external Qwen processor"
+            )
+    elif shared_processor:
+        from rlinf.hybrid_engines.sglang.multimodal.token_space import (
+            require_token_space_support,
+        )
+
+        if os.environ.get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE"):
+            raise ValueError(
+                "Shared multimodal preprocessing requires removing SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE"
+            )
+        require_token_space_support()
+        arguments.update(
+            enable_token_space_processor=True,
+            disable_fast_image_processor=True,
+            image_processor_backend="pil",
+        )
+
+    for name in (
+        "enable_token_space_preprocess_cache",
+        "token_space_preprocess_cache_dir",
+        "token_space_preprocess_cache_trust_url",
+        "token_space_preprocess_cache_check_rate",
+    ):
+        if name not in cfg:
+            continue
+        value = cfg[name]
+        if name in server_fields:
+            arguments[name] = value
+        elif value:
+            raise ValueError(
+                f"Installed SGLang does not support {name}={value!r}; "
+                "use a compatible build or disable this option."
+            )
+    return arguments
 
 
 def __getattr__(name: str) -> Any:

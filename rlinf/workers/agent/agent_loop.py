@@ -77,6 +77,8 @@ class AgentLoopOutput:
     """
     version_start: Optional[int] = None
     version_end: Optional[int] = None
+    """Ordered image payload for replaying this turn on the learner."""
+    response_images: Optional[dict[str, Any]] = None
 
 
 @dataclass
@@ -176,18 +178,65 @@ class AgentLoopWorker(Worker):
         prompt_ids: list[int],
         sampling_params: Optional[dict] = None,
         rollout_name: Optional[str] = None,
+        image_data: Optional[list[bytes]] = None,
+        return_prompt_token_ids: bool = False,
+        mm_token_expansion_start_len: Optional[int] = None,
+        image_spans: Optional[list[tuple[int, int]]] = None,
+        image_history: Optional[dict] = None,
+        image_store_dir: Optional[str] = None,
     ):
+        """Sample one turn; images the prompt stands for ride with the request.
+
+        The rollout engine expands the image markers in ``prompt_ids`` from
+        ``image_data`` itself, so the tokens stay the ones this turn trains on.
+        """
+        request = {
+            "prompt_ids": prompt_ids,
+            "sampling_params": sampling_params,
+        }
+        if image_spans is not None:
+            request["capture_images"] = {
+                "image_spans": image_spans,
+                "history": image_history,
+                "store_dir": image_store_dir,
+            }
+        if image_data:
+            request["image_data"] = image_data
+        if return_prompt_token_ids:
+            request["return_prompt_token_ids"] = True
+        if mm_token_expansion_start_len is not None:
+            request["mm_token_expansion_start_len"] = mm_token_expansion_start_len
+        return await self._request_rollout(request, rollout_name)
+
+    async def prepare_multimodal(
+        self,
+        prompt_ids: list[int],
+        image_data: list,
+        *,
+        prefix_length: int,
+        image_spans: list,
+    ) -> dict:
+        """Resolve image expansion before calculating this turn's output budget."""
+        return await self._request_rollout(
+            {
+                "prompt_ids": prompt_ids,
+                "image_data": image_data,
+                "prepare_multimodal": {
+                    "prefix_length": prefix_length,
+                    "image_spans": image_spans,
+                },
+            }
+        )
+
+    async def _request_rollout(self, request: dict, rollout_name=None) -> dict:
         channel_key = uuid4().hex
+        request["channel_key"] = channel_key
         if rollout_name is None:
             input_channel = self.generate_input_channel
         else:
             input_channel = self.solid_generate_input_channels[rollout_name]
         await input_channel.put(
-            {
-                "channel_key": channel_key,
-                "prompt_ids": prompt_ids,
-                "sampling_params": sampling_params,
-            },
+            request,
             async_op=True,
         ).async_wait()
         result = await self.generate_output_channel.get(
@@ -503,6 +552,7 @@ class AgentLoopWorker(Worker):
             ]
         is_end = [True for _ in task_results]
         answers = [answer] * len(task_results)
+        images = [getattr(r, "response_images", None) for r in task_results]
         return RolloutResult(
             num_sequence=len(task_results),
             group_size=len(task_results),
@@ -514,6 +564,7 @@ class AgentLoopWorker(Worker):
             response_texts=response_texts,
             is_end=is_end,
             answers=answers,
+            multi_modal_inputs=images if any(v is not None for v in images) else None,
             response_mask=response_mask,
             rollout_logprobs=response_logprobs,
         )
@@ -820,6 +871,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_logprobs = None
         if self.return_logprobs:
             rollout_logprobs = []
+        images = []
         is_end = []
         rewards = []
         version_start = []
@@ -842,6 +894,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                         single_turn_output.response_ids
                     ), "response_logprobs should have the same length as response_ids"
                     rollout_logprobs.append(single_turn_output.response_logprobs)
+                images.append(getattr(single_turn_output, "response_images", None))
                 is_end.append(single_turn_output.is_end)
                 rewards.append(single_turn_output.reward_score)
                 version_start.append(single_turn_output.version_start)
@@ -868,6 +921,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             response_lengths=response_lengths,
             input_ids=input_ids,
             rollout_logprobs=rollout_logprobs,
+            multi_modal_inputs=images if any(v is not None for v in images) else None,
             is_end=is_end,
             rewards=rewards,
             version_start=version_start,

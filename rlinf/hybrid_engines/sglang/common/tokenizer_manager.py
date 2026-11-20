@@ -32,6 +32,8 @@ except ImportError:
         from sglang.srt.managers.communicator import FanOutCommunicator as _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
 
+from rlinf.hybrid_engines.sglang.multimodal.token_space import is_token_space_build
+
 from .io_struct import (
     AbortGenerationInput,
     AbortGenerationOutput,
@@ -48,22 +50,21 @@ class TokenizerManager(_TokenizerManager):
         self,
         server_args: ServerArgs,
         port_args: PortArgs,
+        **kwargs,
     ):
         super().__init__(
             server_args=server_args,
             port_args=port_args,
+            **kwargs,
         )
 
-        self.run_task_method_communicator = _Communicator(
-            self.send_to_scheduler,
-            fan_out=server_args.dp_size,
+        token_space_build = is_token_space_build()
+        send = (
+            self._dispatch_to_scheduler if token_space_build else self.send_to_scheduler
         )
-        self.sync_hf_weight_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
-        self.abort_generation_communicator = _Communicator(
-            self.send_to_scheduler, server_args.dp_size
-        )
+        self.run_task_method_communicator = _Communicator(send, server_args.dp_size)
+        self.sync_hf_weight_communicator = _Communicator(send, server_args.dp_size)
+        self.abort_generation_communicator = _Communicator(send, server_args.dp_size)
 
         _extra_mapping = [
             (TaskMethodOutput, self.run_task_method_communicator.handle_recv),
@@ -80,7 +81,9 @@ class TokenizerManager(_TokenizerManager):
             sglang_version = parse(version("sglang"))
         except Exception as e:
             raise ValueError(f"sglang version not supported: {e}")
-        self.patch_return_output_ids = sglang_version < parse("0.5.0")
+        self.patch_return_output_ids = (
+            sglang_version < parse("0.5.0") and not token_space_build
+        )
 
     async def run_task_method(
         self,
