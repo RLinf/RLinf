@@ -3261,8 +3261,8 @@ install_dreamzero_model() {
             PYTHON_VERSION="3.11.14"
             create_and_sync_venv
             install_common_embodied_deps
-            install_behavior_env
             install_dreamzero_deps
+            install_behavior_env
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
