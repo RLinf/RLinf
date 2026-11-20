@@ -1,0 +1,9 @@
+model_type: lingbotvlav2
+num_action_chunks: 50
+action_dim: 14
+is_lora: false
+num_steps: 10
+noise_level: 0.3
+add_value_head: false
+lingbotvlav2:
+  attention_implementation: eager

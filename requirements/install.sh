@@ -3184,6 +3184,8 @@ install_lingbot_vla_v2_model() {
     local vla2_path
     vla2_path=$(clone_or_reuse_repo LINGBOT_VLA_V2_PATH "$VENV_DIR/lingbot-vla-v2" "${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla-v2.git" -b rlinf)
     uv pip install -e "$vla2_path" --no-deps
+    # lerobot 0.4.2 reads LeRobot v3.0 datasets for SFT; keep the packages already installed.
+    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@58f70b6bd370864139a3795ac3497a9eae8c42d5"
 
     case "$ENV_NAME" in
         robotwin)
