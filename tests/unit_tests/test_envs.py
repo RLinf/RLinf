@@ -364,6 +364,11 @@ def _training_cfg(algorithm=None, runner=None, **envs):
             r"normalize_advantages=False",
         ),
         (
+            {"adv_type": "raw", "adv_norm_scope": "all"},
+            None,
+            r"normalize_advantages=False",
+        ),
+        (
             {"adv_type": "grpo", "group_size": 8},
             None,
             r"so env.train.envs.libero needs group_size > 1, got 1",

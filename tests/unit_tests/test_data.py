@@ -253,6 +253,69 @@ def test_rlt_transition_replay_files_each_step_under_its_env():
         worker.replay_buffer.close()
 
 
+def test_rlt_schedule_waits_for_every_env_buffer_before_training(monkeypatch):
+    from rlinf.workers.actor import fsdp_rlt_ac_policy_worker as rlt_mod
+    from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACFSDPPolicy
+
+    monkeypatch.setattr(rlt_mod, "all_reduce_dict", lambda data, op=None: dict(data))
+
+    worker = object.__new__(RLTACFSDPPolicy)
+    worker.cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "update_epoch": 2,
+                "replay_buffer": {"min_buffer_size": 1},
+            }
+        }
+    )
+    worker.rlt_schedule_cfg = {
+        "enable": True,
+        "warmup_min_size": 2,
+        "warmup_post_collect_updates": 2,
+        "train_every_transitions": 1,
+    }
+    worker.demo_buffer = None
+    worker.transitions_since_train = 4
+    worker.episodes_since_train = 1
+    worker.total_transitions_added = 4
+    worker.total_episodes_added = 1
+    worker._warmup_ready_total_transitions = None
+    worker._warmup_ready_total_episodes = None
+    worker.update_step = 0
+    worker.pending_update_budget = 0
+    worker.replay_buffer = EnvReplayBuffer(
+        {
+            "fast": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+            "slow": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+        },
+        {"fast": 1.0, "slow": 1.0},
+    )
+    try:
+        worker.replay_buffer.add_trajectories([_env_trajectory("fast", 1.0)])
+        assert worker.replay_buffer.total_samples >= 2
+        assert worker.replay_buffer.min_env_samples == 0
+
+        updates, metrics = worker._rlt_updates_to_run()
+        assert updates == 0
+        assert metrics["rlt/skip_reason"] == 1.0
+
+        # Even with warmup_min_size=0, an empty env buffer cannot be sampled.
+        worker.rlt_schedule_cfg["warmup_min_size"] = 0
+        updates_zero, _ = worker._rlt_updates_to_run()
+        assert updates_zero == 0
+
+        worker.rlt_schedule_cfg["warmup_min_size"] = 2
+        worker.replay_buffer.add_trajectories([_env_trajectory("slow", 2.0)])
+        assert worker.replay_buffer.min_env_samples >= 2
+        assert worker.replay_buffer.is_ready(1)
+
+        updates, metrics = worker._rlt_updates_to_run()
+        assert updates == 2
+        assert metrics["rlt/skip_reason"] == 0.0
+    finally:
+        worker.replay_buffer.close()
+
+
 def test_memory_checkpoint_indexes_only_cached_trajectories(tmp_path):
     """A memory checkpoint records only the trajectories still held in cache."""
     checkpoint = tmp_path / "checkpoint"

@@ -1314,6 +1314,50 @@ def test_async_ppo_normalizes_advantages_over_the_configured_scope(scope):
         assert a.mean() < 0 < b.mean()
 
 
+@pytest.mark.parametrize(
+    ("normalize_cfg", "expect_normalized"),
+    [(True, True), (False, False), (None, False)],
+)
+def test_raw_advantages_honor_normalize_advantages_under_env_scope(
+    monkeypatch, normalize_cfg, expect_normalized
+):
+    from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
+
+    monkeypatch.setattr(actor_mod, "compute_rollout_metrics", lambda _batch: {})
+    actor = _embodied_actor(OmegaConf.create(_embodied_env(2)))
+    actor.cfg.runner = {"task_type": "embodied"}
+    actor.cfg.actor.model = {"num_action_chunks": 1}
+    actor.cfg.algorithm.adv_type = "raw"
+    actor.cfg.algorithm.reward_type = "chunk_level"
+    actor.cfg.algorithm.group_size = 1
+    actor.cfg.algorithm.adv_norm_scope = "env"
+    if normalize_cfg is not None:
+        actor.cfg.algorithm.normalize_advantages = normalize_cfg
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+        for spec in actor._rollout_geometry.layout.specs
+    }
+    batch = _embodied_batch(2, 2)
+    batch["rewards"] = torch.tensor([[[1.0], [3.0]], [[0.0], [0.0]]])
+    batch["loss_mask"] = torch.ones(2, 2, 1, dtype=torch.bool)
+    actor.env_batches = {None: batch}
+    actor._group_success_metrics = {}
+    actor._timer_metrics = {}
+    actor._accelerator_type = None
+
+    actor.compute_advantages_and_returns()
+
+    [pool] = actor.rollout_batches
+    advantages = pool["advantages"]
+    if expect_normalized:
+        assert abs(advantages.mean().item()) < 1e-4
+        assert abs(advantages.std().item() - 1.0) < 1e-3
+    else:
+        assert torch.allclose(
+            advantages.reshape(-1), torch.tensor([1.0, 3.0, 1.0, 3.0])
+        )
+
+
 def test_off_policy_targets_discount_each_sample_with_its_envs_gamma():
     actor = _embodied_actor(
         OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})

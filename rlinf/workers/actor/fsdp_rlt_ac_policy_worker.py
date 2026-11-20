@@ -719,9 +719,12 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
             },
             op=torch.distributed.ReduceOp.SUM,
         )
+        replay_size = getattr(
+            self.replay_buffer, "min_env_samples", self.replay_buffer.total_samples
+        )
         minimums = all_reduce_dict(
             {
-                "min_replay_size": float(self.replay_buffer.total_samples),
+                "min_replay_size": float(replay_size),
                 "min_demo_size": float(
                     0 if self.demo_buffer is None else self.demo_buffer.total_samples
                 ),
@@ -738,7 +741,7 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
             schedule_cfg.get("warmup_min_size", replay_cfg.get("min_buffer_size", 1))
         )
         counters = self._global_rlt_counters()
-        buffer_ready = counters["min_replay_size"] >= min_buffer_size
+        buffer_ready = counters["min_replay_size"] >= max(min_buffer_size, 1)
         warmup_required_updates = int(
             schedule_cfg.get("warmup_post_collect_updates", 0)
         )

@@ -1266,14 +1266,14 @@ def validate_env_training_cfg(
     assert adv_norm_scope in ("env", "all"), (
         f"algorithm.adv_norm_scope must be 'env' or 'all', got {adv_norm_scope!r}."
     )
+    normalize_advantages = algorithm_cfg.get("normalize_advantages", adv_type != "raw")
     assert adv_norm_scope == "env" or (
-        adv_normalizes_over_batch(adv_type)
-        and algorithm_cfg.get("normalize_advantages", True)
+        adv_normalizes_over_batch(adv_type) and normalize_advantages
     ), (
         "algorithm.adv_norm_scope='all' sets the scope of the batch normalization "
         "of algorithm.adv_type 'gae', 'gae_dynamic' or 'raw' with "
         f"normalize_advantages=True, got adv_type={adv_type!r} and "
-        f"normalize_advantages={algorithm_cfg.get('normalize_advantages', True)}."
+        f"normalize_advantages={normalize_advantages}."
     )
     layout.reference_lengths(algorithm_cfg.get("env_weighting", "trajectory"))
     if adv_requires_group_baseline(

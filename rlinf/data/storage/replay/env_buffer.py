@@ -118,6 +118,11 @@ class EnvReplayBuffer:
         """Transitions held over all env buffers."""
         return sum(buffer.total_samples for buffer in self.buffers.values())
 
+    @property
+    def min_env_samples(self) -> int:
+        """Smallest transition count held by any env buffer."""
+        return min(buffer.total_samples for buffer in self.buffers.values())
+
     def _flatten_trajectory(self, trajectory: Trajectory) -> dict[str, torch.Tensor]:
         # Same layout as the plain buffer, which callers flatten through.
         return self.buffers[trajectory.env_name]._flatten_trajectory(trajectory)
