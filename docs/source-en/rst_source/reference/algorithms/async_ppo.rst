@@ -283,7 +283,7 @@ The following is a minimal Async PPO configuration skeleton aligned with ``examp
        max_steps_per_rollout_epoch: 80
 
    rollout:
-     backend: huggingface
+     rollout_backend: huggingface
      recompute_logprobs: True
      pipeline_stage_num: 1
 

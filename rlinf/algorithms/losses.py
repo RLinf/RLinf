@@ -209,6 +209,8 @@ def compute_ppo_actor_loss(
         clip_ratio_c (Optional[float], optional): Optional clipping coefficient. Defaults to None.
         loss_agg_func (callable, optional): Aggregation function (e.g., masked_mean). Defaults to None.
         max_episode_steps (Optional[int], optional): Max episode length for normalization. Defaults to None.
+        fast_path_zero_loss_mask (Optional[bool], optional): Return a differentiable
+            zero when the entire loss mask is empty. Defaults to False.
         rollout_logprobs (Optional[torch.Tensor], optional): Log probabilities from
             the rollout behavior policy. Defaults to None.
         importance_sampling_clip (Optional[float], optional): Upper bound for the
@@ -217,15 +219,19 @@ def compute_ppo_actor_loss(
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
     """
-    if fast_path_zero_loss_mask and (
-        loss_mask is not None and loss_mask[0].sum() == 0.0
+    # Optional diagnostics use the full path to keep metric keys consistent across DP.
+    if (
+        fast_path_zero_loss_mask
+        and not log_logprob_diagnostics
+        and rollout_logprobs is None
+        and loss_mask is not None
+        and not loss_mask.any()
     ):
-        return torch.tensor(0.0, device=logprobs.device), {
-            "actor/token_num": torch.tensor(0.0, device=logprobs.device),
+        return logprobs.masked_fill(~loss_mask, 0.0).sum(), {
             "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
-            "actor/policy_loss_mbs_mean": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
             "actor/ratio": torch.tensor(0.0, device=logprobs.device),
+            "actor/ratio_abs": torch.tensor(0.0, device=logprobs.device),
             "actor/clipped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/dual_cliped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),

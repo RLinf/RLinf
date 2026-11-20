@@ -76,6 +76,11 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Extra entries (full PEP 508 specifiers) inserted into the pyproject.toml
+# `constraint-dependencies` array by apply_torch_override. Unlike
+# PLATFORM_EXTRA_OVERRIDES, constraints intersect with constituent package
+# bounds rather than replacing them. Set per-platform by configure_<platform>.
+PLATFORM_EXTRA_CONSTRAINTS=()
 # Package names inserted into the pyproject.toml `exclude-dependencies` array
 # by apply_torch_override. Unlike PLATFORM_EXTRA_OVERRIDES (which only rewrites
 # version constraints), these make the resolver ignore the package entirely.
@@ -125,7 +130,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm" "phyai")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "lingbotvlav2" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion" "sglang")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-ros" "frankasim" "robotwin" "robodojo" "habitat" "opensora" "wan" "genesis" "geniesim" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "mujoco_warp" "dosw1" "gim_arm" "so101" "lekiwi" "piper" "arx5" "yam" "dummy" "polaris" "simple" "robolab")
 
 #=======================Utility Functions=======================
 
@@ -934,8 +939,11 @@ EOF
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_TORCHCODEC_SPEC=""
-    # The vendor torch builds are compiled against numpy 1.x.
+    # The vendor torch builds are compiled against numpy 1.x. Overriding numpy
+    # hides ml-dtypes>=0.6's numpy>=2 requirement (0.7+ links the NumPy 2.0
+    # C-API), while overriding ml-dtypes would replace TensorFlow 2.15's ~=0.2.0.
     PLATFORM_EXTRA_OVERRIDES=("numpy<2")
+    PLATFORM_EXTRA_CONSTRAINTS=("ml-dtypes<0.6")
     # Either vendor builds that only exist in the image, or CUDA-only kernels:
     # resolve them, never write them into the venv.
     PLATFORM_UV_SYNC_ARGS=("--inexact")
@@ -1152,6 +1160,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        robolab) env_torch="2.7.1" ;;
         simple) env_torch="2.7.0" ;;
         robodojo) env_torch="2.7.0" ;;
     esac
@@ -1724,6 +1733,7 @@ apply_torch_override() {
     if [ "$needs_torch_rewrite" -eq 0 ] \
         && [ "$PLATFORM_RELAX_TORCHCODEC" -ne 1 ] \
         && [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -eq 0 ] \
+        && [ ${#PLATFORM_EXTRA_CONSTRAINTS[@]} -eq 0 ] \
         && [ ${#PLATFORM_EXCLUDE_DEPS[@]} -eq 0 ]; then
         return 0
     fi
@@ -1756,6 +1766,24 @@ apply_torch_override() {
             sed -i "/^override-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
         done
         echo "[install.sh] Added override-dependencies entries: ${extra_overrides[*]}"
+    fi
+
+    if [ ${#PLATFORM_EXTRA_CONSTRAINTS[@]} -gt 0 ]; then
+        if grep -q '^constraint-dependencies = \[' "$PYPROJECT_FILE"; then
+            local k
+            for (( k=${#PLATFORM_EXTRA_CONSTRAINTS[@]}-1; k>=0; k-- )); do
+                local entry="${PLATFORM_EXTRA_CONSTRAINTS[k]}"
+                sed -i "/^constraint-dependencies = \\[\$/a\\    \"${entry}\"," "$PYPROJECT_FILE"
+            done
+        else
+            local joined=""
+            local entry
+            for entry in "${PLATFORM_EXTRA_CONSTRAINTS[@]}"; do
+                joined="${joined}${joined:+, }\"${entry}\""
+            done
+            sed -i "/^override-dependencies = \\[\$/i constraint-dependencies = [${joined}]" "$PYPROJECT_FILE"
+        fi
+        echo "[install.sh] Added constraint-dependencies entries: ${PLATFORM_EXTRA_CONSTRAINTS[*]}"
     fi
 
     if [ ${#PLATFORM_EXCLUDE_DEPS[@]} -gt 0 ]; then
@@ -1943,7 +1971,7 @@ ensure_uv_python() {
         echo "[install.sh] WARNING: uv could not install Python ${PYTHON_VERSION}; the venv step will fail." >&2
 }
 
-create_and_sync_venv() {
+create_or_activate_venv() {
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
     local venv_args=()
@@ -1997,6 +2025,10 @@ EOF
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
     fi
+}
+
+create_and_sync_venv() {
+    create_or_activate_venv
     if [ -n "$PLATFORM_VENV_HOOK" ]; then
         "$PLATFORM_VENV_HOOK"
     fi
@@ -2725,6 +2757,13 @@ EOF
             install_polaris_env
             uv pip install "rlinf-openpi==0.1.1"
             ;;
+        robolab)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_robolab_env
+            uv pip uninstall transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -3043,7 +3082,6 @@ install_gr00t_n1d6_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/RLinf/Isaac-GR00T.git" -b n1.6.1-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -3056,6 +3094,10 @@ install_gr00t_n1d6_model() {
             ;;
     esac
 
+    # Environment installs may resolve a different Transformers version;
+    # apply the Eagle3-compatible model pins last.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
+
     uv pip uninstall pynvml || true
 }
 
@@ -3066,7 +3108,6 @@ install_gr00t_n1d7_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     case "$ENV_NAME" in
         maniskill_libero)
@@ -3078,6 +3119,9 @@ install_gr00t_n1d7_model() {
             exit 1
             ;;
     esac
+
+    # Apply the backbone's version pins after environment dependency resolution.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
 
     uv pip uninstall pynvml || true
 }
@@ -3559,6 +3603,10 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        robolab)
+            install_common_embodied_deps
+            install_robolab_env
+            ;;
         simple)
             install_common_embodied_deps
             install_simple_env
@@ -3879,6 +3927,30 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_robolab_env() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "RoboLab requires NVIDIA Isaac Sim; platform '$PLATFORM' is unsupported." >&2
+        exit 1
+    fi
+
+    local robolab_dir
+    robolab_dir=$(clone_or_reuse_repo ROBOLAB_PATH "$VENV_DIR/robolab" https://github.com/NVlabs/RoboLab.git)
+    if [ -z "${ROBOLAB_PATH:-}" ]; then
+        git -C "$robolab_dir" checkout b6cfcf6ccd2113c4cd1216d35b33024a7d5691da
+    fi
+    export OMNI_KIT_ACCEPT_EULA=YES
+
+    uv pip install "setuptools<82" wheel
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    pushd "$robolab_dir" >/dev/null
+    uv pip install -e ".[isaac50]"
+    popd >/dev/null
+    # Isaac Sim resolves sibling extensions relative to realpath(__file__).
+    materialize_package_files isaacsim-kernel
+    materialize_package_files omniverse-kit
+    uv pip install openpi-client
 }
 
 install_simple_env() {
@@ -4692,12 +4764,10 @@ install_agentic() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    install_engine_requirements "$(agentic_requirements_file vllm "$(agentic_latest_version vllm)")"
-    install_sglang "$AGENTIC_DEFAULT_SGLANG_VERSION"
-    uv sync --extra embodied --active --inexact "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/docs/requirements.txt
-    uv pip uninstall pynvml || true
+    # Sphinx mocks RLinf's runtime dependencies (docs/autodoc_mock.py), so the
+    # docs venv only needs Sphinx and its extensions.
+    create_or_activate_venv
+    uv pip install -r "$SCRIPT_DIR/docs/requirements.txt"
 }
 
 main() {
@@ -4708,6 +4778,11 @@ main() {
         exit 1
     fi
     validate_python_version
+    if [ "$TARGET" = "docs" ]; then
+        setup_mirror
+        install_docs
+        return 0
+    fi
     validate_engine
     apply_model_default_torch
     apply_env_default_torch
@@ -4817,10 +4892,6 @@ main() {
             fi
             create_and_sync_venv
             install_agentic
-            ;;
-        docs)
-            create_and_sync_venv
-            install_docs
             ;;
         *)
 			echo "Unknown target: $TARGET" >&2

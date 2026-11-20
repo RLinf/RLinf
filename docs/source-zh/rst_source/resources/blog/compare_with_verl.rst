@@ -205,7 +205,7 @@ FSDP 通过在多张 GPU 上分片参数，支持大模型训练：
 Rollout 与推理配置
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- ``actor_rollout_ref.rollout.name``：**推理后端** —— 可选 ``["hf", "sglang", "vllm]"``  
+- ``actor_rollout_ref.rollout.name``：**推理后端** —— 可选 ``["huggingface", "sglang", "vllm]"``
 - ``actor_rollout_ref.rollout.tensor_model_parallel_size``：**张量并行（TP）规模** ——（仅 vLLM 生效）  
 - ``actor_rollout_ref.rollout.gpu_memory_utilization``：**GPU 显存占比** —— 推理阶段使用的显存比  
 - ``actor_rollout_ref.rollout.n``：**每个 prompt 的采样数** —— rollout 时每个 prompt 生成的响应数量
