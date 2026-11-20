@@ -280,10 +280,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
    * - ``omni_config.task.activity_name``
      - 任务名称，例如 ``turning_on_radio``\ 。同一任务的初始布局由 ``omni_config.task.activity_instance_id`` 指定。
    * - ``omni_config.task.instance_resample_mode``
-     - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``
-       （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——
-       ``*_template.json`` 走较重的场景重载路径，``*_template-tro_state.json`` 走较轻的原地路径）、
-       或 ``online``\ （每个仿真进程只能运行一个环境，需设置 ``online_object_sampling: True`` 和 ``use_presampled_robot_pose: False``）。
+     - 固定布局用 ``disabled``\ ，从缓存随机取布局用 ``offline``\ 。用 ``online`` 重新采样时，每个仿真进程只能运行一个环境。各模式所需配置见 :ref:`behavior-eval-config`\ 。
    * - ``omni_config.task.activity_instance_dir``
      - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline``
        模式以及 ``disabled`` 模式下的固定 id 加载使用。

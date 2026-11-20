@@ -263,11 +263,7 @@ performance.
    * - ``omni_config.task.activity_name``
      - Task name, for example ``turning_on_radio``. Use ``omni_config.task.activity_instance_id`` to select an initial layout for that task.
    * - ``omni_config.task.instance_resample_mode``
-     - Reset-time instance switching: ``disabled`` (load the fixed ``activity_instance_id``),
-       ``offline`` (scan ``activity_instance_dir`` once and sample a cached instance per reset —
-       ``*_template.json`` use the heavy scene-reload path, ``*_template-tro_state.json`` the
-       lighter in-place path), or ``online`` (requires one environment per simulator process, ``online_object_sampling: True`` and
-       ``use_presampled_robot_pose: False``).
+     - Use ``disabled`` for a fixed layout, ``offline`` to sample cached layouts, or ``online`` to resample with one environment per simulator process. See :ref:`behavior-eval-config` for the required settings.
    * - ``omni_config.task.activity_instance_dir``
      - Directory of cached instance JSONs (``*_template.json`` / ``*_template-tro_state.json``),
        used by ``offline`` mode and by fixed-id loading when the mode is ``disabled``.
