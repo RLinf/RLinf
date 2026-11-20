@@ -597,7 +597,7 @@ class BehaviorEnv(gym.Env):
             "wrist_images": torch.stack(
                 [convert_uint8_rgb(cam["rgb"]) for cam in (left_camera, right_camera)]
             ),  # [N_IMG, H, W, C]
-            "states": state,
+            "state": state,
         }
         cameras = (head_camera, left_camera, right_camera)
         if all("depth_linear" in cam for cam in cameras):
@@ -616,10 +616,24 @@ class BehaviorEnv(gym.Env):
             extracted_obs_list.append(extracted_obs)
 
         obs = {
-            key: torch.stack([item[key] for item in extracted_obs_list])
-            for key in extracted_obs_list[0]
+            "main_images": torch.stack(
+                [obs["main_images"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, H, W, C]
+            "wrist_images": torch.stack(
+                [obs["wrist_images"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, N_IMG, H, W, C]
+            "task_descriptions": [self.task_description for _ in range(self.num_envs)],
+            "states": torch.stack(
+                [obs["state"] for obs in extracted_obs_list], axis=0
+            ),  # [N_ENV, STATE_DIM]
         }
-        obs["task_descriptions"] = [self.task_description for _ in range(self.num_envs)]
+        if "main_depths" in extracted_obs_list[0]:
+            obs["main_depths"] = torch.stack(
+                [item["main_depths"] for item in extracted_obs_list], axis=0
+            )
+            obs["extra_view_depths"] = torch.stack(
+                [item["extra_view_depths"] for item in extracted_obs_list], axis=0
+            )
         return obs
 
     def _calc_step_reward(self, reward):

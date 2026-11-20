@@ -219,14 +219,14 @@ def _apply_tro_state(env, env_idx: int, instance_id: int, tro_file_path: str) ->
 def _settle_instance_scenes(env, env_indices):
     # Physics is shared. Settle once after placing the whole batch, then save each starting layout.
     import omnigibson as og
-    from omnigibson.utils.bddl_utils import is_system_bddl_inst
+    from omnigibson.prims.entity_prim import EntityPrim
 
     og.sim.update_handles()
     for _ in range(25):
         og.sim.step_physics()
         for idx in env_indices:
-            for name, entity in env.task.object_scopes[idx].items():
-                if entity is not None and not is_system_bddl_inst(name):
+            for entity in env.task.object_scopes[idx].values():
+                if isinstance(entity, EntityPrim):
                     entity.keep_still()
     for idx in env_indices:
         env.scenes[idx].update_initial_file()
@@ -318,13 +318,6 @@ class ActivityInstanceLoader:
                     "task.instance_resample_mode='online' requires "
                     "task.use_presampled_robot_pose to be False."
                 )
-            return cls(
-                omni_cfg=omni_cfg,
-                activity_name=activity_name,
-                activity_instance_id=activity_instance_id,
-                instance_resample_mode=instance_resample_mode,
-                activity_instances=(),
-            )
 
         if activity_instance_dir is None:
             if instance_resample_mode == "offline":
