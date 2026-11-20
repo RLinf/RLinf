@@ -720,6 +720,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        if self.cfg.algorithm.get("ppo_kl_clip_target") is not None:
+            count = mean_metric_dict.pop("actor/conditional_kl_count")
+            kl_sum = mean_metric_dict.pop("actor/conditional_kl_sum")
+            tightened = mean_metric_dict.pop("actor/kl_clip_tightened_count")
+            mean_metric_dict["actor/conditional_kl_mean"] = kl_sum / max(count, 1e-12)
+            mean_metric_dict["actor/kl_clip_tightened_fraction"] = tightened / max(
+                count, 1e-12
+            )
         if explained_variance_stats:
             reduced_stats = all_reduce_dict(
                 explained_variance_stats, op=torch.distributed.ReduceOp.SUM
@@ -819,6 +827,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 "log_logprob_diagnostics", False
             ),
         }
+        if (target_kl := self.cfg.algorithm.get("ppo_kl_clip_target")) is not None:
+            loss_kwargs["ppo_conditional_kl"] = output_dict["ppo_conditional_kl"]
+            loss_kwargs["ppo_kl_clip_target"] = target_kl
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
             loss_kwargs["importance_sampling_clip"] = (

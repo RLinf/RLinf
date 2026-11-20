@@ -194,6 +194,8 @@ def compute_ppo_actor_loss(
     log_logprob_diagnostics: bool = False,
     rollout_logprobs: Optional[torch.Tensor] = None,
     importance_sampling_clip: Optional[float] = None,
+    ppo_conditional_kl: Optional[torch.Tensor] = None,
+    ppo_kl_clip_target: Optional[float] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -215,6 +217,8 @@ def compute_ppo_actor_loss(
             the rollout behavior policy. Defaults to None.
         importance_sampling_clip (Optional[float], optional): Upper bound for the
             actor-to-rollout importance-sampling ratio. Defaults to None.
+        ppo_conditional_kl: Conditional KL for each ratio entry, when available.
+        ppo_kl_clip_target: KL above which the ratio clip interval narrows.
 
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
@@ -224,6 +228,7 @@ def compute_ppo_actor_loss(
         fast_path_zero_loss_mask
         and not log_logprob_diagnostics
         and rollout_logprobs is None
+        and ppo_kl_clip_target is None
         and loss_mask is not None
         and not loss_mask.any()
     ):
@@ -313,7 +318,16 @@ def compute_ppo_actor_loss(
         log_ratio = torch.clamp(log_ratio, max=clip_log_ratio_max)
     ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
 
-    clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
+    if ppo_kl_clip_target is not None:
+        kl = ppo_conditional_kl.detach()
+        clip_scale = (ppo_kl_clip_target / kl.clamp_min(ppo_kl_clip_target)).sqrt()
+        clip_scale = clip_scale.clamp_min(0.25)
+        clipped_ratio = ratio.clamp(
+            min=1.0 - clip_ratio_low * clip_scale,
+            max=1.0 + clip_ratio_high * clip_scale,
+        )
+    else:
+        clipped_ratio = ratio.clamp(1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
     policy_loss1 = -advantages * ratio
     policy_loss2 = -advantages * clipped_ratio
 
@@ -376,6 +390,18 @@ def compute_ppo_actor_loss(
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
+    if ppo_kl_clip_target is not None:
+        # Keep sample counts so KL can be compared across different valid masks.
+        valid_kl = kl.masked_fill(~loss_mask_for_metrics, 0)
+        metrics_data.update(
+            {
+                "actor/conditional_kl_sum": valid_kl.sum(),
+                "actor/conditional_kl_count": loss_mask_for_metrics.sum(),
+                "actor/kl_clip_tightened_count": (
+                    (clip_scale < 1) & loss_mask_for_metrics
+                ).sum(),
+            }
+        )
     if log_logprob_diagnostics:
         with torch.no_grad():
             valid = loss_mask_for_metrics

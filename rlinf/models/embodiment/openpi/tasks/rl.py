@@ -158,6 +158,7 @@ class Pi0RL(EnvIO, Pi0):
         *,
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
+        collect_ppo_kl: bool = False,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         del kwargs
@@ -172,7 +173,11 @@ class Pi0RL(EnvIO, Pi0):
         if mode == "eval":
             return self._predict_eval(observation, noise=noise, rng=rng)
         actions, result = self._predict_train(
-            observation, noise=noise, rng=rng, compute_values=compute_values
+            observation,
+            noise=noise,
+            rng=rng,
+            compute_values=compute_values,
+            collect_ppo_kl=collect_ppo_kl,
         )
         # Match OpenPI: stash raw env obs so the actor can re-transform.
         result["forward_inputs"].update(_clone_replay_obs(repacked))
@@ -185,6 +190,7 @@ class Pi0RL(EnvIO, Pi0):
         noise: torch.Tensor | None,
         rng: torch.Generator | None,
         compute_values: bool,
+        collect_ppo_kl: bool = False,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         rl_cfg = self.rl_cfg
         device = self.device
@@ -226,6 +232,7 @@ class Pi0RL(EnvIO, Pi0):
         chains = [noise]
         log_probs: list[torch.Tensor] = []
         suffix_values: list[torch.Tensor] = []
+        ppo_behavior_mean = None
         x_t = noise
 
         if rl_cfg.joint_logprob:
@@ -260,6 +267,10 @@ class Pi0RL(EnvIO, Pi0):
                 num_steps=num_steps,
                 noise_std=noise_std,
             )
+            if collect_ppo_kl and method == "flow_sde":
+                ppo_behavior_mean = x_t_mean[
+                    :, : self.action_chunk, : self.action_env_dim
+                ].contiguous()
             x_t_prev = x_t
             step_noise = torch.randn(
                 x_t.shape, device=device, dtype=torch.float32, generator=rng
@@ -313,6 +324,8 @@ class Pi0RL(EnvIO, Pi0):
         if nft_state is not None:
             forward_inputs.update(nft_state)
             forward_inputs["nft_x0"] = x_0.detach()
+        if ppo_behavior_mean is not None:
+            forward_inputs["ppo_behavior_mean"] = ppo_behavior_mean
 
         return actions, {
             "prev_logprobs": log_probs_picked,
@@ -517,11 +530,25 @@ class Pi0RL(EnvIO, Pi0):
             entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
         else:
             entropy = torch.zeros((B, 1), device=device, dtype=torch.float32)
-        return {
+        result = {
             "logprobs": log_probs.contiguous(),
             "values": values.float(),
             "entropy": entropy.float(),
         }
+        if "ppo_behavior_mean" in forward_inputs:
+            # Single-step Flow-SDE uses the same configured variance on both sides.
+            with torch.no_grad():
+                chunk_mean = x_t_mean[:, : self.action_chunk, : self.action_env_dim]
+                sigma = x_t_std[:, : self.action_chunk, : self.action_env_dim]
+                deterministic = sigma == 0
+                sigma_safe = torch.where(deterministic, 1.0, sigma)
+                normalized_delta = (
+                    chunk_mean - forward_inputs["ppo_behavior_mean"]
+                ) / sigma_safe
+                result["ppo_conditional_kl"] = 0.5 * torch.where(
+                    deterministic, 0.0, normalized_delta.square()
+                ).sum(dim=(1, 2))
+        return result
 
     def nft_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
         """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""

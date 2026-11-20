@@ -550,6 +550,9 @@ class MultiStepRolloutWorker(Worker):
             else:
                 kwargs = {"mode": mode}
 
+        if mode == "train" and self.algorithm_cfg.get("ppo_kl_clip_target") is not None:
+            kwargs = {**kwargs, "collect_ppo_kl": True}
+
         if model_type in [
             SupportedModel.CNN_POLICY,
             SupportedModel.FLOW_POLICY,
