@@ -204,6 +204,7 @@ def classify_turns(
         else:
             continues.append(False)
             counts.rewritten += 1
+        previous_index = turn_index
 
     for turn_index in range(1, len(turns)):
         declared = turns[turn_index].declared_prev_kept_len

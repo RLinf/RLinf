@@ -89,6 +89,11 @@ from rlinf.workers.rollout.session_server.payload import (  # noqa: E402
 from rlinf.workers.rollout.session_server.server_worker import (  # noqa: E402
     SessionServerWorker,
 )
+from rlinf.workers.rollout.session_server.turns import (  # noqa: E402
+    UnderreportedTruncation,
+    classify_turns,
+    new_turn_record,
+)
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import (  # noqa: E402
     RolloutBufferWorker,
 )
@@ -979,6 +984,62 @@ class TestEqualRewardDrop:
         assert poll_channel(env.rollout, timeout_s=2) is None
 
 
+class TestTurnClassification:
+    """The turn-by-turn prefix classification of one trajectory."""
+
+    @staticmethod
+    def _turns(third_tail):
+        """Three turns: 10 tokens in and 5 out, then 20 in and 10 out.
+
+        ``third_tail`` is what the third turn's input adds after the second
+        turn's input, so a test picks whether the third turn kept the whole
+        second output or broke inside it.
+        """
+        first_input = list(range(10))
+        first_output = list(range(100, 105))
+        second_input = first_input + first_output + list(range(200, 205))
+        second_output = list(range(300, 310))
+        return [
+            new_turn_record(first_input, None, None, None),
+            new_turn_record(second_input, first_input, first_output, None),
+            new_turn_record(
+                second_input + third_tail, second_input, second_output, None
+            ),
+        ]
+
+    def test_third_turn_that_holds_the_second_output_continues(self):
+        """A third turn whose prompt holds the second turn's whole output
+        continues the second turn."""
+        turns = self._turns(list(range(300, 310)) + list(range(400, 402)))
+        continues, counts = classify_turns(turns, [5, 10, 2], set(), None, 0, 0)
+        assert continues == [False, True, True]
+        assert counts.continuous == 2
+
+    def test_third_turn_that_breaks_inside_the_second_output_is_underreported(self):
+        """A third turn that breaks inside the second turn's kept output is
+        an under-reported truncation.
+
+        The third prompt holds only 5 of the 10 output tokens that the close
+        declares as kept for the second turn. The check compares the third
+        turn with the second; compared with the first turn, the same prompt
+        would pass as a continuation.
+        """
+        turns = self._turns(list(range(300, 305)) + list(range(400, 403)))
+        with pytest.raises(UnderreportedTruncation):
+            classify_turns(turns, [5, 10, 2], set(), None, 0, 0)
+
+    def test_third_turn_that_breaks_inside_the_second_output_rewrites_for_chat(self):
+        """For a chat agent the same break counts as a rewritten history.
+
+        A chat agent that shortened the second answer sends such a prompt,
+        so the turn starts a new segment instead of failing the close.
+        """
+        turns = self._turns(list(range(300, 305)) + list(range(400, 403)))
+        continues, counts = classify_turns(turns, [5, 10, 2], set(), "chat", 0, 0)
+        assert continues == [False, True, False]
+        assert counts.rewritten == 1
+
+
 class TestUnderreportedTruncation:
     def test_close_fails_loud_on_under_reported_truncation(self, env):
         request = next_request(env)
@@ -1631,7 +1692,7 @@ class ChatCompletionsTestLoopWorker(MultiAgentLoopWorker):
     }
     _MAX_TURNS = 2
 
-    async def run_session_trajectory(self, binding, input_dict, answer):
+    async def run_session_trajectory(self, binding, input_ids, answer):
         """One trajectory: two chat turns, closed with its extra fields."""
         from openai import AsyncOpenAI
 

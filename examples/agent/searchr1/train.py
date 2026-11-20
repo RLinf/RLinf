@@ -34,8 +34,6 @@ from rlinf.workers.actor.ma_megatron_actor_worker import MAMegatronActor
 from rlinf.workers.agent.tool_worker import ToolWorkerInfo
 from rlinf.workers.critic.ma_megatron_critic_worker import MAMegatronCritic
 from rlinf.workers.inference.utils import get_inference_backend_worker
-from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
-from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
 from rlinf.workers.rollout.utils import get_rollout_backend_worker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
@@ -96,6 +94,14 @@ def main(cfg) -> None:
     session_servers = None
     session_router = None
     if OmegaConf.select(cfg, "session_server.enable", default=False):
+        # Imported here: the session server worker imports fastapi, uvicorn
+        # and SGLang at module level, which a run without the session server
+        # may not have installed.
+        from rlinf.workers.rollout.session_server.server_worker import (
+            SessionServerWorker,
+        )
+        from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
+
         rollout_node_ranks = list(
             dict.fromkeys(
                 placement.cluster_node_rank for placement in rollout_placements

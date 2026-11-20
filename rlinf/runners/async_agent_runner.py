@@ -35,11 +35,14 @@ from rlinf.workers.agent.tool_worker import ToolWorker, ToolWorkerInfo
 from rlinf.workers.inference.megatron_inference_worker import MegatronInference
 from rlinf.workers.reward.reward_worker import RewardWorker
 from rlinf.workers.rollout.session_server.payload import create_payload_channels
-from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
-from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
 from rlinf.workers.rollout_buffer.rollout_buffer_worker import RolloutBufferWorker
 
 if typing.TYPE_CHECKING:
+    # Type checking only: the session server worker imports fastapi,
+    # uvicorn and SGLang at module level, which a run without the session
+    # server (on vLLM, for example) may not have installed.
+    from rlinf.workers.rollout.session_server.server_worker import SessionServerWorker
+    from rlinf.workers.rollout.sglang.router_worker import SGLangRouterWorker
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
     from rlinf.workers.rollout.vllm.vllm_worker import VLLMWorker
 
@@ -78,8 +81,8 @@ class AsyncAgentRunner(AgentRunner):
         rollout_buffer: RolloutBufferWorker,
         tool_workers: dict[ToolWorker, ToolWorkerInfo] = {},
         solid_rollouts: dict[str, Union["SGLangWorker", "VLLMWorker"]] = {},
-        session_servers: Optional[list[SessionServerWorker]] = None,
-        session_router: Optional[SGLangRouterWorker] = None,
+        session_servers: Optional[list["SessionServerWorker"]] = None,
+        session_router: Optional["SGLangRouterWorker"] = None,
     ):
         assert placement.is_disaggregated, (
             "AsyncAgentRunner: rollout and actor must be deployed "

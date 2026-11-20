@@ -1110,6 +1110,24 @@ class TestChannel:
         assert batch[0][0] == items[0][0]
         assert batch[0][1] == items[1][0]
 
+    def test_queued_summary_sums_over_every_channel_rank(self):
+        """queued_summary counts every channel worker, not one rank.
+
+        A key's rank comes from the producing worker's node rank, and this
+        test runs on one node, so the two keys are pinned to ranks 0 and 1
+        through the channel's rank cache. Reading the queue of one rank
+        would report only that rank's share.
+        """
+        channel = DistributedChannel.create(
+            f"QUEUED_SUMMARY_TEST_{uuid.uuid4().hex[:8]}"
+        )
+        channel._key_to_channel_rank_cache["q_rank0"] = 0
+        channel._key_to_channel_rank_cache["q_rank1"] = 1
+        channel.put("first", weight=2, key="q_rank0")
+        channel.put("second", weight=3, key="q_rank1")
+
+        assert channel.queued_summary() == (2, 5)
+
     @pytest.mark.parametrize("channel_type", ["regular", "distributed"], indirect=True)
     def test_qsize_empty_full(self, worker_groups, channel, channel_type):
         """Tests the qsize, empty, and full methods of the channel."""

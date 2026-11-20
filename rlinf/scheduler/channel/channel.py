@@ -409,9 +409,16 @@ class Channel:
         """
         if self._local_channel is not None:
             return self._local_channel.queued_summary()
-        target_rank = self._get_channel_rank_by_key(DEFAULT_KEY)
-        target_actor = self._get_channel_actor(target_rank)
-        return ray.get(target_actor.queued_summary.remote())
+        summaries = ray.get(
+            [
+                actor.queued_summary.remote()
+                for actor in self._channel_actors_by_rank.values()
+            ]
+        )
+        return (
+            sum(items for items, _ in summaries),
+            sum(weight for _, weight in summaries),
+        )
 
     def full(self, key: Any = DEFAULT_KEY) -> bool:
         """Check if the channel queue is full.

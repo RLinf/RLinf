@@ -740,7 +740,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
     async def run_agentloop_rollout_group(
         self,
-        input_dict: dict,
+        input_ids: list[int],
         answer: str,
         group_size: int,
         output_channel: Channel,
@@ -751,7 +751,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         Run the agent loop for a group of queries.
 
         Args:
-            input_dict: Input dictionary containing 'input_ids' and 'answer'
+            input_ids: The prompt's token ids, with the chat template applied.
             answer: Ground truth answer
             group_size: Number of rollouts per query (k samples for pass@k)
             output_channel: Channel receiving each result
@@ -762,13 +762,13 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         """
         if self.session_server_client is not None:
             return await self._run_session_server_group(
-                input_dict, answer, group_size, group_id, task_name
+                input_ids, answer, group_size, group_id, task_name
             )
         rollout_tasks: list[asyncio.Task[MultiAgentLoopOutput]] = []
         # grpo group_size
         for _ in range(group_size):
             task = asyncio.create_task(
-                self.run_one_query(copy.deepcopy(input_dict), answer=answer)
+                self.run_one_query(copy.deepcopy(input_ids), answer=answer)
             )
             rollout_tasks.append(task)
 
@@ -803,7 +803,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
     async def _run_session_server_group(
         self,
-        input_dict: dict,
+        input_ids: list[int],
         answer: str,
         group_size: int,
         group_id: Optional[int],
@@ -824,7 +824,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         rollout_tasks = [
             asyncio.create_task(
                 self._run_session_query(
-                    input_dict, answer, group_id, traj_index, task_name, group_size
+                    input_ids, answer, group_id, traj_index, task_name, group_size
                 )
             )
             for traj_index in range(group_size)
@@ -918,7 +918,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
     async def _run_session_query(
         self,
-        input_dict: dict,
+        input_ids: list[int],
         answer: str,
         group_id: int,
         traj_index: int,
@@ -935,14 +935,14 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         token = self._session_binding.set(binding)
         try:
             output, close_fields, reward = await self.run_session_trajectory(
-                binding, input_dict, answer
+                binding, input_ids, answer
             )
         finally:
             self._session_binding.reset(token)
         return binding, output, close_fields, reward
 
     async def run_session_trajectory(
-        self, binding: SessionBinding, input_dict: dict, answer: str
+        self, binding: SessionBinding, input_ids: list[int], answer: str
     ) -> tuple[Optional[MultiAgentLoopOutput], dict, float]:
         """Run one trajectory on its bound session (override this hook).
 
@@ -955,7 +955,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
 
         Args:
             binding: The trajectory's session: its group, index, and id.
-            input_dict: The task's input, as the rollout request carries it.
+            input_ids: The prompt's token ids, with the chat template
+                applied; decode them with ``self.tokenizer`` to get the text.
             answer: The reference answer, for scoring.
 
         Returns:
@@ -967,7 +968,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
             carries one value per chat response received, when
             ``algorithm.loss_scales`` includes ``agent_level``.
         """
-        output = await self.run_one_query(copy.deepcopy(input_dict), answer=answer)
+        output = await self.run_one_query(copy.deepcopy(input_ids), answer=answer)
         close_fields = {"kept_lens": self._declared_kept_lens(binding, output)}
         return output, close_fields, self._trajectory_reward(output)
 
