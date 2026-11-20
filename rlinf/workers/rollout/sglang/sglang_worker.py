@@ -33,6 +33,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.backend import RlinfContext
+from rlinf.workers.rollout.sglang import sglang_version
 from rlinf.workers.rollout.sglang.backends import make_backend
 from rlinf.workers.rollout.sglang.rendezvous import (
     broadcast_instance_readiness,
@@ -46,8 +47,6 @@ from rlinf.workers.rollout.utils import (
     RunningStatusManager,
     print_sglang_outputs,
 )
-
-_SERVER_ARGS_FIELDS = {f.name for f in dataclasses.fields(ServerArgs)}
 
 
 class SGLangWorker(Worker):
@@ -174,8 +173,16 @@ class SGLangWorker(Worker):
         Engine and Server backends consume the same product, so
         version-compatibility branches live here only once.
         """
+        server_fields = (
+            {field.name for field in dataclasses.fields(ServerArgs)}
+            if dataclasses.is_dataclass(ServerArgs)
+            else ServerArgs.__struct_fields__
+        )
         use_cudagraph = not self._cfg_rollout.enforce_eager
 
+        enable_weights_cpu_backup = self._cfg_rollout.sglang.get(
+            "enable_weights_cpu_backup", False
+        )
         load_format = "dummy"  # dummy means randomize init weight
         if self.weight_reload == "sync":
             validate_weight_first_sync = self._cfg_rollout.get(
@@ -200,8 +207,15 @@ class SGLangWorker(Worker):
                 "enable_deterministic_inference", False
             ),
         }
+        for name in (
+            "context_length",
+            "chunked_prefill_size",
+            "disable_radix_cache",
+        ):
+            if name in self._cfg_rollout.sglang:
+                version_dependent_args[name] = self._cfg_rollout.sglang[name]
         for name in list(version_dependent_args):
-            if name in _SERVER_ARGS_FIELDS:
+            if name in server_fields:
                 continue
             value = version_dependent_args.pop(name)
             if name in self._cfg_rollout.sglang:
@@ -210,13 +224,33 @@ class SGLangWorker(Worker):
                     f"the configured value {value!r} is ignored"
                 )
 
+        # SGLang 0.5.19 renamed this field; both release APIs use the same limit.
+        graph_limit_name = (
+            "cuda_graph_max_bs"
+            if "cuda_graph_max_bs" in server_fields
+            else "cuda_graph_max_bs_decode"
+        )
+        version_dependent_args[graph_limit_name] = min(
+            self._cfg_rollout.cuda_graph_max_bs,
+            self._cfg_rollout.max_running_requests,
+        )
+
+        # Back up pretrained parameters that the actor does not synchronize.
+        if "enable_weights_cpu_backup" in server_fields:
+            version_dependent_args["enable_weights_cpu_backup"] = (
+                enable_weights_cpu_backup
+            )
+        elif enable_weights_cpu_backup:
+            raise ValueError(
+                f"SGLang {sglang_version} does not support enable_weights_cpu_backup. "
+                "Disable it or install a release with CPU weight backup support."
+            )
+        if enable_weights_cpu_backup:
+            load_format = "auto"
+
         server_args = ServerArgs(
             model_path=self._cfg_rollout.model.model_path,
             disable_cuda_graph=not use_cudagraph,
-            cuda_graph_max_bs=min(
-                self._cfg_rollout.cuda_graph_max_bs,
-                self._cfg_rollout.max_running_requests,
-            ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
             # Expert parallel: pass ep_size explicitly. sglang derives
             # moe_tp = tp // ep // moe_dp itself. ep_size defaults to
@@ -246,7 +280,9 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             load_format=load_format,
-            # disable_overlap_schedule=True,
+            disable_overlap_schedule=self._cfg_rollout.sglang.get(
+                "disable_overlap_schedule", False
+            ),
             dtype=torch_dtype_from_precision(self._cfg_rollout.model.precision),
             # sglang will only return text/output_ids when skip_tokenizer_init=False/True
             # text is not needed in RL training, so set to True can save time.
@@ -269,7 +305,13 @@ class SGLangWorker(Worker):
             server_args.skip_server_warmup = True
 
         self.log_on_first_rank(f"{server_args=}")
-        return dataclasses.asdict(server_args)
+        if dataclasses.is_dataclass(server_args):
+            return dataclasses.asdict(server_args)
+        # Backends reconstruct ServerArgs and resolve it at launch. Resolved
+        # values are not constructor inputs (e.g. DP prefill sizing is scaled).
+        return {
+            name: getattr(server_args, name) for name in server_args.__struct_fields__
+        }
 
     async def stop(self):
         """Stop the SGLang engine and finalize stats collectors."""
