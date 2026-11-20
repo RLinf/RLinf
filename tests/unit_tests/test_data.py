@@ -22,6 +22,9 @@ import json
 import pickle
 import random
 import shutil
+import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +35,7 @@ import numpy as np
 import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
+from PIL import Image
 
 import rlinf.data.datasets.d4rl as d4rl_dataset_module
 import rlinf.utils.obs_compression as obs_compression
@@ -64,11 +68,15 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
     split_episode_data,
 )
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
+from rlinf.data.storage.lerobot.compat import index_episode_subset_by_id
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.envs.sim.diffusion import build_reward_dataset
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+from rlinf.scheduler import AcceleratorType
 from rlinf.scheduler.channel.channel import DEFAULT_KEY
 from rlinf.scheduler.channel.hooks import ChannelContext
 from rlinf.scheduler.cluster.utils import (
@@ -608,6 +616,45 @@ class _CurrentDataset:
         self.saved_episodes += 1
 
 
+class _StreamingScalarFeatureDataset(_LegacyDataset):
+    """Mimic a streaming LeRobot dataset with scalar HF features."""
+
+    def __init__(self):
+        from datasets import Features, Value
+
+        super().__init__()
+        self.hf_features = Features(
+            {
+                "done": Value("bool"),
+                "is_success": Value("bool"),
+                "segment_id": Value("uint8"),
+            }
+        )
+        self.episode_buffer = {
+            "done": [],
+            "is_success": [],
+            "segment_id": [],
+            "size": 0,
+        }
+        self.image_writer = None
+
+    def add_frame(self, frame):
+        self.episode_buffer["done"].append(frame["done"])
+        self.episode_buffer["is_success"].append(frame["is_success"])
+        self.episode_buffer["segment_id"].append(frame["segment_id"])
+        self.episode_buffer["size"] += 1
+
+    def save_episode(self):
+        assert all(isinstance(value, bool) for value in self.episode_buffer["done"])
+        assert all(
+            isinstance(value, bool) for value in self.episode_buffer["is_success"]
+        )
+        assert all(
+            isinstance(value, int) for value in self.episode_buffer["segment_id"]
+        )
+        self.saved_episodes += 1
+
+
 def _make_writer(dataset):
     # ``create()`` needs a real lerobot install, so attach the dataset the way
     # ``create()`` would.
@@ -635,6 +682,28 @@ def test_current_dataset_gets_task_as_argument():
     assert dataset.tasks == ["pick up the cube"] * 2
     assert all("task" not in f for f in dataset.frames)
     assert dataset.frames[0]["state"] == 0
+    assert dataset.saved_episodes == 1
+
+
+def test_streaming_writer_converts_scalar_schema_arrays_before_save():
+    dataset = _StreamingScalarFeatureDataset()
+    writer = _make_writer(dataset)
+    writer.add_frame(
+        {
+            "done": np.array([False], dtype=bool),
+            "is_success": np.array([False], dtype=bool),
+            "segment_id": np.array([3], dtype=np.uint8),
+            "task": "pick up the cube",
+        }
+    )
+
+    assert writer.save_episode(is_success=True) == 1
+    assert dataset.episode_buffer == {
+        "done": [True],
+        "is_success": [True],
+        "segment_id": [3],
+        "size": 1,
+    }
     assert dataset.saved_episodes == 1
 
 
@@ -721,6 +790,21 @@ def test_episode_boundaries_agree_across_formats(dataset_cls):
     assert all(isinstance(x, int) for x in starts + ends)
 
 
+@pytest.mark.parametrize("episodes", [[3], [4, 1]])
+def test_lerobot_subset_preserves_episode_boundaries(episodes):
+    starts = [position * 3 for position in range(len(episodes))]
+    ends = [start + 3 for start in starts]
+    dataset = _V21Dataset(starts, ends)
+    dataset.episodes = episodes
+
+    index_episode_subset_by_id(dataset)
+    index_episode_subset_by_id(dataset)
+
+    assert episode_boundaries(dataset) == (starts, ends)
+    assert dataset.episode_data_index["from"][episodes].tolist() == starts
+    assert dataset.episode_data_index["to"][episodes].tolist() == ends
+
+
 def test_episode_boundaries_reports_an_unknown_layout():
     class _Alien:
         episode_data_index = None
@@ -739,6 +823,205 @@ def test_episode_boundaries_rejects_v30_meta_without_the_columns():
 
     with pytest.raises(RuntimeError, match="Cannot determine episode boundaries"):
         episode_boundaries(_Partial())
+
+
+@pytest.mark.parametrize(
+    "config_name,image_key,wrist_key,state_key,action_key",
+    [
+        ("pi05_libero", "image", "wrist_image", "state", "actions"),
+        (
+            "pi05_libero_mem",
+            "observation.images.image",
+            "observation.images.wrist_image",
+            "observation.state",
+            "action",
+        ),
+    ],
+)
+def test_openpi_libero_config_maps_dataset_fields(
+    config_name, image_key, wrist_key, state_key, action_key
+):
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config(config_name)
+    data_config = config.data.create(config.assets_dirs, config.model)
+    sample = {
+        image_key: np.full((8, 8, 3), 10, dtype=np.uint8),
+        wrist_key: np.full((8, 8, 3), 20, dtype=np.uint8),
+        state_key: np.arange(8, dtype=np.float32),
+        action_key: np.arange(70, dtype=np.float32).reshape(10, 7),
+        "prompt": "pick up the cup",
+    }
+    transformed = sample
+    for transform in (
+        *data_config.repack_transforms.inputs,
+        *data_config.data_transforms.inputs,
+    ):
+        transformed = transform(transformed)
+
+    assert data_config.action_sequence_keys == (action_key,)
+    assert data_config.prompt_from_task
+    np.testing.assert_array_equal(transformed["image"]["base_0_rgb"], sample[image_key])
+    np.testing.assert_array_equal(
+        transformed["image"]["left_wrist_0_rgb"], sample[wrist_key]
+    )
+    np.testing.assert_array_equal(transformed["state"], sample[state_key])
+    np.testing.assert_array_equal(transformed["actions"], sample[action_key])
+    assert transformed["prompt"] == sample["prompt"]
+
+
+@pytest.mark.parametrize("num_frames", [1, 3])
+@pytest.mark.parametrize("image_dtype", [np.uint8, np.float32])
+def test_short_memory_dataset_preserves_targets_and_padding(
+    num_frames, image_dtype, monkeypatch
+):
+    from datasets import Dataset
+
+    torchvision = pytest.importorskip("torchvision")
+    monkeypatch.delattr(torchvision.io, "VideoReader", raising=False)
+
+    from rlinf.data.datasets.openpi.short_memory import (
+        ShortMemoryDataset,
+        collate_fn,
+    )
+
+    # A LeRobot episode subset retains global indices, with clamped pad frames.
+    indices = torch.tensor([104] if num_frames == 1 else [101, 102, 104])
+    padding = torch.tensor([False] if num_frames == 1 else [True, False, False])
+    cameras = indices[:, None, None, None].expand(-1, 2, 2, 3).float()
+    raw = {
+        "index": indices,
+        "index_is_pad": padding,
+        "camera": cameras[0] if num_frames == 1 else cameras,
+        "state": np.array([4.0, 5.0], dtype=np.float32),
+        "prompt": "current task",
+        "actions": np.array([[1.0], [2.0]], dtype=np.float32),
+    }
+    lerobot = mock.MagicMock()
+    lerobot.meta.camera_keys = ["camera"]
+    lerobot.hf_dataset = Dataset.from_dict(
+        {"timestamp": [10.0, 10.051, 10.102, 10.155, 10.207]}
+    ).with_format("torch")
+    lerobot.__getitem__.return_value = raw
+    transformed_indices, tokenized_prompts = [], []
+
+    def frame_transform(frame):
+        transformed_indices.append(int(frame["index"]))
+        return {
+            "image": {"base_0_rgb": np.asarray(frame["camera"], dtype=image_dtype)},
+            "image_mask": {"base_0_rgb": True},
+            "state": frame["state"],
+            "prompt": frame["prompt"],
+            "actions": frame["actions"],
+        }
+
+    def sample_transform(frame):
+        tokenized_prompts.append(frame.pop("prompt"))
+        frame["tokenized_prompt"] = np.array([7, 8])
+        frame["tokenized_prompt_mask"] = np.array([True, True])
+        return frame
+
+    dataset = ShortMemoryDataset(
+        lerobot,
+        frame_transform,
+        sample_transform,
+        num_frames=num_frames,
+        action_keys=("actions",),
+    )
+    sample = dataset[3]
+
+    assert transformed_indices == ([104] if num_frames == 1 else [102, 104])
+    assert tokenized_prompts == ["current task"]
+    np.testing.assert_array_equal(sample["state"], raw["state"])
+    np.testing.assert_array_equal(sample["actions"], raw["actions"])
+    np.testing.assert_array_equal(sample["image_mask"]["base_0_rgb"], ~padding)
+    assert sample["image"]["base_0_rgb"].dtype == image_dtype
+    assert sample["history_time_offsets"].dtype == np.float32
+    np.testing.assert_array_equal(
+        sample["image"]["base_0_rgb"][:, 0, 0, 0],
+        [104] if num_frames == 1 else [0, 102, 104],
+    )
+    np.testing.assert_allclose(
+        sample["history_time_offsets"],
+        [0.0] if num_frames == 1 else [0.0, -0.104, 0.0],
+        atol=1e-6,
+    )
+    observation, actions = collate_fn([sample])
+    torch.testing.assert_close(observation.state, torch.from_numpy(raw["state"])[None])
+    torch.testing.assert_close(actions, torch.from_numpy(raw["actions"])[None])
+    torch.testing.assert_close(
+        observation.history_time_offsets,
+        torch.from_numpy(sample["history_time_offsets"])[None],
+    )
+    baseline, baseline_actions = collate_fn([sample], include_history=False)
+    assert baseline.images["base_0_rgb"].shape == (1, 2, 2, 3)
+    assert baseline.image_masks["base_0_rgb"].shape == (1,)
+    assert baseline.history_time_offsets is None
+    torch.testing.assert_close(
+        baseline.images["base_0_rgb"], observation.images["base_0_rgb"][:, -1]
+    )
+    torch.testing.assert_close(
+        baseline.image_masks["base_0_rgb"],
+        observation.image_masks["base_0_rgb"][:, -1],
+    )
+    for field in ("state", "tokenized_prompt", "tokenized_prompt_mask"):
+        torch.testing.assert_close(
+            getattr(baseline, field), getattr(observation, field)
+        )
+    torch.testing.assert_close(baseline_actions, actions)
+
+
+@pytest.mark.parametrize("action_key", ["actions", "action"])
+@pytest.mark.parametrize("tensor_actions", [False, True])
+def test_short_memory_dataset_isolates_action_updates(action_key, tensor_actions):
+    from datasets import Dataset
+
+    from rlinf.data.datasets.openpi.short_memory import ShortMemoryDataset
+
+    original_actions = np.array([[5.0], [7.0]], dtype=np.float32)
+    raw = {
+        "index": torch.tensor([0, 1, 2]),
+        "index_is_pad": torch.tensor([False, False, False]),
+        "camera": np.zeros((3, 2, 2, 3), dtype=np.uint8),
+        "state": np.array([2.0], dtype=np.float32),
+        action_key: (
+            torch.from_numpy(original_actions.copy())
+            if tensor_actions
+            else original_actions.copy()
+        ),
+    }
+    lerobot = mock.MagicMock()
+    lerobot.meta.camera_keys = ["camera"]
+    lerobot.hf_dataset = Dataset.from_dict({"timestamp": [0.0, 0.1, 0.2]})
+    lerobot.__getitem__.return_value = raw
+    transformed_actions = []
+
+    def frame_transform(frame):
+        actions = np.asarray(frame[action_key])
+        actions -= frame["state"]
+        transformed_actions.append(actions.copy())
+        return {
+            "image": {"base_0_rgb": frame["camera"]},
+            "image_mask": {"base_0_rgb": True},
+            "actions": actions,
+        }
+
+    dataset = ShortMemoryDataset(
+        lerobot,
+        frame_transform,
+        lambda frame: frame,
+        num_frames=3,
+        action_keys=(action_key,),
+    )
+    for _ in range(2):
+        sample = dataset[2]
+        np.testing.assert_array_equal(
+            sample["actions"], original_actions - raw["state"]
+        )
+        np.testing.assert_array_equal(raw[action_key], original_actions)
+    for actions in transformed_actions:
+        np.testing.assert_array_equal(actions, original_actions - raw["state"])
 
 
 # Skip codec round-trip tests when the optional backends are not installed.
@@ -949,6 +1232,189 @@ def test_env_output_composes_one_transition_object():
     }
 
 
+def test_env_output_preserves_nested_observations():
+    def observation(value):
+        return {
+            "states": torch.full((2, 3), value),
+            "depth_images": torch.full((2, 2, 2), value),
+            "reset_mask": torch.tensor([False, True]),
+            "history": {
+                "main_images": torch.full((2, 3, 2, 2, 3), value),
+                "wrist_images": torch.full((2, 3, 2, 2, 3), value + 1),
+                "frame_mask": torch.tensor([[False, True, True]] * 2),
+                "time_offsets": torch.tensor([[0.0, -3.5, 0.0]] * 2),
+            },
+        }
+
+    output = EnvOutput(obs=observation(1), final_obs=observation(7))
+    payload = output.to_dict()
+
+    for name, original in (("obs", output.obs), ("final_obs", output.final_obs)):
+        assert "depth_images" not in payload[name]
+        for key in ("states", "reset_mask", "history"):
+            torch.testing.assert_close(payload[name][key], original[key])
+    assert (
+        "history" not in EnvOutput(obs={"states": torch.zeros(2, 3)}).to_dict()["obs"]
+    )
+    shards = PolicyInput(obs=payload["obs"]).split([1, 1])
+    for index, shard in enumerate(shards):
+        torch.testing.assert_close(
+            shard.obs["history"]["main_images"],
+            output.obs["history"]["main_images"][index : index + 1],
+        )
+
+
+@pytest.mark.parametrize(
+    "reset_config, expected_updates",
+    [({}, 1), ({"use_fixed_reset_state_ids": True}, 0)],
+    ids=["optional-setting-absent", "fixed-reset-ids"],
+)
+def test_env_worker_finishes_eval_with_optional_fixed_reset_ids(
+    reset_config, expected_updates
+):
+    class EvalEnv:
+        reset_updates = 0
+
+        def update_reset_state_ids(self):
+            self.reset_updates += 1
+
+    worker = object.__new__(EnvWorker)
+    worker.stage_num = 1
+    worker.eval_env_list = [EvalEnv()]
+    worker.cfg = OmegaConf.create(
+        {"env": {"eval": {"auto_reset": False, "video_cfg": {"save_video": False}}}}
+    )
+    worker.cfg.env.eval.update(reset_config)
+    OmegaConf.set_struct(worker.cfg, True)
+
+    worker.finish_rollout(mode="eval")
+
+    assert worker.eval_env_list[0].reset_updates == expected_updates
+
+
+@pytest.mark.parametrize("array_type", [torch.tensor, np.array])
+@pytest.mark.parametrize("later_reset", [False, True])
+def test_env_worker_restores_terminal_observations(array_type, later_reset):
+    def observation(value):
+        return {
+            "states": array_type([[value], [value + 1]]),
+            "task_descriptions": [f"task {value}", f"task {value + 1}"],
+            "history": {
+                "main_images": array_type([[[value]], [[value + 1]]]),
+                "frame_mask": array_type([[False, True], [True, True]]),
+                "time_offsets": array_type([[0.0, -value / 10], [-value / 10, 0.0]]),
+            },
+        }
+
+    current, terminal = observation(1), observation(7)
+    original = copy.deepcopy(current)
+    infos = [
+        {
+            "final_observation": terminal,
+            "_final_observation": array_type([[True], [False]]),
+        }
+    ]
+    if later_reset:
+        infos.append(
+            {
+                "final_observation": observation(11),
+                "_final_observation": array_type([[False], [True]]),
+            }
+        )
+    worker = object.__new__(EnvWorker)
+    merged = worker._build_chunk_final_obs([current], infos)
+
+    expected = observation(7)
+    second = observation(11 if later_reset else 1)
+    expected["states"][1] = second["states"][1]
+    expected["task_descriptions"][1] = second["task_descriptions"][1]
+    for key in expected["history"]:
+        expected["history"][key][1] = second["history"][key][1]
+    for key in ("states", "history"):
+        torch.testing.assert_close(merged[key], expected[key])
+        torch.testing.assert_close(current[key], original[key])
+    assert merged["task_descriptions"] == expected["task_descriptions"]
+    assert current["task_descriptions"] == original["task_descriptions"]
+    merged["history"]["main_images"][0] = 100
+    merged["task_descriptions"][0] = "changed"
+    np.testing.assert_array_equal(terminal["history"]["main_images"], [[[7]], [[8]]])
+    assert terminal["task_descriptions"] == ["task 7", "task 8"]
+
+
+def test_vla_sft_checkpoint_restores_data_order_and_rng(tmp_path, monkeypatch):
+    from torch.utils.data.distributed import DistributedSampler
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from rlinf.data.datasets.common.epoch import forward_set_epoch
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    def gather_object(gathered, state):
+        gathered[0] = state
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_object)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    def make_worker():
+        dataset = torch.arange(40)
+        sampler = DistributedSampler(
+            dataset, num_replicas=1, rank=0, shuffle=True, seed=19
+        )
+        worker = object.__new__(FSDPVlaSftWorker)
+        worker._rank = 0
+        worker._world_size = 1
+        worker._data_epoch = 0
+        worker.data_loader = StatefulDataLoader(
+            dataset,
+            batch_size=4,
+            sampler=sampler,
+        )
+        worker.data_iter = iter(worker.data_loader)
+        return worker
+
+    original_rng = get_rng_state()
+    try:
+        uninterrupted = make_worker()
+        uninterrupted._data_epoch = 2
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        uninterrupted.data_iter = iter(uninterrupted.data_loader)
+        for _ in range(3):
+            next(uninterrupted.data_iter)
+        uninterrupted._save_data_checkpoint(str(tmp_path))
+
+        expected_torch = torch.rand(3)
+        expected_numpy = np.random.random(3)
+        expected_python = random.random()
+        expected_remaining = torch.cat(list(uninterrupted.data_iter))
+        uninterrupted._data_epoch += 1
+        forward_set_epoch(uninterrupted.data_loader, uninterrupted._data_epoch)
+        expected_next_epoch = torch.cat(list(uninterrupted.data_loader))
+
+        resumed = make_worker()
+        torch.manual_seed(101)
+        np.random.seed(101)
+        random.seed(101)
+        resumed._load_data_checkpoint(str(tmp_path))
+
+        assert resumed._data_epoch == 2
+        torch.testing.assert_close(torch.rand(3), expected_torch, rtol=0, atol=0)
+        np.testing.assert_array_equal(np.random.random(3), expected_numpy)
+        assert random.random() == expected_python
+        first_batch = next(resumed.data_iter)
+        torch.testing.assert_close(first_batch, expected_remaining[:4], rtol=0, atol=0)
+        actual_remaining = torch.cat([first_batch, *list(resumed.data_iter)])
+        torch.testing.assert_close(actual_remaining, expected_remaining, rtol=0, atol=0)
+
+        resumed._data_epoch += 1
+        forward_set_epoch(resumed.data_loader, resumed._data_epoch)
+        actual_next_epoch = torch.cat(list(resumed.data_loader))
+        torch.testing.assert_close(
+            actual_next_epoch, expected_next_epoch, rtol=0, atol=0
+        )
+    finally:
+        set_rng_state(original_rng)
+
+
 def test_removed_duplicate_types_are_not_schema_api():
     import rlinf.data.schema as schema
 
@@ -1097,6 +1563,7 @@ def test_external_policy_input_split_merge_preserves_actions():
 def test_online_lerobot_payload_survives_source_routing():
     episode_data = {
         "chunk_actions": torch.arange(12).reshape(3, 2, 2),
+        "initial_observation": {"images": torch.arange(6).reshape(3, 2)},
         "obs_list": [
             {"images": torch.arange(6).reshape(3, 2)},
             {"images": torch.arange(6, 12).reshape(3, 2)},
@@ -1113,6 +1580,10 @@ def test_online_lerobot_payload_survives_source_routing():
 
     assert merged_data is not None
     assert torch.equal(merged_data["chunk_actions"], episode_data["chunk_actions"])
+    assert torch.equal(
+        merged_data["initial_observation"]["images"],
+        episode_data["initial_observation"]["images"],
+    )
     assert torch.equal(
         merged_data["obs_list"][1]["images"],
         episode_data["obs_list"][1]["images"],
@@ -1187,6 +1658,7 @@ def test_merging_conflicting_scalar_batch_values_is_rejected():
 def test_episode_data_round_trip_keeps_scalar_info_flags_intact():
     episode_data = {
         "chunk_actions": torch.arange(8, dtype=torch.float32).reshape(4, 2),
+        "initial_observation": {"states": torch.arange(4).reshape(4, 1)},
         "obs_list": [{"states": torch.arange(4).reshape(4, 1)}],
         "terminations": torch.zeros(4, 1, dtype=torch.bool),
         "truncations": torch.zeros(4, 1, dtype=torch.bool),
@@ -1420,6 +1892,7 @@ def _env_part(
 def _episode_data():
     return {
         "chunk_actions": torch.zeros(1, 1, 1),
+        "initial_observation": {"states": torch.zeros(1, 1)},
         "obs_list": [{"states": torch.zeros(1, 1)}],
         "terminations": torch.zeros(1, 1, dtype=torch.bool),
         "truncations": torch.zeros(1, 1, dtype=torch.bool),
@@ -1953,6 +2426,10 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0, 2.0]]]),
+        initial_observation={
+            "states": torch.tensor([[-1.0, -1.0]]),
+            "task_descriptions": ["pick"],
+        },
         obs_list=[
             {
                 "states": torch.tensor([[0.0, 0.0]]),
@@ -1973,6 +2450,9 @@ def test_online_lerobot_accumulator_records_external_intervened_action():
     assert torch.equal(
         torch.from_numpy(episode[0]["actions"]), torch.tensor([9.0, 8.0])
     )
+    assert torch.equal(
+        torch.from_numpy(episode[0]["state"]), torch.tensor([-1.0, -1.0])
+    )
 
 
 def test_online_lerobot_accumulator_preserves_auto_reset_observation():
@@ -1985,6 +2465,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0]]]),
+        initial_observation={"states": torch.tensor([[5.0]])},
         obs_list=[{"states": torch.tensor([[100.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -1998,6 +2479,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[2.0]]]),
+        initial_observation={"states": torch.tensor([[100.0]])},
         obs_list=[{"states": torch.tensor([[20.0]])}],
         terminations=torch.tensor([[True]]),
         truncations=torch.tensor([[False]]),
@@ -2005,7 +2487,7 @@ def test_online_lerobot_accumulator_preserves_auto_reset_observation():
     )
 
     first, second = accumulator.drain_episodes()
-    assert first[0]["state"].item() == 10.0
+    assert first[0]["state"].item() == 5.0
     assert first[0]["is_success"].item()
     assert second[0]["state"].item() == 100.0
 
@@ -2026,6 +2508,7 @@ def test_online_lerobot_accumulator_filters_unsuccessful_episodes():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[1.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
             obs_list=[{"states": torch.tensor([[1.0]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[truncated]]),
@@ -2047,6 +2530,7 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     accumulator.append_chunk_episode_data(
         policy_output=None,
         chunk_actions=torch.tensor([[[1.0], [2.0]], [[3.0], [4.0]]]),
+        initial_observation={"states": torch.tensor([[0.0], [20.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0], [30.0]])},
             {"states": torch.tensor([[20.0], [40.0]])},
@@ -2060,6 +2544,8 @@ def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     assert len(episodes) == 2
     assert [frame["actions"].item() for frame in episodes[0]] == [1.0, 2.0]
     assert [frame["actions"].item() for frame in episodes[1]] == [3.0, 4.0]
+    assert [frame["state"].item() for frame in episodes[0]] == [0.0, 10.0]
+    assert [frame["state"].item() for frame in episodes[1]] == [20.0, 30.0]
 
 
 def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
@@ -2077,6 +2563,7 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     accumulator.append_chunk_episode_data(
         policy_output=policy_output,
         chunk_actions=chunk_actions,
+        initial_observation={"states": torch.tensor([[0.0]])},
         obs_list=[
             {"states": torch.tensor([[10.0]])},
             {"states": torch.tensor([[20.0]])},
@@ -2089,6 +2576,37 @@ def test_online_lerobot_accumulator_uses_policy_intervention_metadata():
     [episode] = accumulator.drain_episodes()
     assert [frame["actions"].item() for frame in episode] == [1.0, 8.0]
     assert [frame["intervene_flag"].item() for frame in episode] == [False, True]
+    assert [frame["state"].item() for frame in episode] == [0.0, 10.0]
+
+
+def test_online_lerobot_accumulator_filters_by_intervention_step_count():
+    accumulator = LeRobotEpisodeAccumulator(
+        num_envs=1,
+        intervene_step_filter=2,
+        num_action_chunks=2,
+        action_dim=1,
+    )
+
+    for flags in ([True, False], [True, True]):
+        policy_output = PolicyOutput(
+            forward_inputs={"action": torch.tensor([[[1.0], [2.0]]])},
+            intervene_flags=torch.tensor([flags]),
+        )
+        accumulator.append_chunk_episode_data(
+            policy_output=policy_output,
+            chunk_actions=torch.tensor([[[1.0], [2.0]]]),
+            initial_observation={"states": torch.tensor([[0.0]])},
+            obs_list=[
+                {"states": torch.tensor([[10.0]])},
+                {"states": torch.tensor([[20.0]])},
+            ],
+            terminations=torch.tensor([[False, True]]),
+            truncations=torch.zeros(1, 2, dtype=torch.bool),
+            infos_list=[{}, {}],
+        )
+
+    [episode] = accumulator.drain_episodes()
+    assert [frame["intervene_flag"].item() for frame in episode] == [True, True]
 
 
 def test_online_lerobot_accumulator_applies_recording_controls():
@@ -2106,6 +2624,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
         accumulator.append_chunk_episode_data(
             policy_output=None,
             chunk_actions=torch.tensor([[[action]]]),
+            initial_observation={"states": torch.tensor([[state - 10.0]])},
             obs_list=[{"states": torch.tensor([[state]])}],
             terminations=torch.tensor([[terminated]]),
             truncations=torch.tensor([[False]]),
@@ -2114,7 +2633,7 @@ def test_online_lerobot_accumulator_applies_recording_controls():
 
     [episode] = accumulator.drain_episodes()
     assert len(episode) == 1
-    assert episode[0]["state"].item() == 10.0
+    assert episode[0]["state"].item() == 20.0
     assert episode[0]["actions"].item() == 3.0
     assert episode[0]["segment_id"].item() == 1
 
@@ -2326,6 +2845,33 @@ def test_lerobot_only_collector_does_not_build_replay_trajectories(monkeypatch):
     collector.run()
     assert collector.total_cnt == 1
     assert all("Replay buffer saved" not in message for message in logs)
+
+
+def test_lerobot_frame_keeps_last_substep_of_flattened_intervene_chunk():
+    action_dim = 20
+    chunk = 20
+    policy = np.arange(action_dim, dtype=np.float32)
+    expert = np.arange(chunk * action_dim, dtype=np.float32) + 100
+    collector = object.__new__(CollectEpisode)
+    collector.num_envs = 1
+    buffer = {
+        "observations": [{"state": np.zeros(32, dtype=np.float32)}],
+        "actions": [policy],
+        "terminated": [True],
+        "infos": [
+            {},
+            {
+                "intervene_flag": np.ones(chunk, dtype=bool),
+                "intervene_action": expert,
+            },
+        ],
+        "segment_ids": [0],
+    }
+    frames = collector._buffer_to_lerobot_ep(buffer, env_idx=0, is_success=True)
+    assert frames is not None and len(frames) == 1
+    assert frames[0]["actions"].shape == (action_dim,)
+    assert np.array_equal(frames[0]["actions"], expert[-action_dim:])
+    assert bool(frames[0]["intervene_flag"][0]) is True
 
 
 def _policy_input() -> PolicyInput:
@@ -2547,6 +3093,8 @@ def test_async_runner_reuses_decoupled_evaluation_service_across_validations():
 
 def test_decoupled_policy_route_round_trip():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.env_decoupled_mode = True
     rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
     rollout.train_batch_size = 32
@@ -2589,11 +3137,106 @@ def test_decoupled_policy_route_round_trip():
     )
 
 
+class _HangingGet:
+    def __init__(self, future: asyncio.Future):
+        self._future = future
+
+    async def async_wait(self):
+        return await self._future
+
+
+class _PartialGatherChannel:
+    """First get is ready. Later gets stay pending until the test releases them."""
+
+    def __init__(self):
+        self.gets = 0
+        self.futures: list[asyncio.Future] = []
+
+    def get(self, key, async_op=True):
+        del key, async_op
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self.futures.append(future)
+        self.gets += 1
+        if self.gets == 1:
+            future.set_result({"batch_index": "0_0_train_policy", "batch": {"n": 1}})
+        return _HangingGet(future)
+
+
+def test_decoupled_gather_returns_a_partial_batch_at_the_deadline():
+    """A shard still in flight at the deadline is the next gather's first shard."""
+    route_key = ("route",)
+    plan = SimpleNamespace(entries=[SimpleNamespace(key=route_key)] * 3)
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_router = {"policy": []}
+    rollout._world_size = 2
+    rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
+    rollout._manager_proxy = None
+    channel = _PartialGatherChannel()
+
+    async def _gather():
+        return await asyncio.wait_for(
+            rollout.recv_from_and_record_batch_routes_with_timeout(
+                "EnvGroup",
+                channel,
+                tag="policy",
+                batch_size=8,
+                merge_fn=lambda items: items,
+                infer_batch_size_fn=lambda item: 1,
+                timeout_time=0.05,
+                recv_queue_size=3,
+            ),
+            timeout=1.0,
+        )
+
+    async def run():
+        started = time.monotonic()
+        merged, sizes = await _gather()
+        elapsed = time.monotonic() - started
+
+        assert 0.03 <= elapsed < 1.0
+        assert merged == [{"n": 1}]
+        assert sizes == [1]
+        assert channel.gets == 2
+        assert rollout.batch_router["policy"] == ["0_0_train_policy"]
+
+        async def _release_late_shard():
+            await asyncio.sleep(0.01)
+            channel.futures[1].set_result(
+                {"batch_index": "1_0_train_policy", "batch": {"n": 2}}
+            )
+
+        release = asyncio.create_task(_release_late_shard())
+        merged, sizes = await _gather()
+        await release
+
+        assert merged == [{"n": 2}]
+        assert sizes == [1]
+        assert channel.gets == 3
+        assert rollout.batch_router["policy"] == [
+            "0_0_train_policy",
+            "1_0_train_policy",
+        ]
+        for future in channel.futures:
+            if not future.done():
+                future.set_result(
+                    {"batch_index": "2_0_train_policy", "batch": {"n": 3}}
+                )
+        await asyncio.sleep(0)
+
+    with (
+        patch("rlinf.scheduler.decoupled_build_recv_plan", return_value=plan),
+        patch("rlinf.scheduler.get_group_world_size", return_value=2),
+    ):
+        asyncio.run(run())
+
+
 def test_env_uses_mode_qualified_decoupled_response_tag():
     env = object.__new__(EnvWorker)
     env.cfg = SimpleNamespace(rollout=SimpleNamespace(group_name="RolloutGroup"))
     env.env_decoupled_mode = True
     env.train_batch_size = 32
+    env._supplied_actions = {}
     env.recv_from = Mock(return_value=torch.zeros(8, 4))
 
     env._recv_actions(None, stage_id=0)
@@ -2659,20 +3302,25 @@ def test_smooth_intervention_requires_online_lerobot_dagger():
         )
 
 
-def test_env_sends_external_request_after_intervention_continues():
+def test_env_runs_its_own_actions_after_intervention_continues():
     env = object.__new__(EnvWorker)
+    env.cfg = OmegaConf.create({"rollout": {"group_name": "rollout"}})
     env._trajectory_step = 0
     env._rank = 0
     env.train_num_envs_per_stage = 1
+    env.train_batch_size = 1
     env.n_train_chunk_steps = 2
     env.enable_online_lerobot = True
     env.env_decoupled_mode = False
+    env._policy_input_split_fn = None
+    env._supplied_actions = {}
     env.env_list = [
         SimpleNamespace(get_hold_actions=lambda fallback=None: [[1.0, 2.0]])
     ]
     env.smooth_intervene = SmoothInterveneController(1, 1, 2, 2, enabled=True)
     env._build_env_transition = Mock(return_value=EnvTransition())
-    env._send_policy_input = Mock()
+    env.send_to = Mock()
+    env.recv_from = Mock(return_value=torch.zeros(1, 2, 2))
     env_output = EnvOutput(
         obs={"states": torch.zeros(1, 4)},
         transition=EnvTransition(
@@ -2680,18 +3328,24 @@ def test_env_sends_external_request_after_intervention_continues():
             intervene_flags=torch.tensor([[False, True]]),
         ),
     )
+    hold_chunk = torch.tensor([[[1.0, 2.0], [1.0, 2.0]]])
 
     env._publish_step(Mock(), env_output, EnvTransition(), None, {}, 0, 0, 0)
 
-    policy_input = env._send_policy_input.call_args.args[1]
+    send = env.send_to.call_args.kwargs
+    policy_input = send["data"]
+    assert send["async_op"]
     assert not policy_input.requires_inference
     assert policy_input.env_parts[0] is not None
     assert policy_input.env_parts[0].next_obs is None
     assert torch.equal(policy_input.obs["states"], env_output.obs["states"])
-    assert torch.equal(
-        policy_input.external_actions,
-        torch.tensor([[[1.0, 2.0], [1.0, 2.0]]]),
-    )
+    assert torch.equal(policy_input.external_actions, hold_chunk)
+    # Rollout sends nothing back, so the next chunk starts without a receive.
+    assert torch.equal(env._recv_actions(Mock(), 0), hold_chunk)
+    env.recv_from.assert_not_called()
+    # The chunk after that waits for the policy again.
+    env._recv_actions(Mock(), 0)
+    env.recv_from.assert_called_once()
 
 
 def _publish_step_env(**overrides):
@@ -2740,11 +3394,14 @@ def test_env_sends_terminal_observation_only_as_a_boundary_override():
 
 def test_rollout_completes_each_epoch_through_policy_inputs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
     rollout.enable_rlt = False
     rollout.collect_transitions = False
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
     rollout.hf_model = SimpleNamespace(value_head=object())
     rollout.update_dagger_beta = Mock()
     rollout._send_actions = Mock()
@@ -2845,6 +3502,8 @@ def test_rollout_completes_each_epoch_through_policy_inputs():
 
 def test_rollout_routes_external_input_without_model_inference():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.n_train_chunk_steps = 2
     rollout.num_pipeline_stages = 1
     rollout.env_decoupled_mode = False
@@ -2928,7 +3587,8 @@ def test_rollout_routes_external_input_without_model_inference():
     )
     assert torch.equal(external_part.external_actions, dummy_actions)
     assert rollout._predict_rollout_actions.call_count == 1
-    assert torch.equal(rollout._send_actions.call_args_list[1].args[1], dummy_actions)
+    # Only the inferred chunk gets a reply; the env already runs its own actions.
+    rollout._send_actions.assert_called_once()
 
 
 def test_decoupled_final_completion_uses_next_bootstrap():
@@ -2971,6 +3631,35 @@ def test_decoupled_final_completion_uses_next_bootstrap():
 
     policy_input = env._send_policy_input.call_args.args[1]
     assert policy_input.env_parts == [completion]
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_reward_request_forwards_done_masks_and_final_info(chunked):
+    worker = object.__new__(EnvWorker)
+    worker._accelerator_type = AcceleratorType.NO_ACCEL
+    worker._timer_metrics = {}
+    worker.reward_mode = "per_step"
+    worker.env_infos_reward_keys = ("success", "episode", "final_info", "_final_info")
+    worker.cfg = OmegaConf.create({"reward": {"group_name": "reward"}})
+    worker.env_decoupled_mode = False
+    worker.train_batch_size = 2
+    worker.send_to = Mock()
+    worker.recv_from = Mock()
+    done = torch.tensor([True, False])
+    valid = torch.tensor([False, True])
+    dones = torch.stack([done, torch.zeros_like(done)], dim=-1) if chunked else done
+    env_output = EnvOutput(
+        obs={"states": torch.zeros(2, 1)},
+        transition=EnvTransition(dones=dones),
+        env_infos={"final_info": {"success": done}, "_final_info": valid},
+    )
+
+    worker.get_reward_model_output(env_output, Mock(), Mock())
+
+    payload = worker.send_to.call_args.kwargs["data"]
+    assert torch.equal(payload["dones"], done)
+    assert torch.equal(payload["env_infos"]["_final_info"], valid)
+    assert torch.equal(payload["env_infos"]["final_info"]["success"], done)
 
 
 def test_env_closes_reward_stream_with_final_chunk():
@@ -3054,9 +3743,16 @@ def test_smooth_intervention_holds_at_the_last_commanded_step():
     assert seen[0].tolist() == [[4.0, 5.0, 6.0]]
 
 
-def test_rollout_runs_requested_terminal_inference_without_a_value_head():
+@pytest.mark.parametrize("value_only", [False, True])
+def test_rollout_runs_requested_terminal_inference_without_a_value_head(value_only):
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = value_only
     rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.model_cfg = SimpleNamespace(model_type="openpi")
+    rollout.hf_model = SimpleNamespace()
     rollout.collect_transitions = False
     rollout._predict_rollout_actions = Mock(
         return_value=(
@@ -3087,6 +3783,8 @@ def test_rollout_runs_requested_terminal_inference_without_a_value_head():
 
 def test_rollout_reuses_policy_obs_for_transition_next_obs():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = False
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3110,7 +3808,10 @@ def test_rollout_reuses_policy_obs_for_transition_next_obs():
 
 def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = True
+    rollout.value_only_bootstrap = True
     rollout.enable_rlt = True
+    rollout.model_cfg = SimpleNamespace(model_type="mlp_policy")
     rollout.collect_transitions = True
     rollout.hf_model = SimpleNamespace()
     rollout._predict_rollout_actions = Mock(
@@ -3142,6 +3843,8 @@ def test_rollout_runs_terminal_inference_for_rlt_without_a_value_head():
 
 def test_rollout_keeps_next_forward_inputs_only_for_rlt():
     rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = False
+    rollout.value_only_bootstrap = False
     rollout.enable_rlt = True
     rollout.collect_transitions = True
     actor_channel = Mock()
@@ -3172,6 +3875,129 @@ def test_rollout_keeps_next_forward_inputs_only_for_rlt():
         forward_inputs["rlt_transition_z_rl"],
     )
     assert set(part.next_rlt_obs) == {"z_rl", "proprio", "ref_chunk"}
+
+
+@pytest.mark.parametrize("batch_bootstrap", [False, True])
+def test_rollout_terminal_values_preserve_observations_and_routes(batch_bootstrap):
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.batch_bootstrap_inference = batch_bootstrap
+    rollout.value_only_bootstrap = True
+    rollout.enable_rlt = False
+    rollout.enable_dagger = False
+    rollout.rlt_feature_model = None
+    rollout.model_cfg = SimpleNamespace(model_type="openvla")
+    rollout.collect_transitions = True
+    rollout.n_train_chunk_steps = 0
+    rollout.num_pipeline_stages = 1
+    rollout.env_decoupled_mode = False
+    rollout.update_dagger_beta = lambda: None
+
+    class ValuePolicy:
+        value_head = object()
+
+        def predict_value_batch(self, env_obs):
+            return env_obs["states"][:, :1].float() * 2
+
+    rollout.hf_model = ValuePolicy()
+    sizes = [1, 1, 2]
+    keys = [TrajectoryKey(0, rank, 0, 0, 1) for rank in range(3)]
+    sources = [TrajectorySource(key, size) for key, size in zip(keys, sizes)]
+    parts = [
+        EnvPart(
+            sources=[sources[0]],
+            transition=EnvTransition(truncations=torch.ones(1, 1, dtype=torch.bool)),
+            next_obs={"states": torch.tensor([[9]])},
+            requires_inference=True,
+        ),
+        EnvPart(sources=[sources[1]], transition=EnvTransition()),
+        EnvPart(
+            sources=[sources[2]],
+            transition=EnvTransition(),
+            requires_inference=True,
+        ),
+    ]
+    request = PolicyInput(
+        obs={"states": torch.tensor([[0], [1], [2], [3]])},
+        env_parts=parts,
+        request_sizes=sizes,
+        is_last=True,
+    )
+    rollout._receive_policy_input = AsyncMock(return_value=(request, None))
+
+    class ActorChannel:
+        def __init__(self):
+            self.parts = []
+
+        def put(self, item, *, async_op):
+            self.parts.append(item)
+
+    actor_channel = ActorChannel()
+    generate_one_epoch = MultiStepRolloutWorker.generate_one_epoch
+    while hasattr(generate_one_epoch, "__wrapped__"):
+        generate_one_epoch = generate_one_epoch.__wrapped__
+    asyncio.run(generate_one_epoch(rollout, Mock(), Mock(), actor_channel))
+
+    completed = actor_channel.parts
+    assert [part.sources for part in completed] == [[source] for source in sources]
+    assert all(not part.requires_inference for part in completed)
+    assert completed[0].transition is parts[0].transition
+    assert completed[0].next_obs["states"].tolist() == [[9]]
+    assert completed[0].bootstrap_values.tolist() == [[18.0]]
+    assert completed[1].bootstrap_values is None
+    assert completed[1].next_obs["states"].tolist() == [[1]]
+    assert completed[2].next_obs["states"].tolist() == [[2], [3]]
+    assert completed[2].final_prev_values.tolist() == [[4.0], [6.0]]
+
+
+@pytest.mark.parametrize("use_chat_template", [False, True])
+def test_vlm_trend_sft_uses_inference_prefix_without_trailing_assistant(
+    use_chat_template,
+):
+    from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+
+    class Processor:
+        video_token = "<|video_pad|>"
+        assistant_prefix = "<|im_start|>assistant\n"
+
+        def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+            assert not tokenize
+            text = "".join(
+                f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
+                for msg in messages
+            )
+            return text + self.assistant_prefix if add_generation_prompt else text
+
+        def __call__(self, *, text, **kwargs):
+            input_ids = torch.tensor([[ord(char) for char in text[0]]])
+            return {
+                "input_ids": input_ids,
+                "attention_mask": torch.ones_like(input_ids),
+            }
+
+    dataset = object.__new__(VLMTrendRewardSFTDataset)
+    dataset._processor = Processor()
+    dataset.system_prompt = "Score the attempt."
+    dataset.use_chat_template = use_chat_template
+    dataset._video_fps = 24.0
+    videos = [torch.zeros(2, 3, 2, 2), torch.zeros(1, 3, 2, 2)]
+    question, answer = "Did the robot finish?", "Yes"
+    prompt, prefix, _ = dataset.process_inputs(
+        dataset._processor, dataset.system_prompt, use_chat_template, [question], videos
+    )
+    ids, length, attention_mask, label_mask, _ = dataset.encode_prompt(
+        question, videos, answer
+    )
+
+    assert prompt.count(dataset._processor.video_token) == 2
+    assert prompt.endswith(dataset._processor.assistant_prefix)
+    assert label_mask.shape == prefix["input_ids"].shape
+    prefix_length = int(label_mask.sum())
+    torch.testing.assert_close(ids[:prefix_length], prefix["input_ids"][0])
+    assert (
+        "".join(chr(token) for token in ids[prefix_length:].tolist())
+        == "Yes<|im_end|>\n"
+    )
+    assert length == int(attention_mask.sum())
 
 
 def test_vlm_trend_batch_video_metadata_stays_nested_per_sample():
@@ -3489,3 +4315,859 @@ def test_reward_loaders_accept_one_batch_per_rank(tmp_path):
 
     assert len(train_loader) == 1
     assert len(val_loader) == 1
+
+
+class TestVersionFieldPreservation:
+    """merge_result_list and split_results keep version fields aligned."""
+
+    @staticmethod
+    def _dynamic_result(
+        num_sequence: int = 2,
+        group_size: int = 1,
+        version_start: list[int] | None = None,
+        version_end: list[int] | None = None,
+        rewards: list[float] | None = None,
+    ):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=group_size,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence if rewards is None else rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_merge_concatenates_versions(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(version_start=[1, 2], version_end=[1, 3]),
+                self._dynamic_result(version_start=[4], version_end=[5]),
+            ]
+        )
+        assert merged.version_start == [1, 2, 4]
+        assert merged.version_end == [1, 3, 5]
+
+    def test_merge_without_versions_stays_none(self):
+        merged = DynamicRolloutResult.merge_result_list(
+            [self._dynamic_result(), self._dynamic_result()]
+        )
+        assert merged.version_start is None
+        assert merged.version_end is None
+
+    def test_merge_mixed_versions_asserts(self):
+        with pytest.raises(AssertionError, match="mix"):
+            DynamicRolloutResult.merge_result_list(
+                [
+                    self._dynamic_result(version_start=[1], version_end=[1]),
+                    self._dynamic_result(),
+                ]
+            )
+
+    def test_split_slices_versions(self):
+        result = self._dynamic_result(
+            num_sequence=3, version_start=[1, 2, 3], version_end=[1, 2, 3]
+        )
+        splits = DynamicRolloutResult.split_results(result, [1, 2])
+        assert [s.version_start for s in splits] == [[1], [2, 3]]
+        assert [s.version_end for s in splits] == [[1], [2, 3]]
+
+    def test_split_without_versions_stays_none(self):
+        result = self._dynamic_result(num_sequence=2)
+        splits = DynamicRolloutResult.split_results(result, [1, 1])
+        assert all(s.version_start is None for s in splits)
+        assert all(s.version_end is None for s in splits)
+
+
+class TestGroupMetadataView:
+    """DynamicRolloutResult.group_metadata over real results."""
+
+    @staticmethod
+    def _dynamic_result(
+        rewards=None,
+        version_start=None,
+        version_end=None,
+        idx_to_traj=None,
+        response_lengths=None,
+        is_end=None,
+    ):
+        from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+        num_sequence = len(idx_to_traj) if idx_to_traj else 2
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=2,
+            idx_to_traj=idx_to_traj or [0, 1],
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=response_lengths or [1] * num_sequence,
+            is_end=is_end or [True] * num_sequence,
+            rewards=rewards,
+            version_start=version_start,
+            version_end=version_end,
+        )
+
+    def test_metadata_summarizes_rewards_versions_tokens_calls(self):
+        result = self._dynamic_result(
+            rewards=[1.0, 0.0, 1.0, 0.0],
+            version_start=[1, 1, 2, 3],
+            version_end=[1, 2, 3, 3],
+            idx_to_traj=[0, 0, 1, 1],
+            response_lengths=[2, 3, 4, 5],
+        )
+        metadata = result.group_metadata()
+        assert metadata.group_id is None
+        assert metadata.rewards == [1.0, 1.0]
+        assert metadata.earliest_version == 1
+        assert metadata.completion_version == 3
+        assert metadata.num_gen_tokens == 14
+        # One generate call per sequence, is_end is irrelevant.
+        assert metadata.num_generate_calls == 4
+
+    def test_metadata_without_versions_or_rewards(self):
+        result = self._dynamic_result(rewards=None, is_end=[False, False])
+        metadata = result.group_metadata()
+        assert metadata.rewards == [None, None]
+        assert metadata.earliest_version is None
+        assert metadata.completion_version is None
+        assert metadata.num_generate_calls == 2
+
+
+class TestTaskNameField:
+    """task_name rides on results like group_id: single-group only."""
+
+    @staticmethod
+    def _dynamic_result(num_sequence: int = 2, task_name: str | None = None):
+        return DynamicRolloutResult(
+            num_sequence=num_sequence,
+            group_size=num_sequence,
+            idx_to_traj=list(range(num_sequence)),
+            input_ids=[[1, 2, 3] for _ in range(num_sequence)],
+            prompt_lengths=[2] * num_sequence,
+            response_lengths=[1] * num_sequence,
+            is_end=[True] * num_sequence,
+            rewards=[0.0] * num_sequence,
+            task_name=task_name,
+        )
+
+    def test_merge_drops_task_name(self):
+        """A merged result spans several groups, so it carries None."""
+        merged = DynamicRolloutResult.merge_result_list(
+            [
+                self._dynamic_result(task_name="searchr1"),
+                self._dynamic_result(task_name="searchr1"),
+            ]
+        )
+        assert merged.task_name is None
+
+    def test_split_drops_task_name(self):
+        """Split results are rebuilt without the field, so it is None."""
+        split = DynamicRolloutResult.split_results(
+            self._dynamic_result(task_name="searchr1"), [1, 1]
+        )
+        assert all(result.task_name is None for result in split)
+
+    def test_group_metadata_carries_task_name(self):
+        result = self._dynamic_result(task_name="searchr1")
+        assert result.group_metadata().task_name == "searchr1"
+
+
+def test_trajectory_packing_keeps_a_one_token_overlap_separate(monkeypatch):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.scheduler import Worker
+
+    monkeypatch.setattr(Worker, "torch_device_type", "cpu")
+    result = DynamicRolloutResult(
+        num_sequence=2,
+        group_size=1,
+        idx_to_traj=[0, 0],
+        input_ids=[[1, 2, 3], [1, 2, 3, 4]],
+        prompt_lengths=[1, 2],
+        response_lengths=[2, 2],
+        is_end=[False, True],
+        rewards=[1.0, 1.0],
+        rollout_logprobs=[[-0.1, -0.2], [-0.3, -0.4]],
+        values=torch.arange(8, dtype=torch.float32).reshape(2, 4),
+        advantages=torch.arange(8, dtype=torch.float32).reshape(2, 4) + 1,
+        returns=torch.ones(2, 4),
+    )
+    for key in ("values", "returns", "advantages"):
+        setattr(
+            result,
+            key,
+            [
+                row[: len(ids)]
+                for row, ids in zip(getattr(result, key), result.input_ids)
+            ],
+        )
+    batch = result.to_actor_batch()
+    batch["loss_scales"] = [mask.float() for mask in batch["response_mask"]]
+    assert (batch["response_mask"][0] & batch["response_mask"][1][:3]).sum() == 1
+    packed = DynamicRolloutResult.pack_traj_batch({}, batch)
+    assert packed["idx_to_traj"] == [0, 0]
+    for key in (
+        "input_ids",
+        "response_mask",
+        "values",
+        "advantages",
+        "returns",
+        "rollout_logprobs",
+        "loss_scales",
+    ):
+        torch.testing.assert_close(packed[key], batch[key])
+
+
+@pytest.mark.parametrize("advantage_mode", ["turn", "trajectory"])
+def test_ragged_reasoning_batch_matches_dense_merge(advantage_mode):
+    """Preserve response spans and loss weights when prefix turns are folded."""
+    from rlinf.algorithms.advantages import compute_grpo_turn_advantages
+    from rlinf.algorithms.loss_scales import agent_scale, group_scale, turn_scale
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    lengths = [5, 9, 14, 7]
+    result = DynamicRolloutResult(
+        num_sequence=4,
+        group_size=2,
+        idx_to_traj=[0, 0, 0, 1],
+        input_ids=[list(range(n)) for n in lengths],
+        prompt_lengths=[3, 7, 12, 4],
+        response_lengths=[2, 2, 2, 3],
+        is_end=[False, False, True, True],
+        rewards=[1.0, 1.0, 1.0, 0.0],
+        recomputed_logprobs=[torch.arange(n) * 0.1 for n in lengths],
+        extra_fields_train={"idx_to_sub_traj": [0] * 4},
+    )
+    ragged = result.to_actor_batch()
+    values = compute_grpo_turn_advantages(
+        ragged["rewards"], 2, ragged["idx_to_traj"], advantage_mode
+    )
+    ragged["advantages"] = [
+        mask.float() * value for mask, value in zip(ragged["response_mask"], values)
+    ]
+    ragged["loss_scales"] = [mask.float() for mask in ragged["response_mask"]]
+    context = {
+        "folding_scale": [],
+        "actor_global_batch_size": 2,
+        "data_parallel_world_size": 1,
+    }
+    for scale in (group_scale, agent_scale, turn_scale):
+        ragged = scale(context, ragged)
+    folded = DynamicRolloutResult.pack_traj_batch(context, ragged)
+    assert [len(row) for row in folded["input_ids"]] == [14, 7]
+    expected_positions = ([3, 4, 7, 8, 12, 13], [4, 5, 6])
+    for i, (row, positions) in enumerate(zip(folded["input_ids"], expected_positions)):
+        torch.testing.assert_close(row, torch.arange(len(row)))
+        mask = torch.zeros(len(row), dtype=torch.bool)
+        mask[list(positions)] = True
+        torch.testing.assert_close(folded["response_mask"][i], mask)
+        torch.testing.assert_close(
+            folded["recomputed_logprobs"][i],
+            torch.arange(len(row)) * 0.1 * (mask if i == 0 else torch.ones_like(mask)),
+        )
+        torch.testing.assert_close(folded["loss_scales"][i], mask.float() * 0.5)
+        torch.testing.assert_close(
+            folded["advantages"][i], mask * values[0 if i == 0 else 3] * 2
+        )
+    assert folded["prompt_lengths"].tolist() == [3, 4]
+    assert folded["response_lengths"].tolist() == [11, 3]
+
+
+@pytest.mark.parametrize(
+    ("adv_type", "advantage_mode"),
+    [
+        ("grpo_dynamic", "turn"),
+        ("grpo_dynamic", "trajectory"),
+    ],
+)
+def test_ragged_advantage_dispatch_matches_dense(adv_type, advantage_mode):
+    """Keep the configured advantage algorithm when inputs have real lengths."""
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    lengths = [5, 9, 6, 8]
+    masks = [torch.arange(n) >= 3 for n in lengths]
+    logprobs = [torch.linspace(-0.8, -0.2, n) for n in lengths]
+    reference = [row - 0.1 for row in logprobs]
+    common = {
+        "task_type": "reasoning",
+        "adv_type": adv_type,
+        "advantage_mode": advantage_mode,
+        "rewards": torch.tensor([0.25, 0.5, 1.0, 0.0]),
+        "group_size": 2,
+        "num_sequence": 4,
+        "idx_to_traj": [0, 0, 1, 1],
+        "sequence_length": 32,
+        "kl_beta": 0.1,
+        "kl_penalty_type": "low_var_kl",
+        "use_reinpp_baseline": False,
+    }
+    ragged, ragged_returns = calculate_adv_and_returns(
+        **common, loss_mask=masks, logprob=logprobs, ref_logprob=reference
+    )
+
+    from rlinf.algorithms.advantages import compute_grpo_turn_advantages
+
+    scalars = compute_grpo_turn_advantages(
+        common["rewards"], 2, common["idx_to_traj"], advantage_mode
+    )
+    assert ragged_returns is None
+    for actual, mask, scalar, length in zip(ragged, masks, scalars, lengths):
+        assert actual.shape == (length,)
+        torch.testing.assert_close(actual, mask * scalar)
+
+
+def test_ragged_loss_materialization_preserves_gradients():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    leaves = [torch.randn(n, requires_grad=True) for n in (101, 201, 301)]
+    batch = DynamicRolloutResult.materialize_actor_batch({"logprobs": leaves}, 8192, 0)
+    batch["logprobs"].square().sum().backward()
+    for row in leaves:
+        torch.testing.assert_close(row.grad, 2 * row.detach())
+
+
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_ragged_loss_materialization_preserves_output_devices(device):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    rows = [torch.ones(n, device=device, requires_grad=True) for n in (1, 5)]
+    batch = DynamicRolloutResult.materialize_actor_batch(
+        {"log_probs": rows, "entropy": rows}, 8, 0, device
+    )
+    for values in batch.values():
+        assert values.device == rows[0].device and values.shape == (2, 8)
+        assert values.requires_grad
+
+
+@pytest.mark.parametrize("key", ["log_probs", "entropy"])
+def test_ragged_loss_materialization_does_not_truncate_outputs(key):
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    with pytest.raises(RuntimeError, match="negative"):
+        DynamicRolloutResult.materialize_actor_batch({key: [torch.ones(9)]}, 8, 0)
+
+
+@pytest.mark.parametrize("has_response", [False, True])
+@pytest.mark.parametrize("fast_path", [False, True])
+@pytest.mark.parametrize(
+    "aggregation", ["token-mean", "seq-mean-token-mean", "seq-mean-token-sum"]
+)
+def test_ragged_loss_with_empty_first_row(has_response, aggregation, fast_path):
+    from rlinf.algorithms.losses import compute_ppo_actor_loss
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+    from rlinf.utils.utils import get_loss_agg_func
+
+    leaves = [torch.zeros(n, requires_grad=True) for n in (1, 5)]
+    mask = [torch.zeros(1, dtype=torch.bool), torch.full((5,), has_response)]
+    batch = DynamicRolloutResult.materialize_actor_batch(
+        {"logprobs": leaves, "response_mask": mask}, 32, 0
+    )
+    loss, _ = compute_ppo_actor_loss(
+        logprobs=batch["logprobs"],
+        old_logprobs=batch["logprobs"].detach(),
+        advantages=torch.ones_like(batch["logprobs"]),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        loss_mask=batch["response_mask"],
+        loss_agg_func=get_loss_agg_func(aggregation),
+        fast_path_zero_loss_mask=fast_path,
+    )
+    gradient = -1.0 if aggregation == "seq-mean-token-sum" else -0.2
+    assert loss.item() == pytest.approx(5 * gradient if has_response else 0.0)
+    loss.backward()
+    torch.testing.assert_close(leaves[0].grad, torch.zeros_like(leaves[0]))
+    expected = torch.full((5,), gradient) if has_response else torch.zeros(5)
+    torch.testing.assert_close(leaves[1].grad, expected)
+
+
+def test_ragged_logprobs_survive_result_merge_and_split():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = [
+        DynamicRolloutResult(
+            num_sequence=1,
+            group_size=1,
+            idx_to_traj=[0],
+            input_ids=[list(range(n))],
+            prompt_lengths=[1],
+            response_lengths=[n - 1],
+            is_end=[True],
+            rewards=[1.0],
+            recomputed_logprobs=[torch.arange(n).float()],
+            ref_logprobs=[torch.arange(n).float() - 0.1],
+        )
+        for n in (101, 201, 301)
+    ]
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [1, 1, 1])
+    for original, result in zip(results, restored):
+        assert result.input_ids == original.input_ids
+        assert result.prompt_lengths == original.prompt_lengths
+        assert result.response_lengths == original.response_lengths
+        assert result.rewards == [1.0]
+        torch.testing.assert_close(
+            result.recomputed_logprobs[0], original.recomputed_logprobs[0]
+        )
+        torch.testing.assert_close(result.ref_logprobs[0], original.ref_logprobs[0])
+
+
+@pytest.mark.parametrize("ragged", [False, True])
+@pytest.mark.parametrize("count", [0, 1, 5])
+def test_ragged_batch_size_accepts_dense_and_list_rows(ragged, count):
+    from rlinf.data.schema.reasoning_requests import get_batch_size
+
+    rows = [torch.arange(n + 1) for n in range(count)]
+    value = rows if ragged else torch.zeros(count, 8)
+    assert get_batch_size({"input_ids": value}) == count
+    assert get_batch_size({"responses": value}, "responses") == count
+
+
+@pytest.mark.parametrize(
+    ("count", "num_splits", "enforce_divisible", "sizes"),
+    [
+        (5, 2, False, [3, 2]),
+        (5, 3, False, [2, 2, 1]),
+        (5, [2, 2, 1], False, [2, 2, 1]),
+        (10, 4, False, [3, 3, 2, 2]),
+        (14, 4, False, [4, 4, 3, 3]),
+        (12, 4, True, [3, 3, 3, 3]),
+        (3, 5, False, [1, 1, 1, 0, 0]),
+        (0, 4, True, [0, 0, 0, 0]),
+    ],
+)
+@pytest.mark.parametrize("tensor_metadata", [False, True])
+@pytest.mark.parametrize("shuffle", [False, True])
+def test_ragged_fixed_split_preserves_every_row(
+    count, num_splits, enforce_divisible, sizes, tensor_metadata, shuffle
+):
+    from rlinf.utils.data_iter_utils import get_iterator_k_split
+
+    rows = [torch.full((n + 1,), n) for n in range(count)]
+    batch = {"input_ids": rows, "logprobs": [row.float() for row in rows]}
+    if tensor_metadata:
+        batch["rewards"] = torch.arange(count)
+    chunks = list(
+        get_iterator_k_split(
+            batch,
+            num_splits,
+            enforce_divisible_batch=enforce_divisible,
+            shuffle=shuffle,
+            shuffle_seed=42,
+        )
+    )
+    assert [len(chunk["input_ids"]) for chunk in chunks] == sizes
+    seen = []
+    for chunk in chunks:
+        for row, logprobs in zip(chunk["input_ids"], chunk["logprobs"], strict=True):
+            identity = row[0].item()
+            torch.testing.assert_close(row, rows[identity])
+            torch.testing.assert_close(logprobs, rows[identity].float())
+            seen.append(identity)
+        if tensor_metadata:
+            identities = torch.tensor(
+                [row[0] for row in chunk["input_ids"]], dtype=torch.long
+            )
+            torch.testing.assert_close(chunk["rewards"], identities)
+    expected = (
+        torch.randperm(count, generator=torch.Generator().manual_seed(42)).tolist()
+        if shuffle
+        else list(range(count))
+    )
+    assert seen == expected
+
+
+@pytest.mark.parametrize("count", [3, 10, 14])
+def test_ragged_list_split_requires_divisible_rows(count):
+    from rlinf.utils.data_iter_utils import split_list
+
+    with pytest.raises(AssertionError, match="divisible"):
+        split_list(list(range(count)), 4)
+
+
+@pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])
+def test_multi_turn_batch_rejects_dense_only_advantages(adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    with pytest.raises(ValueError, match=f"grpo_dynamic.*got {adv_type!r}"):
+        validate_searchr1_cfg(cfg)
+
+
+@pytest.mark.parametrize(
+    ("dynamic", "adv_type"),
+    [(True, "grpo_dynamic"), (False, "grpo"), (False, "reinpp"), (False, "raw")],
+)
+def test_batch_validation_preserves_supported_advantages(dynamic, adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": dynamic},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    before = OmegaConf.to_container(cfg)
+    assert validate_searchr1_cfg(cfg) is cfg
+    assert OmegaConf.to_container(cfg) == before
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_multi_turn_batch_validation_survives_python_optimization(optimized):
+    script = textwrap.dedent(
+        """
+        from omegaconf import OmegaConf
+        from rlinf.config import validate_searchr1_cfg
+
+        for adv_type in ("grpo", "reinpp", "raw"):
+            cfg = OmegaConf.create({
+                "agentloop": {"is_dynamic_rollout_batch": True},
+                "algorithm": {"adv_type": adv_type},
+            })
+            try:
+                validate_searchr1_cfg(cfg)
+            except ValueError as error:
+                if "grpo_dynamic" not in str(error) or repr(adv_type) not in str(error):
+                    raise
+            else:
+                raise RuntimeError(f"Expected ValueError for {adv_type!r}.")
+
+        cfg.algorithm.adv_type = "grpo_dynamic"
+        validate_searchr1_cfg(cfg)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, *(["-O"] if optimized else []), "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("adv_type", ["grpo", "reinpp", "raw"])
+def test_multi_turn_shared_registry_keeps_dense_reasoning_layout(adv_type):
+    from rlinf.algorithms.registry import calculate_adv_and_returns
+
+    rewards = torch.tensor([1.0, 3.0, 2.0, 4.0])
+    mask = torch.ones(4, 8, dtype=torch.bool)
+    advantages, returns = calculate_adv_and_returns(
+        task_type="reasoning",
+        adv_type=adv_type,
+        rewards=rewards,
+        loss_mask=mask,
+        group_size=2,
+    )
+    expected = {
+        "grpo": torch.tensor([-1.0, 1.0, -1.0, 1.0]) / (2**0.5 + 1e-6),
+        "reinpp": torch.tensor([-1.5, 0.5, -0.5, 1.5]) / (1.25**0.5),
+        "raw": rewards,
+    }[adv_type]
+    assert isinstance(advantages, torch.Tensor) and returns is None
+    torch.testing.assert_close(advantages, expected[:, None].expand(4, 8))
+
+
+def test_multi_turn_batch_preserves_real_lengths_through_merge_and_split():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = []
+    for lengths in ((5, 9), (7, 11)):
+        results.append(
+            DynamicRolloutResult(
+                num_sequence=2,
+                group_size=2,
+                idx_to_traj=[0, 1],
+                input_ids=[list(range(n)) for n in lengths],
+                prompt_lengths=[2, 3],
+                response_lengths=[lengths[0] - 2, lengths[1] - 3],
+                is_end=[True, True],
+                rewards=[1.0, 0.0],
+                rollout_logprobs=[
+                    [-0.5] * (lengths[0] - 2),
+                    [-0.25] * (lengths[1] - 3),
+                ],
+                recomputed_logprobs=[torch.full((n,), -0.4) for n in lengths],
+                ref_logprobs=[torch.full((n,), -0.6) for n in lengths],
+                advantages=[torch.ones(n) for n in lengths],
+            )
+        )
+    merged = DynamicRolloutResult.merge_batches(
+        [result.to_actor_batch() for result in results], 2
+    )
+    assert merged["idx_to_traj"] == [0, 1, 2, 3]
+    for key in (
+        "input_ids",
+        "attention_mask",
+        "position_ids",
+        "response_mask",
+        "rollout_logprobs",
+        "recomputed_logprobs",
+        "ref_logprobs",
+        "advantages",
+    ):
+        assert [len(row) for row in merged[key]] == [5, 9, 7, 11]
+        assert all(row.device.type == "cpu" for row in merged[key])
+    assert merged["rewards"].shape == (4,)
+
+
+@pytest.mark.parametrize(
+    "critic,adv_type", [(False, "grpo_dynamic"), (True, "gae_dynamic")]
+)
+def test_dynamic_advantage_contract_with_critic(critic, adv_type):
+    from rlinf.config import validate_searchr1_cfg
+
+    cfg = OmegaConf.create(
+        {
+            "agentloop": {"is_dynamic_rollout_batch": True},
+            "critic": {"use_critic_model": critic},
+            "algorithm": {"adv_type": adv_type},
+        }
+    )
+    assert validate_searchr1_cfg(cfg) is cfg
+
+
+def test_dynamic_ppo_targets_survive_group_roundtrip():
+    from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+
+    results = []
+    for length in (3, 7):
+        result = DynamicRolloutResult(
+            num_sequence=1,
+            group_size=1,
+            idx_to_traj=[0],
+            input_ids=[list(range(length))],
+            prompt_lengths=[1],
+            response_lengths=[length - 1],
+            is_end=[True],
+            rewards=[1.0],
+            values=[torch.arange(length).float()],
+            returns=[torch.arange(length).float() + 1],
+            advantages=[torch.arange(length).float() - 1],
+        )
+        results.append(result)
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [1, 1])
+    for original, result in zip(results, restored):
+        batch = result.to_actor_batch()
+        for key in ("values", "returns", "advantages"):
+            torch.testing.assert_close(batch[key], getattr(original, key))
+            assert len(batch[key][0]) == len(original.input_ids[0])
+
+
+@pytest.mark.parametrize("versioned", [False, True])
+def test_dynamic_versions_and_training_rows_share_merge_split_order(versioned):
+    results = []
+    for group, lengths in enumerate(([3, 6], [5])):
+        results.append(
+            DynamicRolloutResult(
+                num_sequence=len(lengths),
+                group_size=1,
+                idx_to_traj=[0] * len(lengths),
+                input_ids=[[group + i] * n for i, n in enumerate(lengths)],
+                prompt_lengths=[1] * len(lengths),
+                response_lengths=[n - 1 for n in lengths],
+                is_end=[True] * len(lengths),
+                rewards=[float(group)] * len(lengths),
+                advantages=[torch.arange(n).float() + group for n in lengths],
+                recomputed_logprobs=[torch.arange(n).float() - group for n in lengths],
+                version_start=[group + i + 5 for i in range(len(lengths))]
+                if versioned
+                else None,
+                version_end=[group + i + 6 for i in range(len(lengths))]
+                if versioned
+                else None,
+                group_id=group,
+                task_name="searchr1",
+            )
+        )
+    merged = DynamicRolloutResult.merge_result_list(results)
+    restored = DynamicRolloutResult.split_results(merged, [2, 1])
+    for actual, expected in zip(restored, results):
+        assert actual.version_start == expected.version_start
+        assert actual.version_end == expected.version_end
+        assert actual.input_ids == expected.input_ids
+        torch.testing.assert_close(actual.advantages, expected.advantages)
+        torch.testing.assert_close(
+            actual.recomputed_logprobs, expected.recomputed_logprobs
+        )
+        # Cross-group merge/split is a training operation, not buffer routing.
+        assert actual.group_id is None and actual.task_name is None
+
+
+def test_rollout_value_only_bootstrap_checks_policy_capability_and_config(monkeypatch):
+    from rlinf.config import validate_embodied_cfg
+    from rlinf.models.embodiment.base_policy import BasePolicy
+    from rlinf.workers.rollout.hf import huggingface_worker as hf_mod
+
+    class _NoValuePolicy(torch.nn.Module, BasePolicy):
+        def default_forward(self, **kwargs):
+            return {}
+
+        def predict_action_batch(self, **kwargs):
+            return np.zeros((1, 1, 1)), {}
+
+    class _CustomValuePolicy(_NoValuePolicy):
+        def predict_value_batch(self, env_obs):
+            return torch.ones(1, 1)
+
+    assert not _NoValuePolicy().supports_value_only_bootstrap()
+    assert _CustomValuePolicy().supports_value_only_bootstrap()
+
+    def _make_worker(policy_cls):
+        worker = object.__new__(MultiStepRolloutWorker)
+        worker.model_cfg = OmegaConf.create({"model_type": "openvla"})
+        worker.cfg = OmegaConf.create(
+            {
+                "rollout": {
+                    "model": {"model_type": "openvla"},
+                    "enable_torch_compile": False,
+                },
+                "runner": {},
+            }
+        )
+        worker.value_only_bootstrap = True
+        worker.enable_opd = False
+        worker.enable_cuda_graph = False
+        worker.enable_offload = False
+        worker.rlt_feature_model = None
+        worker.expert_model = None
+        worker.setup_sample_params = lambda: None
+        monkeypatch.setattr(hf_mod, "get_model", lambda cfg: policy_cls())
+        return worker
+
+    with pytest.raises(ValueError, match="predict_value_batch"):
+        _make_worker(_NoValuePolicy).init_worker()
+
+    ok_worker = _make_worker(_CustomValuePolicy)
+    ok_worker.init_worker()
+    ok_worker.enable_rlt = False
+    ok_worker.enable_dagger = False
+    assert torch.equal(
+        ok_worker._predict_bootstrap({"states": torch.zeros(1, 2)})["prev_values"],
+        torch.ones(1, 1),
+    )
+
+    bad_type_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "huggingface",
+                "value_only_bootstrap": "yes",
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(
+        ValueError, match="Expected bool for rollout.value_only_bootstrap"
+    ):
+        validate_embodied_cfg(bad_type_cfg)
+
+    bad_backend_cfg = OmegaConf.create(
+        {
+            "runner": {"only_eval": False, "task_type": "embodied"},
+            "actor": {"model": {"model_type": "openvla"}},
+            "rollout": {
+                "rollout_backend": "vllm",
+                "batch_bootstrap_inference": True,
+            },
+            "algorithm": {},
+        }
+    )
+    with pytest.raises(ValueError, match="rollout_backend='huggingface'"):
+        validate_embodied_cfg(bad_backend_cfg)
+
+
+def test_prompt_dataset_excludes_eval_and_preserves_unique_order(tmp_path):
+    train = tmp_path / "train.json"
+    held_out = tmp_path / "test.json"
+    train.write_text(
+        json.dumps(
+            [
+                {"text": " a fox "},
+                {"prompt": "a cat"},
+                {"text": "a fox"},
+                {"text": "a dog"},
+                {"text": "A CAT"},
+            ]
+        )
+    )
+    held_out.write_text(json.dumps([{"prompt": "a cat"}]))
+    dataset = build_reward_dataset(
+        {
+            "type": "visual.prompt_dataset",
+            "path": str(train),
+            "exclude_path": str(held_out),
+        }
+    )
+
+    assert [row["task_description"] for row in dataset] == ["a fox", "a dog"]
+    obs, records = dataset.build_grouped_env_batch([1, 0], group_size=2, num_envs=4)
+    assert obs["task_descriptions"] == ["a dog", "a dog", "a fox", "a fox"]
+    assert len(records) == 4
+
+
+def test_prompt_dataset_without_exclusion(tmp_path):
+    path = tmp_path / "test.json"
+    path.write_text(json.dumps([{"text": "a fox"}, {"prompt": "a cat"}]))
+    dataset = build_reward_dataset({"type": "visual.prompt_dataset", "path": str(path)})
+    assert len(dataset) == 2
+    assert dataset[0] == {"task_description": "a fox"}
+
+
+def test_image_text_dataset_preprocessing_and_batches(tmp_path):
+    pytest.importorskip("torchvision")
+    from torch.utils.data import DataLoader, DistributedSampler
+
+    for index, caption in enumerate(("The image shows a fox", "a cat")):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        Image.new("RGB", (12, 8), color=(255, 0, 0)).save(directory / "image.png")
+        (directory / "image.txt").write_text(caption)
+    dataset = build_reward_dataset(
+        {
+            "type": "visual.image_text_dataset",
+            "path": str(tmp_path),
+            "resolution": 8,
+            "caption_prefix": "The image shows ",
+        }
+    )
+    assert len(dataset) == 2
+    assert [dataset[i]["prompts"] for i in range(2)] == ["a fox", "a cat"]
+    torch.testing.assert_close(
+        dataset[0]["images"],
+        torch.tensor([1.0, -1.0, -1.0]).view(3, 1, 1).expand(3, 8, 8),
+    )
+
+    # Recreate the same CPU loader at a dataset boundary, as Lpre does.
+    sampler = DistributedSampler(dataset, num_replicas=1, rank=0, drop_last=True)
+    loader = DataLoader(dataset, batch_size=2, sampler=sampler, num_workers=0)
+    for epoch in range(3):
+        sampler.set_epoch(epoch)
+        batches = list(loader)
+        assert len(batches) == 1
+        assert batches[0]["images"].shape == (2, 3, 8, 8)
+        assert set(batches[0]["prompts"]) == {"a fox", "a cat"}
+
+
+def test_dataset_factory_import_does_not_require_gym():
+    import subprocess
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['gym'] = None; "
+            "from rlinf.envs.sim.diffusion import build_reward_dataset; "
+            "assert callable(build_reward_dataset)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

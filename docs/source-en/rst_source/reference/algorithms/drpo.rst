@@ -82,7 +82,7 @@ prevent response-level shuffling or balancing from silently changing the groups.
      - Positive negative-score temperature. Smaller values emphasize more likely incorrect responses.
    * - ``drpo_beta``
      - 1000.0
-     - Nonnegative old-policy KL penalty coefficient. Zero disables this penalty.
+     - Nonnegative old-policy KL penalty coefficient. Zero disables this penalty. With the constraint disabled, the KL and penalty metrics are zero.
    * - ``drpo_delta``
      - 0.0001
      - Nonnegative KL threshold before the penalty becomes active.

@@ -36,9 +36,9 @@ runner:
     log_path: "../results/libero_spatial_ppo_openpi"
     project_name: rlinf
     experiment_name: "test_openpi"
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
-  max_epochs: 1
+  max_epochs: 2
   max_steps: -1
 
   only_eval: False
@@ -78,7 +78,7 @@ env:
 
   # Override the default values in env/libero_spatial
   train:
-    rollout_epoch: 2
+    rollout_epoch: 1
     total_num_envs: 8
     max_episode_steps: 5
     max_steps_per_rollout_epoch: 5
@@ -98,10 +98,10 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: libero_10
-  enable_offload: False
+  enable_offload: True
   pipeline_stage_num: 1
 
   model:
@@ -144,7 +144,7 @@ actor:
     # requires_grad and rejects wrap unless use_orig_params=True.
     # validate_fsdp_cfg also forces this flag for openpi.
     use_orig_params: True
-    gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

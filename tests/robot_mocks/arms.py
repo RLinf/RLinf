@@ -163,6 +163,7 @@ def franky() -> types.ModuleType:
         CartesianImpedanceTracker=_Tracker,
         JointMotion=lambda *a, **k: ("joint", a, k),
         CartesianMotion=lambda *a, **k: ("cartesian", a, k),
+        RelativeDynamicsFactor=lambda *a, **k: ("rdf", a, k),
         # A joint waypoint, which a reset motion is built from.
         JointState=lambda position=None, **_k: types.SimpleNamespace(
             position=np.asarray(
@@ -259,6 +260,54 @@ def ros() -> dict[str, types.ModuleType]:
     )
     rospy.published = published
 
+    class _PoseMsg:
+        def __init__(self, position=None, orientation=None) -> None:
+            self.position = (
+                position
+                if position is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+            self.orientation = (
+                orientation
+                if orientation is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+            )
+
+    class _TwistMsg:
+        def __init__(self, linear=None, angular=None) -> None:
+            self.linear = (
+                linear
+                if linear is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+            self.angular = (
+                angular
+                if angular is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+
+    class _WrenchMsg:
+        def __init__(self, force=None, torque=None) -> None:
+            self.force = (
+                force
+                if force is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+            self.torque = (
+                torque
+                if torque is not None
+                else types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            )
+
+    class _WrenchStampedMsg:
+        def __init__(self, header=None, wrench=None) -> None:
+            self.header = (
+                header
+                if header is not None
+                else types.SimpleNamespace(stamp=0.0, frame_id="")
+            )
+            self.wrench = wrench if wrench is not None else _WrenchMsg()
+
     pose = _message(
         header=types.SimpleNamespace(stamp=0.0, frame_id=""),
         pose=types.SimpleNamespace(
@@ -269,9 +318,13 @@ def ros() -> dict[str, types.ModuleType]:
     geometry = module(
         "geometry_msgs.msg",
         PoseStamped=pose,
-        Pose=_message(),
+        Pose=_PoseMsg,
         Point=_message(x=0.0, y=0.0, z=0.0),
         Quaternion=_message(x=0.0, y=0.0, z=0.0, w=1.0),
+        Vector3=_message(x=0.0, y=0.0, z=0.0),
+        Twist=_TwistMsg,
+        Wrench=_WrenchMsg,
+        WrenchStamped=_WrenchStampedMsg,
     )
     franka_msgs = module(
         "franka_msgs.msg",
@@ -312,7 +365,35 @@ def ros() -> dict[str, types.ModuleType]:
         GraspActionGoal=_message(goal=_gripper_goal()),
         MoveActionGoal=_message(goal=_gripper_goal()),
     )
-    sensor_msgs = module("sensor_msgs.msg", JointState=_message(position=[0.0, 0.0]))
+
+    class _ImuMsg:
+        def __init__(self) -> None:
+            self.header = types.SimpleNamespace(stamp=0.0, frame_id="")
+            self.orientation = types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+            self.angular_velocity = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.linear_acceleration = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+    sensor_msgs = module(
+        "sensor_msgs.msg",
+        JointState=_message(
+            name=[],
+            position=[0.0, 0.0],
+            velocity=[],
+            effort=[],
+        ),
+        Image=_message(
+            height=480,
+            width=640,
+            encoding="rgb8",
+            data=bytes(480 * 640 * 3),
+        ),
+        CompressedImage=_message(
+            format="jpeg",
+            data=bytes(480 * 640 * 3),
+        ),
+        Imu=_ImuMsg,
+        BatteryState=_message(percentage=95.0),
+    )
     bridge = module(
         "cv_bridge",
         CvBridge=lambda: types.SimpleNamespace(
@@ -500,13 +581,31 @@ def lerobot() -> dict[str, types.ModuleType]:
             self.id = id
             self.use_degrees = use_degrees
 
+    class FakeSO101LeaderBus:
+        """Small bus surface used by the leader reset trajectory."""
+
+        def __init__(self, owner: Any) -> None:
+            self.owner = owner
+
+        def sync_write(self, register: str, values: dict[str, float]) -> None:
+            assert register == "Goal_Position"
+            self.owner.positions.update(values)
+
+        def enable_torque(self) -> None:
+            self.owner.torque_enabled = True
+
+        def disable_torque(self) -> None:
+            self.owner.torque_enabled = False
+
     class FakeSO101Leader:
         #: Set false to model a leader whose calibration file is missing.
         calibrated = True
 
         def __init__(self, config: Any) -> None:
             self.config = config
+            self.bus = FakeSO101LeaderBus(self)
             self.is_connected = False
+            self.torque_enabled = False
             self.is_calibrated = type(self).calibrated
             self.calibrate_calls = 0
             # lerobot's base class always sets this, from the arm's id.
@@ -557,6 +656,117 @@ def lerobot() -> dict[str, types.ModuleType]:
         made["lerobot"].__path__ = list(installed.submodule_search_locations)
     # The driver gates on the Feetech SDK, which lerobot's feetech extra brings.
     made["scservo_sdk"] = module("scservo_sdk")
+
+    class FakeMotor:
+        """A motor entry; the bus keys it by name and stores its id."""
+
+        def __init__(self, motor_id: int, model: str, norm_mode: Any) -> None:
+            self.id = motor_id
+            self.model = model
+            self.norm_mode = norm_mode
+
+    class _MotorNormMode:
+        RANGE_M100_100 = "RANGE_M100_100"
+        RANGE_M1_1 = "RANGE_M1_1"
+
+    class FakeFeetechMotorsBus:
+        """Feetech serial bus that holds per-wheel velocity in raw units.
+
+        Raw velocity values are stored and read back unchanged, so a test can
+        assert that the driver converts between body and wheel frames rather
+        than passing values through.
+        """
+
+        instances: list[Any] = []
+        fail_connect = False
+        fail_read = False
+        fail_write = False
+
+        def __init__(self, port: str, motors: dict[str, Any], calibration: Any = None):
+            type(self).instances.append(self)
+            self.port = port
+            self.motors = dict(motors)
+            self._connected = False
+            self.velocity = dict.fromkeys(self.motors, 0)
+            self.mode = dict.fromkeys(self.motors, 0)
+            self.torque = dict.fromkeys(self.motors, False)
+            self.commands: list[dict[str, int]] = []
+            self.writes: list[tuple[str, str, int]] = []
+            self.disable_calls = 0
+            self.enable_calls = 0
+
+        @property
+        def is_connected(self) -> bool:
+            return self._connected
+
+        def connect(self, handshake: bool = True) -> None:
+            if type(self).fail_connect:
+                raise OSError("simulated USB open failure")
+            self._connected = True
+
+        def disconnect(self, disable_torque: bool = True) -> None:
+            self._connected = False
+
+        def read(self, data_name: str, motor: str, **kwargs: Any) -> int:
+            if type(self).fail_read:
+                raise OSError("simulated read failure")
+            if data_name != "Present_Velocity":
+                raise KeyError(data_name)
+            return self.velocity[motor]
+
+        def sync_read(
+            self, data_name: str, motors: Any = None, **kwargs: Any
+        ) -> dict[str, int]:
+            if type(self).fail_read:
+                raise OSError("simulated read failure")
+            if data_name != "Present_Velocity":
+                raise KeyError(data_name)
+            names = list(self.motors) if motors is None else motors
+            return {name: self.velocity[name] for name in names}
+
+        def write(self, data_name: str, motor: str, value: int, **kwargs: Any) -> None:
+            if type(self).fail_write:
+                raise OSError("simulated write failure")
+            self.writes.append((data_name, motor, value))
+            if data_name == "Goal_Velocity":
+                self.velocity[motor] = value
+            elif data_name == "Operating_Mode":
+                self.mode[motor] = value
+
+        def sync_write(
+            self, data_name: str, values: dict[str, int], **kwargs: Any
+        ) -> None:
+            if type(self).fail_write:
+                raise OSError("simulated write failure")
+            if data_name == "Goal_Velocity":
+                self.commands.append(dict(values))
+                self.velocity.update(values)
+
+        def enable_torque(self, motors: Any = None, num_retry: int = 0) -> None:
+            self.enable_calls += 1
+            for name in self._names(motors):
+                self.torque[name] = True
+
+        def disable_torque(self, motors: Any = None, num_retry: int = 0) -> None:
+            self.disable_calls += 1
+            for name in self._names(motors):
+                self.torque[name] = False
+
+        def _names(self, motors: Any) -> list[str]:
+            if motors is None:
+                return list(self.motors)
+            return list(motors) if isinstance(motors, (list, tuple)) else [motors]
+
+    motors = module(
+        "lerobot.motors",
+        Motor=FakeMotor,
+        MotorNormMode=_MotorNormMode,
+    )
+    feetech = module("lerobot.motors.feetech", FeetechMotorsBus=FakeFeetechMotorsBus)
+    motors.feetech = feetech
+    made["lerobot.motors"] = motors
+    made["lerobot.motors.feetech"] = feetech
+    made["lerobot"].motors = motors
     return made
 
 

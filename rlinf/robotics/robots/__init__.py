@@ -18,17 +18,22 @@ Importing this package registers each robot type and its discovery metadata.
 """
 
 from .dosw1 import DOSW1Robot, DOSW1RobotConfig
+from .dual_arx5 import DualARX5Config, DualARX5Robot
 from .dual_franka import DualFrankaConfig, DualFrankaRobot
 from .dual_yam import DualYamConfig, DualYamRobot
 from .franka import FrankaConfig, FrankaRobot
 from .gim_arm import GimArmConfig, GimArmRobot
+from .lekiwi import LeKiwiConfig, LeKiwiRobot
 from .piper import PiperConfig, PiperRobot
+from .r2 import R2Config, R2Robot
 from .so101 import SO101Config, SO101Robot
 from .turtle2 import Turtle2Config, Turtle2Robot
 
 __all__ = [
     "DOSW1Robot",
     "DOSW1RobotConfig",
+    "DualARX5Config",
+    "DualARX5Robot",
     "DualFrankaConfig",
     "DualFrankaRobot",
     "DualYamConfig",
@@ -37,8 +42,12 @@ __all__ = [
     "FrankaRobot",
     "GimArmConfig",
     "GimArmRobot",
+    "LeKiwiConfig",
+    "LeKiwiRobot",
     "PiperConfig",
     "PiperRobot",
+    "R2Config",
+    "R2Robot",
     "SO101Config",
     "SO101Robot",
     "Turtle2Config",

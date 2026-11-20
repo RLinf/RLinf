@@ -26,6 +26,8 @@ training efficiency becomes the bottleneck.
      - System-level profiling of Ray worker processes.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
+   * - :doc:`Asynchronous Agentic RL <../async_agentic>`
+     - Overlap multi-turn agent rollout with training; two admission limits bound how stale the training data gets.
 
 .. toctree::
    :hidden:
@@ -38,3 +40,4 @@ training efficiency becomes the bottleneck.
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
    5D Parallelism <../5D>
+   Asynchronous Agentic RL <../async_agentic>

@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 import torch
+import torch.nn.functional as F
 from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import (
     retrieve_timesteps,
 )
@@ -49,7 +51,8 @@ class StableDiffusion3Config:
     eval_sampler: Literal["sde", "ode", "dpm1", "dpm2"] = "ode"
     max_sequence_length: int = 128
     output_type: str = "pt"
-    rl_mode: Literal["flow-grpo", "nft"] = "flow-grpo"
+    rl_mode: Literal["flow-grpo", "nft", "art", "refl"] = "flow-grpo"
+    refl_late_fraction: float = 0.25
     use_lora: bool = True
     lora_rank: int = 32
     lora_alpha: int = 64
@@ -100,15 +103,25 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
     def to(self, device):
         module = super().to(device)
         device = torch.device(device)
-        if device.type == "cpu":
+        if device.type == "cpu" and not getattr(self, "_nft_reference_only", False):
             move_auxiliary_modules(self.pipeline, device=device)
         return module
+
+    def prepare_nft_reference_model(self) -> None:
+        """Release pipeline modules that NFT reference forward does not use."""
+        self._nft_reference_only = True
+        for name in ("vae", "text_encoder", "text_encoder_2", "text_encoder_3"):
+            setattr(self.pipeline, name, None)
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         if forward_type == ForwardType.NFT:
             return self.nft_forward(**kwargs)
+        if forward_type == ForwardType.REFL:
+            return self.refl_forward(**kwargs)
+        if forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         raise NotImplementedError
 
     def default_forward(
@@ -216,6 +229,160 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
 
         return {"v_theta": v_theta}
 
+    def _conditional_velocity(
+        self,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        pooled_prompt_embeds: torch.Tensor,
+    ) -> torch.Tensor:
+        """Predict the text-conditional velocity for ``t`` in [0, 1].
+
+        ReFL and its pre-training loss both target this branch, so CFG never
+        applies here regardless of ``config.cfg``.
+        """
+        model_dtype = next(self.transformer.parameters()).dtype
+        return self.transformer(
+            hidden_states=x_t.to(dtype=model_dtype),
+            timestep=t.to(dtype=torch.float32)
+            * self.pipeline.scheduler.config.num_train_timesteps,
+            encoder_hidden_states=prompt_embeds,
+            pooled_projections=pooled_prompt_embeds,
+            return_dict=False,
+        )[0]
+
+    def refl_forward(
+        self,
+        forward_inputs: dict[str, Any],
+        refl_inputs: dict[str, torch.Tensor] | None = None,
+        xt_source: str = "rollout",
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Return differentiable image ``samples`` in [0, 1], shape [B, 3, H, W].
+
+        ``refl_inputs`` can supply an explicit state and normalized timestep;
+        otherwise ``forward_inputs["prompts"]`` supplies the sampling conditions.
+        Prompt sampling returns prepared scorer context in ``forward_inputs``.
+        """
+        sample_from_prompts = "prompts" in forward_inputs
+        if sample_from_prompts:
+            if refl_inputs is not None:
+                raise ValueError(
+                    "Pass either prompts for sampling or an explicit ReFL state, not both."
+                )
+            forward_inputs, refl_inputs = self._sample_refl_inputs(
+                forward_inputs["prompts"], xt_source
+            )
+        elif refl_inputs is None:
+            raise ValueError(
+                "Expected prompts for ReFL sampling or explicit refl_inputs."
+            )
+        x_t = refl_inputs["x_t"]
+        t = refl_inputs["timesteps"]
+        velocity = self._conditional_velocity(
+            x_t,
+            t,
+            forward_inputs["prompt_embeds"],
+            forward_inputs["pooled_prompt_embeds"],
+        )
+        x0 = x_t - t.view(-1, 1, 1, 1) * velocity
+
+        vae = self.pipeline.vae
+        vae.to(device=x0.device)
+        latents = x0 / vae.config.scaling_factor + vae.config.shift_factor
+        images = vae.decode(latents.to(dtype=vae.dtype), return_dict=False)[0]
+        result: dict[str, Any] = {"samples": (images / 2 + 0.5).clamp(0, 1)}
+        if sample_from_prompts:
+            result["forward_inputs"] = forward_inputs
+        return result
+
+    @torch.no_grad()
+    def _sample_refl_inputs(
+        self, prompts: list[str], xt_source: str
+    ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+        """Sample late states with current weights, without decoding a rollout image."""
+        if xt_source not in {"rollout", "resample"}:
+            raise ValueError(
+                f"SD3 ReFL xt_source must be 'rollout' or 'resample', got {xt_source!r}."
+            )
+        prompt_embeds, pooled_prompt_embeds = self.encode_prompts(prompts)
+        start = self.config.num_steps - math.ceil(
+            self.config.num_steps * self.config.refl_late_fraction
+        )
+        steps = torch.randint(
+            start, self.config.num_steps, (len(prompts),), device=prompt_embeds.device
+        )
+        cfg_enabled = self.config.cfg and self.config.guidance_scale != 1.0
+        negative_prompt_embeds, negative_pooled_prompt_embeds = None, None
+        if cfg_enabled:
+            negative_prompt_embeds, negative_pooled_prompt_embeds = self.encode_prompts(
+                [""] * len(prompts)
+            )
+        if self.config.offload_auxiliary_modules:
+            move_text_encoders(self.pipeline, device="cpu")
+        state, _, _ = denoise_with_logprob(
+            pipeline=self.pipeline,
+            transformer=self.transformer,
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            cfg_enabled=cfg_enabled,
+            guidance_scale=self.config.guidance_scale,
+            noise_level=self.config.noise_level,
+            solver=self.config.train_sampler,
+            num_steps=self.config.num_steps,
+            resolution=self.config.resolution,
+            output_type="latent",
+            return_trajectory=False,
+            sample_steps=steps if xt_source == "rollout" else None,
+        )
+        t = (
+            self.pipeline.scheduler.timesteps[steps]
+            / self.pipeline.scheduler.config.num_train_timesteps
+        )
+        if xt_source == "resample":
+            t_bc = t.view(-1, 1, 1, 1)
+            state = (1 - t_bc) * state + t_bc * torch.randn_like(state)
+        context = {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "prompts": prompts,
+        }
+        return context, {"x_t": state, "timesteps": t}
+
+    def sft_forward(self, data: dict[str, Any], **kwargs) -> torch.Tensor:
+        """Return the flow-matching pre-training loss on text-image pairs.
+
+        ``data`` holds ``images`` in [-1, 1] and their ``prompts``.
+        """
+        device = next(self.transformer.parameters()).device
+        prompt_embeds, pooled_prompt_embeds = self.encode_prompts(data["prompts"])
+
+        vae = self.pipeline.vae
+        vae.to(device=device)
+        with torch.no_grad():
+            latents = vae.encode(
+                data["images"].to(device=device, dtype=vae.dtype)
+            ).latent_dist.sample()
+        latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+        if self.config.offload_auxiliary_modules:
+            move_auxiliary_modules(self.pipeline, device="cpu")
+
+        # Logit-normal t with the scheduler shift, as SD3 pre-training samples it.
+        shift = self.pipeline.scheduler.config.shift
+        u = torch.sigmoid(torch.randn(latents.shape[0], device=device))
+        t = shift * u / (1 + (shift - 1) * u)
+        t_bc = t.view(-1, 1, 1, 1)
+        noise = torch.randn_like(latents)
+        velocity = self._conditional_velocity(
+            (1 - t_bc) * latents + t_bc * noise,
+            t,
+            prompt_embeds,
+            pooled_prompt_embeds,
+        )
+        return F.mse_loss(velocity.float(), (noise - latents).float())
+
     def obs_processor(self, env_obs: Any) -> list[str]:
         if isinstance(env_obs, Mapping):
             for key in ("prompts", "prompt", "texts", "text", "task_descriptions"):
@@ -293,11 +460,11 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
             resolution=self.config.resolution,
             output_type=self.config.output_type,
             offload_vae=self.config.offload_auxiliary_modules,
-            return_trajectory=not is_eval,
+            return_trajectory=not is_eval and self.config.rl_mode != "refl",
             generator=kwargs.get("generator"),
             latents=kwargs.get("latents"),
         )
-        if is_eval:
+        if is_eval or self.config.rl_mode == "refl":
             return images, {"prev_values": None}
 
         timesteps = self.pipeline.scheduler.timesteps[: len(log_probs)].repeat(
@@ -330,6 +497,27 @@ class StableDiffusion3(torch.nn.Module, BasePolicy):
                 device=full_latents.device,
                 dtype=full_latents.dtype,
             )
+        elif self.config.rl_mode == "art":
+            scheduler_sigmas = self.pipeline.scheduler.sigmas[: len(log_probs) + 1].to(
+                device=full_latents.device,
+                dtype=torch.float32,
+            )
+            sigmas = (
+                scheduler_sigmas[:-1].unsqueeze(0).expand(full_latents.shape[0], -1)
+            )
+            sigmas_next = (
+                scheduler_sigmas[1:].unsqueeze(0).expand(full_latents.shape[0], -1)
+            )
+            forward_inputs.update(
+                {
+                    "art_states": full_latents[:, :-1, None].detach(),
+                    "art_sigmas": sigmas.detach(),
+                    "art_sigmas_next": sigmas_next.detach(),
+                    "art_endpoint": full_latents[:, -1, None].detach(),
+                }
+            )
+            for key in ("latents", "next_latents", "timesteps"):
+                del forward_inputs[key]
 
         return images, {
             "prev_logprobs": old_logprobs[:, :num_train_timesteps].detach(),

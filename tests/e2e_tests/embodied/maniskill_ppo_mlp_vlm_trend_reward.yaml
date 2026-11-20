@@ -27,7 +27,7 @@ runner:
     log_path: "/workspace/results/maniskill_ppo_mlp_vlm_trend_reward"
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 2
   max_steps: -1
@@ -155,7 +155,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  backend: "huggingface"
+  rollout_backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
   model:

@@ -17,22 +17,29 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import ctypes
+import io
 import os
 import pickle
 import re
 import runpy
 import subprocess
 import sys
+import threading
 import time
+import unittest
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, Optional, cast
+from unittest import mock
 
 import numpy as np
 import pytest
+from robot_mocks.lekiwi import FakeKeyboard, FakeKeySource, FakeWheelBus
 from scipy.spatial.transform import Rotation as R
 
 import rlinf.robotics.robots.franka as franka_module
@@ -48,6 +55,7 @@ from rlinf.robotics import (
     FrankaRobot,
     GimArmConfig,
     LegacyObservationAdapter,
+    LeKiwiConfig,
     MethodArm,
     MethodEndEffector,
     PartGroup,
@@ -68,7 +76,13 @@ from rlinf.robotics.parts.arms import (
     Turtle2Connection,
 )
 from rlinf.robotics.parts.arms.franka import FrankaRobotState
+from rlinf.robotics.parts.cameras.uvc import UVCCamera
 from rlinf.robotics.parts.end_effectors import BaseHand
+from rlinf.robotics.parts.mobility.lekiwi import (
+    body_to_wheel_raw,
+    limit_wheel_raw,
+    start_velocity_mode,
+)
 from rlinf.scheduler import Worker
 from rlinf.scheduler.hardware import (
     Hardware,
@@ -86,6 +100,16 @@ from rlinf.utils.rot6d import (
     rot6d_to_quat_xyzw,
     se3_body_compose,
     se3_body_delta,
+)
+from toolkits.realworld_check.test_lekiwi_env import (
+    KeyboardControl,
+    SocketKeySource,
+    parse_args,
+    pick_device,
+    report,
+    run_receiver,
+    run_teleoperation,
+    spin_each_wheel,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -413,6 +437,18 @@ def test_robot_auto_config_supports_pep604_optional(monkeypatch):
     assert RobotAutoConfig.resolve([config])[0].port == 5000
 
 
+def test_robot_auto_config_reads_disable_validate_for_created_robots(monkeypatch):
+    from rlinf.robotics import FrankaConfig
+
+    monkeypatch.setenv("ROBOT_IP", "10.0.0.2,10.0.0.3")
+    monkeypatch.setenv("DISABLE_VALIDATE", "true,true")
+
+    configs = RobotAutoConfig.resolve([], config_cls=FrankaConfig, node_rank=0)
+
+    assert [c.robot_ip for c in configs] == ["10.0.0.2", "10.0.0.3"]
+    assert [c.disable_validate for c in configs] == [True, True]
+
+
 def test_namespaces_follow_the_composition():
     robot = Robot(arm=PartGroup(arm=FakeControllablePart("arm", [])))
     robot.connect()
@@ -483,6 +519,7 @@ def test_all_builtin_configs_construct_from_a_node_rank_alone():
     configs = [
         GimArmConfig(node_rank=0),
         DOSW1RobotConfig(node_rank=0),
+        LeKiwiConfig(node_rank=0),
         Turtle2Config(node_rank=0),
     ]
 
@@ -1419,7 +1456,7 @@ def test_declaring_cameras_needs_no_config_class():
     assert not declared["scene"].is_connected, "declaring a camera must not open it"
     assert Camera.declare(None) == {}
     # Backend resolution uses the category registry.
-    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos"}
+    assert set(BaseCamera.backends()) >= {"realsense", "zed", "lumos", "uvc"}
     with pytest.raises(ValueError, match="Unsupported BaseCamera backend"):
         BaseCamera.backend("no-such-camera")
 
@@ -2469,6 +2506,155 @@ def test_holding_the_current_pose_leaves_the_gripper_to_the_policy():
     assert set(parts) == {"arm"}
 
 
+def test_releasing_grip_holds_the_measured_pose():
+    import numpy as np
+
+    from rlinf.robotics.parts.teleop import PicoTcp
+
+    binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=True)
+    device = _ScriptedController(
+        [
+            ((0.025, 0.0, 0.0), (0.0, 0.0, 0.0), True, 0),
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), False, 0),
+        ]
+    )
+    context = _pico_context()
+
+    driven = binding.action(device.get_observation(), context).parts["arm"].copy()
+    held = binding.action(device.get_observation(), context)
+    measured = PicoTcp._pose_to_command(context["tcp_pose"])[:-1]
+
+    assert held.driving
+    assert held.info.get("pico_holding") is True
+    # The lead target is still ahead; release must not keep chasing it.
+    assert not np.allclose(held.parts["arm"][:3], driven[:3])
+    assert np.allclose(held.parts["arm"], measured)
+    assert "end_effector" not in held.parts
+
+
+def test_dagger_pico_does_not_apply_arm_commands_while_idle():
+    import gymnasium as gym
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-np.inf, np.inf, shape=(10,))
+            self.observation_space = spaces.Box(-1, 1, shape=(1,))
+            self.stepped: list[np.ndarray] = []
+
+        def get_tcp_pose(self):
+            return np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        def get_action_scale(self):
+            return np.array([0.05, 0.3, 1.0])
+
+        def step(self, action):
+            self.stepped.append(np.asarray(action, dtype=np.float64))
+            return {}, 0.0, False, False, {}
+
+        def reset(self, *, seed=None, options=None):
+            return {}, {}
+
+    class Reader:
+        def get_reading(self):
+            return {
+                "held": False,
+                "position_delta": np.zeros(3),
+                "rotation_delta": np.zeros(3),
+                "grip_close": False,
+                "grip_open": False,
+            }
+
+    binding = PicoTcp(gripper=True, side=0, hold_current_when_inactive=False)
+    binding._device = Reader()
+    group = TeleopGroup(
+        [TeleopEntry(binding)],
+        available={
+            "arm": ActionKind.CARTESIAN_POSE,
+            "end_effector": ActionKind.GRIPPER,
+        },
+    )
+    device = ComposedTeleop(group, {"arm": slice(0, 9), "end_effector": slice(9, 10)})
+    env = Env()
+    policy = np.full(10, 0.7)
+    _, _, _, _, info = TeleopIntervention(env, device).step(policy)
+
+    assert np.allclose(env.stepped[0], policy)
+    assert "intervene_action" not in info
+
+
+def test_idle_pico_tcp_overrides_zero_collection_action():
+    """Collection zeros must not reach DualFranka after the operator lets go."""
+    import gymnasium as gym
+    import numpy as np
+    from gymnasium import spaces
+
+    from rlinf.envs.real.wrappers.teleop.composed import ComposedTeleop
+    from rlinf.envs.real.wrappers.teleop.intervention import TeleopIntervention
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import PicoTcp, TeleopEntry, TeleopGroup
+
+    pose = np.array([0.3, 0.1, 0.4, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+    class Env(gym.Env):
+        def __init__(self):
+            self.action_space = spaces.Box(-2.0, 2.0, shape=(10,), dtype=np.float64)
+            self.observation_space = spaces.Box(-1.0, 1.0, shape=(1,))
+            self.stepped: list[np.ndarray] = []
+
+        def get_tcp_pose(self):
+            return pose.copy()
+
+        def get_action_scale(self):
+            return np.array([0.05, 0.3, 1.0])
+
+        def step(self, action):
+            self.stepped.append(np.asarray(action, dtype=np.float64).copy())
+            return {}, 0.0, False, False, {}
+
+        def reset(self, *, seed=None, options=None):
+            return {}, {}
+
+    class Replay(_ScriptedController):
+        get_reading = _ScriptedController.get_observation
+
+    replay = Replay(
+        [
+            ((0.025, 0.0, 0.0), (0.0, 0.0, 0.0), True, 0),
+            ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), False, 0),
+        ]
+    )
+    pico = PicoTcp(gripper=True, side=0, hold_current_when_inactive=True)
+    pico._device = replay
+    group = TeleopGroup(
+        [TeleopEntry(pico, drives="left")],
+        available={
+            "left.arm": ActionKind.CARTESIAN_POSE,
+            "left.end_effector": ActionKind.GRIPPER,
+        },
+    )
+    env = Env()
+    wrapper = TeleopIntervention(
+        env,
+        ComposedTeleop(
+            group,
+            {"left.arm": slice(0, 9), "left.end_effector": slice(9, 10)},
+        ),
+    )
+    zeros = np.zeros(10, dtype=np.float64)
+    wrapper.step(zeros)
+    _, _, _, _, info = wrapper.step(zeros)
+
+    assert not np.allclose(env.stepped[-1][:3], 0.0)
+    assert np.isclose(env.stepped[-1][0], 0.3)
+    assert "intervene_action" in info
+
+
 def _pico_frame(position, grip=0.0, buttons=None, headset=None):
     """One publisher frame, in the schema the shipped PICO configs describe."""
     import json
@@ -2522,6 +2708,21 @@ def test_the_pico_transport_links_calibrates_and_tracks_motion():
         # it back from there rather than from ``made``, or this test only
         # passes when it runs first.
         zmq = transport.zmq
+        # Blocking recv on an empty fake socket must pace like RCVTIMEO instead
+        # of spinning a recv thread at 100% CPU and starving other threads.
+        from robot_mocks.teleop import vr
+
+        fresh_zmq = vr()
+        probe = fresh_zmq.Context().socket(fresh_zmq.SUB)
+        started = time.monotonic()
+        for _ in range(5):
+            with pytest.raises(fresh_zmq.error.Again):
+                probe.recv()
+        assert time.monotonic() - started >= 0.008
+        with pytest.raises(fresh_zmq.error.Again):
+            probe.recv(fresh_zmq.NOBLOCK)
+        probe.close()
+
         pico = PicoTcp(gripper=True, side=0, hand="right", zmq_addr="tcp://x:1")
         pico.connect()
         try:
@@ -2568,6 +2769,51 @@ def test_the_pico_transport_links_calibrates_and_tracks_motion():
         assert socket.closed, "the subscriber socket outlived the device"
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_pico_can_stop_and_restart_with_a_real_zmq_socket(streaming):
+    pytest.importorskip("zmq")
+    # A libzmq assertion aborts the interpreter, so isolate the real socket test.
+    script = """
+import resource
+import sys
+import time
+
+import zmq
+
+from rlinf.robotics.parts.transports.pico import PicoExpert
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+context = zmq.Context()
+publisher = context.socket(zmq.PUB)
+port = publisher.bind_to_random_port("tcp://127.0.0.1")
+expert = PicoExpert(zmq_addr=f"tcp://127.0.0.1:{port}", timeout_ms=100)
+try:
+    for _ in range(3):
+        expert.start()
+        if sys.argv[1] == "streaming":
+            deadline = time.monotonic() + 3
+            while not expert.ready and time.monotonic() < deadline:
+                publisher.send_json({"buttons": {}})
+                time.sleep(0.01)
+            assert expert.ready, "subscriber did not receive the test stream"
+        else:
+            time.sleep(0.05)
+        expert.stop()
+        expert.stop()
+finally:
+    expert.stop()
+    publisher.close(linger=0)
+    context.term()
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script, "streaming" if streaming else "idle"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_a_stale_pico_link_stops_driving_the_robot():
     """No frames means no motion, not the last motion repeated forever."""
     import time
@@ -2608,7 +2854,7 @@ def _settle(zmq, device, frame, wanted, tries=200):
     raise AssertionError(f"The PICO reading never reflected {frame}.")
 
 
-def _pico_joint(tool):
+def _pico_joint(tool, **settings):
     from rlinf.robotics.parts.teleop import PicoJoint
 
     return PicoJoint(
@@ -2618,6 +2864,7 @@ def _pico_joint(tool):
         joint_step_limits=[0.05] * 6,
         hand="right",
         zmq_addr="tcp://x:1",
+        **settings,
     )
 
 
@@ -2699,6 +2946,44 @@ def test_a_pico_moves_joints_toward_its_ik_solution_a_step_a_tick():
             pico.disconnect()
 
 
+def test_an_integrating_pico_arm_outruns_a_lagging_measurement_up_to_its_lead():
+    """With a lead bound the command advances a step a tick even while the arm lags.
+
+    Stepping from the measured joints instead caps the arm's speed at the step
+    limit over the servo's lag, which a streamed arm makes visible.
+    """
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    lagging = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        for lead, expected in ((None, [0.35, 0.35, 0.35]), (0.12, [0.35, 0.4, 0.42])):
+            pico = _pico_joint(FreeToolKinematics(), max_joint_lead=lead)
+            pico.connect()
+            try:
+                released = _settle(zmq, pico, pico_packet(), lambda r: r["calibrated"])
+                pico.action(released, lagging)
+                held = _settle(
+                    zmq, pico, pico_packet(right={"grip": 1.0}), lambda r: r["held"]
+                )
+                pico.action(held, lagging)
+                moved = _settle(
+                    zmq,
+                    pico,
+                    pico_packet(right={"grip": 1.0, "position": [0, 0, -0.2]}),
+                    lambda r: r["position_delta"][0] > 0.19,
+                )
+                ticks = [pico.action(moved, lagging).parts["arm"][0] for _ in range(3)]
+                assert np.allclose(ticks, expected, atol=1e-6)
+            finally:
+                pico.disconnect()
+
+
 def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
     """A controller that drops out must not drive again while still squeezed."""
     import numpy as np
@@ -2740,8 +3025,87 @@ def test_a_dropped_pico_holds_its_arm_until_the_grip_is_released():
             assert pico.fault is None
             reading = _settle(zmq, pico, held, lambda r: r["held"])
             assert pico.action(reading, context).driving
+
+            # A stale link says nothing about the grip, so it is not a release.
+            zmq.frame = None
+            time.sleep(pico._device.max_stale_s + 0.05)
+            reading = pico.get_observation()
+            assert reading["stale"] is True
+            assert not pico.action(reading, context).driving
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert not pico.action(reading, context).driving
+            assert pico.fault == "right:unavailable"
         finally:
             pico.disconnect()
+
+
+@pytest.mark.parametrize("pause", [False, True])
+def test_a_pico_arm_pauses_through_a_controller_loss_only_when_enabled(pause):
+    """Unset, losing tracking latches the arm at its measured joints.
+
+    Set, an idle arm keeps the pose it was released at, and a release reported
+    during the loss lets the arm drive as soon as tracking returns.
+    """
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0])}
+    sagged = {"joint_positions": np.array([0.29, 0.0, 0.19, 0.0, 0.0, 0.0, 1.0])}
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        pico = _pico_joint(FreeToolKinematics(), pause_on_controller_loss=pause)
+        pico.connect()
+        try:
+            released = _settle(zmq, pico, pico_packet(), lambda r: r["calibrated"])
+            assert not pico.action(released, context).driving
+            assert pico.fault is None
+
+            untracked = pico_packet(right={"orientation": [0.0, 0.0, 0.0, 0.0]})
+            reading = _settle(zmq, pico, untracked, lambda r: r.get("invalid_pose"))
+            hold = pico.action(reading, sagged)
+            assert pico.fault == "right:unavailable" and not hold.driving
+            kept = context if pause else sagged
+            assert np.allclose(hold.parts["arm"], kept["joint_positions"][:6])
+
+            held = pico_packet(right={"grip": 1.0})
+            reading = _settle(zmq, pico, held, lambda r: r["held"])
+            assert pico.action(reading, context).driving == pause
+            assert (pico.fault is None) == pause
+        finally:
+            pico.disconnect()
+
+
+def test_pico_gripper_buttons_drive_an_idle_arm_only_when_enabled():
+    """Released, the gripper follows its measured opening unless told otherwise."""
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.arms import FreeToolKinematics
+    from robot_mocks.teleop import pico_packet
+
+    context = {"joint_positions": np.array([0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 0.6])}
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        for while_idle, expected in ((False, 0.6), (True, 0.0)):
+            pico = _pico_joint(FreeToolKinematics(), gripper_while_idle=while_idle)
+            pico.connect()
+            try:
+                pressed = _settle(
+                    zmq,
+                    pico,
+                    pico_packet({"A": True}),
+                    lambda r: r["calibrated"] and r["grip_close"] and not r["held"],
+                )
+                idle = pico.action(pressed, context)
+                assert idle.parts["end_effector"][0] == pytest.approx(expected)
+                assert idle.driving == while_idle
+            finally:
+                pico.disconnect()
 
 
 def test_pico_builds_the_variant_the_arm_can_accept():
@@ -3095,8 +3459,211 @@ def _pico_reader(**overrides):
         "calibration": {"enabled": False, "required": False},
     }
     config.update(overrides)
+    original_start = PicoExpert.start
     PicoExpert.start = lambda self: None
-    return PicoExpert(**config)
+    try:
+        return PicoExpert(**config)
+    finally:
+        PicoExpert.start = original_start
+
+
+@pytest.mark.parametrize("invert", [False, True])
+@pytest.mark.parametrize(
+    "close,open_", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_pico_default_gripper_buttons_remain_independent(
+    monkeypatch, invert, close, open_
+):
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    reader = PicoExpert(gripper_invert=invert, calibration={"enabled": False})
+    packet = _pico_packet(0, 0, 0, 0, grip=1.0, close=close, open_=open_)
+    with reader._lock:
+        reader._latest_data = packet
+        reader._last_update_time = time.time()
+    reading = reader.get_reading()
+    expected = (open_, close) if invert else (close, open_)
+    assert (reading["grip_close"], reading["grip_open"]) == expected
+
+
+@pytest.mark.parametrize(
+    "margin,held",
+    [
+        (0.0, [True, False, False, False, False]),
+        (0.10, [True, True, True, False, False]),
+    ],
+)
+def test_an_engaged_pico_grip_holds_until_it_falls_below_its_margin(margin, held):
+    """The margin lowers only the release threshold; engaging still needs 0.85."""
+    reader = _pico_reader(control_release_margin=margin)
+    readings = []
+    for grip in (0.90, 0.84, 0.76, 0.74, 0.80):
+        packet = _pico_packet(0, 0, 0, 0, grip=grip)
+        reader._snapshot = lambda packet=packet: packet
+        readings.append(reader.get_reading()["held"])
+    assert readings == held
+
+
+@pytest.mark.parametrize("margin", [-0.1, 0.85])
+def test_a_pico_release_margin_must_leave_a_positive_release_threshold(margin):
+    with pytest.raises(ValueError, match="control_release_margin"):
+        _pico_reader(control_release_margin=margin)
+
+
+def test_pico_bax_reward_profile_uses_the_front_trigger_for_gripper(monkeypatch):
+    from rlinf.robotics.actions import ActionKind
+    from rlinf.robotics.parts.teleop import Pico
+    from rlinf.robotics.parts.transports.pico import PicoExpert
+
+    monkeypatch.setattr(PicoExpert, "start", lambda self: None)
+    entry = Pico.from_config(
+        {
+            "no_gripper": False,
+            "pico": {
+                "gripper_trigger": "trigger",
+                "hand": "right",
+                "control_trigger": "grip",
+                "control_threshold": 0.85,
+                "calibration": {"enabled": False, "required": False},
+            },
+        },
+        {},
+        SimpleNamespace(kinds={"arm": ActionKind.CARTESIAN_POSE}),
+    )
+    reader = entry.device._open()
+    packet = _pico_packet(0.1, 0.2, 0.3, 0.4, grip=0.95, close=True, open_=True)
+    reader._snapshot = lambda: packet
+
+    reading = reader.get_reading()
+    assert (reading["grip_close"], reading["grip_open"]) == (False, True)
+
+    packet["right_controller"]["trigger"] = 0.8
+    reading = reader.get_reading()
+    assert (reading["grip_close"], reading["grip_open"]) == (True, False)
+
+
+@pytest.mark.parametrize("arm_type,opened,closed", [(0, 5.0, 0.0), (2, 0.1, -3.14)])
+def test_arx5_gripper_motor_positions_match_physical_open_and_closed_states(
+    arm_type, opened, closed
+):
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+
+    arm = ARX5Arm("can1", arm_type=arm_type)
+    assert arm.gripper_open == opened
+    assert arm.gripper_closed == closed
+
+
+@pytest.mark.parametrize("state", ["parked", "unparked", "faulted"])
+def test_arx5_disconnect_releases_sdk_without_waiting_for_parking(state):
+    # A subprocess timeout also catches a regression to an unbounded wait.
+    program = """
+import sys
+sys.path.insert(0, "tests")
+from robot_mocks.sdks import arx5
+from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+sdk = arx5()["bimanual"]
+sys.modules["bimanual"] = sdk
+arm = ARX5Arm("can1")
+arm.connect()
+device = sdk.SingleArm.instances[0]
+if sys.argv[1] == "unparked":
+    device.joints[1:3] = 1.0
+elif sys.argv[1] == "faulted":
+    device.fault = "latched fault"
+arm.disconnect()
+arm.disconnect()
+assert device.close_count == 1
+assert not arm.is_connected
+"""
+    subprocess.run(
+        [sys.executable, "-c", program, state],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@pytest.mark.parametrize("result", ["success", "unreachable", "error"])
+def test_arx5_cartesian_command_restores_stdout(monkeypatch, result):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm, ARX5IKUnreachableError
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    arm = ARX5Arm("can1")
+    arm.connect()
+    device = sdk.SingleArm.instances[0]
+    device.cartesian_result = result != "unreachable"
+    device.cartesian_error = result == "error"
+    target = {"tcp_pose": np.array([0.3, 0, 0.2, 0, 0, 0, 1])}
+    try:
+        if result == "unreachable":
+            with pytest.raises(ARX5IKUnreachableError):
+                arm.send_action(target)
+        elif result == "error":
+            with pytest.raises(RuntimeError, match="Cartesian command failed"):
+                arm.send_action(target)
+        else:
+            arm.send_action(target)
+        assert sys.stdout is stream
+        assert stream.getvalue() == "SDK diagnostic\n"
+    finally:
+        arm.disconnect()
+
+
+@pytest.mark.parametrize("first_to_finish", [0, 1])
+def test_arx5_overlapping_commands_restore_stdout_after_last_call(
+    monkeypatch, first_to_finish
+):
+    from robot_mocks.sdks import arx5
+
+    from rlinf.robotics.parts.arms.arx5 import ARX5Arm
+
+    sdk = arx5()["bimanual"]
+    monkeypatch.setitem(sys.modules, "bimanual", sdk)
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    arms = [ARX5Arm("can1"), ARX5Arm("can3")]
+    for arm in arms:
+        arm.connect()
+    entered = [threading.Event(), threading.Event()]
+    release = [threading.Event(), threading.Event()]
+
+    def command(index):
+        def send(pose, duration):
+            entered[index].set()
+            assert release[index].wait(timeout=5)
+            print("set_ee_pose_xyzrpy(...) IK 无解")
+            return True
+
+        return send
+
+    for index, device in enumerate(sdk.SingleArm.instances):
+        monkeypatch.setattr(device, "set_ee_pose_xyzrpy", command(index))
+    target = {"tcp_pose": np.array([0.3, 0, 0.2, 0, 0, 0, 1])}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(arm.send_action, target) for arm in arms]
+        try:
+            assert all(event.wait(timeout=5) for event in entered)
+            print("background log")
+            release[first_to_finish].set()
+            futures[first_to_finish].result(timeout=5)
+            assert sys.stdout is not stream
+            release[1 - first_to_finish].set()
+            futures[1 - first_to_finish].result(timeout=5)
+            assert sys.stdout is stream
+            assert stream.getvalue() == "background log\n"
+        finally:
+            for event in release:
+                event.set()
+            for arm in arms:
+                arm.disconnect()
 
 
 def test_a_reading_is_empty_until_the_operator_takes_hold():
@@ -3141,16 +3708,6 @@ def test_letting_go_and_grabbing_again_re_anchors():
     # Retaking control resets the anchor without applying motion.
     assert reading["held"] is True
     assert np.allclose(reading["position_delta"], 0.0, atol=1e-9)
-
-
-def test_the_gripper_buttons_are_reported_separately():
-    reader = _pico_reader()
-    reader._snapshot = lambda: _pico_packet(0, 0, 0, 0, grip=0.95, close=True)
-
-    reading = reader.get_reading()
-
-    assert reading["grip_close"] is True
-    assert reading["grip_open"] is False
 
 
 def test_a_dropped_link_reports_stale_rather_than_stale_motion():
@@ -3827,6 +4384,437 @@ def test_a_real_camera_runs_against_a_faked_sdk():
         assert not camera.is_connected
 
 
+def _orbbec_camera(**settings: Any) -> Camera:
+    from rlinf.robotics.parts.cameras import CameraInfo
+
+    info = CameraInfo(
+        **{
+            "name": "scene",
+            "serial_number": "MOCK0002",
+            "camera_type": "orbbec",
+            "resolution": (64, 48),
+            "fps": 30,
+            **settings,
+        }
+    )
+    return Camera.of(info)
+
+
+@pytest.fixture
+def orbbec_sdk(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    from robot_mocks.cameras import orbbec
+
+    sdk = orbbec()
+    monkeypatch.setitem(sys.modules, "pyorbbecsdk", sdk)
+    return sdk
+
+
+def test_orbbec_declaration_does_not_import_sdk(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pyorbbecsdk", None)
+    camera = _orbbec_camera()
+    assert not camera.is_connected
+    assert camera.observation_features["frame"]["shape"] == (48, 64, 3)
+    with pytest.raises(ImportError, match="pyorbbecsdk"):
+        camera.connect()
+    assert not camera.is_connected
+    with pytest.raises(ModuleNotFoundError, match="--no-deps pyorbbecsdk2"):
+        type(camera).require_sdk()
+
+
+def test_orbbec_opens_only_selected_serial_and_rgb_needs_no_depth(orbbec_sdk):
+    orbbec_sdk.distortion_model = "unsupported"
+    camera = _orbbec_camera(resolution=(53, 39))
+    assert orbbec_sdk.opened == []
+    try:
+        camera.connect()
+        observation = camera.get_observation(timeout=1)
+        assert set(observation) == {"frame"}
+        assert observation["frame"].shape == (39, 53, 3)
+        assert observation["frame"].dtype == np.uint8
+        np.testing.assert_array_equal(observation["frame"][20, 20], [32, 96, 192])
+        assert orbbec_sdk.opened == ["MOCK0002"]
+        streams = orbbec_sdk.pipelines[0].config.streams
+        assert set(streams) == {"color"}
+        assert streams["color"].size == (64, 48)
+    finally:
+        camera.disconnect()
+    assert not camera.is_connected
+    assert orbbec_sdk.pipelines[0].stops == 1
+
+
+def test_orbbec_unknown_serial_does_not_open_another_device(orbbec_sdk):
+    camera = _orbbec_camera(serial_number="not-attached")
+    with pytest.raises(ValueError, match="not-attached"):
+        camera.connect()
+    assert not camera.is_connected
+    assert orbbec_sdk.opened == []
+    assert orbbec_sdk.pipelines == []
+
+
+def test_orbbec_requires_an_explicit_serial(orbbec_sdk):
+    with pytest.raises(ValueError, match="serial"):
+        _orbbec_camera(serial_number="")
+    assert orbbec_sdk.opened == []
+
+
+def test_orbbec_discovery_reads_serials_without_opening_devices(orbbec_sdk):
+    from robot_mocks.cameras import SERIALS
+
+    assert _orbbec_camera().discover() == set(SERIALS)
+    assert orbbec_sdk.opened == []
+    assert orbbec_sdk.pipelines == []
+
+
+@pytest.mark.parametrize("color_format", ["BGR", "RGB", "MJPG", "YUYV"])
+def test_orbbec_decodes_color_formats_to_bgr(monkeypatch, color_format):
+    from robot_mocks.cameras import orbbec
+
+    sdk = orbbec(color_format=color_format)
+    monkeypatch.setitem(sys.modules, "pyorbbecsdk", sdk)
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        frame = camera.get_observation(timeout=1)["frame"]
+        assert frame.shape == (48, 64, 3)
+        assert frame.dtype == np.uint8
+        expected = [130, 130, 130] if color_format == "YUYV" else [32, 96, 192]
+        np.testing.assert_allclose(frame[20, 20], expected, atol=2)
+    finally:
+        camera.disconnect()
+
+
+def test_orbbec_aligned_depth_is_metres_and_resize_preserves_samples(orbbec_sdk):
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
+    camera = _orbbec_camera(enable_depth=True, resolution=(53, 39))
+    try:
+        camera.connect()
+        # The depth mode is the device default, not the one nearest the output.
+        streams = orbbec_sdk.pipelines[0].config.streams
+        assert streams["color"].size == (64, 48)
+        assert streams["depth"].size == (128, 96)
+
+        observation = camera.get_observation(timeout=1)
+        assert observation["frame"].shape == (39, 53, 3)
+        assert observation["frame"].dtype == np.uint8
+        depth = observation["depth"]
+        assert depth.shape == (39, 53)
+        assert depth.dtype == np.float32
+        near, far = DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE
+        np.testing.assert_allclose(np.unique(depth), [near, far])
+        assert depth[20, 0] == pytest.approx(near)
+        assert depth[20, -1] == pytest.approx(far)
+
+        # Units belong to each frame, so changing the device's depth precision
+        # must not reuse a startup scale for later observations.
+        orbbec_sdk.depth_scale_mm *= 2
+        for _ in range(5):
+            depth = camera.get_observation(timeout=1)["depth"]
+            if depth[20, -1] == pytest.approx(2 * far):
+                break
+        np.testing.assert_allclose(np.unique(depth), [2 * near, 2 * far])
+    finally:
+        camera.disconnect()
+
+
+def test_orbbec_rejects_unsupported_color_distortion_before_streaming(orbbec_sdk):
+    orbbec_sdk.distortion_model = "unsupported"
+    camera = _orbbec_camera(enable_depth=True)
+    with pytest.raises(ValueError, match="distortion model unsupported"):
+        camera.connect()
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+    assert all(pipeline.stops == 0 for pipeline in orbbec_sdk.pipelines)
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, float("nan")])
+def test_orbbec_rejects_invalid_depth_units(orbbec_sdk, scale):
+    orbbec_sdk.depth_scale_mm = scale
+    camera = _orbbec_camera(enable_depth=True)
+    with pytest.raises(RuntimeError, match="depth scale"):
+        camera.connect()
+    assert not camera.is_connected
+    assert orbbec_sdk.pipelines[0].stops == 1
+
+
+@pytest.mark.parametrize("fault", ["no_frames", "missing_depth"])
+def test_orbbec_incomplete_startup_fails_and_can_be_retried(orbbec_sdk, fault):
+    setattr(orbbec_sdk, fault, True)
+    camera = _orbbec_camera(enable_depth=True)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="(?i)(frame|depth|timeout)"):
+        camera.connect()
+    assert time.monotonic() - started < 7.0
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+    assert orbbec_sdk.pipelines[0].stops == 1
+    camera.disconnect()
+
+    setattr(orbbec_sdk, fault, False)
+    try:
+        camera.connect()
+        assert "depth" in camera.get_observation(timeout=1)
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.parametrize("fault", ["fail_profiles", "fail_start"])
+def test_orbbec_partial_open_failure_releases_stream_and_allows_retry(
+    orbbec_sdk, fault
+):
+    setattr(orbbec_sdk, fault, True)
+    camera = _orbbec_camera()
+    with pytest.raises(RuntimeError, match="(?i)(profile|start)"):
+        camera.connect()
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+    if fault == "fail_start":
+        assert orbbec_sdk.pipelines[0].stops == 1
+
+    setattr(orbbec_sdk, fault, False)
+    try:
+        camera.connect()
+        assert camera.get_observation(timeout=1)["frame"].shape == (48, 64, 3)
+    finally:
+        camera.disconnect()
+
+
+def test_orbbec_refuses_unsupported_fps_before_starting(orbbec_sdk):
+    camera = _orbbec_camera(fps=25)
+    with pytest.raises(ValueError, match="25"):
+        camera.connect()
+    assert not camera.is_connected
+    assert not any(pipeline.started for pipeline in orbbec_sdk.pipelines)
+
+
+def test_orbbec_disconnect_is_idempotent_and_reconnect_discards_old_frames(orbbec_sdk):
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        camera.disconnect()
+        camera.disconnect()
+        assert orbbec_sdk.pipelines[0].stops == 1
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        camera.connect()
+        frame = camera.get_observation(timeout=1)["frame"]
+        np.testing.assert_array_equal(frame[20, 20], [9, 21, 43])
+        assert orbbec_sdk.opened == ["MOCK0002", "MOCK0002"]
+    finally:
+        camera.disconnect()
+    assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
+
+
+def test_orbbec_rides_out_a_stall_shorter_than_the_read_timeout(orbbec_sdk):
+    camera = _orbbec_camera()
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        orbbec_sdk.no_frames = True
+        time.sleep(1.0)
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        orbbec_sdk.no_frames = False
+        frame = camera.get_observation(timeout=2, max_age=0.1)["frame"]
+        np.testing.assert_array_equal(frame[20, 20], [9, 21, 43])
+        assert orbbec_sdk.opened == ["MOCK0002"]
+    finally:
+        camera.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("enable_depth", "fault"), [(False, "no_frames"), (True, "missing_depth")]
+)
+def test_orbbec_reopens_a_stalled_stream_and_stops_its_reader(
+    orbbec_sdk, enable_depth, fault
+):
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
+    camera = _orbbec_camera(enable_depth=enable_depth)
+    try:
+        camera.connect()
+        camera.get_observation(timeout=1)
+        stalled = orbbec_sdk.pipelines[0]
+        stalled.fault = fault
+        assert stalled.fault_observed.wait(timeout=2), "Capture never saw the fault"
+        orbbec_sdk.color_bgr[:] = [9, 21, 43]
+        orbbec_sdk.depth_scale_mm *= 2
+        # Age the last frame captured before the stall past max_age below.
+        time.sleep(0.2)
+
+        # The first attempt times out and reopens; the second reads the new
+        # session, so nothing captured before the stall may be returned.
+        recovered = camera.get_observation(timeout=0.5, attempts=2, max_age=0.1)
+        assert orbbec_sdk.opened == ["MOCK0002", "MOCK0002"]
+        assert stalled.stops == 1
+        assert not stalled.fault_reader.is_alive()
+        np.testing.assert_array_equal(recovered["frame"][20, 20], [9, 21, 43])
+        if enable_depth:
+            np.testing.assert_allclose(
+                np.unique(recovered["depth"]),
+                [2 * DEPTH_NEAR * DEPTH_SCALE, 2 * DEPTH_FAR * DEPTH_SCALE],
+            )
+        else:
+            assert set(recovered) == {"frame"}
+    finally:
+        camera.disconnect()
+    assert all(pipeline.stops == 1 for pipeline in orbbec_sdk.pipelines)
+
+
+@pytest.mark.placement
+@pytest.mark.parametrize("node_rank", [None, 0])
+def test_orbbec_camera_has_local_remote_observation_parity(node_rank):
+    from robot_mocks import mocked_sdks
+    from robot_mocks.cameras import DEPTH_FAR, DEPTH_NEAR, DEPTH_SCALE
+
+    from rlinf.robotics.parts.cameras import CameraInfo
+
+    with mocked_sdks():
+        camera = Camera.of(
+            CameraInfo(
+                name="scene",
+                serial_number="MOCK0002",
+                camera_type="orbbec",
+                resolution=(53, 39),
+                fps=30,
+                enable_depth=True,
+            ),
+            node_rank=node_rank,
+        )
+        try:
+            camera.connect()
+            observation = camera.get_observation(timeout=2)
+            assert observation["frame"].shape == (39, 53, 3)
+            assert observation["frame"].dtype == np.uint8
+            assert observation["depth"].shape == (39, 53)
+            assert observation["depth"].dtype == np.float32
+            np.testing.assert_array_equal(observation["frame"][20, 20], [32, 96, 192])
+            np.testing.assert_allclose(
+                np.unique(observation["depth"]),
+                [DEPTH_NEAR * DEPTH_SCALE, DEPTH_FAR * DEPTH_SCALE],
+            )
+        finally:
+            camera.disconnect()
+        assert not camera.is_connected
+
+
+def test_a_uvc_runs_against_a_faked_sdk():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.cameras.base import CameraInfo
+        from rlinf.robotics.parts.cameras.uvc import UVCCamera
+
+        camera = UVCCamera(
+            CameraInfo(
+                name="webcam",
+                serial_number="0",
+                camera_type="uvc",
+                fps=10,
+                resolution=(64, 48),
+            )
+        )
+        assert not camera.is_connected
+        camera.connect()
+        assert camera.is_connected
+
+        frame = camera.get_observation()["frame"]
+        assert frame.shape == (48, 64, 3)
+        assert frame.dtype == np.uint8
+
+        camera.disconnect()
+        assert not camera.is_connected
+
+
+def test_a_uvc_preserves_the_delivered_frame(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.cameras.base import CameraInfo
+    from rlinf.robotics.parts.cameras.uvc import UVCCamera
+
+    delivered = np.arange(48 * 64 * 3, dtype=np.uint8).reshape(48, 64, 3)
+    with mocked_sdks() as made:
+        monkeypatch.setattr(
+            made["cv2"].VideoCapture, "read", lambda self: (True, delivered.copy())
+        )
+        camera = UVCCamera(
+            CameraInfo(
+                name="webcam",
+                serial_number="0",
+                camera_type="uvc",
+                resolution=(32, 32),
+            )
+        )
+        camera.connect()
+        try:
+            np.testing.assert_array_equal(camera.get_observation()["frame"], delivered)
+        finally:
+            camera.disconnect()
+
+
+def test_a_uvc_opens_a_by_id_serial_from_discover(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.cameras.base import CameraInfo
+        from rlinf.robotics.parts.cameras.uvc import UVCCamera
+
+        # UVC discovery returns the full stable device path.
+        basename = "usb-USB_Camera_USB_Camera_2505280051-video-index0"
+        by_id = f"/dev/v4l/by-id/{basename}"
+
+        def exists(path, _real=os.path.exists):
+            return path == by_id or _real(path)
+
+        monkeypatch.setattr(os.path, "exists", exists)
+
+        camera = UVCCamera(
+            CameraInfo(
+                name="webcam",
+                serial_number=by_id,
+                camera_type="uvc",
+                fps=10,
+                resolution=(64, 48),
+            )
+        )
+        camera.connect()
+        try:
+            frame = camera.get_observation()["frame"]
+            assert frame.shape == (48, 64, 3)
+        finally:
+            camera.disconnect()
+        # Preserve the discovered device path through capture startup.
+        assert made["cv2"].opens == [by_id]
+
+
+def test_lumos_and_uvc_use_distinct_mock_formats():
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.cameras.base import CameraInfo
+    from rlinf.robotics.parts.cameras.lumos import LumosCamera
+
+    with mocked_sdks() as made:
+        made["cv2"].device_formats[1] = "I420"
+        for camera_cls, kind, serial in (
+            (LumosCamera, "lumos", "1"),
+            (UVCCamera, "uvc", "0"),
+        ):
+            camera = camera_cls(
+                CameraInfo(
+                    name=kind,
+                    serial_number=serial,
+                    camera_type=kind,
+                    resolution=(64, 48),
+                )
+            )
+            camera.connect()
+            try:
+                frame = camera.get_observation()["frame"]
+                assert frame.shape == (48, 64, 3)
+                assert frame.dtype == np.uint8
+            finally:
+                camera.disconnect()
+
+
 def test_a_real_arm_runs_against_a_faked_sdk():
     from robot_mocks import mocked_sdks
 
@@ -3847,6 +4835,26 @@ def test_a_real_arm_runs_against_a_faked_sdk():
 
         arm.disconnect()
         assert not arm.is_connected
+
+
+def test_a_franky_arm_on_fakes_leaves_the_test_process_unhardened(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from robot_mocks import mocked_sdks
+
+    # mlockall(MCL_FUTURE) in the pytest process makes a later Ray connection
+    # abort once the object store mapping exceeds RLIMIT_MEMLOCK.
+    calls = []
+    monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(os, "sched_setscheduler", lambda *args: calls.append(args))
+    monkeypatch.setattr(os, "sched_setaffinity", lambda *args: calls.append(args))
+
+    with mocked_sdks():
+        arm = FrankyArm("10.0.0.1")
+        arm.connect()
+        arm.disconnect()
+
+    assert calls == []
 
 
 def test_a_franky_arm_takes_no_end_effector_settings():
@@ -3871,13 +4879,6 @@ def franky_arm(
     from rlinf.robotics.parts import claims
 
     monkeypatch.setattr(claims, "_CLAIM_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        ctypes,
-        "CDLL",
-        lambda *args, **kwargs: SimpleNamespace(mlockall=lambda flags: 0),
-    )
-    monkeypatch.setattr(os, "sched_setscheduler", lambda *args: None)
-    monkeypatch.setattr(os, "sched_setaffinity", lambda *args: None)
     with mocked_sdks() as sdk:
         arm = FrankyArm("10.0.0.1")
         arm.connect()
@@ -4101,6 +5102,57 @@ def test_franky_healthy_tracking_can_switch_reset_and_rebuild_compliance(
     assert arm.get_observation()["tcp_pose"].shape == (7,)
 
 
+def test_franky_reset_skips_joint_motion_when_already_there(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    from robot_mocks.arms import HOME_JOINTS
+
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+    arm.reset_joint(list(HOME_JOINTS))
+    assert robot.moved == []
+
+
+def test_franky_reset_retries_after_acceleration_discontinuity(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+    original_move = robot.move
+    attempts = {"n": 0}
+
+    def move(motion):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError(
+                "libfranka: Move command aborted: motion aborted by reflex! "
+                '["joint_motion_generator_acceleration_discontinuity"]'
+            )
+        original_move(motion)
+
+    robot.move = move
+    recovery_count = robot.recovery_count
+    arm.reset_joint(_FRANKY_TEST_JOINTS)
+    assert attempts["n"] == 2
+    assert len(robot.moved) == 1
+    assert robot.recovery_count > recovery_count
+
+
+def test_franky_reset_does_not_retry_unrelated_motion_errors(
+    franky_arm: tuple[FrankyArm, ModuleType],
+) -> None:
+    arm, sdk = franky_arm
+    robot = sdk.Robot.instances[-1]
+
+    def move(_motion):
+        raise RuntimeError("libfranka: Move command aborted: cartesian_reflex")
+
+    robot.move = move
+    with pytest.raises(RuntimeError, match="cartesian_reflex"):
+        arm.reset_joint(_FRANKY_TEST_JOINTS)
+    assert robot.moved == []
+
+
 @pytest.mark.placement
 def test_the_bench_check_runs_a_whole_robot_on_fakes():
     from robot_mocks import mocked_sdks
@@ -4128,6 +5180,7 @@ def test_the_bench_check_runs_a_whole_robot_on_fakes():
 def test_every_shipped_robot_runs_on_faked_sdks():
     from robot_mocks import mocked_sdks
 
+    from rlinf.robotics.parts.cameras import CameraInfo
     from toolkits.realworld_check.check_robot_parts import check
 
     robots = {
@@ -4171,6 +5224,23 @@ def test_every_shipped_robot_runs_on_faked_sdks():
             "left_can_channel": "can0",
             "right_can_channel": "can1",
         },
+        "R2": {
+            "node_rank": 0,
+            "enable_base": True,
+        },
+        "LeKiwi": {
+            "node_rank": 0,
+            "port": "/dev/ttyACM0",
+            "cameras": {
+                "front": CameraInfo(
+                    name="front",
+                    serial_number="0",
+                    camera_type="uvc",
+                    resolution=(64, 48),
+                    fps=5,
+                )
+            },
+        },
     }
     with mocked_sdks():
         import rlinf.robotics.robots  # noqa: F401
@@ -4178,6 +5248,93 @@ def test_every_shipped_robot_runs_on_faked_sdks():
         failed = [name for name, args in robots.items() if check(name, args) != 0]
 
     assert failed == []
+
+
+def test_lekiwi_base_drives_and_reads_back_velocity():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from rlinf.robotics.parts.mobility import LeKiwiBase
+
+        base = LeKiwiBase("/dev/ttyACM0")
+        assert base.observation_features == {
+            "velocity": {"shape": (3,), "dtype": "float32"}
+        }
+        assert base.action_features == base.observation_features
+
+        base.connect()
+        try:
+            # The base starts at rest.
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.0, 0.0, 0.0], atol=1e-6
+            )
+
+            # A forward command round-trips through the wheel kinematics.
+            applied = base.send_action(
+                {"velocity": np.array([0.1, 0.0, 0.0], dtype=np.float32)}
+            )
+            np.testing.assert_allclose(applied["velocity"], [0.1, 0.0, 0.0], atol=0.02)
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.1, 0.0, 0.0], atol=0.02
+            )
+
+            # Lateral and spin round-trip together, in one command.
+            base.send_action({"velocity": np.array([0.0, 0.1, 30.0], dtype=np.float32)})
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.0, 0.1, 30.0], atol=0.3
+            )
+
+            # reset() stops the base.
+            base.reset()
+            np.testing.assert_allclose(
+                base.get_observation()["velocity"], [0.0, 0.0, 0.0], atol=1e-6
+            )
+        finally:
+            base.disconnect()
+
+        bus = made["lerobot.motors.feetech"].FeetechMotorsBus.instances[-1]
+        assert not bus.is_connected
+        assert bus.disable_calls >= 1, "release must drop torque"
+
+
+def test_lekiwi_wheel_mapping_matches_lerobot():
+    """Per-wheel signs and units are lerobot's LeKiwi contract."""
+    import math
+
+    from rlinf.robotics.parts.mobility import body_to_wheel_raw
+
+    def rounded(x, y, theta, **kwargs):
+        return {
+            name: round(value)
+            for name, value in body_to_wheel_raw(x, y, theta, **kwargs).items()
+        }
+
+    assert rounded(0.0, 0.0, 0.0) == {"left": 0, "back": 0, "right": 0}
+    assert rounded(0.1, 0.0, 0.0) == {"left": -1129, "back": 0, "right": 1129}
+    assert rounded(0.0, 0.1, 0.0) == {"left": 652, "back": -1304, "right": 652}
+    assert rounded(0.0, 0.0, 30.0) == {"left": 853, "back": 853, "right": 853}
+    assert rounded(-0.1, 0.0, 0.0) == {
+        name: -value for name, value in rounded(0.1, 0.0, 0.0).items()
+    }
+
+    for not_finite in ((math.nan, 0.0, 0.0), (0.0, math.inf, 0.0)):
+        with pytest.raises(ValueError):
+            body_to_wheel_raw(*not_finite)
+    with pytest.raises(ValueError):
+        body_to_wheel_raw(0.0, 0.0, 0.0, wheel_radius=0.0)
+
+
+def test_lekiwi_wheel_limit_slows_a_direction_instead_of_skewing_it():
+    from rlinf.robotics.parts.mobility import body_to_wheel_raw, limit_wheel_raw
+
+    raw = body_to_wheel_raw(0.3, 0.2, 90.0)
+    peak = max(abs(value) for value in raw.values())
+    limited, scale = limit_wheel_raw(raw, 100)
+
+    assert max(abs(value) for value in limited.values()) == 100
+    assert scale == pytest.approx(peak / 100)
+    for name, value in raw.items():
+        assert limited[name] == round(value / scale)
 
 
 def test_a_worker_installs_the_fakes_for_itself():
@@ -4283,10 +5440,11 @@ def test_an_address_is_checked_by_the_arm_that_dials_it():
 
 def test_a_connection_cannot_be_composed_into_a_robot():
     from rlinf.robotics.parts.arms.dosw1 import DOSW1Connection
+    from rlinf.robotics.parts.arms.r2 import R2Connection
     from rlinf.robotics.parts.arms.turtle2 import Turtle2Connection
     from rlinf.robotics.parts.base import Connection, RobotPart
 
-    for cls in (Turtle2Connection, DOSW1Connection):
+    for cls in (Turtle2Connection, DOSW1Connection, R2Connection):
         assert issubclass(cls, Connection), f"{cls.__name__} must still be placeable"
         assert not issubclass(cls, RobotPart), (
             f"{cls.__name__} backs parts without being one; it must not be "
@@ -4306,6 +5464,7 @@ def test_no_robot_builder_absorbs_a_setting_it_does_not_use():
         DualFrankaRobot,
         FrankaRobot,
         GimArmRobot,
+        R2Robot,
         Turtle2Robot,
     )
 
@@ -4316,6 +5475,7 @@ def test_no_robot_builder_absorbs_a_setting_it_does_not_use():
         GimArmRobot,
         Turtle2Robot,
         DOSW1Robot,
+        R2Robot,
     ):
         # Forwarding catch-alls are valid only when a downstream API validates keys.
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -5163,6 +6323,187 @@ def test_so101_commands_are_converted_back_to_degrees():
         assert wire["shoulder_pan.pos"] == pytest.approx(90.0)
         # send_action reports what actually reached the arm, in radians.
         assert sent["joint_position"][0] == pytest.approx(np.pi / 2)
+
+        arm.disconnect()
+
+
+def test_so101_pose_waits_until_joints_are_still(monkeypatch):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        waited = []
+        monkeypatch.setattr(arm, "wait_until_still", lambda: waited.append(True))
+        try:
+            arm.move_to_pose(np.r_[np.zeros(5), 0.0], duration=0.01, max_velocity=100.0)
+            assert waited == [True]
+        finally:
+            arm.disconnect()
+
+
+def test_so101_pose_monitors_the_commanded_gripper_position(monkeypatch, caplog):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        SO101Follower.jaw_step = 5.0
+        SO101Follower.jaw_lag = 0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        device.positions["gripper.pos"] = 100.0
+        original_read = device.get_observation
+        reads = 0
+
+        def read_after_startup_lag():
+            nonlocal reads
+            reads += 1
+            return dict(device.positions) if reads <= 5 else original_read()
+
+        monkeypatch.setattr(device, "get_observation", read_after_startup_lag)
+        try:
+            arm.move_to_pose(np.zeros(6), duration=0.8, max_velocity=100.0)
+            assert arm.get_state().gripper_position[0] == pytest.approx(0.0)
+            assert all(len(command) == 6 for command in device.sent)
+            assert "SO-101 gripper stall relief" not in caplog.text
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_step = None
+            SO101Follower.jaw_lag = 1
+
+
+def test_so101_pose_relieves_a_blocked_gripper_during_trajectory(caplog):
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        from lerobot.robots.so_follower import SO101Follower
+
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        SO101Follower.jaw_limit = 30.0
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        device = made["lerobot.robots.so_follower"].SO101Follower.instances[-1]
+        device.positions["gripper.pos"] = 100.0
+        try:
+            arm.move_to_pose(
+                np.r_[np.ones(5) * 0.1, 0.0], duration=0.8, max_velocity=100.0
+            )
+            hold_indices = [
+                index
+                for index, command in enumerate(device.sent)
+                if set(command) == {"gripper.pos"}
+            ]
+            assert hold_indices
+            assert hold_indices[0] < len(device.sent) - 1
+            assert device.sent[-1]["gripper.pos"] == pytest.approx(30.0)
+            assert device.sent[-1]["shoulder_pan.pos"] == pytest.approx(np.rad2deg(0.1))
+            assert "SO-101 gripper stall relief" in caplog.text
+        finally:
+            arm.disconnect()
+            SO101Follower.jaw_limit = None
+
+
+def test_so101_leader_ignores_follower_gripper_mismatch_when_idle():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    reading = {"joint_position": np.zeros(5), "grip": np.array([1.0])}
+    action = leader.action(
+        reading,
+        {
+            "joint_positions": np.zeros((1, 5)),
+            "gripper_open": np.array([0.4]),
+        },
+    )
+
+    assert not action.driving
+    np.testing.assert_allclose(action.parts["arm"], np.zeros(5))
+    np.testing.assert_allclose(action.parts["end_effector"], [0.4])
+    np.testing.assert_allclose(action.info["so101_idle_hold_action"], [0.0] * 5 + [0.4])
+
+
+def test_so101_leader_detects_gripper_only_motion():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    context = {
+        "joint_positions": np.zeros((1, 5)),
+        "gripper_open": np.array([0.4]),
+    }
+    leader.action({"joint_position": np.zeros(5), "grip": np.array([0.0])}, context)
+    action = leader.action(
+        {"joint_position": np.zeros(5), "grip": np.array([0.2])}, context
+    )
+
+    assert action.driving
+    np.testing.assert_allclose(action.parts["end_effector"], [0.2])
+
+
+def test_so101_leader_disconnects_after_torque_release_failure():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    leader._torque_enabled = True
+    disconnected = []
+
+    class Device:
+        def disconnect(self):
+            disconnected.append(True)
+
+    def fail_to_disable(_enabled):
+        raise RuntimeError("torque release failed")
+
+    leader._set_torque = fail_to_disable
+    with pytest.raises(RuntimeError, match="torque release failed"):
+        leader._release(Device())
+    assert disconnected == [True]
+
+
+def test_so101_leader_anchors_motion_after_manual_release():
+    from rlinf.robotics.parts.teleop.so101_leader import SO101Leader
+
+    leader = SO101Leader("/dev/mock-so101")
+    leader._manual_release_pending = True
+    context = {"joint_positions": np.zeros((1, 5)), "gripper_open": np.array([0.0])}
+    first = {"joint_position": np.full(5, 0.2), "grip": np.array([0.5])}
+    same = leader.action(first, context)
+    assert not same.driving
+
+    assert not leader.action(first, context).driving
+    moved = {
+        "joint_position": np.full(5, 0.2 + leader.MOVEMENT_EPSILON * 2),
+        "grip": np.array([0.5]),
+    }
+    assert leader.action(moved, context).driving
+
+    grip_moved = {
+        "joint_position": np.full(5, 0.2),
+        "grip": np.array([0.5 + 2 * leader.MOVEMENT_EPSILON]),
+    }
+    leader._manual_release_reference = np.concatenate(
+        (first["joint_position"], first["grip"])
+    )
+    assert leader.action(grip_moved, context).driving
+
+
+def test_so101_clips_out_of_range_gripper_feedback_to_the_public_contract():
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks():
+        from rlinf.robotics.parts.arms.so101 import SO101Arm
+
+        arm = SO101Arm("/dev/mock-so101")
+        arm.connect()
+        arm._robot.positions["gripper.pos"] = 125.0
+
+        assert arm.get_state().gripper_position[0] == pytest.approx(1.0)
 
         arm.disconnect()
 
@@ -6611,3 +7952,1451 @@ def test_SE3_body_delta_compose_round_trip():
 
         assert np.allclose(T_rec[..., :3, :3], T_abs[..., :3, :3], atol=1e-6)
         assert np.allclose(T_rec[..., :3, 3], T_abs[..., :3, 3], atol=1e-6)
+
+
+def test_any_driver_reports_faults_recovers_and_holds_one_command():
+    """Generic fault hooks: piggybacked and async health reports recover, then hold one step."""
+    from rlinf.robotics import FaultLevel, HealthStatus
+
+    class _SerialServoArm(ControllablePart):
+        def __init__(self) -> None:
+            self.hw_error_byte = 0
+            self.cleared_count = 0
+            self.last_cmd = np.zeros(2, dtype=np.float32)
+
+        def _open(self) -> Any:
+            return "serial_bus"
+
+        def _release(self, device: Any) -> None:
+            pass
+
+        @property
+        def observation_features(self) -> dict[str, dict]:
+            return {"q": {"shape": (2,)}}
+
+        @property
+        def action_features(self) -> dict[str, dict]:
+            return {"q": {"shape": (2,)}}
+
+        def get_state(self) -> dict[str, Any]:
+            return {"q": self.last_cmd.copy(), "error_byte": self.hw_error_byte}
+
+        def get_observation(self) -> dict[str, np.ndarray]:
+            return {"q": self.read_state()["q"]}
+
+        def _inspect_state_health(self, state: Any) -> Optional[HealthStatus]:
+            err = int(state.get("error_byte", 0))
+            if err != 0:
+                return HealthStatus(
+                    healthy=False,
+                    level=FaultLevel.RECOVERABLE_FAULT,
+                    error_code=err,
+                    error_message=f"servo_error={err}",
+                )
+            return HealthStatus(healthy=True)
+
+        def clear_errors(self) -> bool:
+            self.hw_error_byte = 0
+            self.cleared_count += 1
+            return True
+
+        def send_action(self, action: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+            self.last_cmd = np.asarray(action["q"], dtype=np.float32)
+            return {"q": self.last_cmd}
+
+    servo = _SerialServoArm()
+    robot = Robot(arm=servo)
+    robot.connect()
+    try:
+        # A fault carried in the state read is recovered before the next command,
+        # which is then dropped so the arm holds; the one after drives again.
+        servo.hw_error_byte = 0x04
+        robot.get_observation()
+        assert robot.diagnose().error_code == 0x04
+        robot.send_action({"arm": {"q": np.array([0.1, 0.2], dtype=np.float32)}})
+        assert robot.consume_recovery_event()["error_code"] == 0x04
+        assert servo.cleared_count == 1 and robot.diagnose().healthy
+        assert np.allclose(servo.last_cmd, [0.0, 0.0])
+        robot.send_action({"arm": {"q": np.array([0.1, 0.2], dtype=np.float32)}})
+        assert np.allclose(servo.last_cmd, [0.1, 0.2])
+
+        # A fault reported from a background callback recovers the same way.
+        servo.report_health(
+            HealthStatus(
+                healthy=False,
+                level=FaultLevel.RECOVERABLE_FAULT,
+                error_code=99,
+                error_message="async_can_emcy",
+            )
+        )
+        robot.send_action({"arm": {"q": np.array([0.3, 0.4], dtype=np.float32)}})
+        assert robot.consume_recovery_event()["error_code"] == 99
+        assert servo.cleared_count == 2 and robot.diagnose().healthy
+    finally:
+        robot.disconnect()
+
+
+def test_setpoint_streamer_moves_within_limits_and_smooths_irregular_goals():
+    """Streamed setpoints respect limits, smooth irregular goals, and never carry a jump forward."""
+    from rlinf.robotics import MotionProfile, SetpointStreamer
+
+    dt = 0.01
+    # A step is approached within per-joint limits, keeping its direction.
+    streamer = SetpointStreamer(
+        np.zeros(3),
+        max_velocity=[1.5, 1.5, 0.5],
+        max_acceleration=6.0,
+        max_extrapolation_s=0.1,
+    )
+    goal = np.array([0.6, -0.3, 0.2])
+    streamer.set_goal(goal, 0.0)
+    path = np.array([streamer.step(k * dt, dt) for k in range(1, 400)])
+    velocity = np.diff(path, axis=0) / dt
+    assert np.all(np.abs(velocity).max(axis=0) <= np.array([1.5, 1.5, 0.5]) + 1e-9)
+    assert np.abs(np.diff(velocity, axis=0) / dt).max() <= 6.0 + 1e-6
+    assert np.max((path - goal) * np.sign(goal)) <= 1e-9
+    assert np.allclose(path[-1], goal)
+    assert np.allclose(path[50] / goal, (path[50] / goal)[0])
+
+    # Goals arriving at an irregular ~50 Hz yield a stream as fast as the goal.
+    rng = np.random.default_rng(0)
+    streamer = SetpointStreamer(
+        np.zeros(1), max_velocity=2.0, max_acceleration=8.0, max_extrapolation_s=0.1
+    )
+    t, next_goal, out = 0.0, 0.0, []
+    while t < 3.0:
+        t += dt
+        if t >= next_goal:
+            streamer.set_goal([0.4 * np.sin(1.5 * t + 1.0)], t)
+            next_goal = t + 0.02 + rng.uniform(-0.006, 0.006)
+        out.append(streamer.step(t, dt)[0])
+    speed = np.abs(np.diff(out[50:]) / dt)
+    assert speed.max() <= 0.65
+    assert np.std(np.diff(np.diff(out[50:]) / dt)) < 0.03
+
+    # Parts updated one at a time inside a couple of milliseconds are one
+    # command, so the velocity estimate survives.
+    streamer = SetpointStreamer(
+        np.zeros(2), max_velocity=2.0, max_acceleration=8.0, max_extrapolation_s=0.1
+    )
+    streamer.set_goal([0.0, 0.0], 0.0)
+    streamer.set_goal([0.01, 0.0], 0.02)
+    streamer.set_goal([0.01, 0.01], 0.0205)
+    assert np.allclose(streamer._goal_velocity, [0.01 / 0.0205] * 2)
+
+    # A goal faster than the velocity limit is a jump: no overshoot.
+    streamer = SetpointStreamer(
+        np.zeros(1), max_velocity=1.0, max_acceleration=4.0, max_extrapolation_s=0.1
+    )
+    streamer.set_goal([0.0], 0.0)
+    streamer.set_goal([1.0], 0.02)
+    peak = max(streamer.step(0.02 + k * dt, dt)[0] for k in range(1, 300))
+    assert peak <= 1.0 + 1e-9
+
+    # A timed move lasts its duration and reports completion; a goal preempts it.
+    streamer = SetpointStreamer(
+        np.zeros(2), max_velocity=1.0, max_acceleration=4.0, max_extrapolation_s=0.1
+    )
+    duration = MotionProfile().move_duration([0.3, 0.1], min_duration=2.0)
+    assert duration == 2.0
+    done = streamer.start_move([0.3, 0.1], 0.0, duration)
+    steps = 0
+    while not done.is_set():
+        steps += 1
+        streamer.step(steps * dt, dt)
+    assert steps == 200 and streamer.move_completed
+    done = streamer.start_move([0.0, 0.0], 2.0, 1.0)
+    streamer.set_goal([0.3, 0.1], 2.1)
+    assert done.is_set() and not streamer.move_completed
+    first_done = streamer.start_move([0.0, 0.0], 2.2, 1.0)
+    second_done = streamer.start_move([0.2, 0.0], 2.3, 1.0)
+    assert first_done.is_set() and not second_done.is_set()
+
+
+def test_motion_profile_sizes_moves_and_rejects_bad_limits():
+    """MotionProfile limits are physical, validated, and size raised-cosine moves."""
+    from rlinf.robotics import MotionProfile
+
+    profile = MotionProfile(max_joint_velocity=1.0, max_joint_acceleration=4.0)
+    # Peak raised-cosine speed pi*d/(2T) equals the limit.
+    assert np.isclose(profile.move_duration([1.5]), np.pi * 1.5 / 2.0)
+    assert np.isclose(
+        profile.move_duration([0.01], max_acceleration=0.5),
+        np.pi * np.sqrt(0.01 / 1.0),
+    )
+    assert profile.move_duration([0.0, 0.0], min_duration=0.7) == 0.7
+    tuned = MotionProfile.from_config({"max_joint_velocity": "2"}, defaults=profile)
+    assert tuned.max_joint_velocity == 2.0 and tuned.max_joint_acceleration == 4.0
+    with pytest.raises(KeyError, match="max_step"):
+        MotionProfile.from_config({"max_step": 0.01})
+    with pytest.raises(ValueError, match="max_joint_velocity"):
+        MotionProfile(max_joint_velocity=0.0)
+
+
+def test_batch_commands_reports_whether_staged_commands_ran():
+    """A batch scope reports its outermost flush, so staged moves cannot fail silently."""
+    from rlinf.robotics import Connection
+
+    class _StagingConnection(Connection):
+        def __init__(self) -> None:
+            self.result = True
+            self.flushes = 0
+
+        def _open(self) -> Any:
+            return "bus"
+
+        def _flush_command_batch(self) -> bool:
+            self.flushes += 1
+            return self.result
+
+    conn = _StagingConnection()
+    conn.connect()
+    try:
+        with conn.batch_commands() as outer:
+            with conn.batch_commands() as inner:
+                pass
+        assert outer.ok and inner.ok and conn.flushes == 1
+        conn.result = False
+        with conn.batch_commands() as failed:
+            pass
+        assert failed.ok is False
+    finally:
+        conn.disconnect()
+
+
+def test_joint_stream_streams_limited_setpoints_for_any_driver():
+    """JointStream needs only callables, so any position-streaming driver can use it."""
+    import threading
+
+    from rlinf.robotics import JointStream, MotionProfile
+
+    measured = np.array([0.1, -0.2])
+    sent: list[tuple[float, np.ndarray]] = []
+    fault = threading.Event()
+    starts: list[bool] = []
+    stream = JointStream(
+        send=lambda q: sent.append((time.monotonic(), q.copy())),
+        measure=lambda: measured.copy(),
+        faulted=fault.is_set,
+        limits=lambda: (np.array([1.0, 0.5]), np.array([4.0, 4.0])),
+        profile=lambda: MotionProfile(control_rate_hz=200.0),
+        on_start=lambda: starts.append(True),
+    )
+    stream.start()
+    try:
+        # Nothing goes out until a command; streaming then starts at the
+        # measured joints, after the driver's start hook.
+        time.sleep(0.05)
+        assert not sent and not stream.active
+        stream.track([0.4, 0.2])
+        assert _wait_until(lambda: sent and np.allclose(sent[-1][1], [0.4, 0.2]))
+        assert starts == [True]
+        assert np.allclose(sent[0][1], measured, atol=0.02)
+        steps = np.abs(np.diff(np.array([q for _, q in sent]), axis=0))
+        assert np.all(steps.max(axis=0) <= np.array([1.0, 0.5]) * 2 * 0.005 + 1e-9)
+
+        # A timed move lasts its duration and reports arrival.
+        started = time.monotonic()
+        assert stream.move([0.45, 0.25], duration=0.3)
+        assert time.monotonic() - started >= 0.29
+
+        # A newer move preempts a running move without losing its own completion.
+        first_result: list[bool] = []
+        first_thread = threading.Thread(
+            target=lambda: first_result.append(stream.move([0.0, 0.0], duration=0.4))
+        )
+        first_thread.start()
+        assert _wait_until(lambda: sent[-1][1][0] < 0.445)
+        assert stream.move([0.45, 0.25], duration=0.15)
+        first_thread.join(timeout=2.0)
+        assert first_result == [False]
+
+        # A fault stops sending and ends a move as not arrived.
+        fault.set()
+        assert _wait_until(lambda: not stream.active)
+        assert not stream.move([0.0, 0.0], duration=0.5)
+        count = len(sent)
+        time.sleep(0.05)
+        assert len(sent) == count and not stream.active
+        fault.clear()
+
+        # After a hold the next command starts again from the measured joints.
+        measured[:] = [0.3, 0.1]
+        stream.hold()
+        sent.clear()
+        stream.track([0.3, 0.1])
+        assert _wait_until(lambda: len(sent) > 2)
+        assert np.allclose(sent[0][1], [0.3, 0.1], atol=0.02)
+        assert len(starts) == 3
+    finally:
+        stream.close()
+    assert stream._thread is None
+
+
+def test_a_braked_setpoint_stream_stops_within_its_limits():
+    """Braking ends a move early, along its direction, within the acceleration limit."""
+    from rlinf.robotics import MotionProfile, SetpointStreamer
+
+    vmax, amax, dt = 1.0, 4.0, 0.01
+    target = np.array([1.0, -0.6, 0.3])
+    streamer = SetpointStreamer(
+        np.zeros(3), max_velocity=vmax, max_acceleration=amax, max_extrapolation_s=0.1
+    )
+    duration = MotionProfile().move_duration(
+        target, max_velocity=vmax, max_acceleration=amax
+    )
+    done = streamer.start_move(target, 0.0, duration)
+    path = [streamer.step(k * dt, dt) for k in range(1, int(0.5 * duration / dt))]
+    rest = streamer.brake()
+    now = len(path) * dt
+    path += [streamer.step(now + k * dt, dt) for k in range(1, 100)]
+
+    assert done.is_set() and not streamer.move_completed
+    # The arm stops ahead of where it was braked, short of the old target.
+    braked_at = path[int(0.5 * duration / dt) - 2]
+    assert np.all(np.sign(rest - braked_at) == np.sign(target))
+    assert np.all(np.abs(rest) < np.abs(target))
+    velocity = np.diff(path, axis=0) / dt
+    assert np.abs(np.diff(velocity, axis=0)).max() <= amax * dt + 1e-9
+    assert np.max((np.asarray(path) - rest) * np.sign(target)) < 1e-4
+    np.testing.assert_allclose(path[-1], rest, atol=1e-6)
+
+
+def _wait_until(predicate: Any, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
+
+
+def _r2_robot(**settings: Any) -> Any:
+    from rlinf.robotics import R2Robot
+
+    defaults = {
+        "body_dof": 21,
+        "end_effector_type": "gripper",
+        "enable_base": False,
+        "cameras": (),
+    }
+    return R2Robot.build(**{**defaults, **settings})
+
+
+def test_r2_robot_variants_read_and_command_the_robot_interface():
+    """Every R2 variant reads its parts and commands them through /robotic/*."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.discovery import RobotDiscovery
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_HAND_FINGER_ORDER,
+        R2_LEFT_READY_QPOS,
+        R2_MODE_MANUAL_DRAG,
+        R2_RIGHT_READY_QPOS,
+        R2Connection,
+        compute_r2_arm_cartesian_step,
+        compute_r2_arm_fk_and_jacobian,
+        infer_r2_hardware,
+    )
+    from rlinf.robotics.robots.r2 import R2Config
+
+    p_r0, _, _, _ = compute_r2_arm_fk_and_jacobian("right", R2_RIGHT_READY_QPOS)
+    q_r_fwd = compute_r2_arm_cartesian_step(
+        "right", R2_RIGHT_READY_QPOS, [0.04, 0.0, 0.0]
+    )
+    p_r1, _, _, _ = compute_r2_arm_fk_and_jacobian("right", q_r_fwd)
+    assert np.allclose(p_r1 - p_r0, [0.04, 0.0, 0.0], atol=2e-3)
+    p_l0, _, _, _ = compute_r2_arm_fk_and_jacobian("left", R2_LEFT_READY_QPOS)
+    q_l_up = compute_r2_arm_cartesian_step("left", R2_LEFT_READY_QPOS, [0.0, 0.0, 0.04])
+    p_l1, _, _, _ = compute_r2_arm_fk_and_jacobian("left", q_l_up)
+    assert np.allclose(p_l1 - p_l0, [0.0, 0.0, 0.04], atol=2e-3)
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        # The 21-DoF gripper body with chassis and depth cameras.
+        robot = _r2_robot(
+            enable_base=True,
+            cameras=("head", "wrist_left", "wrist_right"),
+            enable_depth=True,
+        )
+        assert not robot.is_connected
+        robot.connect()
+        try:
+            obs = robot.get_observation()
+            assert obs["left"]["arm"]["joint_position"].shape == (7,)
+            assert obs["right"]["gripper"]["state"].shape == (1,)
+            assert obs["base"]["base_pose"].shape == (3,)
+            assert obs["head"]["frame"].shape == (720, 1280, 3)
+            assert obs["head"]["depth"].shape == (720, 1280)
+            assert obs["wrist_left"]["frame"].shape == (480, 640, 3)
+
+            left_q = np.array([0.1, 0.3, 0.2, -0.4, 0.1, 0.1, 0.1], dtype=np.float32)
+            robot.send_action(
+                {
+                    "left": {
+                        "arm": {"joint_position": left_q},
+                        "gripper": {"target": np.array([0.25], dtype=np.float32)},
+                    },
+                    "right": {"gripper": {"target": np.array([1.0], dtype=np.float32)}},
+                    "base": {
+                        "base_velocity": np.array([0.2, -0.1, 0.05], dtype=np.float32)
+                    },
+                }
+            )
+            arm = robot.child("left").child("arm")
+            assert _wait_until(
+                lambda: np.allclose(arm.get_observation()["joint_position"], left_q)
+            )
+            after = robot.get_observation()
+            assert np.allclose(after["left"]["gripper"]["state"], [0.25])
+            # The right gripper's default minimum closure keeps it from opening fully.
+            assert np.allclose(after["right"]["gripper"]["state"], [0.85])
+            assert np.allclose(after["base"]["base_velocity"], [0.2, -0.1, 0.05])
+            assert np.allclose(controller.base_commands[-1], [0.2, -0.1, 0.05])
+            robot.child("base").stop()
+            assert np.allclose(controller.base_commands[-1], [0.0, 0.0, 0.0])
+
+            robot.configure_motion_profile(
+                control_rate_hz=200.0, max_joint_velocity=1.5
+            )
+            conn = robot.owners()[0]
+            assert conn.motion_profile.max_joint_velocity == 1.5
+            assert np.isclose(conn.motion_profile.dt, 0.005)
+            with robot.batch_commands() as batch:
+                robot.child("left").child("arm").reset_joint(np.zeros(7), duration=0.2)
+                robot.child("right").child("arm").reset_joint(np.zeros(7), duration=0.2)
+            assert batch.ok
+            assert _wait_until(
+                lambda: np.allclose(
+                    robot.get_observation()["left"]["arm"]["joint_position"],
+                    0,
+                    atol=1e-4,
+                )
+            )
+            assert robot.child("left").child("arm").clear_errors()
+
+            fk = conn.forward_kinematics(np.zeros(14))
+            assert fk["left_tcp_pose"].shape == (6,)
+            assert np.allclose(
+                conn.forward_kinematics(np.zeros(19))["left_tcp_pose"],
+                fk["left_tcp_pose"],
+            )
+            assert conn.switch_controller(R2_MODE_MANUAL_DRAG)
+            assert controller.run_mode == R2_MODE_MANUAL_DRAG
+        finally:
+            robot.disconnect()
+
+        # A 20-DoF body with dexterous hands, detected from its joint names.
+        controller.configure(body_dof=20, end_effector_type="hand")
+        assert infer_r2_hardware(list(controller.joints)) == (20, "hand")
+        assert R2Connection.probe_hardware() == (20, "hand")
+        resources = RobotDiscovery.registry["R2"].discovery_cls.enumerate(
+            node_rank=0, configs=[R2Config(node_rank=0, cameras=[])]
+        )
+        resolved = resources.infos[0].config
+        assert (resolved.body_dof, resolved.end_effector_type) == (20, "hand")
+        hand_robot = _r2_robot(body_dof=None, end_effector_type="auto")
+        hand_robot.connect()
+        conn = hand_robot.owners()[0]
+        try:
+            assert (conn.body_dof, conn.end_effector_type) == (20, "hand")
+            fingers = np.linspace(0.1, 0.6, len(R2_HAND_FINGER_ORDER), dtype=np.float32)
+            hand_robot.send_action({"left": {"hand": {"target": fingers}}})
+            assert _wait_until(
+                lambda: np.allclose(
+                    hand_robot.get_observation()["left"]["hand"]["state"], fingers
+                )
+            )
+            conn.move_neck_joint(np.array([0.3, 0.1], dtype=np.float32))
+            assert _wait_until(
+                lambda: np.isclose(controller.joints["J_NeckPitch"], 0.1)
+            )
+            # The 20-DoF frame packs neck pitch only.
+            assert len(controller.frames[-1][1]) == 20
+        finally:
+            hand_robot.disconnect()
+
+
+def test_r2_streams_commands_from_a_fixed_rate_servo_loop():
+    """Commands only move a goal; a 100 Hz loop streams limited setpoints."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_MAX_JOINT_VELOCITY,
+        R2_WAIST_MAX_VELOCITY,
+        R2KinematicsAdapter,
+    )
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        robot = _r2_robot()
+        robot.connect()
+        conn = robot.owners()[0]
+        try:
+            target = np.array([0.3, 0.5, 0.3, -0.5, 0.3, 0.3, 0.3], dtype=np.float32)
+            started = time.monotonic()
+            robot.send_action({"left": {"arm": {"joint_position": target}}})
+            assert time.monotonic() - started < 0.05
+            arm = robot.child("left").child("arm")
+            assert _wait_until(
+                lambda: np.allclose(arm.get_observation()["joint_position"], target)
+            )
+            frames = list(controller.frames)
+            times = np.array([f[0] for f in frames])
+            joints = np.array([f[1] for f in frames])
+            assert 90.0 < len(frames) / (times[-1] - times[0]) < 110.0
+            assert np.abs(np.diff(joints, axis=0)).max() <= R2_MAX_JOINT_VELOCITY * 0.02
+
+            # A timed move lasts at least its duration; the waist stays slower.
+            started = time.monotonic()
+            assert conn.move_body_smooth(waist=[0.2, 0.2, 0.0, 0.0, 0.0], duration=0.3)
+            assert (
+                time.monotonic() - started
+                >= np.pi * 0.2 / (2.0 * R2_WAIST_MAX_VELOCITY) - 0.02
+            )
+            controller.frames.clear()
+            assert conn.move_body_smooth(waist=[0.0] * 5)
+            waist = np.array([f[1][:5] for f in controller.frames])
+            assert np.abs(np.diff(waist, axis=0)).max() <= R2_WAIST_MAX_VELOCITY * 0.02
+
+            # tcp_pose streams a full 6-DoF IK solution, orientation included.
+            seed = np.array([-0.35, 0.2, 1.0, -0.7, 0.0, -0.3, 0.0], dtype=np.float32)
+            assert conn.move_body_smooth(left_arm=seed, duration=0.2)
+            solver = R2KinematicsAdapter("left", waist_qpos=np.zeros(5))
+            start = solver.fk(seed)
+            pose = np.concatenate(
+                [
+                    start[:3, 3] + [0.03, 0.0, 0.02],
+                    (
+                        R.from_euler("z", 10.0, degrees=True)
+                        * R.from_matrix(start[:3, :3])
+                    ).as_euler("xyz"),
+                ]
+            )
+            robot.send_action({"left": {"arm": {"tcp_pose": pose}}})
+
+            def _reached() -> bool:
+                reached = solver.fk(arm.get_observation()["joint_position"])
+                turned = (
+                    R.from_matrix(reached[:3, :3]) * R.from_euler("xyz", pose[3:]).inv()
+                )
+                return (
+                    np.linalg.norm(reached[:3, 3] - pose[:3]) < 3e-3
+                    and turned.magnitude() < 0.03
+                )
+
+            assert _wait_until(_reached)
+            assert np.allclose(
+                arm.get_observation()["tcp_pose"][:3], pose[:3], atol=3e-3
+            )
+            with pytest.raises(ValueError, match="no IK solution"):
+                conn.inverse_kinematics(left_tcp_pose=pose + [3.0, 0, 0, 0, 0, 0])
+            assert not conn.move_left_arm_cartesian(pose + [3.0, 0, 0, 0, 0, 0])
+        finally:
+            robot.disconnect()
+        assert conn._stream._thread is None
+
+
+def test_r2_hold_stops_a_running_move_and_base_pulse_where_they_are():
+    """hold() ends a move early; the next command starts from where the arm stopped."""
+    from robot_mocks import mocked_sdks
+
+    def _settled(arm: Any) -> bool:
+        before = arm.get_observation()["joint_position"]
+        time.sleep(0.05)
+        return np.allclose(arm.get_observation()["joint_position"], before, atol=1e-4)
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        robot = _r2_robot(enable_base=True)
+        robot.connect()
+        conn = robot.owners()[0]
+        arm = robot.child("left").child("arm")
+        try:
+            target = np.array([0.6, 0.5, 0.3, -0.8, 0.3, 0.3, 0.3], dtype=np.float32)
+            moved: dict[str, bool] = {}
+            mover = threading.Thread(
+                target=lambda: moved.setdefault(
+                    "ok", conn.move_body_smooth(left_arm=target, max_velocity=0.5)
+                )
+            )
+            mover.start()
+            time.sleep(0.4)
+            conn.hold()
+            mover.join(timeout=2.0)
+
+            assert moved == {"ok": False}
+            assert _wait_until(lambda: _settled(arm))
+            stopped = arm.get_observation()["joint_position"]
+            assert 0.05 < np.abs(stopped).max() and not np.allclose(
+                stopped, target, atol=0.05
+            )
+            # A head move afterwards leaves the stopped arm where it is.
+            assert conn.move_body_smooth(neck=[0.1, -0.2])
+            np.testing.assert_allclose(
+                arm.get_observation()["joint_position"], stopped, atol=1e-3
+            )
+
+            pulse = threading.Thread(
+                target=conn.move_base_pulse,
+                args=([0.2, 0.0, 0.0],),
+                kwargs={"duration": 3.0},
+            )
+            started = time.monotonic()
+            pulse.start()
+            time.sleep(0.3)
+            conn.hold()
+            pulse.join(timeout=2.0)
+            assert not pulse.is_alive() and time.monotonic() - started < 1.5
+            assert controller.base_commands[-1] == [0.0, 0.0, 0.0]
+        finally:
+            robot.disconnect()
+
+
+def test_r2_fault_handling_follows_the_controller_codes():
+    """Faults come from the robot's own codes; an emergency stop is never auto-cleared."""
+    from robot_mocks import mocked_sdks
+
+    from rlinf.robotics import FaultLevel
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_MODE_AUTO,
+        R2_MODE_SERVOJ,
+        R2_SYSTEM_STATE_EMERGENCY_STOP,
+        R2Connection,
+    )
+
+    q = np.array([0.1, 0.1, 0.1, -0.1, 0.1, 0.1, 0.1], dtype=np.float32)
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        assert R2Connection().enable_fault_recovery is True
+        robot = _r2_robot(max_recovery_attempts=2)
+        robot.connect()
+        conn = robot.owners()[0]
+        arm = robot.child("left").child("arm")
+
+        def _drive(target: np.ndarray) -> None:
+            robot.send_action({"left": {"arm": {"joint_position": target}}})
+            assert _wait_until(
+                lambda: np.allclose(arm.get_observation()["joint_position"], target)
+            )
+
+        def _holds_then_drives(target: np.ndarray, level: str) -> dict:
+            held = arm.get_observation()["joint_position"]
+            robot.send_action({"left": {"arm": {"joint_position": target}}})
+            event = robot.consume_recovery_event()
+            assert event["level"] == level
+            time.sleep(0.1)
+            assert np.allclose(arm.get_observation()["joint_position"], held)
+            _drive(target)
+            return event
+
+        try:
+            assert robot.diagnose().level == FaultLevel.OK
+            _drive(q)
+
+            # A rejected request and a status code leave the robot healthy.
+            controller.service_errors["/clear_faults"] = 201
+            conn._call_service("/clear_faults", lambda _req: None)
+            controller.service_errors["/clear_faults"] = 11
+            conn._call_service("/clear_faults", lambda _req: None)
+            controller.service_errors.clear()
+            assert not conn._has_active_fault()
+
+            # A controller that left ServoJ is switched back, and the step holds.
+            controller.run_mode = R2_MODE_AUTO
+            assert robot.diagnose().level == FaultLevel.MODE_DROP
+            event = _holds_then_drives(q * 2, "mode_drop")
+            assert event["action"] == "switch_controller(SERVOJ)"
+            assert controller.run_mode == R2_MODE_SERVOJ
+
+            # A motion fault from the health monitor is cleared, and the step holds.
+            controller.report_health("M.ARM-E-501")
+            assert robot.diagnose().level == FaultLevel.RECOVERABLE_FAULT
+            event = _holds_then_drives(q, "recoverable_fault")
+            assert "M.ARM-E-501" in event["error_message"]
+
+            # A collision stays latched after the monitor drops it from its list.
+            controller.report_health(
+                "C.MC-E-804", message="GENERAL_ERROR(MOTION,COLLISION_DETECTED,robot)"
+            )
+            controller.report_health("", severity=0)
+            status = robot.diagnose()
+            assert status.error_code == 304 and "C.MC-E-804" in status.error_message
+
+            # With recovery off a fault stays until recovered by hand.
+            conn._recovery_timestamps.clear()
+            robot.configure_fault_recovery(enable_fault_recovery=False)
+            robot.send_action({"left": {"arm": {"joint_position": q * 2}}})
+            assert robot.consume_recovery_event() is None
+            assert robot.diagnose().error_code == 304
+            assert robot.recover(trigger="manual").healthy
+            assert robot.consume_recovery_event()["trigger"] == "manual"
+            robot.configure_fault_recovery(enable_fault_recovery=True)
+
+            # A fault the controller keeps re-raising trips the circuit breaker.
+            conn._recovery_timestamps.clear()
+            controller.state, controller.error_code = 4, 501
+            controller.clearable = False
+            robot.diagnose()
+            for _ in range(2):
+                robot.send_action({"left": {"arm": {"joint_position": q}}})
+            with pytest.raises(RuntimeError, match="exceeded max_recovery_attempts=2"):
+                robot.send_action({"left": {"arm": {"joint_position": q}}})
+            controller.clearable = True
+            assert conn.clear_errors() and robot.diagnose().healthy
+
+            # An emergency stop stops the stream, refuses automatic recovery, and
+            # stays latched after release until a person clears it.
+            conn._recovery_timestamps.clear()
+            _drive(q * 2)
+            controller.set_main_state(R2_SYSTEM_STATE_EMERGENCY_STOP)
+            assert robot.diagnose().level == FaultLevel.UNRECOVERABLE_FAULT
+            sent = len(controller.frames)
+            with pytest.raises(RuntimeError, match="emergency stop"):
+                robot.send_action({"left": {"arm": {"joint_position": q}}})
+            time.sleep(0.1)
+            assert len(controller.frames) == sent
+            controller.set_main_state(4)
+            assert robot.diagnose().level == FaultLevel.UNRECOVERABLE_FAULT
+            assert conn.clear_errors() and robot.diagnose().healthy
+        finally:
+            robot.disconnect()
+
+        # Connecting during an emergency stop fails and releases what it opened.
+        controller.set_main_state(R2_SYSTEM_STATE_EMERGENCY_STOP)
+        robot = _r2_robot()
+        with pytest.raises(RuntimeError, match="emergency stop"):
+            robot.connect()
+        assert not robot.is_connected
+        assert robot.owners()[0]._stream._thread is None
+        assert not any(controller.readers.values())
+        controller.set_main_state(4)
+
+        # A robot that reports no joint states is refused rather than streamed blind.
+        controller.silent = True
+        robot = _r2_robot()
+        with pytest.raises(RuntimeError, match="joint_states"):
+            robot.connect()
+        assert not robot.is_connected
+
+
+def test_r2_servo_loop_stops_quietly_only_when_ros_shuts_down(caplog):
+    """A send failing after ROS 2 shut down is shutdown; any other failure is an error."""
+    import logging
+
+    from robot_mocks import mocked_sdks
+
+    with mocked_sdks() as made:
+        controller = made["rframe"].controller
+        robot = _r2_robot()
+        robot.connect()
+        conn = robot.owners()[0]
+        q = np.array([0.1, 0.1, 0.1, -0.1, 0.1, 0.1, 0.1], dtype=np.float32)
+        try:
+            for flag, level in (
+                ("send_fails", logging.ERROR),
+                ("shut_down", logging.INFO),
+            ):
+                caplog.clear()
+                with caplog.at_level(logging.INFO):
+                    setattr(controller, flag, True)
+                    robot.send_action({"left": {"arm": {"joint_position": q}}})
+                    assert _wait_until(lambda: not conn._stream.active)
+                    setattr(controller, flag, False)
+                stopped = [
+                    r for r in caplog.records if "servo loop stopped" in r.message
+                ]
+                assert [r.levelno for r in stopped] == [level]
+                q = q * 2
+        finally:
+            robot.disconnect()
+
+
+def test_r2_kinematics_adapter_and_pico_joint():
+    """R2KinematicsAdapter solves 6-DoF TCP targets on 7-DoF R2 arms and drives PicoJoint."""
+    import json
+
+    import numpy as np
+    from robot_mocks import mocked_sdks
+    from robot_mocks.teleop import pico_packet
+    from scipy.spatial.transform import Rotation as R
+
+    from rlinf.robotics.parts.arms import (
+        R2IKConfig,
+        R2KinematicsAdapter,
+    )
+    from rlinf.robotics.parts.arms.r2 import (
+        R2_LEFT_HOME_QPOS,
+        R2_LEFT_READY_QPOS,
+        R2_RIGHT_HOME_QPOS,
+        R2_RIGHT_READY_QPOS,
+    )
+    from rlinf.robotics.parts.teleop import PicoJoint
+
+    for side, home_q, seed in (
+        ("left", R2_LEFT_HOME_QPOS, R2_LEFT_READY_QPOS),
+        ("right", R2_RIGHT_HOME_QPOS, R2_RIGHT_READY_QPOS),
+    ):
+        solver = R2KinematicsAdapter(side, config=R2IKConfig())
+        zero_pose = solver.fk(np.zeros(7, dtype=np.float64))
+        home_pose = solver.fk(home_q)
+        assert float(home_pose[0, 3]) > float(zero_pose[0, 3]) + 0.05
+        assert abs(float(home_pose[1, 3])) > abs(float(zero_pose[1, 3])) + 0.01
+        for alpha in np.linspace(0.0, 1.0, 11):
+            q_interp = (1.0 - alpha) * home_q + alpha * seed
+            assert abs(float(q_interp[1])) >= 0.199
+        start_pose = solver.fk(seed)
+        assert start_pose.shape == (4, 4)
+
+        # 3 cm forward (+X), 2 cm up (+Z), and 5 deg yaw rotation
+        target = start_pose.copy()
+        target[:3, 3] += np.array([0.03, 0.0, 0.02], dtype=np.float64)
+        target[:3, :3] = (
+            R.from_euler("z", 5.0, degrees=True).as_matrix() @ start_pose[:3, :3]
+        )
+        res = solver.solve(target, seed)
+        assert res.success is True, f"{side} solve failed: {res.reason}"
+        assert res.position_error < solver.config.position_tolerance
+        assert res.rotation_error < solver.config.rotation_tolerance
+        reached = solver.fk(res.q_target)
+        assert np.allclose(reached[:3, 3], target[:3, 3], atol=2e-3)
+
+        # 10 cm forward (+X) boundary projection from ready pose succeeds without residual freeze
+        fwd_target = start_pose.copy()
+        fwd_target[:3, 3] += np.array([0.10, 0.0, 0.0], dtype=np.float64)
+        fwd_res = solver.solve(fwd_target, seed)
+        assert fwd_res.success is True, (
+            f"{side} 10cm forward solve failed: {fwd_res.reason}"
+        )
+        fwd_reached = solver.fk(fwd_res.q_target)
+        assert fwd_reached[0, 3] > start_pose[0, 3] + 0.03
+
+        # Large 44 cm + 60 deg teleop sweep clamps lookahead and succeeds on first try
+        sweep_target = start_pose.copy()
+        sweep_target[:3, 3] += np.array([0.25, -0.35, 0.10], dtype=np.float64)
+        sweep_target[:3, :3] = (
+            R.from_euler("xyz", [30.0, -25.0, 45.0], degrees=True).as_matrix()
+            @ start_pose[:3, :3]
+        )
+        sweep_res = solver.solve(sweep_target, seed)
+        assert sweep_res.success is True, (
+            f"{side} large sweep solve failed: {sweep_res.reason}"
+        )
+
+        # Out-of-limits seed is rejected immediately
+        bad_seed = seed.copy()
+        bad_seed[0] = 10.0
+        bad_res = solver.solve(target, bad_seed)
+        assert bad_res.success is False
+        assert bad_res.reason == "seed_out_of_limits"
+
+        # Unreachable target 5 meters away fails cleanly
+        far_target = start_pose.copy()
+        far_target[:3, 3] += np.array([5.0, 0.0, 0.0], dtype=np.float64)
+        far_res = solver.solve(far_target, seed)
+        assert far_res.success is False
+
+    # Drive 7-DoF R2 right arm through PicoJoint even when headset pose is untracked (required=False)
+    with mocked_sdks():
+        from rlinf.robotics.parts.transports import pico as transport
+
+        zmq = transport.zmq
+        pico = PicoJoint(
+            kinematics=lambda: R2KinematicsAdapter("right"),
+            joints=slice(0, 7),
+            grip=slice(7, 8),
+            joint_step_limits=(0.08, 0.08, 0.08, 0.08, 0.12, 0.12, 0.12),
+            hand="right",
+            zmq_addr="tcp://x:1",
+            gripper_trigger="trigger",
+            gripper_while_idle=True,
+            pause_on_controller_loss=True,
+            calibration={
+                "enabled": True,
+                "auto_calibrate_on_start": True,
+                "required": False,
+                "button": "trigger",
+            },
+        )
+        context = {
+            "joint_positions": np.concatenate(
+                [R2_RIGHT_READY_QPOS.astype(np.float64), [1.0]]
+            )
+        }
+        pico.connect()
+        try:
+            untracked_headset_pkt = json.loads(pico_packet())
+            untracked_headset_pkt["headset_pose"] = [0.0] * 7
+            idle = _settle(
+                zmq,
+                pico,
+                json.dumps(untracked_headset_pkt),
+                lambda r: r["ready"] and r["calibrated"] and not r["held"],
+            )
+            assert not pico.action(idle, context).driving
+
+            held_pkt = json.loads(pico_packet(right={"grip": 1.0}))
+            held_pkt["headset_pose"] = [0.0] * 7
+            held = _settle(zmq, pico, json.dumps(held_pkt), lambda r: r["held"])
+            anchored = pico.action(held, context)
+            assert anchored.driving
+            assert np.allclose(anchored.parts["arm"], R2_RIGHT_READY_QPOS, atol=1e-4)
+
+            moved = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0, "position": [0.0, 0.0, -0.04]}),
+                lambda r: r["position_delta"][0] > 0.03,
+            )
+            step = pico.action(moved, context)
+            assert step.driving
+            assert step.info["ik_fault"] is None
+            fk_before = pico._kinematics.fk(R2_RIGHT_READY_QPOS)
+            fk_after = pico._kinematics.fk(step.parts["arm"])
+            assert fk_after[0, 3] > fk_before[0, 3] + 0.008
+
+            # Clutching / re-grip: release side button, relocate and rotate controller
+            # in space, then re-squeeze side button at the displaced arm posture.
+            displaced_q = step.parts["arm"].astype(np.float64).copy()
+            displaced_ctx = {
+                "joint_positions": np.concatenate([displaced_q, [1.0]]),
+            }
+            _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 0.0,
+                        "position": [0.25, -0.15, 0.30],
+                        "orientation": list(
+                            R.from_euler(
+                                "xyz", [20.0, -15.0, 35.0], degrees=True
+                            ).as_quat()
+                        ),
+                    }
+                ),
+                lambda r: not r["held"],
+            )
+            regrip_pose = [0.25, -0.15, 0.30]
+            regrip_quat = list(
+                R.from_euler("xyz", [20.0, -15.0, 35.0], degrees=True).as_quat()
+            )
+            regripped = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 1.0,
+                        "position": regrip_pose,
+                        "orientation": regrip_quat,
+                    }
+                ),
+                lambda r: r["held"] and r["grip_epoch"] >= 2,
+            )
+            # Even if action() was not called during the released interval,
+            # the incremented grip_epoch re-anchors _held_from to displaced_q
+            # with zero posture jump.
+            regrip_anchor = pico.action(regripped, displaced_ctx)
+            assert regrip_anchor.driving
+            assert np.allclose(regrip_anchor.parts["arm"], displaced_q, atol=1e-4)
+
+            # Moving left (-X in PICO = +Y in robot) from the re-gripped anchor
+            # tracks smoothly in +Y without snapping back toward READY_QPOS.
+            regrip_moved = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 1.0,
+                        "position": [
+                            regrip_pose[0] - 0.04,
+                            regrip_pose[1],
+                            regrip_pose[2],
+                        ],
+                        "orientation": regrip_quat,
+                    }
+                ),
+                lambda r: r["position_delta"][1] > 0.03,
+            )
+            regrip_step = pico.action(regrip_moved, displaced_ctx)
+            assert regrip_step.driving
+            assert regrip_step.info["ik_fault"] is None
+            fk_regrip_before = pico._kinematics.fk(displaced_q)
+            fk_regrip_after = pico._kinematics.fk(regrip_step.parts["arm"])
+            assert fk_regrip_after[1, 3] > fk_regrip_before[1, 3] + 0.008
+
+            # Index trigger closes gripper even when grip is released, and
+            # intermediate encoder feedback (0.65) does not overwrite the 0.0 target.
+            trig_close = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 0.0, "trigger": 0.9, "axis": [0.5, -0.8]}),
+                lambda r: not r["held"] and r["grip_close"] and r["axis"][0] > 0.4,
+            )
+            act_close = pico.action(trig_close, context)
+            assert act_close.driving
+            assert act_close.parts["end_effector"][0] == pytest.approx(0.0)
+
+            mid_travel_ctx = {
+                "joint_positions": np.concatenate(
+                    [R2_RIGHT_READY_QPOS.astype(np.float64), [0.65]]
+                )
+            }
+            trig_hold_closed = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 0.0, "trigger": 0.9}),
+                lambda r: not r["held"] and r["grip_close"],
+            )
+            assert pico.action(trig_hold_closed, mid_travel_ctx).parts["end_effector"][
+                0
+            ] == pytest.approx(0.0)
+
+            # Releasing index trigger opens gripper back to 1.0, and reading
+            # last_reading does not consume the falling-edge open_pressed state.
+            trig_open = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 0.0, "trigger": 0.0}),
+                lambda r: not r["held"] and r["grip_open"],
+            )
+            assert pico._device.last_reading["grip_open"] is True
+            act_open = pico.action(trig_open, mid_travel_ctx)
+            assert act_open.driving
+            assert act_open.parts["end_effector"][0] == pytest.approx(1.0)
+
+            # Even when optical 6-DoF pose is untracked (invalid_pose=True),
+            # trigger/button closes the gripper and hold_until_released preserves
+            # the latched 0.0 target instead of freezing at mid-travel 0.65.
+            untracked_close = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 0.0,
+                        "trigger": 0.9,
+                        "orientation": [0.0, 0.0, 0.0, 0.0],
+                    }
+                ),
+                lambda r: r.get("invalid_pose") and r["grip_close"],
+            )
+            act_untracked_close = pico.action(untracked_close, mid_travel_ctx)
+            assert act_untracked_close.driving
+            assert act_untracked_close.parts["end_effector"][0] == pytest.approx(0.0)
+
+            untracked_idle = _settle(
+                zmq,
+                pico,
+                pico_packet(
+                    right={
+                        "grip": 0.0,
+                        "trigger": 0.9,
+                        "orientation": [0.0, 0.0, 0.0, 0.0],
+                    }
+                ),
+                lambda r: r.get("invalid_pose"),
+            )
+            untracked_idle = {**untracked_idle, "grip_close": False, "grip_open": False}
+            act_untracked_hold = pico.action(untracked_idle, mid_travel_ctx)
+            assert not act_untracked_hold.driving
+            assert act_untracked_hold.parts["end_effector"][0] == pytest.approx(0.0)
+
+            # Because grip was released (0.0) while untracked, squeezing grip on
+            # the very first valid-pose frame immediately drives the arm without
+            # requiring a second release-and-squeeze cycle.
+            reengaged = _settle(
+                zmq,
+                pico,
+                pico_packet(right={"grip": 1.0, "position": [0.0, 0.0, 0.0]}),
+                lambda r: r["held"] and not r.get("invalid_pose", False),
+            )
+            assert pico.action(reengaged, mid_travel_ctx).driving
+        finally:
+            pico.disconnect()
+
+
+def wheel_command(
+    x: float,
+    y: float,
+    theta: float,
+    *,
+    wheel_radius: float = 0.05,
+    base_radius: float = 0.125,
+    max_raw: int = 3000,
+) -> dict[str, int]:
+    """Return the servo command the base sends for one body velocity."""
+    raw = body_to_wheel_raw(
+        x, y, theta, wheel_radius=wheel_radius, base_radius=base_radius
+    )
+    return limit_wheel_raw(raw, max_raw)[0]
+
+
+class TestLeKiwi(unittest.TestCase):
+    def setUp(self) -> None:
+        self.args = parse_args(["teleop", "--port", "fake", "--fps", "1000"])
+        self.params = {
+            "wheel_radius": self.args.wheel_radius,
+            "base_radius": self.args.base_radius,
+            "max_raw": self.args.max_raw,
+            "fps": self.args.fps,
+        }
+
+    def test_keys_and_opposing_directions(self) -> None:
+        control = KeyboardControl()
+        for key, expected in {
+            "w": (0.1, 0.0, 0.0),
+            "s": (-0.1, 0.0, 0.0),
+            "a": (0.0, 0.1, 0.0),
+            "d": (0.0, -0.1, 0.0),
+            "z": (0.0, 0.0, 30.0),
+            "x": (0.0, 0.0, -30.0),
+        }.items():
+            with self.subTest(key=key):
+                self.assertEqual(control.action({key}), expected)
+        self.assertEqual(control.action(set("wasdzx")), (0.0, 0.0, 0.0))
+        self.assertEqual(control.action(set()), (0.0, 0.0, 0.0))
+
+    def test_speed_changes_once_per_press_and_stays_in_range(self) -> None:
+        control = KeyboardControl()
+        for _ in range(5):
+            self.assertEqual(control.action({"r", "w"})[0], 0.2)
+        control.action(set())
+        self.assertEqual(control.action({"r", "w"})[0], 0.3)
+        for _ in range(5):
+            control.action(set())
+            self.assertEqual(control.action({"r", "w"})[0], 0.3)
+        for _ in range(5):
+            control.action({"f"})
+            control.action(set())
+        self.assertEqual(control.action({"w"})[0], 0.1)
+
+    def test_release_and_quit_stop_wheels(self) -> None:
+        keyboard = FakeKeyboard([{"W"}, set(), {"a"}, {"q", "w"}])
+        bus = FakeWheelBus()
+        run_teleoperation(keyboard, bus, **self.params)
+        self.assertEqual(bus.commands[0], wheel_command(0.1, 0, 0))
+        self.assertFalse(any(bus.commands[1].values()))
+        self.assertEqual(len(bus.commands), 4)
+        self.assertFalse(any(bus.commands[-1].values()))
+        self.assert_stopped(bus, keyboard)
+
+    def test_listener_loss_stops_without_replaying_held_key(self) -> None:
+        keyboard = FakeKeyboard([{"w"}, None])
+        bus = FakeWheelBus()
+        run_teleoperation(keyboard, bus, **self.params)
+        self.assertEqual(len(bus.commands), 2)
+        self.assertFalse(any(bus.commands[-1].values()))
+        self.assert_stopped(bus, keyboard)
+
+    def test_no_keyboard_never_opens_usb(self) -> None:
+        keyboard = FakeKeyboard([], available=False)
+        bus = FakeWheelBus()
+        with self.assertRaisesRegex(RuntimeError, "Keyboard capture"):
+            run_teleoperation(keyboard, bus, **self.params)
+        self.assertFalse(bus.connect_attempted)
+
+    def test_interrupt_and_input_error_stop_wheels(self) -> None:
+        for error in (KeyboardInterrupt(), RuntimeError("input failure")):
+            with self.subTest(error=type(error).__name__):
+                keyboard = FakeKeyboard([{"z"}, error])
+                bus = FakeWheelBus()
+                with self.assertRaises(type(error)):
+                    run_teleoperation(keyboard, bus, **self.params)
+                self.assert_stopped(bus, keyboard)
+
+    def test_movement_error_stops_and_closes_usb(self) -> None:
+        keyboard = FakeKeyboard([{"w"}])
+        bus = FakeWheelBus(fail_motion=True)
+        with self.assertRaisesRegex(OSError, "USB error"):
+            run_teleoperation(keyboard, bus, **self.params)
+        self.assert_stopped(bus, keyboard)
+
+    def test_unreachable_wheel_does_not_prevent_other_stops_or_port_close(self) -> None:
+        keyboard = FakeKeyboard([{"z"}])
+        bus = FakeWheelBus(fail_motion=True, lost_wheel="left")
+        with self.assertRaises(OSError):
+            run_teleoperation(keyboard, bus, **self.params)
+        self.assertEqual(bus.stop_attempts[-3:], ["left", "back", "right"])
+        self.assertEqual(bus.disable_attempts[-3:], ["left", "back", "right"])
+        self.assertEqual(bus.velocity["back"], 0)
+        self.assertEqual(bus.velocity["right"], 0)
+        self.assertFalse(bus.is_connected)
+        self.assertFalse(keyboard.is_connected)
+
+    def test_partial_connection_failure_closes_port(self) -> None:
+        keyboard = FakeKeyboard([])
+        bus = FakeWheelBus(fail_connect=True)
+        with self.assertRaisesRegex(OSError, "handshake"):
+            run_teleoperation(keyboard, bus, **self.params)
+        self.assert_stopped(bus, keyboard)
+
+    def test_preview_runs_without_motor_bus(self) -> None:
+        keyboard = FakeKeyboard([{"w"}, set(), {"q"}])
+        run_teleoperation(keyboard, None, **self.params)
+        self.assertFalse(keyboard.is_connected)
+
+    def test_remote_receiver_drives_from_streamed_keys(self) -> None:
+        source = FakeKeySource([(True, {"w"}), (True, {"q", "w"})])
+        bus = FakeWheelBus()
+        run_receiver(source, bus, **self.params)
+        self.assertEqual(bus.commands[0], wheel_command(0.1, 0, 0))
+        self.assertFalse(any(bus.velocity.values()))
+        self.assertFalse(any(bus.torque.values()))
+        self.assertFalse(bus.is_connected)
+
+    def test_remote_receiver_stops_when_the_sender_disappears(self) -> None:
+        source = FakeKeySource([(True, {"w"}), (False, set()), (True, {"q"})])
+        bus = FakeWheelBus()
+        run_receiver(source, bus, **self.params)
+        self.assertFalse(any(bus.commands[1].values()))
+        self.assertFalse(bus.is_connected)
+
+    def test_invalid_options_are_rejected(self) -> None:
+        for flags in (
+            [],
+            ["wheels"],
+            ["wheels", "--port", "fake", "--raw", "0"],
+            ["wheels", "--port", "fake", "--seconds", "0"],
+            ["camera", "--width", "0"],
+            ["camera", "--fps", "0"],
+            ["teleop"],
+            ["teleop", "--dry-run", "--fps", "0"],
+            ["teleop", "--dry-run", "--fps", "nan"],
+            ["teleop", "--dry-run", "--wheel-radius", "-1"],
+            ["teleop", "--dry-run", "--base-radius", "inf"],
+            ["teleop", "--dry-run", "--max-raw", "32768"],
+            ["teleop", "--dry-run", "--max-raw", "0"],
+            ["teleop", "--listen"],
+            ["teleop", "--listen", "--port", "fake", "--input-timeout", "0"],
+            ["teleop", "--listen", "--port", "fake", "--remote-port", "0"],
+            ["teleop", "--listen", "--remote", "robot"],
+            ["teleop", "--remote", "robot", "--port", "fake"],
+            ["teleop", "--remote", "robot", "--dry-run"],
+            ["teleop", "--remote", "robot", "--connect-timeout", "nan"],
+        ):
+            with (
+                self.subTest(flags=flags),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                parse_args(flags)
+        self.assertEqual(parse_args(["wheels", "--port", "fake"]).command, "wheels")
+        self.assertEqual(parse_args(["camera"]).command, "camera")
+        self.assertTrue(parse_args(["teleop", "--dry-run"]).dry_run)
+        self.assertTrue(parse_args(["teleop", "--listen", "--port", "fake"]).listen)
+        self.assertEqual(parse_args(["teleop", "--remote", "robot"]).remote, "robot")
+
+    def test_wheel_check_reads_each_wheel_back(self) -> None:
+        bus = FakeWheelBus()
+        measured = spin_each_wheel(bus, raw=100, seconds=0.02)
+        self.assertEqual(measured, dict.fromkeys(("left", "back", "right"), 100))
+        self.assertTrue(report(100, measured))
+        self.assertFalse(any(bus.velocity.values()))
+        self.assertFalse(any(bus.torque.values()))
+        self.assertFalse(bus.is_connected)
+
+    def test_wheel_check_flags_a_wheel_that_did_not_turn(self) -> None:
+        self.assertFalse(report(100, {"left": 100, "back": 0, "right": 100}))
+
+    def test_camera_check_requires_a_choice_when_several_cameras_exist(self) -> None:
+        with mock.patch.object(UVCCamera, "discover", return_value={"2", "0"}):
+            with self.assertRaisesRegex(RuntimeError, "Several webcams"):
+                pick_device(None)
+            self.assertEqual(pick_device("2"), "2")
+
+    def assert_stopped(self, bus: FakeWheelBus, keyboard: FakeKeyboard) -> None:
+        self.assertFalse(any(bus.velocity.values()))
+        self.assertFalse(any(bus.torque.values()))
+        self.assertFalse(bus.is_connected)
+        self.assertFalse(keyboard.is_connected)
+
+
+@pytest.mark.parametrize("entrypoint", ["start", "spin"])
+@pytest.mark.parametrize("failure", ["connect", "write", "enable_torque"])
+def test_lekiwi_initialization_failure_releases_wheels(
+    monkeypatch, entrypoint, failure
+):
+    bus = FakeWheelBus()
+    original = getattr(bus, failure)
+    failed = False
+
+    def fail_once(*args, **kwargs):
+        nonlocal failed
+        result = original(*args, **kwargs)
+        if not failed:
+            failed = True
+            raise OSError("simulated initialization failure")
+        return result
+
+    monkeypatch.setattr(bus, failure, fail_once)
+    with pytest.raises(OSError, match="simulated initialization failure"):
+        if entrypoint == "start":
+            start_velocity_mode(bus)
+        else:
+            spin_each_wheel(bus, raw=100, seconds=0.01)
+    assert not bus.is_connected
+    assert not any(bus.velocity.values())
+    assert not any(bus.torque.values())
+
+
+def test_lekiwi_remote_timeout_stops_and_closes_motors():
+    import socket
+
+    source = SocketKeySource("127.0.0.1", 0, input_timeout=0.05)
+    bus = FakeWheelBus()
+    source.start()
+    try:
+        with socket.create_connection((source.host, source.port), timeout=1) as sender:
+            source.accept()
+            sender.sendall(b'[["w"], 0]\n')
+            with pytest.raises(TimeoutError):
+                run_receiver(
+                    source,
+                    bus,
+                    wheel_radius=0.05,
+                    base_radius=0.125,
+                    max_raw=3000,
+                    fps=1000,
+                )
+            assert any(bus.commands[0].values())
+            assert not any(bus.velocity.values())
+            assert not bus.is_connected
+    finally:
+        source.stop()
+
+
+def test_lekiwi_receiver_port_collision_fails_at_start():
+    import socket
+
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        source = SocketKeySource("127.0.0.1", occupied.getsockname()[1])
+        with pytest.raises(OSError):
+            source.start()
+        source.stop()
+
+
+def test_lekiwi_snapshot_replaces_keys_and_keeps_speed():
+    import socket
+
+    source = SocketKeySource("127.0.0.1", 0)
+    source.start()
+    try:
+        with socket.create_connection((source.host, source.port), timeout=1) as sender:
+            source.accept()
+            sender.sendall(b'[["w"], 1]\n')
+            assert source.read_keys() == ({"w"}, 1)
+            sender.sendall(b"[[], 2]\n")
+            assert source.read_keys() == (set(), 2)
+        assert source.read_keys() is None
+    finally:
+        source.stop()
+
+
+def test_lekiwi_serial_port_ignores_service_port(monkeypatch):
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("SERIAL_PORT", "/dev/ttyACM0,/dev/ttyACM1")
+    monkeypatch.setenv("DISABLE_VALIDATE", "true,true")
+    configs = RobotAutoConfig.resolve([], config_cls=LeKiwiConfig, node_rank=0)
+    assert [config.serial_port for config in configs] == [
+        "/dev/ttyACM0",
+        "/dev/ttyACM1",
+    ]
+
+
+def test_lekiwi_disconnect_attempts_cleanup_after_stop_write_failure(monkeypatch):
+    bus = FakeWheelBus()
+    write = bus.sync_write
+    failed = False
+
+    def fail_first_stop(register, values, **kwargs):
+        nonlocal failed
+        if any(bus.velocity.values()) and not any(values.values()) and not failed:
+            failed = True
+            raise OSError("transient stop write failure")
+        return write(register, values, **kwargs)
+
+    monkeypatch.setattr(bus, "sync_write", fail_first_stop)
+    source = FakeKeySource([(True, {"w"}), (False, set())])
+    run_receiver(
+        source,
+        bus,
+        wheel_radius=0.05,
+        base_radius=0.125,
+        max_raw=3000,
+        fps=1000,
+    )
+    assert failed
+    assert not any(bus.velocity.values())
+    assert not any(bus.torque.values())
+    assert not bus.is_connected
+
+
+def test_lekiwi_sender_without_rlinf_dependencies_stops_on_listener_loss():
+    import json
+    import socket
+
+    root = Path(__file__).resolve().parents[2]
+    code = """
+import sys
+from types import SimpleNamespace
+from runpy import run_path
+FakeListener = run_path("tests/robot_mocks/lekiwi.py")["FakeListener"]
+from toolkits.realworld_check import test_lekiwi_env as cli
+sys.modules["pynput"] = SimpleNamespace(keyboard=SimpleNamespace(
+    Listener=FakeListener, Key=SimpleNamespace(esc="escape")))
+result = cli.main(["teleop", "--remote", "127.0.0.1", "--remote-port", sys.argv[1],
+                   "--fps", "100"])
+assert not any(name.split(".")[0] in {"rlinf", "ray", "torch", "numpy", "lerobot"} for name in sys.modules)
+sys.exit(result)
+"""
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        server.settimeout(5)
+        with subprocess.Popen(
+            [sys.executable, "-S", "-c", code, str(server.getsockname()[1])],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ) as sender:
+            try:
+                with server.accept()[0] as conn:
+                    conn.settimeout(5)
+                    payload = b""
+                    while chunk := conn.recv(1024):
+                        payload += chunk
+                _, stderr = sender.communicate(timeout=5)
+            finally:
+                if sender.poll() is None:
+                    sender.kill()
+                    sender.communicate()
+            assert sender.returncode == 1, stderr
+            assert "Keyboard capture stopped" in stderr
+    # A short R tap must reach the receiver even though R is already released.
+    assert json.loads(payload.splitlines()[0]) == [["w"], 1]
+
+
+def test_lekiwi_camera_explicit_device_does_not_require_discovery(monkeypatch):
+    monkeypatch.setattr(UVCCamera, "discover", lambda: set())
+    assert pick_device("0") == "0"
+    with pytest.raises(RuntimeError, match="No UVC camera found"):
+        pick_device(None)
+
+
+def test_lekiwi_camera_save_failure_returns_error(monkeypatch, tmp_path, capsys):
+    from robot_mocks import mocked_sdks
+
+    from toolkits.realworld_check.test_lekiwi_env import main
+
+    monkeypatch.setattr(UVCCamera, "discover", lambda: {"0"})
+    with mocked_sdks() as made:
+        monkeypatch.setattr(made["cv2"], "imwrite", lambda *args: False, raising=False)
+        result = main(
+            ["camera", "--device", "0", "--save", str(tmp_path / "frame.png")]
+        )
+    output = capsys.readouterr()
+    assert result == 1
+    assert "Could not save camera frame" in output.err
+    assert "Saved the last frame" not in output.out

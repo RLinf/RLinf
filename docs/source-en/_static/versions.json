@@ -18,5 +18,10 @@
         "name": "v0.3",
         "version": "v0.3",
         "url": "https://rlinf.readthedocs.io/en/release-v0.3/"
+    },
+    {
+        "name": "v0.4",
+        "version": "v0.4",
+        "url": "https://rlinf.readthedocs.io/en/release-v0.4/"
     }
 ]

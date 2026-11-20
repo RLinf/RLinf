@@ -15,6 +15,7 @@
 
 from .eval_control import KeyboardEvalControlWrapper
 from .leader_follower import LeaderFollowerKeyboardIntervention
+from .pico_control import PicoEpisodeControlWrapper
 from .policy_switch import KeyboardRLTPolicySwitchWrapper
 from .reward_done import (
     KeyboardRewardDoneMultiStageWrapper,
@@ -29,4 +30,5 @@ __all__ = [
     "KeyboardRewardDoneWrapper",
     "KeyboardStartEndWrapper",
     "LeaderFollowerKeyboardIntervention",
+    "PicoEpisodeControlWrapper",
 ]

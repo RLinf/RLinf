@@ -156,6 +156,7 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
 
    reward_model_registry = {
        "resnet": ResNetRewardModel,
+       "robotwin_t5": RoboTwinT5RewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
        "shaped_vlm": ShapedVLMRewardModel,
@@ -164,6 +165,8 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
 Where:
 
 - ``resnet``: single-frame binary classifier; outputs sigmoid probabilities.
+- ``robotwin_t5``: single-frame success classifier conditioned on the task
+  instruction (T5 encoding); used by the :doc:`BWM example <../examples/embodied/bwm>`.
 - ``vlm``: runs a VLM on the current observation (step/terminal timing depends on ``reward_mode``).
 - ``buffered_vlm``: runs a VLM on history windows from the env worker; prompt, video
   layout, and scalar mapping come from ``input_builder_name`` / ``reward_parser_name``.
@@ -441,6 +444,35 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
+Before deploying any of the reward methods below, warm up the MLP policy with
+ManiSkill's dense environment reward using ``maniskill_ppo_mlp`` with
+``reward.use_reward_model: false``. This is a shared prerequisite for local
+VLM Trend, local Success + Potential, and SGLang API inference. Evaluate saved
+checkpoints on the same 1,024 fixed reset states over 50-step episodes, and
+select one with ``eval/success_at_end`` around 50% before starting reward-model
+PPO:
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+This command saves and evaluates checkpoints every 5 PPO steps. Extend
+``runner.max_steps`` if needed to reach the target; select the checkpoint by
+its measured success rate rather than its training step. Set the selected
+policy weights for the deployment commands below:
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT="/path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt"
+
+The Trend launch commands pass this path through ``runner.ckpt_path``. For
+Success + Potential, set ``vlm_trend_paths.policy_checkpoint`` to the same path.
+
 Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
 ``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
 Potential recipe uses ``model_type: shaped_vlm`` for local inference. API inference
@@ -458,6 +490,23 @@ Both local VLM Trend paths use history-window reward inputs. The standard path u
    With ``reward_mode: history_buffer``, the env worker sends ``history_input`` to the
    reward worker **every step**. When ``min_history_size`` is not met,
    the reward worker returns ``interval_reward`` instead of skipping the RPC.
+
+Set ``gt_success_bonus`` to add a fixed amount to the VLM reward whenever the
+environment reports task success. This provides a reward signal from the
+simulator alongside the VLM's prediction. On a step that ends with an automatic
+reset, the bonus uses the success status of the episode that just ended.
+
+Set ``env.eval.use_fixed_reset_state_ids: true`` to reuse initial states across
+evaluation rounds. Compare ``eval/success_at_end`` (success at the end of an
+episode) with ``eval/success_once`` (success at any point in the episode).
+
+Match the checkpoint's SFT and inference settings for frame order, frame
+sampling, ``video_fps``, system prompt, and chat template. Match
+``data.video_do_sample_frames`` with
+``reward.model.subprocessor_kwargs.video_processor.do_sample_frames``. Set FPS
+and prompt options under ``data`` for SFT and
+``reward.model.input_builder_params`` for inference. For a separate success
+head, use ``reward.model.success_input_builder_params``.
 
 3.4.1 Local Hugging Face Inference
 .....................................
@@ -508,24 +557,12 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
-
-Warm up the MLP policy with the existing dense ManiSkill reward. This reuses
-``maniskill_ppo_mlp`` unchanged; do not enable the reward overlay during warmup.
-Evaluate saved checkpoints on the same 1,024 fixed reset states and select one
-with a non-zero ``success_once`` near 5% (roughly 3--7%). Do not start formal
-PPO from a zero-success checkpoint:
-
-.. code-block:: bash
-
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp \
-     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
-     env.eval.total_num_envs=1024
+     --config-name maniskill_ppo_mlp_vlm_trend_reward \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
 
-Then launch the dual-output branch with the selected checkpoint and the three
+For Success + Potential, use the warmup checkpoint selected above and the three
 reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
 1,024 environments, evaluates every 5 PPO steps, disables environment reward,
 and runs 160 steps by default:
@@ -537,7 +574,7 @@ The runtime fields reference this YAML section directly:
 .. code-block:: yaml
 
    vlm_trend_paths:
-     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     policy_checkpoint: /path/to/evaluated_approximately_50pct/actor/model_state_dict/full_weights.pt
      model_path: /path/to/Qwen3-VL-4B-Instruct
      success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
      potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
@@ -566,10 +603,19 @@ Both state machines reset on ``done``.
 3.4.2 SGLang API Inference
 ............................
 
-Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``). Point
-``reward.api.api_base`` at an external OpenAI-compatible endpoint, or leave it empty
-and let RLinf launch a Ray-managed SGLang server/router via
+Set ``reward.worker_type: api`` (``EmbodiedAPIRewardWorker``) and leave
+``reward.api.api_base`` empty to launch a Ray-managed SGLang server/router via
 :doc:`../guides/sglang_server`.
+
+For Qwen3-VL video rewards, the worker sends the shared processor's unpadded token
+IDs and video tensors losslessly to ``/generate``. The managed server
+preserves video grouping, sampled frames, pixels, grids, and temporal positions
+instead of converting videos to JPEG image lists or resampling them. An external
+video endpoint must use the same RLinf SGLang integration; a generic
+OpenAI-compatible chat endpoint is not sufficient. Image builders continue to
+use the chat API. Equal inputs do not guarantee identical floating-point
+inference outputs across backends.
+
 See ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``:
 
 .. code-block:: yaml
@@ -625,7 +671,26 @@ Launch:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_reward_sglang \
+     runner.ckpt_path="${POLICY_CHECKPOINT}"
+
+3.4.3 ManiSkill Training and Validation Results
+...............................................
+
+Training on ManiSkill PickCube3View started from a policy checkpoint with a
+58.89% success rate in independent evaluation.
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pickcube3view_vlm_trend_ppo_success_rate.png
+   :alt: ManiSkill PickCube3View success rate by PPO update
+
+   Independent success rate reached 80.76% at PPO update 18. Each point uses
+   1,024 complete 50-step episodes evaluated in a fresh process.
+
+At update 21, both the managed SGLang run and the custom SGLang reference
+reached 81.25%. In-training validation matched the independent
+``success_at_end`` at each evaluated checkpoint.
 
 4. Summary
 ^^^^^^^^^^
