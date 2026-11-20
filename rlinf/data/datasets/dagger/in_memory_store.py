@@ -51,10 +51,6 @@ class InMemoryArrowStore:
         fps: Frames per second used for the ``timestamp`` metadata column.
         image_transforms: Optional callable applied to image tensors after
             ``hf_transform_to_torch`` converts PIL → float32 ``[C,H,W]``.
-        vision_horizon: Number of future frames to return with the current
-            frame for vision training. Zero disables the vision window.
-        keep_uint8_images: Keep decoded camera frames as CHW uint8 tensors.
-            Requires image_transforms to be None.
     """
 
     def __init__(
@@ -63,20 +59,15 @@ class InMemoryArrowStore:
         action_sequence_keys: list[str] | None = None,
         fps: int = 10,
         image_transforms: Callable | None = None,
-        vision_horizon: int = 0,
-        keep_uint8_images: bool = False,
     ) -> None:
         self._chunk_size = chunk_size
         self._fps = max(fps, 1)
         self._image_transforms = image_transforms
-        self._vision_horizon = vision_horizon
-        self._keep_uint8_images = keep_uint8_images
         keys = action_sequence_keys or []
         self._delta_indices: dict[str, list[int]] = (
             {k: list(range(chunk_size)) for k in keys} if chunk_size > 1 else {}
         )
         self._episode_datasets: deque[Any] = deque()
-        self._episode_images: deque[dict[str, torch.Tensor]] = deque()
         self._ep_from: deque[int] = deque()
         self._ep_to: deque[int] = deque()
         self._total_frames: int = 0
@@ -148,7 +139,7 @@ class InMemoryArrowStore:
         episode_index: int | None = None,
     ) -> dict[str, Any]:
         import PIL.Image as PILImage
-        from datasets import Dataset, Features
+        from datasets import Dataset
 
         try:  # lerobot >= 0.2 layout
             from lerobot.datasets.utils import hf_transform_to_torch
@@ -186,7 +177,6 @@ class InMemoryArrowStore:
             "timestamp": np.arange(n, dtype=np.float32) / self._fps,
             "task_index": np.array(task_indices, dtype=np.int64),
         }
-        images = {}
 
         for key in hf_features:
             if key in (
@@ -198,13 +188,7 @@ class InMemoryArrowStore:
             ):
                 continue
             if key in image_keys:
-                if self._keep_uint8_images:
-                    pixels = np.stack([frame[key] for frame in ep_frames])
-                    images[key] = (
-                        torch.from_numpy(pixels).permute(0, 3, 1, 2).contiguous()
-                    )
-                else:
-                    ep_dict[key] = [PILImage.fromarray(f[key]) for f in ep_frames]
+                ep_dict[key] = [PILImage.fromarray(f[key]) for f in ep_frames]
             else:
                 vals = [f.get(key) for f in ep_frames]
                 if all(v is not None for v in vals):
@@ -214,22 +198,10 @@ class InMemoryArrowStore:
                         stacked.squeeze(1) if stacked.shape == (n, 1) else stacked
                     )
 
-        arrow_features = (
-            Features(
-                {
-                    key: feature
-                    for key, feature in hf_features.items()
-                    if key not in images
-                }
-            )
-            if images
-            else hf_features
-        )
-        ep_ds = Dataset.from_dict(ep_dict, features=arrow_features)
+        ep_ds = Dataset.from_dict(ep_dict, features=hf_features)
         ep_ds.set_transform(hf_transform_to_torch)
         return {
             "dataset": ep_ds,
-            "images": images,
             "base": base,
             "num_frames": n,
             "hf_features": hf_features,
@@ -252,7 +224,6 @@ class InMemoryArrowStore:
         self._task_to_idx = prepared_episode["task_to_idx"]
         self._tasks = prepared_episode["tasks"]
         self._episode_datasets.append(prepared_episode["dataset"])
-        self._episode_images.append(prepared_episode["images"])
         self._ep_from.append(base)
         self._ep_to.append(base + n)
         self._total_frames += n
@@ -287,10 +258,7 @@ class InMemoryArrowStore:
             ``delta_indices`` are replaced by ``[chunk_size, …]`` tensors and
             companion ``*_is_pad`` bool tensors are added — matching
             :class:`~lerobot.common.datasets.lerobot_dataset.LeRobotDataset`
-            ``__getitem__`` action windows. With vision enabled, ``vision_images``
-            and optional ``vision_wrist_images`` contain the current frame and
-            future frames as ``[T,C,H,W]`` tensors. ``vision_valid`` indicates
-            whether the full window exists within the episode.
+            ``__getitem__`` output exactly.
         """
         local_idx = max(0, min(local_idx, self._total_frames - 1))
         self._hits += 1
@@ -300,20 +268,13 @@ class InMemoryArrowStore:
         local_frame = local_idx - ep_start
 
         ep_ds = self._episode_datasets[ep_idx]
-        images = self._episode_images[ep_idx]
         item: dict[str, Any] = ep_ds[local_frame]
-        for key, frames in images.items():
-            item[key] = frames[local_frame].clone()
         item["task"] = self._tasks.get(int(item["task_index"].item()), "")
 
         if self._image_transforms is not None:
             for k in self._image_keys:
                 if k in item:
                     item[k] = self._image_transforms(item[k])
-
-        if self._vision_horizon:
-            vision_valid = local_idx + self._vision_horizon < ep_end
-            self._add_vision_window(item, ep_ds, images, local_frame, vision_valid)
 
         if self._delta_indices:
             query_indices = {
@@ -340,40 +301,3 @@ class InMemoryArrowStore:
                 item[k] = v
 
         return item
-
-    def _add_vision_window(
-        self,
-        item: dict[str, Any],
-        ep_ds: Any,
-        images: dict[str, torch.Tensor],
-        local_frame: int,
-        valid: bool,
-    ) -> None:
-        image_to_window = {"image": "vision_images"}
-        if "wrist_image" in self._image_keys:
-            image_to_window["wrist_image"] = "vision_wrist_images"
-
-        item["vision_valid"] = valid
-        if not valid:
-            for image_key, window_key in image_to_window.items():
-                item[window_key] = (
-                    item[image_key]
-                    .unsqueeze(0)
-                    .expand(self._vision_horizon + 1, -1, -1, -1)
-                )
-            return
-
-        end = local_frame + self._vision_horizon + 1
-        if images:
-            for image_key, window_key in image_to_window.items():
-                item[window_key] = images[image_key][local_frame:end].clone()
-            return
-
-        future_frames = ep_ds.select_columns(list(image_to_window))[
-            local_frame + 1 : end
-        ]
-        for image_key, window_key in image_to_window.items():
-            frames = future_frames[image_key]
-            if self._image_transforms is not None:
-                frames = [self._image_transforms(frame) for frame in frames]
-            item[window_key] = torch.stack([item[image_key], *frames])

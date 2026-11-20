@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rlinf.data.datasets.dagger import RollingLeRobotDataset
+from rlinf.data.datasets.cosmos3.dataset import Cosmos3RollingLeRobotDataset
 from rlinf.models import get_model
 from rlinf.models.embodiment.cosmos3 import load_inference_checkpoint
 from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerAdapter
@@ -50,7 +50,7 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
                 "algorithm.dagger.online_lerobot.lerobot_num_workers must be non-negative."
             )
         only_expert = self.cfg.algorithm.dagger.get("only_save_expert", False)
-        self.dataset = RollingLeRobotDataset(
+        self.dataset = Cosmos3RollingLeRobotDataset(
             root_dir=cfg.data_path,
             min_frames=cfg.get("min_frames", 1),
             wait_interval_s=cfg.get("wait_interval_s", 10.0),
