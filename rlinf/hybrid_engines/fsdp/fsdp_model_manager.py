@@ -19,6 +19,7 @@ from typing import ContextManager, Union
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
+from torch.distributed import checkpoint as dcp
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
@@ -383,11 +384,14 @@ class FSDPModelManager:
             self.load_optimizer(self.device)
             self.is_optimizer_offloaded = False
 
-        optimizer_progress = self._strategy.load_optimizer_progress(load_path)
-        if optimizer_progress is not None:
+        dcp_dir = os.path.join(load_path, "dcp_checkpoint")
+        reader = dcp.FileSystemReader(dcp_dir if os.path.isdir(dcp_dir) else load_path)
+        if "optimizer_steps" in reader.read_metadata().state_dict_metadata:
+            state = {"optimizer_steps": 0, "critic_warmup_steps": 0}
+            dcp.load(state, storage_reader=reader)
             warmup_active = self.critic_warmup_steps > 0
-            self.optimizer_steps = optimizer_progress["optimizer_steps"]
-            self.critic_warmup_steps = optimizer_progress["critic_warmup_steps"]
+            self.optimizer_steps = state["optimizer_steps"]
+            self.critic_warmup_steps = state["critic_warmup_steps"]
             # DCP restores into the optimizer's existing parameter groups.
             if warmup_active != (self.critic_warmup_steps > 0):
                 self.optimizer = self.build_optimizer(
@@ -431,7 +435,7 @@ class FSDPModelManager:
             save_full_model_weights=self._cfg.fsdp_config.get(
                 "save_full_model_weights", True
             ),
-            optimizer_progress={
+            extra_state={
                 "optimizer_steps": self.optimizer_steps,
                 "critic_warmup_steps": self.critic_warmup_steps,
             },

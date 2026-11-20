@@ -188,7 +188,7 @@ class FSDPStrategyBase(ABC):
         save_path: str,
         save_full_model_weights: bool = True,
         checkpoint_format: str = "dcp",
-        optimizer_progress: Optional[dict[str, int]] = None,
+        extra_state: Optional[dict] = None,
     ) -> None:
         """
         Save the training state checkpoint.
@@ -206,7 +206,7 @@ class FSDPStrategyBase(ABC):
             save_path (str): The path to save the checkpoint.
             save_full_model_weights (bool): Whether to save full model weights.
             checkpoint_format (str): "dcp" or "local_shard".
-            optimizer_progress (Optional[dict[str, int]]): The optimizer step counters to be saved in a "dcp" checkpoint.
+            extra_state (Optional[dict]): Extra entries to be saved in a "dcp" checkpoint.
         """
         clear_memory()
         torch.distributed.barrier()
@@ -234,10 +234,10 @@ class FSDPStrategyBase(ABC):
                 from torch.distributed import checkpoint as dcp
 
                 dcp_save_path = os.path.join(save_path, "dcp_checkpoint")
-                state_dict = {"fsdp_checkpoint": training_state}
-                if optimizer_progress is not None:
-                    state_dict["optimizer_progress"] = optimizer_progress
-                dcp.save(state_dict, checkpoint_id=dcp_save_path)
+                dcp.save(
+                    {"fsdp_checkpoint": training_state, **(extra_state or {})},
+                    checkpoint_id=dcp_save_path,
+                )
 
         except BaseException as e:
             import traceback
@@ -266,39 +266,6 @@ class FSDPStrategyBase(ABC):
                     )
 
             torch.distributed.barrier()
-
-    @classmethod
-    def load_optimizer_progress(cls, load_path: str) -> Optional[dict[str, int]]:
-        """
-        Load the optimizer step counters saved in a DCP checkpoint.
-
-        Args:
-            load_path (str): The path to load the checkpoint from.
-
-        Returns:
-            Optional[dict[str, int]]: The saved counters, or None if the checkpoint has none.
-        """
-        from torch.distributed import checkpoint as dcp
-
-        dcp_dir = os.path.join(load_path, "dcp_checkpoint")
-        dcp_load_path = dcp_dir if os.path.isdir(dcp_dir) else load_path
-
-        storage_reader = dcp.FileSystemReader(dcp_load_path)
-        metadata = storage_reader.read_metadata()
-        prefix = "optimizer_progress."
-        keys = [
-            key.removeprefix(prefix)
-            for key in metadata.state_dict_metadata
-            if key.startswith(prefix)
-        ]
-        if len(keys) == 0:
-            return None
-        optimizer_progress = dict.fromkeys(keys)
-        dcp.load(
-            {"optimizer_progress": optimizer_progress},
-            storage_reader=storage_reader,
-        )
-        return optimizer_progress
 
     @classmethod
     def load_checkpoint(
