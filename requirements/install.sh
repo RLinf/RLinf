@@ -4365,8 +4365,10 @@ install_robotwin_env() {
 
     if [ "$build_curobo_stack" -eq 1 ]; then
         uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
-        uv pip install warp-lang==1.11.1
-        uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+        # cuRobo derives its version from git through setuptools_scm; install it before
+        # building with --no-build-isolation so metadata and wheel versions match.
+        uv pip install warp-lang==1.11.1 "setuptools_scm>=6.2"
+        uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git@v0.7.8 --no-build-isolation
     fi
 
     # patch sapien and mplib for robotwin
