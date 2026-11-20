@@ -28,7 +28,7 @@ from sglang.srt.managers.io_struct import (
     ResumeMemoryOccupationReqInput,
 )
 
-from rlinf.utils.http_client import InferenceHTTPClient
+from rlinf.utils.http_client import InferenceHTTPClient, split_sglang_sampling_params
 from rlinf.workers.rollout.backend import RlinfContext, RolloutBackend
 from rlinf.workers.rollout.sglang.process import SGLangServerProcess
 from rlinf.workers.rollout.utils import RolloutEngineStats
@@ -89,17 +89,7 @@ class SGLangEngineBackend(RolloutBackend):
         return_prompt_token_ids: bool = False,
         mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
-        if isinstance(sampling_params, dict):
-            sampling_params = dict(sampling_params)
-            processor = sampling_params.pop("custom_logit_processor", None)
-        else:
-            sampling_params = [dict(params) for params in sampling_params]
-            processors = [
-                params.pop("custom_logit_processor", None) for params in sampling_params
-            ]
-            processor = (
-                processors if any(item is not None for item in processors) else None
-            )
+        sampling_params, processor = split_sglang_sampling_params(sampling_params)
         if return_prompt_token_ids or mm_token_expansion_start_len is not None:
             from sglang.srt.managers.io_struct import GenerateReqInput
 

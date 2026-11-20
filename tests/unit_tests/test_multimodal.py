@@ -24,7 +24,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from rlinf.data.schema.reasoning_results import DynamicRolloutResult
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
 
 
 @pytest.mark.parametrize("prefetch_batches", [0, 2, 8])
@@ -110,6 +110,33 @@ def test_image_prefetch_propagates_failure_and_joins_threads(failure):
     )
 
 
+def test_static_image_rows_survive_grouping():
+    rows = RolloutResult(
+        num_sequence=2,
+        group_size=1,
+        prompt_ids=[[1], [2]],
+        prompt_lengths=[1, 1],
+        response_ids=[[3], [4]],
+        response_lengths=[1, 1],
+        is_end=[True, True],
+        multi_modal_inputs=[None, {"image": "second"}],
+    )
+    groups = RolloutResult.split_result_list_by_group([rows])
+    assert [g.multi_modal_inputs for g in groups] == [[None], [{"image": "second"}]]
+    assert (
+        RolloutResult.merge_result_list(groups).multi_modal_inputs
+        == rows.multi_modal_inputs
+    )
+
+    rows.multi_modal_inputs = [{"image": "unknown row"}]
+    for operation in (
+        RolloutResult.split_result_list_by_group,
+        RolloutResult.merge_result_list,
+    ):
+        with pytest.raises(ValueError, match="one entry per sequence"):
+            operation([rows])
+
+
 def test_batch_merge_pads_rows_for_a_text_only_batch():
     """A batch without images must still contribute one slot per row."""
 
@@ -137,6 +164,10 @@ def test_batch_merge_pads_rows_for_a_text_only_batch():
             image_row
         ]
         assert DynamicRolloutResult.pack_traj_batch({}, merged) is merged
+
+    for merge in (RolloutResult.merge_batches, DynamicRolloutResult.merge_batches):
+        with pytest.raises(ValueError, match="one entry per sequence"):
+            merge([batch([{}])])
 
 
 @pytest.mark.parametrize(
@@ -384,6 +415,9 @@ def test_native_token_space_prefetch_matches_synchronous_replay(native_multiturn
                 assert torch.equal(actual[key], expected[key])
 
 
+@pytest.mark.parametrize(
+    "native_token_space", [True], indirect=True, ids=["disk-cache"]
+)
 def test_native_token_space_disk_cache_shared_across_processes(
     native_multiturn, tmp_path
 ):
@@ -393,8 +427,6 @@ def test_native_token_space_disk_cache_shared_across_processes(
     from rlinf.utils.multimodal import MultimodalBatchPreparer
 
     case = native_multiturn
-    if case.processor.cache_directory is None:
-        pytest.skip("Cross-process cache check needs the disk-cache variant")
     request = tmp_path / "replay.pt"
     result = tmp_path / "replay.json"
     torch.save(case.batch, request)

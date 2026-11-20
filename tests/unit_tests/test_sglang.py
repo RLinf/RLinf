@@ -29,6 +29,19 @@ import pytest
 import torch
 
 
+def test_batched_sampling_preserves_custom_processor_row_order():
+    from rlinf.utils.http_client import InferenceHTTPClient
+
+    params = [
+        {"temperature": 0},
+        {"temperature": 1, "custom_logit_processor": "second"},
+    ]
+    body = InferenceHTTPClient._generate_body(None, [[1], [2]], params, False)
+    assert body["sampling_params"] == [{"temperature": 0}, {"temperature": 1}]
+    assert body["custom_logit_processor"] == [None, "second"]
+    assert params[1]["custom_logit_processor"] == "second"
+
+
 @pytest.mark.skipif(
     importlib.util.find_spec("sglang") is None, reason="requires SGLang"
 )

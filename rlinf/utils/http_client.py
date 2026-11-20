@@ -36,6 +36,19 @@ _PROXY_ENV_VARS = (
 )
 
 
+def split_sglang_sampling_params(
+    params: dict | list[dict],
+) -> tuple[dict | list[dict], str | list[str | None] | None]:
+    """SGLang takes custom logit processors on the request, outside SamplingParams."""
+    if isinstance(params, dict):
+        sampling = params.copy()
+        processor = sampling.pop("custom_logit_processor", None)
+        return sampling, processor
+    sampling = [item.copy() for item in params]
+    processors = [item.pop("custom_logit_processor", None) for item in sampling]
+    return sampling, processors if any(p is not None for p in processors) else None
+
+
 def _b64_payload(obj: Any) -> dict:
     """Wrap a pickled object as the body of an /rlinf/* control request.
 
@@ -290,19 +303,9 @@ class InferenceHTTPClient:
         if input_ids is not None:
             body["input_ids"] = input_ids
         if sampling_params is not None:
-            if isinstance(sampling_params, dict):
-                sampling_params = dict(sampling_params)
-                processor = sampling_params.pop("custom_logit_processor", None)
-                if processor is not None:
-                    body["custom_logit_processor"] = processor
-            else:
-                sampling_params = [dict(params) for params in sampling_params]
-                processors = [
-                    params.pop("custom_logit_processor", None)
-                    for params in sampling_params
-                ]
-                if any(processor is not None for processor in processors):
-                    body["custom_logit_processor"] = processors
+            sampling_params, processor = split_sglang_sampling_params(sampling_params)
+            if processor is not None:
+                body["custom_logit_processor"] = processor
             body["sampling_params"] = sampling_params
         if image_data is not None:
 

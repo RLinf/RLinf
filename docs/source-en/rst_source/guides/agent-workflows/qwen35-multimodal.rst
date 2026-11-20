@@ -31,6 +31,24 @@ Set ``rollout.sglang.enable_shared_multi_modal_processor=true`` and
 Use pipeline and context parallel sizes of one. Each rollout worker and its
 local tokenizer process must share the same temporary directory.
 
+Two-turn smoke test
+~~~~~~~~~~~~~~~~~~~
+
+With the agentic environment active and one free A100 80 GB, run this from the
+repository root. Set the model path and GPU to match your installation.
+
+.. code-block:: bash
+
+   CUDA_VISIBLE_DEVICES=0 python examples/agent/qwen35/replay_images.py --model /path/to/Qwen3.5-4B
+
+The script starts a loopback HTTP server, generates two images locally, checks
+both turns against the learner inputs and shuts down its server. Look for
+``Turn 2 passed``. The checks cover sampled history, BF16 pixels, image grids
+and M-RoPE positions. Model training is a separate step.
+
+Use replay in an agent
+~~~~~~~~~~~~~~~~~~~~~~
+
 For each image turn, append new input to the previous served prompt and sampled
 output IDs. Supply all raw images in prompt order and their half-open pad spans
 (excluding the vision delimiters). Keep the previous expanded spans and use one
@@ -42,11 +60,18 @@ pad for each new image. Pass ``None`` on the first call and the returned history
        prompt_ids, image_data=images, image_spans=spans, image_history=history,
        image_store_dir=shared_directory,
    )
+   turn = AgentLoopOutput(
+       prompt_ids=result["prompt_token_ids"],
+       response_ids=result["output_ids"],
+       response_logprobs=result["logprobs"],
+       response_images=result["multimodal_input"],
+   )
    history = result["image_history"]
    prefix = result["prompt_token_ids"] + result["output_ids"]
    spans = result["multimodal_input"]["image_spans"]
 
-Store ``multimodal_input`` with the training row. The learner reads the captured
+Enable rollout logprobs and return one training row per turn.
+Text-only rows use ``response_images=None``. The learner reads the captured
 pixels, grid and positions. The shared directory contains one file per distinct
 pixel tensor. Keep it accessible until all pending rows and checkpoints have
 expired. Keep image turns as separate learner rows: equal token prefixes can
@@ -111,6 +136,16 @@ and M-RoPE positions for each turn. Only recorded image spans contribute
 visual positions. Sampled image markers retain their token IDs. Megatron verifies
 the positions at the language model input and runs its vision encoder on the saved pixels. Compare
 final logprobs separately using the same weights and tokens.
+
+On eight A100 80 GB GPUs (PyTorch 2.11.0+cu128, SGLang 0.5.12.post1,
+Transformers 5.6.1 and Bridge 0.5.0), four pairs of image turns passed the
+replay checks. The same eight rows were redistributed across four data-parallel
+replicas with tensor parallel size two. Both dense and chunked actors and a
+scalar critic completed an optimizer update. A separate 96-token, frozen-weight
+SGLang/Megatron comparison measured a mean absolute logprob difference of
+0.058638 and a maximum of 0.763876. Seventeen differences exceeded 0.10.
+These measurements describe input replay and backend scoring on this panel.
+They do not measure policy improvement.
 
 .. warning::
 

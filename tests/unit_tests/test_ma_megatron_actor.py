@@ -30,6 +30,30 @@ from omegaconf import OmegaConf
 from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 
 
+def test_bridge_text_critic_replaces_only_last_stage_output():
+    pytest.importorskip("megatron.training")
+    from rlinf.hybrid_engines.megatron.megatron_model_manager import (
+        MegatronModelManager,
+    )
+
+    manager = MegatronModelManager.__new__(MegatronModelManager)
+    manager._cfg = OmegaConf.create({"model": {}})
+    first, last = torch.nn.Module(), torch.nn.Module()
+    first.post_process, last.post_process = False, True
+    last.config = OmegaConf.create({"hidden_size": 4, "sequence_parallel": False})
+    last.embedding = torch.nn.Embedding(8, 4)
+    last.output_layer = torch.nn.Linear(4, 8, bias=False)
+    last.output_layer.weight = last.embedding.weight
+    last.share_embeddings_and_output_weights = True
+    manager._attach_value_head([first, last])
+    values, _ = last.output_layer(last.embedding(torch.tensor([2, 3])))
+    assert values.shape == (2, 1) and not last.share_embeddings_and_output_weights
+    values.sum().backward()
+    assert last.output_layer.weight.grad is not None
+    assert last.embedding.weight.shape == (8, 4)
+    assert not hasattr(first, "output_layer")
+
+
 class TestExtractVersionedTrajectoryRecords:
     """The actor's record extraction from DynamicRolloutResult objects."""
 
