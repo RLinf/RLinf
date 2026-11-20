@@ -22,7 +22,9 @@ from textwrap import dedent
 import pytest
 
 
-@pytest.mark.skipif(importlib.util.find_spec("sglang") is None, reason="requires SGLang")
+@pytest.mark.skipif(
+    importlib.util.find_spec("sglang") is None, reason="requires SGLang"
+)
 def test_patched_scheduler_delegates_to_vendor():
     # Applying the engine patch changes module globals throughout the interpreter.
     script = dedent(
