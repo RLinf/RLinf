@@ -115,9 +115,9 @@ class Pi0(model.BaseModel):
 
         action_linear = nn.Linear
         patch_embedding = None
-        if (backend := config.batch_invariant_backend) is not None:
-            action_linear = get_batch_invariant_op("linear", backend)
-            patch_embedding = get_batch_invariant_op("patch_embedding", backend)
+        if config.batch_invariant_ops:
+            action_linear = get_batch_invariant_op("linear", "triton")
+            patch_embedding = get_batch_invariant_op("patch_embedding", "triton")
 
         # Gemma LLM with dual experts
         # Expert 0 (PaliGemma) uses regular RMSNorm; Expert 1 (Action Expert) may use adaRMS

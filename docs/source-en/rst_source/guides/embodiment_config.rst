@@ -440,16 +440,16 @@ Reduce Batch-Size Effects in OpenPI
 
 Rollout and actor replay may score the same recorded action differently when they use different batch sizes. OpenPI can use batch-invariant kernels for the SigLIP patch embedding and selected action expert projections. These kernels keep the forward reduction order fixed as the batch size changes. For FP32 inputs, they use TF32x3 with FP32 accumulation.
 
-Use the Triton backend on NVIDIA Ampere or newer GPUs with PyTorch 2.6 or later and a compatible Triton installation. Add this setting to your OpenPI training YAML.
+The kernels use Triton and require an NVIDIA Ampere or newer GPU and PyTorch 2.6 or later with a compatible Triton installation. Add this setting to your OpenPI training YAML.
 
 .. code:: yaml
 
   actor:
     model:
       openpi:
-        batch_invariant_backend: triton
+        batch_invariant_ops: true
 
-The Hugging Face rollout model inherits the actor setting unless you override it under ``rollout.model.openpi``. Leave the key unset to use the standard PyTorch operators.
+The Hugging Face rollout model inherits the actor setting unless you override it under ``rollout.model.openpi``. Omit the key or set it to ``false`` to use the standard PyTorch operators.
 
 To check the effect, keep the weights, forward precision, and attention path matched between rollout and actor. Compare their log-probabilities before the first optimizer step. Also check step time and peak GPU memory at your usual batch sizes because the patch embedding builds a temporary patch matrix.
 

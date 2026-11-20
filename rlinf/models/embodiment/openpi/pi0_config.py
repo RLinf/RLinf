@@ -44,7 +44,7 @@ class Pi0Config:
     # the current frame.
     short_memory_temporal_layers: tuple[int, ...] = (3, 7, 11, 15)
     short_memory_drop_history_layer: int = 15
-    batch_invariant_backend: str | None = None
+    batch_invariant_ops: bool = False
 
     def __post_init__(self):
         if self.pi05 and self.max_token_len == 48:
