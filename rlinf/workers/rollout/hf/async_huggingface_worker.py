@@ -33,11 +33,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         self._background_weight_sync_active = self.cfg.actor.get(
             "sync_weight_no_wait", False
         )
-        self._model_lock = (
-            asyncio.Lock()
-            if self.enable_dagger and not self._background_weight_sync_active
-            else None
-        )
         self._weight_sync_requested = False
         self._weight_sync_work = None
         self._weight_sync_apply_total = 0
@@ -90,21 +85,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             metric_channel.put(
                 {"rank": self._rank, "time": rollout_metrics}, async_op=True
             )
-
-    async def _wait_for_model_sync(self) -> None:
-        if self._model_lock is None:
-            return
-        # Let the sync RPC acquire the lock even with queued policy requests.
-        await asyncio.sleep(0)
-        # The caller processes the request synchronously after this gate.
-        async with self._model_lock:
-            pass
-
-    async def sync_model_from_actor(self):
-        if self._model_lock is None:
-            return await super().sync_model_from_actor()
-        async with self._model_lock:
-            return await super().sync_model_from_actor()
 
     async def wait_if_stale(self) -> None:
         if self.staleness_threshold is None:

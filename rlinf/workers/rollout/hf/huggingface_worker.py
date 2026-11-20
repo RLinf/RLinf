@@ -944,9 +944,6 @@ class MultiStepRolloutWorker(Worker):
             split_fn=self._split_actions,
         )
 
-    async def _wait_for_model_sync(self) -> None:
-        """Wait before processing a policy request on workers with concurrent sync."""
-
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(
         self,
@@ -962,7 +959,6 @@ class MultiStepRolloutWorker(Worker):
                 )
                 if policy_input.is_last:
                     raise ValueError("Received a final input in the policy stream.")
-                await self._wait_for_model_sync()
                 # Omit raw observations when the collector does not consume them.
                 transition_obs = (
                     policy_input.obs if self.collect_raw_transition_obs else {}
@@ -1010,7 +1006,6 @@ class MultiStepRolloutWorker(Worker):
             if not policy_input.is_last:
                 raise ValueError("Expected a final policy input at epoch end.")
             # The final message closes the last chunk without requesting actions.
-            await self._wait_for_model_sync()
             self._publish_env_parts(policy_input, None, actor_channel)
 
     @Worker.timer("rollout/generate")
@@ -1055,7 +1050,6 @@ class MultiStepRolloutWorker(Worker):
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
-                await self._wait_for_model_sync()
                 actions, _ = self._predict_rollout_actions(
                     env_output["obs"],
                     mode="eval",
@@ -1094,7 +1088,6 @@ class MultiStepRolloutWorker(Worker):
                         if env_output.get("eval_epoch_done"):
                             eval_epoch_done = True
                             break
-                        await self._wait_for_model_sync()
                         actions, _ = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",

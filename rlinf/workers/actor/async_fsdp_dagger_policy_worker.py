@@ -159,11 +159,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 return {}
             return super().run_training()
 
-    async def sync_model_to_rollout(self):
-        # State dict tensors can alias model storage throughout the async send.
-        async with self._model_lock:
-            return await super().sync_model_to_rollout()
-
     async def save_checkpoint(self, save_base_path, step):
         async with self._model_lock:
             self._check_receiver()
