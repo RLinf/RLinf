@@ -131,6 +131,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 self._score_update_kl_probe,
                 target_kl=kl_stop.target_kl,
                 group=self._dp_group,
+                cache_prefix=kl_stop.get("cache_prefix", False),
             )
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
@@ -819,6 +820,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         kwargs = {}
         if kl_probe is not None:
             kwargs["denoise_probe"] = "capture"
+            kwargs["cache_prefix"] = kl_probe.cache_prefix
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,

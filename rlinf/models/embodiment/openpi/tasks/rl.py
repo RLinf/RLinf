@@ -30,7 +30,7 @@ from rlinf.models.embodiment.openpi.modules.model import (
     Observation,
     preprocess_observation,
 )
-from rlinf.models.embodiment.openpi.pi0 import Pi0
+from rlinf.models.embodiment.openpi.pi0 import ImageFeatures, Pi0
 from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi.sampling import rl_sampler
 from rlinf.models.embodiment.openpi.transforms.env import repack_env_obs
@@ -56,14 +56,31 @@ class Pi0RLConfig:
     config_name: str = ""
 
 
+PrefixKV = tuple[torch.Tensor, tuple[tuple[torch.Tensor, torch.Tensor], ...]]
+
+
 class _DenoiseProbeInputs:
     # This is a leaf for FSDP input casting. The wrapped reference forward
     # already applied its precision policy before preparing these inputs.
     def __init__(
-        self, chains: torch.Tensor, denoise_inds: torch.Tensor, observation: Observation
+        self,
+        chains: torch.Tensor,
+        denoise_inds: torch.Tensor,
+        observation: Observation,
+        *,
+        image_features: ImageFeatures | None,
+        prefix_kv: PrefixKV | None,
     ) -> None:
         self.chains = chains
         self.denoise_inds = denoise_inds
+        self.image_features = image_features
+        self.prefix_kv = prefix_kv
+        if prefix_kv is not None:
+            observation = Observation(
+                images={}, image_masks={}, state=observation.state
+            )
+        elif image_features is not None:
+            observation = dataclasses.replace(observation, images={}, image_masks={})
         self.observation = observation
 
 
@@ -146,7 +163,12 @@ class Pi0RL(EnvIO, Pi0):
         self.global_step = int(global_step)
 
     def _build_prefix_cache_for_actor(
-        self, observation: Observation, *, return_prefix: bool = True
+        self,
+        observation: Observation,
+        *,
+        return_prefix: bool = True,
+        image_features: ImageFeatures | None = None,
+        prefix_kv: PrefixKV | None = None,
     ):
         """Prefix KV for actor recompute.
 
@@ -157,10 +179,16 @@ class Pi0RL(EnvIO, Pi0):
         (~2.5GiB/layer at micro_batch=128) and OOM. When the VLM is trained,
         prefix stays in the graph.
         """
-        if self.rl_cfg.train_expert_only:
-            with torch.no_grad():
-                return self.build_prefix_cache(observation, return_prefix=return_prefix)
-        return self.build_prefix_cache(observation, return_prefix=return_prefix)
+        if prefix_kv is not None:
+            prefix_mask, kv_cache = prefix_kv
+            return None, prefix_mask, kv_cache
+
+        with torch.set_grad_enabled(
+            torch.is_grad_enabled() and not self.rl_cfg.train_expert_only
+        ):
+            return self.build_prefix_cache(
+                observation, return_prefix=return_prefix, image_features=image_features
+            )
 
     @torch.no_grad()
     def predict_action_batch(
@@ -440,6 +468,7 @@ class Pi0RL(EnvIO, Pi0):
         forward_inputs: dict[str, torch.Tensor] | _DenoiseProbeInputs,
         *,
         denoise_probe: Literal["capture", "score"] | None = None,
+        cache_prefix: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
         """Score the stored chain, optionally collecting or scoring a KL probe."""
@@ -450,19 +479,32 @@ class Pi0RL(EnvIO, Pi0):
                 "got joint_logprob=True."
             )
         compute_values = kwargs.get("compute_values", True)
+        image_features = None
+        prefix_kv = None
+        capture_prefix_kv = denoise_probe == "capture" and cache_prefix
         if isinstance(forward_inputs, _DenoiseProbeInputs):
             chains = forward_inputs.chains
             denoise_inds = forward_inputs.denoise_inds
             observation = forward_inputs.observation
+            image_features = forward_inputs.image_features
+            prefix_kv = forward_inputs.prefix_kv
         else:
             chains = forward_inputs["chains"]
             denoise_inds = forward_inputs["denoise_inds"]
             observation = self._observation_from_forward_inputs(forward_inputs)
+            if capture_prefix_kv:
+                self.validate_prefix_reuse()
+            elif denoise_probe == "capture" and self.can_reuse_image_features():
+                with torch.no_grad():
+                    image_features = self.embed_images(observation)
         B = chains.shape[0]
         device = chains.device
 
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
-            observation, return_prefix=denoise_probe != "score"
+            observation,
+            return_prefix=denoise_probe != "score",
+            image_features=image_features,
+            prefix_kv=prefix_kv,
         )
 
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
@@ -566,7 +608,13 @@ class Pi0RL(EnvIO, Pi0):
         if probe_stats is not None:
             result["denoise_probe"] = {
                 **probe_stats,
-                "probe_inputs": _DenoiseProbeInputs(chains, denoise_inds, observation),
+                "probe_inputs": _DenoiseProbeInputs(
+                    chains,
+                    denoise_inds,
+                    observation,
+                    image_features=image_features,
+                    prefix_kv=(prefix_mask, kv_cache) if capture_prefix_kv else None,
+                ),
             }
         return result
 

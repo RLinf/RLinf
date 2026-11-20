@@ -48,10 +48,12 @@ class UpdateKLProbe:
         *,
         target_kl: float,
         group: dist.ProcessGroup,
+        cache_prefix: bool = False,
     ) -> None:
         self._score = score
         self._group = group
         self._target_kl = target_kl
+        self.cache_prefix = cache_prefix
         self._remaining = 0
         self._captured: list[_CapturedBatch] = []
         self._reference: _ProbeReference | None = None
