@@ -98,7 +98,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: libero_10 # It's not important for openpi model
   enable_offload: False
