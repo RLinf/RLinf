@@ -20,12 +20,12 @@ Environment Setup
 
 **Hardware and Isaac Sim**
 
-Evaluation uses OmniGibson 3.9.3 and Isaac Sim 5.1.
+The installer selects a BEHAVIOR-1K fork based on Stanford’s v3.9.4 release. It runs on Isaac Sim 5.1 and supports sending actions to selected scenes in a shared simulator.
 
 - Use an NVIDIA GPU with RT cores. NVIDIA lists 16 GB of GPU memory as the minimum for Isaac Sim 5.1. A100 and H100 GPUs lack RT cores and are unsupported.
 - NVIDIA lists Linux driver 580.65.06 as a tested version. Check the supported driver versions and operating systems in the `Isaac Sim 5.1 requirements <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`_.
 
-The RLinf BEHAVIOR Docker image with OmniGibson 3.9.3 is pending release.
+The RLinf Docker image for the BEHAVIOR-1K v3.9.4 fork is pending release.
 
 **Environment variables**
 
@@ -86,15 +86,7 @@ The OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` must match training (``a
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model
 
-The command above runs the radio task on base layout ``0`` with the default configuration. To evaluate the first 2026 public test instance, set the task's cached-instance directory and select instance ID ``301``. Public test index ``0`` refers to layout ``301``. The layout determines the starting object states and robot pose.
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model \
-     +env.eval.omni_config.scene.scene_instance=house_double_floor_lower_task_turning_on_radio_0_0_template \
-     "env.eval.omni_config.task.activity_instance_dir=${OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances" \
-     env.eval.omni_config.task.activity_instance_id=301
+By default this command evaluates the radio task on base layout 0. To use a public layout such as 301, set the fields in :ref:`behavior-public-instances` and rerun the same command.
 
 **Step 5: Check results**
 
@@ -122,7 +114,7 @@ Each evaluation trajectory is determined by:
 
 - ``disabled`` (default): every reset loads the fixed instance for ``activity_instance_id``; if ``activity_instance_dir`` is set, the matching JSON is read from that directory.
 - ``offline``: each reset randomly selects a cached layout from the task directory you set in ``activity_instance_dir``.
-- ``online``: online object resampling on reset (requires ``online_object_sampling: True`` and ``use_presampled_robot_pose: False``; slower startup).
+- ``online``: resample objects on reset. This requires one environment per simulator process, ``online_object_sampling: True``, and ``use_presampled_robot_pose: False``.
 
 .. note::
 
@@ -142,36 +134,37 @@ Generic ``env.eval`` fields
    * - ``rollout_epoch``
      - Number of evaluation rounds. The π₀.₅ example runs four rounds.
    * - ``max_episode_steps``
-     - Leave unset in the π₀.₅ evaluation to use the official timeout for the task. The SDK checks a zero-based counter against 1.5 times the mean human demonstration length, rounded down. Set an integer to specify the number of actions directly.
+     - Leave unset to use the official limit for the selected task, or enter the maximum number of actions in one episode.
    * - ``max_steps_per_rollout_epoch``
      - Leave unset to request enough whole action chunks to reach the episode limit. With the default fixed episode, only the remaining actions in the last chunk are executed. An explicit budget must be divisible by ``rollout.model.num_action_chunks``.
    * - ``num_env_subprocess``
-     - Number of simulator processes per environment worker (default 1). Each worker assigns environments in index order, cycling through its processes. Environments from different pipeline stages can share a process. Only the active stage receives actions and advances its episode counters. Each process handling those actions advances physics for all its scenes. The worker’s environment count must be divisible by both the process count and the stage count.
+     - Simulator processes per environment worker (default 1). The environment count on each worker must be divisible by both its process count and its pipeline stage count.
    * - ``skip_intermediate_renders``
-     - When ``True``, skips intermediate observations inside action chunks for faster stepping; saved videos only contain chunk-boundary frames.
+     - Set to ``True`` to render and collect observations only on the last executed step of each action chunk. Videos keep one frame per chunk.
 
-Key ``omni_config`` fields
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+Sharing a simulator across pipeline stages saves the startup and GPU memory cost of extra processes. Only the active stage receives new actions, but all scenes in the process advance in physics. A waiting robot can keep moving under its previous command. Use the default ``rollout.pipeline_stage_num: 1`` to step all environments in each process together.
 
-These live under ``env.eval.omni_config`` (inherited from ``examples/embodiment/config/env/behavior_r1pro.yaml`` and overridable in eval YAML):
+.. _behavior-public-instances:
+
+Select a public instance
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Merge the following settings into ``evaluations/behavior/behavior_openpi_pi05_eval.yaml``. For the radio task, template 0 loads the scene. Public instance 301 supplies the starting layout for evaluation.
 
 .. code-block:: yaml
 
    env:
      eval:
        omni_config:
-         task:
-           activity_name: turning_on_radio
-           activity_definition_id: 0
-           activity_instance_id: 0
-           activity_instance_dir: null          # directory of cached instance JSON files
-           instance_file_format: tro_state        # template | tro_state
-           instance_resample_mode: disabled       # disabled | offline | online
          scene:
            scene_model: house_double_floor_lower
-           partial_scene_load: true               # load task-relevant rooms only
+           scene_instance: house_double_floor_lower_task_turning_on_radio_0_0_template
+         task:
+           activity_name: turning_on_radio
+           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
+           activity_instance_id: 301
 
-For full field descriptions (``partial_scene_load``, ``instance_generator.py``, etc.), see "behavior_r1pro.yaml key settings" in :doc:`../../examples/embodied/behavior`.
+To run instance 302 of the same task, change only ``activity_instance_id`` to ``302``. For another task, set the task and scene names, its full scene template, and its cached-instance directory. See :doc:`../../examples/embodied/behavior` for the other scene settings.
 
 GPU and cluster placement
 ~~~~~~~~~~~~~~~~~~~~~~~~~

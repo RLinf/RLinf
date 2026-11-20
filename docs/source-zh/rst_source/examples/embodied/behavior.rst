@@ -1,4 +1,4 @@
-基于Behavior评测平台的强化学习训练
+2026 BEHAVIOR 挑战的强化学习训练
 ========================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
@@ -7,7 +7,7 @@
 
    BEHAVIOR 基准（图片来源：`BEHAVIOR <https://behavior.stanford.edu>`__）。
 
-`2026 BEHAVIOR 挑战 <https://behavior.stanford.edu/challenge/index.html>`__ 使用 OmniGibson 3.9.3 和 NVIDIA Isaac Sim 5.1 模拟家居任务。RLinf 的示例用双臂移动机器人 R1 Pro 训练视觉语言动作模型（VLA）。
+`2026 BEHAVIOR 挑战 <https://behavior.stanford.edu/challenge/index.html>`__ 使用 OmniGibson 和 NVIDIA Isaac Sim 模拟家居任务。RLinf 的示例用双臂移动机器人 R1 Pro 训练视觉语言动作模型（VLA）。
 
 概览
 ----------------------------------------
@@ -38,7 +38,7 @@
       1 节点 · 支持光追的 GPU
 
 | **你将完成：** 核对仿真版本 → 下载 2026 仿真资产与模型 → 选择 RLinf 配置。
-| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Python 3.11 · OmniGibson 3.9.3 · Isaac Sim 5.1。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Python 3.11 · RLinf 安装的 BEHAVIOR-1K v3.9.4 分支 · Isaac Sim 5.1。
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -81,7 +81,7 @@
 .. include:: _setup_common.rst
    :end-before: 然后，使用下列两种方式之一
 
-**选项 1：Docker 镜像** — BEHAVIOR 3.9.3 镜像待发布。
+**选项 1：Docker 镜像** — 用于 BEHAVIOR-1K v3.9.4 分支的 RLinf Docker 镜像待发布。
 
 **选项 2：自定义环境**
 
@@ -93,8 +93,9 @@
    bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
    python -c "from importlib.metadata import version; print(version('omnigibson'), version('isaacsim'))"
+   git -C "${BEHAVIOR_PATH:-$VIRTUAL_ENV/BEHAVIOR-1K}" rev-parse HEAD
 
-输出为 OmniGibson 3.9.3 和 Isaac Sim 5.1.x 时，可使用下节的 SDK 下载命令。尚未安装 SDK 时，也可先下载下节列出的三个压缩包。
+v3.9.4 源码中的 OmniGibson 软件包版本号仍为 3.9.3。按默认方式安装后，Git 提交号应与 ``requirements/install.sh`` 中指定的提交一致，Isaac Sim 版本应为 5.1.x。
 
 
 下载资产
@@ -106,7 +107,7 @@
 
    export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
 
-在已激活的 RLinf 环境中运行以下命令，可下载或补齐 3.9.3 所需的资产。
+在已激活的 RLinf 环境中运行以下命令，可下载 2026 挑战所需的仿真资产。首次获取场景资产密钥时，OmniGibson 会提示你接受数据集许可协议。
 
 .. code-block:: bash
 
@@ -189,13 +190,12 @@ PPO 训练沿用以下入口。
 
    - BEHAVIOR 吞吐调优 → 先增加 env GPU 数量，再调 ``env.num_env_subprocess`` 和 ``env.train.total_num_envs``。
    - 按可用 GPU 显存和所选场景的显存占用设置仿真子进程数。
-   - 缓存任务实例 → 使用 ``rlinf/envs/sim/behavior/instance_generator.py`` 和 ``examples/embodiment/config/env/behavior_r1pro.yaml`` 生成。
    - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
    - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
 
 .. warning::
 
-   OpenVLA-OFT 和 π₀ 在 BEHAVIOR 3.9.3 上的训练成功率待验证。
+   OpenVLA-OFT 和 π₀ 在 BEHAVIOR-1K v3.9.4 分支上的训练成功率待验证。
 
 独立评测
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -283,7 +283,7 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
      - reset 时的实例切换：``disabled``\ （加载固定的 ``activity_instance_id``）、``offline``
        （启动时扫描一次 ``activity_instance_dir``，每次 reset 采样一个缓存实例——
        ``*_template.json`` 走较重的场景重载路径，``*_template-tro_state.json`` 走较轻的原地路径）、
-       或 ``online``\ （需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``）。
+       或 ``online``\ （每个仿真进程只能运行一个环境，需设置 ``online_object_sampling: True`` 和 ``use_presampled_robot_pose: False``）。
    * - ``omni_config.task.activity_instance_dir``
      - 缓存实例 JSON 目录（``*_template.json`` / ``*_template-tro_state.json``），供 ``offline``
        模式以及 ``disabled`` 模式下的固定 id 加载使用。
@@ -311,40 +311,11 @@ OmniGibson 的基础配置（``base_config_name``），再应用 ``omni_config``
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` 使用 numpy 控制器后端，在单进程 / 中等并行下通常更快。
    * - ``skip_intermediate_renders``
-     - 为 ``True`` 时跳过动作 chunk 内中间观测的采集（显著提升环境速度）。此时保存的视频只显示策略在
-       chunk 边界观测到的帧。
+     - 设为 ``True`` 后，仿真器只在每个动作块实际执行的最后一步渲染并读取观测。
    * - ``num_env_subprocess``
-     - 每个环境 worker 的仿真子进程数，默认为 1。环境按编号轮流分到各进程，不同流水线阶段的环境可以共用同一个进程。只有当前阶段的环境接收动作并累计回合步数。进程处理动作时，会推进其中所有场景的物理仿真。每个 worker 的环境数须能分别被进程数和阶段数整除。
+     - 每个环境 worker 启动的仿真进程数，默认为 1。详见 :ref:`不同流水线阶段共用仿真进程时的限制 <behavior-eval-config>`。
 
-生成缓存任务实例
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``rlinf/envs/sim/behavior/instance_generator.py`` 直接从 ``behavior_r1pro.yaml`` 生成
-``*_template.json`` 与 ``*_template-tro_state.json`` 文件（它读取 ``scene_model``、
-``activity_name``、``activity_definition_id``、机器人配置与房间加载设置，并临时切换为在线物体采样）。
-
-2026 资产已包含官方评测实例。以下命令用于生成额外的训练布局。3.9.3 的默认输出目录仍待适配。使用以下命令前，先在 ``behavior_r1pro.yaml`` 中将 ``omni_config.task.activity_instance_dir`` 设为训练布局的输出目录。
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-
-   python rlinf/envs/sim/behavior/instance_generator.py \
-     --config examples/embodiment/config/env/behavior_r1pro.yaml \
-     --output-format template \
-     --start-idx 1 --end-idx 50
-
-   python rlinf/envs/sim/behavior/instance_generator.py \
-     --config examples/embodiment/config/env/behavior_r1pro.yaml \
-     --output-format tro_state \
-     --start-idx 1 --end-idx 50
-
-生成的文件名遵循
-``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``，
-因此 ``--start-idx`` / ``--end-idx`` 决定 ``activity_instance_id`` 范围。``tro_state`` 输出仅在任务
-元数据提供时包含顶层 ``robot_poses``，否则省略该键，reset 回退到任务默认机器人位姿。BEHAVIOR-1K 上游的
-``multiply_b1k_tasks.py`` 仍可使用，但推荐 RLinf 的生成器，因为它直接读取 RLinf YAML 并保留
-``activity_definition_id``。
+2026 仿真资产已包含官方评测实例。选择实例的方法见 :doc:`BEHAVIOR 评测指南 <../../evaluations/guides/behavior>`。生成额外训练布局的工具需要 OmniGibson 3.7.2。
 
 
 可视化与结果

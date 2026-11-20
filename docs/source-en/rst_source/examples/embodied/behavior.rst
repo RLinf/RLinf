@@ -8,7 +8,7 @@ RL with the 2026 BEHAVIOR Challenge
    The BEHAVIOR benchmark (image: `BEHAVIOR <https://behavior.stanford.edu>`__).
 
 The `2026 BEHAVIOR Challenge <https://behavior.stanford.edu/challenge/index.html>`__
-uses OmniGibson 3.9.3 and NVIDIA Isaac Sim 5.1 to simulate household tasks.
+uses OmniGibson and NVIDIA Isaac Sim to simulate household tasks.
 The RLinf recipes use the dual-arm R1 Pro mobile robot to train vision-language-action (VLA) policies.
 
 Overview
@@ -40,7 +40,7 @@ Prepare the 2026 simulation assets in your RLinf environment and select an RLinf
       1 node · ray-tracing GPUs
 
 | **You'll do:** check the simulator versions → download the 2026 assets and a base model → select an RLinf config.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Python 3.11 · OmniGibson 3.9.3 · Isaac Sim 5.1.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Python 3.11 · the BEHAVIOR-1K v3.9.4 fork installed by RLinf · Isaac Sim 5.1.
 
 Tasks
 ~~~~~
@@ -84,7 +84,7 @@ Installation
 .. include:: _setup_common.rst
    :end-before: Then set up the dependencies
 
-**Option 1: Docker image** — The BEHAVIOR 3.9.3 image is pending release.
+**Option 1: Docker image** — The RLinf Docker image for the BEHAVIOR-1K v3.9.4 fork is pending release.
 
 **Option 2: Custom environment**
 
@@ -98,8 +98,9 @@ versions of LeRobot, Hugging Face Hub, and Warp.
    bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
    python -c "from importlib.metadata import version; print(version('omnigibson'), version('isaacsim'))"
+   git -C "${BEHAVIOR_PATH:-$VIRTUAL_ENV/BEHAVIOR-1K}" rev-parse HEAD
 
-If the output shows OmniGibson 3.9.3 and Isaac Sim 5.1.x, use the SDK commands below. You can also download the three asset archives before installing the SDK.
+The v3.9.4 checkout reports OmniGibson 3.9.3 in its Python package metadata. For the default installation, the Git revision should match the commit pinned in ``requirements/install.sh``, and Isaac Sim should report 5.1.x.
 
 
 Download the Assets
@@ -112,7 +113,7 @@ Export the path in the shell that launches RLinf.
 
    export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
 
-Run these commands in the active RLinf environment to download any missing assets for 3.9.3. OmniGibson prompts for the dataset license when it first retrieves the scene asset key.
+Run these commands in the active RLinf environment to download any missing assets for the 2026 challenge. OmniGibson prompts for the dataset license when it first retrieves the scene asset key.
 
 .. code-block:: bash
 
@@ -196,13 +197,12 @@ Launch PPO training with the existing entry point.
 
    - BEHAVIOR throughput → increase env GPU count first, then tune ``env.num_env_subprocess`` and ``env.train.total_num_envs``.
    - Set the number of simulator subprocesses to fit your scene and available GPU memory.
-   - Cached task instances → generate them with ``rlinf/envs/sim/behavior/instance_generator.py`` and ``examples/embodiment/config/env/behavior_r1pro.yaml``.
    - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
 
 .. warning::
 
-   Training success rates for OpenVLA-OFT and π₀ on BEHAVIOR 3.9.3 have yet to be verified.
+   Training success rates for OpenVLA-OFT and π₀ on the BEHAVIOR-1K v3.9.4 fork have yet to be verified.
 
 Standalone Evaluation
 ~~~~~~~~~~~~~~~~~~~~~
@@ -266,7 +266,7 @@ performance.
      - Reset-time instance switching: ``disabled`` (load the fixed ``activity_instance_id``),
        ``offline`` (scan ``activity_instance_dir`` once and sample a cached instance per reset —
        ``*_template.json`` use the heavy scene-reload path, ``*_template-tro_state.json`` the
-       lighter in-place path), or ``online`` (requires ``online_object_sampling: True`` and
+       lighter in-place path), or ``online`` (requires one environment per simulator process, ``online_object_sampling: True`` and
        ``use_presampled_robot_pose: False``).
    * - ``omni_config.task.activity_instance_dir``
      - Directory of cached instance JSONs (``*_template.json`` / ``*_template-tro_state.json``),
@@ -296,44 +296,12 @@ performance.
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` uses the numpy controller backend, usually faster in single-/moderate-parallel runs.
    * - ``skip_intermediate_renders``
-     - When ``True``, skips collecting intermediate observations inside an action chunk (large
-       env-speed gain). Saved videos then show only the frames the policy observes at chunk boundaries.
+     - Set to ``True`` to render and collect observations only on the last executed step of each action chunk.
    * - ``num_env_subprocess``
-     - Number of simulator processes per environment worker (default 1). Each worker assigns environments in index order, cycling through its processes. Environments from different pipeline stages can share a process. Only the active stage receives actions and advances its episode counters. Each process handling those actions advances physics for all its scenes. The worker’s environment count must be divisible by both the process count and the stage count.
+     - Simulator processes per environment worker (default 1). See :ref:`how pipeline stages share a simulator process <behavior-eval-config>`.
 
-Generating cached task instances
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The 2026 asset bundle includes the official evaluation instances. See the :doc:`BEHAVIOR evaluation guide <../../evaluations/guides/behavior>` to select one. The tool for generating additional training layouts requires OmniGibson 3.7.2.
 
-``rlinf/envs/sim/behavior/instance_generator.py`` generates ``*_template.json`` and
-``*_template-tro_state.json`` files directly from ``behavior_r1pro.yaml`` (it reads
-``scene_model``, ``activity_name``, ``activity_definition_id``, the robot config, and
-room-loading settings, then temporarily switches to online object sampling).
-
-The 2026 assets include the official evaluation instances. Use the commands below to generate additional training layouts.
-The generator cannot yet determine the default output directory on 3.9.3. Before using either command,
-set ``omni_config.task.activity_instance_dir`` in ``behavior_r1pro.yaml`` to the directory for the generated layouts.
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-
-   python rlinf/envs/sim/behavior/instance_generator.py \
-     --config examples/embodiment/config/env/behavior_r1pro.yaml \
-     --output-format template \
-     --start-idx 1 --end-idx 50
-
-   python rlinf/envs/sim/behavior/instance_generator.py \
-     --config examples/embodiment/config/env/behavior_r1pro.yaml \
-     --output-format tro_state \
-     --start-idx 1 --end-idx 50
-
-Generated filenames follow
-``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``,
-so ``--start-idx`` / ``--end-idx`` set the ``activity_instance_id`` range. ``tro_state``
-outputs include top-level ``robot_poses`` only when the task metadata provides them; otherwise
-the key is omitted and reset falls back to the task's default robot pose. BEHAVIOR-1K's upstream
-``multiply_b1k_tasks.py`` still works, but RLinf's generator is recommended because it reads the
-RLinf YAML directly and preserves ``activity_definition_id``.
 
 --------------
 

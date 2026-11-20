@@ -20,12 +20,12 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 的大规模家居场景仿真基
 
 **硬件与 Isaac Sim**
 
-评测使用 OmniGibson 3.9.3 和 Isaac Sim 5.1。
+安装脚本使用基于 Stanford v3.9.4 的 BEHAVIOR-1K 分支。该分支使用 Isaac Sim 5.1，支持在同一仿真进程内按场景编号发送动作。
 
 - 使用配有 RT Core 的 NVIDIA GPU。NVIDIA 为 Isaac Sim 5.1 列出的最低显存为 16 GB。A100、H100 缺少 RT Core，不在支持范围内。
 - NVIDIA 列出的 Linux 测试驱动版本为 580.65.06。支持的驱动版本和操作系统见 `Isaac Sim 5.1 系统要求 <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`_\ 。
 
-包含 OmniGibson 3.9.3 的 RLinf BEHAVIOR Docker 镜像待发布。
+用于 BEHAVIOR-1K v3.9.4 分支的 RLinf Docker 镜像待发布。
 
 **环境变量**
 
@@ -86,15 +86,7 @@ OmniGibson 从根目录下的 ``behavior-1k-assets/`` 读取场景和物体资�
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path=/path/to/model
 
-上面的命令按默认配置在基础布局 0 上评测“打开收音机”任务。评测 2026 年公开测试集的首个实例时，需指定该任务的缓存目录，并将实例编号设为 301。公开测试索引 0 对应布局 301。布局决定物体的初始状态和机器人的初始位姿。
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-     rollout.model.model_path=/path/to/model \
-     +env.eval.omni_config.scene.scene_instance=house_double_floor_lower_task_turning_on_radio_0_0_template \
-     "env.eval.omni_config.task.activity_instance_dir=${OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances" \
-     env.eval.omni_config.task.activity_instance_id=301
+这条命令默认在基础布局 0 上评测“打开收音机”。要使用 301 等公开布局，按 :ref:`behavior-public-instances` 设置评测 YAML，再运行同一条命令。
 
 **Step 5：查看结果**
 
@@ -122,7 +114,7 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
 
 - ``disabled`` （默认）：每次 reset 加载 ``activity_instance_id`` 对应的固定实例；若设置了 ``activity_instance_dir``，则从该目录读取对应 JSON。
 - ``offline``\ ：每次重置时，从 ``activity_instance_dir`` 指向的任务目录中随机选取一个缓存布局。
-- ``online``：reset 时在线重采样物体布局（需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``，启动较慢）。
+- ``online``：重置时重新采样物体布局。每个仿真进程只能运行一个环境，并须设置 ``online_object_sampling: True`` 和 ``use_presampled_robot_pose: False``\ 。
 
 .. note::
 
@@ -142,36 +134,37 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
    * - ``rollout_epoch``
      - 评测轮数。π₀.₅ 示例默认运行 4 轮。
    * - ``max_episode_steps``
-     - π₀.₅ 评测留空时采用该任务的官方时限。SDK 从 0 开始计数，达到人类示范平均步数的 1.5 倍（向下取整）时判定超时。也可以直接填写本回合允许执行的动作数。
+     - 留空时采用所选任务的官方步数上限，也可填写每个回合最多执行的动作数。
    * - ``max_steps_per_rollout_epoch``
      - 留空时按整组动作计算足够覆盖回合时限的采样预算。默认配置下，最后一组只执行回合剩余的动作。手动填写的预算必须能被 ``rollout.model.num_action_chunks`` 整除。
    * - ``num_env_subprocess``
-     - 每个环境 worker 的仿真子进程数，默认为 1。环境按编号轮流分到各进程，不同流水线阶段的环境可以共用同一个进程。只有当前阶段的环境接收动作并累计回合步数。进程处理动作时，会推进其中所有场景的物理仿真。每个 worker 的环境数须能分别被进程数和阶段数整除。
+     - 每个环境 worker 的仿真进程数，默认为 1。每个 worker 的环境数须能分别被进程数和流水线阶段数整除。
    * - ``skip_intermediate_renders``
-     - 设为 ``True`` 时跳过 chunk 内中间 observation，显著加速环境步进；保存的视频仅含 chunk 边界帧。
+     - 设为 ``True`` 后，仿真器只在每个动作块实际执行的最后一步渲染并读取观测，录像也只保留这一帧。
 
-``omni_config`` 关键字段
-~~~~~~~~~~~~~~~~~~~~~~~~
+多个流水线阶段共用一个仿真进程，可以省去额外进程的启动和显存开销。只有当前阶段接收新动作，但同一进程内所有场景的物理仿真都会推进，等待中的机器人可能继续执行上一次的指令。要让每个进程里的环境一起接收动作、一起推进，使用默认配置 ``rollout.pipeline_stage_num: 1``\ 。
 
-以下字段位于 ``env.eval.omni_config`` 下（继承自 ``examples/embodiment/config/env/behavior_r1pro.yaml``，可在评测 YAML 中覆盖）：
+.. _behavior-public-instances:
+
+选择公开实例
+~~~~~~~~~~~~
+
+将以下字段合入 ``evaluations/behavior/behavior_openpi_pi05_eval.yaml`` 中已有的 ``env.eval`` 配置。收音机任务使用 0 号完整模板创建场景，再从公开实例 301 恢复本次评测的初始布局。
 
 .. code-block:: yaml
 
    env:
      eval:
        omni_config:
-         task:
-           activity_name: turning_on_radio
-           activity_definition_id: 0
-           activity_instance_id: 0
-           activity_instance_dir: null          # 指向缓存 instance JSON 目录
-           instance_file_format: tro_state        # template | tro_state
-           instance_resample_mode: disabled       # disabled | offline | online
          scene:
            scene_model: house_double_floor_lower
-           partial_scene_load: true               # 仅加载任务相关房间，缩短启动时间
+           scene_instance: house_double_floor_lower_task_turning_on_radio_0_0_template
+         task:
+           activity_name: turning_on_radio
+           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
+           activity_instance_id: 301
 
-更完整的字段说明（``partial_scene_load``、``instance_generator.py`` 用法等）见 :doc:`../../examples/embodied/behavior` 中的「behavior_r1pro.yaml 关键配置说明」。
+要运行同一任务的实例 302，只需把 ``activity_instance_id`` 改为 ``302``\ 。换任务时，同时更新任务名、场景名、对应的完整模板和缓存实例目录。其他场景设置见 :doc:`../../examples/embodied/behavior`\ 。
 
 GPU 与集群布局
 ~~~~~~~~~~~~~~
