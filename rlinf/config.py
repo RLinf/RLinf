@@ -2624,6 +2624,12 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.critic = validate_fsdp_cfg(cfg.critic)
 
     if cfg.runner.task_type == "reasoning":
+        if "lm_head_chunk_size" in cfg.actor.model:
+            from rlinf.hybrid_engines.megatron.qwen_vl import (
+                validate_qwen_vl_chunked_cfg,
+            )
+
+            validate_qwen_vl_chunked_cfg(cfg)
         cfg = validate_searchr1_cfg(cfg)
 
     return cfg

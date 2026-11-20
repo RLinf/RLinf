@@ -10,6 +10,8 @@ training efficiency becomes the bottleneck.
 
    * - Guide
      - What you get
+   * - :doc:`Actor Logprob Memory <../actor_logprob_memory>`
+     - Choose chunking settings for the Megatron Actor and measure peak output-layer memory.
    * - :doc:`RTC <../rtc>`
      - Hide policy inference latency by overlapping it with action-chunk execution, in simulation and on real robots.
    * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
@@ -32,6 +34,7 @@ training efficiency becomes the bottleneck.
 .. toctree::
    :hidden:
 
+   Actor Logprob Memory <../actor_logprob_memory>
    RTC <../rtc>
    Env Decoupled Mode <../env_decoupled_mode>
    Observation Compression <../obs_compression>

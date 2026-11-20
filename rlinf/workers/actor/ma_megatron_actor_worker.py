@@ -14,6 +14,7 @@
 
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 from typing import Optional
 
 import torch
@@ -84,6 +85,18 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     ):
         super().__init__(cfg, placement)
         self.response_only_logits = cfg.actor.get("response_only_logits", False)
+        self.scoring_forward = None
+        lm_head_chunk_size = cfg.actor.model.get("lm_head_chunk_size", 0)
+        if lm_head_chunk_size:
+            from rlinf.hybrid_engines.megatron.qwen_vl import (
+                forward_qwen_vl_with_chunked_log_probs,
+            )
+
+            self.scoring_forward = partial(
+                forward_qwen_vl_with_chunked_log_probs,
+                chunk_size=lm_head_chunk_size,
+                calculate_entropy=self.calculate_entropy,
+            )
         self._init_auto_scheduler(role)
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
@@ -117,6 +130,18 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         """Project packed tokens and return scores in their original positions."""
         module = unwrap_model(model)
         temperature = self.cfg.algorithm.sampling_params.temperature
+        if self.scoring_forward is not None:
+            return self.scoring_forward(
+                model,
+                module,
+                input_ids=input_ids,
+                attention_mask=None,
+                position_ids=position_ids,
+                packed_seq_params=packed_params,
+                temperature=temperature,
+                label=label,
+                label_mask=label_mask,
+            )
         positions = None
         projection = nullcontext()
         if self.response_only_logits and module.post_process:
@@ -193,7 +218,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             )
             labels = [torch.cat((row[1:], row.new_zeros(1))) for row in rows]
             label, _ = preprocess_ragged_seqs(labels)
-            if self.response_only_logits:
+            if self.response_only_logits or self.scoring_forward is not None:
                 # Shift in each trajectory before the packing step inserts TP padding.
                 masks = [
                     torch.cat((mask[1:], mask.new_zeros(1))).to(input_ids.device)
