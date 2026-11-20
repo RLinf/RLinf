@@ -669,7 +669,7 @@ Reduce Actor Scoring Memory
 ---------------------------
 
 A dynamic-batch Megatron Actor can reduce the memory it uses to score generated
-tokens. Both options are disabled by default.
+tokens. All three options are disabled by default.
 
 .. list-table::
    :header-rows: 1
@@ -683,8 +683,11 @@ tokens. Both options are disabled by default.
    * - ``actor.response_only_logits: true``
      - Prompts or tool outputs occupy most of the batch. Project only the positions that predict response tokens.
      - Context parallel size 1. Supports entropy bonuses. With entropy off and no explicit chunk size, softmax uses 256-token chunks.
+   * - ``actor.model.lm_head_chunk_size: 256``
+     - The projection itself is the peak. Project decoder states in chunks and recompute each chunk during backward.
+     - Qwen3.5 with MBridge, PP1, CP1 and ``actor.model.load_mtp: false``. Set ``algorithm.entropy_bonus: 0``. Logging entropy projects every position. With entropy off, only response positions are projected.
 
-To try both options on one eight-GPU node, follow the
+To try the first two options on one eight-GPU node, follow the
 :doc:`Search-R1 Qwen2.5 setup <../examples/agentic/searchr1/qwen2.5>` for the
 retrieval server, data and weights. Set the paths in ``train_qwen2.5.yaml``.
 The chunked configuration inherits those paths. Run it from the repository root:
@@ -696,3 +699,30 @@ The chunked configuration inherits those paths. Run it from the repository root:
 Use ``train_qwen2.5`` with the same command for the baseline. Compare peak
 allocated memory and update time on equivalent batches, keeping the token
 counts and number of scored positions fixed.
+
+Measure Qwen3.5 Projection Memory
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Training from a public Qwen3.5 checkpoint requires the loading support in
+`PR #1862 <https://github.com/RLinf/RLinf/pull/1862>`_. To benchmark the
+output layer alone, run this command from the repository root in a CUDA training
+environment. It uses seeded synthetic inputs and requires no checkpoint:
+
+.. code-block:: bash
+
+   PYTHONPATH=. python tests/unit_tests/bench_lm_head.py --tokens 4096 --chunk-size 256
+
+The script prints peak allocated GiB for dense and chunked BF16 forward and
+backward after one warm-up per mode. Change ``--tokens`` to compare sequence
+lengths. It scores every input position. With the command above on one A100
+80GB (PyTorch 2.11.0+cu128), the peaks were 1.586 GiB for dense projection and
+0.283 GiB for chunked projection.
+
+For context, a Qwen3.5-4B Actor update on two A100-80GB GPUs (TP2 with sequence
+parallelism, fusion off) used 33.33 GiB per GPU with dense projection and
+24.60 GiB with 256-token chunks. The private six-image sample had 23,095 tokens
+and 12,303 scored positions. At 512 tokens (256 scored) on one A100, 32-token
+chunks increased the peak from 43.57 to 44.93 GiB. These measurements come from
+`revision 97c60112 <https://github.com/Sonorous281/RLinf/commit/97c60112045384ab35c824ee4646ab79b0665d7a>`_,
+before the Actor adopted ragged batches. The synthetic benchmark measures a
+different workload.

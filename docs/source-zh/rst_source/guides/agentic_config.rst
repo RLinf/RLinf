@@ -651,7 +651,7 @@ reward
 降低 Actor 打分的峰值显存
 --------------------------
 
-Megatron Actor 使用动态批次训练时，可按下表选择优化方式。两项默认都关闭。
+Megatron Actor 使用动态批次训练时，可按下表选择优化方式。三项默认都关闭。
 
 .. list-table::
    :header-rows: 1
@@ -665,11 +665,27 @@ Megatron Actor 使用动态批次训练时，可按下表选择优化方式。�
    * - ``actor.response_only_logits: true``
      - 提示词或工具返回占批次的大部分，只对预测回复 token 的位置做词表投影。
      - 上下文并行度为 1。支持熵奖励。关闭熵计算且未指定块大小时，softmax 每块处理 256 个位置。
+   * - ``actor.model.lm_head_chunk_size: 256``
+     - 峰值出在词表投影本身。将解码器输出分块投影，反向传播时逐块重算。
+     - Qwen3.5 使用 MBridge，PP 和 CP 均为 1，设置 ``actor.model.load_mtp: false`` 和 ``algorithm.entropy_bonus: 0``。记录熵时对全部位置做投影；关闭熵计算时只投影回复位置。
 
-在单机八卡上试用这两项配置前，先按 :doc:`Search-R1 Qwen2.5 指南 <../examples/agentic/searchr1/qwen2.5>` 准备检索服务、数据和权重，并在 ``train_qwen2.5.yaml`` 中填好路径。分块配置会继承这些设置。在仓库根目录运行：
+在单机八卡上试用前两项配置前，先按 :doc:`Search-R1 Qwen2.5 指南 <../examples/agentic/searchr1/qwen2.5>` 准备检索服务、数据和权重，并在 ``train_qwen2.5.yaml`` 中填好路径。分块配置会继承这些设置。在仓库根目录运行：
 
 .. code-block:: bash
 
    bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked
 
 对照组用同一条命令，把配置名换成 ``train_qwen2.5``。比较峰值显存和更新时间时，保持批次的总 token 数和实际打分位置数一致。
+
+测量 Qwen3.5 词表投影的显存开销
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+使用公开的 Qwen3.5 权重训练，需要 `PR #1862 <https://github.com/RLinf/RLinf/pull/1862>`_ 的权重加载支持。若只对比输出层，可在 CUDA 训练环境中从仓库根目录运行以下命令。脚本用固定随机种子生成输入，无需下载权重：
+
+.. code-block:: bash
+
+   PYTHONPATH=. python tests/unit_tests/bench_lm_head.py --tokens 4096 --chunk-size 256
+
+脚本为常规投影和分块投影各预热一次，再分别输出 BF16 前向和反向传播的峰值显存（GiB）。全部输入位置都参与打分，可调整 ``--tokens`` 比较不同序列长度。在一张 A100 80GB 上用 PyTorch 2.11.0+cu128 执行上述命令，常规投影的峰值为 1.586 GiB，分块后为 0.283 GiB。
+
+作为参考，Qwen3.5-4B Actor 曾在两张 A100 80GB 上使用 TP2 和序列并行，关闭梯度融合，完成一次更新。六图私有样本共 23,095 个 token，其中 12,303 个参与打分。常规投影的单卡峰值为 33.33 GiB，按 256 个 token 分块后为 24.60 GiB。单卡短样本共 512 个 token，256 个参与打分，按 32 个 token 分块后峰值从 43.57 增至 44.93 GiB。这两组数据来自采用不等长批次之前的 `版本 97c60112 <https://github.com/Sonorous281/RLinf/commit/97c60112045384ab35c824ee4646ab79b0665d7a>`_。上面的合成测试只测输出层，测量范围不同。

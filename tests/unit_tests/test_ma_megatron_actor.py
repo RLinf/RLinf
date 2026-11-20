@@ -467,6 +467,7 @@ def scoring_actor(tmp_path, monkeypatch):
     actor.tokenizer = SimpleNamespace(eos_token_id=0)
     actor.clip_ratio_c, actor.clip_ratio_low, actor.clip_ratio_high = 3.0, 0.2, 0.2
     actor.response_only_logits = False
+    actor.scoring_forward = None
     actor.kl_beta = 0.0
     actor.loss_agg_func = masked_mean
     actor.torch_platform = SimpleNamespace(current_device=lambda: "cpu")
