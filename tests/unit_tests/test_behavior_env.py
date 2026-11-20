@@ -58,9 +58,9 @@ def actors(monkeypatch):
     "num_envs,num_processes,num_stages",
     [(4, 2, 2), (4, 2, 1), (6, 3, 2), (4, 1, 2), (6, 2, 3)],
     ids=[
-        "isolated-stages",
+        "two-stages-two-processes",
         "single-stage-round-robin",
-        "uneven-stage-process-count",
+        "two-stages-three-processes",
         "two-stages-one-process",
         "three-stages-two-processes",
     ],
@@ -68,21 +68,15 @@ def actors(monkeypatch):
 def test_stage_dispatch_and_result_order(actors, num_envs, num_processes, num_stages):
     cfg = OmegaConf.create({})
     pool = behavior_env.BehaviorProcessPool(cfg, num_envs, num_processes, num_stages)
-    owners = set()
+    assert len(actors) == num_processes
     count = num_envs // num_stages
     for stage in range(num_stages):
         start = stage * count
         observations, _ = pool.env_reset_slice(start, count)
-        assert len(set(observations)) == count
-        if num_stages == 1 or num_processes < num_stages:
-            assert observations == [
-                (i % num_processes, i // num_processes)
-                for i in range(start, start + count)
-            ]
+        assert observations == [
+            (i % num_processes, i // num_processes) for i in range(start, start + count)
+        ]
         active = {actor for actor, row in observations}
-        if num_processes >= num_stages:
-            assert owners.isdisjoint(active)
-        owners.update(active)
 
         actions = torch.arange(start + 1, start + count + 1).reshape(count, 1, 1)
         _, rewards, _, _, _ = pool.env_chunk_step_slice(start, count, actions)
@@ -91,13 +85,6 @@ def test_stage_dispatch_and_result_order(actors, num_envs, num_processes, num_st
             assert process.reset.remote.call_count == int(index in active)
             assert process.chunk_step.remote.call_count == int(index in active)
             process.reset_mock()
-    assert owners == set(range(num_processes))
-
-
-def test_unequal_stage_sizes_fail_before_launch(actors):
-    with pytest.raises(ValueError, match="same positive number of environments"):
-        behavior_env.BehaviorProcessPool(OmegaConf.create({}), 4, 1, 3)
-    assert not actors
 
 
 @pytest.mark.parametrize("automatic_reset", [False, True])

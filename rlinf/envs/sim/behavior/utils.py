@@ -221,7 +221,7 @@ def apply_env_wrapper(vec_env, wrapper_name: str | None):
 
 @contextmanager
 def selected_scene_batch(env, indices: list[int]):
-    """Use the SDK step on a subset of scenes for one action chunk.
+    """Run an SDK step on the selected scenes.
 
     The view shares live robots and physics. Only the selected scenes' episode
     counters, rewards and termination history are written back to the task.

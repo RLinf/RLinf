@@ -17,7 +17,6 @@ import inspect
 import json
 import os
 import time
-from contextlib import nullcontext
 from typing import ClassVar
 
 import gymnasium as gym
@@ -153,24 +152,27 @@ class BehaviorProcess:
         actions: torch.Tensor,
         env_indices: list[int],
         need_obs: bool,
-        batch=None,
     ):
         """Step one shard for a single chunk timestep.
 
-        ``actions`` contains the process's rows, or only the selected rows
-        when stepping a scene batch. ``env_indices`` uses process-local IDs.
+        ``actions`` is the zero-padded ``[num_shard, action_dim]`` action
+        tensor (inactive rows already carry zero actions). ``env_indices``
+        is the ascending list of local rows that should advance.
 
         Returns outputs only for ``env_indices``, in that same order.
         """
-        if batch is not None:
-            raw_obs, rewards, terminates, truncates, infos = batch.step(actions)
-        elif self.step_supports_env_indices:
+        if self.step_supports_env_indices:
             raw_obs, rewards, terminates, truncates, infos = self._call_step(
                 [actions[i] for i in env_indices],
                 env_indices=env_indices,
                 get_obs=need_obs,
                 render=need_obs,
             )
+        elif len(env_indices) < self.env.num_envs:
+            with selected_scene_batch(self.env.unwrapped, env_indices) as scenes:
+                raw_obs, rewards, terminates, truncates, infos = scenes.step(
+                    actions[env_indices]
+                )
         else:
             raw_obs, rewards, terminates, truncates, infos = self._call_step(
                 actions,
@@ -193,25 +195,19 @@ class BehaviorProcess:
 
         Args:
             actions: Zero-padded ``[num_shard, chunk, action_dim]`` action
-                matrix for this VectorEnvironment.
+                matrix for this simulator process.
             env_indices: Ascending local rows that should advance every
                 chunk step.
         """
         _, chunk_size, _ = actions.shape
 
-        scenes = nullcontext()
-        if not self.step_supports_env_indices and len(env_indices) < self.env.num_envs:
-            scenes = selected_scene_batch(self.env.unwrapped, env_indices)
-            actions = actions[env_indices]
-
         results: list[tuple] = []
-        with scenes as batch:
-            for t in range(chunk_size):
-                is_last = t == chunk_size - 1
-                need_obs = not self.skip_intermediate_renders or is_last
-                results.append(
-                    self._step_shard(actions[:, t], env_indices, need_obs, batch)
-                )
+        for t in range(chunk_size):
+            is_last = t == chunk_size - 1
+            need_obs = not self.skip_intermediate_renders or is_last
+            results.append(
+                self._step_shard(actions[:, t], env_indices, need_obs=need_obs)
+            )
         return tuple(zip(*results))
 
     def reset(self, reset_indices=None, get_obs=True):
@@ -298,15 +294,7 @@ class BehaviorProcessPool:
         num_env_subprocess: int,
         pipeline_stage_num: int,
     ):
-        if (
-            pipeline_stage_num < 1
-            or total_num_envs < 1
-            or total_num_envs % pipeline_stage_num
-        ):
-            raise ValueError(
-                "Each pipeline stage must have the same positive number of environments."
-            )
-        if num_env_subprocess < 1 or total_num_envs % num_env_subprocess != 0:
+        if total_num_envs % num_env_subprocess != 0:
             raise ValueError(
                 f"total_num_envs({total_num_envs}) must be divisible by num_env_subprocess({num_env_subprocess})"
             )
@@ -315,10 +303,7 @@ class BehaviorProcessPool:
         self.cfg = cfg
         self.total_num_envs = total_num_envs
         self.num_env_subprocess = num_env_subprocess
-        self.pipeline_stage_num = pipeline_stage_num
-        self.envs_per_process = [
-            len(rows) for _, _, rows in self._slice_plan(0, total_num_envs)
-        ]
+        self.num_env_shard = total_num_envs // num_env_subprocess
         self.skip_intermediate_renders = bool(
             OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
@@ -339,8 +324,8 @@ class BehaviorProcessPool:
         for attempt in range(1, max_attempts + 1):
             try:
                 self.env_processes = [
-                    BehaviorProcess.remote(self.cfg, count)
-                    for count in self.envs_per_process
+                    BehaviorProcess.remote(self.cfg, self.num_env_shard)
+                    for _ in range(self.num_env_subprocess)
                 ]
 
                 # Wait for all instances to initialize and fetch their activity name
@@ -392,25 +377,13 @@ class BehaviorProcessPool:
         ``slice_positions`` are indices inside the caller's slice and
         ``local_rows`` are the matching rows owned by that subprocess.
         """
-        envs_per_stage = self.total_num_envs // self.pipeline_stage_num
-        procs_per_stage, extra_procs = divmod(
-            self.num_env_subprocess, self.pipeline_stage_num
-        )
         slice_positions_by_proc = [[] for _ in range(self.num_env_subprocess)]
         local_rows_by_proc = [[] for _ in range(self.num_env_subprocess)]
         for pos in range(num_envs):
             global_idx = global_start + pos
-            if procs_per_stage:
-                stage, stage_env = divmod(global_idx, envs_per_stage)
-                first_proc = stage * procs_per_stage + min(stage, extra_procs)
-                proc_count = procs_per_stage + int(stage < extra_procs)
-                local_row, stage_proc = divmod(stage_env, proc_count)
-                sp = first_proc + stage_proc
-            else:
-                # Stages share processes in round-robin order.
-                local_row, sp = divmod(global_idx, self.num_env_subprocess)
+            sp = global_idx % self.num_env_subprocess
             slice_positions_by_proc[sp].append(pos)
-            local_rows_by_proc[sp].append(local_row)
+            local_rows_by_proc[sp].append(global_idx // self.num_env_subprocess)
 
         return [
             (sp, slice_positions_by_proc[sp], local_rows_by_proc[sp])
@@ -453,7 +426,7 @@ class BehaviorProcessPool:
         refs = []
         for sp, positions, local_rows in plan:
             actions_j = torch.zeros(
-                self.envs_per_process[sp],
+                self.num_env_shard,
                 chunk_size,
                 action_dim,
                 dtype=chunk_actions.dtype,

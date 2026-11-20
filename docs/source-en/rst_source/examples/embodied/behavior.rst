@@ -299,7 +299,7 @@ performance.
      - When ``True``, skips collecting intermediate observations inside an action chunk (large
        env-speed gain). Saved videos then show only the frames the policy observes at chunk boundaries.
    * - ``num_env_subprocess``
-     - Number of simulator processes per environment worker (default 1). When there are fewer processes than pipeline stages, stages share processes. Only the active stage receives actions and advances its episode counters. Each process handling those actions advances physics for all its scenes. The worker’s environment count must be divisible by both the process count and the stage count.
+     - Number of simulator processes per environment worker (default 1). Each worker assigns environments in index order, cycling through its processes. Environments from different pipeline stages can share a process. Only the active stage receives actions and advances its episode counters. Each process handling those actions advances physics for all its scenes. The worker’s environment count must be divisible by both the process count and the stage count.
 
 Generating cached task instances
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
