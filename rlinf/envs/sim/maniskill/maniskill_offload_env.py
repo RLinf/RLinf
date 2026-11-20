@@ -356,11 +356,17 @@ class ManiskillOffloadEnv(EnvOffloadMixin):
             return
         self.start_env()
         # If no valid serialized state is available, bootstrap with one reset so
-        # auto-reset training can safely call step/chunk_step after onload.
+        # auto-reset environments can step after onload. Evaluation requests
+        # a separate full reset when it needs to rebuild the scene.
         if (not self._has_valid_state_buffer) and getattr(
             self.cfg, "auto_reset", False
         ):
-            self._rpc("reset")
+            options = (
+                {"reconfigure": False}
+                if self.cfg.get("_reconfigure_on_full_reset", False)
+                else None
+            )
+            self._rpc("reset", kwargs={"options": options})
 
     def offload(self, keep_state: bool = True):
         if self.process is None or not self.process.is_alive():

@@ -25,7 +25,6 @@ from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
-from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
 
@@ -90,6 +89,24 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
 
         actor_worker_cls = EmbodiedNFTFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_refl":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for embodied_refl."
+            )
+        from rlinf.workers.actor.fsdp_refl_policy_worker import (
+            EmbodiedReFLFSDPPolicy,
+        )
+
+        actor_worker_cls = EmbodiedReFLFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_art":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for embodied_art."
+            )
+        from rlinf.workers.actor.fsdp_art_policy_worker import EmbodiedARTFSDPPolicy
+
+        actor_worker_cls = EmbodiedARTFSDPPolicy
     else:
         if use_training_pipeline:
             from rlinf.workers.actor.fsdp_actor_worker_pipeline import (
@@ -106,10 +123,34 @@ def main(cfg) -> None:
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 
+    runner_cls = EmbodiedRunner
+    if cfg.algorithm.loss_type == "embodied_refl":
+        from rlinf.runners.refl_runner import ReFLRunner
+
+        runner_cls = ReFLRunner
+
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    if rollout_backend == "phyai":
+        from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
+
+        rollout_worker_cls = PhyAIRolloutWorker
+    elif rollout_backend == "huggingface":
+        from rlinf.workers.rollout.hf.huggingface_worker import (
+            MultiStepRolloutWorker,
+        )
+
+        rollout_worker_cls = MultiStepRolloutWorker
+    else:
+        raise ValueError(
+            "Expected rollout.rollout_backend 'huggingface' or 'phyai' for "
+            f"embodied training, got {rollout_backend!r}."
+        )
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
+        cluster,
+        name=cfg.rollout.group_name,
+        placement_strategy=rollout_placement,
     )
 
     # Create env worker group
@@ -160,7 +201,7 @@ def main(cfg) -> None:
             placement_strategy=reward_placement,
         )
 
-    runner = EmbodiedRunner(
+    runner = runner_cls(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,

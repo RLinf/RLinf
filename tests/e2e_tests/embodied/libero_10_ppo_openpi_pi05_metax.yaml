@@ -27,7 +27,7 @@ runner:
     log_path: "../results/metax_libero_10_ppo_openpi_pi05"
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
 
   max_epochs: 1
   max_steps: -1
@@ -90,7 +90,7 @@ env:
 
 rollout:
   group_name: "RolloutGroup"
-  generation_backend: "huggingface"
+  rollout_backend: "huggingface"
   recompute_logprobs: False
   unnorm_key: libero_10
   enable_offload: False

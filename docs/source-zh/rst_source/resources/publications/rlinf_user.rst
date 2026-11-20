@@ -1,17 +1,17 @@
-RLinf-USER: Unified System for Real-world Online Policy Learning
-=================================================================
+USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI
+==========================================================================================
 
-**论文：** `RSS 2026 <https://roboticsconference.org/program/papers/37/>`__ | `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__ 
+**论文：** `RSS 2026 <https://roboticsproceedings.org/rss22/p037.html>`__ | `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__
 
 概述
 ----
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-HEAD.png
-   :alt: RLinf-USER 概述
+   :alt: USER 概述
    :width: 800px
    :align: center
 
-RLinf-USER 是面向真机在线策略学习的统一可扩展系统，提供奖励、算法与策略的可扩展抽象，支持 CNN/MLP、生成式（流）策略与大规模 VLA 模型在统一流程中进行在线模仿或强化学习。
+USER 是面向真机在线策略学习的统一可扩展系统，提供奖励、算法与策略的可扩展抽象，支持 CNN/MLP、生成式（流）策略与大规模 VLA 模型在统一流程中进行在线模仿或强化学习。
 
 任务
 ----
@@ -57,7 +57,7 @@ RLinf-USER 是面向真机在线策略学习的统一可扩展系统，提供奖
 真机表现
 ~~~~~~~~
 
-RLinf-USER 支持多种学习范式。下方为多种 RL 算法（RLPD、SAC、SAC-Flow）在多任务上的训练曲线，以及 VLA（π₀）经在线微调后的提升。
+USER 支持多种学习范式。下方为多种 RL 算法（RLPD、SAC、SAC-Flow）在多任务上的训练曲线，以及 VLA（π₀）经在线微调后的提升。
 
 .. image:: https://github.com/RLinf/misc/raw/main/pic/USER/USER-main_rl.jpg
    :alt: RL 训练曲线
@@ -66,7 +66,7 @@ RLinf-USER 支持多种学习范式。下方为多种 RL 算法（RLPD、SAC、S
 
 **多任务与多算法的 RL 训练曲线**
 
-**VLA（π₀）与 HG-DAgger：** RLinf-USER 在少量干预下显著提升基础 VLA 模型在真实世界中的成功率。
+**VLA（π₀）与 HG-DAgger：** USER 在少量干预下显著提升基础 VLA 模型在真实世界中的成功率。
 
 .. list-table:: π₀ 在线训练提升
    :header-rows: 1
@@ -86,7 +86,7 @@ RLinf-USER 支持多种学习范式。下方为多种 RL 算法（RLPD、SAC、S
 系统效率：异步 vs 同步
 ~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf-USER 采用完全异步流水线，将数据生成、训练与权重同步解耦，尤其对大模型优于同步流水线。
+USER 采用完全异步流水线，将数据生成、训练与权重同步解耦，尤其对大模型优于同步流水线。
 
 .. list-table:: 性能：生成与训练吞吐
    :header-rows: 1
@@ -102,7 +102,7 @@ RLinf-USER 采用完全异步流水线，将数据生成、训练与权重同步
      - 45.07
      - 45.01
    * - π₀ + HG-DAgger
-     - **异步 (RLinf-USER)**
+     - **异步 (USER)**
      - **37.54**
      - **7.90**
    * - π₀ + HG-DAgger
@@ -114,7 +114,7 @@ RLinf-USER 采用完全异步流水线，将数据生成、训练与权重同步
      - 20.29
      - 0.64
    * - CNN + SAC
-     - **异步 (RLinf-USER)**
+     - **异步 (USER)**
      - **13.11**
      - **0.14**
    * - CNN + SAC
@@ -125,7 +125,7 @@ RLinf-USER 采用完全异步流水线，将数据生成、训练与权重同步
 多机与异构支持
 ~~~~~~~~~~~~~~
 
-在统一硬件抽象下，RLinf-USER 将机器人视为一等资源：
+在统一硬件抽象下，USER 将机器人视为一等资源：
 
 - **并行训练：** 多机同时训练（如 2× Franka）多任务以扩大数据采集。
 - **异构训练：** 在不同本体（如 Franka 7-DoF + ARX 6-DoF）上训练统一策略。
@@ -147,7 +147,7 @@ RLinf-USER 采用完全异步流水线，将数据生成、训练与权重同步
    </table>
    </div>
 
-在多机与异构配置下，RLinf-USER 在可比时间内实现策略完全收敛。
+在多机与异构配置下，USER 在可比时间内实现策略完全收敛。
 
 快速开始
 --------
@@ -166,19 +166,16 @@ RLinf-USER 采用完全异步流水线，将数据生成、训练与权重同步
 引用
 ----
 
-RLinf-USER 及 RLinf 真实世界 RL 请引用 RLinf 主论文：
+使用 USER 或 RLinf 真机 RL 时，请引用以下 RSS 2026 论文：
 
 .. code-block:: bibtex
 
-   @inproceedings{yu2026rlinf,
-     author = {Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Jiakun Du and Xiangyuan Wang and Xu Fu and Letong Shi and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
-     title = {{RLinf}: Flexible and Efficient {Large-Scale} Reinforcement Learning via {Macro-to-Micro} Flow Transformation},
-     booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
-     year = {2026},
-     isbn = {978-1-939133-55-7},
-     address = {Seattle, WA},
-     pages = {829--846},
-     url = {https://www.usenix.org/conference/osdi26/presentation/yu-chao},
-     publisher = {USENIX Association},
-     month = jul
+   @INPROCEEDINGS{ZangH1-RSS-26,
+       AUTHOR    = {Hongzhi Zang AND Shu'ang Yu AND Hao Lin AND Tianxing Zhou AND Zefang Huang AND Zhen Guo AND Xin Xu AND Yuze Sheng AND Jiakai Zhou AND Shizhe Zhang AND Feng Gao AND Wenhao Tang AND Yufeng Yue AND Quanlu Zhang AND Xinlei Chen AND Chao Yu AND Yu Wang},
+       TITLE     = {{USER: A Unified and Extensible System for Online Real-World Policy Learning in Embodied AI}},
+       BOOKTITLE = {Proceedings of Robotics: Science and Systems},
+       YEAR      = {2026},
+       ADDRESS   = {Sydney, Australia},
+       MONTH     = {July},
+       DOI       = {10.15607/RSS.2026.XXII.037}
    }

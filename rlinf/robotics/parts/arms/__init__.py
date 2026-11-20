@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # Static declarations for the names __getattr__ resolves lazily.
     # A test keeps this block synchronized with _MODULE_BY_NAME.
+    from .arx5 import ARX5Arm, ARX5State
     from .base import (
         ARM_STATE_FIELDS,
         Arm,
@@ -47,6 +48,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         PiperArm,
         PiperRobotState,
     )
+    from .r2 import (
+        R2Arm,
+        R2Camera,
+        R2Connection,
+        R2HandView,
+        R2IKConfig,
+        R2IKResult,
+        R2KinematicsAdapter,
+        R2MobileBase,
+        R2RobotState,
+    )
     from .so101 import (
         SO101Arm,
         SO101RobotState,
@@ -61,7 +73,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
 
 _MODULE_BY_NAME: dict[str, str] = {
+    "ARX5Arm": ".arx5",
     "ARM_STATE_FIELDS": ".base",
+    "ARX5State": ".arx5",
     "Arm": ".base",
     "ArmState": ".base",
     "BaseArm": ".base",
@@ -76,6 +90,15 @@ _MODULE_BY_NAME: dict[str, str] = {
     "GimArmRobotState": ".gim_arm",
     "PiperArm": ".piper",
     "PiperRobotState": ".piper",
+    "R2Arm": ".r2",
+    "R2Camera": ".r2",
+    "R2Connection": ".r2",
+    "R2HandView": ".r2",
+    "R2IKConfig": ".r2",
+    "R2IKResult": ".r2",
+    "R2KinematicsAdapter": ".r2",
+    "R2MobileBase": ".r2",
+    "R2RobotState": ".r2",
     "SO101Arm": ".so101",
     "SO101RobotState": ".so101",
     "Turtle2Connection": ".turtle2",
@@ -86,6 +109,8 @@ _MODULE_BY_NAME: dict[str, str] = {
 
 __all__ = [
     "ARM_STATE_FIELDS",
+    "ARX5Arm",
+    "ARX5State",
     "Arm",
     "ArmState",
     "BaseArm",
@@ -100,6 +125,15 @@ __all__ = [
     "GimArmRobotState",
     "PiperArm",
     "PiperRobotState",
+    "R2Arm",
+    "R2Camera",
+    "R2Connection",
+    "R2HandView",
+    "R2IKConfig",
+    "R2IKResult",
+    "R2KinematicsAdapter",
+    "R2MobileBase",
+    "R2RobotState",
     "SO101Arm",
     "SO101RobotState",
     "Turtle2Connection",

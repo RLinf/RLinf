@@ -92,8 +92,13 @@ class RolloutBackend(ABC):
         """Generate for a batch of prompts, given as text or as token ids."""
 
     @abstractmethod
-    async def sync_weights(self) -> None:
-        """Pull the latest weights from the actor side."""
+    async def sync_weights(self, pause_mode: Optional[str] = None) -> None:
+        """Pull the latest weights from the actor side.
+
+        `pause_mode` is the rollout's current pause mode during async
+        training (None when not paused, i.e. the synchronous path); backends
+        pass it to the scheduler so it can handle caches accordingly.
+        """
 
     @abstractmethod
     async def offload(self, tags: Optional[list[str]] = None) -> None:
@@ -110,6 +115,21 @@ class RolloutBackend(ABC):
     @abstractmethod
     async def abort_generation(self) -> None:
         """Abort all in-flight generations."""
+
+    @abstractmethod
+    async def pause_generation(self, mode: str) -> None:
+        """Pause generation before an async weight sync.
+
+        Only the sglang-native modes are backend-level: "in_place" keeps
+        in-flight requests and their KV, "retract" moves running requests
+        back to the waiting queue and releases their KV. The "drain" mode is
+        implemented on the RLinf side (dispatch gate in the rollout worker)
+        and never reaches the backend.
+        """
+
+    @abstractmethod
+    async def continue_generation(self) -> None:
+        """Resume generation after a pause and weight sync."""
 
     @abstractmethod
     async def get_running_state(self) -> RolloutEngineStats:

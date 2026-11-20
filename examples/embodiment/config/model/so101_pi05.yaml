@@ -1,0 +1,16 @@
+# SO-101 Pi0.5 model shape for joint-space control.
+defaults:
+  - pi0_5
+  - _self_
+
+num_action_chunks: 20
+action_dim: 6
+model_path: /path/to/so101_pi05_checkpoint
+openpi:
+  task: eval
+  config_name: pi05_so101_joint
+  discrete_state_input: true
+  model_action_dim: 32
+  max_token_len: 200
+openpi_data:
+  norm_stats_path: null

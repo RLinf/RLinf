@@ -16,11 +16,17 @@ docker build -f docker/Dockerfile --build-arg BUILD_TARGET=$BUILD_TARGET -t rlin
 
 Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see the full, up-to-date list of targets and the venvs each one installs, look at the stage names (`FROM ... AS <target>-image`) and the `install.sh` invocations inside them — the Dockerfile is the source of truth, so this README does not duplicate the list.
 
+`embodied-geniesim` also needs the GenieSim client package as a named build
+context and currently builds for NVIDIA CUDA 12.8. See the
+[GenieSim example](../docs/source-en/rst_source/examples/embodied/geniesim.rst)
+for its build command.
+
 ### Additional build arguments
 
 - `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), `musa` (Moore Threads), `kunlun` (Kunlunxin), or `metax` (MetaX MACA). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image.
 - Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `KUNLUN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, `MUSA_BASE_IMAGE`, `KUNLUN_BASE_IMAGE`, or `METAX_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
+- `GITHUB_PREFIX` — proxy prefix for GitHub clones and release downloads while the mirrors are on (that is, unless `NO_MIRROR=1`). Defaults to `https://gh-proxy.com/`; set another proxy, for example `https://gh-proxy.org/`, if it is faster on your network.
 - `UNINSTALL_FA4` (default `1`) — on the `reason` target, uninstalls `flash-attn-4` during the image build and installs FA2 instead. FA2 also runs on GPUs older than sm90 (for example A100), and Docker builds cannot see the GPU, so `install.sh` cannot make this choice by itself. Set it to `0` for an image that runs only on Hopper or newer: it keeps FA4 and skips FA2, since a venv carries exactly one flash-attention variant. The published FA4 image carries a `-fa4` tag suffix.
 
 The common image setup selects `runit-systemd` or `runit-run` from the base distribution's available packages. Embodied installs use `requirements/sys_deps.sh` for rendering libraries, including OSMesa on every platform.
