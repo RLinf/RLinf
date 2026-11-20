@@ -99,27 +99,27 @@ def set_camera_resolution(
     r1pro: DictConfig | None = None,
     wrapper_name: str | None = None,
 ) -> None:
-    # Official wrappers declare their modalities and sizes before sensors are built.
-    camera_spec = None
-    if wrapper_name not in (None, "rgb"):
-        camera_spec = get_env_wrapper(wrapper_name).camera_spec()
-        robot_cfg.obs_modalities = ["proprio", *camera_spec["modalities"]]
-    if camera_cfg is None and camera_spec is None:
+    """Configure the robot cameras before the simulator creates their sensors."""
+    use_yaml = wrapper_name in (None, "rgb")
+    if use_yaml and camera_cfg is None:
         return
-
-    # OmniGibson 3.9.3 fixes camera sizes at sensor creation.
     if r1pro is None:
         import omnigibson as og
 
         r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+    cameras = r1pro.eval.camera_sensor_names
+    if use_yaml:
+        head = camera_cfg.get("head_resolution")
+        wrist = camera_cfg.get("wrist_resolution")
+        resolutions = {role: head if role == "head" else wrist for role in cameras}
+    else:
+        spec = get_env_wrapper(wrapper_name).camera_spec()
+        resolutions = spec["resolution"]
+        robot_cfg.obs_modalities = ["proprio", *spec["modalities"]]
+
     sensors = robot_cfg.get("sensor_config") or {}
-    for role, name in r1pro.eval.camera_sensor_names.items():
-        if camera_spec is None:
-            resolution = camera_cfg.get(
-                "head_resolution" if role == "head" else "wrist_resolution"
-            )
-        else:
-            resolution = camera_spec["resolution"].get(role)
+    for role, name in cameras.items():
+        resolution = resolutions.get(role)
         if resolution is None:
             continue
         height, width = resolution
@@ -127,13 +127,10 @@ def set_camera_resolution(
         # A per-link entry takes precedence over the shared VisionSensor settings.
         current = sensors.get(link, sensors.get("VisionSensor", {}))
         size = {"image_height": height, "image_width": width}
-        if camera_spec is not None and role == "head":
+        if not use_yaml and role == "head":
             size["horizontal_aperture"] = 40.0
-        OmegaConf.update(
-            robot_cfg,
-            f"sensor_config.{link}",
-            OmegaConf.merge(current, {"sensor_kwargs": size}),
-        )
+        sensor = OmegaConf.merge(current, {"sensor_kwargs": size})
+        OmegaConf.update(robot_cfg, f"sensor_config.{link}", sensor)
 
 
 def apply_runtime_renderer_settings() -> None:
