@@ -889,7 +889,7 @@ def test_kl_clip_masks_invalid_samples():
         clip_ratio_low=0.2,
         clip_ratio_high=0.2,
         ppo_conditional_kl=kl,
-        ppo_kl_clip_target=0.05,
+        kl_clip_target=0.05,
     )
     loss.backward()
     finalize_kl_clip_metrics(metrics)

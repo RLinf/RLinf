@@ -196,7 +196,7 @@ def compute_ppo_actor_loss(
     rollout_logprobs: Optional[torch.Tensor] = None,
     importance_sampling_clip: Optional[float] = None,
     ppo_conditional_kl: Optional[torch.Tensor] = None,
-    ppo_kl_clip_target: Optional[float] = None,
+    kl_clip_target: Optional[float] = None,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -219,7 +219,7 @@ def compute_ppo_actor_loss(
         importance_sampling_clip (Optional[float], optional): Upper bound for the
             actor-to-rollout importance-sampling ratio. Defaults to None.
         ppo_conditional_kl: Conditional KL for each ratio entry, when available.
-        ppo_kl_clip_target: KL above which the ratio clip interval narrows.
+        kl_clip_target: KL above which the ratio clip interval narrows.
 
     Returns:
         Tuple[torch.Tensor, Dict]: (actor_loss, metrics_dict)
@@ -229,7 +229,7 @@ def compute_ppo_actor_loss(
         fast_path_zero_loss_mask
         and not log_logprob_diagnostics
         and rollout_logprobs is None
-        and ppo_kl_clip_target is None
+        and kl_clip_target is None
         and loss_mask is not None
         and not loss_mask.any()
     ):
@@ -320,13 +320,13 @@ def compute_ppo_actor_loss(
     ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
 
     kl_clip_metrics = None
-    if ppo_kl_clip_target is not None:
+    if kl_clip_target is not None:
         clipped_ratio, kl_clip_metrics = clip_ratio_with_kl(
             ratio,
             clip_ratio_low,
             clip_ratio_high,
             ppo_conditional_kl,
-            ppo_kl_clip_target,
+            kl_clip_target,
             loss_mask,
         )
     else:

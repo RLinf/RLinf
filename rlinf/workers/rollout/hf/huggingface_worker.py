@@ -62,8 +62,7 @@ class MultiStepRolloutWorker(Worker):
         self.only_eval = cfg.runner.get("only_eval", False)
         self.algorithm_cfg = cfg.get("algorithm", {})
         self._collect_transition_stats = (
-            not self.only_eval
-            and self.algorithm_cfg.get("ppo_kl_clip_target") is not None
+            not self.only_eval and self.algorithm_cfg.get("kl_clip_target") is not None
         )
         self.model_cfg = cfg.rollout.model if self.only_eval else cfg.actor.model
         self.actor_group_name = (

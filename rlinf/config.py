@@ -1209,10 +1209,10 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
-def _validate_ppo_kl_clip(cfg: DictConfig, target_kl: float) -> None:
+def _validate_kl_clip(cfg: DictConfig, target_kl: float) -> None:
     if type(target_kl) not in (int, float) or not 0 < target_kl < float("inf"):
         raise ValueError(
-            f"Expected a finite positive algorithm.ppo_kl_clip_target, got {target_kl!r}."
+            f"Expected a finite positive algorithm.kl_clip_target, got {target_kl!r}."
         )
 
     algorithm = cfg.algorithm
@@ -1228,7 +1228,7 @@ def _validate_ppo_kl_clip(cfg: DictConfig, target_kl: float) -> None:
         and not algorithm.get("recompute_logprobs", False)
     ):
         raise ValueError(
-            "Expected algorithm.ppo_kl_clip_target to use synchronous FSDP PPO "
+            "Expected algorithm.kl_clip_target to use synchronous FSDP PPO "
             "or GRPO with Hugging Face rollout and chunk-level rollout logprobs "
             "and rewards."
         )
@@ -1253,9 +1253,9 @@ def validate_embodied_cfg(cfg):
     )
     if (
         not only_eval
-        and (clip_target_kl := algorithm_cfg.get("ppo_kl_clip_target")) is not None
+        and (kl_clip_target := algorithm_cfg.get("kl_clip_target")) is not None
     ):
-        _validate_ppo_kl_clip(cfg, clip_target_kl)
+        _validate_kl_clip(cfg, kl_clip_target)
     if model_type == SupportedModel.OPENPI:
         if only_eval and model_cfg.openpi.get("short_memory", False):
             assert cfg.env.eval.get("short_memory") is not None, (

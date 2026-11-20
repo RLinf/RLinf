@@ -91,7 +91,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Worker.__init__(self)
         super().__init__(cfg.actor, self._world_size, self._rank)
         self.cfg = cfg
-        self._kl_clip_target = cfg.algorithm.get("ppo_kl_clip_target")
+        self._kl_clip_target = cfg.algorithm.get("kl_clip_target")
         self._env_group_name = cfg.env.group_name
         self._rollout_group_name = cfg.rollout.group_name
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -840,7 +840,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             loss_kwargs["ppo_conditional_kl"] = transition_kl(
                 behavior_stats, output_dict["transition_stats"]
             )
-            loss_kwargs["ppo_kl_clip_target"] = self._kl_clip_target
+            loss_kwargs["kl_clip_target"] = self._kl_clip_target
         if self.cfg.algorithm.get("importance_sampling_fix", False):
             loss_kwargs["rollout_logprobs"] = micro_batch["rollout_logprobs"]
             loss_kwargs["importance_sampling_clip"] = (
