@@ -11,6 +11,8 @@ Fine-tune SD3 and Wan2.2 with OCR rewards using Diffusion-NFT or DiffusionART.
 Both methods use the same models, prompt dataset, and diffusion environment.
 Prepare these shared dependencies below, then follow a training guide.
 
+For ImageReward-based preference tuning of SD3, see :doc:`embodied/refl`.
+
 Choose a Training Method
 ------------------------
 
