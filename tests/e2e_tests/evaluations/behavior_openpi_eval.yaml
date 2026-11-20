@@ -43,7 +43,8 @@ env:
   eval:
     use_2026_eval_proprio_and_rooms: True
     rollout_epoch: 1
-    total_num_envs: 2
+    # Each of the two workers shares one simulator between its two stages.
+    total_num_envs: 4
     # BEHAVIOR subtracts one, so 33 env steps fit one 32-step action chunk.
     max_episode_steps: 33
     max_steps_per_rollout_epoch: 32
@@ -54,7 +55,7 @@ rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
 
   sampling_params:
     do_sample: True

@@ -673,6 +673,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
+          python -m pytest -q tests/unit_tests/test_worker.py -k test_behavior_
           bash tests/e2e_tests/evaluations/run.sh behavior_openpi_eval
 
       - name: Clean up
