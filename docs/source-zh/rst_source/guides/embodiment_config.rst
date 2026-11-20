@@ -144,6 +144,25 @@ algorithm
 ``algorithm.group_size``\ （每个 prompt 的回复数；GRPO 始终 > 1）为共享键，在
 :doc:`basic_config` 中说明。
 
+用 KL 早停控制 actor 的更新幅度
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+同一批 rollout 数据反复用于更新时，policy 可能在一轮内变化过大。Actor 在第一次 optimizer step 前记录一组固定动作块的去噪转移分布。之后每一步都在同一组转移上比较当前分布和最初记录的分布，计算平均条件 KL。KL 达到目标后结束本轮更新，触发早停的这一步仍然生效。
+
+在同步 FSDP 的 OpenPI PPO 或 GRPO 训练中使用这个选项。奖励和 log-prob 都按动作块计算。OpenPI 使用噪声强度大于 0 的 Flow-SDE，并关闭 joint log-prob。可以在 ``libero_object_ppo_openpi.yaml`` 等符合条件的训练配置中加入以下内容。
+
+.. code:: yaml
+
+  algorithm:
+    kl_stop:
+      enabled: true
+      target_kl: 0.05
+
+启用时填写有限的正数作为 KL 目标。默认按配置执行更新。如果没有有效动作块可供测量，也按配置执行。``train/actor/update_kl`` 记录最后一次测得的 KL，``train/actor/optimizer_steps_used`` 记录本轮实际执行的步数。
+
+只训练 action expert 且 prefix 已冻结、未使用 dropout 时，可以在 ``kl_stop`` 下设 ``cache_prefix: true``。启用后会用额外显存保存 prefix KV cache，供每次 KL 检查复用。这个选项默认关闭。
+
+
 env
 ~~~~~~~~~~~~~~~
 
