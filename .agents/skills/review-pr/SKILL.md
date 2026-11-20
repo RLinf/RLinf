@@ -39,7 +39,7 @@ Read the description, the linked issue, the commits, and the whole diff. Then wr
 
 - the problem the PR solves and its core idea, in one or two sentences;
 - the areas it touches (for example packaging, docs, CI, refactor) and what could regress (backends, envs, models, tasks);
-- the closest current sibling on `main` it should look like (`git log "$BASE" -- <dir>` shows which sibling is recent).
+- the closest current siblings on `main` it should look like, for both code/config and docs (`git log "$BASE" -- <dir>` shows recent siblings; for docs, match the model or domain family and its shared setup pages, not only the directory or gallery the PR chose).
 
 ## 3. Route the change
 
@@ -59,7 +59,7 @@ A PR that adds or changes a user-facing workflow (a new model, env, algorithm, o
 2. **Start the run when the host has what it needs**, in the background and right away, so it runs while you review. Check first that the accelerators are free (`nvidia-smi`, and `ray status` for other users' clusters), and never stop someone else's job. The run is a fresh agent, never a fork, which would inherit what you have read. Its brief holds only the PR URL, the head SHA, the doc pages to follow, the hardware it may use, and the host's install rules. It works in its own worktree at the PR head, follows only the user docs, does not open `rlinf/` or `tests/`, fixes nothing, and reports the settings it used, the first failure, every intervention, and the functional and metric results separately. A metric claim that needs a long run gets the shortest run the docs define, such as the e2e config, and the report says what that run can and cannot show.
 3. **Otherwise say what is missing.** When the host lacks the hardware, weights, datasets, or accounts, the Reproduction section names what is missing and what a run would need. When the user hands you the record of their own run, report that instead.
 
-Every reproduction follows the user documentation, records the first failure and every intervention, and keeps functional success and metric success as separate conclusions; a run that needed undocumented changes does not show that the workflow is reproducible. You never reproduce the PR yourself, because you have read the implementation. A step of the docs that the run could not follow is a `docs` finding. The unit tests and area checks you run are not a reproduction; they belong in the review notes.
+Every reproduction follows the user documentation, records the first failure and every intervention, and keeps functional success and metric success as separate conclusions; a run that needed undocumented changes does not show that the workflow is reproducible. You never reproduce the PR yourself, because you have read the implementation. A step of the docs that the run could not follow is a `docs` finding. A passing reproduction only proves the commands execute, not that they are clean, standard, or easy for a human to follow; judge instruction simplicity, YAML-first configuration, and shared setup reuse in step 6. The unit tests and area checks you run are not a reproduction; they belong in the review notes.
 
 ## 5. Review the code
 
@@ -86,11 +86,11 @@ python3 "$SKILLS/route.py" check --base "$BASE"            # every touched area'
 python3 "$SKILLS/create-pr/lint_pr.py" lint --pr "$N"      # PR title and description
 ```
 
-`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do, and for docs it means reading every changed page in full in both languages. A script's finding becomes a review finding once step 7 settles it, filed under the category of its rule:
+`route.py check` runs each area's `check.py` with that area's files; the judgment list is yours to do. For docs, `check.py` only inspects build, markup, and prose—not command blocks, workflow design, or page density—so you must read every changed page in full in both languages, inspect every command block for simplicity and standard RLinf usage, check that the page favors simplicity and scannability over verbosity, and compare recipes side by side against their closest model- or domain-family siblings on `main` (and any shared setup page they link to). When a missing detail would clutter a recipe or guide, ask the author to fix the YAML default, move multi-step logic into a script, or link to Reference rather than adding more prose or workarounds to the page. A script's finding becomes a review finding once step 7 settles it, filed under the category of its rule:
 
 - `tests`: `code/ci-filter`, `code/test-layout`, and every `install/*` rule;
-- `docs`: `docs/symbol`, `docs/rtd-link`, `docs/parity`, and the docs-to-code items of the docs judgment list;
-- `docs-style`: `docs/build`, `docs/markup`, `docs/zh-hard-wrap`, and the page reading;
+- `docs`: `docs/symbol`, `docs/rtd-link`, `docs/parity`, docs-to-code checks, sibling workflow alignment, setup reuse, and command usability from the docs judgment list and reproduction;
+- `docs-style`: `docs/build`, `docs/markup`, `docs/zh-hard-wrap`, verbosity/scannability, and the prose/structure checks of page reading;
 - `style`: `code/pre-commit`, `code/init`, `code/license`, and the PR lint.
 
 When an area's script cannot run, for example without a docs virtualenv or without GPUs for the install Verify step, the report says it did not run and what it needs. Never leave a routed area out.
