@@ -14,7 +14,6 @@
 
 """Materialize immutable image references for learner microbatches."""
 
-import asyncio
 import hashlib
 import io
 import json
@@ -105,10 +104,9 @@ class _ProcessedImageCache:
 _processed_image_cache = _ProcessedImageCache()
 
 
-def _materialize_image_refs(entry, model_path, cache_bytes, processor=None):
+def _materialize_image_refs(entry, model_path, cache_bytes):
     """Read immutable media and cache the complete, validated image sequence."""
     grid = entry["image_grid_thw"]
-    token_space = processor is not None
     from PIL import Image
 
     contents = []
@@ -117,8 +115,7 @@ def _materialize_image_refs(entry, model_path, cache_bytes, processor=None):
         if hashlib.sha256(content).hexdigest() != reference["sha256"]:
             raise ValueError(f"Training image checksum mismatch: {reference['path']}")
         contents.append(content)
-    if not token_space:
-        processor = _image_processor(model_path)
+    processor = _image_processor(model_path)
     # Cache the complete image sequence: generic processors can depend
     # on batch composition. Never assume per-image preprocessing commutes.
     cached = None
@@ -126,16 +123,6 @@ def _materialize_image_refs(entry, model_path, cache_bytes, processor=None):
         key = (
             model_path,
             id(processor),
-            json.dumps(
-                {
-                    key: value
-                    for key, value in entry.items()
-                    if key not in ("image_refs", "image_grid_thw")
-                },
-                sort_keys=True,
-            )
-            if token_space
-            else None,
             tuple(grid.flatten().tolist()),
             json.dumps(processor.to_dict(), sort_keys=True)
             if hasattr(processor, "to_dict")
@@ -145,22 +132,14 @@ def _materialize_image_refs(entry, model_path, cache_bytes, processor=None):
         cached = _processed_image_cache.get(key)
     if cached is None:
         images = []
-        if token_space and processor.cache_directory is not None:
-            # Use the same immutable sources as serving, before decoding them.
-            images = [reference["path"] for reference in entry["image_refs"]]
-        else:
-            for content in contents:
-                with Image.open(io.BytesIO(content)) as image:
-                    # Preserve alpha/mode for SGLang's own conversion rules.
-                    images.append(image.copy() if token_space else image.convert("RGB"))
-        if token_space:
-            cached = asyncio.run(processor.replay(entry, images))
-        else:
-            processed = processor(images=images, return_tensors="pt")
-            cached = (
-                processed["pixel_values"].to(torch.bfloat16),
-                processed["image_grid_thw"],
-            )
+        for content in contents:
+            with Image.open(io.BytesIO(content)) as image:
+                images.append(image.convert("RGB"))
+        processed = processor(images=images, return_tensors="pt")
+        cached = (
+            processed["pixel_values"].to(torch.bfloat16),
+            processed["image_grid_thw"],
+        )
         if cache_bytes:
             _processed_image_cache.put(key, cached, cache_bytes)
     if not torch.equal(grid, cached[1]):
@@ -212,39 +191,16 @@ def materialize_multimodal_inputs(
                 pixels.append(replay_pixels(entry))
                 grids.append(entry["image_grid_thw"])
                 continue
-            elif entry.get("format") != "sglang-token-space-v1":
+            else:
                 raise ValueError(
-                    "Legacy media cannot enter a token-space batch; generate fresh rollouts"
+                    "Image replay requires a captured image row; generate fresh rollouts"
                 )
-        elif entry and entry.get("format") in (REPLAY_FORMAT, "sglang-token-space-v1"):
+        elif entry and entry.get("format") == REPLAY_FORMAT:
             raise ValueError(
-                "Token-space media requires token-space training to be enabled"
+                "Captured image rows require shared multimodal preprocessing"
             )
         if not entry:
             continue
-        if token_space:
-            if (
-                "image_refs" not in entry
-                or row_ids[: len(entry["prompt_token_ids"])]
-                != entry["prompt_token_ids"]
-            ):
-                raise ValueError(
-                    "Training tokens or immutable media references differ from rollout"
-                )
-            from rlinf.hybrid_engines.sglang.multimodal.token_space import (
-                token_space_processor,
-            )
-
-            if entry["processor_settings"]["model_path"] != model_path:
-                raise ValueError("Training and rollout token-space model paths differ")
-            processor = token_space_processor(
-                json.dumps(entry["processor_settings"], sort_keys=True)
-            )
-            if processor.fingerprint != entry["processor_fingerprint"]:
-                raise ValueError(
-                    "Token-space processor changed; generate fresh rollouts"
-                )
-            positions[:, row, row_mask] = processor.positions(entry, row_ids)
         grid = entry["image_grid_thw"]
         if "image_refs" in entry:
             pixels.append(
@@ -252,7 +208,6 @@ def materialize_multimodal_inputs(
                     entry,
                     model_path,
                     cache_bytes,
-                    processor if token_space else None,
                 )
             )
         else:

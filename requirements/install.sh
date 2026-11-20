@@ -1554,7 +1554,6 @@ sglang_torch_version() {
         0.4.6.post5) echo "2.6.0" ;;
         0.5.2|0.5.4) echo "2.8.0" ;;
         0.5.19)      echo "2.13.0" ;;
-        token-space) echo "2.14.1" ;;
         *)           echo "-" ;;
     esac
 }
@@ -1567,9 +1566,8 @@ agentic_torch_for_engine() {
     esac
 }
 
-engine_uses_modern_megatron() {
-    [ "$(agentic_torch_for_engine)" = "-" ] ||
-        [ "$(effective_engine):$(effective_engine_version)" = "sglang:token-space" ]
+engine_needs_torch211() {
+    [ "$(agentic_torch_for_engine)" = "-" ]
 }
 
 agentic_cuda_line() {
@@ -1583,10 +1581,6 @@ agentic_requirements_file() {
     # $1 = engine (sglang|vllm|phyai), $2 = version
     local line path
     line=$(agentic_cuda_line)
-    if [ "$1:$2:$line" = "sglang:token-space:cu13" ]; then
-        printf '%s\n' "$SCRIPT_DIR/agentic/sglang-token-space.txt"
-        return
-    fi
     path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
     if [ ! -f "$path" ]; then
         echo "[install.sh] ERROR: no $1 $2 build for ${line}. Available:" >&2
@@ -2078,18 +2072,6 @@ EOF
         if [ "$torch_ge_28" = "1" ]; then
             flash_ver="2.8.3"
         fi
-    fi
-
-    if [ "$(effective_engine):$(effective_engine_version)" = "sglang:token-space" ]; then
-        local flash_dir
-        flash_dir=$(clone_or_reuse_repo FLASH_ATTN_PATH "$VENV_DIR/flash-attention" \
-            https://github.com/Dao-AILab/flash-attention.git -b v2.8.3 --depth 1)
-        local cpp_patch="$SCRIPT_DIR/agentic/flash-attn-2.8.3-cxx20.patch"
-        if ! git -C "$flash_dir" apply --reverse --check "$cpp_patch" 2>/dev/null; then
-            git -C "$flash_dir" apply "$cpp_patch" || return $?
-        fi
-        FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install --no-build-isolation --no-deps "$flash_dir"
-        return
     fi
 
     local prebuilt_flash_versions=("$flash_ver")
@@ -4631,18 +4613,7 @@ install_mbridge() {
     echo "[install.sh] Installing megatron-bridge 0.5.0 (PyPI wheel)..."
     uv pip uninstall rlinf-megatron-bridge || true
     uv pip install --no-deps "megatron-bridge==0.5.0"
-    if [ "$(effective_engine):$(effective_engine_version)" = "sglang:token-space" ]; then
-        # Transformers 5.19 already registers Qwen3-ASR; preserve that registration.
-        local bridge_root
-        bridge_root=$(python -c 'import importlib.metadata as m; print(m.distribution("megatron-bridge").locate_file(""))')
-        local asr_patch="$SCRIPT_DIR/agentic/megatron-bridge-0.5.0-asr-registration.patch"
-        if ! patch -d "$bridge_root" -p1 --dry-run --reverse < "$asr_patch" >/dev/null 2>&1; then
-            patch -d "$bridge_root" -p1 < "$asr_patch" || return $?
-        fi
-    fi
     uv pip install "nvidia-modelopt==0.45.0"
-    # Megatron's GDN layers use FLA's kernels and normalization modules.
-    uv pip install "fla-core==0.6.0"
 
     local mbridge_ver modelopt_ver
     mbridge_ver=$(uv pip show megatron-bridge 2>/dev/null | awk '/^Version:/{print $2}')
@@ -4719,32 +4690,13 @@ EOF
     echo "[install.sh] NCCL LD_LIBRARY_PATH export added to $VENV_DIR/bin/activate."
 }
 
-configure_token_space_cuda() {
-    # Use the pinned pip toolkit in this venv, without changing the host CUDA setup.
-    local cuda_dir
-    cuda_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/nvidia/cu13")')
-    test -x "$cuda_dir/bin/nvcc" && test -f "$cuda_dir/include/nv/target" || {
-        echo "[install.sh] TokenSpace requires cuda-toolkit[nvcc,cccl]==13.0.3." >&2
-        return 1
-    }
-    if [ ! -e "$cuda_dir/lib/libcudart.so" ]; then
-        ln -s libcudart.so.13 "$cuda_dir/lib/libcudart.so"
-    fi
-    export CUDA_HOME="$cuda_dir"
-    export PATH="$CUDA_HOME/bin:$PATH"
-    export LIBRARY_PATH="$CUDA_HOME/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-    echo "export CUDA_HOME=$cuda_dir" >> "$VENV_DIR/bin/activate"
-    echo 'export PATH="$CUDA_HOME/bin:$PATH"' >> "$VENV_DIR/bin/activate"
-    echo 'export LIBRARY_PATH="$CUDA_HOME/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"' >> "$VENV_DIR/bin/activate"
-}
-
 install_agentic() {
-    local engine engine_ver modern_megatron_stack=0
+    local engine engine_ver torch211_stack=0
     engine=$(effective_engine)
     engine_ver=$(effective_engine_version)
-    if engine_uses_modern_megatron; then
-        modern_megatron_stack=1
-        echo "[install.sh] ${engine} ${engine_ver}: using TE 2.17, mcore 0.18, megatron-bridge."
+    if engine_needs_torch211; then
+        torch211_stack=1
+        echo "[install.sh] ${engine} ${engine_ver} runs on torch 2.11: using TE 2.17, mcore 0.18, megatron-bridge."
     fi
 
     local engine_req
@@ -4757,9 +4709,6 @@ install_agentic() {
         install_engine_requirements "$engine_req"
     fi
     echo "[install.sh] Installed engine: $(basename "$engine_req")"
-    if [ "$engine:$engine_ver" = "sglang:token-space" ]; then
-        configure_token_space_cuda
-    fi
     uv pip check || echo "[install.sh] WARNING: dependency conflicts reported above"
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
@@ -4770,18 +4719,17 @@ install_agentic() {
     # otherwise clone into the venv.
     local megatron_branch="core_r0.13.0"
     # megatron-bridge 0.5.0 needs mcore 0.18+.
-    [ "$modern_megatron_stack" -eq 1 ] && megatron_branch="core_r0.18.0"
+    [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.18.0"
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b "$megatron_branch")
-
 
     echo "export PYTHONPATH=$(realpath "$megatron_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 
     # If TEST_BUILD is 1, skip the heavy transformer-engine build (megatron.txt
     # pins TE 2.1.0; the torch 2.11 stack builds TE 2.17 instead).
     if [ "$TEST_BUILD" -ne 1 ]; then
-        if [ "$modern_megatron_stack" -eq 1 ]; then
-            if [ -z "${CUDA_HOME:-}" ] && [ -f /etc/profile.d/cuda.sh ]; then
+        if [ "$torch211_stack" -eq 1 ]; then
+            if [ -f /etc/profile.d/cuda.sh ]; then
                 source /etc/profile.d/cuda.sh
             fi
             install_te_2_17
@@ -4790,7 +4738,7 @@ install_agentic() {
         fi
     fi
 
-    if [ "$modern_megatron_stack" -eq 1 ]; then
+    if [ "$torch211_stack" -eq 1 ]; then
         # megatron-bridge requires Python 3.12; an explicit --python below that
         # still gets the rest of the stack, just without Megatron-Bridge models.
         if python -c 'import sys; sys.exit(sys.version_info < (3, 12))'; then
@@ -4942,7 +4890,7 @@ main() {
             # mcore 0.18 on the torch 2.11 stack needs Python 3.12. Older engine
             # stacks keep 3.11 (no cp312 flash-attn/apex wheels); a venv over a
             # vendor image's site-packages keeps the image interpreter.
-            if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 0 ] && engine_uses_modern_megatron; then
+            if [ "$USER_SET_PYTHON" -eq 0 ] && [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 0 ] && engine_needs_torch211; then
                 PYTHON_VERSION="3.12.12"
             fi
             create_and_sync_venv

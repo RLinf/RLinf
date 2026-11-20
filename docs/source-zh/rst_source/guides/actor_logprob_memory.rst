@@ -7,7 +7,7 @@ Megatron Actor 使用动态批次时，输出层投影（LM Head）和 softmax �
 - 显存峰值出现在 FP32 softmax：设置 ``actor.logprob_chunk_size: 256``，并设 ``algorithm.calculate_entropy: false`` 和 ``algorithm.entropy_bonus: 0``。
 - 显存峰值出现在 Qwen3.5 MBridge 的输出层投影：设置 ``actor.model.lm_head_chunk_size: 256``。流水线和上下文并行度均须为 1，并设置 ``actor.model.load_mtp: false`` 和 ``algorithm.entropy_bonus: 0``。
 
-输出层分块优先于另外两项，默认只投影预测回复的位置。记录熵时会投影全部位置，请将 ``actor.logprob_chunk_size`` 保持为 0。Qwen3.5 分块路径目前只接收文本输入，图像接入见 `#1891 <https://github.com/RLinf/RLinf/pull/1891>`_，加载公开权重见 `#1862 <https://github.com/RLinf/RLinf/pull/1862>`_。
+输出层分块优先于另外两项，默认只投影预测回复的位置。记录熵时会投影全部位置，请将 ``actor.logprob_chunk_size`` 保持为 0。使用 Qwen3.5 图像输入时，按 :doc:`图像回放指南 <agent-workflows/qwen35-multimodal>` 配置。公开权重的加载方式见 :doc:`qwen35_weight_sync`。
 
 **试跑 Search-R1**。按 :doc:`Qwen2.5 指南 <../examples/agentic/searchr1/qwen2.5>` 准备权重、数据和检索服务。单机八卡配置 ``train_qwen2.5_chunked.yaml`` 沿用基线配置，启用以下两项：
 

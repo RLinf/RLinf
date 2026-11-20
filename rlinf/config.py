@@ -277,55 +277,14 @@ def activation_to_func(
 
 
 def shared_multi_modal_processor_enabled(cfg: DictConfig | dict | None) -> bool:
-    """Read the SGLang config switch, accepting legacy saved configurations."""
+    """Read the opt-in flag for capturing SGLang image inputs."""
     if cfg is None:
         return False
-    current = "enable_shared_multi_modal_processor"
-    legacy = "enable_token_space_processor"
-    if current in cfg and legacy in cfg:
-        raise ValueError(
-            f"rollout.sglang contains both {current} and {legacy}; keep only {current}."
-        )
-    key = legacy if legacy in cfg else current
+    key = "enable_shared_multi_modal_processor"
     enabled = cfg.get(key, False)
     if type(enabled) is not bool:
         raise ValueError(f"rollout.sglang.{key} must be a boolean, got {enabled!r}.")
     return enabled
-
-
-def validate_sglang_multimodal_cfg(cfg: DictConfig) -> None:
-    """Check multimodal options supported by the default serving worker."""
-    shared_processor = shared_multi_modal_processor_enabled(cfg)
-    serving_mode = cfg.get("serving_mode")
-    cache_enabled = cfg.get("enable_token_space_preprocess_cache", False)
-    cache_directory = cfg.get("token_space_preprocess_cache_dir")
-    check_rate = cfg.get("token_space_preprocess_cache_check_rate", 0.0)
-    if cache_enabled:
-        if (
-            serving_mode is not None
-            or not shared_processor
-            or not cfg.get("token_space_preprocess_cache_trust_url", False)
-            or not cache_directory
-            or not os.path.isabs(cache_directory)
-        ):
-            raise ValueError(
-                "Shared preprocessing cache requires the default SGLang worker, "
-                "enable_shared_multi_modal_processor=True, "
-                "token_space_preprocess_cache_trust_url=True and an absolute "
-                "token_space_preprocess_cache_dir visible to rollout and learners."
-            )
-    elif cache_directory is not None or check_rate:
-        raise ValueError(
-            "Set enable_token_space_preprocess_cache=True to use "
-            "token_space_preprocess_cache_dir or token_space_preprocess_cache_check_rate."
-        )
-    if check_rate is not None and (
-        type(check_rate) not in (int, float) or not 0 <= check_rate <= 1
-    ):
-        raise ValueError(
-            "token_space_preprocess_cache_check_rate must be between 0 and 1, "
-            f"got {check_rate!r}."
-        )
 
 
 def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
@@ -353,7 +312,10 @@ def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
             f"backend_type=server; the server backend is only implemented for "
             f"the default serving worker (leave serving_mode unset)."
         )
-        validate_sglang_multimodal_cfg(cfg)
+        if shared_multi_modal_processor_enabled(cfg) and serving_mode is not None:
+            raise ValueError(
+                "Image capture requires the default SGLang rollout worker."
+            )
         return cfg
 
     def validate_vllm_cfg(cfg):

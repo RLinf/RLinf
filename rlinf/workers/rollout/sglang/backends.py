@@ -28,7 +28,7 @@ from sglang.srt.managers.io_struct import (
     ResumeMemoryOccupationReqInput,
 )
 
-from rlinf.utils.http_client import InferenceHTTPClient, split_sglang_sampling_params
+from rlinf.utils.http_client import InferenceHTTPClient
 from rlinf.workers.rollout.backend import RlinfContext, RolloutBackend
 from rlinf.workers.rollout.sglang.process import SGLangServerProcess
 from rlinf.workers.rollout.utils import RolloutEngineStats
@@ -86,30 +86,8 @@ class SGLangEngineBackend(RolloutBackend):
         sampling_params: list[dict] | dict,
         image_data: Optional[list],
         return_logprob: list[bool] | bool,
-        return_prompt_token_ids: bool = False,
-        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
-        sampling_params, processor = split_sglang_sampling_params(sampling_params)
-        if return_prompt_token_ids or mm_token_expansion_start_len is not None:
-            from sglang.srt.managers.io_struct import GenerateReqInput
-
-            request = GenerateReqInput(
-                text=prompt,
-                input_ids=input_ids,
-                sampling_params=sampling_params,
-                image_data=image_data,
-                return_logprob=return_logprob,
-                custom_logit_processor=processor,
-                return_prompt_token_ids=return_prompt_token_ids,
-                mm_token_expansion_start_len=mm_token_expansion_start_len,
-            )
-            responses = self.engine.tokenizer_manager.generate_request(request, None)
-            try:
-                return await anext(responses)
-            finally:
-                await responses.aclose()
         return await self.engine.async_generate(
-            custom_logit_processor=processor,
             prompt=prompt,
             sampling_params=sampling_params,
             input_ids=input_ids,
@@ -293,18 +271,11 @@ class SGLangServerBackend(RolloutBackend):
         sampling_params: list[dict] | dict,
         image_data: Optional[list],
         return_logprob: list[bool] | bool,
-        return_prompt_token_ids: bool = False,
-        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
         # A request can still race the server closing an idle keep-alive
         # connection, or hit a transient disconnect. Resending only draws
         # another sample, so retry connection errors; HTTP status errors
         # are not retried.
-        extra = {}
-        if return_prompt_token_ids:
-            extra["return_prompt_token_ids"] = True
-        if mm_token_expansion_start_len is not None:
-            extra["mm_token_expansion_start_len"] = mm_token_expansion_start_len
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -314,7 +285,6 @@ class SGLangServerBackend(RolloutBackend):
                     sampling_params=sampling_params,
                     return_logprob=return_logprob,
                     image_data=image_data,
-                    **extra,
                 )
             except aiohttp.ClientConnectionError as e:
                 self._log_info(
@@ -328,7 +298,6 @@ class SGLangServerBackend(RolloutBackend):
             sampling_params=sampling_params,
             return_logprob=return_logprob,
             image_data=image_data,
-            **extra,
         )
 
     async def sync_weights(self, pause_mode: Optional[str] = None) -> None:

@@ -31,6 +31,18 @@ Set ``rollout.sglang.enable_shared_multi_modal_processor=true`` and
 Use pipeline and context parallel sizes of one. Each rollout worker and its
 local tokenizer process must share the same temporary directory.
 
+.. list-table:: Supported configuration
+   :header-rows: 1
+
+   * - Component
+     - Coverage
+   * - Rollout
+     - Qwen3.5-4B, SGLang 0.5.12.post1, raw images and token-ID prompts. Register the external processor before the default rollout worker starts.
+   * - Learner
+     - Megatron Bridge BF16 actor (dense or chunked projection) and scalar critic. Use PP=1 and CP=1. The eight-GPU update uses TP=2 and DP=4.
+   * - Media
+     - Ordered images. Replay covers pixels, token spans, grids and positions. The learner executes its own vision forward pass.
+
 Two-turn smoke test
 ~~~~~~~~~~~~~~~~~~~
 
@@ -45,6 +57,22 @@ The script starts a loopback HTTP server, generates two images locally, checks
 both turns against the learner inputs and shuts down its server. Look for
 ``Turn 2 passed``. The checks cover sampled history, BF16 pixels, image grids
 and M-RoPE positions. Model training is a separate step.
+
+Reproduce the optimizer updates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On a single node with eight available A100 80 GB GPUs and no active Ray cluster,
+run the following command from the repository root. The script captures four
+two-turn episodes and sends the same eight rows to a dense actor, a chunked
+actor, and a scalar critic. Each role reports its loss, gradient norm and
+changed parameter count for every rank.
+
+.. code-block:: bash
+
+   CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash examples/agent/qwen35/run_replay_update.sh /path/to/Qwen3.5-4B
+
+The check uses fixed advantages and returns to exercise the optimizer. The
+result is a training-path check. Policy quality requires a separate evaluation.
 
 Use replay in an agent
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -78,54 +106,29 @@ expired. Keep image turns as separate learner rows: equal token prefixes can
 refer to different images. The learner pads only the current image microbatch
 before Bridge embeds the images and packs the decoder sequence. Omit ``image_store_dir`` to carry tensors inline. Old images are
 processed again by SGLang on later turns and checked against the recorded
-history. This mode does not require the experimental preprocessing cache.
+history.
 
-Experimental TokenSpace API
----------------------------
+.. list-table:: Captured row fields
+   :header-rows: 1
 
-Workflows using the separate ``prepare_multimodal()`` preflight and SGLang's
-native preprocessing cache require the pinned build and a CUDA 13 driver.
-Install it in a separate environment and unset the external processor variable:
-
-.. code-block:: bash
-
-   unset SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE
-   bash requirements/install.sh agentic --sglang token-space --venv .venv-token-space
-
-Configure the shared storage and per-rank budgets on the experimental path:
-
-.. code-block:: yaml
-
-   rollout:
-     sglang:
-       enable_shared_multi_modal_processor: true
-       enable_token_space_preprocess_cache: true
-       token_space_preprocess_cache_dir: /absolute/shared/image-cache
-       token_space_preprocess_cache_trust_url: true
-   actor:
-     expect_multi_modal_inputs: true
-     model:
-       load_mtp: false
-       lm_head_chunk_size: 256
-     multimodal:
-       cache_bytes: 268435456
-       prefetch_batches: 2
-       prefetch_bytes: 536870912
-   critic:
-     expect_multi_modal_inputs: true
-     multimodal:
-       cache_bytes: 268435456
-       prefetch_batches: 2
-       prefetch_bytes: 536870912
-
-The example gives each learner rank 256 MiB of processed-image cache and a
-512 MiB prefetch budget. With two actor and two critic ranks, these budgets sum
-to 3 GiB of host memory; model state, raw images and processor scratch space are
-additional. Cache and prefetch are disabled when their budgets are zero.
-
-Chunked scoring requires MTP to be disabled explicitly. It supports entropy
-metrics with zero entropy bonus. Keep the vision encoder and projection frozen
-in both training and rollout.
+   * - Field
+     - Type and meaning
+   * - ``format``
+     - String, fixed to rlinf-qwen-image-inputs-v1.
+   * - ``prompt_token_ids``
+     - List of integers. Full expanded prompt used to sample this turn.
+   * - ``image_spans``
+     - One [start, end) pair per real image in the expanded prompt, excluding delimiters.
+   * - ``image_grid_thw``
+     - Integer tensor [images, 3]. Temporal, height and width grid dimensions in prompt order.
+   * - ``mrope_positions``
+     - Integer tensor [3, prompt length]. Positions for the complete served prompt.
+   * - ``mrope_position_delta``
+     - Integer tensor [1]. Offset for positions after the prompt.
+   * - ``pixel_values``
+     - Inline native processor tensor. The learner casts it to BF16.
+   * - ``pixel_refs``, ``pixel_values_bytes``
+     - With shared storage, a list of path/SHA-256 pairs replaces inline pixels. The byte count budgets the BF16 learner copy.
 
 Check the Input Contract
 ------------------------
@@ -146,11 +149,5 @@ SGLang/Megatron comparison measured a mean absolute logprob difference of
 0.058638 and a maximum of 0.763876. Seventeen differences exceeded 0.10.
 These measurements describe input replay and backend scoring on this panel.
 They do not measure policy improvement.
-
-.. warning::
-
-   Trusted cache URLs must refer to immutable files. Keep image files and the
-   cache accessible for as long as pending trajectories or checkpoints use them.
-   Shared preprocessing accepts images; video and audio are unsupported.
 
 See :doc:`../agentic_config` for the other agent training options.

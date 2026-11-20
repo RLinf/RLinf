@@ -179,8 +179,6 @@ class AgentLoopWorker(Worker):
         sampling_params: Optional[dict] = None,
         rollout_name: Optional[str] = None,
         image_data: Optional[list[bytes]] = None,
-        return_prompt_token_ids: bool = False,
-        mm_token_expansion_start_len: Optional[int] = None,
         image_spans: Optional[list[tuple[int, int]]] = None,
         image_history: Optional[dict] = None,
         image_store_dir: Optional[str] = None,
@@ -202,31 +200,7 @@ class AgentLoopWorker(Worker):
             }
         if image_data:
             request["image_data"] = image_data
-        if return_prompt_token_ids:
-            request["return_prompt_token_ids"] = True
-        if mm_token_expansion_start_len is not None:
-            request["mm_token_expansion_start_len"] = mm_token_expansion_start_len
         return await self._request_rollout(request, rollout_name)
-
-    async def prepare_multimodal(
-        self,
-        prompt_ids: list[int],
-        image_data: list,
-        *,
-        prefix_length: int,
-        image_spans: list,
-    ) -> dict:
-        """Resolve image expansion before calculating this turn's output budget."""
-        return await self._request_rollout(
-            {
-                "prompt_ids": prompt_ids,
-                "image_data": image_data,
-                "prepare_multimodal": {
-                    "prefix_length": prefix_length,
-                    "image_spans": image_spans,
-                },
-            }
-        )
 
     async def _request_rollout(self, request: dict, rollout_name=None) -> dict:
         channel_key = uuid4().hex

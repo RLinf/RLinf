@@ -1,0 +1,49 @@
+runner:
+  seq_length: 512
+  max_tokens_per_mbs: 1024
+algorithm:
+  use_valid_token_scale: false
+  logprob_forward_micro_batch_size: 2
+reward:
+  reward_type: null  # This check supplies fixed training targets.
+data:
+  max_prompt_length: 480
+rollout:
+  model:
+    model_type: qwen3_5
+  sglang:
+    enable_shared_multi_modal_processor: true
+actor:
+  expect_multi_modal_inputs: true
+  enable_dp_load_balance: true
+  offload_weight: false
+  offload_optimizer: false
+  offload_grad: false
+  micro_batch_size: 2
+  model:
+    model_path: ${rollout.model.model_path}
+    model_type: qwen3_5
+    precision: bf16
+    load_mtp: false
+    context_parallel_size: 1
+    tensor_model_parallel_size: 2
+    sequence_parallel: true
+    attention_backend: flash
+    apply_rope_fusion: false
+    recompute_method: null
+    recompute_granularity: null
+    recompute_num_layers: null
+    freeze_vision_model: true
+    freeze_vision_projection: true
+  optim:
+    bf16: true
+    fp16: false
+    optimizer_cpu_offload: true
+    optimizer_offload_fraction: 1.0
+  lr_sched:
+    lr_warmup_init: 1.0e-6
+  megatron:
+    mbridge: true
+    train_iters: 2
+    ckpt_convertor:
+      model: Qwen3.5-4B

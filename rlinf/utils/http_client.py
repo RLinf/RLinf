@@ -36,19 +36,6 @@ _PROXY_ENV_VARS = (
 )
 
 
-def split_sglang_sampling_params(
-    params: dict | list[dict],
-) -> tuple[dict | list[dict], str | list[str | None] | None]:
-    """SGLang takes custom logit processors on the request, outside SamplingParams."""
-    if isinstance(params, dict):
-        sampling = params.copy()
-        processor = sampling.pop("custom_logit_processor", None)
-        return sampling, processor
-    sampling = [item.copy() for item in params]
-    processors = [item.pop("custom_logit_processor", None) for item in sampling]
-    return sampling, processors if any(p is not None for p in processors) else None
-
-
 def _b64_payload(obj: Any) -> dict:
     """Wrap a pickled object as the body of an /rlinf/* control request.
 
@@ -127,19 +114,11 @@ class InferenceHTTPClient:
         sampling_params: Optional[list[dict] | dict] = None,
         return_logprob: list[bool] | bool = False,
         image_data: Optional[list] = None,
-        return_prompt_token_ids: bool = False,
-        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict | list:
         return self.post(
             "/generate",
             self._generate_body(
-                prompt,
-                input_ids,
-                sampling_params,
-                return_logprob,
-                image_data,
-                return_prompt_token_ids,
-                mm_token_expansion_start_len,
+                prompt, input_ids, sampling_params, return_logprob, image_data
             ),
         )
 
@@ -173,19 +152,11 @@ class InferenceHTTPClient:
         sampling_params: Optional[list[dict] | dict] = None,
         return_logprob: list[bool] | bool = False,
         image_data: Optional[list] = None,
-        return_prompt_token_ids: bool = False,
-        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict | list:
         return await self._apost(
             "/generate",
             self._generate_body(
-                prompt,
-                input_ids,
-                sampling_params,
-                return_logprob,
-                image_data,
-                return_prompt_token_ids,
-                mm_token_expansion_start_len,
+                prompt, input_ids, sampling_params, return_logprob, image_data
             ),
         )
 
@@ -290,22 +261,13 @@ class InferenceHTTPClient:
         sampling_params: Optional[list[dict] | dict],
         return_logprob: list[bool] | bool,
         image_data: Optional[list] = None,
-        return_prompt_token_ids: bool = False,
-        mm_token_expansion_start_len: Optional[int] = None,
     ) -> dict:
         body: dict = {"return_logprob": return_logprob}
-        if return_prompt_token_ids:
-            body["return_prompt_token_ids"] = True
-        if mm_token_expansion_start_len is not None:
-            body["mm_token_expansion_start_len"] = mm_token_expansion_start_len
         if prompt is not None:
             body["text"] = prompt
         if input_ids is not None:
             body["input_ids"] = input_ids
         if sampling_params is not None:
-            sampling_params, processor = split_sglang_sampling_params(sampling_params)
-            if processor is not None:
-                body["custom_logit_processor"] = processor
             body["sampling_params"] = sampling_params
         if image_data is not None:
 

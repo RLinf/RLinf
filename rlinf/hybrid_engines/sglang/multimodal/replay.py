@@ -25,10 +25,30 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory, gettempdir
 import torch
 from safetensors.torch import load, load_file, save
 
-from .token_space import tensor_digest
-
 REPLAY_FORMAT = "rlinf-qwen-image-inputs-v1"
 CAPTURE_KEY = "rlinf_image_capture"
+
+
+def require_image_capture(sglang_version) -> None:
+    if str(sglang_version) != "0.5.12.post1":
+        raise ValueError(
+            f"Image capture requires SGLang 0.5.12.post1, got {sglang_version}."
+        )
+    if (
+        os.environ.get("SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE")
+        != "rlinf.hybrid_engines.sglang.multimodal"
+    ):
+        raise ValueError(
+            "Set SGLANG_EXTERNAL_MM_PROCESSOR_PACKAGE=rlinf.hybrid_engines.sglang.multimodal before starting rollout."
+        )
+
+
+def tensor_digest(tensor: torch.Tensor) -> str:
+    """Hash a tensor's dtype, shape and exact CPU bytes."""
+    tensor = tensor.detach().cpu().contiguous()
+    digest = hashlib.sha256(str((tensor.dtype, tuple(tensor.shape))).encode())
+    digest.update(tensor.view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
 
 
 async def generate_with_capture(

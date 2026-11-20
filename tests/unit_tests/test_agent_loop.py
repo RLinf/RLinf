@@ -79,29 +79,11 @@ def test_agent_loop_sends_multimodal_request_metadata():
     worker.generate_output_channel = _QueueChannel()
     ids, images, spans = [1, 2], [b"image"], [(1, 2)]
 
-    async def run():
-        for response in [{"ready": True}, {"output_ids": [3]}]:
-            worker.generate_output_channel.put(response)
-        assert await worker.prepare_multimodal(
-            ids, images, prefix_length=1, image_spans=spans
-        ) == {"ready": True}
-        await worker.generate(
-            ids,
-            {},
-            image_data=images,
-            return_prompt_token_ids=True,
-            mm_token_expansion_start_len=1,
-        )
-
-    asyncio.run(run())
-    prepare = worker.generate_input_channel.get_nowait()
-    generate = worker.generate_input_channel.get_nowait()
-    assert prepare["prepare_multimodal"] == {"prefix_length": 1, "image_spans": spans}
-    assert prepare["image_data"] == generate["image_data"] == images
-    assert (
-        generate["return_prompt_token_ids"]
-        and generate["mm_token_expansion_start_len"] == 1
-    )
+    worker.generate_output_channel.put({"output_ids": [3]})
+    asyncio.run(worker.generate(ids, {}, image_data=images, image_spans=spans))
+    request = worker.generate_input_channel.get_nowait()
+    assert request["image_data"] == images
+    assert request["capture_images"]["image_spans"] == spans
 
 
 def _request(n_groups=1, group_size=2, group_ids=None, task_names=None):

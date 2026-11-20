@@ -8,7 +8,7 @@ With dynamic Megatron batches, the output projection and softmax can allocate te
 - If GPU memory peaks during the Qwen3.5 MBridge output projection, set ``actor.model.lm_head_chunk_size: 256``. Use pipeline and context parallel sizes of 1, ``actor.model.load_mtp: false`` and ``algorithm.entropy_bonus: 0``.
 
 LM Head chunking takes precedence over the other two options. It projects response positions by default and all positions when logging entropy. To log entropy, leave ``actor.logprob_chunk_size`` at zero.
-This Qwen3.5 training path supports text inputs only. See `#1891 <https://github.com/RLinf/RLinf/pull/1891>`_ for image inputs and `#1862 <https://github.com/RLinf/RLinf/pull/1862>`_ for loading public Qwen3.5 weights.
+For Qwen3.5 image inputs, follow :doc:`the image replay guide <agent-workflows/qwen35-multimodal>`. See :doc:`qwen35_weight_sync` for loading public weights.
 
 **Try Search-R1.** Follow the :doc:`Qwen2.5 setup <../examples/agentic/searchr1/qwen2.5>` for weights, data and the retrieval server. On one eight-GPU node, ``train_qwen2.5_chunked.yaml`` inherits the base configuration and adds:
 
