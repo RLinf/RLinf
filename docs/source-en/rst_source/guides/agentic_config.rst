@@ -263,6 +263,8 @@ actor
   actor:
     training_backend: megatron
     mcore_gpt: True
+    logprob_chunk_size: 0
+    response_only_logits: False
     spec_name: decoder_gpt
 
     offload_optimizer: True
@@ -275,6 +277,7 @@ actor
 
     model:
       precision: fp16
+      lm_head_chunk_size: 0
       add_bias_linear: False
 
       tensor_model_parallel_size: 1
@@ -409,6 +412,10 @@ actor
      - Enable data-parallel load balancing.
    * - ``actor.calculate_flops``
      - Compute and log FLOPs for profiling.
+   * - ``actor.logprob_chunk_size``
+     - Positions per vocabulary softmax chunk (nonnegative integer). With response-only projection and entropy disabled, zero uses chunks of 256 positions. See :doc:`actor_logprob_memory` for the other options and benchmark.
+   * - ``actor.response_only_logits``
+     - Project only positions that predict response tokens. Requires context parallel size 1.
    * - ``actor.seed``
      - Global seed for reproducibility.
 
@@ -420,6 +427,8 @@ actor
 
    * - Parameter
      - Description
+   * - ``actor.model.lm_head_chunk_size``
+     - Positions per output projection chunk (nonnegative integer). Applies to Qwen3.5 with MBridge.
    * - ``actor.model.precision``
      - Numerical precision for training (e.g., ``fp16``).
    * - ``actor.model.add_bias_linear``
@@ -664,35 +673,3 @@ reward
    * - ``reward.reward_scale``
      - A correct answer receives ``reward_scale``; an incorrect one receives
        ``-reward_scale``.
-
-Reduce Actor Scoring Memory
----------------------------
-
-A dynamic-batch Megatron Actor can reduce the memory it uses to score generated
-tokens. Both options are disabled by default.
-
-.. list-table::
-   :header-rows: 1
-
-   * - Setting
-     - When to enable it
-     - Requirements
-   * - ``actor.logprob_chunk_size: 256``
-     - Vocabulary softmax is the peak. Process 256 positions at a time and recompute their probabilities during backward. The Actor still materializes the logits.
-     - Disable entropy calculation and set the entropy bonus to zero.
-   * - ``actor.response_only_logits: true``
-     - Prompts or tool outputs occupy most of the batch. Project only the positions that predict response tokens.
-     - Context parallel size 1. Supports entropy bonuses. With entropy off and no explicit chunk size, softmax uses 256-token chunks.
-
-To try both options on one eight-GPU node, follow the
-:doc:`Search-R1 Qwen2.5 setup <../examples/agentic/searchr1/qwen2.5>` for the
-retrieval server, data and weights. Set the paths in ``train_qwen2.5.yaml``.
-The chunked configuration inherits those paths. Run it from the repository root:
-
-.. code-block:: bash
-
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked
-
-Use ``train_qwen2.5`` with the same command for the baseline. Compare peak
-allocated memory and update time on equivalent batches, keeping the token
-counts and number of scored positions fixed.

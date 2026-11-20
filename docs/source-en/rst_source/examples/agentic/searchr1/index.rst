@@ -111,7 +111,9 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            rollout.model.model_path=./Qwen2.5-3B-Instruct \
            'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
 
-      .. dropdown:: PPO, FSDP GRPO, checkpoint export, and evaluation
+      .. dropdown:: Chunked GRPO, PPO, FSDP GRPO, checkpoint export, and evaluation
+
+         **Chunked Megatron GRPO** (``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``): inherits ``train_qwen2.5.yaml`` and computes Actor logits at response positions in 256-token chunks to reduce GPU memory.
 
          **Megatron PPO** (``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``): saves both ``actor`` and ``critic`` under each ``global_step_xxx``; set ``runner.resume_dir`` to resume both.
 
@@ -119,6 +121,8 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
          .. code-block:: bash
 
+            bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked \
+              rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo \
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp \

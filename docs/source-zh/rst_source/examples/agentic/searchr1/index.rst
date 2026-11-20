@@ -111,7 +111,9 @@ Search-R1 强化学习训练
            rollout.model.model_path=./Qwen2.5-3B-Instruct \
            'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
 
-      .. dropdown:: PPO、FSDP GRPO 及 checkpoint 导出与评测
+      .. dropdown:: 分块 GRPO、PPO、FSDP GRPO 及 checkpoint 导出与评测
+
+         **分块 Megatron GRPO**\ （``examples/agent/searchr1/config/train_qwen2.5_chunked.yaml``）：继承 ``train_qwen2.5.yaml``，按最多 256 个回复位置分块计算 Actor logits 以降低显存占用。
 
          **Megatron PPO**\ （``examples/agent/searchr1/config/train_qwen2.5_ppo.yaml``）：在每个 ``global_step_xxx`` 下同时保存 ``actor`` 和 ``critic``，通过 ``runner.resume_dir`` 一并恢复。
 
@@ -119,6 +121,8 @@ Search-R1 强化学习训练
 
          .. code-block:: bash
 
+            bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked \
+              rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_ppo \
               rollout.model.model_path=./Qwen2.5-3B-Instruct 'data.train_data_paths=["./Search-R1-Data/train.jsonl"]'
             bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp \

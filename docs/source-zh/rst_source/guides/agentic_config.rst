@@ -254,6 +254,8 @@ actor
   actor:
     training_backend: megatron
     mcore_gpt: True
+    logprob_chunk_size: 0
+    response_only_logits: False
     spec_name: decoder_gpt
 
     offload_optimizer: True
@@ -266,6 +268,7 @@ actor
 
     model:
       precision: fp16
+      lm_head_chunk_size: 0
       add_bias_linear: False
 
       tensor_model_parallel_size: 1
@@ -400,6 +403,10 @@ actor
      - 启用数据并行负载均衡。
    * - ``actor.calculate_flops``
      - 计算并记录 FLOPs 以供性能分析。
+   * - ``actor.logprob_chunk_size``
+     - 每次计算词表 softmax 的位置数，取非负整数。设为 0 时，如果开启 ``response_only_logits`` 并关闭熵计算，默认每块 256 个位置。选项对比和实测数据见 :doc:`actor_logprob_memory`。
+   * - ``actor.response_only_logits``
+     - 只在预测回复 token 的位置计算输出层投影。要求上下文并行度为 1。
    * - ``actor.seed``
      - 用于可复现性的全局随机种子。
 
@@ -411,6 +418,8 @@ actor
 
    * - 参数
      - 说明
+   * - ``actor.model.lm_head_chunk_size``
+     - 输出层每次投影的位置数，取非负整数。适用于使用 MBridge 的 Qwen3.5。
    * - ``actor.model.precision``
      - 训练的数值精度（例如 ``fp16``）。
    * - ``actor.model.add_bias_linear``
@@ -647,29 +656,3 @@ reward
      - 训练使用的奖励类型（例如 ``math``）。
    * - ``reward.reward_scale``
      - 答案正确时获得 ``reward_scale``；错误时获得 ``-reward_scale``。
-
-降低 Actor 打分的峰值显存
---------------------------
-
-Megatron Actor 使用动态批次训练时，可按下表选择优化方式。两项默认都关闭。
-
-.. list-table::
-   :header-rows: 1
-
-   * - 配置
-     - 适用场景
-     - 使用条件
-   * - ``actor.logprob_chunk_size: 256``
-     - 峰值出现在词表 softmax。每次处理 256 个位置，反向传播时重算概率。Actor 仍会生成完整 logits。
-     - 关闭熵计算，将熵奖励系数设为零。
-   * - ``actor.response_only_logits: true``
-     - 提示词或工具返回占批次的大部分，只对预测回复 token 的位置做词表投影。
-     - 上下文并行度为 1。支持熵奖励。关闭熵计算且未指定块大小时，softmax 每块处理 256 个位置。
-
-在单机八卡上试用这两项配置前，先按 :doc:`Search-R1 Qwen2.5 指南 <../examples/agentic/searchr1/qwen2.5>` 准备检索服务、数据和权重，并在 ``train_qwen2.5.yaml`` 中填好路径。分块配置会继承这些设置。在仓库根目录运行：
-
-.. code-block:: bash
-
-   bash examples/agent/searchr1/run_train.sh train_qwen2.5_chunked
-
-对照组用同一条命令，把配置名换成 ``train_qwen2.5``。比较峰值显存和更新时间时，保持批次的总 token 数和实际打分位置数一致。
