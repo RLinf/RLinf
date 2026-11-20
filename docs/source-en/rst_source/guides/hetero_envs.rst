@@ -40,7 +40,6 @@ List the env configurations under ``env.train.envs``, each under a name you choo
            rollout_epoch: 2
            max_episode_steps: 80
            max_steps_per_rollout_epoch: 80
-           ignore_terminations: True
            group_size: 8
 
 Each ``defaults`` line loads an env preset under a name, here ``libero_goal`` and ``maniskill``. Each env configuration accepts all fields of ``env.train`` independently: ``total_num_envs``, ``rollout_epoch``, ``max_steps_per_rollout_epoch``, ``max_episode_steps``, ``auto_reset``, ``ignore_terminations``, and ``group_size`` apply only to its own envs. ``env.eval`` works the same way and is independent, so you can train on two env configurations and evaluate on one.
@@ -79,7 +78,7 @@ Balance Training Across Envs
 
 Each training step collects ``total_num_envs * rollout_epoch`` trajectories per env configuration, and the slowest env configuration sets the step time. To inspect per-env timing, set ``runner.per_worker_log: True`` and read ``time/env/interact`` on each env worker.
 
-By default, every trajectory carries the same weight in the loss regardless of horizon, so in the 64-vs-128 example above ManiSkill takes two-thirds of the gradient. Adjust the balance with these settings:
+By default, every trajectory carries the same weight in the loss regardless of horizon. In the opening configuration, ``64 * 1`` LIBERO-Goal trajectories and ``64 * 2`` ManiSkill trajectories give 64 and 128 trajectories per step, so ManiSkill supplies two-thirds of the equally weighted trajectories (its actual gradient contribution still depends on their gradients). Adjust the balance with these settings:
 
 .. code-block:: yaml
 
@@ -97,7 +96,7 @@ By default, every trajectory carries the same weight in the loss regardless of h
 - ``adv_norm_scope: all`` normalizes advantages over all env configurations together instead of separately. It applies to batch-normalized advantage types—``gae`` and ``raw`` with ``normalize_advantages: True``—and is rejected for GRPO, which normalizes within each group.
 - ``actor.mix_envs: False`` puts one env configuration in each optimizer step, in a random order shared across actor ranks. Each env configuration's samples per actor must fill whole global batches.
 
-Async and off-policy training keep the same proportions. In Async PPO, each env configuration gets a share of ``algorithm.rollout_store_size_per_rank`` proportional to its trajectories per step, and the actor waits until every share is full before updating. Off-policy training (SAC, DAgger, RLT) keeps one replay buffer per env configuration, waits until every buffer holds ``min_buffer_size`` trajectories, and samples in proportion to each env's collected transitions times ``loss_weight`` (or draws one env per batch when ``actor.mix_envs: False``).
+Async and off-policy training keep the same proportions. In Async PPO, ``algorithm.rollout_store_size_per_rank`` is sized in received trajectory shards per actor rank and splits into integer quotas proportional to each env's shards per step, with the actor waiting until every quota is full before updating. Because the default of ``1`` cannot split across two nonempty envs, raise it to a multiple of the shard ratio (for example, ``2`` for two envs with equal shard shares). Off-policy training (SAC, DAgger, RLT) keeps one replay buffer per env configuration, waits until every buffer holds ``min_buffer_size`` trajectories, and samples in proportion to each env's collected transitions times ``loss_weight`` (or draws one env per batch when ``actor.mix_envs: False``).
 
 Rewards keep each env's scale. Because PPO and SAC share one critic across env configurations, set ``algorithm.envs.<name>.reward_scale`` when reward magnitudes differ so one env does not dominate the critic. The scale multiplies rewards before ``huber_delta`` and ``value_clip`` apply.
 

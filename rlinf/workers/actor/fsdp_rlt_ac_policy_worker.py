@@ -91,9 +91,9 @@ class RLTACLossMixin:
         rewards = rewards.to(self.torch_dtype)
         chunk_len = rewards.shape[-1]
         discounts = torch.pow(
-            torch.as_tensor(gamma, device=rewards.device),
-            torch.arange(chunk_len, device=rewards.device, dtype=rewards.dtype),
-        )
+            torch.as_tensor(gamma, device=rewards.device, dtype=torch.float32),
+            torch.arange(chunk_len, device=rewards.device, dtype=torch.float32),
+        ).to(rewards.dtype)
         return torch.sum(rewards * discounts, dim=-1, keepdim=True)
 
     def _bc_metrics(
@@ -269,10 +269,12 @@ class RLTACLossMixin:
                 )
                 q_next = self._min_twin_q(all_qf_next.detach())
 
-            gamma = self._env_values("gamma", batch.get("env_index"), self.torch_dtype)
+            gamma = self._env_values("gamma", batch.get("env_index"), torch.float32)
             reward_target = self._discounted_chunk_rewards(rewards, gamma)
             reward_horizon = int(rewards.reshape(rewards.shape[0], -1).shape[-1])
             bootstrap_discount = gamma**reward_horizon
+            if isinstance(bootstrap_discount, torch.Tensor):
+                bootstrap_discount = bootstrap_discount.to(self.torch_dtype)
             if bootstrap_type == "always":
                 target_q_values = reward_target + bootstrap_discount * q_next
             elif bootstrap_type == "standard":

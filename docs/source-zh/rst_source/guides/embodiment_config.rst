@@ -199,7 +199,7 @@ env
    * - ``env.train.envs`` / ``env.eval.envs``
      - 以名字为 key 的多份环境配置，设置后 ``env.train`` 或 ``env.eval`` 成为异构的，每份环境配置运行在自己的一段 env worker 上。见 :doc:`hetero_envs` 。
    * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
-     - 发送给 policy 的观测 key 和图像尺寸，使相机配置不同的环境能共用一个 batch。见 :doc:`hetero_envs` 。
+     - 发送给 policy 的观测 key 和图像尺寸，用来统一相机配置不同的环境格式，使它们在 actor 训练阶段共用同一个训练池，并在路由到同一 rollout worker 且 ``unnorm_key`` 等 policy 参数也相同时能够共享 rollout 前向计算。见 :doc:`hetero_envs` 。
    * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
      - OpenVLA-OFT 还原这份环境配置的动作时使用的统计量，用来代替 ``actor.model.unnorm_key`` 。见 :doc:`hetero_envs` 。
 

@@ -45,7 +45,9 @@ from rlinf.utils.metric_utils import (
     append_to_dict,
     compute_critic_explained_variance_from_stats,
     compute_group_success_metrics,
-    compute_rollout_metrics,
+    compute_rollout_metric_stats,
+    format_rollout_metrics,
+    merge_rollout_metric_stats,
     pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import (
@@ -421,36 +423,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self._normalize_advantages_jointly()
 
         rollout_metrics = dict(self._group_success_metrics)
-        specs = self._rollout_geometry.layout.specs
-        per_env_metrics = [
-            (spec, compute_rollout_metrics(self.env_batches[spec.name]))
-            for spec in specs
+        per_env_stats = [
+            (spec, compute_rollout_metric_stats(self.env_batches[spec.name]))
+            for spec in self._rollout_geometry.layout.specs
         ]
-        for spec, metrics in per_env_metrics:
-            rollout_metrics.update(spec.scoped(metrics))
+        for spec, stats in per_env_stats:
+            rollout_metrics.update(spec.scoped(format_rollout_metrics(stats)))
         self.rollout_batches = self._merge_env_batches()
-        if len(specs) == 1:
-            rollout_metrics.update(per_env_metrics[0][1])
-        else:
-            rollout_metrics.update(
-                compute_rollout_metrics(
-                    cat_list_of_dict_tensor(
-                        [
-                            {
-                                key: pool[key]
-                                for key in (
-                                    "rewards",
-                                    "advantages",
-                                    "returns",
-                                    "loss_mask",
-                                )
-                                if pool.get(key) is not None
-                            }
-                            for pool in self.rollout_batches
-                        ]
-                    )
-                )
+        rollout_metrics.update(
+            format_rollout_metrics(
+                merge_rollout_metric_stats([stats for _, stats in per_env_stats])
             )
+        )
         return rollout_metrics
 
     def _normalize_advantages_jointly(self) -> None:

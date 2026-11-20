@@ -568,20 +568,26 @@ class TrajectoryReplayBuffer:
     def sample(
         self,
         num_chunks: int = 0,
+        *,
+        exact: bool = False,
     ) -> dict[str, torch.Tensor]:
         """
         Sample chunks (transitions) from the buffer.
 
         Args:
-            num_chunks: Minimum number of chunks (transitions) to return
+            num_chunks: Number of chunks (transitions) to return
+            exact: If True, always draw ``num_chunks`` rows with replacement
+                even when the active sampling window holds fewer samples.
 
         Returns:
             Dictionary with rollout batch format [B, ...]
         """
         assert num_chunks > 0
-        return self.sample_chunks(num_chunks)
+        return self.sample_chunks(num_chunks, exact=exact)
 
-    def sample_chunks(self, num_chunks: int) -> dict[str, torch.Tensor]:
+    def sample_chunks(
+        self, num_chunks: int, *, exact: bool = False
+    ) -> dict[str, torch.Tensor]:
         """
         Sample chunks (transitions) from the buffer.
         Each chunk is a single transition from any trajectory.
@@ -635,7 +641,7 @@ class TrajectoryReplayBuffer:
         if window_total_samples == 0:
             return {}
 
-        if num_chunks > window_total_samples:
+        if not exact and num_chunks > window_total_samples:
             num_chunks = window_total_samples
 
         # Sample chunk indices directly from total samples

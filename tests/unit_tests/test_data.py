@@ -226,12 +226,20 @@ def test_env_replay_buffer_carries_fractional_quotas_without_starvation():
         env_buffer.close()
 
 
-def test_env_replay_buffer_samples_full_batch_when_one_window_is_small():
+def test_env_replay_buffer_samples_full_batch_when_one_window_is_small(monkeypatch):
     buffers = {
         "a": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
         "b": TrajectoryReplayBuffer(seed=0, sample_window_size=1),
     }
     env_buffer = EnvReplayBuffer(buffers, {"a": 1.0, "b": 1.0})
+    small_calls = []
+    orig_sample_chunks = buffers["b"].sample_chunks
+
+    def _spy(num_chunks, *, exact=False):
+        small_calls.append((num_chunks, exact))
+        return orig_sample_chunks(num_chunks, exact=exact)
+
+    monkeypatch.setattr(buffers["b"], "sample_chunks", _spy)
     try:
         # Each trajectory holds 2 transitions; env "b"'s window holds only 2 rows.
         env_buffer.add_trajectories(
@@ -241,10 +249,11 @@ def test_env_replay_buffer_samples_full_batch_when_one_window_is_small():
                 _env_trajectory("b", 2.0),
             ]
         )
-        batch = env_buffer.sample(8)
-        assert batch["rewards"].shape[0] == 8
-        assert int((batch["rewards"] == 1.0).sum().item()) == 4
-        assert int((batch["rewards"] == 2.0).sum().item()) == 4
+        batch = env_buffer.sample(16)
+        assert batch["rewards"].shape[0] == 16
+        assert int((batch["rewards"] == 1.0).sum().item()) == 8
+        assert int((batch["rewards"] == 2.0).sum().item()) == 8
+        assert small_calls == [(8, True)]
     finally:
         env_buffer.close()
 
@@ -3491,7 +3500,6 @@ def test_decoupled_step_caps_receive_so_odd_shares_never_overshoot(monkeypatch):
     )
     rollout.decoupled_requests_per_step = 5
     rollout._decoupled_step = 0
-    rollout._decoupled_deferred = []
     rollout._serve_policy_inputs = Mock()
     channel = _QueueChannel()
 
@@ -3506,151 +3514,240 @@ def test_decoupled_step_caps_receive_so_odd_shares_never_overshoot(monkeypatch):
     ]
     assert batch_sizes == [2, 2, 1]
     assert channel.index == 5
+    assert rollout._decoupled_step == 1
 
 
-def test_decoupled_step_defers_future_step_requests_and_finalizes_prev_env_parts(
-    monkeypatch,
-):
+def test_decoupled_two_rollout_ranks_isolate_steps_and_deliver_finals(monkeypatch):
+    from collections import deque
+
     from omegaconf import OmegaConf
 
     import rlinf.scheduler as scheduler_module
     from rlinf.envs.layout import EnvLayout
 
-    def _req(step_id: int, env_rank: int, chunk_id: int, env_parts=None):
+    def _req(step_id: int, env_rank: int, chunk_id: int):
         key = TrajectoryKey(step_id, 0, env_rank, 0, chunk_id)
         return PolicyInput(
             sources=[TrajectorySource(key=key, size=1)],
             obs={"states": torch.zeros(1, 2)},
-            env_parts=env_parts or [],
+            env_parts=[None],
+            request_sizes=[1],
         )
 
-    closing_fast = EnvPart(
-        sources=[TrajectorySource(key=TrajectoryKey(0, 0, 0, 0, 0), size=1)],
-        transition=EnvTransition(
-            rewards=torch.ones(1, 1),
-            dones=torch.zeros(1, 1, dtype=torch.bool),
-            terminations=torch.zeros(1, 1, dtype=torch.bool),
-            truncations=torch.zeros(1, 1, dtype=torch.bool),
-        ),
-        next_obs={"states": torch.zeros(1, 2)},
-        requires_inference=False,
-    )
-    closing_slow = EnvPart(
-        sources=[TrajectorySource(key=TrajectoryKey(0, 0, 1, 0, 1), size=1)],
-        transition=EnvTransition(
-            rewards=torch.ones(1, 1),
-            dones=torch.zeros(1, 1, dtype=torch.bool),
-            terminations=torch.zeros(1, 1, dtype=torch.bool),
-            truncations=torch.zeros(1, 1, dtype=torch.bool),
-        ),
-        next_obs={"states": torch.zeros(1, 2)},
-        requires_inference=False,
-    )
+    def _final(step_id: int, env_rank: int, chunk_id: int):
+        part = EnvPart(
+            sources=[
+                TrajectorySource(
+                    key=TrajectoryKey(step_id, 0, env_rank, 0, chunk_id), size=1
+                )
+            ],
+            transition=EnvTransition(
+                rewards=torch.ones(1, 1),
+                dones=torch.zeros(1, 1, dtype=torch.bool),
+                terminations=torch.zeros(1, 1, dtype=torch.bool),
+                truncations=torch.zeros(1, 1, dtype=torch.bool),
+            ),
+            next_obs={"states": torch.zeros(1, 2)},
+            requires_inference=False,
+        )
+        return PolicyInput(
+            obs={"states": torch.zeros(1, 2)},
+            env_parts=[part],
+            request_sizes=[1],
+            is_last=True,
+        )
 
-    # Fast env (rank 0, 1 chunk) sends step 1 carrying its step-0 closing EnvPart
-    # before slow env (rank 1, 2 chunks) sends its second step-0 chunk.
-    items = [
-        {"batch_index": "0_0_train_policy", "batch": _req(0, 0, 0)},
-        {"batch_index": "1_0_train_policy", "batch": _req(0, 1, 0)},
-        {
-            "batch_index": "0_0_train_policy",
-            "batch": _req(1, 0, 0, env_parts=[closing_fast]),
-        },
-        {"batch_index": "1_0_train_policy", "batch": _req(0, 1, 1)},
-        {
-            "batch_index": "1_0_train_policy",
-            "batch": _req(1, 1, 0, env_parts=[closing_slow]),
-        },
-    ]
-
-    class _QueueChannel:
-        def __init__(self):
-            self.index = 0
+    class _KeyedQueueChannel:
+        def __init__(self, initial):
+            self.queues = {k: deque(v) for k, v in initial.items()}
 
         def get(self, key, async_op=True):
-            del key, async_op
+            del async_op
             loop = asyncio.get_running_loop()
             future = loop.create_future()
-            future.set_result(items[self.index])
-            self.index += 1
+            future.set_result(self.queues[key].popleft())
             return _HangingGet(future)
 
-    plan = SimpleNamespace(entries=[SimpleNamespace(key=("route",))])
     monkeypatch.setattr(scheduler_module, "get_group_world_size", lambda *_: 2)
-    monkeypatch.setattr(scheduler_module, "decoupled_build_recv_plan", lambda **_: plan)
+    monkeypatch.setattr(
+        scheduler_module,
+        "decoupled_build_recv_plan",
+        lambda **kw: SimpleNamespace(
+            entries=[SimpleNamespace(key=("policy", kw["route_key"]))]
+        ),
+    )
 
-    rollout = object.__new__(AsyncMultiStepRolloutWorker)
-    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
-    rollout._world_size = 1
-    rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
-    rollout._manager_proxy = None
-    rollout.batch_router = {"policy": []}
-    rollout.train_batch_size = 2
-    rollout.rollout_queue_size = 1
-    rollout.num_pipeline_stages = 1
-    rollout.staleness_threshold = 0
-    rollout._decoupled_step = 0
-    rollout._decoupled_deferred = []
-    rollout.model_cfg = SimpleNamespace(num_action_chunks=1)
-    rollout.train_layout = EnvLayout(
+    # Two envs (fast: 1 chunk + 1 final = 2 msgs, slow: 2 chunks + 1 final = 3 msgs)
+    # feed two rollout ranks with uneven quotas [3, 2]. Step 1 messages are already
+    # queued before step 0 runs so any step leak would starve the other rank.
+    channel = _KeyedQueueChannel(
+        {
+            ("policy", 0): [
+                {"batch_index": "0_0_train_policy", "batch": _req(0, 0, 0)},
+                {"batch_index": "0_0_train_policy", "batch": _final(0, 0, 0)},
+                {"batch_index": "1_0_train_policy", "batch": _req(0, 1, 0)},
+                {"batch_index": "1_0_train_policy", "batch": _req(0, 1, 1)},
+                {"batch_index": "1_0_train_policy", "batch": _final(0, 1, 1)},
+            ],
+            ("policy", 1): [
+                {"batch_index": "0_0_train_policy", "batch": _req(1, 0, 0)},
+                {"batch_index": "0_0_train_policy", "batch": _final(1, 0, 0)},
+                {"batch_index": "1_0_train_policy", "batch": _req(1, 1, 0)},
+                {"batch_index": "1_0_train_policy", "batch": _req(1, 1, 1)},
+                {"batch_index": "1_0_train_policy", "batch": _final(1, 1, 1)},
+            ],
+        }
+    )
+
+    layout = EnvLayout(
         OmegaConf.create(
             {
                 "envs": {
-                    "fast": {
-                        "env_type": "maniskill",
-                        "total_num_envs": 1,
-                        "rollout_epoch": 1,
-                        "max_steps_per_rollout_epoch": 1,
-                        "max_episode_steps": 1,
-                        "auto_reset": True,
-                        "ignore_terminations": False,
-                    },
-                    "slow": {
-                        "env_type": "maniskill",
-                        "total_num_envs": 1,
-                        "rollout_epoch": 1,
-                        "max_steps_per_rollout_epoch": 2,
-                        "max_episode_steps": 2,
-                        "auto_reset": True,
-                        "ignore_terminations": False,
-                    },
+                    "fast": {"env_type": "maniskill", "total_num_envs": 1},
+                    "slow": {"env_type": "maniskill", "total_num_envs": 1},
                 }
             }
         ),
         world_size=2,
         path="env.train",
     )
-    rollout.decoupled_requests_per_step = 3
-    served_keys = []
-    published_env_keys = []
 
-    def _serve(requests, *_args, **_kwargs):
-        served_keys.extend(req.sources[0].key for req in requests)
+    served_by_step = {0: [], 1: []}
+    finals_by_step = {0: [], 1: []}
 
-    def _publish(env_part, *_args, **_kwargs):
-        published_env_keys.append(env_part.sources[0].key)
+    def _make_worker(rank: int, quota: int):
+        worker = object.__new__(AsyncMultiStepRolloutWorker)
+        worker.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
+        worker._rank = rank
+        worker._world_size = 2
+        worker._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
+        worker._manager_proxy = None
+        worker.batch_router = {"policy": []}
+        worker.train_batch_size = 2
+        worker.rollout_queue_size = 1
+        worker.batch_bootstrap_inference = False
+        worker.train_layout = layout
+        worker.staleness_threshold = 0
+        worker._decoupled_step = 0
+        worker.decoupled_requests_per_step = quota
+        worker._serve_policy_inputs = lambda reqs, *a, **kw: served_by_step[
+            worker._decoupled_step
+        ].extend(req.sources[0].key for req in reqs)
+        worker._publish_env_parts = lambda item, *a, **kw: finals_by_step[
+            worker._decoupled_step
+        ].extend(part.sources[0].key for part in item.env_parts if part is not None)
+        return worker
 
-    rollout._serve_policy_inputs = _serve
-    rollout._publish_env_part = _publish
-    channel = _QueueChannel()
+    rank0 = _make_worker(0, 3)
+    rank1 = _make_worker(1, 2)
+    step_fn = inspect.unwrap(MultiStepRolloutWorker._serve_decoupled_step)
+
+    async def _run_two_steps():
+        await asyncio.gather(
+            step_fn(rank0, channel, None, None),
+            step_fn(rank1, channel, None, None),
+        )
+        # Step 1 queue stayed untouched until step 0 finished on both ranks.
+        assert len(channel.queues[("policy", 0)]) == 0
+        assert len(channel.queues[("policy", 1)]) == 5
+        await asyncio.gather(
+            step_fn(rank0, channel, None, None),
+            step_fn(rank1, channel, None, None),
+        )
+        assert len(channel.queues[("policy", 1)]) == 0
+
+    asyncio.run(_run_two_steps())
+    for step in (0, 1):
+        assert set(served_by_step[step]) == {
+            TrajectoryKey(step, 0, 0, 0, 0),
+            TrajectoryKey(step, 0, 1, 0, 0),
+            TrajectoryKey(step, 0, 1, 0, 1),
+        }
+        assert set(finals_by_step[step]) == {
+            TrajectoryKey(step, 0, 0, 0, 0),
+            TrajectoryKey(step, 0, 1, 0, 1),
+        }
+
+
+def test_decoupled_nonzero_resume_syncs_step_through_async_runners(monkeypatch):
+    from omegaconf import OmegaConf
+
+    import rlinf.scheduler as scheduler_module
+    from rlinf.envs.layout import EnvLayout
+    from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
+    from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
+
+    class _StopRun(Exception):
+        pass
+
+    for runner_cls in (AsyncEmbodiedRunner, AsyncPPOEmbodiedRunner):
+        runner = object.__new__(runner_cls)
+        runner.global_step = 7
+        runner.max_steps = 10
+        runner.actor = SimpleNamespace(
+            set_global_step=Mock(return_value=SimpleNamespace(wait=Mock()))
+        )
+        runner.rollout = SimpleNamespace(
+            set_global_step=Mock(return_value=SimpleNamespace(wait=Mock()))
+        )
+        runner.env = SimpleNamespace(
+            set_global_step=Mock(return_value=SimpleNamespace(wait=Mock()))
+        )
+        runner.update_rollout_weights = Mock(side_effect=_StopRun)
+        with pytest.raises(_StopRun):
+            runner.run()
+        runner.rollout.set_global_step.assert_called_once_with(7)
+        runner.env.set_global_step.assert_called_once_with(7)
+
+    seen_route_keys = []
+    monkeypatch.setattr(scheduler_module, "get_group_world_size", lambda *_: 1)
+
+    def _plan(**kw):
+        seen_route_keys.append(kw["route_key"])
+        return SimpleNamespace(
+            entries=[SimpleNamespace(key=("policy", kw["route_key"]))]
+        )
+
+    monkeypatch.setattr(scheduler_module, "decoupled_build_recv_plan", _plan)
+
+    req7 = PolicyInput(
+        sources=[TrajectorySource(TrajectoryKey(7, 0, 0, 0, 0), 1)],
+        obs={"states": torch.zeros(1, 2)},
+        env_parts=[None],
+        request_sizes=[1],
+    )
+
+    class _Step7Channel:
+        def get(self, key, async_op=True):
+            del async_op
+            assert key == ("policy", 7)
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            fut.set_result({"batch_index": "0_0_train_policy", "batch": req7})
+            return _HangingGet(fut)
+
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
+    rollout.hf_model = SimpleNamespace()
+    rollout._world_size = 1
+    rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
+    rollout._manager_proxy = None
+    rollout.batch_router = {"policy": []}
+    rollout.train_batch_size = 1
+    rollout.rollout_queue_size = 1
+    rollout.batch_bootstrap_inference = False
+    rollout.train_layout = EnvLayout(OmegaConf.create({}), 1, "env.train")
+    rollout.decoupled_requests_per_step = 1
+    rollout._serve_policy_inputs = Mock()
+    rollout.set_global_step(7)
 
     asyncio.run(
         inspect.unwrap(MultiStepRolloutWorker._serve_decoupled_step)(
-            rollout, channel, None, None
+            rollout, _Step7Channel(), None, None
         )
     )
-
-    assert served_keys == [
-        TrajectoryKey(0, 0, 0, 0, 0),
-        TrajectoryKey(0, 0, 1, 0, 0),
-        TrajectoryKey(0, 0, 1, 0, 1),
-    ]
-    assert set(published_env_keys) == {
-        TrajectoryKey(0, 0, 0, 0, 0),
-        TrajectoryKey(0, 0, 1, 0, 1),
-    }
-    assert len(rollout._decoupled_deferred) == 2
-    assert all(req.env_parts == [] for req, _, _ in rollout._decoupled_deferred)
+    assert seen_route_keys == [7]
+    assert rollout._decoupled_step == 8
 
 
 def test_dagger_beta_depends_on_each_requests_own_epoch():
@@ -3720,6 +3817,7 @@ def test_decoupled_policy_route_round_trip():
     rollout.recv_from_and_record_batch_routes_with_timeout.assert_awaited_once_with(
         group_name="EnvGroup",
         channel=None,
+        route_key=None,
         tag="policy",
         batch_size=32,
         merge_fn=rollout._decompress_policy_inputs,
@@ -4486,18 +4584,23 @@ def test_rollout_routes_external_input_without_model_inference():
     rollout._send_actions.assert_called_once()
 
 
-def test_decoupled_final_completion_uses_next_bootstrap():
+def test_decoupled_final_completion_sends_final_on_step_route():
     env = object.__new__(EnvWorker)
-    env._trajectory_step = 0
+    env._trajectory_step = 3
     env._rank = 0
     env.stage_num = 1
     env.train_num_envs_per_stage = 1
     env.n_train_chunk_steps = 1
     env.enable_online_lerobot = False
     env.env_decoupled_mode = True
+    env.collect_final_values = False
+    env.cfg = OmegaConf.create({"rollout": {"group_name": "RolloutGroup"}})
+    env.train_batch_size = 1
+    env._policy_input_split_fn = None
+    env._supplied_actions = {}
     env.smooth_intervene = SmoothInterveneController(1, 1, 1, 4)
     env._build_env_transition = Mock(return_value=EnvTransition())
-    env._send_policy_input = Mock()
+    env.send_to = Mock()
     env_output = EnvOutput(obs={"states": torch.zeros(1, 4)})
 
     completion = env._publish_step(
@@ -4511,21 +4614,15 @@ def test_decoupled_final_completion_uses_next_bootstrap():
         stage_id=0,
     )
 
-    assert completion is not None
-    assert completion.initial_transition is not None
-    assert torch.equal(completion.next_obs["states"], env_output.obs["states"])
-    env._send_policy_input.assert_not_called()
-
-    env._send_train_bootstrap(
-        rollout_channel=Mock(),
-        env_outputs=[env_output],
-        step_id=1,
-        epoch_id=0,
-        previous_env_parts={0: completion},
-    )
-
-    policy_input = env._send_policy_input.call_args.args[1]
-    assert policy_input.env_parts == [completion]
+    assert completion is None
+    env.send_to.assert_called_once()
+    kwargs = env.send_to.call_args.kwargs
+    assert kwargs["route_key"] == 3
+    assert kwargs["decoupled_mode"] is True
+    policy_input = kwargs["data"]
+    assert policy_input.is_last is True
+    assert len(policy_input.env_parts) == 1
+    assert policy_input.env_parts[0].initial_transition is not None
 
 
 @pytest.mark.parametrize("chunked", [False, True])

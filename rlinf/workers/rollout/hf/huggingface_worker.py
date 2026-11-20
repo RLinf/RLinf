@@ -158,11 +158,13 @@ class MultiStepRolloutWorker(Worker):
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
         if self.env_decoupled_mode and self.enable_train:
-            # Every source sends one request per chunk step of each epoch.
+            # Every source sends one action request per chunk step plus one
+            # epoch-closing final message on route_key=step_id.
             requests_per_step = sum(
                 len(spec.ranks)
+                * self.num_pipeline_stages
                 * spec.cfg.rollout_epoch
-                * spec.chunk_steps(self.model_cfg.num_action_chunks)
+                * (spec.chunk_steps(self.model_cfg.num_action_chunks) + 1)
                 for spec in self.train_layout.specs
             )
             self.decoupled_requests_per_step = self._decoupled_share(
@@ -177,7 +179,6 @@ class MultiStepRolloutWorker(Worker):
                 "rollout_results": [],
             }
         self._decoupled_step = 0
-        self._decoupled_deferred: list[tuple[PolicyInput, int, Any]] = []
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
     @property
@@ -802,12 +803,17 @@ class MultiStepRolloutWorker(Worker):
         return [cls._decompress_policy_input(item) for item in policy_inputs]
 
     async def _receive_decoupled_policy_inputs(
-        self, channel: Channel, max_items: int | None = None
+        self,
+        channel: Channel,
+        *,
+        route_key: Any = None,
+        max_items: int | None = None,
     ) -> tuple[list[PolicyInput], list[int]]:
         """Receive one round of decompressed decoupled requests, in route order."""
         return await self.recv_from_and_record_batch_routes_with_timeout(
             group_name=self.cfg.env.group_name,
             channel=channel,
+            route_key=route_key,
             tag="policy",
             batch_size=self.train_batch_size,
             merge_fn=self._decompress_policy_inputs,
@@ -1146,57 +1152,30 @@ class MultiStepRolloutWorker(Worker):
                 policy_input, forward_inputs, actor_channel, dict(policy_fields)
             )
 
-    def _finalize_decoupled_env_parts(
+    def _publish_final_inputs(
         self,
-        request: PolicyInput,
-        max_step_id: int,
+        finals: list[PolicyInput],
+        final_ranks: list[int],
         actor_channel: Channel,
-    ) -> list[tuple[int, int]]:
-        """Publish attached env parts up to ``max_step_id`` without serving ``request``."""
-        if not request.env_parts:
-            return []
-        closed_finals: list[tuple[int, int]] = []
-        remaining_parts: list[EnvPart | None] = []
-        for env_part in request.env_parts:
-            if (
-                env_part is not None
-                and env_part.sources
-                and env_part.sources[0].key.step_id <= max_step_id
-            ):
-                key = env_part.sources[0].key
-                policy_fields = dict(
-                    self._env_policy_fields(
-                        self.train_layout,
-                        {source.key.env_rank for source in env_part.sources},
-                    )
+    ) -> None:
+        """Publish epoch-closing final inputs without sending action replies."""
+        if not finals:
+            return
+        final_keys = [
+            self._forward_key(self.train_layout, [env_rank], item.obs)
+            for env_rank, item in zip(final_ranks, finals)
+        ]
+        if self.batch_bootstrap_inference and len(finals) > 1:
+            groups = self._group_indices(final_keys)
+            for (_, policy_fields), indices in groups.items():
+                group = [finals[index] for index in indices]
+                merged = PolicyInput.merge(group) if len(group) > 1 else group[0]
+                self._publish_env_parts(
+                    merged, None, actor_channel, dict(policy_fields)
                 )
-                self._publish_env_part(
-                    env_part,
-                    policy_obs=None,
-                    next_rlt_obs=None,
-                    actor_channel=actor_channel,
-                    policy_kwargs=policy_fields,
-                )
-                spec = self.train_layout.spec_of_rank(key.env_rank)
-                num_chunks = spec.chunk_steps(self.model_cfg.num_action_chunks)
-                if (
-                    key.step_id == max_step_id
-                    and key.epoch_id == spec.cfg.rollout_epoch - 1
-                    and key.chunk_id == num_chunks - 1
-                ):
-                    closed_finals.append((key.env_rank, key.stage_id))
-                remaining_parts.append(None)
-            else:
-                remaining_parts.append(env_part)
-        if any(part is not None for part in remaining_parts):
-            request.env_parts = remaining_parts
         else:
-            request.env_parts = []
-        return closed_finals
-
-    def _decoupled_pending_finals(self) -> set[tuple[int, int]]:
-        """Return ``(env_rank, stage_id)`` finals to close before ending a decoupled step."""
-        return set()
+            for item, (_, policy_fields) in zip(finals, final_keys):
+                self._publish_env_parts(item, None, actor_channel, dict(policy_fields))
 
     @Worker.timer("serve_decoupled_step")
     async def _serve_decoupled_step(
@@ -1205,82 +1184,49 @@ class MultiStepRolloutWorker(Worker):
         output_channel: Channel,
         actor_channel: Channel,
     ) -> None:
-        """Serve this worker's share of one training step's decoupled requests.
+        """Serve this worker's share of one training step's decoupled messages.
 
-        Rollout workers pull requests from a shared queue, so each serves its
-        share of the current step's requests. Requests arriving early for a
-        later step have any previous-step transitions finalized immediately and
-        are deferred until that step, so a fast env cannot steal budget from a
-        slower env.
+        Each training step routes on ``route_key=step_id``, so rollout workers
+        only pull messages for the active step and finish every step's final
+        transitions before returning.
         """
-        current_step = self._decoupled_step
-        deferred = list(self._decoupled_deferred)
-        still_deferred: list[tuple[PolicyInput, int, Any]] = []
-        pending_finals = self._decoupled_pending_finals()
         served = 0
-
-        def serve_items(items: list[tuple[PolicyInput, int, Any]]) -> None:
-            nonlocal served
-            if not items:
-                return
-            self.batch_router["policy"].extend(route for _, _, route in items)
-            self._serve_policy_inputs(
-                [req for req, _, _ in items],
-                output_channel,
-                actor_channel,
-                0,
-                split_sizes=[size for _, size, _ in items],
-            )
-            served += len(items)
-
-        ready_from_deferred: list[tuple[PolicyInput, int, Any]] = []
-        for entry in deferred:
-            req = entry[0]
-            if (
-                req.sources[0].key.step_id <= current_step
-                and len(ready_from_deferred) < self.decoupled_requests_per_step
-            ):
-                ready_from_deferred.append(entry)
-            else:
-                for closed in self._finalize_decoupled_env_parts(
-                    req, current_step, actor_channel
-                ):
-                    pending_finals.discard(closed)
-                still_deferred.append(entry)
-        serve_items(ready_from_deferred)
-
-        while served < self.decoupled_requests_per_step or pending_finals:
-            budget = (
-                self.decoupled_requests_per_step - served
-                if served < self.decoupled_requests_per_step
-                else len(pending_finals)
-            )
+        while served < self.decoupled_requests_per_step:
             route_start = len(self.batch_router["policy"])
             requests, split_sizes = await self._receive_decoupled_policy_inputs(
-                input_channel, max_items=budget
+                input_channel,
+                route_key=self._decoupled_step,
+                max_items=self.decoupled_requests_per_step - served,
             )
             routes = self.batch_router["policy"][route_start:]
             del self.batch_router["policy"][route_start:]
-            if any(request.is_last for request in requests):
-                raise ValueError("Received a final input in the policy stream.")
 
-            ready: list[tuple[PolicyInput, int, Any]] = []
+            active_requests: list[PolicyInput] = []
+            active_sizes: list[int] = []
+            active_routes: list[Any] = []
+            finals: list[PolicyInput] = []
+            final_ranks: list[int] = []
             for request, size, route in zip(requests, split_sizes, routes):
-                if (
-                    request.sources[0].key.step_id <= current_step
-                    and served + len(ready) < self.decoupled_requests_per_step
-                ):
-                    ready.append((request, size, route))
+                if request.is_last:
+                    finals.append(request)
+                    final_ranks.append(split_channel_message(route)[0])
                 else:
-                    for closed in self._finalize_decoupled_env_parts(
-                        request, current_step, actor_channel
-                    ):
-                        pending_finals.discard(closed)
-                    still_deferred.append((request, size, route))
-            serve_items(ready)
+                    active_requests.append(request)
+                    active_sizes.append(size)
+                    active_routes.append(route)
 
-        self._decoupled_deferred = still_deferred
-        self._decoupled_step = current_step + 1
+            if active_requests:
+                self.batch_router["policy"].extend(active_routes)
+                self._serve_policy_inputs(
+                    active_requests,
+                    output_channel,
+                    actor_channel,
+                    0,
+                    split_sizes=active_sizes,
+                )
+            self._publish_final_inputs(finals, final_ranks, actor_channel)
+            served += len(requests)
+        self._decoupled_step += 1
 
     def _source_budgets(
         self, layout: EnvLayout, batch_size: int, count: Callable[[EnvSpec], int]
@@ -1423,7 +1369,7 @@ class MultiStepRolloutWorker(Worker):
                     infer_batch_size_fn=self._infer_policy_input_batch_size,
                     peer_ranks=peers,
                 ).async_wait()
-                finals, final_keys, requests, request_ranks = [], [], [], []
+                finals, final_ranks, requests, request_ranks = [], [], [], []
                 for env_rank, item in zip(peers, received):
                     if not item.is_last:
                         requests.append(item)
@@ -1431,25 +1377,9 @@ class MultiStepRolloutWorker(Worker):
                         continue
                     # The final message closes the last chunk without requesting actions.
                     finals.append(item)
-                    final_keys.append(
-                        self._forward_key(self.train_layout, [env_rank], item.obs)
-                    )
+                    final_ranks.append(env_rank)
                     left[env_rank] -= 1
-                if self.batch_bootstrap_inference and len(finals) > 1:
-                    groups = self._group_indices(final_keys)
-                    for (_, policy_fields), indices in groups.items():
-                        group = [finals[index] for index in indices]
-                        merged = (
-                            PolicyInput.merge(group) if len(group) > 1 else group[0]
-                        )
-                        self._publish_env_parts(
-                            merged, None, actor_channel, dict(policy_fields)
-                        )
-                else:
-                    for item, (_, policy_fields) in zip(finals, final_keys):
-                        self._publish_env_parts(
-                            item, None, actor_channel, dict(policy_fields)
-                        )
+                self._publish_final_inputs(finals, final_ranks, actor_channel)
                 if not requests:
                     continue
                 self._serve_policy_inputs(
@@ -1741,5 +1671,6 @@ class MultiStepRolloutWorker(Worker):
 
     def set_global_step(self, global_step: int):
         self.global_step = global_step
+        self._decoupled_step = global_step
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(global_step)

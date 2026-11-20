@@ -17,7 +17,6 @@
 import math
 import os
 from functools import reduce
-from typing import Any
 
 import torch
 
@@ -87,9 +86,8 @@ class EnvReplayBuffer:
         for index, (name, count) in enumerate(self._counts(num_chunks).items()):
             if count == 0:
                 continue
-            part = self._sample_exact(self.buffers[name], count)
-            rows = self._batch_rows(part)
-            part["env_index"] = torch.full((rows,), index, dtype=torch.long)
+            part = self.buffers[name].sample(count, exact=True)
+            part["env_index"] = torch.full((count,), index, dtype=torch.long)
             parts[name] = part
         formats = {name: batch_format(part) for name, part in parts.items()}
         if len(set(formats.values())) > 1:
@@ -159,33 +157,6 @@ class EnvReplayBuffer:
     @staticmethod
     def _path(path: str, name: str | None) -> str:
         return path if name is None else os.path.join(path, name)
-
-    @staticmethod
-    def _batch_rows(batch: dict[str, Any]) -> int:
-        for value in batch.values():
-            if isinstance(value, torch.Tensor):
-                return int(value.shape[0])
-            if isinstance(value, dict):
-                rows = EnvReplayBuffer._batch_rows(value)
-                if rows > 0:
-                    return rows
-        return 0
-
-    @classmethod
-    def _sample_exact(
-        cls, buffer: TrajectoryReplayBuffer, count: int
-    ) -> dict[str, torch.Tensor]:
-        """Sample exactly ``count`` transitions even when a small window clamps one draw."""
-        chunks: list[dict[str, torch.Tensor]] = []
-        remaining = count
-        while remaining > 0:
-            draw = buffer.sample(remaining)
-            got = cls._batch_rows(draw)
-            if got <= 0:
-                raise RuntimeError("Cannot sample from an empty env replay buffer.")
-            chunks.append(draw)
-            remaining -= got
-        return chunks[0] if len(chunks) == 1 else reduce(concat_batch, chunks)
 
     def _counts(self, num_chunks: int) -> dict[str | None, int]:
         if not self.mix_envs:

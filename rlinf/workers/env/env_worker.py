@@ -916,13 +916,18 @@ class EnvWorker(Worker):
         supplies_actions = not policy_input.requires_inference
         if supplies_actions:
             self._supplied_actions[stage_id] = policy_input.external_actions
+        route_key = (
+            (key.step_id if key is not None else self._trajectory_step)
+            if self.env_decoupled_mode
+            else stage_id
+        )
         self.send_to(
             group_name=self.cfg.rollout.group_name,
             channel=rollout_channel,
             data=policy_input,
             mode="train",
             tag="policy",
-            route_key=stage_id if not self.env_decoupled_mode else None,
+            route_key=route_key,
             async_op=supplies_actions,
             batch_size=self.train_batch_size,
             split_fn=self._policy_input_split_fn or PolicyInput.split,
@@ -960,9 +965,6 @@ class EnvWorker(Worker):
         next_obs_override = None
         if has_terminal_state and env_output.final_obs is not None:
             next_obs_override = env_output.final_obs
-        elif is_last and self.env_decoupled_mode:
-            # The next decoupled request may contain a reset observation.
-            next_obs_override = env_output.obs
 
         next_key = None
         if not is_last:
@@ -1005,8 +1007,6 @@ class EnvWorker(Worker):
         )
         policy_input.env_parts = [env_part]
         policy_input.is_last = is_last
-        if is_last and self.env_decoupled_mode:
-            return env_part
         self._send_policy_input(
             rollout_channel,
             policy_input,
@@ -1159,7 +1159,6 @@ class EnvWorker(Worker):
         cooperative_yield: bool,
     ) -> dict[str, torch.Tensor]:
         env_metrics = defaultdict(list)
-        final_env_parts: dict[int, EnvPart] = {}
 
         for epoch in range(self.rollout_epoch):
             if epoch == 0 and self._prefetched_train_bootstrap is not None:
@@ -1170,9 +1169,7 @@ class EnvWorker(Worker):
                     rollout_channel,
                     self._trajectory_step,
                     epoch,
-                    final_env_parts,
                 )
-            final_env_parts = {}
             # Preserve the pre-action boundary until chunk zero completes.
             initial_transitions = [
                 self._build_env_transition(env_output) for env_output in env_outputs
@@ -1220,7 +1217,7 @@ class EnvWorker(Worker):
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
 
-                    env_part = self._publish_step(
+                    self._publish_step(
                         rollout_channel,
                         env_output,
                         initial_transitions[stage_id],
@@ -1230,8 +1227,6 @@ class EnvWorker(Worker):
                         chunk_step_idx,
                         stage_id,
                     )
-                    if env_part is not None:
-                        final_env_parts[stage_id] = env_part
                     if (
                         get_env_attr(self.env_list[stage_id], "insert_delay_metrics")
                         is not None
@@ -1251,13 +1246,6 @@ class EnvWorker(Worker):
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
         self._trajectory_step += 1
-        if self.env_decoupled_mode:
-            self._prefetched_train_bootstrap = self._bootstrap_and_send_train(
-                rollout_channel,
-                self._trajectory_step,
-                0,
-                final_env_parts,
-            )
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

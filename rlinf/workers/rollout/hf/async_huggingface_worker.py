@@ -81,17 +81,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 {"rank": self._rank, "time": rollout_metrics}, async_op=True
             )
 
-    def _decoupled_pending_finals(self) -> set[tuple[int, int]]:
-        """Close each env's final transition before ``wait_if_stale`` can block."""
-        if self.staleness_threshold is None or self._world_size != 1:
-            return set()
-        return {
-            (env_rank, stage_id)
-            for spec in self.train_layout.specs
-            for env_rank in spec.ranks
-            for stage_id in range(self.num_pipeline_stages)
-        }
-
     async def wait_if_stale(self) -> None:
         if self.staleness_threshold is None:
             return

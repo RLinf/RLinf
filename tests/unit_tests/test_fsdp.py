@@ -1382,7 +1382,7 @@ def test_raw_advantages_honor_normalize_advantages_under_env_scope(
     metrics_calls = []
     monkeypatch.setattr(
         actor_mod,
-        "compute_rollout_metrics",
+        "compute_rollout_metric_stats",
         lambda batch: metrics_calls.append(batch) or {},
     )
     actor = _embodied_actor(OmegaConf.create(_embodied_env(2)))
@@ -1440,6 +1440,108 @@ def test_off_policy_targets_discount_each_sample_with_its_envs_gamma():
     assert torch.allclose(
         env_values(torch.tensor([1, 0, -1])), torch.tensor([[0.9], [0.99], [0.99]])
     )
+
+
+def test_off_policy_bf16_gamma_exponentiates_in_fp32_before_casting():
+    from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACLossMixin
+
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.algorithm.gamma = 0.999
+    actor.cfg.algorithm.envs = {"b": {"gamma": 0.99}}
+    actor.torch_dtype = torch.bfloat16
+    actor._env_algorithm_cfgs = {
+        spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+        for spec in actor._rollout_geometry.layout.specs
+    }
+
+    gamma = actor._env_values("gamma", torch.tensor([0, 1]), torch.float32)
+    assert gamma.dtype == torch.float32
+    discount = (gamma**8).to(torch.bfloat16)
+    expected_a = (torch.tensor(0.999, dtype=torch.float32) ** 8).to(torch.bfloat16)
+    assert discount[0].item() == pytest.approx(expected_a.item())
+    assert discount[0].item() < 1.0
+
+    rlt = object.__new__(RLTACLossMixin)
+    rlt.torch_dtype = torch.bfloat16
+    rewards = torch.ones((2, 8), dtype=torch.bfloat16)
+    discounted = rlt._discounted_chunk_rewards(rewards, gamma)
+    expected_r0 = sum(0.999**k for k in range(8))
+    assert discounted.dtype == torch.bfloat16
+    assert abs(discounted[0].item() - expected_r0) < 0.05
+    assert discounted[0].item() < 8.0
+
+
+def test_multi_env_pooled_rollout_metrics_merge_per_env_stats_without_extra_reduction(
+    tmp_path, monkeypatch
+):
+    from rlinf.utils.metric_utils import (
+        compute_rollout_metric_stats,
+        compute_rollout_metrics,
+    )
+    from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
+
+    monkeypatch.setattr(Worker, "torch_platform", torch.cpu)
+    calls = []
+
+    def _spy(batch):
+        calls.append(batch)
+        return compute_rollout_metric_stats(batch)
+
+    monkeypatch.setattr(actor_mod, "compute_rollout_metric_stats", _spy)
+    dist.init_process_group(
+        "gloo", init_method=f"file://{tmp_path / 'init'}", rank=0, world_size=1
+    )
+    try:
+        actor = _embodied_actor(
+            OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+        )
+        actor.cfg.runner = {"task_type": "embodied"}
+        actor.cfg.actor.model = {"num_action_chunks": 1}
+        actor.cfg.algorithm.adv_type = "raw"
+        actor.cfg.algorithm.reward_type = "chunk_level"
+        actor.cfg.algorithm.group_size = 1
+        actor.cfg.algorithm.adv_norm_scope = "env"
+        actor.cfg.algorithm.normalize_advantages = False
+        actor._env_algorithm_cfgs = {
+            spec.name: spec.algorithm_cfg(actor.cfg.algorithm)
+            for spec in actor._rollout_geometry.layout.specs
+        }
+        batch_a = _embodied_batch(2, 2)
+        batch_a["rewards"] = torch.tensor([[[1.0], [5.0]], [[3.0], [7.0]]])
+        batch_a["loss_mask"] = torch.tensor([[[True], [False]], [[True], [True]]])
+        batch_b = _embodied_batch(2, 2)
+        batch_b["rewards"] = torch.tensor([[[10.0], [20.0]], [[30.0], [40.0]]])
+        batch_b["loss_mask"] = torch.zeros(2, 2, 1, dtype=torch.bool)
+        actor.env_batches = {"a": batch_a, "b": batch_b}
+        actor._group_success_metrics = {}
+        actor._timer_metrics = {}
+        actor._accelerator_type = None
+
+        metrics = actor.compute_advantages_and_returns()
+
+        assert len(calls) == 2
+        expected_pooled = compute_rollout_metrics(
+            {
+                "rewards": torch.cat(
+                    [batch_a["rewards"].reshape(-1), batch_b["rewards"].reshape(-1)]
+                ),
+                "advantages": torch.cat(
+                    [
+                        batch_a["advantages"].reshape(-1),
+                        batch_b["advantages"].reshape(-1),
+                    ]
+                ),
+                "loss_mask": torch.cat(
+                    [batch_a["loss_mask"].reshape(-1), batch_b["loss_mask"].reshape(-1)]
+                ),
+            }
+        )
+        for key, value in expected_pooled.items():
+            assert metrics[key] == pytest.approx(value), key
+    finally:
+        dist.destroy_process_group()
 
 
 def test_one_env_trains_on_the_same_batch_and_loss_weights_as_before():

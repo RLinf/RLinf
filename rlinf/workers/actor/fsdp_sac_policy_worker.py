@@ -358,7 +358,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
         agg_q = self.cfg.algorithm.get("agg_q", "min")
         use_dsrl = _openpi_is_dsrl(self.cfg)
-        gamma = self._env_values("gamma", batch.get("env_index"), self.torch_dtype)
+        gamma = self._env_values("gamma", batch.get("env_index"), torch.float32)
         if use_dsrl:
             num_action_chunks = self.cfg.actor.model.get("num_action_chunks", 1)
             discount = gamma**num_action_chunks
@@ -368,6 +368,8 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             rewards_for_bootstrap = (
                 batch["rewards"].sum(dim=-1, keepdim=True).to(self.torch_dtype)
             )
+        if isinstance(discount, torch.Tensor):
+            discount = discount.to(self.torch_dtype)
         terminations = batch["terminations"].to(self.torch_dtype)
 
         curr_obs = batch["curr_obs"]

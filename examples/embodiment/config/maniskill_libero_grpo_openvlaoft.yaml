@@ -67,8 +67,9 @@ env:
 
   train:
     # LIBERO sends a main and a wrist view, ManiSkill one view. OpenVLA-OFT reads
-    # the main view and the task, so both send just those at one size and share
-    # one forward pass.
+    # the main view and the task, so policy_obs puts both in one format for the
+    # shared actor training pool (rollout still runs separate passes here because
+    # env ranks map 1:1 to rollout ranks and ManiSkill overrides unnorm_key).
     policy_obs:
       keys: [main_images, task_descriptions]
       image_size: [256, 256]

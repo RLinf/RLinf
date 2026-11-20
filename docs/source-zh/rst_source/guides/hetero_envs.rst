@@ -40,7 +40,6 @@ rollout 阶段，每个 rollout worker 服务路由到自己的 env worker；某
            rollout_epoch: 2
            max_episode_steps: 80
            max_steps_per_rollout_epoch: 80
-           ignore_terminations: True
            group_size: 8
 
 每一行 ``defaults`` 把一个环境预设加载到对应名称下（这里是 ``libero_goal`` 和 ``maniskill`` ）。每份环境配置都独立支持 ``env.train`` 的全部字段： ``total_num_envs`` 、 ``rollout_epoch`` 、 ``max_steps_per_rollout_epoch`` 、 ``max_episode_steps`` 、 ``auto_reset`` 、 ``ignore_terminations`` 和 ``group_size`` 只作用于它自己。 ``env.eval`` 的写法相同且与 ``env.train`` 独立，可以在两份环境配置上训练、只在一份上评估。
@@ -79,7 +78,7 @@ worker 运行在哪些硬件上由 ``env`` 的 placement 决定。多个 env wor
 
 每个训练 step 为每份环境配置采集 ``total_num_envs * rollout_epoch`` 条轨迹，整个 step 的耗时取决于最慢的那份环境配置。如需查看各环境耗时，设置 ``runner.per_worker_log: True`` ，然后查看对应 env worker 的 ``time/env/interact`` 。
 
-默认情况下，无论 episode 长短，每条轨迹在 loss 中的权重相同，因此上面的 64 对 128 示例里 ManiSkill 占三分之二的梯度。可以通过以下配置调整配比：
+默认情况下，无论 episode 长短，每条轨迹在 loss 中的权重相同。在开头的配置里，LIBERO-Goal 每步采集 ``64 * 1 = 64`` 条轨迹，ManiSkill 采集 ``64 * 2 = 128`` 条轨迹，因此 ManiSkill 占等权轨迹数的三分之二（实际梯度贡献还取决于各自梯度的大小）。可以通过以下配置调整配比：
 
 .. code-block:: yaml
 
@@ -97,7 +96,7 @@ worker 运行在哪些硬件上由 ``env`` 的 placement 决定。多个 env wor
 - ``adv_norm_scope: all`` 在所有环境配置上联合归一化 advantage，而不是分别归一化。它仅适用于整 batch 归一化的 advantage 类型——即 ``gae`` 以及设置 ``normalize_advantages: True`` 的 ``raw`` ；GRPO 在 group 内归一化，不能使用 ``all`` 。
 - ``actor.mix_envs: False`` 让每个 optimizer step 只训练一份环境配置的数据，顺序随机且所有 actor worker 一致。此时每份环境配置在单个 actor 上的样本数必须能填满整数个 global batch。
 
-异步训练和 off-policy 训练保持同样配比。异步 PPO 中，每份环境配置按每步发给单个 actor 的轨迹数比例分得 ``algorithm.rollout_store_size_per_rank`` 的配额，等每份配额都填满后才开始更新。off-policy 训练（SAC、DAgger、RLT）为每份环境配置维护独立的 replay buffer，等每个 buffer 都存满 ``min_buffer_size`` 条轨迹后启动训练，并按每步采集的 transition 数乘以 ``loss_weight`` 的比例采样（设置 ``actor.mix_envs: False`` 时，每个 batch 只来自一份环境配置）。
+异步训练和 off-policy 训练保持同样配比。异步 PPO 中， ``algorithm.rollout_store_size_per_rank`` 以单个 actor rank 收到的轨迹分片（trajectory shard）数计，按各环境每步分片比例拆成整数配额，actor 等所有配额填满后才更新。默认值 ``1`` 无法拆给两个非空环境，需要设为能整除分片比例的值（例如两个等份额环境设为 ``2`` ）。off-policy 训练（SAC、DAgger、RLT）为每份环境配置维护独立的 replay buffer，等每个 buffer 都存满 ``min_buffer_size`` 条轨迹后启动训练，并按每步采集的 transition 数乘以 ``loss_weight`` 的比例采样（设置 ``actor.mix_envs: False`` 时，每个 batch 只来自一份环境配置）。
 
 奖励保持各环境原有尺度。PPO 和 SAC 在所有环境配置间共享一个 critic，奖励量级相差较大时请设置 ``algorithm.envs.<name>.reward_scale`` ，避免某一环境主导 critic。该系数在 ``huber_delta`` 和 ``value_clip`` 生效前乘到奖励上。
 

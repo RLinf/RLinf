@@ -209,7 +209,7 @@ env
    * - ``env.train.envs`` / ``env.eval.envs``
      - Env configurations keyed by name, which make ``env.train`` or ``env.eval`` heterogeneous. Each runs on its own block of env workers. See :doc:`hetero_envs`.
    * - ``env.train.policy_obs`` / ``env.eval.policy_obs``
-     - Observation keys and image size sent to the policy, so envs with different cameras share one batch. See :doc:`hetero_envs`.
+     - Observation keys and image size sent to the policy, putting envs with different cameras in one format so they can share an actor training pool and become eligible to share a rollout forward pass when they also reach the same rollout rank with the same policy fields (such as ``unnorm_key``). See :doc:`hetero_envs`.
    * - ``env.train.envs.<name>.unnorm_key`` / ``env.eval.envs.<name>.unnorm_key``
      - Action statistics OpenVLA-OFT unnormalizes this env configuration's actions with, instead of ``actor.model.unnorm_key``. See :doc:`hetero_envs`.
 
