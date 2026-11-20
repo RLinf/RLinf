@@ -61,8 +61,8 @@ and M-RoPE positions. Model training is a separate step.
 Reproduce the optimizer updates
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-On a single node with eight available A100 80 GB GPUs and no active Ray cluster,
-run the following command from the repository root. The script captures four
+Run the following command from the repository root on a node with eight free
+A100 80 GB GPUs. The script starts a private Ray instance, captures four
 two-turn episodes and sends the same eight rows to a dense actor, a chunked
 actor, and a scalar critic. Each role reports its loss, gradient norm and
 changed parameter count for every rank.
