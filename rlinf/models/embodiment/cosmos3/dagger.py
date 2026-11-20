@@ -24,8 +24,23 @@ class Cosmos3DAggerAdapter:
     """Cosmos input and training-step conventions for the DAgger actor."""
 
     @staticmethod
-    def uses_joint_vision_sft(model_cfg: DictConfig) -> bool:
-        return model_cfg.get("sft_objective") == "joint"
+    def lerobot_window_options(
+        model_cfg: DictConfig, online_cfg: DictConfig, require_all_intervene: bool
+    ) -> dict:
+        horizon = online_cfg.get("training_action_horizon", model_cfg.num_action_chunks)
+        joint = model_cfg.get("sft_objective") == "joint"
+        window_size = online_cfg.get("rolling_lerobot_window_size")
+        return {
+            "chunk_size": horizon,
+            "vision_horizon": horizon if joint else 0,
+            "require_full_window": joint,
+            "keep_uint8_images": (
+                joint
+                and not require_all_intervene
+                and window_size is not None
+                and int(window_size) > 0
+            ),
+        }
 
     @staticmethod
     def stage_lerobot_batch(
@@ -55,6 +70,20 @@ class Cosmos3DAggerAdapter:
             )
         )
         return prepared
+
+    @staticmethod
+    def loss_and_metrics(
+        output: torch.Tensor | dict,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Keep the native loss graph and detach Cosmos reporting metrics."""
+        if not isinstance(output, dict):
+            return output, {}
+        metrics = {
+            f"dagger/{key}": value.detach().float().item()
+            for key, value in output.items()
+            if key != "loss" and torch.is_tensor(value) and value.numel() == 1
+        }
+        return output["loss"], metrics
 
     @staticmethod
     def after_optimizer_step(model: torch.nn.Module, step: int) -> None:

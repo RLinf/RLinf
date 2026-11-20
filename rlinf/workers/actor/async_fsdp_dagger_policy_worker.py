@@ -17,7 +17,10 @@ import queue
 import threading
 import time
 
-from rlinf.utils.metric_utils import compute_split_num
+import torch
+
+from rlinf.scheduler import Worker
+from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.workers.actor.fsdp_dagger_policy_worker import EmbodiedDAGGERFSDPPolicy
 
 
@@ -25,7 +28,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.should_stop = False
-        self._model_lock = asyncio.Lock()
         self._lerobot_ingest_lock = threading.RLock()
         self._recv_error: Exception | None = None
 
@@ -69,8 +71,8 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
         Each received episode is appended to the actor's live in-memory
         LeRobot dataset immediately. Archive writes are flushed separately by
-        ``algorithm.dagger.online_lerobot.finalize_interval`` and do not gate
-        training readiness.
+        ``algorithm.dagger.online_lerobot.finalize_interval`` and are not part of training
+        readiness.
         """
         try:
             while not self.should_stop:
@@ -89,9 +91,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
     def _archive_pending_lerobot_episodes(self):
         with self._lerobot_ingest_lock:
-            # Publish training readiness before the archive's potentially slow I/O.
-            if not self.should_stop and self.dataset.is_ready():
-                self._ensure_lerobot_loader()
             return super()._archive_pending_lerobot_episodes()
 
     def _recv_rollout_thread_main(self, input_channel):
@@ -132,7 +131,13 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         if not recv_list:
             return
 
-        self.recv_buffer_rollout_trajectories(recv_list)
+        intervene_traj_list = []
+        for traj in recv_list:
+            intervene_trajs = traj.extract_intervene_traj(mode="all")
+            if intervene_trajs is not None:
+                intervene_traj_list.extend(intervene_trajs)
+        if intervene_traj_list:
+            self.replay_buffer.add_trajectories(intervene_traj_list)
 
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while not self.should_stop:
@@ -142,35 +147,58 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             )
             if await self.replay_buffer.is_ready_async(min_buffer_size):
                 return
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
+    @Worker.timer("run_training")
     async def run_training(self):
-        """Use the synchronous DAgger update contract after async reception."""
+        """Run async DAgger updates with replay-buffer samples."""
         self._check_receiver()
+        if self.cfg.actor.get("enable_offload", False):
+            self.load_param_and_grad(self.device)
+            self.load_optimizer(self.device)
+
         if not self.enable_online_lerobot:
             min_buffer_size = self.cfg.algorithm.replay_buffer.get(
                 "min_buffer_size", 100
             )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
+        elif self._skip_lerobot_training():
+            return {}
 
-        async with self._model_lock:
-            self._check_receiver()
-            if self.should_stop:
-                return {}
-            return super().run_training()
+        if self.should_stop:
+            return {}
 
-    async def save_checkpoint(self, save_base_path, step):
-        async with self._model_lock:
-            self._check_receiver()
-            return super().save_checkpoint(save_base_path, step)
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
 
-    async def load_checkpoint(self, load_base_path):
-        async with self._model_lock:
-            return super().load_checkpoint(load_base_path)
+        self.model.train()
+        metrics = {}
+        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+        for _ in range(update_epoch):
+            if self._dagger_adapter is None:
+                await asyncio.sleep(0)
+            metrics_data = self.update_one_epoch()
+            append_to_dict(metrics, metrics_data)
+            # The adapter advances its step only when the optimizer succeeds.
+            if self._dagger_adapter is None:
+                self.update_step += 1
 
-    async def set_global_step(self, global_step):
-        async with self._model_lock:
-            return super().set_global_step(global_step)
+        self.torch_platform.synchronize()
+        torch.distributed.barrier()
+        self.torch_platform.empty_cache()
+        return self.process_train_metrics(metrics)
+
+    def save_checkpoint(self, save_base_path, step):
+        self._check_receiver()
+        return super().save_checkpoint(save_base_path, step)
 
     async def stop(self):
         self.should_stop = True
