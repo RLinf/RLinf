@@ -169,6 +169,54 @@ RL 逻辑保持在模型内部。
 重建训练所需的全部信息；二是 ``default_forward`` 输出至少覆盖训练算法实际依赖的
 ``logprobs``、``values``、``entropy`` 等字段。
 
+.. _refl-model-interface:
+
+通过可微奖励训练
+^^^^^^^^^^^^^^^^
+
+ReFL 接入分为两部分：模型生成可微样本，scorer 为每个样本打分。奖励梯度经过样本回传到模型的可训练参数。
+
+模型实现 ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)``，返回包含 ``samples`` 的 dict，样本 tensor 的首维为 batch。模型负责状态采样、时间单位、加噪和解码，样本布局与 scorer 保持一致。``BasePolicy.forward`` 根据 ``ForwardType.REFL`` 调用这个方法。重写 ``forward`` 时保留这一分支。
+
+actor 从 ``algorithm.refl_xt_source`` 读取 ``xt_source``。返回值中的 ``forward_inputs`` 用作 scorer 上下文，默认沿用原始输入。``scorer(samples, forward_inputs)`` 返回 shape 为 ``[B]`` 的奖励，数值越大越好。冻结 scorer 的参数，并保留输入样本的梯度。
+
+SD3 的输入为 ``forward_inputs={"prompts": prompts}``，其中 ``prompts`` 是字符串列表。模型用当前权重采样，并将原始提示词传给 ImageReward scorer 分词。传入已有状态时，``refl_inputs`` 提供 ``x_t`` 和 ``timesteps``，``forward_inputs`` 提供 ``prompt_embeds`` 与 ``pooled_prompt_embeds``。SD3 的时间范围为 ``[0, 1]``，0 对应数据，1 对应噪声。
+
+使用 ``register_refl_scorer`` 注册 scorer 的 builder，再通过 ``actor.refl_reward_model.type`` 选择。builder 接收完整的 ``actor.refl_reward_model`` 配置和 actor device，返回 scorer。将下面的扩展模块保存为 ``my_refl_ext.py``，注册 ImageReward scorer：
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+按 :doc:`SD3 示例 </rst_source/examples/embodied/refl>` 准备模型、数据和启动参数数组。将 ``<ext_dir>`` 替换为 ``my_refl_ext.py`` 所在目录，再启动训练：
+
+.. code-block:: bash
+
+   export PYTHONPATH="<ext_dir>:$PYTHONPATH"
+   export RLINF_EXT_MODULE=my_refl_ext
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+     "${REFL_ARGS[@]}" \
+     actor.refl_reward_model.type=custom_image_reward
+
+每个 worker 导入 ``RLINF_EXT_MODULE`` 并调用 ``register()``。更换打分器时，修改 builder 中的 scorer 构造逻辑。
+
+在 ``tests/unit_tests/test_diffusion.py`` 中测试奖励 shape、参数冻结和从奖励到样本的梯度：
+
+.. code-block:: bash
+
+   pytest tests/unit_tests/test_diffusion.py -k scorer
+
 3. 配置文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
