@@ -227,16 +227,6 @@
        </p>
      </div>
 
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/supermimic.html" style="display: flex; align-items: center; justify-content: center; width: 100%; height: 200px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); background: #eef2f7; color: #333; text-decoration: none; font-size: 22px;"><b>G1 MuJoCo Warp</b></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/supermimic.html" style="text-decoration: underline; color: blue;">
-           <b>基于 MuJoCo Warp 的 G1 动作跟踪</b>
-         </a><br>
-         在 LAFAN1 片段上用 SuperMimic 训练 G1 全身动作跟踪 policy
-       </p>
-     </div>
-
    </div>
 
 .. toctree::
@@ -262,5 +252,4 @@
    Genesis <embodied/genesis>
    GenieSim <embodied/geniesim>
    MuJoCo Warp <embodied/mujoco_warp>
-   G1 MuJoCo Warp <embodied/supermimic>
    真机仿真器 <embodied/real_simulator>

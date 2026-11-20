@@ -17,7 +17,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all
+    actor,env,rollout: 0
 
 runner:
   task_type: embodied
@@ -27,7 +27,7 @@ runner:
     experiment_name: supermimic_lafan1_gencoord
     logger_backends: ["tensorboard"]
 
-  max_epochs: 400000         # global updates
+  max_epochs: 6000           # global updates
   max_steps: -1
 
   only_eval: False

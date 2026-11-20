@@ -11,7 +11,7 @@ SuperMimic 评测
 运行
 ----
 
-``evaluations/run_eval.sh`` 从 ``evaluations/supermimic/`` 读取配置。``runner.ckpt_path`` 指向 checkpoint 里的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果目录。每条命令的最后两行让评测只用 0 号 GPU，不加时会占用机器上的所有 GPU。评测 MaxCoord checkpoint 时，改用 ``supermimic_lafan1_maxcoord`` 下的目录，并加上 ``actor.model.representation=maxcoord``。全部参数见 :doc:`CLI 参考 <../../evaluations/reference/cli>`。
+``evaluations/run_eval.sh`` 从 ``evaluations/supermimic/`` 读取配置。``runner.ckpt_path`` 指向 checkpoint 里的 ``full_weights.pt``，``runner.eval_export.output_dir`` 指定结果目录。评测在 0 号 GPU 上运行。评测 MaxCoord checkpoint 时，改用 ``supermimic_lafan1_maxcoord`` 下的目录，并加上 ``actor.model.representation=maxcoord``。全部参数见 :doc:`CLI 参考 <../../evaluations/reference/cli>`。
 
 动作跟踪
 ~~~~~~~~
@@ -22,9 +22,7 @@ SuperMimic 评测
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
 要评测第 2000 或 4000 次更新，把两个路径里的 ``6000`` 换掉即可。
 
@@ -37,9 +35,7 @@ SuperMimic 评测
 
    bash evaluations/run_eval.sh supermimic_push_recovery \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/push_6000 \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
+       runner.eval_export.output_dir=$RUN_DIR/push_6000
 
 可视化与结果
 ------------

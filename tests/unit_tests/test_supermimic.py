@@ -394,6 +394,20 @@ def test_exported_config_records_the_motion_path(tmp_path, monkeypatch):
     assert saved.env.eval.motion_path == "/data/lafan1_g1"
 
 
+def test_lafan1_q0_export_needs_no_license_or_output(tmp_path, monkeypatch):
+    path = Path(__file__).resolve().parents[2] / "toolkits/supermimic/prepare_lafan1.py"
+    spec = importlib.util.spec_from_file_location("prepare_lafan1", path)
+    prepare = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prepare)
+    pose = torch.linspace(-0.5, 0.5, 29)
+    monkeypatch.setattr(prepare, "default_q0", lambda: pose.clone())
+    out = tmp_path / "g1_q0.pt"
+    monkeypatch.setattr("sys.argv", ["prepare_lafan1.py", "--export-q0", str(out)])
+
+    assert prepare.main() == 0
+    assert torch.equal(torch.load(out, weights_only=True), pose)
+
+
 def test_evaluation_entry_picks_workers_without_an_algorithm_section():
     from rlinf.runners import get_embodied_eval_runner
     from rlinf.workers.env import get_env_worker

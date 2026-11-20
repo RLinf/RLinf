@@ -139,7 +139,7 @@ the training machine can export.
 
    .. code-block:: bash
 
-      python -c "import torch; from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state; torch.save(asset_default_state()[7:36].clone(), 'g1_q0.pt')"
+      python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt
 
 2. Copy ``g1_q0.pt`` to the conversion machine.
 3. On the conversion machine, from its RLinf checkout, download and convert
@@ -168,40 +168,30 @@ Run this block in every new shell before any command below:
 .. code-block:: bash
 
    export PYTHONPATH=$PWD:$PYTHONPATH
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export MUJOCO_GL=disabled
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export RUN_DIR=/data/runs/supermimic_gencoord
-   GPU_PLACEMENT=('~cluster.component_placement'
-       '+cluster.component_placement={actor:0,env:0,rollout:0}')
-   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
-       runner.max_epochs=6000
-       actor.cuda_graph=True
-       runner.logger.log_path=$RUN_DIR
-       "${GPU_PLACEMENT[@]}")
 
+* ``MUJOCO_GL=disabled`` skips MuJoCo's OpenGL renderer, which training and
+  evaluation do not use.
 * ``SUPERMIMIC_MOTION_PATH`` is the clip folder from `Prepare LAFAN1`_.
 * ``RUN_DIR`` receives the logs, checkpoints, and evaluation results.
-* ``GPU_PLACEMENT`` puts every worker on GPU 0. Change ``0`` to use another
-  GPU; without it, training and evaluation take every GPU on the machine.
-* ``TRAIN_ARGS`` selects the GenCoord config and sets 6000 updates with CUDA
-  graph replay.
-
-.. warning::
-
-   ``TRAIN_ARGS`` exists only in the shell that defined it. In a new shell
-   without it, the training command falls back to the entry script's default
-   config, which is not SuperMimic.
 
 Train on One GPU
 ~~~~~~~~~~~~~~~~
 
-This run uses the config defaults: 4096 environments, world-model batches of
-2048 windows, and 4096 imagined rollouts per update, with TF32 matmuls and
-float32 weights. Start training:
+The GenCoord config runs on GPU 0 for 6000 updates, with 4096 environments,
+world-model batches of 2048 windows, and 4096 imagined rollouts per update,
+TF32 matmuls, and float32 weights. To use another GPU, change
+``actor,env,rollout: 0`` under ``cluster.component_placement`` in
+``examples/embodiment/config/supermimic_lafan1_gencoord.yaml``. Start
+training with CUDA graph replay:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True
 
 After the first few updates the log prints
 ``Recorded the SuperMimic update as a CUDA graph.``. Every 100 updates it
@@ -214,7 +204,9 @@ latest complete checkpoint:
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}" \
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
        runner.resume_dir=auto
 
 The log names the checkpoint after ``Resuming from``. If it reports
@@ -232,8 +224,7 @@ update 6000:
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
-       "${GPU_PLACEMENT[@]}"
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
 The log ends with ``Wrote SuperMimic evaluation results to`` and the output
 folder. Results go under ``$RUN_DIR/eval_6000/``. ``evaluations/run_eval.sh``
@@ -312,9 +303,60 @@ return of 0.82 on these clips.
    :alt: SuperMimic GenCoord training curves
    :width: 100%
 
-   Training curves of the same run. The imagined return per second includes
-   the critic's value at the end of each imagined rollout, so it exceeds the
-   5 per second that the simulated reward alone can reach.
+   Training curves of the same run.
+
+Compare with the Official Code
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Seconds per update of the GenCoord recipe on NVIDIA A800 GPUs, with the
+official code on the same machines. RLinf rows set ``actor.cuda_graph=True``.
+The bf16 rows also set ``actor.fsdp_config.amp_autocast.enabled=True``, which
+runs the network matmuls in bf16.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 25 25
+
+   * - Run
+     - GPUs
+     - Matmul
+     - s/update
+   * - Official
+     - 1
+     - TF32
+     - 0.515
+   * - RLinf
+     - 1
+     - TF32
+     - 0.603
+   * - RLinf
+     - 1
+     - bf16
+     - 0.515
+   * - RLinf
+     - 2
+     - TF32
+     - 0.486
+   * - RLinf
+     - 2
+     - bf16
+     - 0.449
+   * - RLinf
+     - 4
+     - TF32
+     - 0.421
+   * - RLinf
+     - 4
+     - bf16
+     - 0.407
+
+An RLinf time is the mean of ``time/step`` over 1000 updates after 200
+warm-up updates, from a run that had the GPUs to itself. It covers
+collection, the update, and the copy of the weights to the policy, but not
+logging. The official time is the wall clock between two checkpoints of a
+MaxCoord run. On one GPU with TF32, RLinf takes about 17% longer per update:
+on every control step the environment and the policy exchange observations
+and actions, and every update copies the weights to the policy.
 
 Other Setups
 ------------
@@ -323,16 +365,18 @@ Train on Several GPUs
 ~~~~~~~~~~~~~~~~~~~~~
 
 The environment count, the world-model batch, and the number of imagined
-rollouts are totals over all GPUs, so more GPUs split the same update. In the setup block,
-use a new ``RUN_DIR`` and list the GPUs in ``GPU_PLACEMENT``. For two GPUs,
-change these two lines, run the whole block, and then run the training
-command:
+rollouts are totals over all GPUs, so more GPUs split the same update. Use a
+new ``RUN_DIR`` and list the GPUs at the end of the training command. For
+two GPUs:
 
 .. code-block:: bash
 
    export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
-   GPU_PLACEMENT=('~cluster.component_placement'
-       '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}')
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}'
 
 .. list-table::
    :header-rows: 1
@@ -356,14 +400,13 @@ command:
      - 1024
 
 For four GPUs, use ``0-3``. The learning rate and the number of updates stay
-the same. To evaluate on one GPU, set ``GPU_PLACEMENT`` back to GPU 0 and
-keep the new ``RUN_DIR``. Multi-node and Slurm launches have not been
-validated with this recipe.
+the same. Resume with the same GPU list. Evaluation keeps the command from
+`Evaluate the Checkpoint`_ and runs on GPU 0.
 
 Train MaxCoord
 ~~~~~~~~~~~~~~
 
-Use a new ``RUN_DIR`` and change ``--config-name`` in ``TRAIN_ARGS`` to
+Use a new ``RUN_DIR`` and change ``--config-name`` in the training command to
 ``supermimic_lafan1_maxcoord``. Its checkpoints are under
 ``$RUN_DIR/supermimic_lafan1_maxcoord/checkpoints``, and its evaluation
 command adds ``actor.model.representation=maxcoord``.

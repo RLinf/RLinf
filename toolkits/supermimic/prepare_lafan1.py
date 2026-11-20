@@ -39,7 +39,10 @@ pinned revision's sums unless ``--skip-remote-check``)::
 
 Pass ``--q0-file`` with a ``torch.save`` file containing the 29-d floating-point
 default joint pose in radians to convert without importing mjlab. Joint order
-must match ``G1_JOINT_NAMES`` and the training asset's default pose.
+must match ``G1_JOINT_NAMES`` and the training asset's default pose. Write
+that file on a machine with mjlab::
+
+    python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt
 """
 
 from __future__ import annotations
@@ -195,6 +198,12 @@ def check_sources(source_dir: Path, listing) -> list[dict]:
     return checked
 
 
+def default_q0():
+    from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
+
+    return asset_default_state()[7:36].clone().float()
+
+
 def convert(
     source_dir: Path,
     sources: list[dict],
@@ -208,9 +217,7 @@ def convert(
     from rlinf.envs.sim.g1_mimic.motion import decode_motion_payload
 
     if q0_file is None:
-        from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state
-
-        q0 = asset_default_state()[7:36].clone().float()
+        q0 = default_q0()
     else:
         q0 = torch.load(q0_file, map_location="cpu", weights_only=True)
         if (
@@ -272,8 +279,11 @@ def convert(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--out", help="directory for clip_*.pt and manifest.json")
     parser.add_argument(
-        "--out", required=True, help="directory for clip_*.pt and manifest.json"
+        "--export-q0",
+        type=Path,
+        help="write mjlab's G1 default joint pose for --q0-file to this path and exit",
     )
     parser.add_argument(
         "--source-dir", default="", help="existing CSV folder; skips download"
@@ -310,6 +320,14 @@ def main() -> int:
     parser.add_argument("--accept-license", action="store_true")
     args = parser.parse_args()
 
+    if args.export_q0 is not None:
+        import torch
+
+        torch.save(default_q0(), args.export_q0)
+        print(f"[lafan1] wrote the G1 default joint pose to {args.export_q0}")
+        return 0
+    if not args.out:
+        parser.error("--out is required")
     print(f"[lafan1] {LICENSE_NOTE}")
     if not args.accept_license:
         parser.error("read the license note above, then pass --accept-license")

@@ -82,10 +82,10 @@ The arguments below apply to the two SuperMimic configs,
      - ``gencoord``
      - ``maxcoord`` for a checkpoint trained with MaxCoord
    * - ``cluster.component_placement``
-     - every GPU
+     - GPU 0
      - Pass ``'~cluster.component_placement'`` and
-       ``'+cluster.component_placement={actor:0,env:0,rollout:0}'`` to run on
-       GPU 0
+       ``'+cluster.component_placement={actor:1,env:1,rollout:1}'`` to run on
+       GPU 1
    * - ``env.eval.num_clips``
      - ``40``
      - Clips to load from ``SUPERMIMIC_MOTION_PATH``; ``null`` loads all

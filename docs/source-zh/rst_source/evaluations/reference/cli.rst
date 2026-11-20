@@ -77,8 +77,8 @@ SuperMimic 评测
      - ``gencoord``
      - 用 MaxCoord 训练的 checkpoint 要设为 ``maxcoord``
    * - ``cluster.component_placement``
-     - 所有 GPU
-     - 传入 ``'~cluster.component_placement'`` 和 ``'+cluster.component_placement={actor:0,env:0,rollout:0}'``，只用 0 号 GPU
+     - 0 号 GPU
+     - 传入 ``'~cluster.component_placement'`` 和 ``'+cluster.component_placement={actor:1,env:1,rollout:1}'``，改用 1 号 GPU
    * - ``env.eval.num_clips``
      - ``40``
      - 从 ``SUPERMIMIC_MOTION_PATH`` 加载的片段数，``null`` 加载全部

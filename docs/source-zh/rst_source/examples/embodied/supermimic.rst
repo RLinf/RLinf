@@ -103,7 +103,7 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
 
    .. code-block:: bash
 
-      python -c "import torch; from rlinf.envs.sim.g1_mimic.g1_fk import asset_default_state; torch.save(asset_default_state()[7:36].clone(), 'g1_q0.pt')"
+      python toolkits/supermimic/prepare_lafan1.py --export-q0 g1_q0.pt
 
 2. 把 ``g1_q0.pt`` 复制到转换机器。
 3. 在转换机器的 RLinf 目录下，带上这个姿态下载并转换：
@@ -128,34 +128,24 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
 .. code-block:: bash
 
    export PYTHONPATH=$PWD:$PYTHONPATH
-   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export MUJOCO_GL=disabled
+   export SUPERMIMIC_MOTION_PATH=/data/lafan1_g1
    export RUN_DIR=/data/runs/supermimic_gencoord
-   GPU_PLACEMENT=('~cluster.component_placement'
-       '+cluster.component_placement={actor:0,env:0,rollout:0}')
-   TRAIN_ARGS=(--config-name supermimic_lafan1_gencoord
-       runner.max_epochs=6000
-       actor.cuda_graph=True
-       runner.logger.log_path=$RUN_DIR
-       "${GPU_PLACEMENT[@]}")
 
+* ``MUJOCO_GL=disabled`` 跳过 MuJoCo 的 OpenGL 渲染器，训练和评测都用不到它。
 * ``SUPERMIMIC_MOTION_PATH`` 是 `准备 LAFAN1`_ 写出的片段目录。
 * ``RUN_DIR`` 存放日志、checkpoint 和评测结果。
-* ``GPU_PLACEMENT`` 把所有 worker 放到 0 号 GPU，改用其他 GPU 时修改其中的 ``0``。不加它时，训练和评测会占用机器上的所有 GPU。
-* ``TRAIN_ARGS`` 选用 GenCoord 配置，设定 6000 次更新并打开 CUDA 图回放。
-
-.. warning::
-
-   ``TRAIN_ARGS`` 只在定义它的终端里有效。新终端没执行设置代码时，训练命令会退回入口脚本的默认配置，训练的就不是 SuperMimic 了。
 
 单卡训练
 ~~~~~~~~
 
-配置保持默认：4096 个环境，每次更新的世界模型批次是 2048 个窗口、想象 rollout 4096 条，矩阵乘用 TF32，权重是 float32。开始训练：
+GenCoord 配置在 0 号 GPU 上训练 6000 次更新：4096 个环境，每次更新的世界模型批次是 2048 个窗口、想象 rollout 4096 条，矩阵乘用 TF32，权重是 float32。要换一张 GPU，改 ``examples/embodiment/config/supermimic_lafan1_gencoord.yaml`` 里 ``cluster.component_placement`` 下的 ``actor,env,rollout: 0``。打开 CUDA 图回放，开始训练：
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}"
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True
 
 最初几次更新后，日志打印 ``Recorded the SuperMimic update as a CUDA graph.``。之后每 100 次更新打印一张指标表，开头是 ``Global Step:``，后面跟更新次数和 ``/6000``。每 2000 次更新和最后一次更新后各写一个 checkpoint。
 
@@ -163,7 +153,9 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py "${TRAIN_ARGS[@]}" \
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
        runner.resume_dir=auto
 
 日志会在 ``Resuming from`` 后面给出所用的 checkpoint。如果出现 ``resume_dir=auto found no complete checkpoint``，训练就是从头开始的，请检查 ``RUN_DIR`` 和配置名。续训时 GPU 数要和原来相同。
@@ -177,8 +169,7 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
-       "${GPU_PLACEMENT[@]}"
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
 日志最后一行是 ``Wrote SuperMimic evaluation results to`` 加输出目录。评测结果写到 ``$RUN_DIR/eval_6000/``。``evaluations/run_eval.sh`` 把评测日志写到 ``logs/<时间戳>-supermimic_lafan1_eval/``。要评测第 2000 或 4000 次更新，把两个路径里的 ``6000`` 换掉即可。指标定义和站立推力恢复见 :doc:`supermimic_eval`。
 
@@ -242,7 +233,51 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
    :alt: SuperMimic GenCoord 训练曲线
    :width: 100%
 
-   同一次运行的训练曲线。想象回报包含每条想象 rollout 末尾 critic 给出的价值，所以会超过仅靠仿真奖励每秒能达到的 5。
+   同一次运行的训练曲线。
+
+与官方代码对比
+~~~~~~~~~~~~~~
+
+GenCoord 配方在 NVIDIA A800 上每次更新的耗时，官方代码在同一批机器上运行。RLinf 各行设置 ``actor.cuda_graph=True``。bf16 各行再设置 ``actor.fsdp_config.amp_autocast.enabled=True``，网络矩阵乘用 bf16。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 25 25
+
+   * - 运行
+     - GPU 数
+     - 矩阵乘
+     - 秒/次更新
+   * - 官方
+     - 1
+     - TF32
+     - 0.515
+   * - RLinf
+     - 1
+     - TF32
+     - 0.603
+   * - RLinf
+     - 1
+     - bf16
+     - 0.515
+   * - RLinf
+     - 2
+     - TF32
+     - 0.486
+   * - RLinf
+     - 2
+     - bf16
+     - 0.449
+   * - RLinf
+     - 4
+     - TF32
+     - 0.421
+   * - RLinf
+     - 4
+     - bf16
+     - 0.407
+
+RLinf 的时间取自独占 GPU 的一次运行：预热 200 次更新后，对接下来 1000 次更新的 ``time/step`` 取平均。计时包含采集、更新，以及把权重复制给 policy，不含写日志。官方的时间是一次 MaxCoord 运行里前后两个 checkpoint 的时间差。单卡 TF32 下，RLinf 每次更新比官方代码长约 17%：每个控制步里，环境和 policy 都要交换观测与动作；每次更新后，权重还要复制给 policy。
 
 其他设置
 --------
@@ -250,13 +285,16 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
 多卡训练
 ~~~~~~~~
 
-环境数、世界模型批次和想象 rollout 数都是所有 GPU 的总和，多加 GPU 只是把同一次更新分摊出去。在设置代码里换一个新的 ``RUN_DIR``，并在 ``GPU_PLACEMENT`` 里列出要用的 GPU。两张卡时改下面两行，执行整段设置代码，再运行训练命令：
+环境数、世界模型批次和想象 rollout 数都是所有 GPU 的总和，多加 GPU 只是把同一次更新分摊出去。换一个新的 ``RUN_DIR``，在训练命令末尾列出要用的 GPU。两张卡时：
 
 .. code-block:: bash
 
    export RUN_DIR=/data/runs/supermimic_gencoord_2gpu
-   GPU_PLACEMENT=('~cluster.component_placement'
-       '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}')
+   python examples/embodiment/train_embodied_agent.py \
+       --config-name supermimic_lafan1_gencoord \
+       runner.logger.log_path=$RUN_DIR actor.cuda_graph=True \
+       '~cluster.component_placement' \
+       '+cluster.component_placement={actor:0-1,env:0-1,rollout:0-1}'
 
 .. list-table::
    :header-rows: 1
@@ -279,12 +317,12 @@ SuperMimic 反复做三件事。先让所有环境在 MuJoCo Warp 里走一个�
      - 2048
      - 1024
 
-四张卡时写 ``0-3``。学习率和更新次数不变。要单卡评测，把 ``GPU_PLACEMENT`` 改回 0 号 GPU，``RUN_DIR`` 保持新的值。多节点和 Slurm 启动还没有用这个配方验证过。
+四张卡时写 ``0-3``。学习率和更新次数不变。续训时带上同样的 GPU 列表。评测沿用 `评测 checkpoint`_ 里的命令，在 0 号 GPU 上运行。
 
 训练 MaxCoord
 ~~~~~~~~~~~~~
 
-换一个新的 ``RUN_DIR``，把 ``TRAIN_ARGS`` 里的 ``--config-name`` 改成 ``supermimic_lafan1_maxcoord``。checkpoint 在 ``$RUN_DIR/supermimic_lafan1_maxcoord/checkpoints`` 下，评测命令要加上 ``actor.model.representation=maxcoord``。
+换一个新的 ``RUN_DIR``，把训练命令里的 ``--config-name`` 改成 ``supermimic_lafan1_maxcoord``。checkpoint 在 ``$RUN_DIR/supermimic_lafan1_maxcoord/checkpoints`` 下，评测命令要加上 ``actor.model.representation=maxcoord``。
 
 用其他片段训练见 :doc:`supermimic_motion`。
 

@@ -18,8 +18,7 @@ Run It
 ``evaluations/run_eval.sh`` picks the config from
 ``evaluations/supermimic/``. ``runner.ckpt_path`` points at the
 ``full_weights.pt`` inside a checkpoint, and ``runner.eval_export.output_dir``
-names the folder for the results. The last two lines of each command keep the
-evaluation on GPU 0; without them it takes every GPU on the machine. For a
+names the folder for the results. Evaluation runs on GPU 0. For a
 MaxCoord checkpoint, use its ``supermimic_lafan1_maxcoord`` folder and add
 ``actor.model.representation=maxcoord``. Every argument is listed in the
 :doc:`CLI reference <../../evaluations/reference/cli>`.
@@ -35,9 +34,7 @@ and the robot applies the policy's actions without noise. Evaluate update
 
    bash evaluations/run_eval.sh supermimic_lafan1_eval \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/eval_6000 \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
+       runner.eval_export.output_dir=$RUN_DIR/eval_6000
 
 To evaluate update 2000 or 4000, replace ``6000`` in both paths.
 
@@ -54,9 +51,7 @@ the paper is not part of this config.
 
    bash evaluations/run_eval.sh supermimic_push_recovery \
        runner.ckpt_path=$RUN_DIR/supermimic_lafan1_gencoord/checkpoints/global_step_6000/actor/model_state_dict/full_weights.pt \
-       runner.eval_export.output_dir=$RUN_DIR/push_6000 \
-       '~cluster.component_placement' \
-       '+cluster.component_placement={actor:0,env:0,rollout:0}'
+       runner.eval_export.output_dir=$RUN_DIR/push_6000
 
 Visualization and Results
 -------------------------
