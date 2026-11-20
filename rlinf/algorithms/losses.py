@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 import torch
 
+from rlinf.algorithms.kl_clip import clip_ratio_with_kl
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import apply_importance_sampling_correction, huber_loss
 from rlinf.utils.metric_utils import (
@@ -318,13 +319,15 @@ def compute_ppo_actor_loss(
         log_ratio = torch.clamp(log_ratio, max=clip_log_ratio_max)
     ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
 
+    kl_clip_metrics = None
     if ppo_kl_clip_target is not None:
-        kl = ppo_conditional_kl.detach()
-        clip_scale = (ppo_kl_clip_target / kl.clamp_min(ppo_kl_clip_target)).sqrt()
-        clip_scale = clip_scale.clamp_min(0.25)
-        clipped_ratio = ratio.clamp(
-            min=1.0 - clip_ratio_low * clip_scale,
-            max=1.0 + clip_ratio_high * clip_scale,
+        clipped_ratio, kl_clip_metrics = clip_ratio_with_kl(
+            ratio,
+            clip_ratio_low,
+            clip_ratio_high,
+            ppo_conditional_kl,
+            ppo_kl_clip_target,
+            loss_mask,
         )
     else:
         clipped_ratio = ratio.clamp(1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
@@ -390,18 +393,8 @@ def compute_ppo_actor_loss(
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
-    if ppo_kl_clip_target is not None:
-        # Keep sample counts so KL can be compared across different valid masks.
-        valid_kl = kl.masked_fill(~loss_mask_for_metrics, 0)
-        metrics_data.update(
-            {
-                "actor/conditional_kl_sum": valid_kl.sum(),
-                "actor/conditional_kl_count": loss_mask_for_metrics.sum(),
-                "actor/kl_clip_tightened_count": (
-                    (clip_scale < 1) & loss_mask_for_metrics
-                ).sum(),
-            }
-        )
+    if kl_clip_metrics is not None:
+        metrics_data.update(kl_clip_metrics)
     if log_logprob_diagnostics:
         with torch.no_grad():
             valid = loss_mask_for_metrics

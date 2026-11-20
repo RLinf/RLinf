@@ -24,6 +24,11 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from rlinf.algorithms.expert import build_expert_model_config
+from rlinf.algorithms.kl_clip import (
+    BEHAVIOR_TRANSITION_MEAN,
+    BEHAVIOR_TRANSITION_STD,
+    require_transition_stats,
+)
 from rlinf.algorithms.rlt import (
     build_rlt_route,
     predict_rlt_actions,
@@ -56,6 +61,10 @@ class MultiStepRolloutWorker(Worker):
 
         self.only_eval = cfg.runner.get("only_eval", False)
         self.algorithm_cfg = cfg.get("algorithm", {})
+        self._collect_transition_stats = (
+            not self.only_eval
+            and self.algorithm_cfg.get("ppo_kl_clip_target") is not None
+        )
         self.model_cfg = cfg.rollout.model if self.only_eval else cfg.actor.model
         self.actor_group_name = (
             cfg.actor.get("group_name", None)
@@ -167,6 +176,8 @@ class MultiStepRolloutWorker(Worker):
         rollout_model_config = OmegaConf.merge(self.model_cfg, self.cfg.rollout.model)
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
+        if self._collect_transition_stats:
+            require_transition_stats(self.hf_model)
         if self.value_only_bootstrap and getattr(
             type(self.hf_model), "predict_value_batch", None
         ) in (None, BasePolicy.predict_value_batch):
@@ -550,8 +561,9 @@ class MultiStepRolloutWorker(Worker):
             else:
                 kwargs = {"mode": mode}
 
-        if mode == "train" and self.algorithm_cfg.get("ppo_kl_clip_target") is not None:
-            kwargs = {**kwargs, "collect_ppo_kl": True}
+        collect_stats = mode == "train" and self._collect_transition_stats
+        if collect_stats:
+            kwargs = {**kwargs, "return_transition_stats": True}
 
         if model_type in [
             SupportedModel.CNN_POLICY,
@@ -608,6 +620,10 @@ class MultiStepRolloutWorker(Worker):
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
 
+        if collect_stats:
+            stats = result.pop("transition_stats")
+            result["forward_inputs"][BEHAVIOR_TRANSITION_MEAN] = stats["mean"]
+            result["forward_inputs"][BEHAVIOR_TRANSITION_STD] = stats["std"]
         result["expert_label_flag"] = bool(expert_label_flag)
         return actions, result
 

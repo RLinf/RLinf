@@ -35,6 +35,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 
+from rlinf.algorithms.kl_clip import finalize_kl_clip_metrics, transition_kl
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import (
     apply_importance_sampling_correction,
@@ -862,6 +863,41 @@ def test_embodied_loss_is_unchanged_without_importance_sampling():
     assert loss.item() == pytest.approx(-expected_ratio.mean().item())
     assert metrics["actor/ratio"] == pytest.approx(expected_ratio.mean().item())
     assert "actor/importance_sampling_weight" not in metrics
+
+
+def test_kl_clip_masks_invalid_samples():
+    logprobs = torch.tensor([1.15, 1.05, 1.14]).log().reshape(3, 1, 1).requires_grad_()
+    mean = torch.tensor([0.4**0.5, 0.4**0.5, float("nan")]).reshape_as(logprobs)
+    std = torch.ones_like(mean)
+    kl = transition_kl(
+        {"mean": torch.zeros_like(mean), "std": std},
+        {"mean": mean, "std": std},
+    )
+
+    loss, metrics = policy_loss(
+        task_type="embodied",
+        loss_type="actor",
+        logprob_type="chunk_level",
+        reward_type="chunk_level",
+        single_action_dim=1,
+        logprobs=logprobs,
+        old_logprobs=torch.zeros_like(logprobs),
+        advantages=torch.ones(3, 1),
+        loss_mask=torch.tensor([[True], [True], [False]]),
+        loss_mask_sum=torch.ones(3, 1),
+        max_episode_steps=1,
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        ppo_conditional_kl=kl,
+        ppo_kl_clip_target=0.05,
+    )
+    loss.backward()
+    finalize_kl_clip_metrics(metrics)
+
+    assert loss.item() == pytest.approx(-(1.1 + 1.05) / 3)
+    torch.testing.assert_close(logprobs.grad.flatten(), torch.tensor([0, -1.05 / 3, 0]))
+    assert metrics["actor/conditional_kl_mean"] == pytest.approx(0.2)
+    assert metrics["actor/kl_clip_tightened_fraction"] == 1.0
 
 
 def _load_checkpoint_utils():

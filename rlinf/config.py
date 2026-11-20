@@ -1216,33 +1216,8 @@ def _validate_ppo_kl_clip(cfg: DictConfig, target_kl: float) -> None:
         )
 
     algorithm = cfg.algorithm
-    actor_model = cfg.actor.model
-    rollout_model = OmegaConf.merge(actor_model, cfg.rollout.model)
-
-    def sde_spec(model: DictConfig) -> dict:
-        openpi = model.get("openpi", {})
-        return {
-            "model_type": model.model_type,
-            "task": openpi.get("task"),
-            "noise_method": openpi.get("noise_method"),
-            "noise_level": openpi.get("noise_level", 0.0),
-            "joint_logprob": openpi.get("joint_logprob", False),
-            "is_nft": openpi.get("is_nft", False),
-            "num_steps": openpi.get("num_steps") or model.get("num_steps"),
-            "action_chunk": openpi.get("action_chunk")
-            or model.get("num_action_chunks"),
-            "action_dim": openpi.get("action_env_dim", model.get("action_dim")),
-        }
-
-    actor_spec = sde_spec(actor_model)
     if not (
-        actor_spec["model_type"] == SupportedModel.OPENPI.value
-        and actor_spec["task"] == "rl"
-        and actor_spec["noise_method"] == "flow_sde"
-        and 0 < actor_spec["noise_level"] < float("inf")
-        and not (actor_spec["joint_logprob"] or actor_spec["is_nft"])
-        and actor_spec == sde_spec(rollout_model)
-        and cfg.runner.task_type == "embodied"
+        cfg.runner.task_type == "embodied"
         and not cfg.runner.get("use_training_pipeline", False)
         and not cfg.runner.get("async_mode", False)
         and cfg.actor.training_backend == "fsdp"
@@ -1253,21 +1228,9 @@ def _validate_ppo_kl_clip(cfg: DictConfig, target_kl: float) -> None:
         and not algorithm.get("recompute_logprobs", False)
     ):
         raise ValueError(
-            "Expected algorithm.ppo_kl_clip_target to use synchronous FSDP OpenPI "
-            "PPO or GRPO with Hugging Face rollout, matching single-transition Flow-SDE "
-            "settings with positive noise, and chunk-level rewards and rollout logprobs."
-        )
-
-    fsdp = cfg.actor.fsdp_config
-    precision = fsdp.get("mixed_precision", {})
-    param_dtype = torch_dtype_from_precision(precision.get("param_dtype"))
-    casts_inputs = precision.get("cast_forward_inputs", True) or (
-        fsdp.strategy == "fsdp" and precision.get("cast_root_forward_inputs", True)
-    )
-    if param_dtype not in (None, torch.float32) and casts_inputs:
-        raise ValueError(
-            "Expected FSDP input casting disabled with algorithm.ppo_kl_clip_target "
-            "to preserve the FP32 rollout mean."
+            "Expected algorithm.ppo_kl_clip_target to use synchronous FSDP PPO "
+            "or GRPO with Hugging Face rollout and chunk-level rollout logprobs "
+            "and rewards."
         )
 
 
