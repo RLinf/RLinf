@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SGLang request metadata, image processing, and service lifecycle."""
+"""SGLang subprocess startup."""
 
+import importlib.util
 import subprocess
 import sys
-import textwrap
+from textwrap import dedent
 
 import pytest
 
 
+@pytest.mark.skipif(importlib.util.find_spec("sglang") is None, reason="requires SGLang")
 def test_patched_scheduler_delegates_to_vendor():
     # Applying the engine patch changes module globals throughout the interpreter.
     script = dedent(
