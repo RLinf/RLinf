@@ -221,22 +221,9 @@ PyTorch format:
 Thanks to the OpenPI-Comet authors for open-sourcing the model and tools, which
 helps reproducibility and evaluation in RLinf.
 
-After conversion, update ``behavior_openpi_pi05_eval.yaml`` as follows:
-
-1. Set ``rollout.model.model_path`` to the converted model directory.
-2. Keep both step limits at ``null`` to use the official timeout for the selected task.
-   RLinf rounds the rollout budget up to a whole number of action chunks.
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       max_episode_steps: null
-       max_steps_per_rollout_epoch: null
-
-Prepare the 2026 simulation assets as described on this page. The
-:doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>` explains how to set the model path,
-launch ``behavior_openpi_pi05_eval``, read the ``eval/success_once`` metric, and find the logs and videos.
+Set ``rollout.model.model_path`` to the converted model directory.
+Evaluation uses the selected task's official timeout by default. For step limits,
+success metrics, logs and videos, see the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
 
 
 Configure Further
@@ -319,12 +306,8 @@ paths directly in the config as ``/path/to/...`` placeholders:
 Normalization statistics are loaded from the converted checkpoint's bundled
 ``physical-intelligence/behavior/norm_stats.json`` asset.
 
-Run standalone evaluation from the same environment.
-
-.. code:: bash
-
-   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
+Launch the checkpoint from the same environment using the command in the
+:doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
 
 .. note::
 

@@ -212,19 +212,8 @@ OpenPI-Comet 作为示例来源：
 
 感谢 OpenPI-Comet 作者开源模型和工具，这有助于 RLinf 中的可复现评估。
 
-转换完成后，按如下方式更新 ``behavior_openpi_pi05_eval.yaml``：
-
-1. 将 ``rollout.model.model_path`` 设置为转换后的模型目录。
-2. 两个步数字段保持 ``null`` 即可使用所选任务的官方超时。RLinf 将每轮采样步数向上取整到动作块长度的整数倍。
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       max_episode_steps: null
-       max_steps_per_rollout_epoch: null
-
-请先按本页说明准备 2026 仿真资产。:doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>` 说明如何设置模型路径、使用 ``behavior_openpi_pi05_eval`` 启动独立评测、读取成功率指标 ``eval/success_once`` 以及查看日志和视频。
+将 ``rollout.model.model_path`` 设为转换后的模型目录。评测默认使用所选任务的官方超时。
+步数配置、成功率指标、日志和视频见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
 
 --------------
 
@@ -245,12 +234,7 @@ checkpoint，即由 OpenPI checkpoint 转换器
 归一化统计从转换后 checkpoint 中打包的
 ``physical-intelligence/behavior/norm_stats.json`` 读取。
 
-在同一环境中运行独立评测。
-
-.. code:: bash
-
-   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
+在同一环境中按 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>` 中的命令运行该模型。
 
 .. note::
 

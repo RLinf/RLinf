@@ -192,16 +192,9 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 
 **使用离线 instance 随机采样**
 
-.. code-block:: yaml
-
-   env:
-     eval:
-       omni_config:
-         task:
-           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
-           instance_file_format: tro_state
-           instance_resample_mode: offline
-       rollout_epoch: 5
+沿用 :ref:`behavior-public-instances` 中的场景模板和实例目录。
+将 ``env.eval.omni_config.task.instance_resample_mode`` 设为 ``offline``，每次重置时会随机选择一个缓存布局。
+要跑五轮评测，将 ``env.eval.rollout_epoch`` 设为 ``5``。
 
 **调整并行规模**
 

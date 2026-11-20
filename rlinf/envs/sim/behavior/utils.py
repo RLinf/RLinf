@@ -21,6 +21,7 @@ import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from rlinf.utils.data_iter_utils import ceildiv
 from rlinf.utils.logging import get_logger
 
 SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rgbd_full_res")
@@ -235,7 +236,7 @@ def resolve_eval_step_limits(cfg: DictConfig, chunk_size: int) -> None:
         raise ValueError(
             "BEHAVIOR episode length and action chunk size must be positive."
         )
-    chunks = (cfg.max_episode_steps + chunk_size - 1) // chunk_size
+    chunks = ceildiv(cfg.max_episode_steps, chunk_size)
     episode_budget = chunks * chunk_size
     if cfg.max_steps_per_rollout_epoch is None:
         cfg.max_steps_per_rollout_epoch = episode_budget
@@ -289,9 +290,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     )
     OmegaConf.update(omni_cfg, "robots[0]", robot_override, merge=True)
 
-    override_proprio_obs = OmegaConf.select(
-        override_cfg, "robots[0].proprio_obs", default=None
-    )
+    override_proprio_obs = robot_override.get("proprio_obs")
     r1pro = None
     if override_proprio_obs is None:
         if cfg.get("use_2026_eval_proprio_and_rooms", False):
@@ -363,15 +362,9 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
         camera_cfg, omni_cfg.robots[0], r1pro, omni_cfg.env.get("env_wrapper")
     )
 
-    # override behavior's termination config `max_steps` field
-    max_episode_steps = (
-        OmegaConf.select(cfg, "max_episode_steps") - 1
-    )  # BEHAVIOR env will off-by-one
-    assert max_episode_steps is not None, "must set max_episode_steps in config."
+    # OmniGibson checks its zero-based step counter before incrementing it.
     OmegaConf.update(
-        omni_cfg,
-        "task.termination_config.max_steps",
-        max_episode_steps,
+        omni_cfg, "task.termination_config.max_steps", cfg.max_episode_steps - 1
     )
 
     return omni_cfg

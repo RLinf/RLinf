@@ -237,13 +237,11 @@ class ActivityInstanceLoader:
 
     def __init__(
         self,
-        omni_cfg: DictConfig,
         activity_name: str,
         activity_instance_id: int,
         instance_resample_mode: str,
         activity_instances: tuple[ActivityInstanceFile, ...],
     ):
-        self.omni_cfg = omni_cfg
         self.activity_name = activity_name
         self.activity_instance_id = activity_instance_id
         self.instance_resample_mode = instance_resample_mode
@@ -326,7 +324,6 @@ class ActivityInstanceLoader:
                     "task.instance_resample_mode is 'offline'."
                 )
             return cls(
-                omni_cfg=omni_cfg,
                 activity_name=activity_name,
                 activity_instance_id=activity_instance_id,
                 instance_resample_mode=instance_resample_mode,
@@ -361,7 +358,6 @@ class ActivityInstanceLoader:
                 )
 
         return cls(
-            omni_cfg=omni_cfg,
             activity_name=activity_name,
             activity_instance_id=activity_instance_id,
             instance_resample_mode=instance_resample_mode,

@@ -131,13 +131,9 @@ class BehaviorProcess:
 
         if need_obs:
             self._restore_legacy_base_velocity(raw_obs, env_indices)
-        return (
-            list(raw_obs) if need_obs else None,
-            to_tensor(rewards),
-            to_tensor(terminates),
-            to_tensor(truncates),
-            list(infos),
-        )
+        else:
+            raw_obs = None
+        return raw_obs, rewards, terminates, truncates, infos
 
     def chunk_step(self, actions, env_indices):
         """Step a full chunk for one shard.
@@ -191,7 +187,6 @@ class BehaviorProcessPool:
         cls,
         cfg: DictConfig,
         worker_info,
-        pipeline_stage_num: int,
         num_envs: int,
     ) -> tuple["BehaviorProcessPool", int]:
         """Attach to the shared pool and return ``(pool, pool_offset)``."""
@@ -201,12 +196,7 @@ class BehaviorProcessPool:
             num_env_subprocess = int(
                 OmegaConf.select(cfg, "num_env_subprocess", default=1)
             )
-            cls._shared_pool = cls(
-                cfg,
-                total_envs_per_worker,
-                num_env_subprocess,
-                pipeline_stage_num,
-            )
+            cls._shared_pool = cls(cfg, total_envs_per_worker, num_env_subprocess)
 
         idx = cls._pipeline_next_idx
         global_offset = idx * num_envs
@@ -238,7 +228,6 @@ class BehaviorProcessPool:
         cfg: DictConfig,
         total_num_envs: int,
         num_env_subprocess: int,
-        pipeline_stage_num: int,
     ):
         if total_num_envs % num_env_subprocess != 0:
             raise ValueError(
@@ -472,12 +461,6 @@ class BehaviorEnv(gym.Env):
         self.pool = None
         self.pool_offset = None
         self.task_description = None
-        if total_num_processes % worker_info.group_world_size != 0:
-            raise ValueError(
-                f"total_num_processes ({total_num_processes}) must be divisible by "
-                f"worker_info.group_world_size ({worker_info.group_world_size}) to infer pipeline_stage_num."
-            )
-        self.pipeline_stage_num = total_num_processes // worker_info.group_world_size
 
         self.auto_reset = cfg.auto_reset
         self._fixed_eval = cfg.get("is_eval", False) and not self.auto_reset
@@ -493,10 +476,7 @@ class BehaviorEnv(gym.Env):
     def _ensure_pool(self):
         if self.pool is None:
             self.pool, self.pool_offset = BehaviorProcessPool.acquire_shared(
-                self.cfg,
-                self.worker_info,
-                self.pipeline_stage_num,
-                self.num_envs,
+                self.cfg, self.worker_info, self.num_envs
             )
 
     def _load_tasks_cfg(self, activity_name: str):
@@ -628,13 +608,8 @@ class BehaviorEnv(gym.Env):
         obs_list = []
         infos_list = []
         scaled_rewards_list = []
-        merged_terminations_list = []
-        info_done_flags = []
-        for raw_obs, raw_rewards, raw_terminations, step_infos in zip(
-            raw_obs_list,
-            raw_rewards_list,
-            raw_terminations_list,
-            raw_infos_list,
+        for raw_obs, raw_rewards, step_infos in zip(
+            raw_obs_list, raw_rewards_list, raw_infos_list
         ):
             if raw_obs is None:
                 obs_list.append(None)
@@ -642,22 +617,13 @@ class BehaviorEnv(gym.Env):
                 obs_list.append(self._wrap_obs(raw_obs))
             step_rewards = self._calc_step_reward(raw_rewards)
             infos_list.append(self._record_metrics(step_rewards, step_infos))
-            if self.ignore_terminations:
-                raw_terminations = torch.zeros_like(raw_terminations)
-            merged_terminations_list.append(raw_terminations)
             scaled_rewards_list.append(step_rewards)
-            # `raw_infos_list[i]` is a list of per-env info dicts for chunk step i.
-            step_done = [
-                self._extract_info_done(info) if isinstance(info, dict) else False
-                for info in step_infos
-            ]
-            info_done_flags.append(torch.tensor(step_done, dtype=torch.bool))
 
         chunk_rewards = torch.stack(
             scaled_rewards_list, dim=1
         )  # [num_envs, chunk_steps]
         raw_terminations = torch.stack(
-            merged_terminations_list, dim=1
+            raw_terminations_list, dim=1
         )  # [num_envs, chunk_steps]
         raw_truncations = torch.stack(
             raw_truncations_list, dim=1
@@ -665,22 +631,10 @@ class BehaviorEnv(gym.Env):
 
         past_terminations = raw_terminations.any(dim=1)
         past_truncations = raw_truncations.any(dim=1)
-
-        # Some OmniGibson builds may report episode completion primarily via
-        # `info["done"]` while leaving `terminations`/`truncations` booleans
-        # as all-False for the whole chunk. RLinf's evaluation metrics gate on
-        # `terminations|truncations`, so we fall back to info-done here.
-        past_info_dones = torch.stack(info_done_flags, dim=1).any(dim=1)
-        # A native timeout already has a classification; do not also mark it as terminated.
-        past_info_dones &= ~(past_terminations | past_truncations)
-
-        # If the config asks to ignore terminations, map info-done into
-        # truncations; otherwise map it into terminations.
-        if self.ignore_terminations:
-            past_truncations = torch.logical_or(past_truncations, past_info_dones)
-        else:
-            past_terminations = torch.logical_or(past_terminations, past_info_dones)
         past_dones = torch.logical_or(past_terminations, past_truncations)
+        if self.ignore_terminations:
+            past_truncations = past_dones
+            past_terminations = torch.zeros_like(past_terminations)
 
         if past_dones.any() and self.auto_reset:
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(
@@ -761,11 +715,6 @@ class BehaviorEnv(gym.Env):
 
         infos = {"episode": to_tensor(list_of_dict_to_dict_of_list(info_lists))}
         return infos
-
-    @staticmethod
-    def _extract_info_done(info: dict) -> bool:
-        tc = info.get("done", {}).get("termination_conditions", {})
-        return any(v["done"] for v in tc.values())
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
         final_obs = extracted_obs.copy()

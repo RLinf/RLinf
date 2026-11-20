@@ -192,16 +192,9 @@ Advanced Usage
 
 **Random offline instance sampling**
 
-.. code-block:: yaml
-
-   env:
-     eval:
-       omni_config:
-         task:
-           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
-           instance_file_format: tro_state
-           instance_resample_mode: offline
-       rollout_epoch: 5
+Reuse the scene template and instance directory from :ref:`behavior-public-instances`.
+Set ``env.eval.omni_config.task.instance_resample_mode`` to ``offline`` to sample
+a cached layout at each reset. Set ``env.eval.rollout_epoch`` to ``5`` for five evaluation rounds.
 
 **Adjust parallel scale**
 
