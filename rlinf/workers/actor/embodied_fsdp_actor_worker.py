@@ -420,25 +420,36 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self._normalize_advantages_jointly()
 
         rollout_metrics = dict(self._group_success_metrics)
-        for spec in self._rollout_geometry.layout.specs:
-            rollout_metrics.update(
-                spec.scoped(compute_rollout_metrics(self.env_batches[spec.name]))
-            )
+        specs = self._rollout_geometry.layout.specs
+        per_env_metrics = [
+            (spec, compute_rollout_metrics(self.env_batches[spec.name]))
+            for spec in specs
+        ]
+        for spec, metrics in per_env_metrics:
+            rollout_metrics.update(spec.scoped(metrics))
         self.rollout_batches = self._merge_env_batches()
-        rollout_metrics.update(
-            compute_rollout_metrics(
-                cat_list_of_dict_tensor(
-                    [
-                        {
-                            key: pool[key]
-                            for key in ("rewards", "advantages", "returns", "loss_mask")
-                            if pool.get(key) is not None
-                        }
-                        for pool in self.rollout_batches
-                    ]
+        if len(specs) == 1:
+            rollout_metrics.update(per_env_metrics[0][1])
+        else:
+            rollout_metrics.update(
+                compute_rollout_metrics(
+                    cat_list_of_dict_tensor(
+                        [
+                            {
+                                key: pool[key]
+                                for key in (
+                                    "rewards",
+                                    "advantages",
+                                    "returns",
+                                    "loss_mask",
+                                )
+                                if pool.get(key) is not None
+                            }
+                            for pool in self.rollout_batches
+                        ]
+                    )
                 )
             )
-        )
         return rollout_metrics
 
     def _normalize_advantages_jointly(self) -> None:
@@ -508,7 +519,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 loss_weight=algorithm_cfg.get("loss_weight", 1.0),
             )
             rows = batch["prev_logprobs"].shape[0] * batch["prev_logprobs"].shape[1]
-            flat = process_nested_dict_for_train(batch, torch.arange(rows))
+            flat = process_nested_dict_for_train(batch)
             pool = pools.setdefault(batch_format(flat), [])
             self._env_rows[spec.name] = (
                 list(pools).index(batch_format(flat)),
@@ -517,7 +528,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
             pool.append(flat)
         self.env_batches = {}
-        return [cat_list_of_dict_tensor(entries) for entries in pools.values()]
+        return [
+            entries[0] if len(entries) == 1 else cat_list_of_dict_tensor(entries)
+            for entries in pools.values()
+        ]
 
     def _order_training_batch(self) -> None:
         """Order each pool's rows and plan the rows every global batch takes.
@@ -540,16 +554,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.cfg.actor.get("mix_envs", True):
             orders = [torch.randperm(rows, generator=g) for rows in pool_rows]
             num_global_batches = sum(pool_rows) // batch_size_per_rank
-            for rows in pool_rows:
-                assert rows % num_global_batches == 0, (
-                    "Every global batch takes an equal share of each observation "
-                    f"format, so a format's {rows} samples per actor must split "
-                    f"into {num_global_batches} global batches."
-                )
             plan = [
                 [rows // num_global_batches for rows in pool_rows]
                 for _ in range(num_global_batches)
             ]
+            cursor = 0
+            for pool_index, rows in enumerate(pool_rows):
+                for _ in range(rows % num_global_batches):
+                    plan[cursor % num_global_batches][pool_index] += 1
+                    cursor += 1
         else:
             env_parts = []
             for name, (pool_index, offset, rows) in self._env_rows.items():

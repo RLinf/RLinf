@@ -5125,3 +5125,47 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
         )
 
     assert seen_devices == [torch.device("cpu"), None, None]
+
+
+def test_mlp_policy_cuda_graph_falls_back_to_eager_for_uncaptured_batch_size(
+    monkeypatch,
+):
+    from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
+
+    policy = MLPPolicy(
+        obs_dim=4,
+        action_dim=2,
+        num_action_chunks=1,
+        add_value_head=True,
+        add_q_head=False,
+    )
+    replayed = []
+
+    class FakeManager:
+        def replay(self, graph_name, inputs):
+            replayed.append((graph_name, inputs["states"].shape[0]))
+            action, chunk_actions, chunk_logprobs, chunk_values = (
+                policy._eager_generate_actions(inputs["states"], "train", True)
+            )
+            return {
+                "action": action,
+                "chunk_actions": chunk_actions,
+                "chunk_logprobs": chunk_logprobs,
+                "chunk_values": chunk_values,
+            }
+
+    policy.cuda_graph_manager = FakeManager()
+    monkeypatch.setattr(policy, "capture_action_generation", lambda **kwargs: None)
+    policy.capture_cuda_graph(train_batch_size=4, eval_batch_size=2)
+
+    actions, _, _, _ = policy._generate_actions(
+        torch.zeros(4, 4), mode="train", calculate_values=True
+    )
+    assert actions.shape == (4, 2)
+    assert len(replayed) == 1
+
+    smaller_actions, _, _, _ = policy._generate_actions(
+        torch.zeros(2, 4), mode="train", calculate_values=True
+    )
+    assert smaller_actions.shape == (2, 2)
+    assert len(replayed) == 1

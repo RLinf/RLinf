@@ -271,8 +271,10 @@ class MultiStepRolloutWorker(Worker):
             self._eval_sampling_params = {}
 
         if self.expert_model is not None and self.enable_dagger:
+            init_beta = self.algorithm_cfg.get("dagger", {}).get("init_beta", 0.5)
             self._dagger_sampling_params = {
-                "beta": self.algorithm_cfg.get("dagger", {}).get("init_beta", 0.5),
+                "init_beta": init_beta,
+                "beta": init_beta,
                 "beta_schedule": self.algorithm_cfg.get("dagger", {}).get(
                     "beta_schedule", "exponential"
                 ),
@@ -542,12 +544,34 @@ class MultiStepRolloutWorker(Worker):
                 f"Beta schedule {self._dagger_sampling_params['beta_schedule']} is not implemented"
             )
 
+    def _dagger_beta_for_source(self, source: Any) -> float | None:
+        """Compute DAgger expert-sampling beta from the source's own epoch."""
+        if getattr(self, "expert_model", None) is None or not getattr(
+            self, "enable_dagger", False
+        ):
+            return None
+        schedule = self._dagger_sampling_params["beta_schedule"]
+        if schedule != "exponential":
+            raise NotImplementedError(f"Beta schedule {schedule} is not implemented")
+        spec = self.train_layout.spec_of_rank(source.key.env_rank)
+        epoch_index = (
+            source.key.step_id * spec.cfg.rollout_epoch + source.key.epoch_id + 1
+        )
+        init_beta = self._dagger_sampling_params.get(
+            "init_beta", self._dagger_sampling_params["beta"]
+        )
+        return max(
+            self._dagger_sampling_params["beta_min"],
+            init_beta * (self._dagger_sampling_params["beta_decay"] ** epoch_index),
+        )
+
     @Worker.timer("predict")
     def predict(
         self,
         env_obs: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
         policy_kwargs: dict[str, Any] | None = None,
+        dagger_beta: float | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Act on one batch of observations.
 
@@ -603,7 +627,12 @@ class MultiStepRolloutWorker(Worker):
 
         if mode == "train" and self.expert_model is not None and self.enable_dagger:
             # training with expert model. Beta-probability acting.
-            use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
+            beta = (
+                self._dagger_sampling_params["beta"]
+                if dagger_beta is None
+                else dagger_beta
+            )
+            use_expert = torch.rand(1).item() < beta
         else:
             use_expert = False
 
@@ -656,6 +685,7 @@ class MultiStepRolloutWorker(Worker):
         rlt_switch_flags: torch.Tensor | None = None,
         intervene_requested: torch.Tensor | None = None,
         policy_kwargs: dict[str, Any] | None = None,
+        dagger_beta: float | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.rlt_feature_model is not None:
             return predict_rlt_actions(
@@ -670,7 +700,12 @@ class MultiStepRolloutWorker(Worker):
                 intervene_requested=intervene_requested,
                 expert_model=self.expert_model,
             )
-        return self.predict(env_obs, mode=mode, policy_kwargs=policy_kwargs)
+        return self.predict(
+            env_obs,
+            mode=mode,
+            policy_kwargs=policy_kwargs,
+            dagger_beta=dagger_beta,
+        )
 
     def _build_policy_output(
         self, actions: torch.Tensor, result: dict[str, Any]
@@ -1010,36 +1045,12 @@ class MultiStepRolloutWorker(Worker):
                     {source.key.env_rank for source in request.sources},
                     request.obs,
                 ),
+                self._dagger_beta_for_source(request.sources[0])
+                if request.sources
+                else None,
             )
             for request in requests
         )
-
-        request_actions: list[torch.Tensor | None] = [None] * len(requests)
-        published = []
-        for (_, _, policy_fields), indices in groups.items():
-            policy_input = PolicyInput.merge([requests[index] for index in indices])
-            if not policy_input.requires_inference:
-                actions = policy_input.external_actions
-                forward_inputs = None
-                policy_output = None
-            else:
-                actions, result = self._predict_rollout_actions(
-                    policy_input.obs,
-                    rlt_switch_flags=policy_input.rlt_switch_flags,
-                    intervene_requested=policy_input.intervene_flags,
-                    policy_kwargs=dict(policy_fields),
-                )
-                forward_inputs = result.get("forward_inputs")
-                policy_output = self._build_policy_output(actions, result)
-            sizes = [
-                self._infer_policy_input_batch_size(requests[index])
-                for index in indices
-            ]
-            for index, shard in zip(indices, torch.split(actions, sizes, dim=0)):
-                request_actions[index] = shard
-            published.append(
-                (policy_input, actions, forward_inputs, policy_output, policy_fields)
-            )
 
         # The env runs the actions it supplied, so nothing goes back.
         replied = [
@@ -1047,15 +1058,63 @@ class MultiStepRolloutWorker(Worker):
             for index, request in enumerate(requests)
             if request.requires_inference
         ]
+        single_reply_group = len(groups) == 1 and len(replied) == len(requests)
+        request_actions: list[torch.Tensor | None] | None = (
+            None if single_reply_group else [None] * len(requests)
+        )
+        direct_actions: torch.Tensor | None = None
+        published = []
+        for (_, _, policy_fields, dagger_beta), indices in groups.items():
+            policy_input = (
+                requests[indices[0]]
+                if len(indices) == 1
+                else PolicyInput.merge([requests[index] for index in indices])
+            )
+            if not policy_input.requires_inference:
+                actions = policy_input.external_actions
+                forward_inputs = None
+                policy_output = None
+            else:
+                predict_kwargs: dict[str, Any] = {
+                    "rlt_switch_flags": policy_input.rlt_switch_flags,
+                    "intervene_requested": policy_input.intervene_flags,
+                    "policy_kwargs": dict(policy_fields),
+                }
+                if dagger_beta is not None:
+                    predict_kwargs["dagger_beta"] = dagger_beta
+                actions, result = self._predict_rollout_actions(
+                    policy_input.obs,
+                    **predict_kwargs,
+                )
+                forward_inputs = result.get("forward_inputs")
+                policy_output = self._build_policy_output(actions, result)
+            if single_reply_group:
+                direct_actions = actions
+            elif request_actions is not None:
+                sizes = [
+                    self._infer_policy_input_batch_size(requests[index])
+                    for index in indices
+                ]
+                for index, shard in zip(indices, torch.split(actions, sizes, dim=0)):
+                    request_actions[index] = shard
+            published.append(
+                (policy_input, actions, forward_inputs, policy_output, policy_fields)
+            )
+
         if len(replied) < len(requests):
             if split_sizes is not None:
                 split_sizes = [split_sizes[index] for index in replied]
             if peer_ranks is not None:
                 peer_ranks = [peer_ranks[index] for index in replied]
         if replied:
+            actions_to_send = (
+                direct_actions
+                if single_reply_group and direct_actions is not None
+                else torch.cat([request_actions[index] for index in replied])
+            )
             self._send_actions(
                 output_channel,
-                torch.cat([request_actions[index] for index in replied]).contiguous(),
+                actions_to_send,
                 stage_id,
                 split_sizes,
                 peer_ranks,
@@ -1089,6 +1148,54 @@ class MultiStepRolloutWorker(Worker):
                 policy_input, forward_inputs, actor_channel, dict(policy_fields)
             )
 
+    def _finalize_decoupled_env_parts(
+        self,
+        request: PolicyInput,
+        max_step_id: int,
+        actor_channel: Channel,
+    ) -> list[tuple[int, int]]:
+        """Publish attached env parts up to ``max_step_id`` without serving ``request``."""
+        if not request.env_parts:
+            return []
+        closed_finals: list[tuple[int, int]] = []
+        remaining_parts: list[EnvPart | None] = []
+        for env_part in request.env_parts:
+            if (
+                env_part is not None
+                and env_part.sources
+                and env_part.sources[0].key.step_id <= max_step_id
+            ):
+                key = env_part.sources[0].key
+                policy_fields = dict(
+                    self._env_policy_fields(
+                        self.train_layout,
+                        {source.key.env_rank for source in env_part.sources},
+                    )
+                )
+                self._publish_env_part(
+                    env_part,
+                    policy_obs=None,
+                    next_rlt_obs=None,
+                    actor_channel=actor_channel,
+                    policy_kwargs=policy_fields,
+                )
+                spec = self.train_layout.spec_of_rank(key.env_rank)
+                num_chunks = spec.chunk_steps(self.model_cfg.num_action_chunks)
+                if (
+                    key.step_id == max_step_id
+                    and key.epoch_id == spec.cfg.rollout_epoch - 1
+                    and key.chunk_id == num_chunks - 1
+                ):
+                    closed_finals.append((key.env_rank, key.stage_id))
+                remaining_parts.append(None)
+            else:
+                remaining_parts.append(env_part)
+        if any(part is not None for part in remaining_parts):
+            request.env_parts = remaining_parts
+        else:
+            request.env_parts = []
+        return closed_finals
+
     @Worker.timer("serve_decoupled_step")
     async def _serve_decoupled_step(
         self,
@@ -1099,29 +1206,98 @@ class MultiStepRolloutWorker(Worker):
         """Serve this worker's share of one training step's decoupled requests.
 
         Rollout workers pull requests from a shared queue, so each serves its
-        share of the step's requests, counted from the env specs. The share is
-        split into the longest env's rollout epochs for DAgger's per-epoch
-        schedule.
+        share of the current step's requests. Requests arriving early for a
+        later step have any previous-step transitions finalized immediately and
+        are deferred until that step, so a fast env cannot steal budget from a
+        slower env or stall weight syncs under ``staleness_threshold=0``.
         """
-        epochs = max(spec.cfg.rollout_epoch for spec in self.train_layout.specs)
+        current_step = getattr(self, "_decoupled_step", 0)
+        deferred: list[tuple[PolicyInput, int, Any]] = list(
+            getattr(self, "_decoupled_deferred", [])
+        )
+        still_deferred: list[tuple[PolicyInput, int, Any]] = []
+        track_finals = (
+            self._world_size == 1
+            and getattr(self, "staleness_threshold", None) is not None
+        )
+        pending_finals: set[tuple[int, int]] = (
+            {
+                (env_rank, stage_id)
+                for spec in self.train_layout.specs
+                for env_rank in spec.ranks
+                for stage_id in range(getattr(self, "num_pipeline_stages", 1))
+            }
+            if track_finals
+            else set()
+        )
         served = 0
-        for epoch in range(epochs):
-            self.update_dagger_beta()
-            epoch_end = self.decoupled_requests_per_step * (epoch + 1) // epochs
-            while served < epoch_end:
-                requests, split_sizes = await self._receive_decoupled_policy_inputs(
-                    input_channel, max_items=epoch_end - served
+
+        def serve_items(items: list[tuple[PolicyInput, int, Any]]) -> None:
+            nonlocal served
+            if not items:
+                return
+            self.batch_router["policy"].extend(route for _, _, route in items)
+            self._serve_policy_inputs(
+                [req for req, _, _ in items],
+                output_channel,
+                actor_channel,
+                0,
+                split_sizes=[size for _, size, _ in items],
+            )
+            served += len(items)
+
+        ready_from_deferred: list[tuple[PolicyInput, int, Any]] = []
+        for entry in deferred:
+            req = entry[0]
+            req_step = req.sources[0].key.step_id if req.sources else current_step
+            if (
+                req_step <= current_step
+                and len(ready_from_deferred) < self.decoupled_requests_per_step
+            ):
+                ready_from_deferred.append(entry)
+            else:
+                for closed in self._finalize_decoupled_env_parts(
+                    req, current_step, actor_channel
+                ):
+                    pending_finals.discard(closed)
+                still_deferred.append(entry)
+        serve_items(ready_from_deferred)
+
+        while served < self.decoupled_requests_per_step or pending_finals:
+            budget = (
+                self.decoupled_requests_per_step - served
+                if served < self.decoupled_requests_per_step
+                else len(pending_finals)
+            )
+            route_start = len(self.batch_router["policy"])
+            requests, split_sizes = await self._receive_decoupled_policy_inputs(
+                input_channel, max_items=budget
+            )
+            routes = self.batch_router["policy"][route_start:]
+            del self.batch_router["policy"][route_start:]
+            if any(request.is_last for request in requests):
+                raise ValueError("Received a final input in the policy stream.")
+
+            ready: list[tuple[PolicyInput, int, Any]] = []
+            for request, size, route in zip(requests, split_sizes, routes):
+                req_step = (
+                    request.sources[0].key.step_id if request.sources else current_step
                 )
-                if any(request.is_last for request in requests):
-                    raise ValueError("Received a final input in the policy stream.")
-                self._serve_policy_inputs(
-                    requests,
-                    output_channel,
-                    actor_channel,
-                    0,
-                    split_sizes=split_sizes,
-                )
-                served += len(requests)
+                if (
+                    req_step <= current_step
+                    and served + len(ready) < self.decoupled_requests_per_step
+                ):
+                    ready.append((request, size, route))
+                else:
+                    for closed in self._finalize_decoupled_env_parts(
+                        request, current_step, actor_channel
+                    ):
+                        pending_finals.discard(closed)
+                    still_deferred.append((request, size, route))
+            serve_items(ready)
+
+        self._decoupled_deferred = still_deferred
+        self._decoupled_step = current_step + 1
 
     def _source_budgets(
         self, layout: EnvLayout, batch_size: int, count: Callable[[EnvSpec], int]
@@ -1247,7 +1423,6 @@ class MultiStepRolloutWorker(Worker):
             self.train_batch_size,
             lambda spec: spec.cfg.rollout_epoch,
         )
-        started_epochs: set[int] = set()
         while any(any(left.values()) for left in finals_left.values()):
             for stage_id, left in finals_left.items():
                 # Received items follow the plan's peer order, which is ascending.
@@ -1294,10 +1469,6 @@ class MultiStepRolloutWorker(Worker):
                         )
                 if not requests:
                     continue
-                epochs = {item.sources[0].key.epoch_id for item in requests}
-                for _ in epochs - started_epochs:
-                    self.update_dagger_beta()
-                started_epochs |= epochs
                 self._serve_policy_inputs(
                     requests,
                     output_channel,

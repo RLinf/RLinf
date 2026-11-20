@@ -1271,7 +1271,7 @@ def validate_env_training_cfg(
         adv_normalizes_over_batch(adv_type) and normalize_advantages
     ), (
         "algorithm.adv_norm_scope='all' sets the scope of the batch normalization "
-        "of algorithm.adv_type 'gae', 'gae_dynamic' or 'raw' with "
+        "of algorithm.adv_type 'gae' or 'raw' with "
         f"normalize_advantages=True, got adv_type={adv_type!r} and "
         f"normalize_advantages={normalize_advantages}."
     )
@@ -2652,7 +2652,7 @@ def adv_normalizes_over_batch(adv_type: Optional[str]) -> bool:
     ``algorithm.adv_norm_scope`` can widen their batch to every env. Group
     estimators normalize within each group instead.
     """
-    return bool(adv_type) and adv_type.lower() in ("gae", "gae_dynamic", "raw")
+    return bool(adv_type) and adv_type.lower() in ("gae", "raw")
 
 
 def adv_requires_group_baseline(

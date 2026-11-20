@@ -14,8 +14,10 @@
 
 """Replay buffers of a run's env configurations, sampled as one buffer."""
 
+import math
 import os
 from functools import reduce
+from typing import Any
 
 import torch
 
@@ -59,6 +61,7 @@ class EnvReplayBuffer:
         total = sum(weights.values())
         self.buffers = buffers
         self.shares = {name: weight / total for name, weight in weights.items()}
+        self._carry = dict.fromkeys(self.shares, 0.0)
         self.mix_envs = mix_envs
         self._generator = torch.Generator().manual_seed(seed)
 
@@ -84,12 +87,8 @@ class EnvReplayBuffer:
         for index, (name, count) in enumerate(self._counts(num_chunks).items()):
             if count == 0:
                 continue
-            part = self.buffers[name].sample(count)
-            rows = next(
-                value.shape[0]
-                for value in part.values()
-                if isinstance(value, torch.Tensor)
-            )
+            part = self._sample_exact(self.buffers[name], count)
+            rows = self._batch_rows(part)
             part["env_index"] = torch.full((rows,), index, dtype=torch.long)
             parts[name] = part
         formats = {name: batch_format(part) for name, part in parts.items()}
@@ -161,6 +160,33 @@ class EnvReplayBuffer:
     def _path(path: str, name: str | None) -> str:
         return path if name is None else os.path.join(path, name)
 
+    @staticmethod
+    def _batch_rows(batch: dict[str, Any]) -> int:
+        for value in batch.values():
+            if isinstance(value, torch.Tensor):
+                return int(value.shape[0])
+            if isinstance(value, dict):
+                rows = EnvReplayBuffer._batch_rows(value)
+                if rows > 0:
+                    return rows
+        return 0
+
+    @classmethod
+    def _sample_exact(
+        cls, buffer: TrajectoryReplayBuffer, count: int
+    ) -> dict[str, torch.Tensor]:
+        """Sample exactly ``count`` transitions even when a small window clamps one draw."""
+        chunks: list[dict[str, torch.Tensor]] = []
+        remaining = count
+        while remaining > 0:
+            draw = buffer.sample(remaining)
+            got = cls._batch_rows(draw)
+            if got <= 0:
+                raise RuntimeError("Cannot sample from an empty env replay buffer.")
+            chunks.append(draw)
+            remaining -= got
+        return chunks[0] if len(chunks) == 1 else reduce(concat_batch, chunks)
+
     def _counts(self, num_chunks: int) -> dict[str | None, int]:
         if not self.mix_envs:
             names = list(self.shares)
@@ -170,9 +196,21 @@ class EnvReplayBuffer:
             return {
                 name: num_chunks if i == index else 0 for i, name in enumerate(names)
             }
-        exact = {name: num_chunks * share for name, share in self.shares.items()}
-        counts = {name: int(value) for name, value in exact.items()}
+        exact = {
+            name: self._carry[name] + num_chunks * share
+            for name, share in self.shares.items()
+        }
+        counts = {name: max(0, int(math.floor(value))) for name, value in exact.items()}
         leftover = num_chunks - sum(counts.values())
-        for name in sorted(exact, key=lambda n: counts[n] - exact[n])[:leftover]:
-            counts[name] += 1
+        if leftover > 0:
+            for name in sorted(exact, key=lambda n: counts[n] - exact[n])[:leftover]:
+                counts[name] += 1
+        elif leftover < 0:
+            for name in sorted(
+                (n for n, c in counts.items() if c > 0),
+                key=lambda n: exact[n] - counts[n],
+            )[:-leftover]:
+                counts[name] -= 1
+        for name in self.shares:
+            self._carry[name] = exact[name] - counts[name]
         return counts

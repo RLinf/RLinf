@@ -204,6 +204,51 @@ def test_env_replay_buffer_draws_one_env_per_batch_when_envs_do_not_mix():
         env_buffer.close()
 
 
+def test_env_replay_buffer_carries_fractional_quotas_without_starvation():
+    buffers = {
+        "major": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+        "minor": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+    }
+    env_buffer = EnvReplayBuffer(buffers, {"major": 0.9, "minor": 0.1})
+    try:
+        env_buffer.add_trajectories(
+            [_env_trajectory("major", 1.0), _env_trajectory("minor", 2.0)]
+        )
+        major_total = 0
+        minor_total = 0
+        for _ in range(10):
+            batch = env_buffer.sample(4)
+            assert batch["rewards"].shape[0] == 4
+            major_total += int((batch["rewards"] == 1.0).sum().item())
+            minor_total += int((batch["rewards"] == 2.0).sum().item())
+        assert (major_total, minor_total) == (36, 4)
+    finally:
+        env_buffer.close()
+
+
+def test_env_replay_buffer_samples_full_batch_when_one_window_is_small():
+    buffers = {
+        "a": TrajectoryReplayBuffer(seed=0, sample_window_size=100),
+        "b": TrajectoryReplayBuffer(seed=0, sample_window_size=1),
+    }
+    env_buffer = EnvReplayBuffer(buffers, {"a": 1.0, "b": 1.0})
+    try:
+        # Each trajectory holds 2 transitions; env "b"'s window holds only 2 rows.
+        env_buffer.add_trajectories(
+            [
+                _env_trajectory("a", 1.0),
+                _env_trajectory("a", 1.0),
+                _env_trajectory("b", 2.0),
+            ]
+        )
+        batch = env_buffer.sample(8)
+        assert batch["rewards"].shape[0] == 8
+        assert int((batch["rewards"] == 1.0).sum().item()) == 4
+        assert int((batch["rewards"] == 2.0).sum().item()) == 4
+    finally:
+        env_buffer.close()
+
+
 def test_rlt_transition_replay_files_each_step_under_its_env():
     def env(auto_reset: bool) -> dict:
         return {"env_type": "maniskill", "total_num_envs": 1, "auto_reset": auto_reset}
@@ -3452,6 +3497,191 @@ def test_decoupled_step_caps_receive_so_odd_shares_never_overshoot(monkeypatch):
     ]
     assert batch_sizes == [2, 2, 1]
     assert channel.index == 5
+
+
+def test_decoupled_step_defers_future_step_requests_and_finalizes_prev_env_parts(
+    monkeypatch,
+):
+    from omegaconf import OmegaConf
+
+    import rlinf.scheduler as scheduler_module
+    from rlinf.envs.layout import EnvLayout
+
+    def _req(step_id: int, env_rank: int, chunk_id: int, env_parts=None):
+        key = TrajectoryKey(step_id, 0, env_rank, 0, chunk_id)
+        return PolicyInput(
+            sources=[TrajectorySource(key=key, size=1)],
+            obs={"states": torch.zeros(1, 2)},
+            env_parts=env_parts or [],
+        )
+
+    closing_fast = EnvPart(
+        sources=[TrajectorySource(key=TrajectoryKey(0, 0, 0, 0, 0), size=1)],
+        transition=EnvTransition(
+            rewards=torch.ones(1, 1),
+            dones=torch.zeros(1, 1, dtype=torch.bool),
+            terminations=torch.zeros(1, 1, dtype=torch.bool),
+            truncations=torch.zeros(1, 1, dtype=torch.bool),
+        ),
+        next_obs={"states": torch.zeros(1, 2)},
+        requires_inference=False,
+    )
+    closing_slow = EnvPart(
+        sources=[TrajectorySource(key=TrajectoryKey(0, 0, 1, 0, 1), size=1)],
+        transition=EnvTransition(
+            rewards=torch.ones(1, 1),
+            dones=torch.zeros(1, 1, dtype=torch.bool),
+            terminations=torch.zeros(1, 1, dtype=torch.bool),
+            truncations=torch.zeros(1, 1, dtype=torch.bool),
+        ),
+        next_obs={"states": torch.zeros(1, 2)},
+        requires_inference=False,
+    )
+
+    # Fast env (rank 0, 1 chunk) sends step 1 carrying its step-0 closing EnvPart
+    # before slow env (rank 1, 2 chunks) sends its second step-0 chunk.
+    items = [
+        {"batch_index": "0_0_train_policy", "batch": _req(0, 0, 0)},
+        {"batch_index": "1_0_train_policy", "batch": _req(0, 1, 0)},
+        {
+            "batch_index": "0_0_train_policy",
+            "batch": _req(1, 0, 0, env_parts=[closing_fast]),
+        },
+        {"batch_index": "1_0_train_policy", "batch": _req(0, 1, 1)},
+        {
+            "batch_index": "1_0_train_policy",
+            "batch": _req(1, 1, 0, env_parts=[closing_slow]),
+        },
+    ]
+
+    class _QueueChannel:
+        def __init__(self):
+            self.index = 0
+
+        def get(self, key, async_op=True):
+            del key, async_op
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            future.set_result(items[self.index])
+            self.index += 1
+            return _HangingGet(future)
+
+    plan = SimpleNamespace(entries=[SimpleNamespace(key=("route",))])
+    monkeypatch.setattr(scheduler_module, "get_group_world_size", lambda *_: 2)
+    monkeypatch.setattr(scheduler_module, "decoupled_build_recv_plan", lambda **_: plan)
+
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.cfg = SimpleNamespace(env=SimpleNamespace(group_name="EnvGroup"))
+    rollout._world_size = 1
+    rollout._worker_address = SimpleNamespace(root_group_name="RolloutGroup")
+    rollout._manager_proxy = None
+    rollout.batch_router = {"policy": []}
+    rollout.train_batch_size = 2
+    rollout.rollout_queue_size = 1
+    rollout.num_pipeline_stages = 1
+    rollout.staleness_threshold = 0
+    rollout.model_cfg = SimpleNamespace(num_action_chunks=1)
+    rollout.train_layout = EnvLayout(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "fast": {
+                        "env_type": "maniskill",
+                        "total_num_envs": 1,
+                        "rollout_epoch": 1,
+                        "max_steps_per_rollout_epoch": 1,
+                        "max_episode_steps": 1,
+                        "auto_reset": True,
+                        "ignore_terminations": False,
+                    },
+                    "slow": {
+                        "env_type": "maniskill",
+                        "total_num_envs": 1,
+                        "rollout_epoch": 1,
+                        "max_steps_per_rollout_epoch": 2,
+                        "max_episode_steps": 2,
+                        "auto_reset": True,
+                        "ignore_terminations": False,
+                    },
+                }
+            }
+        ),
+        world_size=2,
+        path="env.train",
+    )
+    rollout.decoupled_requests_per_step = 3
+    served_keys = []
+    published_env_keys = []
+
+    def _serve(requests, *_args, **_kwargs):
+        served_keys.extend(req.sources[0].key for req in requests)
+
+    def _publish(env_part, *_args, **_kwargs):
+        published_env_keys.append(env_part.sources[0].key)
+
+    rollout._serve_policy_inputs = _serve
+    rollout._publish_env_part = _publish
+    channel = _QueueChannel()
+
+    asyncio.run(
+        inspect.unwrap(MultiStepRolloutWorker._serve_decoupled_step)(
+            rollout, channel, None, None
+        )
+    )
+
+    assert served_keys == [
+        TrajectoryKey(0, 0, 0, 0, 0),
+        TrajectoryKey(0, 0, 1, 0, 0),
+        TrajectoryKey(0, 0, 1, 0, 1),
+    ]
+    assert set(published_env_keys) == {
+        TrajectoryKey(0, 0, 0, 0, 0),
+        TrajectoryKey(0, 0, 1, 0, 1),
+    }
+    assert len(rollout._decoupled_deferred) == 2
+    assert all(req.env_parts == [] for req, _, _ in rollout._decoupled_deferred)
+
+
+def test_dagger_beta_depends_on_each_requests_own_epoch():
+    from omegaconf import OmegaConf
+
+    from rlinf.envs.layout import EnvLayout
+
+    rollout = object.__new__(MultiStepRolloutWorker)
+    rollout.expert_model = object()
+    rollout.enable_dagger = True
+    rollout._dagger_sampling_params = {
+        "init_beta": 0.5,
+        "beta": 0.5,
+        "beta_schedule": "exponential",
+        "beta_min": 0.05,
+        "beta_decay": 0.8,
+    }
+    rollout.train_layout = EnvLayout(
+        OmegaConf.create(
+            {
+                "envs": {
+                    "fast": {
+                        "env_type": "maniskill",
+                        "total_num_envs": 1,
+                        "rollout_epoch": 2,
+                    },
+                    "slow": {
+                        "env_type": "maniskill",
+                        "total_num_envs": 1,
+                        "rollout_epoch": 1,
+                    },
+                }
+            }
+        ),
+        world_size=2,
+        path="env.train",
+    )
+
+    fast_e1 = TrajectorySource(key=TrajectoryKey(0, 1, 0, 0, 0), size=1)
+    slow_e0 = TrajectorySource(key=TrajectoryKey(0, 0, 1, 0, 0), size=1)
+    assert rollout._dagger_beta_for_source(fast_e1) == pytest.approx(0.5 * 0.8**2)
+    assert rollout._dagger_beta_for_source(slow_e0) == pytest.approx(0.5 * 0.8**1)
 
 
 def test_decoupled_policy_route_round_trip():

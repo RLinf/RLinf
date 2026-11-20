@@ -277,7 +277,7 @@ def process_nested_dict_for_adv(nested_dict, rollout_epoch):
     return ret_dict
 
 
-def process_nested_dict_for_train(nested_dict, shuffle_id):
+def process_nested_dict_for_train(nested_dict, shuffle_id=None):
     ret_dict = {}
     for key, value in nested_dict.items():
         if key in ["dones", "terminations", "truncations", "prev_values"]:
@@ -287,7 +287,8 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
         if value is None:
             ret_dict[key] = None
         if isinstance(value, torch.Tensor):
-            ret_dict[key] = value.reshape(-1, *value.shape[2:])[shuffle_id]
+            flat = value.reshape(-1, *value.shape[2:])
+            ret_dict[key] = flat if shuffle_id is None else flat[shuffle_id]
         elif isinstance(value, dict):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict

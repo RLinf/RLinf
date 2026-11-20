@@ -1314,6 +1314,61 @@ def test_async_ppo_normalizes_advantages_over_the_configured_scope(scope):
         assert a.mean() < 0 < b.mean()
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="masked_normalization runs on CUDA"
+)
+def test_async_ppo_returns_zero_advantages_for_fully_masked_env_group():
+    from rlinf.workers.actor.async_ppo_fsdp_worker import AsyncPPOEmbodiedFSDPActor
+
+    actor = _embodied_actor(
+        OmegaConf.create(
+            {"envs": {"empty": _embodied_env(2), "valid": _embodied_env(2)}}
+        ),
+        actor_cls=AsyncPPOEmbodiedFSDPActor,
+    )
+    actor.cfg.algorithm.adv_norm_scope = "env"
+    actor.env_batches = {
+        "empty": _embodied_batch(2, 2),
+        "valid": _embodied_batch(2, 2),
+    }
+    actor.env_batches["empty"]["loss_mask"] = torch.zeros(2, 2, 1, dtype=torch.bool)
+    actor.env_batches["valid"]["loss_mask"] = torch.ones(2, 2, 1, dtype=torch.bool)
+    actor.env_batches["empty"]["advantages"] = torch.tensor(
+        [[[1.0], [2.0]], [[3.0], [4.0]]]
+    )
+    actor.env_batches["valid"]["advantages"] = torch.tensor(
+        [[[10.0], [20.0]], [[30.0], [40.0]]]
+    )
+    actor.rollout_batches = actor._merge_env_batches()
+
+    actor._normalize_advantages_across_ranks()
+
+    [pool] = actor.rollout_batches
+    empty_adv, valid_adv = pool["advantages"][:4], pool["advantages"][4:]
+    assert torch.isfinite(empty_adv).all()
+    assert torch.allclose(empty_adv, torch.zeros_like(empty_adv))
+    assert abs(valid_adv.mean().item()) < 1e-4
+    assert abs(valid_adv.std(unbiased=False).item() - 1.0) < 1e-4
+
+
+def test_multi_format_global_batch_plan_distributes_uneven_remainders():
+    actor = _embodied_actor(
+        OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
+    )
+    actor.cfg.actor.global_batch_size = 4
+    actor.cfg.actor.mix_envs = True
+    actor.rollout_batches = [
+        {"prev_logprobs": torch.zeros(6, 1)},
+        {"prev_logprobs": torch.zeros(10, 1)},
+    ]
+
+    actor._order_training_batch()
+
+    assert len(actor._global_batch_plan) == 4
+    assert all(sum(takes) == 4 for takes in actor._global_batch_plan)
+    assert [sum(col) for col in zip(*actor._global_batch_plan)] == [6, 10]
+
+
 @pytest.mark.parametrize(
     ("normalize_cfg", "expect_normalized"),
     [(True, True), (False, False), (None, False)],
@@ -1323,7 +1378,12 @@ def test_raw_advantages_honor_normalize_advantages_under_env_scope(
 ):
     from rlinf.workers.actor import embodied_fsdp_actor_worker as actor_mod
 
-    monkeypatch.setattr(actor_mod, "compute_rollout_metrics", lambda _batch: {})
+    metrics_calls = []
+    monkeypatch.setattr(
+        actor_mod,
+        "compute_rollout_metrics",
+        lambda batch: metrics_calls.append(batch) or {},
+    )
     actor = _embodied_actor(OmegaConf.create(_embodied_env(2)))
     actor.cfg.runner = {"task_type": "embodied"}
     actor.cfg.actor.model = {"num_action_chunks": 1}
@@ -1347,6 +1407,7 @@ def test_raw_advantages_honor_normalize_advantages_under_env_scope(
 
     actor.compute_advantages_and_returns()
 
+    assert len(metrics_calls) == 1
     [pool] = actor.rollout_batches
     advantages = pool["advantages"]
     if expect_normalized:
