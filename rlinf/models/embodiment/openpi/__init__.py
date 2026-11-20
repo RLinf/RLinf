@@ -108,6 +108,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
+        "batch_invariant_backend": model_cfg.get("batch_invariant_backend"),
         "pytorch_numerics": bool(
             OmegaConf.select(model_cfg, "pytorch_numerics", default=False)
         ),

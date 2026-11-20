@@ -418,6 +418,24 @@ actor
 :doc:`agentic_config` 与 :doc:`basic_config` 中的共享 schema；FSDP 预设从
 ``hybrid_engines/fsdp`` 挂载。
 
+减少 Batch Size 对 OpenPI 打分的影响
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Rollout 和 actor 使用不同的 batch size 时，即使权重相同，对同一个动作也可能算出不同的 log-prob。启用 batch-invariant 算子后，SigLIP 的图像 patch 投影和指定的 action expert 投影会在不同 batch size 下使用相同的累加顺序。FP32 输入采用 TF32x3 计算，累加使用 FP32。
+
+Triton 后端需要 NVIDIA Ampere 或更新架构的 GPU、PyTorch 2.6 或更高版本，以及兼容的 Triton。在现有 OpenPI 训练 YAML 中添加以下配置。
+
+.. code:: yaml
+
+  actor:
+    model:
+      openpi:
+        batch_invariant_backend: triton
+
+Hugging Face rollout 默认继承 actor 的设置，也可以在 ``rollout.model.openpi`` 下覆盖。省略配置项即可使用标准 PyTorch 算子。
+
+检查效果时，让 rollout 和 actor 使用相同的权重、前向精度和 attention 路径，比较第一次 optimizer step 前的 log-prob。图像 patch 投影会额外构建一个临时矩阵。用常用的 batch size 测一下每步耗时和峰值显存。
+
 环境专用配置
 ------------------------------------
 
