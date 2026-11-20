@@ -195,6 +195,76 @@ same as OpenPI, but it is recommended to guarantee two things: first,
 second, ``default_forward`` should output at least the fields actually required
 by the training algorithm, such as ``logprobs``, ``values``, and ``entropy``.
 
+.. _refl-model-interface:
+
+Train from Differentiable Rewards
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ReFL connects a model that generates differentiable samples to a scorer that
+rewards each sample. Reward gradients pass through the samples to the model's
+trainable parameters.
+
+Implement ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)`` and
+return a dict containing ``samples``, a tensor with the batch dimension first.
+The model handles state sampling, time units, noising, and decoding; its sample
+layout must match the scorer. ``BasePolicy.forward`` calls this method for
+``ForwardType.REFL``. A custom ``forward`` must support the same dispatch.
+
+The actor reads ``xt_source`` from ``algorithm.refl_xt_source``. Return
+``forward_inputs`` alongside ``samples`` to set the scorer context; the default
+is the original input. ``scorer(samples, forward_inputs)`` returns rewards of
+shape ``[B]``, with higher values preferred. Freeze the scorer's parameters and
+preserve gradients through its input samples.
+
+SD3 takes ``forward_inputs={"prompts": prompts}``, where ``prompts`` is a list
+of strings. It samples with its current weights and passes the raw prompts to
+the ImageReward scorer for tokenization. To supply an existing state, pass
+``x_t`` and ``timesteps`` in ``refl_inputs``, and ``prompt_embeds`` and
+``pooled_prompt_embeds`` in ``forward_inputs``. SD3 uses times in ``[0, 1]``,
+with 0 for data and 1 for noise.
+
+Register a scorer builder with ``register_refl_scorer`` and select it through
+``actor.refl_reward_model.type``. The builder receives the full
+``actor.refl_reward_model`` config and the actor device, and returns a scorer.
+Save this extension module as ``my_refl_ext.py`` to register ImageReward:
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+Prepare the models, data, and launch-argument array from the
+:doc:`SD3 recipe </rst_source/examples/embodied/refl>`. Replace ``<ext_dir>``
+with the directory containing ``my_refl_ext.py`` and launch training:
+
+.. code-block:: bash
+
+   export PYTHONPATH="<ext_dir>:$PYTHONPATH"
+   export RLINF_EXT_MODULE=my_refl_ext
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+     "${REFL_ARGS[@]}" \
+     actor.refl_reward_model.type=custom_image_reward
+
+Each worker imports ``RLINF_EXT_MODULE`` and calls ``register()``. To use your
+own scorer, change how the builder constructs it.
+
+Add tests for reward shape, frozen parameters, and gradients back to the samples
+to ``tests/unit_tests/test_diffusion.py``:
+
+.. code-block:: bash
+
+   pytest tests/unit_tests/test_diffusion.py -k scorer
+
 3. Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

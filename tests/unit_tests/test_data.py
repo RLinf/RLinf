@@ -35,6 +35,7 @@ import numpy as np
 import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
+from PIL import Image
 
 import rlinf.data.datasets.d4rl as d4rl_dataset_module
 import rlinf.utils.obs_compression as obs_compression
@@ -72,6 +73,7 @@ from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.compat import index_episode_subset_by_id
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.envs.sim.diffusion import build_reward_dataset
 from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.runners.async_embodied_runner import AsyncEmbodiedRunner
 from rlinf.scheduler import AcceleratorType
@@ -5080,3 +5082,92 @@ def test_rollout_value_only_bootstrap_checks_policy_capability_and_config(monkey
     )
     with pytest.raises(ValueError, match="rollout_backend='huggingface'"):
         validate_embodied_cfg(bad_backend_cfg)
+
+
+def test_prompt_dataset_excludes_eval_and_preserves_unique_order(tmp_path):
+    train = tmp_path / "train.json"
+    held_out = tmp_path / "test.json"
+    train.write_text(
+        json.dumps(
+            [
+                {"text": " a fox "},
+                {"prompt": "a cat"},
+                {"text": "a fox"},
+                {"text": "a dog"},
+                {"text": "A CAT"},
+            ]
+        )
+    )
+    held_out.write_text(json.dumps([{"prompt": "a cat"}]))
+    dataset = build_reward_dataset(
+        {
+            "type": "visual.prompt_dataset",
+            "path": str(train),
+            "exclude_path": str(held_out),
+        }
+    )
+
+    assert [row["task_description"] for row in dataset] == ["a fox", "a dog"]
+    obs, records = dataset.build_grouped_env_batch([1, 0], group_size=2, num_envs=4)
+    assert obs["task_descriptions"] == ["a dog", "a dog", "a fox", "a fox"]
+    assert len(records) == 4
+
+
+def test_prompt_dataset_without_exclusion(tmp_path):
+    path = tmp_path / "test.json"
+    path.write_text(json.dumps([{"text": "a fox"}, {"prompt": "a cat"}]))
+    dataset = build_reward_dataset({"type": "visual.prompt_dataset", "path": str(path)})
+    assert len(dataset) == 2
+    assert dataset[0] == {"task_description": "a fox"}
+
+
+def test_image_text_dataset_preprocessing_and_batches(tmp_path):
+    pytest.importorskip("torchvision")
+    from torch.utils.data import DataLoader, DistributedSampler
+
+    for index, caption in enumerate(("The image shows a fox", "a cat")):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        Image.new("RGB", (12, 8), color=(255, 0, 0)).save(directory / "image.png")
+        (directory / "image.txt").write_text(caption)
+    dataset = build_reward_dataset(
+        {
+            "type": "visual.image_text_dataset",
+            "path": str(tmp_path),
+            "resolution": 8,
+            "caption_prefix": "The image shows ",
+        }
+    )
+    assert len(dataset) == 2
+    assert [dataset[i]["prompts"] for i in range(2)] == ["a fox", "a cat"]
+    torch.testing.assert_close(
+        dataset[0]["images"],
+        torch.tensor([1.0, -1.0, -1.0]).view(3, 1, 1).expand(3, 8, 8),
+    )
+
+    # Recreate the same CPU loader at a dataset boundary, as Lpre does.
+    sampler = DistributedSampler(dataset, num_replicas=1, rank=0, drop_last=True)
+    loader = DataLoader(dataset, batch_size=2, sampler=sampler, num_workers=0)
+    for epoch in range(3):
+        sampler.set_epoch(epoch)
+        batches = list(loader)
+        assert len(batches) == 1
+        assert batches[0]["images"].shape == (2, 3, 8, 8)
+        assert set(batches[0]["prompts"]) == {"a fox", "a cat"}
+
+
+def test_dataset_factory_import_does_not_require_gym():
+    import subprocess
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['gym'] = None; "
+            "from rlinf.envs.sim.diffusion import build_reward_dataset; "
+            "assert callable(build_reward_dataset)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

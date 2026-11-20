@@ -98,6 +98,18 @@ RL
        </p>
      </div>
 
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
+           <b>ReFL</b>
+         </a><br>
+         使用 ImageReward 和可选的图文监督更新微调 SD3
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -112,3 +124,4 @@ RL
    IQL (D4RL) <embodied/iql_d4rl>
    OPD <embodied/opd>
    RL Token <embodied/rlt>
+   ReFL <embodied/refl>
