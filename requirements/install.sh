@@ -104,6 +104,8 @@ PLATFORM_COMMON_REQ_EXCLUDE_RE=""
 # Default torch-backend per platform; user can override by exporting
 # UV_TORCH_BACKEND before invoking this script.
 DEFAULT_BACKEND_NVIDIA="auto"
+# Preserve an explicit backend when the simulator pins a different Torch version.
+REQUESTED_TORCH_BACKEND="${UV_TORCH_BACKEND:-auto}"
 # AMD composes UV_TORCH_BACKEND=rocm<version>; --rocm picks the version. When
 # unset, configure_amd detects the system's ROCm version and auto-picks the
 # minimum torch version on https://download.pytorch.org/whl/torch/ that has a
@@ -2657,8 +2659,6 @@ EOF
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            # The SDK installs Hub 1.x, but OpenPI's Transformers requires Hub <1 at import.
-            uv pip install "${RAY_COMPAT_DEPS[@]}" "huggingface-hub>=0.34.4,<1"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -3857,32 +3857,54 @@ install_liberoplus_env() {
 }
 
 install_behavior_env() {
-    # Use BEHAVIOR_PATH as the checkout location if set (shared, cloned on first use);
-    # otherwise clone into the venv.
-    local behavior_dir
-    behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/StanfordVL/BEHAVIOR-1K.git -b v3.9.3-post2 --depth 1)
+    local behavior_dir="${BEHAVIOR_PATH:-$VENV_DIR/BEHAVIOR-1K}"
+    local behavior_source="https://github.com/Forging-ahead/BEHAVIOR-1K.git@5acd19864a3ec51b9ed1dade6d0b1a04b9d63c24"
+    local behavior_repo="${GITHUB_PREFIX}${behavior_source%@*}"
+    local behavior_ref="${behavior_source##*@}"
 
-    # The SDK installs LeRobot from a moving Git branch with pip. Pin the
-    # Python 3.11-compatible revision in its requirement before setup runs.
-    if grep -Fq 'wensi-ai/lerobot@release/b1k"' "$behavior_dir/OmniGibson/setup.py"; then
-        if [[ -n "${BEHAVIOR_PATH:-}" || "$(realpath "$behavior_dir/OmniGibson/setup.py")" != "$(realpath "$VENV_DIR")/BEHAVIOR-1K/OmniGibson/setup.py" ]]; then
-            # Keep editable packages in this venv when the source checkout is shared.
-            local checkout="$behavior_dir"
-            behavior_dir=$(mktemp -d "$VENV_DIR/BEHAVIOR-1K-install.XXXXXX")
-            tar -C "$checkout" --dereference --exclude-vcs --exclude=appdata --exclude=__pycache__ \
-                -cf - setup.sh bddl3 joylo OmniGibson | tar -C "$behavior_dir" -xf -
-            ln -s "$checkout/datasets" "$checkout/docs" "$behavior_dir/"
+    # Pin the venv checkout and finish new or interrupted BEHAVIOR_PATH clones.
+    if [[ ! -L "$behavior_dir" && ( -z "${BEHAVIOR_PATH:-}" || ! -f "$behavior_dir/setup.sh" ) ]]; then
+        behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" \
+            "$behavior_repo" --depth 1 --filter=blob:none --no-checkout)
+        if [[ ! -e "$behavior_dir/.git" || ( -n "${BEHAVIOR_PATH:-}" &&
+            "$(git -C "$behavior_dir" config remote.origin.url)" != "$behavior_repo" ) ]]; then
+            echo "Expected a BEHAVIOR checkout at $behavior_dir." >&2
+            return 1
         fi
-        sed -i 's|wensi-ai/lerobot@release/b1k"|wensi-ai/lerobot@436812bd8ee39b768c645c248c91f1330834e687"|' "$behavior_dir/OmniGibson/setup.py"
+        if [[ "$(git -C "$behavior_dir" rev-parse HEAD)" != "$behavior_ref" ]]; then
+            git -C "$behavior_dir" fetch --depth 1 "$behavior_repo" "$behavior_ref"
+        fi
+        git -C "$behavior_dir" checkout --detach "$behavior_ref"
+    elif [[ -z "${BEHAVIOR_PATH:-}" && "$(git -C "$behavior_dir" rev-parse HEAD)" != "$behavior_ref" ]]; then
+        echo "Shared checkout $behavior_dir does not point to BEHAVIOR commit $behavior_ref. Set BEHAVIOR_PATH to the desired checkout." >&2
+        return 1
     fi
+    local cuda_tag="$REQUESTED_TORCH_BACKEND" cuda_limit cuda_version
+    if [[ "$cuda_tag" == auto ]]; then
+        cuda_limit=$(detect_nvidia_driver_max_cuda) || cuda_limit=$(python -c 'import torch; print((torch.version.cuda or "12.8").replace(".", ""))')
+        cuda_tag=$(detect_nvidia_torch_cuda_tag 2.7.0 https://download.pytorch.org/whl "$cuda_limit") || {
+            echo "Could not resolve a BEHAVIOR Torch 2.7.0 CUDA wheel for this host." >&2
+            return 1
+        }
+    fi
+    case "$cuda_tag" in
+        cu118) cuda_version=11.8 ;;
+        cu126) cuda_version=12.6 ;;
+        cu128) cuda_version=12.8 ;;
+        *) echo "BEHAVIOR requires a Torch 2.7.0 CUDA build (cu118, cu126 or cu128); got $cuda_tag." >&2; return 1 ;;
+    esac
+    export UV_TORCH_BACKEND="$cuda_tag"
     pushd "$behavior_dir" >/dev/null
-    ./setup.sh --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula
+    # The SDK accepts matching public versions even when their CUDA builds differ.
+    python -m pip install --index-url "https://download.pytorch.org/whl/$cuda_tag" \
+        "torch==2.7.0+$cuda_tag" "torchvision==0.22.0+$cuda_tag" "torchaudio==2.7.0+$cuda_tag"
+    ./setup.sh --cuda-version "$cuda_version" --omnigibson --bddl --joylo --confirm-no-conda --accept-nvidia-eula
     # OmniGibson imports warp at startup and pins it in its primitives extra.
     # Install it alongside the evaluation utilities used by RLinf.
     uv pip install "warp-lang==1.12.0" "dm_tree>=0.1.9" "hydra-core>=1.3.2" "websockets>=15.0.1" "msgpack>=1.1.0" "gspread>=6.2.1" "open3d>=0.19.0" av "numpy<2"
     popd >/dev/null
     uv pip uninstall flash-attn || true
-    uv pip install ml_dtypes==0.5.3 "${RAY_COMPAT_DEPS[@]}"
+    uv pip install ml_dtypes==0.5.3 "${RAY_COMPAT_DEPS[@]}" "huggingface-hub>=0.34.4,<1"
 }
 
 install_geniesim_env() {

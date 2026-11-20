@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import gc
-import inspect
 import json
 import os
 import time
@@ -30,7 +29,6 @@ from rlinf.envs.sim.behavior.utils import (
     apply_env_wrapper,
     apply_runtime_renderer_settings,
     convert_uint8_rgb,
-    selected_scene_batch,
     setup_omni_cfg,
 )
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
@@ -69,7 +67,6 @@ class BehaviorProcess:
         _preload_numba_llvmlite()
         from omnigibson.envs import Environment
 
-        self.logger = get_logger()
         omni_cfg = setup_omni_cfg(cfg)
         self.use_legacy_proprio = omni_cfg.robots[0].proprio_obs == R1PRO_PROPRIO_KEYS
         self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
@@ -92,27 +89,9 @@ class BehaviorProcess:
         # enable cyclic GC here so that we do not encounter OOMs in long runs.
         gc.enable()
 
-        step_signature = inspect.signature(self.env.step)
-        step_params = step_signature.parameters.values()
-        step_supports_kwargs = any(
-            param.kind == inspect.Parameter.VAR_KEYWORD for param in step_params
-        )
-        self.step_supports_get_obs = (
-            step_supports_kwargs or "get_obs" in step_signature.parameters
-        )
-        self.step_supports_render = (
-            step_supports_kwargs or "render" in step_signature.parameters
-        )
-        self.step_supports_env_indices = "env_indices" in step_signature.parameters
         self.skip_intermediate_renders = bool(
             OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
-
-        if self.skip_intermediate_renders and not self.step_supports_get_obs:
-            self.logger.warning(
-                "skip_intermediate_renders is True but OmniGibson env step does not "
-                "support get_obs; this config will be ignored."
-            )
 
     def get_activity_name(self):
         return self.instance_loader.activity_name
@@ -129,24 +108,6 @@ class BehaviorProcess:
                 robot.base_control_idx
             ]
 
-    def _call_step(self, actions, env_indices=None, get_obs=True, render=True):
-        """Call ``self.env.step`` forwarding only the kwargs it supports."""
-        kwargs = {}
-        if self.step_supports_get_obs:
-            kwargs["get_obs"] = get_obs
-        if self.step_supports_render:
-            kwargs["render"] = render
-        if env_indices is not None:
-            kwargs["env_indices"] = env_indices
-        return self.env.step(actions, **kwargs)
-
-    def _call_reset(self, reset_indices=None, get_obs=True):
-        """Call ``self.env.reset`` through one normalized code path."""
-        kwargs = {"get_obs": get_obs}
-        if reset_indices is not None:
-            kwargs["env_indices"] = reset_indices
-        return self.env.reset(**kwargs)
-
     def _step_shard(
         self,
         actions: torch.Tensor,
@@ -161,24 +122,12 @@ class BehaviorProcess:
 
         Returns outputs only for ``env_indices``, in that same order.
         """
-        if self.step_supports_env_indices:
-            raw_obs, rewards, terminates, truncates, infos = self._call_step(
-                [actions[i] for i in env_indices],
-                env_indices=env_indices,
-                get_obs=need_obs,
-                render=need_obs,
-            )
-        elif len(env_indices) < self.env.num_envs:
-            with selected_scene_batch(self.env.unwrapped, env_indices) as scenes:
-                raw_obs, rewards, terminates, truncates, infos = scenes.step(
-                    actions[env_indices]
-                )
-        else:
-            raw_obs, rewards, terminates, truncates, infos = self._call_step(
-                actions,
-                get_obs=need_obs,
-                render=need_obs,
-            )
+        raw_obs, rewards, terminates, truncates, infos = self.env.step(
+            actions[env_indices],
+            env_indices=env_indices,
+            get_obs=need_obs,
+            render=need_obs,
+        )
 
         if need_obs:
             self._restore_legacy_base_velocity(raw_obs, env_indices)
@@ -212,10 +161,7 @@ class BehaviorProcess:
 
     def reset(self, reset_indices=None, get_obs=True):
         self.instance_loader.prepare_reset(self.env, reset_indices=reset_indices)
-        result = self._call_reset(
-            reset_indices=reset_indices,
-            get_obs=get_obs,
-        )
+        result = self.env.reset(env_indices=reset_indices, get_obs=get_obs)
         if not get_obs:
             return None, None
 
@@ -304,6 +250,13 @@ class BehaviorProcessPool:
         self.total_num_envs = total_num_envs
         self.num_env_subprocess = num_env_subprocess
         self.num_env_shard = total_num_envs // num_env_subprocess
+        if self.num_env_shard > 1 and OmegaConf.select(
+            cfg, "omni_config.task.online_object_sampling"
+        ):
+            raise ValueError(
+                "Online object sampling requires one scene per simulator process. "
+                "Set num_env_subprocess to the number of environments per worker."
+            )
         self.skip_intermediate_renders = bool(
             OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
         )
@@ -527,6 +480,8 @@ class BehaviorEnv(gym.Env):
         self.pipeline_stage_num = total_num_processes // worker_info.group_world_size
 
         self.auto_reset = cfg.auto_reset
+        self._fixed_eval = cfg.get("is_eval", False) and not self.auto_reset
+        self._steps_since_reset = 0
         self.max_episode_steps = torch.tensor(cfg.max_episode_steps)
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         if self.record_metrics:
@@ -643,6 +598,7 @@ class BehaviorEnv(gym.Env):
         if self.enable_offload and self.pool is None:
             self._init_env()
         raw_obs, infos = self.env_reset()
+        self._steps_since_reset = 0
         obs = self._wrap_obs(raw_obs)
         rewards = torch.zeros(self.num_envs, dtype=bool)
         infos = self._record_metrics(rewards, infos)
@@ -652,6 +608,13 @@ class BehaviorEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim].
         chunk_actions = torch.as_tensor(chunk_actions).detach().cpu()
+        if self._fixed_eval:
+            remaining = self.cfg.max_episode_steps - self._steps_since_reset
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Reset the BEHAVIOR environment before starting another episode."
+                )
+            chunk_actions = chunk_actions[:, :remaining]
         (
             raw_obs_list,
             raw_rewards_list,
@@ -659,6 +622,8 @@ class BehaviorEnv(gym.Env):
             raw_truncations_list,
             raw_infos_list,
         ) = self.env_chunk_step(chunk_actions)
+        if self._fixed_eval:
+            self._steps_since_reset += chunk_actions.shape[1]
 
         obs_list = []
         infos_list = []

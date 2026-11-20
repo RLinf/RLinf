@@ -381,8 +381,8 @@ class ActivityInstanceLoader:
         if self.instance_resample_mode == "online":
             import omnigibson as og
 
-            # The 3.9.3 online sampler is bound to a single scene and stops physics on exit.
-            vec_env.scenes[0].reset()
+            (scene_idx,) = indices
+            vec_env.scenes[scene_idx].reset()
             try:
                 success, feedback = vec_env.task.sampler.sample_states(
                     vec_env.task.compiled_task

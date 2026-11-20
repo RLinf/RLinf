@@ -1267,7 +1267,6 @@ class EnvWorker(Worker):
     @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
-        eval_cfg = self.cfg.env.eval
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
@@ -1320,18 +1319,6 @@ class EnvWorker(Worker):
                         raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
                     else:
                         raw_chunk_actions = np.asarray(raw_chunk_actions)
-                    if (
-                        eval_cfg.env_type == SupportedEnvType.BEHAVIOR.value
-                        and not eval_cfg.auto_reset
-                    ):
-                        # All environments reset together. Report the timeout frame even
-                        # when the BEHAVIOR task ends partway through a policy chunk.
-                        remaining = (
-                            eval_cfg.max_episode_steps
-                            - eval_step * self.model_cfg.num_action_chunks
-                        )
-                        if 0 < remaining < raw_chunk_actions.shape[1]:
-                            raw_chunk_actions = raw_chunk_actions[:, :remaining]
                     env_output, env_info = self.env_evaluate_step(
                         raw_chunk_actions, stage_id
                     )

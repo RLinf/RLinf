@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 import json
 import os
-from contextlib import contextmanager
-from copy import copy
 from importlib.util import find_spec
 from pathlib import Path
 
 import torch
 import yaml
-from hydra.experimental.callback import Callback
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from rlinf.utils.logging import get_logger
@@ -187,106 +183,11 @@ def convert_uint8_rgb(image: torch.Tensor) -> torch.Tensor:
     return image[..., :3]
 
 
-def patch_omnigibson_wrapper_reset_signature() -> None:
-    from omnigibson.envs.env_wrapper import EnvironmentWrapper
-
-    reset_fn = EnvironmentWrapper.reset
-    if getattr(reset_fn, "__rlinf_patched__", False):
-        return
-
-    sig = inspect.signature(reset_fn)
-    supports_kwargs = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
-    if supports_kwargs:
-        return
-
-    def _reset_with_kwargs(self, *args, **kwargs):
-        return self.env.reset(*args, **kwargs)
-
-    _reset_with_kwargs.__rlinf_patched__ = True
-    EnvironmentWrapper.reset = _reset_with_kwargs
-
-
 def apply_env_wrapper(vec_env, wrapper_name: str | None):
     if wrapper_name is None:
         return vec_env
-    patch_omnigibson_wrapper_reset_signature()
     wrapper_cls = get_env_wrapper(wrapper_name)
     return wrapper_cls(vec_env)
-
-
-@contextmanager
-def selected_scene_batch(env, indices: list[int]):
-    """Run an SDK step on the selected scenes.
-
-    The view shares live robots and physics. Only the selected scenes' episode
-    counters, rewards and termination history are written back to the task.
-    """
-    batch = copy(env)
-    batch.num_envs = len(indices)
-    batch._scenes = [env.scenes[i] for i in indices]
-    if env._scene_graph_builders:
-        batch._scene_graph_builders = [env._scene_graph_builders[i] for i in indices]
-
-    # Camera tiles and sensor maps are indexed by the original scene number.
-    def get_obs(env_indices=None):
-        rows = indices if env_indices is None else [indices[i] for i in env_indices]
-        return env.get_obs(env_indices=rows)
-
-    batch.get_obs = get_obs
-    task = batch._task = copy(env.task)
-    task._env = batch
-    task._num_envs = batch.num_envs
-    task.object_scopes = [env.task.object_scopes[i] for i in indices]
-    # The SDK binds the goal and reward callbacks to their owning task.
-    task._termination_conditions = task._create_termination_conditions()
-    task._reward_functions = task._create_reward_functions()
-
-    fields = []
-
-    def select_rows(source, target, *names):
-        for name in names:
-            state = getattr(source, name)
-            if isinstance(state, list):
-                selected = [state[i] for i in indices]
-            else:
-                selected = state[indices] if state is not None else None
-            setattr(target, name, selected)
-            fields.append((source, target, name))
-
-    select_rows(env, batch, "_current_episodes", "_current_steps")
-    select_rows(env.task, task, "_reward", "_done", "_success", "_info")
-    for name, condition in task._termination_conditions.items():
-        condition._num_envs = batch.num_envs
-        original = env.task._termination_conditions[name]
-        select_rows(original, condition, "_done")
-        if name == "predicate":
-            select_rows(original, condition, "_goal_status")
-    potential = task._reward_functions["potential"]
-    potential._num_envs = batch.num_envs
-    select_rows(
-        env.task._reward_functions["potential"],
-        potential,
-        "_potential",
-        "_reward",
-        "_info",
-    )
-
-    try:
-        yield batch
-    finally:
-        for source, target, name in fields:
-            state, selected = getattr(source, name), getattr(target, name)
-            if torch.is_tensor(state):
-                state[indices] = selected
-            elif state is not None or selected is not None:
-                # Task.reset clears its info, and Task.step rebuilds it.
-                if state is None:
-                    state = [{} for _ in range(env.num_envs)]
-                    setattr(source, name, state)
-                for pos, idx in enumerate(indices):
-                    state[idx] = {} if selected is None else selected[pos]
 
 
 def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: str):
@@ -300,19 +201,6 @@ def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: s
             if omni_sub_cfg is None
             else OmegaConf.merge(omni_sub_cfg, override_sub_cfg),
         )
-
-
-class BehaviorEvalStepLimits(Callback):
-    """Apply the selected BEHAVIOR task's step limits before RLinf validates the run."""
-
-    def on_run_start(self, config: DictConfig, **kwargs: object) -> None:
-        try:
-            resolve_eval_step_limits(
-                config.env.eval, config.rollout.model.num_action_chunks
-            )
-        except (OSError, ImportError, ValueError) as exc:
-            # Hydra logs ordinary callback exceptions and starts the job anyway.
-            raise SystemExit(str(exc)) from exc
 
 
 def resolve_eval_step_limits(cfg: DictConfig, chunk_size: int) -> None:
@@ -343,15 +231,26 @@ def resolve_eval_step_limits(cfg: DictConfig, chunk_size: int) -> None:
                 raise ValueError(
                     f"No human demonstration length for {task!r} in {stats}"
                 )
+    if cfg.max_episode_steps < 1 or chunk_size < 1:
+        raise ValueError(
+            "BEHAVIOR episode length and action chunk size must be positive."
+        )
     chunks = (cfg.max_episode_steps + chunk_size - 1) // chunk_size
     episode_budget = chunks * chunk_size
-    budget = cfg.max_steps_per_rollout_epoch
-    if budget is None:
+    if cfg.max_steps_per_rollout_epoch is None:
         cfg.max_steps_per_rollout_epoch = episode_budget
-    elif not cfg.auto_reset and budget % chunk_size == 0:
-        # Each fixed episode ends at its first timeout. Extra chunks would run
-        # after termination. Misaligned overrides are checked by validate_embodied_cfg.
-        cfg.max_steps_per_rollout_epoch = min(budget, episode_budget)
+    elif cfg.max_steps_per_rollout_epoch <= 0:
+        raise ValueError("BEHAVIOR max_steps_per_rollout_epoch must be positive.")
+    elif (
+        not cfg.auto_reset
+        and not cfg.get("early_stop_on_done", False)
+        and cfg.max_steps_per_rollout_epoch > episode_budget
+    ):
+        raise ValueError(
+            f"With auto_reset=False, the episode fits in {chunks} action chunks "
+            f"({episode_budget} rollout steps). Reduce max_steps_per_rollout_epoch "
+            "or enable early_stop_on_done."
+        )
 
 
 def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
