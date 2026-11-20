@@ -20,9 +20,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rlinf.data.datasets.cosmos3.dataset import Cosmos3RollingLeRobotDataset
 from rlinf.models import get_model
 from rlinf.models.embodiment.cosmos3 import load_inference_checkpoint
+from rlinf.models.embodiment.cosmos3.datasets.dataset import (
+    Cosmos3RollingLeRobotDataset,
+)
 from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerAdapter
 from rlinf.scheduler import Worker
 from rlinf.utils import drq

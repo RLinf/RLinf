@@ -21,9 +21,11 @@ from typing import Any
 
 import numpy as np
 
-from rlinf.data.datasets.cosmos3.in_memory_store import Cosmos3InMemoryArrowStore
 from rlinf.data.datasets.dagger.dataset import RollingLeRobotDataset
 from rlinf.data.datasets.dagger.lerobot_io import _hf_column_to_numpy_bool_1d
+from rlinf.models.embodiment.cosmos3.datasets.in_memory_store import (
+    Cosmos3InMemoryArrowStore,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
