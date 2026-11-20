@@ -110,7 +110,7 @@ class AsyncAgentRunner(AgentRunner):
         )
         self.rollout_buffer = rollout_buffer
         self.pause_mode = cfg.rollout.pause_mode
-        # Session-server path: the entry script (which owns placement)
+        # With the session server: the entry script (which owns placement)
         # launches one worker group per server instance plus the router
         # group. Each server gets its payload channels on its own node,
         # one process per shard.
@@ -218,8 +218,8 @@ class AsyncAgentRunner(AgentRunner):
             url for url in self.rollout.get_server_url().wait() if url is not None
         ]
         assert instance_urls, (
-            "no rollout instance advertised a server URL: the session "
-            "server path requires rollout.sglang.backend_type 'server'."
+            "no rollout instance advertised a server URL: the session server "
+            "requires rollout.sglang.backend_type 'server'."
         )
         for url in instance_urls:
             self._session_router.register_server(url).wait()
@@ -358,7 +358,7 @@ class AsyncAgentRunner(AgentRunner):
         self._push_loaded_versions_to_session_servers()
         self.timer.consume_durations()
 
-        # The session server path keeps the rollout workers off the data
+        # The session server keeps the rollout workers off the data
         # plane: the engines serve the session servers over HTTP, so no
         # rollout_serverless loop runs and the serve handles replace its
         # handle in _wait_actor.
@@ -650,7 +650,7 @@ class AsyncAgentRunner(AgentRunner):
             logging.info("Rollout buffer worker stopped")
 
     def _stop_rollouts(self):
-        """Stop the session server path, then the rollout engines.
+        """Stop the session server, then the rollout engines.
 
         The session servers stop before the router: once serving has
         ended no request can be in flight through the router. The serve

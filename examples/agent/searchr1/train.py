@@ -89,7 +89,7 @@ def main(cfg) -> None:
         placement_strategy=agentloop_placement_strategy,
     )
 
-    # Session server path: one worker group per session server (its
+    # With the session server: one worker group per session server (its
     # server_index fixes the port), round-robin over the rollout nodes,
     # plus the single router group on the first rollout node. The payload
     # channels are created by the runner on each server's node.

@@ -156,8 +156,8 @@ class AgentRunner(ReasoningRunner):
         if self.use_pre_process_policy:
             self.rollout.offload_engine().wait()
 
-        # Session server URLs exist only on the async runner's session
-        # server path.
+        # Session server URLs exist only on the async runner with the
+        # session server enabled.
         session_server_urls, session_server_generate_timeout_s, session_keepalive = (
             self._start_session_servers()
         )

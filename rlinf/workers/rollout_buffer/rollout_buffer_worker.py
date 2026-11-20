@@ -123,7 +123,7 @@ class RolloutBuffer:
                 # Finished groups awaiting a release, keyed by group id
                 # and held as (metadata, result): decisions read the
                 # metadata, the release forwards the result untouched —
-                # None on the session server path, where the payload sits
+                # None with the session server, where the payload sits
                 # in its channel behind the metadata's payload ref.
                 "buffer": {},
                 # Loaded version at issue time of every not-yet-released
@@ -268,7 +268,7 @@ class RolloutBuffer:
         """Buffer one finished group and return its group id.
 
         `metadata` is the decision view of `result`, computed by the
-        caller at receive time; on the session server path only the
+        caller at receive time; with the session server only the
         metadata travels here and `result` is None. A group id that is
         unknown or None is a producer bug and raises.
         """
@@ -460,11 +460,11 @@ class RolloutBuffer:
 class RolloutBufferWorker(Worker):
     """Runs on the driver's node.
 
-    Two payload layouts reach this worker. On the channel path the
+    Two payload layouts reach this worker. Without the session server the
     finished `DynamicRolloutResult` passes through here on its way to the
-    actor; on the session server path only the group metadata travels
-    here, the payload waits in its channel, and the release hands the
-    actor a `GroupDelivery` pointing at it. The dataloader, the admission
+    actor; with the session server only the group metadata travels here,
+    the payload waits in its channel, and the release puts a
+    `GroupDelivery` pointing at it on the actor's channel. The dataloader, the admission
     capacity and the buffer state live in this worker, so a checkpoint
     counts as complete only after its `data/data.pt` (written last)
     exists.
@@ -611,7 +611,7 @@ class RolloutBufferWorker(Worker):
                 )
                 continue
             if isinstance(result, GroupMetadata):
-                # Session server path: the payload waits in its channel
+                # With the session server: the payload waits in its channel
                 # behind the metadata's ref; nothing of it passes through.
                 metadata = result
                 result = None

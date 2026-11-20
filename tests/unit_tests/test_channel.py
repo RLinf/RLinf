@@ -947,7 +947,7 @@ class TestChannel:
 
     def test_recv_failure_fails_pending_gets_of_the_same_peer(self):
         """A worker's recvs from one channel worker are not keyed: each takes
-        the next message, and the store hands the data to the get its
+        the next message, and the store returns the data to the get its
         query_id names. When one recv of a peer fails after an earlier
         recv already delivered another get's data, every get still pending
         on that peer fails instead of hanging, and gets on other peers are

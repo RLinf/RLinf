@@ -156,8 +156,8 @@ class AgentLoopWorker(Worker):
         self._agent_metric_channel = None
         self._producer_error = None
         self._inflight_groups = set()
-        # Session server transport, set by init_worker when the runner hands
-        # over session server URLs instead of a generate channel pair.
+        # Session server transport, set by init_worker when the runner passes
+        # the session server URLs instead of a generate channel pair.
         self.session_server_client: Optional[SessionServerClient] = None
         # The session of the trajectory whose task is currently running;
         # set per trajectory by the session-path group runner, read by
@@ -817,7 +817,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         the group itself.
         """
         assert group_id is not None and task_name is not None, (
-            "the session server path needs the group and task identity the "
+            "the session server needs the group and task identity the "
             f"buffer worker stamps on its requests; got group_id={group_id!r}, "
             f"task_name={task_name!r}"
         )
@@ -852,7 +852,7 @@ class MultiAgentLoopWorker(AgentLoopWorker):
                 task_results, answer
             )
             assert extra_turn is None and extra_traj is None and extra_group is None, (
-                "the session server path does not support turn / traj / group "
+                "the session server does not support turn / traj / group "
                 f"extra fields; got turn={extra_turn!r}, traj={extra_traj!r}, "
                 f"group={extra_group!r}"
             )
@@ -984,14 +984,14 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         outputs = output.single_turn_outputs
         assert len(outputs) == len(binding.turns), (
             f"a trajectory closed with {len(outputs)} turn outputs after "
-            f"{len(binding.turns)} generate calls; the session server path "
+            f"{len(binding.turns)} generate calls; the session server "
             "requires them to correspond one to one"
         )
         kept_lens: dict[int, int] = {}
         for turn_index, (turn_output, record) in enumerate(zip(outputs, binding.turns)):
             if turn_output.extra_fields.get("not_training", False):
                 raise RuntimeError(
-                    "the session server path does not support not_training turns"
+                    "the session server does not support not_training turns"
                 )
             assert turn_output.prompt_ids == record["input_ids"], (
                 f"turn {turn_index} of trajectory {binding.traj_index} "
@@ -1012,8 +1012,8 @@ class MultiAgentLoopWorker(AgentLoopWorker):
         """The trajectory-level score, asserted uniform across its turns.
 
         The reward route takes one scalar per trajectory; a task scoring
-        turns differently needs per-turn verdict rewards, which the session
-        server path does not support.
+        turns differently needs per-turn verdict rewards, which the
+        session server does not support.
         """
         scores = [turn.reward_score for turn in output.single_turn_outputs]
         assert scores and all(score is not None for score in scores), (

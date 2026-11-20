@@ -40,7 +40,7 @@ from typing import Any, Callable, MutableMapping
 # configuration reaches further endpoints and is rejected here: PowerOfTwo
 # policies poll GET /v1/loads every 30 s, and enabled health checks issue
 # periodic /health traffic. Config validation pins these two settings
-# whenever the session server path is enabled.
+# whenever the session server is enabled.
 WHITELISTED_PATHS = frozenset({"/generate", "/health", "/server_info", "/model_info"})
 
 # Loopback values of ``scope["client"][0]``.

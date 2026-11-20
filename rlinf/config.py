@@ -2516,16 +2516,17 @@ def validate_session_server_cfg(cfg: DictConfig) -> DictConfig:
         )
     if cfg.rollout.router.policy not in ("manual", "cache_aware"):
         raise ValueError(
-            f"rollout.router.policy must be 'manual' or 'cache_aware' on the "
-            f"session server path, found {cfg.rollout.router.policy!r}: the "
+            f"rollout.router.policy must be 'manual' or 'cache_aware' when the "
+            f"session server is enabled, found {cfg.rollout.router.policy!r}: the "
             "engines' peer-address whitelist covers only the endpoints "
             "these two policies call."
         )
     if not cfg.rollout.router.disable_health_check:
         raise ValueError(
-            "rollout.router.disable_health_check must be true on the session "
-            "server path: the router's /health probes generate tokens, and "
-            "engine liveness is already watched by the rollout worker."
+            "rollout.router.disable_health_check must be true when the "
+            "session server is enabled: the router's /health probes generate "
+            "tokens, and engine liveness is already watched by the rollout "
+            "worker."
         )
     generate_timeouts = [
         float(cfg.session_server.generate_timeout_s),

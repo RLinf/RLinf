@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse
 
 
 def find_available_port() -> int:
-    """Return a port the kernel currently hands out for binding."""
+    """Return a port the kernel currently assigns for binding."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]

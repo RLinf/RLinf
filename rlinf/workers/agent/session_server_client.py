@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The agent loop's HTTP transport for the session server path.
+"""The agent loop's HTTP transport for the session server.
 
-Replaces the generate channel pair for agents on the session server path:
+Replaces the generate channel pair for agents using the session server:
 each generate is one POST, and the group lifecycle (create, close, reward,
 abort) is driven by the group runner. The training payload never passes
 through this side — the session server writes it and reports the group

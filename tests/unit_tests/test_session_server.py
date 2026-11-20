@@ -700,7 +700,7 @@ class TestNormalCompletion:
 
 
 class TestAgentLoopSessionTransport:
-    """The agent loop's session server path, driven end to end.
+    """The agent loop over the session server, driven end to end.
 
     With verify_assembly off, the session server keeps logprobs out of its
     responses (training reads them from the payload), so the agent loop

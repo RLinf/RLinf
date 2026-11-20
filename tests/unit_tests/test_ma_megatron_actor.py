@@ -111,7 +111,7 @@ class TestExtractVersionedTrajectoryRecords:
 
 
 class _LocalDeliveryChannel:
-    """A local input channel that hands out one delivered group."""
+    """A local input channel that returns one delivered group."""
 
     is_local = True
 

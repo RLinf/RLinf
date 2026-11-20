@@ -227,7 +227,7 @@ class SGLangServerBackend(RolloutBackend):
         return self._process.poll_child_failure()
 
     async def initialize(self) -> None:
-        # Loopback unless the session server path opens the data plane to
+        # Loopback unless the session server opens the data plane to
         # other nodes. advertise_host=None lets SGLangServerProcess
         # advertise the node IP (ray.util.get_node_ip_address()).
         session_server_enabled = bool(
@@ -244,7 +244,7 @@ class SGLangServerBackend(RolloutBackend):
             server_args_kwargs["dtype"] = str(server_args_kwargs["dtype"]).removeprefix(
                 "torch."
             )
-        # On the session server path the router's forwarding client holds
+        # With the session server, the router's forwarding client holds
         # idle connections to the engines for 50 s (sgl-model-gateway
         # app_context.rs, hardcoded `.pool_idle_timeout(50s)` in
         # sglang-router 0.3.x; the CLI flag of newer routers defaults to

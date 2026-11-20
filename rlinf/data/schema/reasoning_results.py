@@ -867,7 +867,7 @@ class GroupMetadata:
     # since each turn of a multi-turn rollout is its own sequence.
     num_generate_calls: int
     # Where the group's training payload is stored, when the producer
-    # keeps the result itself out-of-band (session server path); None when
+    # keeps the result itself out-of-band (with the session server); None when
     # the result travels with this metadata.
     payload_ref: Optional[PayloadRef] = None
     # Bytes of payload written for the group, counted by the producer at
@@ -886,7 +886,8 @@ class DiscardedGroup:
 
 @dataclass(kw_only=True)
 class GroupDelivery:
-    """Message the rollout buffer hands the actor on the session server path.
+    """Message the rollout buffer puts on the actor's channel when the
+    session server is enabled.
 
     The training data itself stays in the payload channel named by
     ``payload_ref``; the actor fetches it with a keyed get on the group's

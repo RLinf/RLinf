@@ -400,7 +400,7 @@ class TestPerTaskState:
         assert buffer._buffered_groups() == 1
 
     def test_release_takes_the_oldest_groups_across_tasks(self):
-        """A release still hands the actor the oldest buffered groups."""
+        """A release still returns the oldest buffered groups to the actor."""
         buffer = _BufferFixture.make(rollout_batch_size=2)
         group_ids = {}
         for sample, task_name in [(0, "searchr1"), (1, "code"), (2, "searchr1")]:
@@ -1001,7 +1001,7 @@ class TestWorkerResident:
                 await asyncio.sleep(0.05)
                 assert dataloader_channel._queue.empty()
 
-                # A release hands one training batch over: two groups
+                # A release returns one training batch to the actor: two groups
                 # leave, and exactly two are issued to top the total back
                 # up to the cap.
                 await worker.release_batch(version=0)

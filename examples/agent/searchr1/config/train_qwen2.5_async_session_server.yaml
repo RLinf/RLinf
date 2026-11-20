@@ -6,7 +6,7 @@
 # ranks 8-15 (node 1). The difference: agents talk to session servers
 # instead of the rollout workers directly. Each session server keeps a
 # group's multi-turn state (prefix reuse, payload collection) on the
-# rollout side and hands the actor a payload reference; the rollout
+# rollout side and puts a payload reference on the actor's channel; the
 # buffer sees only group metadata.
 #
 # Requires the same cluster prerequisites as the parent config (unique
