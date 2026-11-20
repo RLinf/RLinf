@@ -83,9 +83,8 @@ class Cosmos3DAggerActor(EmbodiedDAGGERFSDPPolicy):
         return super()._prepare_sft_batch(batch)
 
     def set_global_step(self, global_step: int) -> None:
-        """Publish the rollout version without advancing EMA."""
+        """Publish the rollout version. The optimizer owns the model step."""
         self.version = global_step
-        self.model.set_global_step(self.update_step, update_ema=False)
 
     def update_buffer_one_epoch(self):
         """Run one replay-buffer update epoch for DAgger."""

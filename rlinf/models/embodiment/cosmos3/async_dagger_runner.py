@@ -23,7 +23,8 @@ class Cosmos3AsyncDAggerRunner(AsyncEmbodiedRunner):
         super().update_rollout_weights(no_wait=no_wait)
 
     def run(self) -> None:
-        # Restore the rollout policy's step before its first weight load.
-        self.rollout.set_global_step(self.global_step).wait()
+        if self.global_step > 0:
+            # Restore the rollout policy's step before loading resumed weights.
+            self.rollout.set_global_step(self.global_step).wait()
         super().run()
         self._finish_run()
