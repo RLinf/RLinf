@@ -18,9 +18,14 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from rlinf.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    import torch
+    from torch import nn
 
 logger = get_logger()
 
@@ -279,3 +284,101 @@ def load_base_safetensors(model, safetensors_path) -> None:
             len(incompatible.missing_keys),
             incompatible.missing_keys[:4],
         )
+
+
+def convert_pi05_weights(
+    state: Mapping[str, torch.Tensor], model: nn.Module
+) -> dict[str, torch.Tensor]:
+    """Convert OpenPI/LeRobot/base RLinf weights into SGLang's fused layout.
+
+    All shards of a fused tensor must be present. Missing backbone tensors are
+    rejected rather than leaving an inference projection uninitialized.
+    Native SGLang RLinf checkpoints already have the target layout.
+    """
+    import torch
+    from sglang.multimodal_gen.runtime.models.vlas.pi05_policy import Pi05PolicyModel
+
+    from rlinf.utils.ckpt_convertor.openpi.openpi_to_openpi_pytorch import (
+        new_to_old_state_dict,
+    )
+
+    state = _normalize_state_dict(state)
+    target = model.state_dict()
+    if any(name.startswith("core_model.") for name in state):
+        return dict(state)
+    if any(name.startswith("llm.") for name in state):
+        converted = new_to_old_state_dict(dict(state))
+        converted.update(
+            {
+                k: v
+                for k, v in state.items()
+                if k.startswith(("value_head.", "noise_head."))
+            }
+        )
+        state = converted
+    direct = {}
+    shards: dict[str, dict[int | str, torch.Tensor]] = {}
+    unexpected = []
+    for source, tensor in state.items():
+        if source.startswith(("value_head.", "noise_head.")):
+            if source in target:
+                direct[source] = tensor
+            continue
+        for candidate, shard in Pi05PolicyModel._candidate_target_weights(source):
+            name = "core_model." + candidate
+            if name not in target:
+                continue
+            if shard is None:
+                direct[name] = tensor
+            else:
+                shards.setdefault(name, {})[shard] = tensor
+            break
+        else:
+            # The action expert's unused language head is absent from Pi0.5.
+            if not source.endswith("gemma_expert.lm_head.weight"):
+                unexpected.append(source)
+    if unexpected:
+        raise ValueError(f"Unmapped Pi0.5 checkpoint tensors: {unexpected[:8]}")
+    for name, parts in shards.items():
+        order = ("q", "k", "v") if ".qkv_proj." in name else (0, 1)
+        if set(parts) != set(order) or name in direct:
+            raise ValueError(
+                f"Incomplete or duplicate fused weight {name}: {tuple(parts)}"
+            )
+        direct[name] = torch.cat([parts[key] for key in order], dim=0)
+    missing = [
+        name for name in target if name.startswith("core_model.") and name not in direct
+    ]
+    if missing:
+        raise ValueError(f"Missing SGLang Pi0.5 backbone weights: {missing[:8]}")
+    for name, tensor in direct.items():
+        if tensor.shape != target[name].shape:
+            raise ValueError(
+                f"Shape mismatch for {name}: {tensor.shape} != {target[name].shape}"
+            )
+    return direct
+
+
+def load_sglang_checkpoint(model: nn.Module, path: pathlib.Path) -> None:
+    """Load base weights or resume a native SGLang RLinf checkpoint."""
+    import torch
+
+    from rlinf.utils.ckpt_convertor.openpi._core import as_state_dict
+
+    path = pathlib.Path(path)
+    if path.name.endswith(".pt"):
+        state = as_state_dict(torch.load(path, map_location="cpu", weights_only=False))
+    else:
+        state = _load_safetensors_state_dict(path)
+    state = convert_pi05_weights(state, model)
+    incompatible = model.load_state_dict(state, strict=False)
+    missing = [
+        key for key in incompatible.missing_keys if key.startswith("core_model.")
+    ]
+    if missing or incompatible.unexpected_keys:
+        raise ValueError(f"Invalid SGLang Pi0.5 checkpoint: {incompatible}")
+    logger.info(
+        "SGLang Pi0.5: loaded %s; initialized heads: %s",
+        path,
+        incompatible.missing_keys,
+    )

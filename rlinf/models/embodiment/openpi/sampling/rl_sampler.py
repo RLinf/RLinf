@@ -63,7 +63,8 @@ def sample_mean_var(
         x_t_std = torch.sqrt(delta) * sigma_i
     elif noise_method == "flow_cps":
         pi = torch.pi
-        level = torch.as_tensor(noise_level, device=device, dtype=x_t.dtype)
+        # Device-side fill keeps the scalar creation CUDA-graph capturable.
+        level = torch.full((), noise_level, device=device, dtype=x_t.dtype)
         cos_term = torch.cos(pi * level / 2)
         sin_term = torch.sin(pi * level / 2)
         x0_weight = torch.ones_like(t_input) - (t_input - delta)

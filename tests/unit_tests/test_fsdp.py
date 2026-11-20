@@ -1051,6 +1051,94 @@ def test_sharded_retained_gradient_dtype(tmp_path):
     )
 
 
+@pytest.mark.skipif(Worker.torch_device_type != "cuda", reason="Requires NVIDIA CUDA")
+def test_actor_graph_accumulates_gradients_and_observes_optimizer_updates(tmp_path):
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import ShardingStrategy
+
+    from rlinf.hybrid_engines.fsdp.actor_graph import FSDPActorGraph
+
+    if dist.is_initialized():
+        pytest.skip("Test requires its own process group")
+    dist.init_process_group(
+        "nccl", init_method=f"file://{tmp_path / 'actor-graph'}", rank=0, world_size=1
+    )
+    runner = None
+    try:
+        torch.manual_seed(18)
+        network = nn.Sequential(nn.Linear(16, 32), nn.SiLU(), nn.Linear(32, 4)).to(
+            "cuda"
+        )
+        network[0] = FSDP(
+            network[0],
+            device_id=0,
+            use_orig_params=True,
+            sharding_strategy=ShardingStrategy.NO_SHARD,
+        )
+        model = FSDP(
+            network,
+            device_id=0,
+            use_orig_params=True,
+            sharding_strategy=ShardingStrategy.NO_SHARD,
+        )
+        inputs = [torch.randn(2, 16, device="cuda") for _ in range(2)]
+        targets = [torch.randn(2, 4, device="cuda") for _ in range(2)]
+        expected_outputs = []
+        for x, target in zip(inputs, targets, strict=True):
+            output = model(x)
+            expected_outputs.append(output.detach().clone())
+            (output - target).square().mean().backward()
+        expected_grads = [p.grad.clone() for p in model.parameters()]
+        model.zero_grad(set_to_none=True)
+        runner = FSDPActorGraph(model)
+        for x, target, expected in zip(inputs, targets, expected_outputs, strict=True):
+            output = runner.forward(
+                lambda data: {"prediction": model(data["x"])}, {"x": x}
+            )
+            torch.testing.assert_close(output["prediction"], expected)
+            (output["prediction"] - target).square().mean().backward()
+            runner.backward(output)
+        for param, expected in zip(model.parameters(), expected_grads, strict=True):
+            torch.testing.assert_close(param.grad, expected)
+        assert (
+            runner.captures == 1
+            and runner.forward_replays == runner.backward_replays == 2
+        )
+        optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=False)
+        output = runner.forward(
+            lambda data: {"prediction": model(data["x"])}, {"x": inputs[0]}
+        )
+        output["prediction"].sum().backward()
+        runner.backward(output)
+        changed = output["prediction"].detach().clone()
+        updated_grads = [p.grad.clone() for p in model.parameters()]
+        runner.clear()
+        optimizer.zero_grad(set_to_none=True)
+        reference = model(inputs[0])
+        reference.sum().backward()
+        torch.testing.assert_close(changed, reference)
+        assert not torch.equal(changed, expected_outputs[0])
+        for param, expected in zip(model.parameters(), updated_grads, strict=True):
+            torch.testing.assert_close(param.grad, expected)
+        # A new training call captures again, even when weights stay resident.
+        model.zero_grad(set_to_none=True)
+        output = runner.forward(
+            lambda data: {"prediction": model(data["x"])}, {"x": inputs[0]}
+        )
+        output["prediction"].sum().backward()
+        runner.backward(output)
+        torch.testing.assert_close(output["prediction"], reference)
+        for param, expected in zip(model.parameters(), updated_grads, strict=True):
+            torch.testing.assert_close(param.grad, expected)
+        assert runner.captures == 2
+    finally:
+        if runner is not None:
+            runner.clear()
+        dist.destroy_process_group()
+
+
 @pytest.mark.parametrize("embed_precision", [None, "bf16"])
 def test_openpi_factory_separates_parameter_and_activation_dtypes(
     tmp_path, monkeypatch, embed_precision

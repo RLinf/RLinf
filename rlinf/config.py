@@ -1221,6 +1221,12 @@ def validate_embodied_cfg(cfg):
     if not only_eval and algorithm_cfg.get("loss_type") == "embodied_refl":
         validate_refl_cfg(cfg)
     model_type = SupportedModel(model_cfg.model_type)
+    if model_type == SupportedModel.OPENPI:
+        from rlinf.models.embodiment.openpi.sglang_config import (
+            validate_sglang_pi05_cfg,
+        )
+
+        validate_sglang_pi05_cfg(cfg, only_eval=only_eval)
     assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
         f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
