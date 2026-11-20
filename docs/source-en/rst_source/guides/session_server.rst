@@ -373,11 +373,12 @@ session that is already open:
 
 
    class MyChatAgentLoopWorker(MultiAgentLoopWorker):
-       async def run_session_trajectory(self, binding, input_dict, answer):
+       async def run_session_trajectory(self, binding, input_ids, answer):
            base_url = self.session_server_client.session_base_url(
                binding.group_id, binding.session_id
            )
-           messages = build_messages(input_dict)  # your prompt
+           prompt = self.tokenizer.decode(input_ids, skip_special_tokens=True)
+           messages = build_messages(prompt)  # your prompt
            message = None
            num_responses = 0
            async with AsyncOpenAI(
@@ -412,6 +413,11 @@ session that is already open:
            }
            return None, close_fields, reward
 
+``input_ids`` holds the token ids of the dataset prompt, with the chat
+template already applied. Decoded without special tokens, the text still
+holds the template's role lines, such as ``system`` and ``user``, so
+``build_messages`` takes the task out of it before building the messages.
+
 Launch this class in your entry script instead of the agent loop that sends
 token ids, the way ``examples/agent/searchr1/train.py`` launches the Search-R1
 agent loop.
@@ -440,6 +446,8 @@ three ways:
   used the previous answer. The server rolls the conversation back to before
   that turn. The abandoned turn stays in the payload but is not trained.
 - **Rewrite.** Any other request is rendered in full from its messages.
+  For example, an agent that shortens or edits an earlier answer to save
+  context sends such a request.
   ``prefix_rewritten`` counts these requests, and their data is trained as
   usual.
 

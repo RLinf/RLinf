@@ -264,11 +264,12 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
 
 
    class MyChatAgentLoopWorker(MultiAgentLoopWorker):
-       async def run_session_trajectory(self, binding, input_dict, answer):
+       async def run_session_trajectory(self, binding, input_ids, answer):
            base_url = self.session_server_client.session_base_url(
                binding.group_id, binding.session_id
            )
-           messages = build_messages(input_dict)  # 你的 prompt
+           prompt = self.tokenizer.decode(input_ids, skip_special_tokens=True)
+           messages = build_messages(prompt)  # 你的 prompt
            message = None
            num_responses = 0
            async with AsyncOpenAI(
@@ -303,6 +304,8 @@ session server 每一步都在 ``rollout/session_server/`` 下上报指标。计
            }
            return None, close_fields, reward
 
+``input_ids`` 是数据集 prompt 的 token id，已经套过 chat 模板。去掉特殊 token 解码后，文字里仍有模板的角色行（如 ``system``、``user``），所以 ``build_messages`` 要先从中取出任务，再构造消息。
+
 在入口脚本里启动这个类，替换原来发送 token id 的 agent loop，写法参照 ``examples/agent/searchr1/train.py`` 启动 Search-R1 agent loop 的方式。``algorithm.loss_scales`` 里包含 ``agent_level`` 时需要 ``idx_to_sub_traj``。
 
 客户端要设置 ``max_retries=0``：重发的请求会被重新采样，两次回答只有一次参与训练。
@@ -313,7 +316,7 @@ session server 会复用之前各轮的 token：一轮的 prompt 是上一轮的
 
 - **接续**：请求以已保存的对话开头，后面追加 tool 或 user 消息。只渲染新消息，因此前缀缓存仍能命中。如果 ``clear_thinking`` 为 true，新增 user 消息时会重新渲染整段对话，因为此时模板会去掉之前各轮的思考内容。
 - **重发**：请求与上一次请求相同，说明 agent 没有用到上一轮的回答。session server 把对话回退到那一轮之前。被放弃的那一轮仍留在 payload 中，但不参与训练。
-- **改写**：其他请求按其中的完整消息重新渲染。``prefix_rewritten`` 会统计这类请求，它们的数据照常参与训练。
+- **改写**：其他请求按其中的完整消息重新渲染。例如 agent 为了节省上下文截短或修改了之前的回答，就会发出这类请求。``prefix_rewritten`` 会统计这类请求，它们的数据照常参与训练。
 
 session server 保存一份自己的对话记录。每个请求都与这份记录比对，请求内容不会覆盖这份记录。如果请求里 assistant 消息的 ``reasoning_content`` 缺失或为空，session server 沿用自己记录中的内容。因此，即使客户端从历史中去掉了思考内容，对话也能接续。
 
