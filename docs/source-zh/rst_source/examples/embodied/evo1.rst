@@ -127,11 +127,11 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 ~~~~~~~~
 
 * **SFT（监督微调）**：
-  ``examples/sft/config/libero_sft_evo1.yaml``（用 ``examples/sft/run_vla_sft.sh`` 运行）
+  ``examples/sft/config/libero_sft_evo1.yaml``\ （用 ``examples/sft/run_vla_sft.sh`` 运行）
 * **GRPO（强化学习）**：
   ``examples/embodiment/config/libero_spatial_grpo_evo1.yaml``
 * **独立评测**：
-  ``evaluations/libero/libero_spatial_evo1_eval.yaml``（用 ``evaluations/run_eval.sh`` 运行）
+  ``evaluations/libero/libero_spatial_evo1_eval.yaml``\ （用 ``evaluations/run_eval.sh`` 运行）
 
 关键配置片段（GRPO）
 ^^^^^^^^^^^^^^^^^^^^
@@ -166,6 +166,18 @@ SDE 采样与 GRPO 的核心参数。
       clip_ratio_low: 0.2
       clip_ratio_high: 0.28          # clip-higher：持续改进
 
+当动作头的算子下发成为 rollout 瓶颈时，可以为训练 rollout 中的确定性计算启用 graph。让 rollout 模型常驻设备，可以在后续调用中复用已捕获的 graph：
+
+.. code-block:: yaml
+
+    rollout:
+      enable_cuda_graph: True
+      enable_offload: False
+
+CUDA 和 Ascend 均按实际输入的 shape 和 dtype 延迟捕获 graph，原地更新权重后，replay 会使用新权重。模型卸载时会释放 graph；重新加载后，再根据下一次 rollout 的输入捕获。
+
+Ascend 上的大 batch 可能在冻结的 InternVL 视觉 attention 中耗尽显存。将 ``actor.model.evo1.vision_attention_batch_size`` 设为 ``8``，可以让 attention 矩阵每次最多计算八帧相机图像。该参数默认为 ``0``，沿用原 attention；仅适用于昇腾上未启用 dropout 的冻结视觉 attention。分批计算减少了临时显存，但会增加算子下发次数，需要结合实际 rollout batch 测量吞吐。
+
 启动命令
 ~~~~~~~~
 
@@ -174,7 +186,7 @@ SDE 采样与 GRPO 的核心参数。
     export ROBOT_PLATFORM="LIBERO"
     bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
 
-若你自行 clone 了 Evo-1 仓库，请把 ``actor.model.evo1.repo_path``（或环境变量
+若你自行 clone 了 Evo-1 仓库，请把 ``actor.model.evo1.repo_path``\ （或环境变量
 ``EVO1_REPO_PATH``）指向仓库根目录。
 
 如需快速复现单任务上的 RL 效果，可用 ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``

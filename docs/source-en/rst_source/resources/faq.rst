@@ -276,3 +276,32 @@ compatibility, try **triton**:
 
    rollout:
      attention_backend: triton
+
+Worker Aborts While Creating a Process Group
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptom:** A worker exits while it connects to a new peer. The first native
+error in its log is:
+
+.. code-block:: text
+
+   pybind11_object_dealloc(): Tried to deallocate unregistered instance!
+
+The process then receives ``SIGABRT``, and the driver only reports that the
+actor died.
+
+**Likely Cause:** Before PyTorch 2.7, several ``torch.distributed``
+constructors, including the Gloo backend and ``TCPStore``, register their new
+Python object without holding the GIL. RLinf creates the process groups for
+different peers on separate threads, so two registrations can overlap and
+corrupt pybind11's table of live objects. The BEHAVIOR install (PyTorch 2.5.1)
+and the default Ascend install (PyTorch 2.6.0) are affected.
+
+**Fix:** On these versions RLinf creates Gloo backends and process-group
+options through constructors that register under the GIL, so Gloo groups no
+longer trigger the race. ``TCPStore`` and the debug wrapper enabled by
+``TORCH_DISTRIBUTED_DEBUG=DETAIL`` have no such constructor. ``TCPStore`` is
+created once per collective group, so a rare abort is still possible. Use
+PyTorch 2.7 or later where the rest of the stack allows it. When reporting a
+failure, include the PyTorch version and the first native stack trace; Ray's
+``actor died`` message does not identify the cause.

@@ -136,7 +136,7 @@ c. 安装 gim_arm_control SDK
 
 **构建依赖**：``scikit-build-core>=0.5``、``nanobind>=2.0``、C++17 编译器（GCC >= 7 或 Clang >= 5）。
 
-**运行依赖**：``numpy``、``pinocchio``（以 ``pin`` 名称导入）。
+**运行依赖**：``numpy``、``pinocchio``\ （以 ``pin`` 名称导入）。
 
 .. note::
 
@@ -199,7 +199,7 @@ CAN 总线需要在使用机械臂之前完成初始化。
 
   校准必须在机械臂处于机械零位时进行。
   错误的校准会导致机械臂执行意料之外的动作。
-  该操作依赖 ``can-utils``（使用 ``sudo apt install can-utils`` 安装）。
+  该操作依赖 ``can-utils``\ （使用 ``sudo apt install can-utils`` 安装）。
 
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

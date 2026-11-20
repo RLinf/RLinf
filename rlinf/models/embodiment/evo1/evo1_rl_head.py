@@ -35,7 +35,7 @@ data (t=1), and the head predicts a velocity ``v_t`` such that the Euler step is
 from __future__ import annotations
 
 import random
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 import torch
 
@@ -131,6 +131,8 @@ def flow_velocity(
     idx,
     denoise_steps: int,
     embodiment_id: torch.Tensor,
+    *,
+    head_forward: Callable | None = None,
 ) -> torch.Tensor:
     """Predict the flow velocity ``v_t`` at denoise step ``idx``.
 
@@ -140,8 +142,6 @@ def flow_velocity(
     """
     bsz = context_tokens.shape[0]
     device = context_tokens.device
-    horizon = action_head.horizon
-    per_dim = action_head.per_action_dim
     target_dtype = action_head.dtype
 
     # Continuous time -> sinusoidal time embedding, matching get_action:
@@ -160,6 +160,22 @@ def flow_velocity(
     action_tokens = action_head._project_actions(x_t, embodiment_id)
     action_tokens = action_tokens.to(dtype=target_dtype)
     context_tokens = context_tokens.to(dtype=target_dtype)
+
+    forward = head_forward or flow_velocity_from_embeddings
+    return forward(action_head, context_tokens, action_tokens, time_emb, embodiment_id)
+
+
+def flow_velocity_from_embeddings(
+    action_head,
+    context_tokens: torch.Tensor,
+    action_tokens: torch.Tensor,
+    time_emb: torch.Tensor,
+    embodiment_id: torch.Tensor,
+) -> torch.Tensor:
+    """Predict ``[B, H, per_dim]`` velocities from prepared head embeddings."""
+    bsz = context_tokens.shape[0]
+    horizon = action_head.horizon
+    per_dim = action_head.per_action_dim
 
     x = action_tokens
     for block in action_head.transformer_blocks:
@@ -241,6 +257,8 @@ def rl_denoise_sample(
     denoise_steps: int,
     rl_cfg: Any,
     mode: Literal["train", "eval"] = "train",
+    *,
+    head_forward: Callable | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Run the SDE denoising loop and record the trajectory.
 
@@ -282,19 +300,26 @@ def rl_denoise_sample(
     # across the batch and repeated across the step axis.
     if mode == "train":
         if joint:
-            denoise_inds = torch.arange(num)
+            step_indices = list(range(num))
         else:
             hi = num - 2 if ignore_last else num - 1
             hi = max(hi, 0)
-            denoise_inds = torch.tensor([random.randint(0, hi)] * num)
+            step_indices = [random.randint(0, hi)] * num
     else:
-        denoise_inds = torch.tensor([-1] * num)
+        step_indices = [-1] * num
+    denoise_inds = torch.tensor(step_indices)
     denoise_inds = denoise_inds[None].repeat(bsz, 1).to(device)
 
     for idx in range(num):
-        step_mode = "train" if idx == int(denoise_inds[0][idx].item()) else "eval"
+        step_mode = "train" if idx == step_indices[idx] else "eval"
         v_t = flow_velocity(
-            action_head, context_tokens, x_t * action_mask_3d, idx, num, embodiment_id
+            action_head,
+            context_tokens,
+            x_t * action_mask_3d,
+            idx,
+            num,
+            embodiment_id,
+            head_forward=head_forward,
         )
         x_t_mean, x_t_std = flow_sde_mean_std(
             x_t, v_t, idx, num, noise_level, step_mode

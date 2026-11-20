@@ -13,7 +13,7 @@ REINFORCE++
 * **单响应训练** (`group_size = 1`)：每个 prompt 只采样一个答案。  
 * **逐 token KL 惩罚** （默认 *k₂*）：KL 不作为额外损失项加入，而是从标量奖励中扣除。  
 * **全局优势归一化**：在整个 batch 上进行归一化。  
-* **REINFORCE++ 基线**：当 `group_size > 1` 时，使用每个 prompt 内的平均奖励作为基线，*然后* 再进行全局归一化。  
+* **REINFORCE++ 基线** （`use_reinpp_baseline: True`，要求 `group_size > 1`）：使用每个 prompt 内的平均奖励作为基线，*然后* 再进行全局归一化。
 
 2. 目标函数
 ----------------------
@@ -76,6 +76,7 @@ REINFORCE++ 基线
 
    algorithm:
      adv_type:      "reinpp"
+     use_reinpp_baseline: True     # 减去组内平均奖励
      group_size:    16             # 每个 prompt 多个响应
      kl_beta:       0.0001
 

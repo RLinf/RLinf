@@ -43,9 +43,9 @@ data:
   dataset_type: sft
 
   camera_keys:
-    - observation.images.global
-    - observation.images.right
-    - observation.images.wrist
+    - face_view
+    - left_wrist_view
+    - right_wrist_view
 
   k: 32
   # false = train on all episodes (success + failure); true = keep only
@@ -71,7 +71,9 @@ actor:
   seed: 0
 
   model:
-    precision: bf16
+    # Keep fp32 master parameters while FSDP uses bf16 for forward passes.
+    # Loading the backbone itself in bf16 can destabilize Adam moments.
+    precision: fp32
     fusion_hidden_dim: 512
     dropout: 0.1
     label_smoothing: 0.05
@@ -86,7 +88,7 @@ actor:
     max_state_dim: 32
     state_discretization_bins: 256
     max_token_len: 200
-    ensemble_size: 1
+    ensemble_size: 3
     ensemble_head_seed_base: 0
     use_gradient_checkpointing: true
 

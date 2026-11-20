@@ -58,6 +58,7 @@ def posemb_sincos(
     embedding_dim: int,
     min_period: float = 4e-3,
     max_period: float = 4.0,
+    pytorch_numerics: bool = False,
 ) -> torch.Tensor:
     """Sine-cosine positional embedding for scalar positions.
 
@@ -72,7 +73,11 @@ def posemb_sincos(
         raise ValueError(f"embedding_dim ({embedding_dim}) must be divisible by 2")
 
     fraction = torch.linspace(
-        0.0, 1.0, embedding_dim // 2, device=pos.device, dtype=torch.float32
+        0.0,
+        1.0,
+        embedding_dim // 2,
+        device=pos.device,
+        dtype=torch.float64 if pytorch_numerics else torch.float32,
     )
     period = min_period * (max_period / min_period) ** fraction
     sinusoid_input = torch.einsum("i,j->ij", pos.float(), 1.0 / period * 2 * torch.pi)
@@ -115,6 +120,7 @@ class Pi0(model.BaseModel):
             embed_dtype=config.dtype,
             adarms=adarms,
             use_gradient_checkpointing=False,
+            pytorch_numerics=config.pytorch_numerics,
         )
 
         # SigLIP vision encoder
@@ -123,7 +129,14 @@ class Pi0(model.BaseModel):
             pool_type="none",
             num_classes=paligemma_config.width,
             use_gradient_checkpointing=False,
+            pytorch_numerics=config.pytorch_numerics,
             dtype_mm=config.dtype,
+            temporal_layers=(
+                config.short_memory_temporal_layers if config.short_memory else ()
+            ),
+            drop_history_layer=(
+                config.short_memory_drop_history_layer if config.short_memory else None
+            ),
         )
 
         action_expert_width = action_expert_config.width
@@ -207,15 +220,39 @@ class Pi0(model.BaseModel):
         # concatenates ``list(observation.images.values())``.
         image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
         image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
+        current_only_by_camera = {}
+        if self._config.short_memory:
+            history_names = [
+                name
+                for name in image_names
+                if obs.images[name].ndim == 5 and obs.images[name].shape[1] > 1
+            ]
+            if history_names:
+                # Transfer all camera decisions together instead of syncing per camera.
+                current_only = torch.stack(
+                    [
+                        (obs.image_masks[name].sum(dim=1) <= 1).all()
+                        for name in history_names
+                    ]
+                ).tolist()
+                current_only_by_camera = dict(zip(history_names, current_only))
         for name in image_names:
-            image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
+            image_mask = obs.image_masks[name]
+            if self._config.short_memory:
+                image_tokens, _ = self.img(
+                    obs.images[name],
+                    frame_mask=image_mask,
+                    time_offsets=obs.history_time_offsets,
+                    current_only=current_only_by_camera.get(name),
+                )
+                image_mask = image_mask[:, -1]
+            else:
+                image_tokens, _ = self.img(obs.images[name])
             tokens.append(image_tokens)
 
             # Image tokens use bidirectional attention
             input_mask.append(
-                einops.repeat(
-                    obs.image_masks[name], "b -> b s", s=image_tokens.shape[1]
-                )
+                einops.repeat(image_mask, "b -> b s", s=image_tokens.shape[1])
             )
             ar_mask += [False] * image_tokens.shape[1]
 
@@ -290,7 +327,11 @@ class Pi0(model.BaseModel):
 
         # Time embedding
         time_emb = posemb_sincos(
-            timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0
+            timestep,
+            self.action_in_proj.out_features,
+            min_period=4e-3,
+            max_period=4.0,
+            pytorch_numerics=self._config.pytorch_numerics,
         )
 
         if self.pi05:
@@ -401,6 +442,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            return_prefix=False,
         )[0]
 
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
@@ -552,10 +594,17 @@ class Pi0(model.BaseModel):
 
         x_t = noise
         t = 1.0
+        if self._config.pytorch_numerics:
+            t = torch.tensor(t, device=device, dtype=torch.float32)
+            dt = torch.tensor(dt, device=device, dtype=torch.float32)
 
         # Euler integration
         while t >= -dt / 2:
-            t_tensor = torch.full((B,), t, device=device, dtype=torch.float32)
+            t_tensor = (
+                t.expand(B)
+                if self._config.pytorch_numerics
+                else torch.full((B,), t, device=device, dtype=torch.float32)
+            )
             suffix_out_act = self.run_suffix(
                 observation, x_t, t_tensor, kv_cache, prefix_mask
             )
@@ -733,6 +782,7 @@ class Pi0(model.BaseModel):
             token_ar_mask=_move(observation.token_ar_mask),
             token_loss_mask=_move(observation.token_loss_mask),
             pcd_xyz=_move(observation.pcd_xyz),
+            history_time_offsets=_move(observation.history_time_offsets),
         )
 
     def _actions_to_device(self, actions: Any) -> torch.Tensor:
@@ -813,6 +863,7 @@ class Pi0(model.BaseModel):
             positions=positions,
             mask=attn_mask,
             adarms_cond=[None, adarms_cond],
+            prefix_requires_grad=False,
         )[0]
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
         loss = torch.square(v_t - u_t)
@@ -826,8 +877,6 @@ class Pi0(model.BaseModel):
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Flow-matching SFT loss. Shared by SFT, DAgger, and PPO co-train."""
         del kwargs
-        if hasattr(self, "gradient_checkpointing_disable"):
-            self.gradient_checkpointing_disable()
         observation, actions = self._unpack_sft_batch(data)
         observation = self._observation_to_device(observation)
         actions = self._actions_to_device(actions)

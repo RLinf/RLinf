@@ -145,6 +145,13 @@ class RealWorldEnv(gym.Env):
             self.env.call("get_wrapper_attr", "task_description")
         )
 
+    def close(self) -> None:
+        """Close the vector env and its physical robot/camera resources."""
+        if getattr(self, "_closed", False):
+            return
+        self.env.close()
+        self._closed = True
+
     def get_hold_actions(
         self, fallback_actions: np.ndarray | None = None
     ) -> np.ndarray:
@@ -329,6 +336,10 @@ class RealWorldEnv(gym.Env):
             timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         if not self.manual_episode_control_only:
             truncations = timeout_truncations
+        if "fault_truncated" in infos:
+            truncations = np.logical_or(
+                truncations, np.asarray(infos["fault_truncated"], dtype=bool)
+            )
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)

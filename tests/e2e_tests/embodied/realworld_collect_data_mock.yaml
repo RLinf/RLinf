@@ -43,7 +43,7 @@ runner:
     log_path: /workspace/results/realworld_collect_data_mock
     project_name: rlinf
     experiment_name: "ci-test"
-    logger_backends: ["tensorboard"]
+    logger_backends: null
   num_data_episodes: 1
   record_task_description: False
 
@@ -65,8 +65,8 @@ env:
       enable_camera_player: False
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
+      save_dir: ${runner.logger.log_path}
+      export_format: [replay_buffer, pickle_episode]
       only_success: True
       robot_type: "panda"
       fps: 10

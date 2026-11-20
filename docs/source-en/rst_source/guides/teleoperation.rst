@@ -41,7 +41,8 @@ calibration. For a single matching device, set its name:
      - ``left_gello_port`` / ``right_gello_port``
    * - ``pico``
      - Uses a handheld VR controller whose grip marks when it is driving; one
-       entry per arm on a two-armed robot.
+       entry per arm on a two-armed robot. An arm that takes joint positions
+       is reached through the env's inverse kinematics.
      - ``pico:`` block
    * - ``glove``
      - Bends the fingers of a dexterous hand, alongside a device on the arm.
@@ -296,14 +297,21 @@ what the robot can accept:
 ``drives`` branch without changing other instances. Validate these keys here; a
 misspelled hardware option should not be silently ignored. ``facts`` describes
 the env's action layout and semantics -- notably whether an arm takes an
-absolute pose or a delta -- so a device can adapt without importing a concrete
-env class.
+absolute pose, a delta, or joint positions, and for a joint arm the env's
+``arm_kinematics`` -- so a device can adapt without importing a concrete env
+class.
 
 Override ``streamer()`` only for a device that also commands the robot on its
 own thread; the default returns nothing, which is what every device but
 ``gello_joint`` wants. See :ref:`When the Rate Is the Problem <teleop-rate>`.
 The builder creates every entry before it creates any streamer, so a streamer
 may take over devices it did not construct itself.
+
+Override ``interlock()`` when the arms a device drives must stop together. The
+builder calls it once every entry exists. The check it returns runs after every
+entry has mapped its reading and before the action is sent, so it can hold an
+arm whose partner faulted later in the same tick. ``pico`` returns one when it
+drives two or more arms through joint positions.
 
 Then list the registered name in the env's ``TELEOP`` tuple. This declaration
 states that the env can represent the device's action; it does not register the

@@ -50,6 +50,8 @@ The VR data publisher is not launched by RLinf directly. It first reads
 headset and controller data from PICO / XRoboToolkit, then publishes the data
 to ZeroMQ.
 
+.. _pico-software-setup:
+
 1. Prepare PICO / XRoboToolkit
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -64,7 +66,7 @@ publisher:
   The PC Service packages currently provided on the release page only cover
   Ubuntu 22.04 and Ubuntu 24.04, so install it on one of those OS versions;
   other OS versions require local adaptation.
-- Ensure that the publisher machine is on the same network as the Franka
+- Ensure that the publisher machine is on the same network as the robot
   controller node, or that it runs on the same machine as the RLinf env worker.
 
 Before connecting the PICO headset, start the XRoboToolkit PC Service on the
@@ -115,6 +117,8 @@ publisher machine is working:
 
 If the connection is successful, moving the PICO headset and controllers
 should show a continuously changing data stream in the terminal.
+
+.. _pico-publisher-setup:
 
 Before starting the VR data publisher, configure the publisher-side ZeroMQ
 address in ``pico_software/configs/vr_bridge.yaml``.

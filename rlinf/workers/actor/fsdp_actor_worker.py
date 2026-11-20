@@ -24,9 +24,11 @@ from torch.multiprocessing.reductions import reduce_tensor
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import (
+    apply_importance_sampling_correction,
     kl_penalty,
 )
 from rlinf.config import torch_dtype_from_precision
+from rlinf.data.schema.actor_batch import DynamicActorBatch, TokenRows
 from rlinf.data.schema.reasoning_results import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.fsdp.utils import (
@@ -69,18 +71,21 @@ from rlinf.utils.utils import (
     masked_mean,
     retrieve_model_state_dict_in_cpu,
 )
-from rlinf.workers.rollout.utils import RankMapper
+from rlinf.workers.rollout.utils import (
+    RankMapper,
+    instance_ids_to_entry_process_ranks,
+)
 
 
 def compute_rollout_train_kl(
-    m_batch: dict, loss_mask: torch.Tensor
+    m_batch: dict, loss_mask: torch.Tensor | TokenRows
 ) -> Optional[torch.Tensor]:
     """
     Compute the masked mean of absolute difference between rollout and training logprobs.
 
     Args:
         m_batch: Dictionary containing 'rollout_logprobs' and 'recomputed_logprobs'.
-        loss_mask: Mask tensor for computing weighted mean.
+        loss_mask: A dense mask or real-length mask rows for the weighted mean.
 
     Returns:
         Masked mean of abs(recomputed_logprobs - rollout_logprobs), or None if keys are missing.
@@ -89,6 +94,10 @@ def compute_rollout_train_kl(
         return None
     rollout_logprobs = m_batch["rollout_logprobs"]
     recomputed_logprobs = m_batch["recomputed_logprobs"]
+    if isinstance(loss_mask, list):
+        loss_mask = torch.cat(loss_mask)
+        rollout_logprobs = torch.cat(rollout_logprobs)
+        recomputed_logprobs = torch.cat(recomputed_logprobs)
     kl = torch.abs(recomputed_logprobs - rollout_logprobs)
     return masked_mean(kl, loss_mask)
 
@@ -192,11 +201,18 @@ class FSDPActor(FSDPModelManager, Worker):
         self._setup_rollout_weight_dst_ranks()
 
     def _setup_rollout_weight_dst_ranks(self) -> None:
-        """Setup destination ranks for token and weight communication."""
+        """Setup destination ranks for token and weight communication.
+
+        RankMapper's ``(engine_id, rank_in_engine)`` is converted into
+        ``(entry process rank, rank_in_engine)``: scheduler
+        child workers register under the instance's entry process.
+        """
         rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
             self._component_placement
         )
-        self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        self._weight_dst_rank_in_rollout = instance_ids_to_entry_process_ranks(
+            rank_map[self._rank], self._component_placement
+        )
         self.log_info(
             f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
         )
@@ -706,11 +722,11 @@ class FSDPActor(FSDPModelManager, Worker):
                 raise ValueError(
                     "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
                 )
-            rollout_logprobs = m_batch["rollout_logprobs"]
-            recomputed_logprobs = m_batch["recomputed_logprobs"]
-            advantages = advantages * torch.clamp(
-                (recomputed_logprobs - rollout_logprobs).exp(),
-                max=self.cfg.algorithm.importance_sampling_clip,
+            advantages, _, _ = apply_importance_sampling_correction(
+                advantages,
+                m_batch["recomputed_logprobs"],
+                m_batch["rollout_logprobs"],
+                self.cfg.algorithm.importance_sampling_clip,
             )
 
         loss, mbs_metrics_data = policy_loss(
@@ -760,10 +776,10 @@ class FSDPActor(FSDPModelManager, Worker):
 
     @Worker.timer("training_step")
     def training_step(
-        self, batch: dict[str, torch.Tensor] | BatchResizingIterator
+        self, batch: DynamicActorBatch | dict[str, torch.Tensor] | BatchResizingIterator
     ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
         if isinstance(batch, dict):
-            global_batch_size = batch["input_ids"].shape[0]
+            global_batch_size = len(batch["input_ids"])
             assert global_batch_size % self.micro_batch_size == 0, (
                 f"global batch size {global_batch_size} can not divide micro_batch_size {self.micro_batch_size}"
             )

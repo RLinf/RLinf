@@ -195,6 +195,76 @@ same as OpenPI, but it is recommended to guarantee two things: first,
 second, ``default_forward`` should output at least the fields actually required
 by the training algorithm, such as ``logprobs``, ``values``, and ``entropy``.
 
+.. _refl-model-interface:
+
+Train from Differentiable Rewards
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ReFL connects a model that generates differentiable samples to a scorer that
+rewards each sample. Reward gradients pass through the samples to the model's
+trainable parameters.
+
+Implement ``refl_forward(forward_inputs, xt_source="rollout", **kwargs)`` and
+return a dict containing ``samples``, a tensor with the batch dimension first.
+The model handles state sampling, time units, noising, and decoding; its sample
+layout must match the scorer. ``BasePolicy.forward`` calls this method for
+``ForwardType.REFL``. A custom ``forward`` must support the same dispatch.
+
+The actor reads ``xt_source`` from ``algorithm.refl_xt_source``. Return
+``forward_inputs`` alongside ``samples`` to set the scorer context; the default
+is the original input. ``scorer(samples, forward_inputs)`` returns rewards of
+shape ``[B]``, with higher values preferred. Freeze the scorer's parameters and
+preserve gradients through its input samples.
+
+SD3 takes ``forward_inputs={"prompts": prompts}``, where ``prompts`` is a list
+of strings. It samples with its current weights and passes the raw prompts to
+the ImageReward scorer for tokenization. To supply an existing state, pass
+``x_t`` and ``timesteps`` in ``refl_inputs``, and ``prompt_embeds`` and
+``pooled_prompt_embeds`` in ``forward_inputs``. SD3 uses times in ``[0, 1]``,
+with 0 for data and 1 for noise.
+
+Register a scorer builder with ``register_refl_scorer`` and select it through
+``actor.refl_reward_model.type``. The builder receives the full
+``actor.refl_reward_model`` config and the actor device, and returns a scorer.
+Save this extension module as ``my_refl_ext.py`` to register ImageReward:
+
+.. code-block:: python
+
+   # my_refl_ext.py
+   from rlinf.algorithms.refl_scorers import register_refl_scorer
+
+
+   def build_image_scorer(cfg, device):
+       from rlinf.envs.sim.diffusion.rewards.visual.image_reward import ImageRewardScorer
+
+       return ImageRewardScorer.from_config(cfg, device)
+
+
+   def register():
+       register_refl_scorer("custom_image_reward", build_image_scorer)
+
+Prepare the models, data, and launch-argument array from the
+:doc:`SD3 recipe </rst_source/examples/embodied/refl>`. Replace ``<ext_dir>``
+with the directory containing ``my_refl_ext.py`` and launch training:
+
+.. code-block:: bash
+
+   export PYTHONPATH="<ext_dir>:$PYTHONPATH"
+   export RLINF_EXT_MODULE=my_refl_ext
+   bash examples/diffusion/run_diffusion.sh sd3_refl_imagereward \
+     "${REFL_ARGS[@]}" \
+     actor.refl_reward_model.type=custom_image_reward
+
+Each worker imports ``RLINF_EXT_MODULE`` and calls ``register()``. To use your
+own scorer, change how the builder constructs it.
+
+Add tests for reward shape, frozen parameters, and gradients back to the samples
+to ``tests/unit_tests/test_diffusion.py``:
+
+.. code-block:: bash
+
+   pytest tests/unit_tests/test_diffusion.py -k scorer
+
 3. Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -304,3 +374,120 @@ load it inside ``build_my_model`` before returning the model instance.
   wrapping as expected. Otherwise, you may encounter degraded training
   performance, unreasonable memory usage, or modules that are not sharded
   correctly.
+
+Per-Wrapper Mixed Precision (FSDP1)
+----------------------------------------
+
+Use ``mixed_precision`` as the global default MP policy. Select wrappers in
+``wrappers``, define their MP policies in ``mixed_precision_policies``, and bind
+the names in ``mixed_precision_rules`` to override that default. This Pi05
+example keeps sensitive modules in FP32 while using BF16 elsewhere:
+
+For OpenPI, set ``actor.model.precision: fp32`` for original parameters and
+``actor.model.openpi.embed_dtype: bf16`` for backbone activations and residuals.
+
+.. code-block:: yaml
+
+   fsdp_config:
+     strategy: fsdp
+     sharding_strategy: no_shard
+     use_orig_params: true
+     mixed_precision:
+       param_dtype: bf16
+       reduce_dtype: fp32
+       buffer_dtype: fp32
+       cast_forward_inputs: false
+       cast_root_forward_inputs: false
+     wrappers:
+       projections:
+         wrap_names: [action_in_proj, action_out_proj, time_mlp_in, time_mlp_out]
+       norms:
+         module_classes: [RMSNorm]
+       vision_embedding:
+         module_names: [img, img.stem]
+       vision_mlps:
+         module_names: ["img.encoder.layers.*.mlp"]
+         wrap_mode: subtree
+     mixed_precision_policies:
+       fp32:
+         param_dtype: fp32
+         reduce_dtype: fp32
+         buffer_dtype: fp32
+         cast_forward_inputs: true
+       fp32_preserve_inputs:
+         param_dtype: fp32
+         reduce_dtype: fp32
+         buffer_dtype: fp32
+         cast_forward_inputs: false
+     mixed_precision_rules:
+       projections: fp32
+       norms: fp32_preserve_inputs
+       vision_embedding: fp32_preserve_inputs
+       vision_mlps: fp32
+     amp_autocast:
+       enabled: false
+
+Choose one selector per wrapper: ``module_names`` matches exact module paths
+or globs such as ``img.encoder.layers.*.mlp``; ``module_classes`` accepts short or qualified Python
+class names, using the same resolver as ``wrap_policy.module_classes_to_wrap``; ``wrap_names`` matches existing ``_fsdp_wrap_name`` tags. Pi05 assigns
+these tags to its projection modules during model initialization.
+
+Set ``wrap_mode`` to control the boundaries:
+
+- ``individual`` (default): wrap each match and retain automatic child wrapping.
+- ``subtree``: wrap each match's complete subtree, with no inner wrappers.
+  The example creates one FP32 wrapper for each layer's MLP.
+- ``combined``: wrap all matches under their existing common parent, with no
+  inner wrappers. Include all parameters and buffers under that parent.
+
+Each wrapper's managed parameters must share their original dtype. Mixed
+``requires_grad`` requires ``use_orig_params: true``. Subtree and combined
+boundaries must not overlap other explicitly selected wrappers.
+
+Specify all three dtype fields in each named policy. Wrappers without a binding
+use the global policy; nested wrappers retain their own policies. Both global
+and named policies default to ``cast_forward_inputs: true``. Set it to ``false``
+when the module handles input casting itself, as OpenPI RMSNorm does.
+When inputs must retain FP32 precision, as with Pi05 actions and timesteps,
+set global ``cast_root_forward_inputs: false`` to avoid rounding them to BF16
+before they reach that wrapper.
+
+``buffer_dtype`` controls floating-point buffers during computation. FSDP saves
+buffers in their original dtype in full and sharded model checkpoints;
+``LOCAL_STATE_DICT`` does not restore their dtype. ``summon_full_params()``
+restores parameter precision and does not restore buffer precision.
+
+Retaining Low-Precision Gradients
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``keep_low_precision_grads`` defaults to ``false`` in both the global policy
+and named policies. FSDP converts gradients back to the parameters' original dtype for the
+optimizer. With ``true``, sharded strategies and FSDP CPU parameter offload prepare
+gradients in the compute dtype (``param_dtype``, or the original dtype when
+unset); ``no_shard`` without CPU offload retains the effective reduction dtype.
+Retaining a smaller dtype reduces gradient storage.
+
+Use ``FP32MasterAdamW`` with FSDP1 and ``no_shard`` to update parameters
+from retained gradients of a different dtype. Select it for the whole actor:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       precision: fp32
+     optim:
+       use_fp32_master_params: true
+     fsdp_config:
+       strategy: fsdp
+       sharding_strategy: no_shard
+       mixed_precision:
+         param_dtype: bf16
+         reduce_dtype: bf16
+         buffer_dtype: fp32
+         keep_low_precision_grads: true
+
+Set ``keep_low_precision_grads`` in ``mixed_precision_policies`` to retain
+gradients for specific wrappers. The optimizer preserves parameter groups and
+optimizer settings, converts gradients to FP32 during updates, and keeps FP32
+optimizer states. BF16/FP16 original parameters also have an FP32 master copy.
+Use the default ``keep_low_precision_grads: false`` with native AdamW.

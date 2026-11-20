@@ -15,11 +15,13 @@
 # Override of Ray's AMDGPUAcceleratorManager
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/amd_gpu.py
 
+import ctypes
 import logging
 import os
 import shlex
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ray._private.accelerators.amd_gpu import AMDGPUAcceleratorManager
@@ -30,6 +32,213 @@ if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Render devices
+#
+# HIP_VISIBLE_DEVICES restricts neither Vulkan nor EGL, so every simulator
+# process renders on the same default GPU unless it is told otherwise.
+#
+# Vulkan (SAPIEN in RoboTwin and ManiSkill): Mesa's device-select layer makes
+# the GPU named by DRI_PRIME=pci-DDDD_BB_DD_F the default.
+#
+# EGL (MuJoCo and robosuite in LIBERO): the renderer takes an index into
+# eglQueryDevicesEXT, which Mesa orders independently of the HIP device ids.
+#
+# KFD supplies each HIP device's PCI identity and DRM render node; EGL supplies
+# its enumeration index. Building the mappings does not initialize HIP.
+# ---------------------------------------------------------------------------
+
+DRI_PRIME_ENV = "DRI_PRIME"
+#: EGL device index, read by MuJoCo and robosuite (``MUJOCO_EGL_DEVICE_ID``) and
+#: by other EGL renderers such as pyrender (``EGL_DEVICE_ID``).
+EGL_DEVICE_ID_ENV_VARS = ("MUJOCO_EGL_DEVICE_ID", "EGL_DEVICE_ID")
+_EGL_DRM_RENDER_NODE_FILE_EXT = 0x3377
+_MAX_EGL_DEVICES = 64
+# robosuite renders with EGL for every MUJOCO_GL value other than these.
+_CPU_RENDERING_BACKENDS = frozenset({"osmesa", "glx"})
+_KFD_TOPOLOGY_NODES = "/sys/class/kfd/kfd/topology/nodes"
+_DRI_DEVICE_DIR = "/dev/dri"
+# gfx_target_version of the first RDNA ISA (gfx1010). CDNA parts (gfx9xx) have
+# no rasterization hardware and render on the CPU, so they are not pinned.
+_FIRST_RDNA_GFX_TARGET = 100100
+
+
+def _read_kfd_node_properties(node_dir: str) -> dict[str, int]:
+    """Parse the integer fields of a KFD topology ``properties`` file.
+
+    Args:
+        node_dir: Path of one ``.../topology/nodes/<id>`` directory.
+
+    Returns:
+        Property name to value. Non-integer fields are skipped.
+    """
+    props: dict[str, int] = {}
+    with open(os.path.join(node_dir, "properties")) as handle:
+        for line in handle:
+            name, _, value = line.strip().partition(" ")
+            try:
+                props[name] = int(value)
+            except ValueError:
+                continue
+    return props
+
+
+@cache
+def _rdna_gpus_by_hip_device() -> dict[int, tuple[str, str]]:
+    """Map each HIP device id on this node to the render identity of its GPU.
+
+    GPUs are numbered as ROCr numbers them: KFD nodes in order, skipping CPU
+    nodes and GPUs whose render node this process cannot open, then filtered by
+    ``ROCR_VISIBLE_DEVICES``. Only RDNA GPUs get an entry.
+
+    Returns:
+        HIP device id to ``(pci-DDDD_BB_DD_F, /dev/dri/renderD<minor>)``. Empty
+        when the KFD topology cannot be read or ``ROCR_VISIBLE_DEVICES`` does
+        not match it.
+    """
+    try:
+        node_ids = sorted(
+            int(name) for name in os.listdir(_KFD_TOPOLOGY_NODES) if name.isdigit()
+        )
+    except OSError as exc:
+        logger.debug("Cannot read the KFD topology (%s).", exc)
+        return {}
+
+    gpus = []
+    for node_id in node_ids:
+        try:
+            props = _read_kfd_node_properties(
+                os.path.join(_KFD_TOPOLOGY_NODES, str(node_id))
+            )
+        except OSError:
+            continue
+        if not props.get("gfx_target_version"):
+            continue
+        render_node = os.path.join(
+            _DRI_DEVICE_DIR, f"renderD{props.get('drm_render_minor', -1)}"
+        )
+        if not os.access(render_node, os.R_OK | os.W_OK):
+            continue
+        location = props.get("location_id", 0)
+        gpus.append(
+            (
+                props["gfx_target_version"],
+                f"pci-{props.get('domain', 0):04x}_{location >> 8:02x}_"
+                f"{(location >> 3) & 0x1F:02x}_{location & 0x7:x}",
+                render_node,
+            )
+        )
+
+    rocr_visible = os.environ.get("ROCR_VISIBLE_DEVICES", "")
+    if rocr_visible:
+        try:
+            indices = [int(index) for index in rocr_visible.split(",")]
+            # ROCr hides every GPU for an out-of-range index such as -1, while
+            # Python would count a negative index from the end of the list.
+            if any(index < 0 for index in indices):
+                raise IndexError("negative device index")
+            gpus = [gpus[index] for index in indices]
+        except (ValueError, IndexError):
+            logger.debug(
+                "ROCR_VISIBLE_DEVICES=%s does not match the KFD topology.",
+                rocr_visible,
+            )
+            return {}
+    return {
+        hip_id: (dri_prime, render_node)
+        for hip_id, (gfx_target, dri_prime, render_node) in enumerate(gpus)
+        if gfx_target >= _FIRST_RDNA_GFX_TARGET
+    }
+
+
+def _query_egl_index_by_render_node() -> dict[str, int]:
+    """Map the DRM render node of each EGL device to its EGL enumeration index.
+
+    The query goes through ``ctypes`` rather than PyOpenGL because PyOpenGL
+    resolves extension entry points by calling ``eglQueryString`` on a display,
+    and obtaining the right display is what the device index is needed for.
+
+    Returns:
+        Dict[str, int]: ``/dev/dri/renderD<minor>`` to EGL enumeration index.
+        Devices without a render node, such as Mesa's software device, are
+        left out.
+
+    Raises:
+        RuntimeError: If the EGL device extensions are unavailable or the device
+            query fails.
+        OSError: If ``libEGL.so.1`` cannot be loaded.
+    """
+    try:
+        libegl = ctypes.CDLL("libEGL.so.1")
+    except OSError as exc:
+        raise OSError(f"libEGL.so.1 is not loadable: {exc}") from exc
+    libegl.eglGetProcAddress.argtypes = [ctypes.c_char_p]
+    libegl.eglGetProcAddress.restype = ctypes.c_void_p
+
+    device_t = ctypes.c_void_p
+    query_devices_ptr = libegl.eglGetProcAddress(b"eglQueryDevicesEXT")
+    query_string_ptr = libegl.eglGetProcAddress(b"eglQueryDeviceStringEXT")
+    if not query_devices_ptr or not query_string_ptr:
+        raise RuntimeError(
+            "EGL_EXT_device_enumeration and EGL_EXT_device_query are required"
+        )
+    query_devices = ctypes.CFUNCTYPE(
+        ctypes.c_uint,
+        ctypes.c_int,
+        ctypes.POINTER(device_t),
+        ctypes.POINTER(ctypes.c_int),
+    )(query_devices_ptr)
+    query_string = ctypes.CFUNCTYPE(ctypes.c_char_p, device_t, ctypes.c_int)(
+        query_string_ptr
+    )
+
+    devices = (device_t * _MAX_EGL_DEVICES)()
+    device_count = ctypes.c_int()
+    if not query_devices(_MAX_EGL_DEVICES, devices, ctypes.byref(device_count)):
+        raise RuntimeError("eglQueryDevicesEXT failed")
+
+    egl_index_by_render_node = {}
+    for egl_index in range(device_count.value):
+        render_node = query_string(devices[egl_index], _EGL_DRM_RENDER_NODE_FILE_EXT)
+        if render_node:
+            egl_index_by_render_node[render_node.decode()] = egl_index
+    return egl_index_by_render_node
+
+
+@cache
+def _egl_index_by_hip_device() -> dict[int, int]:
+    """Map each HIP device id on this node to the EGL index of its GPU.
+
+    Cached: neither enumeration can change under a running process.
+
+    Returns:
+        Dict[int, int]: HIP device id to EGL enumeration index, for RDNA GPUs
+        whose render node EGL lists. Empty when EGL cannot be queried, e.g. on a
+        node without Mesa.
+    """
+    render_node_by_hip_device = {
+        hip_id: render_node
+        for hip_id, (_, render_node) in _rdna_gpus_by_hip_device().items()
+    }
+    if not render_node_by_hip_device:
+        return {}
+    try:
+        egl_index_by_render_node = _query_egl_index_by_render_node()
+    except (OSError, RuntimeError) as exc:
+        logger.debug("Cannot map HIP devices to EGL devices (%s).", exc)
+        return {}
+    return {
+        hip_id: egl_index_by_render_node[render_node]
+        for hip_id, render_node in render_node_by_hip_device.items()
+        if render_node in egl_index_by_render_node
+    }
+
+
+def _renders_with_egl() -> bool:
+    """Report whether a renderer could go through EGL in this run."""
+    return os.environ.get("MUJOCO_GL") not in _CPU_RENDERING_BACKENDS
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +373,70 @@ class AMDGPUManager(AcceleratorManager):
         # https://github.com/ray-project/ray/blob/5d6c40aba865b2b80ee4dc549e603e89817ad285/python/ray/_private/accelerators/amd_gpu.py#L128
 
         return env_vars
+
+    @staticmethod
+    def get_worker_local_env_var(visible_accelerators: list[int]) -> dict[str, str]:
+        """Get the environment variables a worker resolves on its own node.
+
+        Simulators render on the worker's first GPU: Vulkan through
+        ``DRI_PRIME``, EGL through the device index. Both are resolved from the
+        KFD topology and EGL enumeration of the node the worker runs on, which
+        can differ from the driver's.
+
+        Args:
+            visible_accelerators (List[int]): The worker's HIP device IDs.
+
+        Returns:
+            Dict[str, str]: ``DRI_PRIME`` and the EGL device index for the first
+            device, or nothing when it has no render device to pin.
+        """
+        env_vars = {}
+        if len(visible_accelerators) > 0:
+            dri_prime = AMDGPUManager.get_dri_prime(visible_accelerators[0])
+            if dri_prime is not None:
+                env_vars[DRI_PRIME_ENV] = dri_prime
+            if _renders_with_egl():
+                egl_device_id = AMDGPUManager.get_egl_device_id(visible_accelerators[0])
+                if egl_device_id is not None:
+                    for env_var in EGL_DEVICE_ID_ENV_VARS:
+                        env_vars[env_var] = str(egl_device_id)
+        return env_vars
+
+    @staticmethod
+    def get_egl_device_id(hip_device_id: int | str) -> Optional[int]:
+        """Get the EGL enumeration index that renders on a HIP device.
+
+        Args:
+            hip_device_id (int | str): HIP device id, as in ``HIP_VISIBLE_DEVICES``.
+
+        Returns:
+            Optional[int]: The EGL device index, or ``None`` for a device that is
+            not on this node, is addressed by UUID, is not an RDNA GPU, or that
+            EGL does not list.
+        """
+        try:
+            hip_device_id = int(hip_device_id)
+        except ValueError:
+            return None
+        return _egl_index_by_hip_device().get(hip_device_id)
+
+    @staticmethod
+    def get_dri_prime(hip_device_id: int | str) -> Optional[str]:
+        """Get the Mesa ``DRI_PRIME`` value that renders on a HIP device.
+
+        Args:
+            hip_device_id (int | str): HIP device id, as in ``HIP_VISIBLE_DEVICES``.
+
+        Returns:
+            Optional[str]: ``pci-DDDD_BB_DD_F``, or ``None`` for a device that is
+            not on this node, is addressed by UUID, or is not an RDNA GPU.
+        """
+        try:
+            hip_device_id = int(hip_device_id)
+        except ValueError:
+            return None
+        gpu = _rdna_gpus_by_hip_device().get(hip_device_id)
+        return gpu[0] if gpu is not None else None
 
     @staticmethod
     def get_visible_devices():

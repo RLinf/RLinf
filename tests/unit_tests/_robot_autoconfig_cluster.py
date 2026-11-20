@@ -103,6 +103,7 @@ os.environ.update(_ENV[MODE])
 
 import dataclasses  # noqa: E402
 
+import ray  # noqa: E402
 from omegaconf import DictConfig  # noqa: E402
 
 import rlinf.robotics.robots  # noqa: E402, F401
@@ -161,7 +162,10 @@ def worker_configs(cluster: Cluster, label: str, ranks_list: list) -> list:
         ),
         name=f"RobotEnvWorker-{label}-{len(ranks_list)}",
     )
-    return group.configs().wait()
+    try:
+        return group.configs().wait()
+    finally:
+        group._close()
 
 
 # Scenarios
@@ -388,5 +392,9 @@ RUNNERS = {
 
 
 if __name__ == "__main__":
-    RUNNERS[MODE]()
+    try:
+        RUNNERS[MODE]()
+    finally:
+        if ray.is_initialized():
+            ray.shutdown()
     print(f"{MODE}:OK")

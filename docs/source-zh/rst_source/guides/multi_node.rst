@@ -85,7 +85,7 @@
 步骤 3：开启代码同步（可选）
 ----------------------------
 
-当 driver 与 worker **不共享同一文件系统**（云边、异构机房等）时，可在 **启动训练脚本之前** 开启 Ray 任务级代码同步：
+当 driver 与 worker **不共享同一文件系统**\ （云边、异构机房等）时，可在 **启动训练脚本之前** 开启 Ray 任务级代码同步：
 由 driver 将 ``rlinf/`` 包打包进 ``runtime_env.py_modules``，worker 无需本地有一份相同 checkout。
 
 .. code-block:: bash
@@ -108,7 +108,7 @@
    * **勿在 ``rlinf/`` 下保存大文件**：同步会把启动节点上的 **整个本地 ``rlinf/`` 目录** 打包下发给其他 worker。请勿把日志、checkpoint、缓存、数据集等大文件或临时产物放在 ``rlinf/`` 下，否则会显著拖慢打包与传输。
    * **模型权重和Assets等资源准备**：**模型权重、模拟器 assets、数据集** 等 **不会** 随 code sync 同步。请在各 worker 节点 **提前下载** 到配置中写的路径，或通过 NFS/共享存储挂载，并确认该路径在 **所有节点** 上均可访问。
 
-上述变量在 RLinf 首次调用 ``ray.init``（``Cluster`` 初始化）时生效，请勿在训练进程之外提前手动 ``ray.init``。
+上述变量在 RLinf 首次调用 ``ray.init``\ （``Cluster`` 初始化）时生效，请勿在训练进程之外提前手动 ``ray.init``。
 
 
 步骤 4：检查集群状态
@@ -151,7 +151,7 @@
 
 启动节点须满足：
 
-* 本机已执行过 ``ray start``（``ray status`` 能显示完整集群）；
+* 本机已执行过 ``ray start``\ （``ray status`` 能显示完整集群）；
 * 能访问配置文件、模型与数据路径（或已配置共享存储 / code sync）；
 * 若启用代码同步，在 **同一终端** 已 ``export RLINF_CODE_WORKING_DIR=...``。
 
@@ -179,7 +179,7 @@
 
 **Worker 连不上 head**
 
-检查 ``<head_ip>`` 是否对其他节点 ping/ telnet 可达、安全组/iptables 是否放行 ``6379``，以及 head 是否使用了错误的 ``--node-ip-address``（例如绑定了 ``127.0.0.1``）。
+检查 ``<head_ip>`` 是否对其他节点 ping/ telnet 可达、安全组/iptables 是否放行 ``6379``，以及 head 是否使用了错误的 ``--node-ip-address``\ （例如绑定了 ``127.0.0.1``）。
 
 **ray status 节点数少于 cluster.num_nodes**
 
