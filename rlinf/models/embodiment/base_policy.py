@@ -45,7 +45,9 @@ class BasePolicy(ABC):
         - crossq_forward
         - crossq_q_forward
         - iql_forward
+        - predict_value_batch
         - prepare_dagger_sft_batch
+        - prepare_nft_reference_model
     """
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -74,11 +76,24 @@ class BasePolicy(ABC):
             f"{self.__class__.__name__} does not support DAgger SFT training."
         )
 
+    def prepare_nft_reference_model(self) -> None:
+        """Release state unused by NFT forward on a cached reference model."""
+
     @abstractmethod
     def default_forward(self, **kwargs): ...
 
     @abstractmethod
     def predict_action_batch(self, **kwargs): ...
+
+    def supports_value_only_bootstrap(self) -> bool:
+        """Return whether this policy instance can run ``predict_value_batch``."""
+        return type(self).predict_value_batch is not BasePolicy.predict_value_batch
+
+    def predict_value_batch(self, env_obs):
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support value-only bootstrap; "
+            "set rollout.value_only_bootstrap=False."
+        )
 
     def enable_torch_compile(
         self,

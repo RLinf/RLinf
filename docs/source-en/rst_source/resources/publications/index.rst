@@ -12,15 +12,18 @@ Detailed publication pages
    * - Publication
      - Focus
      - Paper
+   * - :doc:`CEL <cel>`
+     - Collective experience learning from deployed robot fleets.
+     - `arXiv:2610.25736 <https://arxiv.org/abs/2610.25736>`__
    * - :doc:`STEAM <steam>`
      - Self-supervised temporal ensemble advantage modeling for real-world robot learning.
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
-   * - :doc:`RLinf-USER <rlinf_user>`
+   * - :doc:`USER <rlinf_user>`
      - Unified system for real-world online policy learning.
-     - `RSS 2026 <https://roboticsconference.org/program/papers/37/>`__
+     - `RSS 2026 <https://roboticsproceedings.org/rss22/p037.html>`__
    * - :doc:`RLinf-VLA <rlinf_vla>`
      - Unified framework for VLA+RL training.
-     - `RSS 2026 <https://roboticsconference.org/program/papers/89/>`__
+     - `RSS 2026 <https://roboticsproceedings.org/rss22/p089.html>`__
    * - :doc:`RLinf-Co <rlinf_co>`
      - Reinforcement learning-based sim-real co-training for VLA models.
      - `arXiv:2602.12628 <https://arxiv.org/abs/2602.12628>`__
@@ -44,6 +47,7 @@ Detailed publication pages
    :hidden:
    :maxdepth: 2
 
+   CEL: Collective Experience Learning Across 96 Robots <cel>
    steam
    rlinf_user
    rlinf_vla

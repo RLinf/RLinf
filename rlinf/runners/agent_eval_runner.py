@@ -100,6 +100,13 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
         self.tool_output_channel = Channel.create("ToolOutput")
 
+    def _stop_rollouts(self):
+        """Stop the main and solid rollout engines after evaluation finishes."""
+        super()._stop_rollouts()
+        for solid_rollout in self.solid_rollouts.values():
+            if hasattr(solid_rollout, "stop"):
+                solid_rollout.stop().wait()
+
     def init_rollout_workers(self):
         """init rollout workers, tool workers and agent loop worker."""
         rollout_handles = [self.rollout.init_worker()]
@@ -206,6 +213,7 @@ class AgentEvalRunner(ReasoningEvalRunner):
 
                 self.global_steps += 1
 
+            self._stop_rollouts()
         finally:
             for tool_worker in self.tool_workers:
                 tool_worker.stop_server()

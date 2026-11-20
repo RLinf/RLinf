@@ -20,7 +20,7 @@ runner:
     log_path: ${runner.output_dir}/${runner.experiment_name}
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
-    logger_backends: ["tensorboard"] # wandb, swanlab
+    logger_backends: null # tensorboard, wandb, swanlab
 
   max_epochs: 1
   max_steps: -1
@@ -154,7 +154,7 @@ rollout:
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
   max_running_requests: 64      # the maximum number of running requests in the rollout engine.
-  cuda_graph_max_bs: 128        # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+  cuda_graph_max_bs: 16        # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
   validate_weight: False        # whether to send all weights at first for weight comparison.
   validate_save_dir: null       # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.
@@ -185,7 +185,7 @@ rollout_fixed_worker:
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
   max_running_requests: 64      # the maximum number of running requests in the rollout engine.
-  cuda_graph_max_bs: 128        # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
+  cuda_graph_max_bs: 16        # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
   validate_weight: False        # whether to send all weights at first for weight comparison.
   validate_save_dir: null       # the directory to save the weights for comparison. If validate_weight is True, this will be used to save the weights for comparison.

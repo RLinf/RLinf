@@ -16,6 +16,13 @@
 模型进行强化学习微调（PPO / GRPO）。方法细节见论文
 `πRL: Online RL Fine-Tuning for Flow-Based Vision-Language-Action Models <https://arxiv.org/abs/2510.25889>`__。
 
+需要在 SFT 和评测中使用相机历史时，参阅 :doc:`Short Memory <pi0/short_memory>`。
+
+.. toctree::
+   :hidden:
+
+   Short Memory <pi0/short_memory>
+
 概览
 ----------------------------------------
 
@@ -493,6 +500,17 @@ checkpoint 的动作 horizon 为 50 时，设置 ``RLINF_PI05_HORIZON=50``。未
 --------------------
 
 NVIDIA 使用上面的安装与启动流程。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 都通过共用平台安装器与 scheduler 设备 API 支持 OpenPI π₀ / π₀.₅ 系列在 LIBERO 和 ManiSkill 上运行。非 CUDA 后端上的 ManiSkill 使用 CPU simulation；MUSA 还需要厂商模拟器包。
+
+OpenPI 可以通过 ``torch.compile`` 编译激活函数、旋转位置编码和门控残差更新等计算。仅当 ``actor.model.openpi.torch_compile`` 为 ``True`` 且当前 Python 环境包含 ``triton`` 模块时才会启用编译。π₀.₅ 模板将该项设为 ``True``，因此未安装 Triton 的后端会保持 eager 执行。若已安装 Triton 但 Inductor 无法运行（例如使用 Isaac Sim 时），可在实验 YAML 中添加以下配置将其设为 ``False``：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       openpi:
+         torch_compile: False
+
+该设置在进程内控制上述 OpenPI 计算的编译，不会编译整个 policy。
 
 AMD ROCm
 ~~~~~~~~

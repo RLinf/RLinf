@@ -233,6 +233,9 @@ def vr() -> types.ModuleType:
                 if fake.frame is not None:
                     time.sleep(0.002)
                     return fake.frame
+                if not (flags & fake.NOBLOCK):
+                    # Pace empty blocking polls like RCVTIMEO so recv loops do not spin.
+                    time.sleep(0.002)
                 raise fake.Again()
             packet = fake.packets.pop(0)
             return packet if isinstance(packet, str) else packet.decode("utf-8")
