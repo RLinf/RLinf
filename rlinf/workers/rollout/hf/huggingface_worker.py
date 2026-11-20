@@ -558,9 +558,7 @@ class MultiStepRolloutWorker(Worker):
         epoch_index = (
             source.key.step_id * spec.cfg.rollout_epoch + source.key.epoch_id + 1
         )
-        init_beta = self._dagger_sampling_params.get(
-            "init_beta", self._dagger_sampling_params["beta"]
-        )
+        init_beta = self._dagger_sampling_params["init_beta"]
         return max(
             self._dagger_sampling_params["beta_min"],
             init_beta * (self._dagger_sampling_params["beta_decay"] ** epoch_index),
@@ -1079,22 +1077,18 @@ class MultiStepRolloutWorker(Worker):
                 forward_inputs = None
                 policy_output = None
             else:
-                predict_kwargs: dict[str, Any] = {
-                    "rlt_switch_flags": policy_input.rlt_switch_flags,
-                    "intervene_requested": policy_input.intervene_flags,
-                    "policy_kwargs": dict(policy_fields),
-                }
-                if dagger_beta is not None:
-                    predict_kwargs["dagger_beta"] = dagger_beta
                 actions, result = self._predict_rollout_actions(
                     policy_input.obs,
-                    **predict_kwargs,
+                    rlt_switch_flags=policy_input.rlt_switch_flags,
+                    intervene_requested=policy_input.intervene_flags,
+                    policy_kwargs=dict(policy_fields),
+                    dagger_beta=dagger_beta,
                 )
                 forward_inputs = result.get("forward_inputs")
                 policy_output = self._build_policy_output(actions, result)
             if single_reply_group:
                 direct_actions = actions
-            elif request_actions is not None:
+            else:
                 sizes = [
                     self._infer_policy_input_batch_size(requests[index])
                     for index in indices
@@ -1113,7 +1107,7 @@ class MultiStepRolloutWorker(Worker):
         if replied:
             actions_to_send = (
                 direct_actions
-                if single_reply_group and direct_actions is not None
+                if single_reply_group
                 else torch.cat([request_actions[index] for index in replied])
             )
             self._send_actions(

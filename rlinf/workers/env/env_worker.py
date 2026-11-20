@@ -1054,7 +1054,6 @@ class EnvWorker(Worker):
         env_outputs: list[EnvOutput],
         step_id: int,
         epoch_id: int,
-        previous_env_parts: dict[int, EnvPart] | None = None,
     ) -> None:
         for stage_id in range(self.stage_num):
             # Bootstrap starts chunk zero; no earlier transition exists yet.
@@ -1069,11 +1068,7 @@ class EnvWorker(Worker):
                 )
             else:
                 policy_input = self._build_policy_input(env_outputs[stage_id])
-            policy_input.env_parts = [
-                previous_env_parts.get(stage_id)
-                if previous_env_parts is not None
-                else None
-            ]
+            policy_input.env_parts = [None]
             self._send_policy_input(
                 rollout_channel,
                 policy_input,
@@ -1086,7 +1081,6 @@ class EnvWorker(Worker):
         rollout_channel: Channel,
         step_id: int,
         epoch_id: int,
-        previous_env_parts: dict[int, EnvPart] | None = None,
     ) -> list[EnvOutput]:
         env_outputs = self.bootstrap_step()
         self._send_train_bootstrap(
@@ -1094,7 +1088,6 @@ class EnvWorker(Worker):
             env_outputs,
             step_id,
             epoch_id,
-            previous_env_parts,
         )
         return env_outputs
 

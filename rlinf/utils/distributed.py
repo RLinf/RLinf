@@ -978,9 +978,7 @@ def masked_normalization(
             torch.zeros_like(var),
         )
     normalized = ((x - mean) / (var.sqrt() + eps)).float()
-    if mask is not None:
-        normalized = torch.where(factor > 0, normalized, torch.zeros_like(normalized))
-    return normalized
+    return torch.where(factor > 0, normalized, torch.zeros_like(normalized))
 
 
 def masked_stats(x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:

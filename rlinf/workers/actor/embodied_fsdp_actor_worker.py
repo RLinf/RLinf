@@ -408,10 +408,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             if normalize_jointly:
                 kwargs["normalize_advantages"] = False
             elif (
-                "normalize_advantages" in algorithm_cfg
-                and algorithm_cfg.normalize_advantages is not None
-            ):
-                kwargs["normalize_advantages"] = algorithm_cfg.normalize_advantages
+                normalize_advantages := algorithm_cfg.get("normalize_advantages")
+            ) is not None:
+                kwargs["normalize_advantages"] = normalize_advantages
 
             batch.update(calculate_adv_and_returns(**kwargs))
             if kwargs["loss_mask"] is not None:
