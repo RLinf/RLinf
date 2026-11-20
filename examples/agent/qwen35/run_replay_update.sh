@@ -20,6 +20,8 @@ example_dir=$(cd "$(dirname "$0")" && pwd)
 run_dir=$(mktemp -d)
 trap 'rm -rf -- "$run_dir"' EXIT
 export RAY_TMPDIR="$run_dir"
+# Keep this single-node example off other Ray clusters on the host.
+export RAY_ADDRESS=local
 python "$example_dir/replay_images.py" --model "$model" --rows "$run_dir/rows.pt"
 for role in dense chunked critic; do
     python "$example_dir/replay_update.py" --model "$model" --rows "$run_dir/rows.pt" --role "$role"
