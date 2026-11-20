@@ -116,11 +116,14 @@ def main(cfg) -> None:
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    native_pi05 = (
+        OmegaConf.select(cfg, "actor.model.openpi.backend", default=None) == "sglang"
+    )
     if rollout_backend == "phyai":
         from rlinf.workers.rollout.phyai import PhyAIRolloutWorker
 
         rollout_worker_cls = PhyAIRolloutWorker
-    elif rollout_backend == "huggingface":
+    elif rollout_backend == "huggingface" or native_pi05:
         from rlinf.workers.rollout.hf.huggingface_worker import (
             MultiStepRolloutWorker,
         )
