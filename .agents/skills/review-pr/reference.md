@@ -29,7 +29,7 @@ A mismatch with how RLinf already does things, a bloated workaround, or dead boi
 
 ## reuse
 
-- [ ] Duplication: new logic does not duplicate a helper or abstraction that already exists anywhere in the stack on `main`, such as `rlinf/utils/` (placement, checkpoint, distributed, data iterators, logging), `rlinf/models/embodiment/` (shared transforms, image parsing, action packing), `rlinf/envs/` (`prepare_actions`, wrappers), `rlinf/data/` (dataset writers and loaders), or the `requirements/install.sh` helpers (`clone_or_reuse_repo`, `install_lerobot`, `install_flash_attn`).
+- [ ] Duplication: new logic does not duplicate a helper or abstraction that already exists anywhere in the stack on `main`, such as `rlinf/utils/` (placement, checkpoint, distributed, data iterators, logging), `rlinf/models/embodiment/` (shared transforms, image parsing, action packing), `rlinf/envs/` (`prepare_actions`, wrappers), `rlinf/data/` (dataset writers and loaders), the `requirements/install.sh` helpers (`clone_or_reuse_repo`, `install_lerobot`, `install_flash_attn`), or shared documentation setup pages and partials (for example `video_models.rst`, `_setup_common.rst`, `_model_path.rst`).
 - [ ] Citation: each reuse finding cites the existing helper as `main:<path>:<line>` and proposes reusing or extending it.
 - [ ] Comparison: when nothing should be reused, the review names the implementation it compared against.
 
@@ -39,6 +39,8 @@ These come from the area checks of step 6: [code § Check](../code/SKILL.md#chec
 
 - [ ] Coverage: a user-facing change has a unit or e2e test that fails without the change, so a reviewer can validate that it works.
 - [ ] Completeness: a new model or env comes with an install path, a Docker stage where comparable targets have one, an e2e config, CI coverage, a recipe page in both languages, and a README highlight; a large new dependency (a Docker image, model, or dataset) comes with a maintainer ping.
+- [ ] Recipe usability and sibling alignment: compare every new or edited recipe side by side with its closest model- or domain-family siblings on `main` (not only its gallery). Flag duplicated setup that already belongs to a shared page or partial, and flag non-standard or hard-to-follow instructions (shell plumbing, heavy CLI overrides that belong in YAML, inline prep scripts, or env/CLI workarounds that bypass RLinf's standard config and launchers), even when reproduction succeeds.
+- [ ] Simplicity and readability over verbosity: flag walls of prose, repeated explanations, dense inline parameter dumps, and exhaustive defaults or caveats that clutter the main path. Do not ask authors to document workarounds or long details inline when fixing the config default, moving logic into a script, or linking to Reference keeps the page cleaner.
 
 ## style
 

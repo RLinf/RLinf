@@ -896,7 +896,7 @@ class TestSearchr1DisaggregatedValidation:
                     "is_dynamic_rollout_batch": True,
                     "agentic_tokenizer": "default",
                 },
-                "algorithm": {"recompute_logprobs": False},
+                "algorithm": {"recompute_logprobs": False, "adv_type": "grpo_dynamic"},
                 "rollout": {
                     "return_logprobs": True,
                     "sglang": {"tool_call_parser": None},
@@ -957,6 +957,7 @@ class TestSearchr1AsyncPauseModeDefaults:
                 },
                 "algorithm": {
                     "recompute_logprobs": False,
+                    "adv_type": "grpo_dynamic",
                     "group_size": 2,
                 },
                 "rollout": {
@@ -1035,6 +1036,7 @@ class TestSearchr1AsyncBatchDivisibility:
                 },
                 "algorithm": {
                     "recompute_logprobs": False,
+                    "adv_type": "grpo_dynamic",
                     "group_size": 2,
                 },
                 "rollout": {
@@ -1078,7 +1080,11 @@ class TestSearchr1AsyncDiscardConfig:
 
     @staticmethod
     def _make_cfg(rollout_batch_size=8, algorithm_extra=None, runner_extra=None):
-        algorithm = {"recompute_logprobs": False, "group_size": 2}
+        algorithm = {
+            "recompute_logprobs": False,
+            "group_size": 2,
+            "adv_type": "grpo_dynamic",
+        }
         if algorithm_extra:
             algorithm.update(algorithm_extra)
         runner = {"task_type": "reasoning", "async_mode": True}
@@ -2215,6 +2221,7 @@ class TestSearchr1AsyncAdmissionCfg:
                 },
                 "algorithm": {
                     "recompute_logprobs": False,
+                    "adv_type": "grpo_dynamic",
                     "group_size": 4,
                 },
                 "rollout": {
