@@ -1296,11 +1296,12 @@ def validate_embodied_cfg(cfg):
                 "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
             )
 
-    target_kl = algorithm_cfg.get("update_stop_kl")
-    if not only_eval and target_kl is not None:
+    kl_stop = algorithm_cfg.get("kl_stop") or {}
+    if not only_eval and kl_stop.get("enabled", False):
+        target_kl = kl_stop.get("target_kl")
         if type(target_kl) not in (int, float) or not 0 < target_kl < float("inf"):
             raise ValueError(
-                "Expected a finite positive algorithm.update_stop_kl, "
+                "Expected a finite positive algorithm.kl_stop.target_kl, "
                 f"got {target_kl!r}."
             )
         openpi_cfg = model_cfg.get("openpi", {})
@@ -1318,7 +1319,7 @@ def validate_embodied_cfg(cfg):
             and cfg.actor.training_backend == "fsdp"
         ):
             raise ValueError(
-                "algorithm.update_stop_kl requires synchronous FSDP OpenPI "
+                "algorithm.kl_stop requires synchronous FSDP OpenPI "
                 "PPO or GRPO with chunk-level rewards and logprobs, at least "
                 "one update epoch, and single-step flow_sde with positive noise."
             )

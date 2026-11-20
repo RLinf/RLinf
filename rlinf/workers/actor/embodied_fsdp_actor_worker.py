@@ -125,10 +125,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
 
         self._update_kl_probe = None
-        if (target_kl := self.cfg.algorithm.get("update_stop_kl")) is not None:
+        kl_stop = self.cfg.algorithm.get("kl_stop") or {}
+        if kl_stop.get("enabled", False):
             self._update_kl_probe = UpdateKLProbe(
                 self._score_update_kl_probe,
-                target_kl=target_kl,
+                target_kl=kl_stop.target_kl,
                 group=self._dp_group,
             )
 
