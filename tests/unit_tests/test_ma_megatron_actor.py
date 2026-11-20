@@ -124,14 +124,14 @@ class _LocalDeliveryChannel:
         return self._delivery
 
 
-def test_get_batch_assembles_delivered_groups(monkeypatch):
-    """The batch fetch goes through the actor's result hook.
+def test_get_step_batch_assembles_delivered_groups(monkeypatch):
+    """get_step_batch assembles a group delivered by the session server.
 
-    A group the session server delivered is a GroupDelivery whose data sits
-    behind its payload ref; only MAMegatronActor._receive_rollout_result
-    turns it into training data. get_batch fetches through that hook, so a
-    hook that is bypassed hands the GroupDelivery to the batch code instead
-    and the first training step fails.
+    A delivered group arrives as a GroupDelivery whose data is in a payload
+    channel, and only MAMegatronActor._receive_rollout_result turns it into
+    training data. If get_step_batch received the group with a plain
+    channel.get(), the GroupDelivery would reach the batch code and the
+    first training step would fail.
     """
     pytest.importorskip("megatron.core")
     from megatron.core import parallel_state
@@ -160,13 +160,14 @@ def test_get_batch_assembles_delivered_groups(monkeypatch):
     )
     assembled_calls = []
     monkeypatch.setattr(
-        actor, "_assemble_delivery", lambda delivery: assembled_calls.append(delivery)
-        or assembled
+        actor,
+        "_assemble_delivery",
+        lambda delivery: assembled_calls.append(delivery) or assembled,
     )
     monkeypatch.setattr(parallel_state, "get_data_parallel_world_size", lambda: 1)
     channel = _LocalDeliveryChannel(delivery)
 
-    _batch, results = actor.get_batch(channel)
+    _batch, results = actor.get_step_batch(channel)
 
     assert assembled_calls == [delivery]
     assert results == [assembled]

@@ -87,8 +87,8 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     ):
         super().__init__(cfg, placement)
         self._init_auto_scheduler(role)
-        # Held by run_training for the duration of a training call;
-        # _assemble_delivery reads them for payload-ref groups.
+        # Set by run_training for the duration of a training call and read
+        # by _assemble_delivery.
         self._payload_channels: Optional[list[Channel]] = None
         self.is_dynamic_rollout_batch = self.cfg.agentloop.is_dynamic_rollout_batch
         assert self.is_dynamic_rollout_batch
@@ -110,11 +110,12 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
     ) -> RolloutResult | DynamicRolloutResult:
         """Fetch one rollout result, assembling delivered groups.
 
-        Overrides DynamicMegatronBatchMixin's hook (plain channel.get): when
-        the buffer delivers a GroupDelivery, the group's data sits behind its
-        payload ref and is fetched and assembled here, before get_batch
-        balances the groups across data-parallel ranks and broadcasts them
-        to the model-parallel ranks.
+        Overrides DynamicMegatronBatchMixin._receive_rollout_result, which
+        is a plain channel.get(). When the session server is enabled, the
+        rollout buffer puts a GroupDelivery on the channel instead of the
+        group's data; it is assembled here, before get_step_batch balances
+        the groups across data-parallel ranks and broadcasts them to the
+        model-parallel ranks.
         """
         result = channel.get()
         if isinstance(result, GroupDelivery):
@@ -122,31 +123,32 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         return result
 
     def _assemble_delivery(self, delivery: GroupDelivery) -> DynamicRolloutResult:
-        """Fetch and assemble the payload one delivered group points to.
+        """Fetch and assemble the data of one delivered group.
 
         Args:
-            delivery: The group reference the rollout buffer put on the
-                channel when the group's data stayed behind its payload
-                ref instead of riding the result.
+            delivery: The GroupDelivery the rollout buffer put on the
+                channel. The group's data is in the payload channel named
+                by its payload ref.
 
         Returns:
-            The assembled result, carrying the group identity of the
-            delivery, checked against the agent-side reference when the
-            finalize part brought one.
+            The assembled result, with the group id and task name of the
+            delivery. With ``session_server.verify_assembly`` on, it is
+            checked against the reference data in the last payload part.
         """
         assert self._payload_channels is not None, (
-            "a group arrived as a payload ref but this actor has no "
-            "payload channels: run_training must receive them on the "
-            "session server path."
+            "a group arrived as a GroupDelivery but this actor has no "
+            "payload channels: run_training must receive them when the "
+            "session server is enabled."
         )
         channel = payload_channel_for(
             delivery.payload_ref.locator, self._payload_channels
         )
         payload = channel.get(key=delivery.payload_ref.key)
-        # A keyed get leaves the now-empty queue behind; without this the
-        # payload channel accumulates one empty queue per trained group.
-        # Same-key operations run in issue order, so this remove trails
-        # the get; a group is delivered once, so no reader is left behind.
+        # A keyed get leaves an empty queue under the key; without this
+        # removal the payload channel keeps one empty queue per trained
+        # group. Operations on one key run in the order they are issued, so
+        # the removal runs after the get, and a group is delivered once, so
+        # no other get waits on this key.
         channel.remove_key(key=delivery.payload_ref.key, async_op=True)
         result = assemble_group_payload(
             payload, not self.cfg.algorithm.recompute_logprobs
@@ -426,7 +428,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
         """
         self._payload_channels = payload_channels
 
-        batch, rollout_results = self.get_batch(input_channel)
+        batch, rollout_results = self.get_step_batch(input_channel)
         fixed_ppo_targets = self.cfg.critic.get("use_critic_model", False)
         assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         batch = self.compute_advantages_and_returns(batch)
@@ -687,7 +689,7 @@ class MAMegatronActor(DynamicMegatronBatchMixin, MegatronActor):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
-        batch, results = self.get_batch(input_channel)
+        batch, results = self.get_step_batch(input_channel)
         self._load_weight_and_optimizer()
         with self.worker_timer():
             probabilities = self.inference_step(batch)
