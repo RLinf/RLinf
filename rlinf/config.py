@@ -1370,7 +1370,8 @@ def validate_eval_env_cfg(
     )
     eval_envs_per_stage = cfg.env.eval.total_num_envs // env_world_size // stage_num
     for env_path, eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").items():
-        assert eval_envs_per_stage % eval_env_cfg.group_size == 0, (
+        group_size = eval_env_cfg.get("group_size", 1)
+        assert eval_envs_per_stage % group_size == 0, (
             "env.eval.total_num_envs // env_world_size // rollout.pipeline_stage_num "
             f"must be divisible by {env_path}.group_size"
         )

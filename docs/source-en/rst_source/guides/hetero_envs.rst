@@ -102,7 +102,7 @@ Each step collects ``total_num_envs * rollout_epoch`` trajectories per environme
 - ``algorithm.adv_norm_scope``: ``env`` (default) normalizes each environment separately; ``all`` normalizes across all environments together (supported for ``gae`` and ``raw`` with ``normalize_advantages: True``).
 - ``actor.mix_envs``: ``True`` (default) mixes environments across optimizer steps; ``False`` puts one environment in each optimizer step (each environment's per-actor samples must fill whole global batches).
 
-For Async PPO, ``algorithm.rollout_store_size_per_rank`` is measured in received trajectory shards per actor rank and must divide into integer quotas across environments (for example, set it to ``2`` for two environments with equal shard shares instead of the default ``1``). For off-policy algorithms (SAC, DAgger, RLT) with ``actor.mix_envs: True``, set ``policy_obs`` so all environments store one observation format.
+For Async PPO, ``algorithm.rollout_store_size_per_rank`` is measured in received trajectory shards per actor rank and must divide into integer quotas across environments (for example, set it to ``2`` for two environments with equal shard shares instead of the default ``1``). Off-policy replay (SAC, DAgger, RLT) allocates samples by ``total_num_envs * rollout_epoch * chunk_steps * loss_weight`` (``env_weighting`` does not change that ratio), and requires ``policy_obs`` when ``actor.mix_envs: True`` so all environments store one observation format.
 
 Run the Example
 ---------------
@@ -117,32 +117,32 @@ Prerequisites:
 
 1. Install both simulators into one virtual environment:
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
+      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+      source .venv/bin/activate
 
 2. Download the checkpoints:
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+      # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+      hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
+      hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
 3. In ``examples/embodiment/config/maniskill_libero_grpo_openvlaoft.yaml``, point three fields to your local paths:
 
-- ``actor.model.model_path``: ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
-- ``rollout.model.model_path``: ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
-- ``actor.model.merged_loras[0].path``: ``RLinf-OpenVLAOFT-ManiSkill-Base-Lora``
+   - ``actor.model.model_path``: ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
+   - ``rollout.model.model_path``: ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
+   - ``actor.model.merged_loras[0].path``: ``RLinf-OpenVLAOFT-ManiSkill-Base-Lora``
 
 4. Launch training:
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_libero_grpo_openvlaoft
+      bash examples/embodiment/run_embodiment.sh maniskill_libero_grpo_openvlaoft
 
-5. Verify both environments in the terminal table or TensorBoard: look for ``env/libero_10/success_once`` (starting around 0.2) and ``env/maniskill/success_once`` (starting around 0.09) alongside the pooled ``env/success_once``. Eval and rollout metrics use the same ``<group>/<name>/<metric>`` naming, and videos save to ``<video_base_dir>/seed_<n>/<name>/``. To check per-env step latency, set ``runner.per_worker_log: True`` and read ``time/env/interact``.
+5. Verify both environments in the terminal table or TensorBoard (under ``logs/<timestamp>-maniskill_libero_grpo_openvlaoft/``): look for ``env/libero_10/success_once`` (starting around 0.2) and ``env/maniskill/success_once`` (starting around 0.09) alongside the pooled ``env/success_once``. Eval and rollout metrics use the same ``<group>/<name>/<metric>`` naming, and videos save to ``<video_base_dir>/seed_<n>/<name>/``. To check per-env step latency, set ``runner.per_worker_log: True`` and read ``time/env/interact``.
 
 Supported Scope
 ---------------

@@ -82,11 +82,13 @@ class PolicyObsSpec:
             return cls()
         return cls(keys=spec_cfg.get("keys"), image_size=spec_cfg.get("image_size"))
 
-    def apply(self, obs: dict[str, Any]) -> dict[str, Any]:
+    def apply(self, obs: dict[str, Any], *, _top_level: bool = True) -> dict[str, Any]:
         """Return the policy's copy of ``obs``; ``obs`` itself is not modified."""
         if self._keys is None and self._image_size is None:
             return obs
-        conformed = {}
+        conformed = (
+            dict.fromkeys(self.KEYS) if _top_level and self._keys is not None else {}
+        )
         for key, value in obs.items():
             if self._keys is not None and key in self.KEYS and key not in self._keys:
                 value = None
@@ -97,7 +99,7 @@ class PolicyObsSpec:
             ):
                 value = self._resize(value)
             elif key == "history" and isinstance(value, dict):
-                value = self.apply(value)
+                value = self.apply(value, _top_level=False)
             conformed[key] = value
         return conformed
 

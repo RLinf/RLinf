@@ -681,6 +681,37 @@ def test_policy_obs_spec_rejects_keys_the_policy_batch_does_not_carry():
         PolicyObsSpec(keys=["main_image"])
 
 
+def test_policy_obs_spec_aligns_missing_camera_keys_across_eval_obs():
+    from rlinf.data.schema.embodied_types import batch_format
+
+    spec = PolicyObsSpec(keys=["main_images", "task_descriptions"], image_size=[8, 8])
+    libero_obs = {
+        "main_images": torch.zeros(2, 16, 16, 3),
+        "wrist_images": torch.zeros(2, 16, 16, 3),
+        "states": torch.zeros(2, 7),
+        "task_descriptions": ["pick", "place"],
+    }
+    maniskill_obs = {
+        "main_images": torch.zeros(2, 12, 20, 3),
+        "states": torch.zeros(2, 8),
+        "task_descriptions": ["put", "stack"],
+    }
+    assert batch_format(spec.apply(libero_obs)) == batch_format(
+        spec.apply(maniskill_obs)
+    )
+
+
+def test_validate_eval_env_cfg_defaults_missing_group_size():
+    eval_cfg = _env("d4rl", 4)
+    eval_cfg.pop("group_size")
+    cfg = OmegaConf.create({"env": {"eval": eval_cfg}})
+    OmegaConf.set_struct(cfg, True)
+    assert (
+        validate_eval_env_cfg(cfg, env_world_size=2, stage_num=1, num_action_chunks=8)
+        == 2
+    )
+
+
 def test_config_needs_grpo_envs_to_stop_trajectories_at_their_first_done():
     cfg = _training_cfg(
         {"adv_type": "grpo"},

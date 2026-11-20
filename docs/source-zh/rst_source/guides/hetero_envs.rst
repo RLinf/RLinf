@@ -102,7 +102,7 @@ env worker 按列出顺序根据 ``total_num_envs`` 的比例分配：
 - ``algorithm.adv_norm_scope`` ： ``env`` （默认）按环境分别归一化； ``all`` 跨环境联合归一化（适用于 ``gae`` 及开启 ``normalize_advantages: True`` 的 ``raw`` ）。
 - ``actor.mix_envs`` ： ``True`` （默认）混合各环境训练； ``False`` 让每个 optimizer step 只训练单个环境（单环境在每个 actor 上的样本数需填满整数个 global batch）。
 
-异步 PPO 下， ``algorithm.rollout_store_size_per_rank`` 以单个 actor rank 收到的轨迹分片（trajectory shard）数计，需能按各环境分片比例整除（例如两个等份额环境应设为 ``2`` 而非默认的 ``1`` ）。off-policy 算法（SAC、DAgger、RLT）在 ``actor.mix_envs: True`` 时需配置 ``policy_obs`` 统一观测格式。
+异步 PPO 下， ``algorithm.rollout_store_size_per_rank`` 以单个 actor rank 收到的轨迹分片（trajectory shard）数计，需能按各环境分片比例整除（例如两个等份额环境应设为 ``2`` 而非默认的 ``1`` ）。off-policy 回放采样（SAC、DAgger、RLT）按 ``total_num_envs * rollout_epoch * chunk_steps * loss_weight`` 分配比例（不受 ``env_weighting`` 影响），在 ``actor.mix_envs: True`` 时需配置 ``policy_obs`` 统一观测格式。
 
 运行示例
 --------
@@ -117,32 +117,32 @@ env worker 按列出顺序根据 ``total_num_envs`` 的比例分配：
 
 1. 在同一个虚拟环境中安装两个仿真器：
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   source .venv/bin/activate
+      bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+      source .venv/bin/activate
 
 2. 下载权重：
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   # 在中国大陆可设置 HF_ENDPOINT=https://hf-mirror.com。
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+      # 在中国大陆可设置 HF_ENDPOINT=https://hf-mirror.com。
+      hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Main
+      hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
 3. 在 ``examples/embodiment/config/maniskill_libero_grpo_openvlaoft.yaml`` 中将以下三个路径改为本地目录：
 
-- ``actor.model.model_path`` ： ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
-- ``rollout.model.model_path`` ： ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
-- ``actor.model.merged_loras[0].path`` ： ``RLinf-OpenVLAOFT-ManiSkill-Base-Lora``
+   - ``actor.model.model_path`` ： ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
+   - ``rollout.model.model_path`` ： ``RLinf-OpenVLAOFT-ManiSkill-Base-Main``
+   - ``actor.model.merged_loras[0].path`` ： ``RLinf-OpenVLAOFT-ManiSkill-Base-Lora``
 
 4. 启动训练：
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_libero_grpo_openvlaoft
+      bash examples/embodiment/run_embodiment.sh maniskill_libero_grpo_openvlaoft
 
-5. 在终端指标表或 TensorBoard 中确认同时出现 ``env/libero_10/success_once`` （初始约 0.2）、 ``env/maniskill/success_once`` （初始约 0.09）和汇总的 ``env/success_once`` 。eval 和 rollout 指标采用同样的 ``<group>/<name>/<metric>`` 命名，视频保存在 ``<video_base_dir>/seed_<n>/<name>/`` 。如需查看各环境耗时，可设置 ``runner.per_worker_log: True`` 并查看 ``time/env/interact`` 。
+5. 在终端指标表或 TensorBoard（目录位于 ``logs/<timestamp>-maniskill_libero_grpo_openvlaoft/`` ）中确认同时出现 ``env/libero_10/success_once`` （初始约 0.2）、 ``env/maniskill/success_once`` （初始约 0.09）和汇总的 ``env/success_once`` 。eval 和 rollout 指标采用同样的 ``<group>/<name>/<metric>`` 命名，视频保存在 ``<video_base_dir>/seed_<n>/<name>/`` 。如需查看各环境耗时，可设置 ``runner.per_worker_log: True`` 并查看 ``time/env/interact`` 。
 
 支持范围
 --------
