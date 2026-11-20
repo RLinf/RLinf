@@ -1296,6 +1296,33 @@ def validate_embodied_cfg(cfg):
                 "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
             )
 
+    target_kl = algorithm_cfg.get("update_stop_kl")
+    if not only_eval and target_kl is not None:
+        if type(target_kl) not in (int, float) or not 0 < target_kl < float("inf"):
+            raise ValueError(
+                "Expected a finite positive algorithm.update_stop_kl, "
+                f"got {target_kl!r}."
+            )
+        openpi_cfg = model_cfg.get("openpi", {})
+        if not (
+            model_type == SupportedModel.OPENPI
+            and openpi_cfg.get("task") == "rl"
+            and openpi_cfg.get("noise_method") == "flow_sde"
+            and openpi_cfg.get("noise_level", 0) > 0
+            and not openpi_cfg.get("joint_logprob", False)
+            and algorithm_cfg.get("loss_type") in ("actor", "actor_critic")
+            and algorithm_cfg.get("logprob_type") == "chunk_level"
+            and algorithm_cfg.get("reward_type") == "chunk_level"
+            and algorithm_cfg.get("update_epoch", 1) >= 1
+            and not cfg.runner.get("use_training_pipeline", False)
+            and cfg.actor.training_backend == "fsdp"
+        ):
+            raise ValueError(
+                "algorithm.update_stop_kl requires synchronous FSDP OpenPI "
+                "PPO or GRPO with chunk-level rewards and logprobs, at least "
+                "one update epoch, and single-step flow_sde with positive noise."
+            )
+
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
         # the OpenVLA family and LingBot-VLA V2. OpenPI already returns the

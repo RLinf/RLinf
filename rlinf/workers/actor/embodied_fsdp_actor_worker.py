@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
+from typing import Any
+
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -58,6 +61,7 @@ from rlinf.utils.utils import (
     get_loss_agg_func,
     masked_mean,
 )
+from rlinf.workers.actor.update_kl_probe import UpdateKLProbe
 
 
 def _reshape_recompute_logprob_gap(
@@ -119,6 +123,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             // self._world_size
         )
         self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+
+        self._update_kl_probe = None
+        if (target_kl := self.cfg.algorithm.get("update_stop_kl")) is not None:
+            self._update_kl_probe = UpdateKLProbe(
+                self._score_update_kl_probe,
+                target_kl=target_kl,
+                group=self._dp_group,
+            )
 
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
@@ -620,6 +632,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         return loss
 
+    @torch.no_grad()
+    def _score_update_kl_probe(self, forward_inputs: Any) -> dict[str, Any]:
+        device = self.torch_platform.current_device()
+        with (
+            torch.random.fork_rng(devices=[device], device_type=self.torch_device_type),
+            self.amp_context,
+        ):
+            return self.model(forward_inputs=forward_inputs, denoise_probe="score")
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """
@@ -667,8 +688,44 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics = {}
         if self.cfg.algorithm.get("recompute_logprobs", False):
             append_to_dict(metrics, self.recompute_prev_logprobs(batch_size_per_rank))
-        update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        for _ in range(update_epoch):
+        try:
+            self._run_policy_updates(metrics, rollout_size, batch_size_per_rank)
+        finally:
+            if self._update_kl_probe is not None:
+                self._update_kl_probe.end_round()
+
+        # put LR scheduler step here
+        self.lr_scheduler.step()
+        self.optimizer.zero_grad()
+        clear_memory()
+        explained_variance_stats = pop_critic_explained_variance_stats(metrics)
+        mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
+        mean_metric_dict = all_reduce_dict(
+            mean_metric_dict, op=torch.distributed.ReduceOp.AVG
+        )
+        if explained_variance_stats:
+            reduced_stats = all_reduce_dict(
+                explained_variance_stats, op=torch.distributed.ReduceOp.SUM
+            )
+            mean_metric_dict[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                compute_critic_explained_variance_from_stats(reduced_stats).item()
+            )
+
+        return mean_metric_dict
+
+    def _run_policy_updates(
+        self,
+        metrics: dict,
+        rollout_size: int,
+        batch_size_per_rank: int,
+    ) -> None:
+        kl_probe = self._update_kl_probe
+        if kl_probe is not None:
+            kl_probe.begin_round(batch_size_per_rank)
+
+        updates_used = 0
+        stopped_by_kl = False
+        for _ in range(self.update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
                 rollout_size // batch_size_per_rank,
@@ -696,39 +753,49 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         micro_batch=batch,
                         metrics=metrics,
                         is_last=(idx + 1) == self.gradient_accumulation,
+                        kl_probe=kl_probe
+                        if kl_probe is not None and kl_probe.needs_reference
+                        else None,
                     )
                     # avoid gpu memory leak
                     train_micro_batch[idx] = None
                     del batch
 
+                if kl_probe is not None and updates_used == 0:
+                    with self.worker_timer("update_kl_reference"):
+                        kl_probe.finish_reference()
+
                 self.torch_platform.empty_cache()
 
                 grad_norm, lr_list = self.optimizer_step()
-                data = {
-                    "actor/grad_norm": grad_norm,
-                    "actor/lr": lr_list[0],
-                }
-                if len(lr_list) > 1:
-                    data["critic/lr"] = lr_list[1]
-                append_to_dict(metrics, data)
-        # put LR scheduler step here
-        self.lr_scheduler.step()
-        self.optimizer.zero_grad()
-        clear_memory()
-        explained_variance_stats = pop_critic_explained_variance_stats(metrics)
-        mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
-        mean_metric_dict = all_reduce_dict(
-            mean_metric_dict, op=torch.distributed.ReduceOp.AVG
-        )
-        if explained_variance_stats:
-            reduced_stats = all_reduce_dict(
-                explained_variance_stats, op=torch.distributed.ReduceOp.SUM
-            )
-            mean_metric_dict[CRITIC_EXPLAINED_VARIANCE_KEY] = (
-                compute_critic_explained_variance_from_stats(reduced_stats).item()
-            )
+                if kl_probe is not None:
+                    updates_used += 1
+                    self.optimizer.zero_grad()
+                with (
+                    self.worker_timer("update_kl_probe")
+                    if kl_probe is not None
+                    else nullcontext(),
+                    kl_probe.check() if kl_probe is not None else nullcontext(),
+                ):
+                    data = {
+                        "actor/grad_norm": grad_norm,
+                        "actor/lr": lr_list[0],
+                    }
+                    if len(lr_list) > 1:
+                        data["critic/lr"] = lr_list[1]
+                    append_to_dict(metrics, data)
+                if kl_probe is not None and kl_probe.stopped:
+                    stopped_by_kl = True
+                    break
+            if stopped_by_kl:
+                break
 
-        return mean_metric_dict
+        if kl_probe is not None:
+            metrics["actor/optimizer_steps_used"] = [updates_used]
+            metrics["actor/update_kl_stopped"] = [int(stopped_by_kl)]
+            metrics["actor/update_kl_probe_count"] = [kl_probe.valid_count]
+            if kl_probe.last_kl is not None:
+                metrics["actor/update_kl"] = [kl_probe.last_kl]
 
     def train_micro_batch(
         self,
@@ -736,6 +803,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics: dict[str, list[float]],
         *,
         is_last: bool,
+        kl_probe: UpdateKLProbe | None = None,
     ) -> None:
         micro_batch = put_tensor_device(micro_batch, self.device)
         backward_ctx = self.before_micro_batch(self.model, is_last_micro_batch=is_last)
@@ -748,6 +816,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         forward_inputs = micro_batch.get("forward_inputs", None)
 
         kwargs = {}
+        if kl_probe is not None:
+            kwargs["denoise_probe"] = "capture"
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
@@ -784,6 +854,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 use_cache=False,
                 **kwargs,
             )
+
+        if kl_probe is not None:
+            kl_probe.capture_reference(output_dict.pop("denoise_probe"), loss_mask)
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,

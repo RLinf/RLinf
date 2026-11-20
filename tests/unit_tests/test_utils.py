@@ -53,6 +53,7 @@ from rlinf.utils.metric_utils import (
 from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 from rlinf.utils.utils import masked_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.actor.update_kl_probe import UpdateKLProbe
 
 
 @pytest.mark.parametrize("left_pad", [False, True])
@@ -2113,4 +2114,86 @@ def test_dynamic_rollout_metrics_allow_empty_dp_rank(tmp_path, empty_rank):
         args=(empty_rank, str(tmp_path / "empty-metrics")),
         nprocs=2,
         join=True,
+    )
+
+
+def _update_kl_probe_process(rank, init_file):
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=45),
+    )
+    try:
+        shift = 0.0
+
+        def score(inputs):
+            return {
+                "denoise_mean": inputs["delta"] * shift,
+                "denoise_std": inputs["std"],
+                "probe_inputs": inputs,
+            }
+
+        batches = [
+            {
+                "delta": torch.tensor([[[1.0, 20.0]], [[10.0, 0.0]]]),
+                "std": torch.tensor([[[1.0, 0.0]], [[1.0, 0.0]]]),
+            },
+            {
+                "delta": torch.tensor([[[2.0, 0.0]], [[100.0, 0.0]]]),
+                "std": torch.tensor([[[0.0, 0.0]], [[1.0, 0.0]]]),
+            },
+        ]
+        masks = [
+            torch.tensor([[rank == 1], [False]]),
+            torch.ones(2, 1, dtype=torch.bool),
+        ]
+        probe = UpdateKLProbe(score, target_kl=0.5, group=dist.group.WORLD)
+
+        def capture(loss_masks):
+            probe.begin_round(3)
+            for batch, mask in zip(batches, loss_masks, strict=True):
+                assert probe.needs_reference
+                probe.capture_reference(score(batch), mask)
+            assert not probe.needs_reference
+            probe.finish_reference()
+
+        capture(masks)
+        assert probe.valid_count == 1
+        shift = 0.5
+        with probe.check():
+            assert probe.last_kl is None
+        assert not probe.stopped
+        assert probe.last_kl == 0.125
+        shift = 1.0
+        with probe.check():
+            pass
+        assert probe.stopped
+        assert probe.last_kl == 0.5
+        probe.end_round()
+
+        capture(masks)
+        with probe.check():
+            pass
+        assert not probe.stopped
+        assert probe.last_kl == 0.0
+        probe.end_round()
+
+        capture([torch.zeros_like(mask) for mask in masks])
+        assert probe.valid_count == 0
+        with probe.check():
+            pass
+        assert not probe.stopped
+        assert probe.last_kl is None
+        probe.end_round()
+    finally:
+        dist.destroy_process_group()
+
+
+def test_update_kl_probe_stops_all_ranks_with_shared_valid_chunk_count(tmp_path):
+    mp.spawn(
+        _update_kl_probe_process,
+        args=(tmp_path / "ppo-kl-probe",),
+        nprocs=2,
     )

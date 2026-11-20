@@ -56,6 +56,17 @@ class Pi0RLConfig:
     config_name: str = ""
 
 
+class _DenoiseProbeInputs:
+    # This is a leaf for FSDP input casting. The wrapped reference forward
+    # already applied its precision policy before preparing these inputs.
+    def __init__(
+        self, chains: torch.Tensor, denoise_inds: torch.Tensor, observation: Observation
+    ) -> None:
+        self.chains = chains
+        self.denoise_inds = denoise_inds
+        self.observation = observation
+
+
 class Pi0RL(EnvIO, Pi0):
     """On-policy flow RL (PPO / GRPO / NFT) inheriting vendored Pi0."""
 
@@ -134,7 +145,9 @@ class Pi0RL(EnvIO, Pi0):
     def set_global_step(self, global_step: int) -> None:
         self.global_step = int(global_step)
 
-    def _build_prefix_cache_for_actor(self, observation: Observation):
+    def _build_prefix_cache_for_actor(
+        self, observation: Observation, *, return_prefix: bool = True
+    ):
         """Prefix KV for actor recompute.
 
         ``train_expert_only`` freezes the VLM, so prefix must not record
@@ -146,8 +159,8 @@ class Pi0RL(EnvIO, Pi0):
         """
         if self.rl_cfg.train_expert_only:
             with torch.no_grad():
-                return self.build_prefix_cache(observation)
-        return self.build_prefix_cache(observation)
+                return self.build_prefix_cache(observation, return_prefix=return_prefix)
+        return self.build_prefix_cache(observation, return_prefix=return_prefix)
 
     @torch.no_grad()
     def predict_action_batch(
@@ -422,18 +435,34 @@ class Pi0RL(EnvIO, Pi0):
             f"{type(self).__name__} does not support forward_type={forward_type!r}."
         )
 
-    def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
-        """PPO/GRPO recompute of logprobs and values from the stored chain."""
+    def default_forward(
+        self,
+        forward_inputs: dict[str, torch.Tensor] | _DenoiseProbeInputs,
+        *,
+        denoise_probe: Literal["capture", "score"] | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Score the stored chain, optionally collecting or scoring a KL probe."""
         rl_cfg = self.rl_cfg
+        if denoise_probe is not None and rl_cfg.joint_logprob:
+            raise ValueError(
+                "Denoise statistics require a single selected transition, "
+                "got joint_logprob=True."
+            )
         compute_values = kwargs.get("compute_values", True)
-        chains = forward_inputs["chains"]
-        denoise_inds = forward_inputs["denoise_inds"]
+        if isinstance(forward_inputs, _DenoiseProbeInputs):
+            chains = forward_inputs.chains
+            denoise_inds = forward_inputs.denoise_inds
+            observation = forward_inputs.observation
+        else:
+            chains = forward_inputs["chains"]
+            denoise_inds = forward_inputs["denoise_inds"]
+            observation = self._observation_from_forward_inputs(forward_inputs)
         B = chains.shape[0]
         device = chains.device
-        observation = self._observation_from_forward_inputs(forward_inputs)
 
         prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
-            observation
+            observation, return_prefix=denoise_probe != "score"
         )
 
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
@@ -456,11 +485,11 @@ class Pi0RL(EnvIO, Pi0):
             step_entropy = []
 
         suffix_values = []
+        probe_stats = None
         arange_B = torch.arange(B, device=device)
         for idx in range(num_recompute):
             denoise_ind = denoise_inds[:, idx].to(torch.long)
             chains_pre = chains[arange_B, denoise_ind]
-            chains_next = chains[arange_B, denoise_ind + 1]
             t_input = timesteps[denoise_ind].to(torch.float32)
             suffix_act = self.run_suffix(
                 observation, chains_pre, t_input, kv_cache, prefix_mask
@@ -478,6 +507,18 @@ class Pi0RL(EnvIO, Pi0):
                 num_steps=self.num_steps,
                 noise_std=noise_std,
             )
+            if denoise_probe is not None:
+                probe_stats = {
+                    "denoise_mean": x_t_mean[
+                        :, : self.action_chunk, : self.action_env_dim
+                    ].detach(),
+                    "denoise_std": x_t_std[
+                        :, : self.action_chunk, : self.action_env_dim
+                    ].detach(),
+                }
+                if denoise_probe == "score":
+                    return probe_stats
+            chains_next = chains[arange_B, denoise_ind + 1]
             step_logprobs.append(
                 rl_sampler.gaussian_logprob(
                     chains_next.to(torch.float32), x_t_mean, x_t_std
@@ -517,11 +558,17 @@ class Pi0RL(EnvIO, Pi0):
             entropy = entropy.mean(dim=[1, 2, 3], keepdim=False)[:, None]
         else:
             entropy = torch.zeros((B, 1), device=device, dtype=torch.float32)
-        return {
+        result: dict[str, Any] = {
             "logprobs": log_probs.contiguous(),
             "values": values.float(),
             "entropy": entropy.float(),
         }
+        if probe_stats is not None:
+            result["denoise_probe"] = {
+                **probe_stats,
+                "probe_inputs": _DenoiseProbeInputs(chains, denoise_inds, observation),
+            }
+        return result
 
     def nft_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
         """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""
