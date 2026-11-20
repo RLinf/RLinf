@@ -640,6 +640,8 @@ jobs:
 
   embodied-openpi-behavior-test:
     runs-on: embodied
+    env:
+      OMNIGIBSON_DATA_PATH: ${{ vars.BEHAVIOR_2026_DATA_PATH || '/workspace/dataset/behavior-2026-data' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -651,8 +653,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
-          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
+          test -r "$OMNIGIBSON_DATA_PATH/2026-challenge-task-instances/metadata/B100_task_misc.csv"
           bash requirements/install.sh embodied --model openpi --env behavior
 
       - name: BEHAVIOR OpenPI PPO test
@@ -661,8 +662,6 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
-          export ISAAC_PATH=/workspace/dataset/isaac-sim
           bash tests/e2e_tests/embodied/run.sh behavior_ppo_openpi
 
       - name: BEHAVIOR OpenPI eval test
@@ -671,8 +670,6 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
-          export ISAAC_PATH=/workspace/dataset/isaac-sim
           python -m pytest -q tests/unit_tests/test_worker.py -k test_behavior_
           bash tests/e2e_tests/evaluations/run.sh behavior_openpi_eval
 

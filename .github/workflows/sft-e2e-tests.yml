@@ -151,16 +151,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Create sft environment
+      # The 2025 fixture uses LeRobot v2.1 and OmniGibson 3.7.2 video utilities.
+      - name: Check out the installer used for the 2025 dataset
+        uses: actions/checkout@v5
+        with:
+          repository: RLinf/RLinf
+          ref: b665e1873b07501f779a5b11dc5bed5b6dcb2125
+          path: .ci/behavior-2025
+          persist-credentials: false
+
+      - name: Create the 2025 SFT environment
+        working-directory: .ci/behavior-2025
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
           export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
-          bash requirements/install.sh embodied --model openpi --env behavior
+          bash requirements/install.sh embodied --model openpi --env behavior --venv "$GITHUB_WORKSPACE/.venv"
 
       - name: SFT BEHAVIOR OpenPI test
         timeout-minutes: 30
