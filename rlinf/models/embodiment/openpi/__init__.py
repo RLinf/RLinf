@@ -55,6 +55,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
 
     model_cfg = cfg.openpi
+    batch_invariant_ops = model_cfg.get("batch_invariant_ops", False)
+    if not isinstance(batch_invariant_ops, bool):
+        raise ValueError(
+            f"Expected a boolean for openpi.batch_invariant_ops, got {batch_invariant_ops!r}."
+        )
     set_torch_compile(
         bool(OmegaConf.select(model_cfg, "torch_compile", default=True))
         and inductor_available()
@@ -108,6 +113,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": _pi0_dtype_name(embed_dtype),
         "pcd": False,
+        "batch_invariant_ops": batch_invariant_ops,
         "pytorch_numerics": bool(
             OmegaConf.select(model_cfg, "pytorch_numerics", default=False)
         ),
