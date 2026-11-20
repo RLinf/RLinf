@@ -1040,7 +1040,6 @@ class MultiStepRolloutWorker(Worker):
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()
-        await self._wait_for_model_sync()
         if self.env_decoupled_mode:
             while True:
                 (

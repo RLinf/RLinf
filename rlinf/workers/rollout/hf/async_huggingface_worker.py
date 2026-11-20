@@ -25,7 +25,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         super().__init__(cfg)
         self._generate_task: asyncio.Task = None
         self._evaluate_task: asyncio.Task = None
-        self._model_lock = asyncio.Lock()
         self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
         assert not self.enable_offload, (
             "Offload not supported in AsyncMultiStepRolloutWorker"
@@ -33,6 +32,11 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
 
         self._background_weight_sync_active = self.cfg.actor.get(
             "sync_weight_no_wait", False
+        )
+        self._model_lock = (
+            asyncio.Lock()
+            if self.enable_dagger and not self._background_weight_sync_active
+            else None
         )
         self._weight_sync_requested = False
         self._weight_sync_work = None
@@ -87,25 +91,8 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 {"rank": self._rank, "time": rollout_metrics}, async_op=True
             )
 
-    async def generate_one_epoch(
-        self,
-        input_channel: Channel,
-        output_channel: Channel,
-        actor_channel: Channel,
-    ) -> None:
-        if self._background_weight_sync_active or self.enable_dagger:
-            return await super().generate_one_epoch(
-                input_channel, output_channel, actor_channel
-            )
-        # Bucket sync applies parameters across multiple awaits. Keep an epoch
-        # on one complete model while its environment requests are in flight.
-        async with self._model_lock:
-            return await super().generate_one_epoch(
-                input_channel, output_channel, actor_channel
-            )
-
     async def _wait_for_model_sync(self) -> None:
-        if not self.enable_dagger or self._background_weight_sync_active:
+        if self._model_lock is None:
             return
         # Let the sync RPC acquire the lock even with queued policy requests.
         await asyncio.sleep(0)
@@ -114,7 +101,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             pass
 
     async def sync_model_from_actor(self):
-        if self._background_weight_sync_active:
+        if self._model_lock is None:
             return await super().sync_model_from_actor()
         async with self._model_lock:
             return await super().sync_model_from_actor()
