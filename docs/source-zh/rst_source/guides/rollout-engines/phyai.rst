@@ -1,9 +1,9 @@
 PhyAI 具身 Rollout 后端
 =======================
 
-本页介绍如何在 LIBERO 上用 PPO 训练 PI0.5 policy，并由 `PhyAI <https://github.com/mingti-org/phyai>`_ 生成 rollout。PhyAI 是面向 VLA 等物理 AI 模型的推理框架。每个 RLinf rollout worker 在自己的 GPU 上运行一个 PhyAI engine，用 CUDA graph 和 FlashInfer kernel 采样动作，替代 Hugging Face 模型代码。其余部分仍由 RLinf 负责，包括 LIBERO 环境、观测与动作变换、FSDP actor 和权重同步。
+本页介绍如何用 `PhyAI <https://github.com/mingti-org/phyai>`_ 在进程内训练 PI0.5 policy，或通过外部 Gateway 执行评估。PhyAI 是面向 VLA 等物理 AI 模型的推理框架。进程内路径由每个 RLinf rollout worker 管理一个 engine，LIBERO 环境、FSDP actor、观测变换和权重同步仍由 RLinf 负责。
 
-下面依次完成安装、配置 checkpoint 和启动训练。训练前有一节说明为什么 PhyAI 训练需要开启重要性采样修正：actor 训练时用到的动作不是它自己采样的，这个设置决定了 actor 如何处理这些动作。
+下面先说明进程内 PPO 的安装与训练流程。需要独立管理模型服务时，请阅读 :ref:`phyai-http-evaluation-zh`。该评估路径启动 RLinf 环境 worker 和 HTTP rollout worker，Gateway 和模型 Server 作为独立进程运行。
 
 准备工作
 --------
@@ -19,7 +19,6 @@ PhyAI 具身 Rollout 后端
 
    bash requirements/install.sh \
      --python 3.12 \
-     --torch 2.11.0 \
      --install-rlinf \
      embodied \
      --model openpi \
@@ -95,3 +94,145 @@ PPO 以产生数据的 policy 为基准衡量每次更新。如果这个基准�
 ------------
 
 启动脚本将日志写入 ``logs/<timestamp>-<config-name>/``。``env/success_once`` 反映任务成功率。``actor/importance_sampling_weight`` 接近 1、``actor/importance_sampling_clip_fraction`` 较小，说明 PhyAI 与 actor 的结果仍然一致；如果权重逐渐偏离 1，说明二者的差异在扩大。其余指标的定义见 :doc:`训练指标 <../../reference/metrics>`。
+
+.. _phyai-http-evaluation-zh:
+
+通过外部 Gateway 评估
+---------------------
+
+如果模型推理由独立服务管理，使用这条路径。评估入口启动 RLinf 环境 worker 和 HTTP rollout worker，你需要先启动模型 Server 和 Gateway。``serving_mode: gateway`` 选择这条仅用于评估的路径；上面的 PPO 流程使用进程内后端。
+
+.. code-block:: text
+
+   RLinf EnvWorker -> HTTP rollout worker
+       -> HTTP MessagePack -> PhyAI Gateway
+       -> gRPC -> PI0.5 model server
+
+安装评估环境
+~~~~~~~~~~~~
+
+使用已有的 ``--engine phyai`` 安装入口创建一个环境，同时提供 RLinf 评估客户端、PhyAI 模型 Server 和 Gateway，HTTP 链路的客户端与服务端共用这一套安装：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   bash requirements/install.sh \
+     --python 3.12 \
+     --venv .venv-phyai \
+     --install-rlinf \
+     embodied --model openpi --env libero --engine phyai
+   source .venv-phyai/bin/activate
+
+安装器选择 CUDA 12/13 依赖，将 PhyAI 固定为 ``0.2.0rc1``，补上 Gateway、processor 辅助包及其 HTTP 依赖，并检查这些新增内容是否保留了 RLinf 所用的 Torch 和 Transformers 版本。HTTP 客户端使用 ``rlinf.utils.msgpack_codec`` 编码 MessagePack；该 codec 与 Gateway 线格式一致，不需要安装 SGLang。
+
+模型 Server 和 Gateway 运行在独立进程中，也可以部署到另一台机器。此时在服务端机器上执行同一条命令，在评估机器上使用不带 ``--engine phyai`` 的环境即可。环境的 ``bin`` 目录应位于 ``PATH`` 中，供 ``ninja`` 等 kernel 构建工具使用；激活环境和 Shell e2e 脚本都会处理这一点。
+
+.. warning::
+
+   为这些命令创建新环境。安装器会同步所选依赖，不要指向还需要保留额外软件包的混合实验环境。
+
+下载 checkpoint 和 tokenizer：
+
+.. code-block:: bash
+
+   export HF_ENDPOINT=https://hf-mirror.com
+   hf download lerobot/pi05_libero_finetuned_v044 \
+     --revision 7152f13e34c6c115d808aea0e5d08aca74eac14b \
+     --local-dir /path/to/lerobot-pi05-libero
+   hf download google/paligemma-3b-pt-224 \
+     --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+     --local-dir /path/to/paligemma-3b-pt-224
+
+``HF_ENDPOINT`` 指向镜像以加快下载；不需要时可取消该变量，直接访问 ``huggingface.co``。checkpoint 目录包含 ``PI05Backend`` 读取的预处理、归一化及动作后处理文件，对应 8 维 state、7 维 action 和 50 步动作块。上面的进程内 RLinf/OpenPI checkpoint 使用另一种布局，不能直接替代。
+
+在 RLinf 仓库根目录中创建 ``pi05-http.yaml``，内容如下，资源路径填写模型所在机器上的实际位置：
+
+.. code-block:: yaml
+
+   plugin: pi05
+   plugin_args:
+     checkpoint_dir: /path/to/lerobot-pi05-libero  # https://huggingface.co/lerobot/pi05_libero_finetuned_v044
+     max_batch_size: 8
+     inputs_image_shape:
+       - [360, 360, 3]
+       - [360, 360, 3]
+   config:
+     device:
+       target: cuda
+       params_dtype: bfloat16
+     runtime:
+       use_cuda_graph: true
+       flashinfer_workspace_bytes: 2147483648
+   deployment:
+     mode: auto
+   server:
+     host: 127.0.0.1
+     port: 50063
+     model_name: pi05
+     workers: 1
+   adapter:
+     factory: phyai.server.backends.pi05:PI05Backend
+     args:
+       tokenizer_dir: /path/to/paligemma-3b-pt-224  # https://huggingface.co/google/paligemma-3b-pt-224
+       image_names: [main_images, wrist_images]
+       state_dim: 8
+       action_dim: 7
+
+这里的相机名匹配 RLinf HTTP 请求，不是 LeRobot 客户端使用的 LIBERO 原始相机 key。``max_batch_size: 8`` 覆盖下面单 worker、8 个环境的示例。增大请求 batch 前，同步调整该上限，并检查显存和 100 MiB 消息限制。FlashInfer workspace 显式设为 2 GiB，避免使用较小的运行时默认值。
+
+启动模型 Server 和 Gateway
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+选择空闲 GPU 和未占用端口。在第一个服务终端中激活 PhyAI 环境，启动模型 Server：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv-phyai/bin/activate
+   export GPU_ID=0
+   CUDA_VISIBLE_DEVICES="$GPU_ID" python -m phyai server pi05-http.yaml
+
+等待 ``Serving model pi05 on 127.0.0.1:50063``，这条日志出现在模型初始化和 warmup 完成之后。保持该进程运行，在第二个服务终端激活同一环境并启动 Gateway：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv-phyai/bin/activate
+   python -m phyai_gateway.server \
+     --gateway 127.0.0.1:50111 \
+     --http-host 127.0.0.1 \
+     --http-port 30000 \
+     --backend pi05 127.0.0.1:50063
+   # In another shell:
+   curl --noproxy '*' http://127.0.0.1:30000/v1/backends
+
+Gateway 主动调用已登记 Server 的 ``CheckHealth``。等待 ``pi05``、``127.0.0.1:50063`` 对应记录显示 ``healthy: true``。Server YAML 的 ``server.model_name`` 和 Gateway 的后端名都应为 ``pi05``，当前 HTTP worker 每次请求会发送这个名字。登记只在 Gateway 进程内有效，重启时再次提供 ``--backend``。
+
+这里的回环地址要求服务与 RLinf worker 共享网络命名空间。若运行在不同机器或容器中，将服务绑定到可达接口，在 ``--backend`` 中填写模型主机地址，在 ``rollout.phyai.gateway_url`` 中填写 Gateway 主机地址。这些 HTTP/gRPC 接口面向可信调用方，应由部署环境实施网络访问控制。
+
+运行 HTTP 评估
+~~~~~~~~~~~~~~
+
+两项服务就绪后，在第三个终端使用 RLinf 客户端环境。为 LIBERO 渲染选择空闲 GPU，并让 placement 使用相同编号。模型 Server 是独立进程，可以使用另一张 GPU。
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv-phyai/bin/activate
+   export GPU_ID=0
+   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
+     "~cluster.component_placement" \
+     "+cluster.component_placement.env=$GPU_ID" \
+     "+cluster.component_placement.rollout=$GPU_ID" \
+     rollout.phyai.gateway_url=http://127.0.0.1:30000 \
+     env.eval.total_num_envs=8 \
+     env.eval.rollout_epoch=1 \
+     env.eval.max_episode_steps=240 \
+     env.eval.max_steps_per_rollout_epoch=240 \
+     env.eval.video_cfg.save_video=false
+
+``run_eval.sh`` 提供标准 LIBERO/EGL 默认环境变量。运行此命令时不要设置 ``CUDA_VISIBLE_DEVICES``：RLinf placement 会根据 ``cluster.component_placement`` 同时设置 worker 的可见 GPU 和 EGL 渲染设备。预先过滤可见 GPU 会让 Ray 只枚举到一个 rank 0 设备，任何非 0 的 ``GPU_ID`` 都会触发 rank 断言失败。YAML 默认使用 ``env,rollout: all``，可在任意机器上运行；上面的 ``component_placement`` 覆盖会替换该默认值，把本次评估固定到单个 ``GPU_ID``。由于 YAML 用的是复合键 ``env,rollout``，逐组件覆盖需要先用 ``~`` 删除它，再分别添加 ``env`` 和 ``rollout``。HTTP YAML 设置 ``serving_mode: gateway`` 并请求 16 步动作块；``rollout.phyai.model_name`` 必须与 Server 注册并供 Gateway 路由的模型名一致。这里把原配置的较大评估规模覆盖为 8 个环境、1 轮 rollout，保留 360x360 相机输入。权重和 tokenizer 路径由模型 Server YAML 管理，客户端命令只选择 Gateway 地址。
+
+在最终评估指标中检查 ``success_once``、``success_at_end`` 和 ``num_trajectories``。
+
+评估结束后，在对应终端中用 Ctrl+C 停止 Gateway 和模型 Server。更多后端管理和多机部署说明见 `PhyAI 服务指南 <https://phyai.mintlify.app/zh/deployment/server-gateway>`_。

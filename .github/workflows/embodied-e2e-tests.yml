@@ -988,6 +988,68 @@ jobs:
           ray stop --force || true
           rm -rf "$GITHUB_WORKSPACE/.venv"
 
+  embodied-libero-phyai-http-test:
+    # Maintainers stage compatible LeRobot checkpoint/tokenizer assets on the runner.
+    if: ${{ vars.PHYAI_HTTP_CHECKPOINT != '' && vars.PHYAI_HTTP_TOKENIZER != '' }}
+    runs-on: embodied
+    timeout-minutes: 120
+    env:
+      PHYAI_HTTP_CHECKPOINT: ${{ vars.PHYAI_HTTP_CHECKPOINT }}
+      PHYAI_HTTP_TOKENIZER: ${{ vars.PHYAI_HTTP_TOKENIZER }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create isolated PhyAI environment
+        timeout-minutes: 75
+        run: |
+          environment_root=$(mktemp -d "$RUNNER_TEMP/phyai-http-envs.XXXXXX")
+          echo "PHYAI_HTTP_ENV_ROOT=$environment_root" >> "$GITHUB_ENV"
+          echo "RLINF_VENV=$environment_root/phyai" >> "$GITHUB_ENV"
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          unset UV_DEFAULT_INDEX UV_TORCH_BACKEND PYTHONPATH VIRTUAL_ENV
+          test -d "$PHYAI_HTTP_CHECKPOINT"
+          test -d "$PHYAI_HTTP_TOKENIZER"
+          install_args=(
+            --python 3.12
+            --venv "$environment_root/phyai"
+            --install-rlinf
+            embodied
+            --model openpi
+            --env libero
+            --engine phyai
+          )
+          bash requirements/install.sh "${install_args[@]}"
+
+      - name: Run PhyAI Gateway E2E
+        timeout-minutes: 35
+        run: |
+          unset PYTHONPATH
+          source "$RLINF_VENV/bin/activate"
+          if [[ -n "${CUDNN_FRONTEND_CUDART_LIB_NAME:-}" ]]; then
+            export PHYAI_CUDART_LIB_NAME="$CUDNN_FRONTEND_CUDART_LIB_NAME"
+          fi
+          env GPU_ID=1 SERVER_GPU_ID=0 \
+            bash tests/e2e_tests/evaluations/run_phyai_gateway.sh
+
+      - name: Upload PhyAI HTTP evaluation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phyai-http-evaluation-logs
+          path: logs/ci/phyai-gateway.*/
+          if-no-files-found: warn
+
+      - name: Clean up isolated PhyAI environment
+        if: always()
+        run: |
+          if [[ -n "${PHYAI_HTTP_ENV_ROOT:-}" && "$PHYAI_HTTP_ENV_ROOT" == "$RUNNER_TEMP"/phyai-http-envs.* ]]; then
+            rm -rf -- "$PHYAI_HTTP_ENV_ROOT"
+          fi
+
   embodied-openpi-maniskill-gsenv-test:
     runs-on: embodied
     steps:

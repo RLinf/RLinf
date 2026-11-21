@@ -3958,6 +3958,47 @@ def test_phyai_eval_requires_a_nonempty_openpi_config_name(phyai_example_cfg):
         validate_embodied_cfg(phyai_example_cfg)
 
 
+def test_phyai_rejects_unknown_serving_mode(phyai_example_cfg):
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.serving_mode",
+        "worker_http",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="serving_mode"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
+def test_phyai_gateway_serving_mode_requires_eval_and_url(phyai_example_cfg):
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.serving_mode",
+        "gateway",
+        force_add=True,
+    )
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.gateway_url",
+        "http://localhost:30000",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="only_eval"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+    phyai_example_cfg.runner.only_eval = True
+    OmegaConf.update(
+        phyai_example_cfg,
+        "rollout.phyai.gateway_url",
+        "",
+        force_add=True,
+    )
+
+    with pytest.raises(AssertionError, match="gateway_url"):
+        validate_embodied_cfg(phyai_example_cfg)
+
+
 def _cosmos3_sglang_cfg(batching_max_size=None):
     server = (
         {} if batching_max_size is None else {"batching_max_size": batching_max_size}
@@ -4835,6 +4876,188 @@ def test_openvla_oft_predicts_a_finite_action_on_the_accelerator():
     assert tuple(actions.shape) == (1, 8, 7)
     assert torch.isfinite(actions).all()
     assert torch.isfinite(result["prev_logprobs"]).all()
+
+
+@pytest.fixture
+def phyai_http_worker(monkeypatch):
+    from rlinf.workers.rollout.phyai import PhyAIGatewayRolloutWorker
+
+    def init_scheduler(worker):
+        worker._rank = 0
+        worker._world_size = 1
+        worker._group_name = "RolloutGroup"
+        worker._logger = logging.getLogger("phyai-http-test")
+        worker._stacklevel = 1
+
+    monkeypatch.setattr(Worker, "__init__", init_scheduler)
+    cfg = _phyai_cfg(only_eval=True)
+    return PhyAIGatewayRolloutWorker(cfg)
+
+
+def test_phyai_http_request_preserves_raw_observations(phyai_http_worker):
+    obs = _phyai_env_obs()
+    obs["states"] = obs["states"].double()
+    payload, state = phyai_http_worker.build_phyai_request(
+        {**obs, "_rlinf_stage_id": 2, "_rlinf_reset": True}
+    )
+    assert payload["model"] == payload["model_name"] == "pi05"
+    assert payload["observation"]["main_images"] is obs["main_images"]
+    assert payload["observation"]["states"].dtype is torch.float32
+    assert torch.equal(payload["observation"]["states"], obs["states"].float())
+    assert payload["metadata"] == {
+        "mode": "eval",
+        "batch_size": 2,
+        "stage_id": 2,
+        "reset": True,
+    }
+    assert payload["requested_action_horizon"] == 5
+    assert state == {"batch_size": 2, "requested_action_horizon": 5}
+    assert "_rlinf_stage_id" not in payload["observation"]
+    actions, info = phyai_http_worker.parse_phyai_response(
+        {"actions": np.zeros((2, 5, 7), dtype=np.float32)}, state
+    )
+    assert actions.shape == (2, 5, 7)
+    assert info == {}
+
+
+@pytest.mark.parametrize("shape", [(2, 4, 7), (2, 5, 32)])
+def test_phyai_http_response_rejects_shape_mismatches(phyai_http_worker, shape):
+    with pytest.raises(RuntimeError, match="Expected PhyAI action shape"):
+        phyai_http_worker.parse_phyai_response(
+            {"actions": np.zeros(shape, dtype=np.float32)},
+            {"batch_size": 2, "requested_action_horizon": 5},
+        )
+
+
+def test_phyai_http_response_rejects_nonfinite_values(phyai_http_worker):
+    with pytest.raises(RuntimeError, match="finite"):
+        phyai_http_worker.parse_phyai_response(
+            {"actions": np.full((2, 5, 7), np.nan, dtype=np.float32)},
+            {"batch_size": 2, "requested_action_horizon": 5},
+        )
+
+
+@pytest.mark.parametrize("codec", ["lz4", "zstd"])
+def test_phyai_http_merge_decompresses_images_and_keeps_epoch_end(
+    phyai_http_worker, codec
+):
+    from rlinf.utils.obs_compression import compress_obs, infer_obs_batch_size
+
+    obs = _phyai_env_obs()
+    compressed = compress_obs(
+        {"obs": obs, "eval_epoch_done": True},
+        {"enable": True, "codec": codec, "level": 1},
+    )
+    assert infer_obs_batch_size(compressed) == 2
+    merged = phyai_http_worker._merge_obs_batches([compressed])
+    assert torch.equal(merged["obs"]["main_images"], obs["main_images"])
+    assert torch.equal(merged["obs"]["wrist_images"], obs["wrist_images"])
+    assert merged["eval_epoch_done"]
+    assert not merged["reset"]
+
+
+def test_phyai_http_evaluate_stops_without_predicting_after_epoch_end(
+    monkeypatch, phyai_http_worker
+):
+    received = []
+    sent = []
+    predictions = []
+    phyai_http_worker.n_eval_chunk_steps = 3
+    actions = torch.zeros(2, 5, 7)
+
+    class ReceiveResult:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def async_wait(self):
+            return self.payload
+
+    def recv_from(**kwargs):
+        received.append(kwargs)
+        batch = {"obs": _phyai_env_obs(), "eval_epoch_done": len(received) == 2}
+        return ReceiveResult(kwargs["merge_fn"]([batch]))
+
+    def predict(obs, mode):
+        predictions.append((obs, mode))
+        return actions, {}
+
+    monkeypatch.setattr(phyai_http_worker, "recv_from", recv_from)
+    monkeypatch.setattr(
+        phyai_http_worker, "send_to", lambda **kwargs: sent.append(kwargs)
+    )
+    monkeypatch.setattr(phyai_http_worker, "predict", predict)
+    asyncio.run(phyai_http_worker.evaluate("observations", "actions"))
+    assert len(received) == 2
+    assert len(predictions) == len(sent) == 1
+    assert sent[0]["channel"] == "actions"
+    assert sent[0]["route_key"] == 0
+    assert torch.equal(sent[0]["data"], actions)
+
+
+def test_phyai_http_initialization_requires_gateway_urls(phyai_http_worker):
+    with pytest.raises(RuntimeError, match="Expected Gateway URLs"):
+        asyncio.run(phyai_http_worker.init_worker())
+    phyai_http_worker.set_phyai_server_urls(["http://localhost:30000/"])
+    asyncio.run(phyai_http_worker.init_worker())
+    assert phyai_http_worker.phyai_server_url == "http://localhost:30000"
+
+
+def test_phyai_http_predict_posts_msgpack_to_actions_endpoint(phyai_http_worker):
+    """Exercise predict end to end against a fake HTTP boundary.
+
+    The other PhyAI HTTP worker tests patch predict itself, so the
+    request builder, the MessagePack POST, and the response parser are never
+    wired together. This replaces only the transport, so a regression in any
+    of those three steps fails here.
+    """
+    calls = []
+    phyai_http_worker.set_phyai_server_urls(["http://localhost:30000"])
+    asyncio.run(phyai_http_worker.init_worker())
+    phyai_http_worker.http_client = SimpleNamespace(
+        post=lambda path, body, **kwargs: (
+            calls.append((path, body, kwargs))
+            or {"actions": np.zeros((2, 5, 7), dtype=np.float32)}
+        )
+    )
+    actions, info = phyai_http_worker.predict(_phyai_env_obs(), mode="eval")
+    assert len(calls) == 1
+    path, body, kwargs = calls[0]
+    assert path == "/v1/actions/generations"
+    assert body["model"] == body["model_name"] == "pi05"
+    assert (
+        body["requested_action_horizon"]
+        == phyai_http_worker.model_cfg.num_action_chunks
+    )
+    assert body["metadata"]["batch_size"] == 2
+    assert kwargs == {
+        "msgpack": True,
+        "timeout_s": phyai_http_worker._http_timeout_s,
+        "max_retries": phyai_http_worker._http_max_retries,
+        "retry_backoff_s": phyai_http_worker._http_retry_backoff_s,
+    }
+    assert actions.shape == (2, 5, 7)
+    assert actions.dtype is torch.float32
+    assert info == {}
+
+
+def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
+    from hydra import compose, initialize_config_dir
+
+    from rlinf.config import validate_only_eval_rollout_model
+
+    repo = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(repo / "examples/embodiment"))
+    with initialize_config_dir(
+        config_dir=str(repo / "evaluations/libero"), version_base=None
+    ):
+        cfg = compose(config_name="libero_spatial_pi05_eval_phyai")
+    validate_only_eval_rollout_model(cfg.rollout.model)
+    assert cfg.rollout.model.action_dim == 7
+    assert cfg.rollout.model.num_action_chunks == 16
+    assert cfg.rollout.phyai.serving_mode == "gateway"
+    assert cfg.rollout.phyai.model_name == "pi05"
+    assert cfg.rollout.model.openpi.task == "eval"
+    assert "action_head_cfg" not in cfg.rollout.model
 
 
 def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessing):

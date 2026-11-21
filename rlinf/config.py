@@ -1528,16 +1528,37 @@ def validate_embodied_cfg(cfg):
             raise ValueError(
                 f"Expected bool for rollout.{bootstrap_flag}, got {flag_value!r}."
             )
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     if (
         cfg.rollout.get("batch_bootstrap_inference", False)
         or cfg.rollout.get("value_only_bootstrap", False)
-    ) and cfg.rollout.get("rollout_backend", "huggingface") != "huggingface":
+    ) and rollout_backend != "huggingface":
         raise ValueError(
             "rollout.batch_bootstrap_inference and rollout.value_only_bootstrap "
             "require rollout.rollout_backend='huggingface'."
         )
+    if rollout_backend == "phyai":
+        phyai_cfg = cfg.rollout.get("phyai", {})
+        serving_mode = phyai_cfg.get("serving_mode", "in_process")
+        assert serving_mode in {"in_process", "gateway"}, (
+            "Expected rollout.phyai.serving_mode in "
+            "('in_process', 'gateway'), "
+            f"got {serving_mode!r}."
+        )
+        model_name = phyai_cfg.get("model_name", "pi05")
+        assert isinstance(model_name, str) and model_name.strip(), (
+            f"Expected a nonempty rollout.phyai.model_name, got {model_name!r}."
+        )
+        if serving_mode == "gateway":
+            assert only_eval, (
+                "rollout.phyai.serving_mode='gateway' requires runner.only_eval=True."
+            )
+            gateway_url = phyai_cfg.get("gateway_url")
+            assert isinstance(gateway_url, str) and gateway_url.strip(), (
+                "Expected a nonempty rollout.phyai.gateway_url when "
+                f"serving_mode='gateway', got {gateway_url!r}."
+            )
     # Only the HF rollout worker serves each env configuration on its own loop.
-    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     listed = [
         f"env.{mode}.envs"
         for mode in ("train", "eval")

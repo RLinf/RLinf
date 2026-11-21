@@ -1,18 +1,16 @@
 PhyAI Embodied Rollout Backend
 ==============================
 
-This guide trains a PI0.5 policy on LIBERO with PPO while
-`PhyAI <https://github.com/mingti-org/phyai>`_ generates the rollouts. PhyAI is
-an inference framework for physical-AI models such as VLAs. Each RLinf rollout
-worker runs one PhyAI engine on its GPU, and the engine samples actions with
-CUDA graphs and FlashInfer kernels instead of the Hugging Face model code.
-Everything else stays with RLinf: the LIBERO environments, observation and
-action transforms, the FSDP actor, and weight synchronization.
+Use `PhyAI <https://github.com/mingti-org/phyai>`_ to train a PI0.5 policy
+in process or evaluate it through an external Gateway. PhyAI is an inference
+framework for physical-AI models such as VLAs. The in-process path puts one
+engine in each RLinf rollout worker and keeps the LIBERO environments, FSDP
+actor, observation transforms, and weight synchronization in RLinf.
 
-You'll install the backend, point the example at a checkpoint, and run
-training. Before the run, one section explains why PhyAI training keeps
-importance-sampling correction turned on, because that setting decides how the
-actor treats actions it did not sample itself.
+The sections below install and run the in-process PPO backend. For separate
+model servers, follow :ref:`phyai-http-evaluation-en`. That evaluation-only
+path runs RLinf environment workers and an HTTP rollout worker, and keeps
+the Gateway and model server in separate processes.
 
 Prerequisites
 -------------
@@ -32,7 +30,6 @@ one virtual environment, then activate it:
 
    bash requirements/install.sh \
      --python 3.12 \
-     --torch 2.11.0 \
      --install-rlinf \
      embodied \
      --model openpi \
@@ -147,3 +144,207 @@ near 1 with a small ``actor/importance_sampling_clip_fraction`` means PhyAI and
 the actor still agree closely; a weight drifting away from 1 means their scores
 are diverging. :doc:`Training Metrics <../../reference/metrics>` defines the
 remaining metrics.
+
+.. _phyai-http-evaluation-en:
+
+Evaluate Through an External Gateway
+------------------------------------
+
+Run this mode when model inference belongs to a separately managed service.
+The evaluation driver starts RLinf environment workers and HTTP rollout
+workers; you start the model server and Gateway first.
+``serving_mode: gateway`` selects this evaluation-only path; the PPO
+instructions above use the in-process backend.
+
+.. code-block:: text
+
+   RLinf EnvWorker -> HTTP rollout worker
+       -> HTTP MessagePack -> PhyAI Gateway
+       -> gRPC -> PI0.5 model server
+
+Install the Evaluation Environment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Create one dedicated environment with the existing ``--engine phyai``
+installer. It provides the RLinf evaluation client, the PhyAI model server,
+and the Gateway, so a single installation serves both sides of the HTTP
+chain:
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   bash requirements/install.sh \
+     --python 3.12 \
+     --venv .venv-phyai \
+     --install-rlinf \
+     embodied --model openpi --env libero --engine phyai
+   source .venv-phyai/bin/activate
+
+The installer selects the CUDA 12/13 requirements, pins PhyAI to
+``0.2.0rc1``, adds the Gateway, its processor helpers, and the HTTP
+dependencies, and then checks that the additions preserved RLinf's Torch and
+Transformers versions. The HTTP client encodes MessagePack with
+``rlinf.utils.msgpack_codec``, which matches the Gateway wire format and does
+not require SGLang.
+
+The model server and Gateway run as separate processes, so they can also run
+on another host. Install the serving side with the same command there and
+give the evaluation host an environment built without ``--engine phyai``.
+Keep the environment's ``bin`` directory on ``PATH`` for ``ninja`` and other
+kernel-build tools; activation and the Shell e2e runner do this.
+
+.. warning::
+
+   Use a new environment for these commands. The installer synchronizes its
+   selected dependencies; do not point it at a mixed experimental environment
+   whose additional packages you need to preserve.
+
+Download the checkpoint and tokenizer:
+
+.. code-block:: bash
+
+   export HF_ENDPOINT=https://hf-mirror.com
+   hf download lerobot/pi05_libero_finetuned_v044 \
+     --revision 7152f13e34c6c115d808aea0e5d08aca74eac14b \
+     --local-dir /path/to/lerobot-pi05-libero
+   hf download google/paligemma-3b-pt-224 \
+     --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+     --local-dir /path/to/paligemma-3b-pt-224
+
+``HF_ENDPOINT`` selects a mirror for faster downloads; unset it to reach
+``huggingface.co`` directly. The checkpoint directory carries the
+preprocessing, normalization, and action postprocessing files
+``PI05Backend`` reads, and describes an eight-value state, seven-value
+actions, and a 50-step action chunk. The in-process RLinf/OpenPI checkpoint
+shown earlier uses a different layout and cannot be substituted directly.
+
+Create ``pi05-http.yaml`` in the RLinf repository root with these settings,
+using resource paths on the model host:
+
+.. code-block:: yaml
+
+   plugin: pi05
+   plugin_args:
+     checkpoint_dir: /path/to/lerobot-pi05-libero  # https://huggingface.co/lerobot/pi05_libero_finetuned_v044
+     max_batch_size: 8
+     inputs_image_shape:
+       - [360, 360, 3]
+       - [360, 360, 3]
+   config:
+     device:
+       target: cuda
+       params_dtype: bfloat16
+     runtime:
+       use_cuda_graph: true
+       flashinfer_workspace_bytes: 2147483648
+   deployment:
+     mode: auto
+   server:
+     host: 127.0.0.1
+     port: 50063
+     model_name: pi05
+     workers: 1
+   adapter:
+     factory: phyai.server.backends.pi05:PI05Backend
+     args:
+       tokenizer_dir: /path/to/paligemma-3b-pt-224  # https://huggingface.co/google/paligemma-3b-pt-224
+       image_names: [main_images, wrist_images]
+       state_dim: 8
+       action_dim: 7
+
+The camera names match the RLinf HTTP request, rather than the raw LIBERO
+camera keys used by the LeRobot client. ``max_batch_size: 8`` covers the
+single-worker, eight-environment example below. Before increasing request
+batches, raise this limit and check GPU memory and the 100 MiB message limit.
+The 2 GiB FlashInfer workspace is explicit instead of relying on the smaller
+runtime default.
+
+Start the Model Server and Gateway
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Choose an available GPU and unused ports. In the first serving terminal,
+activate the PhyAI environment and start the model server:
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv-phyai/bin/activate
+   export GPU_ID=0
+   CUDA_VISIBLE_DEVICES="$GPU_ID" python -m phyai server pi05-http.yaml
+
+Wait for ``Serving model pi05 on 127.0.0.1:50063``, which follows model
+initialization and warmup. Keep it running. In a second serving terminal,
+activate the same environment and start the Gateway:
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv-phyai/bin/activate
+   python -m phyai_gateway.server \
+     --gateway 127.0.0.1:50111 \
+     --http-host 127.0.0.1 \
+     --http-port 30000 \
+     --backend pi05 127.0.0.1:50063
+   # In another shell:
+   curl --noproxy '*' http://127.0.0.1:30000/v1/backends
+
+The Gateway probes ``CheckHealth`` on the registered server. Wait until the
+record for ``pi05`` at ``127.0.0.1:50063`` reports ``healthy: true``. Both the
+server YAML's ``server.model_name`` and the backend name must be ``pi05``,
+which the current HTTP worker sends in every request. Registration lasts for
+the Gateway process; include ``--backend`` again after a restart.
+
+These loopback addresses assume that the services and RLinf workers share a
+network namespace. For separate hosts or containers, bind the services to
+reachable interfaces, use the model host's address in ``--backend``, and set
+``rollout.phyai.gateway_url`` to the Gateway host. Keep these trusted HTTP/gRPC
+interfaces behind the deployment's network controls.
+
+Run the HTTP Evaluation
+~~~~~~~~~~~~~~~~~~~~~~~
+
+With both services ready, use a third terminal for the RLinf client. Select an
+available GPU for LIBERO rendering and set placement to the same index. The
+model server can use a different GPU because it is a separate process.
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv-phyai/bin/activate
+   export GPU_ID=0
+   bash evaluations/run_eval.sh libero libero_spatial_pi05_eval_phyai \
+     "~cluster.component_placement" \
+     "+cluster.component_placement.env=$GPU_ID" \
+     "+cluster.component_placement.rollout=$GPU_ID" \
+     rollout.phyai.gateway_url=http://127.0.0.1:30000 \
+     env.eval.total_num_envs=8 \
+     env.eval.rollout_epoch=1 \
+     env.eval.max_episode_steps=240 \
+     env.eval.max_steps_per_rollout_epoch=240 \
+     env.eval.video_cfg.save_video=false
+
+``run_eval.sh`` supplies the standard LIBERO/EGL defaults. Leave
+``CUDA_VISIBLE_DEVICES`` unset for this command: RLinf's placement sets both
+the worker's visible GPU and its EGL rendering device from
+``cluster.component_placement``. Pre-filtering visible GPUs makes Ray
+enumerate a single device at rank 0, so any ``GPU_ID`` other than 0 fails
+with a rank assertion. The YAML defaults to ``env,rollout: all`` so it runs
+on any host; the ``component_placement`` overrides above replace that
+default and pin this evaluation to the single ``GPU_ID``. Because the YAML
+defines a composite ``env,rollout`` key, the per-component overrides first
+remove it with ``~`` and then add ``env`` and ``rollout`` separately.
+
+The HTTP YAML sets ``serving_mode: gateway`` and requests 16-step action
+chunks. ``rollout.phyai.model_name`` must match the model name the server
+registers and the Gateway routes. These overrides reduce its larger
+workload to eight environments and one rollout epoch, while retaining
+360x360 camera inputs. Weights and tokenizer paths belong to the model
+server YAML; this client command selects the Gateway address.
+
+Inspect ``success_once``, ``success_at_end``, and ``num_trajectories`` in the
+final evaluation metrics.
+
+Stop the Gateway and model server with Ctrl+C in their respective terminals
+after evaluation. The `PhyAI serving guide
+<https://phyai.mintlify.app/deployment/server-gateway>`_ describes backend
+management and multi-host deployment.
