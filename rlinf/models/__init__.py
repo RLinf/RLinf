@@ -15,6 +15,7 @@
 from typing import Callable, Optional
 
 from omegaconf import DictConfig
+from torch import nn
 
 from rlinf.config import (
     DIFFUSION_MODELS,
@@ -376,6 +377,21 @@ def _register_builtin_models():
 
 
 _register_builtin_models()
+
+
+def get_inference_checkpoint_loader(
+    model_type: str,
+) -> Callable[[nn.Module, str], None] | None:
+    """Return the model-specific loader, if its inference weights need one."""
+    if str(model_type).lower() != "cosmos3":
+        return None
+
+    def load(model: nn.Module, checkpoint_path: str) -> None:
+        from rlinf.models.embodiment.cosmos3 import load_inference_checkpoint
+
+        load_inference_checkpoint(model, checkpoint_path)
+
+    return load
 
 
 def get_model(cfg: DictConfig):

@@ -118,6 +118,10 @@ def normalize_device(device: torch.device | str | None) -> torch.device:
 
 def collect_param_names_need_sync(module: torch.nn.Module) -> list[str]:
     """Collect trainable parameters and persistent buffers for selective sync."""
+    get_names = getattr(module, "get_weight_sync_param_names", None)
+    if callable(get_names):
+        return get_names(module)
+
     trainable_param_names = [
         name
         for name, param in module.named_parameters(remove_duplicate=False)

@@ -12,23 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cosmos3 (NVIDIA ``OmniMoTModel``) action-policy wrapper for RLinf SFT."""
+"""Cosmos3 action-policy wrapper for RLinf SFT and native rollout."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
 import torch.nn as nn
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.cosmos3.env_io import Cosmos3EnvIO
+from rlinf.models.embodiment.cosmos3.tasks.dagger import Cosmos3DAggerInputs
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
 
-class Cosmos3Policy(nn.Module, BasePolicy):
-    """RLinf SFT adapter around a cosmos ``OmniMoTModel``."""
+class Cosmos3Policy(Cosmos3DAggerInputs, Cosmos3EnvIO, nn.Module, BasePolicy):
+    """RLinf adapter around a cosmos ``OmniMoTModel``."""
 
     _no_split_modules: list[str] = [
         "MoTDecoderLayer",
@@ -44,6 +47,7 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         *,
         lr_multipliers: dict[str, float] | None = None,
         ema_enabled: bool = True,
+        rollout_config: Mapping[str, Any] | None = None,
     ):
         super().__init__()
         self.omni = model
@@ -53,15 +57,62 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             and model.config.ema.enabled
         )
         self._global_step: int = 0
+        self._rollout_config = dict(rollout_config or {})
+        self._action_normalizer = None
+
+    @staticmethod
+    def get_weight_sync_param_names(module: nn.Module) -> list[str]:
+        """Resolve Cosmos checkpoint-wrapper names in the outermost model state dict."""
+        trainable = {
+            id(param): name
+            for name, param in module.named_parameters(remove_duplicate=False)
+            if param.requires_grad
+        }
+        persistent_buffers: dict[int, str] = {}
+        for module_name, submodule in module.named_modules(remove_duplicate=False):
+            non_persistent_buffers = getattr(
+                submodule, "_non_persistent_buffers_set", set()
+            )
+            for buffer_name, buffer in submodule.named_buffers(
+                recurse=False, remove_duplicate=False
+            ):
+                if buffer_name not in non_persistent_buffers:
+                    full_name = (
+                        buffer_name
+                        if not module_name
+                        else f"{module_name}.{buffer_name}"
+                    )
+                    persistent_buffers[id(buffer)] = full_name
+
+        # Checkpoint wrappers expose canonical state keys while traversal names include
+        # wrapper modules. keep_vars preserves identity without copying tensor storage.
+        state_dict = module.state_dict(keep_vars=True)
+        state_ids = {id(value) for value in state_dict.values()}
+        selected = trainable | persistent_buffers
+        missing = selected.keys() - state_ids
+        if missing:
+            names = sorted(selected[identity] for identity in missing)
+            raise RuntimeError(
+                f"State dict does not preserve selected tensor identities: {names}"
+            )
+        trainable_names = [
+            name for name, value in state_dict.items() if id(value) in trainable
+        ]
+        buffer_names = [
+            name
+            for name, value in state_dict.items()
+            if id(value) in persistent_buffers and id(value) not in trainable
+        ]
+        return trainable_names + buffer_names
 
     @property
     def device(self) -> torch.device:
         return next(self.omni.parameters()).device
 
-    def set_global_step(self, step: int) -> None:
-        """Called once per global (optimizer) step by ``FSDPSftWorker``."""
+    def set_global_step(self, step: int, *, update_ema: bool = True) -> None:
+        """Track optimizer steps; restoration and rollout versions can skip EMA."""
         step = int(step)
-        if self._ema_enabled and step == self._global_step + 1:
+        if update_ema and self._ema_enabled and step == self._global_step + 1:
             self._update_ema(self._global_step)
         self._global_step = step
 
@@ -96,7 +147,7 @@ class Cosmos3Policy(nn.Module, BasePolicy):
         )
 
     def sft_forward(self, data: Any = None, **kwargs) -> dict[str, torch.Tensor]:
-        """Compute the cosmos flow-matching SFT loss for one batch."""
+        """Compute the native SFT loss for one batch."""
         torch.compiler.cudagraph_mark_step_begin()
 
         if data is None:
@@ -108,15 +159,21 @@ class Cosmos3Policy(nn.Module, BasePolicy):
 
         from cosmos_framework.utils.misc import to as _cosmos_to
 
-        data = _cosmos_to(data, "cuda")
+        # Native packing reads these fields as Python integers and token lists.
+        data = {
+            key: value
+            if key in {"text_token_ids", "image_size"}
+            else _cosmos_to(value, self.device)
+            for key, value in data.items()
+        }
 
         if not getattr(self, "_vae_patch_applied", False):
             self._vae_patch_applied = True
             _orig_fn = type(self.omni)._encode_vision_item
 
             def _patched(omni_self, state, *args, **kwargs):
-                if hasattr(state, "device") and state.device.type == "cpu":
-                    state = state.to("cuda")
+                if hasattr(state, "device") and state.device != self.device:
+                    state = state.to(self.device)
                 return _orig_fn(omni_self, state, *args, **kwargs)
 
             import functools
@@ -138,12 +195,6 @@ class Cosmos3Policy(nn.Module, BasePolicy):
 
     def default_forward(self, **kwargs):
         raise NotImplementedError(
-            "Cosmos3Policy.default_forward is not implemented; rollout/eval runs "
-            "through the sglang /v1/actions/generations adapter (Cosmos3SGLangAdapter)."
-        )
-
-    def predict_action_batch(self, **kwargs):
-        raise NotImplementedError(
-            "Cosmos3Policy.predict_action_batch is not implemented; rollout/eval runs "
-            "through the sglang /v1/actions/generations adapter (Cosmos3SGLangAdapter)."
+            "Cosmos3Policy.default_forward is not implemented; native rollout "
+            "uses predict_action_batch()."
         )

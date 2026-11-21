@@ -28,6 +28,7 @@ from rlinf.data.datasets.dagger import (
 )
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
+from rlinf.models.embodiment import get_dagger_component_class
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -39,6 +40,14 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
+    @classmethod
+    def create_group(cls, *args, **kwargs):
+        cfg = args[0] if args else kwargs.get("cfg")
+        actor_cls = get_dagger_component_class(cls, cfg)
+        if actor_cls is cls:
+            return super().create_group(*args, **kwargs)
+        return actor_cls.create_group(*args, **kwargs)
+
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self.replay_buffer = None

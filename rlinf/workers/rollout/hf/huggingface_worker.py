@@ -39,7 +39,7 @@ from rlinf.data.schema.embodied_types import (
     split_batch_value,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
-from rlinf.models import get_model
+from rlinf.models import get_inference_checkpoint_loader, get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
@@ -176,8 +176,14 @@ class MultiStepRolloutWorker(Worker):
             )
 
         if self.cfg.runner.get("ckpt_path", None):
-            model_dict = torch.load(self.cfg.runner.ckpt_path)
-            self.hf_model.load_state_dict(model_dict)
+            load_checkpoint = get_inference_checkpoint_loader(
+                rollout_model_config.model_type
+            )
+            if load_checkpoint is not None and self.enable_dagger:
+                load_checkpoint(self.hf_model, self.cfg.runner.ckpt_path)
+            else:
+                model_dict = torch.load(self.cfg.runner.ckpt_path)
+                self.hf_model.load_state_dict(model_dict)
 
         rlt_feature_model_config = OmegaConf.select(
             self.cfg, "rollout.rlt_feature_model", default=None
@@ -197,8 +203,14 @@ class MultiStepRolloutWorker(Worker):
             self.expert_model = get_model(expert_model_config)
 
             if self.cfg.runner.get("expert_ckpt_path", None):
-                expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
-                self.expert_model.load_state_dict(expert_model_dict)
+                load_checkpoint = get_inference_checkpoint_loader(
+                    expert_model_config.model_type
+                )
+                if load_checkpoint is not None:
+                    load_checkpoint(self.expert_model, self.cfg.runner.expert_ckpt_path)
+                else:
+                    expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+                    self.expert_model.load_state_dict(expert_model_dict)
 
         self.hf_model.eval()
         if self.expert_model is not None:
