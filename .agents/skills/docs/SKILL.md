@@ -61,6 +61,7 @@ Page findings count only on the lines the change adds, because many existing pag
 | `docs/command-legacy` | major | `huggingface-cli download`, `pip install huggingface-hub`, `git lfs`, `git clone https://huggingface.co/`, or `CUDA_VISIBLE_DEVICES` |
 | `docs/command-cd` | major | `cd` immediately before `hf download`, or `--local-dir .` / `--local-dir /path/to/...` |
 | `docs/command-tabset` | major | an `install.sh` or `hf download` block on `examples/` or `evaluations/` (outside hardware-backend subsections) not wrapped in `.. tab-set::` |
+| `docs/nested-tabset` | major | nested `.. tab-set::` directives (stacked tab bars); flatten into one single-level `.. tab-set::` |
 | `docs/mirror-comment` | major | commented `--use-mirror`, `HF_ENDPOINT`, `hf-mirror`, or `gh-proxy` lines inside bash blocks |
 | `docs/dir-tree` | major | decorative ASCII directory trees (`├──` / `└──`) outside `.. dropdown::` |
 | `docs/boilerplate-yaml` | major | stale `rollout.model.model_path` alongside `actor.model.model_path`, or repeated `logger_backends:` / `video_base_dir:` YAML blocks |

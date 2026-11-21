@@ -7,21 +7,45 @@ OpenPI Supervised Fine-Tuning
 
    OpenPI π₀ / π₀.₅ vision-language-action models.
 
-Run **full-parameter** or **LoRA** SFT on π₀ / π₀.₅ in RLinf. Policies use
-``model_type: openpi``, a PyTorch port aligned with the JAX reference
-(the official OpenPI PyTorch code is not). SFT is the usual RL cold start:
-imitate demonstrations first, then continue with RL from a stronger prior.
+Run **full-parameter** or **LoRA** SFT on π₀ / π₀.₅ in RLinf. Policies use ``model_type: openpi``, a PyTorch port aligned with the JAX reference (the official OpenPI PyTorch code is not). SFT is the usual RL cold start: imitate demonstrations first, then continue with RL from a stronger prior.
 
-For visual-history conditioning on LIBERO-Mem, follow
-:doc:`OpenPI Short Memory Evaluation and Training </rst_source/examples/embodied/pi0/short_memory>`.
-That guide covers history sampling and the FSDP1 SFT configuration.
+For visual-history conditioning on LIBERO-Mem, follow :doc:`OpenPI Short Memory Evaluation and Training </rst_source/examples/embodied/pi0/short_memory>`. For dual-Franka SFT and deployment, see :doc:`dual_franka_openpi_pytorch`.
+
+Overview
+--------
+
+Full-parameter or LoRA SFT for OpenPI π₀ / π₀.₅ across LIBERO, real-world Franka, BEHAVIOR-1K, RoboTwin, and custom LeRobot datasets.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      π₀ · π₀.₅
+
+   .. grid-item-card:: Methods
+      :text-align: center
+
+      Full SFT · LoRA
+
+   .. grid-item-card:: Data
+      :text-align: center
+
+      LeRobot · BEHAVIOR
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      1+ nodes · GPUs
+
+| **You'll do:** install → prepare data and norm stats → ``bash examples/sft/run_vla_sft.sh <launch-name>`` → watch the training loss.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a matching dataset and base checkpoint.
 
 Configurations
---------------
+~~~~~~~~~~~~~~
 
-Each experiment YAML imports a path-free model template through Hydra
-``defaults``, then overrides paths and task fields. Replace ``/path/to/...``
-before launch.
+Each experiment YAML imports a path-free model template through Hydra ``defaults``, then overrides paths and task fields. Replace ``/path/to/...`` before launch.
 
 .. list-table::
    :header-rows: 1
@@ -52,88 +76,212 @@ before launch.
      - ``model/pi0``
      - ``robotwin_adjust_bottle_sft_openpi``
 
-For dual-Franka SFT and deployment, see :doc:`dual_franka_openpi_pytorch`.
+Setup and Run
+-------------
 
-.. grid:: 2 4 4 4
-   :gutter: 2
+.. include:: _setup_common.rst
 
-   .. grid-item-card:: Models
-      :text-align: center
+``--model openpi`` installs the official OpenPI runtime (transforms and data pipeline) alongside RLinf's ``openpi`` network.
 
-      π₀ · π₀.₅
+.. tab-set::
 
-   .. grid-item-card:: Methods
-      :text-align: center
+   .. tab-item:: LIBERO & Franka
+      :sync: libero-franka
 
-      Full SFT · LoRA
+      **1. Install**
 
-   .. grid-item-card:: Data
-      :text-align: center
+      .. code-block:: bash
 
-      LeRobot · BEHAVIOR
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-   .. grid-item-card:: Hardware
-      :text-align: center
+      **2. Configure**
 
-      1+ nodes · GPUs
+      For newly collected real-world or custom LeRobot datasets, compute ``norm_stats.json`` first (see *Normalization statistics for new LeRobot datasets* below). Then set ``data.train_data_paths`` and ``actor.model.model_path`` in ``examples/sft/config/libero_sft_openpi.yaml`` (or ``realworld_bin_relocation_sft_openpi.yaml``):
 
-| **You'll do:** install → prepare data and norm stats → ``bash examples/sft/run_vla_sft.sh <launch-name>`` → watch the training loss.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a matching dataset.
+      .. code-block:: yaml
 
-Shared conventions
-------------------
+         data:
+           train_data_paths: /path/to/libero-data
 
-``openpi.task`` must be ``sft`` during training. Eval YAMLs use ``eval``;
-do not copy the training value.
+         actor:
+           model:
+             model_path: /path/to/pi0-model
 
-``num_action_chunks`` is the env-executed chunk, **not** the network horizon:
+      **3. Launch**
 
-- ``num_action_chunks`` / ``openpi.action_chunk``: how many actions the env
-  executes per step.
-- Network ``action_horizon``: ``openpi.action_horizon`` when set; otherwise the
-  official ``TrainConfig.model.action_horizon`` for ``openpi.config_name``.
-  Default templates only interpolate ``num_action_chunks`` into
-  ``action_chunk``.
+      Launch training from the repository root (logs and checkpoints go under ``runner.logger.log_path`` every ``runner.save_interval`` steps at ``.../checkpoints/global_step_<N>/``):
 
-Official LeRobot SFT also sizes its data window from
-``TrainConfig.model.action_horizon``; it does not read ``num_action_chunks``.
-Typical official horizons: BEHAVIOR ``pi05_behavior`` **32**, RoboTwin
-``pi0_aloha_robotwin`` / LIBERO ``pi0_libero`` **50**, real-world
-``pi0_realworld`` **10**. Override ``openpi.action_horizon`` only when the
-checkpoint horizon differs from that ``TrainConfig``.
+      .. code-block:: bash
 
-The BEHAVIOR / dual-Franka streaming SFT loaders currently still use
-``num_action_chunks`` as the data window, so those configurations keep it equal to
-the official horizon.
+         bash examples/sft/run_vla_sft.sh libero_sft_openpi
+         # Real-world Franka:
+         bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
 
-Keep original parameters and optimizer updates in FP32 with
-``actor.model.precision: fp32``. Set ``actor.model.openpi.embed_dtype: bf16``
-for BF16 backbone activations and residuals. If omitted or null,
-``embed_dtype`` follows ``model.precision``; ``precision: null`` selects BF16
-activations. Configure FSDP separately: BF16 parameters
-for forward/backward computation, FP32 gradient reduction, and FP32 buffers.
-The shared model templates use ``precision: null`` for OpenPI's selective
-BF16/FP32 parameter dtypes. BEHAVIOR, RoboTwin, dual-Franka, and RLT Stage 1
-SFT configurations set ``precision: fp32``.
+      .. dropdown:: Advanced configuration (optional)
 
-Select ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm weights,
-and vision embeddings in FP32. The profile preserves FP32 action/time inputs
-and adaptive-norm conditioning while the backbone computes in BF16.
-RLT Stage 1 configurations also keep ``rlt_module`` in FP32.
+         Optional placement, LoRA, and OpenPI overrides (already set with working defaults in each shipped YAML):
 
-OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with
-``use_orig_params: true``. ``no_shard`` replicates all training state;
-``shard_grad_op`` shards gradients and optimizer state; ``full_shard`` also
-shards parameters between module executions. Select either sharded mode to
-reduce per-rank memory. Enable ``gradient_checkpointing: true`` with
-``gradient_checkpointing_use_reentrant: false`` to reduce activation memory.
-BEHAVIOR / RoboTwin configurations use the ``openpi_cosine`` learning rate schedule.
+         .. code-block:: yaml
 
-.. dropdown:: Advanced configuration (optional)
+            cluster:
+              num_nodes: 1
+              component_placement:
+                actor,env,rollout: 0-0
 
-   Mixed-precision and FSDP1 profile example used by BEHAVIOR, RoboTwin, dual-Franka, and RLT Stage 1 SFT configs:
+            actor:
+              model:
+                num_action_chunks: 4          # env-executed length, not network horizon
+                is_lora: False                # set True and lora_rank for LoRA
+                openpi:
+                  task: sft
+                  embed_dtype: bf16
+                  config_name: "pi0_libero"   # use pi0_realworld for Franka
 
-   .. code:: yaml
+   .. tab-item:: BEHAVIOR-1K
+      :sync: behavior
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env behavior && source .venv/bin/activate
+
+      **2. Download and Convert**
+
+      Download the π₀.₅ JAX base checkpoint from ``gs://openpi-assets/checkpoints/pi05_base`` and convert it to the RLinf OpenPI layout (using BEHAVIOR's 32-step horizon; prepare task-specific ``norm_stats.json`` first; the converter defaults to π₀.₅ so omit ``--no-pi05``):
+
+      .. code-block:: bash
+
+         mkdir -p ./checkpoints/jax
+         gcloud storage cp --recursive \
+           gs://openpi-assets/checkpoints/pi05_base ./checkpoints/jax/
+
+         python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
+           --input-model ./checkpoints/jax/pi05_base \
+           --input-norm-stats /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json \
+           --output-model ./pi05_base_openpi \
+           --output-norm-stats ./pi05_base_openpi/task/norm_stats.json \
+           --action-dim 32 \
+           --action-horizon 32 \
+           --max-token-len 200
+
+      Verify ``./pi05_base_openpi`` contains ``model.safetensors`` and ``config.json``. Other π₀.₅ SFT configs use the same converter with their own ``--action-horizon`` (10 for ManiSkill RLT; 20 for Franka RLT and dual-Franka). Official OpenPI PyTorch checkpoints with ``paligemma_with_expert.*`` keys require ``--mode openpi_pytorch_to_openpi`` even when they contain ``model.safetensors``.
+
+      Set dataset, base model, and stats paths in ``examples/sft/config/behavior_sft_openpi_pi05.yaml``:
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: /path/to/2025-challenge-demos
+           behavior_dataset_root: /path/to/2025-challenge-demos
+
+         actor:
+           model:
+             model_path: ./pi05_base_openpi
+             openpi_data:
+               norm_stats_path: /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json
+
+      **3. Launch**
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05
+
+      .. dropdown:: Advanced configuration (optional)
+
+         The shipped config imports ``model/pi0_5`` and ``hybrid_engines/fsdp`` and sets BEHAVIOR streaming options:
+
+         .. code-block:: yaml
+
+            data:
+              repo_id: "behavior-1k/2025-challenge-demos"
+              modalities: ["rgb"]
+              num_workers: 8
+              tasks: ["turning_on_radio"]
+              use_skill: false
+              task_subtasks:
+                turning_on_radio:
+                  - "move to radio"
+                  - "pick up radio from coffee table"
+                  - "press radio"
+                  - "place radio on coffee table"
+
+            actor:
+              model:
+                openpi:
+                  task: sft
+                  embed_dtype: bf16
+
+         - ``use_skill: false`` trains on main-task text; ``true`` uses per-frame skill text from ``task_subtasks`` (collapsed orchestrators in the dataset are not valid labels).
+         - ``fine_grained_level`` / ``tolerance_s`` control streaming time alignment.
+
+   .. tab-item:: RoboTwin
+      :sync: robotwin
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
+
+      **2. Download**
+
+      Download the processed `adjust_bottle <https://huggingface.co/datasets/RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data>`_ dataset (and optionally the reference SFT weights `RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle>`_):
+
+      .. code-block:: bash
+
+         hf download RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data --repo-type dataset --local-dir ./robotwin-adjust-bottle-data
+         hf download RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle
+
+      Set the dataset and base model paths in ``examples/sft/config/robotwin_adjust_bottle_sft_openpi.yaml``:
+
+      .. code-block:: yaml
+
+         data:
+           train_data_paths: ./robotwin-adjust-bottle-data
+
+         actor:
+           model:
+             model_path: /path/to/pi0_base_pytorch_new
+
+      **3. Launch**
+
+      .. code-block:: bash
+
+         bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi
+
+      .. dropdown:: Advanced configuration (optional)
+
+         Uses 14-D ALOHA actions and three cameras (OpenPI pads actions to 32-D before the model). Update the task name in ``norm_stats_path`` when switching tasks:
+
+         .. code-block:: yaml
+
+            data:
+              num_workers: 4
+
+            actor:
+              model:
+                num_action_chunks: 50
+                action_dim: 14
+                openpi:
+                  task: sft
+                  embed_dtype: bf16
+                  config_name: "pi0_aloha_robotwin"
+                  num_images_in_input: 3
+                openpi_data:
+                  norm_stats_path: ${actor.model.model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
+
+.. dropdown:: Shared conventions (precision, FSDP, action horizon)
+
+   - **Task mode:** ``openpi.task`` must be ``sft`` during training. Eval YAMLs use ``eval``; do not copy the training value.
+   - **Action chunk vs horizon:** ``num_action_chunks`` / ``openpi.action_chunk`` sets how many actions the env executes per step, while network ``action_horizon`` comes from ``openpi.action_horizon`` or the official ``TrainConfig.model.action_horizon`` for ``openpi.config_name`` (BEHAVIOR ``pi05_behavior``: **32**; RoboTwin ``pi0_aloha_robotwin`` / LIBERO ``pi0_libero``: **50**; real-world ``pi0_realworld``: **10**). Official LeRobot SFT sizes its data window from ``TrainConfig.model.action_horizon``. The BEHAVIOR and dual-Franka streaming SFT loaders still use ``num_action_chunks`` as the data window, so those configs keep it equal to the official horizon.
+   - **Precision & FSDP1:** Set ``actor.model.precision: fp32`` for FP32 master weights and optimizer updates, and ``actor.model.openpi.embed_dtype: bf16`` for BF16 backbone activations (if null/omitted, ``embed_dtype`` follows ``model.precision``; ``precision: null`` selects BF16 activations). Use ``hybrid_engines/openpi_fsdp`` to keep projections, RMSNorm weights, vision embeddings, and RLT Stage 1 ``rlt_module`` in FP32 while the backbone computes in BF16. OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard`` with ``use_orig_params: true``; enable ``gradient_checkpointing: true`` with ``gradient_checkpointing_use_reentrant: false`` to reduce activation memory. BEHAVIOR and RoboTwin configs use the ``openpi_cosine`` LR schedule.
+   - **Tokenizer:** OpenPI's ``ModelTransformFactory`` loads the tokenizer from the base model; no separate SentencePiece path is needed.
+
+   .. code-block:: yaml
 
       defaults:
         - model/pi0_5@actor.model
@@ -154,354 +302,72 @@ BEHAVIOR / RoboTwin configurations use the ``openpi_cosine`` learning rate sched
             reduce_dtype: fp32
             buffer_dtype: fp32
 
-The tokenizer is loaded by OpenPI's ``ModelTransformFactory`` from the base
-model; the SFT YAML does not need a SentencePiece path.
-
-Datasets
---------
-
-Select the data format with ``actor.model.openpi.config_name``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 44 56
-
-   * - ``config_name``
-     - Dataset / environment
-   * - ``pi0_libero`` · ``pi05_libero``
-     - LIBERO
-   * - ``pi0_realworld``
-     - Real-world Franka
-   * - ``pi05_yam_joint``
-     - Real-world Dual YAM
-   * - ``pi0_aloha_robotwin``
-     - RoboTwin (ALOHA)
-   * - ``pi05_behavior``
-     - BEHAVIOR-1K (streaming loader)
-   * - ``pi0_maniskill`` · ``pi05_maniskill``
-     - ManiSkill
-   * - ``pi05_metaworld``
-     - MetaWorld
-   * - ``pi05_calvin``
-     - CALVIN
-   * - ``pi0_custom``
-     - Custom LeRobot
-
-Custom LeRobot dataset
-~~~~~~~~~~~~~~~~~~~~~~
-
-1. Set ``config_name`` in ``examples/sft/config/custom_sft_openpi.yaml``:
-
-   .. code:: yaml
-
-      actor:
-        model:
-          openpi:
-            task: sft
-            config_name: "pi0_custom"
-
-2. Register ``pi0_custom`` in
-   ``rlinf/models/embodiment/openpi/dataconfig/__init__.py`` (a template
-   is already there):
-
-   .. code:: python
-
-      TrainConfig(
-          name="pi0_custom",
-          model=pi0_config.Pi0Config(),
-          data=CustomDataConfig(
-              repo_id="physical-intelligence/custom_dataset",
-              base_config=DataConfig(prompt_from_task=True),
-              assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
-              extra_delta_transform=False,
-              action_train_with_rotation_6d=False,
-          ),
-          pytorch_weight_path="checkpoints/torch/pi0_base",
-      ),
-
-3. Adapt ``CustomDataConfig`` in
-   ``rlinf/models/embodiment/openpi/dataconfig/franka_dataconfig.py`` to
-   your keys and action space.
-
-Normalization statistics
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-For a newly collected LeRobot dataset, compute ``norm_stats`` for ``state``
-and ``actions`` before SFT (especially important for real-robot data):
-
-.. code:: bash
-
-   # Local dataset directory (contains meta/info.json):
-   python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_realworld \
-       --repo-id /path/to/realworld_franka_bin_relocation
-
-   # Or a Hugging Face repo id (cached under ~/.cache/huggingface/lerobot):
-   python toolkits/lerobot/calculate_norm_stats.py \
-       --config-name pi0_realworld \
-       --repo-id realworld_franka_bin_relocation
-
-- ``--repo-id`` is a local path or a LeRobot HF repo id; ``HF_LEROBOT_HOME``
-  changes the cache parent.
-- ``--config-name`` must match the training dataconfig.
-- ``calculate_norm_stats.py`` writes to
-  ``./assets/<config_name>/<repo_id>/norm_stats.json``
-  (``TrainConfig.assets_dirs / repo_id``). Training and eval do **not** look
-  next to SFT ``full_weights.pt`` for that file. Set
-  ``openpi_data.norm_stats_path`` to that ``norm_stats.json``. If the key is
-  omitted, OpenPI loads ``{assets_dir}/{asset_id}/norm_stats.json`` from the
-  TrainConfig (after ``model_path`` is applied) and logs a warning. The
-  RoboTwin configuration pins stats beside the base weights at
-  ``physical-intelligence/robotwin/<task>/norm_stats.json``.
-
-If standard deviations are tiny or the q99–q01 range is very narrow, widening
-them often stabilizes training, especially when SFT is followed by online RL.
-
-BEHAVIOR does not use that script. Point
-``actor.model.openpi_data.norm_stats_path`` at an existing
-``{assets}/{asset_id}/norm_stats.json``.
-
-Installation
-------------
-
-.. include:: _setup_common.rst
-
-.. tab-set::
-
-   .. tab-item:: OpenPI + LIBERO / ManiSkill
-
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
-
-``--model openpi`` installs the official OpenPI **runtime** (transforms and data pipeline). The trained network is still ``openpi``.
-
-LIBERO and real-world Franka
-----------------------------
-
-Set ``data.train_data_paths`` and ``actor.model.model_path`` in the experiment YAML:
-
-.. code:: yaml
-
-   data:
-     train_data_paths: /path/to/libero-data
-
-   actor:
-     model:
-       model_path: /path/to/pi0-model
-
-Launch training from the repository root:
-
-.. code:: bash
-
-   bash examples/sft/run_vla_sft.sh libero_sft_openpi
-   bash examples/sft/run_vla_sft.sh realworld_bin_relocation_sft_openpi
-
-Logs and checkpoints go under ``runner.logger.log_path``, saved every ``runner.save_interval`` steps at ``.../checkpoints/global_step_<N>/``.
-
-.. dropdown:: Advanced configuration (optional)
-
-   Optional placement, LoRA, and OpenPI overrides (already set with working defaults in each shipped YAML):
-
-   .. code:: yaml
-
-      cluster:
-        num_nodes: 1
-        component_placement:
-          actor,env,rollout: 0-0
-
-      actor:
-        model:
-          num_action_chunks: 4          # env-executed length, not network horizon
-          is_lora: False                # set True and lora_rank for LoRA
-          openpi:
-            task: sft
-            embed_dtype: bf16
-            config_name: "pi0_libero"   # use pi0_realworld for Franka
-
-Pi0.5 Base Checkpoint Download and Conversion
----------------------------------------------
-
-The π₀.₅ JAX base checkpoint is available at ``gs://openpi-assets/checkpoints/pi05_base``. Download it with the Google Cloud CLI and convert it to the RLinf OpenPI layout (using BEHAVIOR's 32-step horizon as an example; prepare task-specific ``norm_stats.json`` first):
-
-.. tab-set::
-
-   .. tab-item:: π₀.₅ JAX Base → RLinf OpenPI
-
-      .. code-block:: bash
-
-         mkdir -p ./checkpoints/jax
-         gcloud storage cp --recursive \
-           gs://openpi-assets/checkpoints/pi05_base ./checkpoints/jax/
-
-         python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi \
-           --input-model ./checkpoints/jax/pi05_base \
-           --input-norm-stats /path/to/task/norm_stats.json \
-           --output-model ./pi05_base_openpi \
-           --output-norm-stats ./pi05_base_openpi/task/norm_stats.json \
-           --action-dim 32 \
-           --action-horizon 32 \
-           --max-token-len 200
-
-The converter defaults to π₀.₅; do not add ``--no-pi05``. Other π₀.₅ SFT configurations use the same workflow with ``--action-horizon`` matching their existing configs: 10 for ManiSkill RLT, and 20 for Franka RLT and dual-Franka.
-
-Verify that the output directory contains ``model.safetensors`` and ``config.json``, then set ``actor.model.model_path`` and ``actor.model.openpi_data.norm_stats_path``:
-
-.. code:: yaml
-
-   actor:
-     model:
-       model_path: ./pi05_base_openpi
-       openpi_data:
-         norm_stats_path: ./pi05_base_openpi/task/norm_stats.json
-
-Checkpoints already in the RLinf OpenPI layout need no further conversion. Official OpenPI PyTorch checkpoints (with ``paligemma_with_expert.*`` keys) still require ``openpi_pytorch_to_openpi`` even when they contain ``model.safetensors``.
-
-Pi0.5 + BEHAVIOR-1K
--------------------
-
-Set the dataset, base model, and normalization stats paths in ``examples/sft/config/behavior_sft_openpi_pi05.yaml``:
-
-.. code:: yaml
-
-   data:
-     train_data_paths: /path/to/2025-challenge-demos
-     behavior_dataset_root: /path/to/2025-challenge-demos
-
-   actor:
-     model:
-       model_path: ./pi05_base_openpi
-       openpi_data:
-         norm_stats_path: /path/to/assets/behavior-1k/2025-challenge-demos/norm_stats.json
-
-Launch BEHAVIOR-1K SFT from the repository root:
-
-.. code:: bash
-
-   bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05
-
-.. dropdown:: Advanced configuration (optional)
-
-   The shipped config already imports ``model/pi0_5`` and ``hybrid_engines/fsdp``, and sets BEHAVIOR streaming options:
-
-   .. code:: yaml
-
-      data:
-        repo_id: "behavior-1k/2025-challenge-demos"
-        modalities: ["rgb"]
-        num_workers: 8
-        tasks: ["turning_on_radio"]
-        use_skill: false
-        task_subtasks:
-          turning_on_radio:
-            - "move to radio"
-            - "pick up radio from coffee table"
-            - "press radio"
-            - "place radio on coffee table"
-
-      actor:
-        model:
-          openpi:
-            task: sft
-            embed_dtype: bf16
-
-   - ``use_skill: false`` trains on the main-task text; ``true`` uses per-frame skill text from ``task_subtasks`` (collapsed orchestrators in the dataset are not valid labels).
-   - ``fine_grained_level`` / ``tolerance_s`` control streaming time alignment.
-
-Pi0 + RoboTwin
---------------
-
-Uses the official OpenPI / LeRobot map-style loader with ``config_name: pi0_aloha_robotwin``. Example data: `adjust_bottle <https://huggingface.co/datasets/RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data>`_; matching HF SFT weights: `RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle>`_.
-
-.. tab-set::
-
-   .. tab-item:: RoboTwin (Dataset + SFT Weights)
-
-      .. code-block:: bash
-
-         hf download RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data --repo-type dataset --local-dir ./robotwin-adjust-bottle-data
-         hf download RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle
-
-Set the dataset and base model paths in ``examples/sft/config/robotwin_adjust_bottle_sft_openpi.yaml``:
-
-.. code:: yaml
-
-   data:
-     train_data_paths: ./robotwin-adjust-bottle-data
-
-   actor:
-     model:
-       model_path: /path/to/pi0_base_pytorch_new
-
-Launch RoboTwin SFT from the repository root:
-
-.. code:: bash
-
-   bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi
-
-.. dropdown:: Advanced configuration (optional)
-
-   14-D ALOHA actions and three cameras (OpenPI pads actions to 32-D before the model). Change the task name in ``norm_stats_path`` when switching tasks:
-
-   .. code:: yaml
-
-      data:
-        num_workers: 4
-
-      actor:
-        model:
-          num_action_chunks: 50
-          action_dim: 14
-          openpi:
-            task: sft
-            embed_dtype: bf16
-            config_name: "pi0_aloha_robotwin"
-            num_images_in_input: 3
-          openpi_data:
-            norm_stats_path: ${actor.model.model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
-
-Evaluation
-----------
-
-SFT writes ``full_weights.pt`` under
-``.../checkpoints/global_step_<N>/actor/model_state_dict/``. ``openpi``
-eval can load that ``.pt`` (or the ``global_step_<N>`` directory) directly:
-wrapper / FSDP prefixes are stripped in memory, and the eval YAML supplies the
-model shape. You do **not** need to convert to ``model.safetensors`` first.
-
-Do not copy training ``openpi.task: sft`` into eval. Eval configs must use
-``task: eval`` (that selects ``Pi0Eval`` and observation transforms). Keep
-``config_name`` and ``num_action_chunks`` aligned with training.
-
-Norm stats also do **not** travel with ``full_weights.pt``. Stock eval YAMLs
-often interpolate ``openpi_data.norm_stats_path`` as
-``${rollout.model.model_path}/.../norm_stats.json``, which assumes a converted
-directory that already bundles stats. If you only retarget ``model_path`` at
-an SFT checkpoint, also point stats back at the training copy (RoboTwin: next
-to the base weights at ``physical-intelligence/robotwin/<task>/norm_stats.json``;
-BEHAVIOR: the training ``openpi_data.norm_stats_path``).
-
-Evaluate an SFT checkpoint in place while keeping the training normalization statistics:
-
-.. code:: bash
-
-   bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
-     rollout.model.model_path=/path/to/logs/.../checkpoints/global_step_30000 \
-     rollout.model.openpi_data.norm_stats_path=/path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
-
-Eval steps: :doc:`BEHAVIOR-1K <../../evaluations/guides/behavior>` and
-:doc:`RoboTwin <../../evaluations/guides/robotwin>`. To export a shareable
-bare ``Pi0`` directory (``model.safetensors`` + ``config.json`` + copied
-``norm_stats.json``), use ``sft_to_openpi``; commands are in
-``rlinf/utils/ckpt_convertor/openpi/README.md``.
-
-Visualization
--------------
-
-Watch the **training loss**. Metric definitions:
-:doc:`Training metrics <../../reference/metrics>`.
-
-.. code:: bash
-
-   tensorboard --logdir ./logs
+.. dropdown:: Supported datasets & custom LeRobot config
+
+   Select the data format with ``actor.model.openpi.config_name``:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 44 56
+
+      * - ``config_name``
+        - Dataset / environment
+      * - ``pi0_libero`` · ``pi05_libero``
+        - LIBERO
+      * - ``pi0_realworld``
+        - Real-world Franka
+      * - ``pi05_yam_joint``
+        - Real-world Dual YAM
+      * - ``pi0_aloha_robotwin``
+        - RoboTwin (ALOHA)
+      * - ``pi05_behavior``
+        - BEHAVIOR-1K (streaming loader)
+      * - ``pi0_maniskill`` · ``pi05_maniskill``
+        - ManiSkill
+      * - ``pi05_metaworld``
+        - MetaWorld
+      * - ``pi05_calvin``
+        - CALVIN
+      * - ``pi0_custom``
+        - Custom LeRobot
+
+   **Custom LeRobot dataset:** set ``actor.model.openpi.config_name: "pi0_custom"`` in ``examples/sft/config/custom_sft_openpi.yaml``, then register ``pi0_custom`` in the OpenPI dataconfig registry and adapt the custom Franka/LeRobot data config class to your observation keys and action space.
+
+.. dropdown:: Normalization statistics for new LeRobot datasets
+
+   For a newly collected LeRobot dataset, compute ``norm_stats`` for ``state`` and ``actions`` before SFT (especially important for real-robot data):
+
+   .. code-block:: bash
+
+      # Local dataset directory (contains meta/info.json):
+      python toolkits/lerobot/calculate_norm_stats.py \
+          --config-name pi0_realworld \
+          --repo-id /path/to/realworld_franka_bin_relocation
+
+      # Or a Hugging Face repo id (cached under ~/.cache/huggingface/lerobot):
+      python toolkits/lerobot/calculate_norm_stats.py \
+          --config-name pi0_realworld \
+          --repo-id realworld_franka_bin_relocation
+
+   - ``--repo-id`` accepts a local path or LeRobot HF repo id; ``HF_LEROBOT_HOME`` changes the cache directory.
+   - ``--config-name`` must match the training dataconfig.
+   - The script writes to ``./assets/<config_name>/<repo_id>/norm_stats.json``. Training and evaluation do **not** look beside SFT ``full_weights.pt`` for this file, so set ``openpi_data.norm_stats_path`` explicitly (omitting it falls back to ``{assets_dir}/{asset_id}/norm_stats.json`` with a warning; RoboTwin pins stats beside base weights at ``physical-intelligence/robotwin/<task>/norm_stats.json``).
+   - If standard deviations are tiny or the q99–q01 range is very narrow, widening them stabilizes training, especially before online RL.
+   - BEHAVIOR does not use this script; point ``actor.model.openpi_data.norm_stats_path`` at an existing ``{assets}/{asset_id}/norm_stats.json``.
+
+.. dropdown:: Evaluating SFT checkpoints
+
+   ``openpi`` evaluation loads ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` (or the ``global_step_<N>`` directory) directly without converting to ``model.safetensors`` first. Always keep ``openpi.task: eval`` in eval YAMLs, match ``config_name`` and ``num_action_chunks`` to training, and explicitly point ``openpi_data.norm_stats_path`` back at the training stats file:
+
+   .. code-block:: bash
+
+      bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
+        rollout.model.model_path=/path/to/logs/.../checkpoints/global_step_30000 \
+        rollout.model.openpi_data.norm_stats_path=/path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
+
+   See :doc:`BEHAVIOR-1K evaluation <../../evaluations/guides/behavior>` and :doc:`RoboTwin evaluation <../../evaluations/guides/robotwin>`. To export a standalone ``model.safetensors`` + ``config.json`` + ``norm_stats.json`` directory, run the OpenPI checkpoint converter in ``sft_to_openpi`` mode (see :doc:`Checkpoint conversion <../../guides/convertor>`).
+
+Visualization and Results
+-------------------------
+
+Watch the **training loss** in TensorBoard (``tensorboard --logdir ./logs --port 6006``). For all logged metrics and logger backends, see :doc:`Training metrics <../../reference/metrics>`.

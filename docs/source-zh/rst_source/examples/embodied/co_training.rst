@@ -1,4 +1,4 @@
-基于RL的仿真-真机协同训练
+基于 RL 的仿真-真机协同训练
 ========================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
@@ -7,9 +7,7 @@
 
    仿真-真机协同训练总览。
 
-仿真-真机协同训练通过在仿真中用 PPO 与在真机数据上用 SFT 相结合来训练 π₀.₅ 策略：
-在提升仿真任务成功率的同时保留真机先验，避免仅靠仿真过拟合而损害 sim-to-real 迁移。技术细节详见
-:doc:`Beyond Imitation: RL-Based Sim-Real Co-Training for VLA Models <../../resources/publications/rlinf_co>`。
+仿真-真机协同训练通过在仿真中用 PPO 与在真机数据上用 SFT 相结合来训练 π₀.₅ 策略：在提升仿真任务成功率的同时保留真机先验，避免仅靠仿真过拟合而损害 sim-to-real 迁移。技术细节详见 :doc:`Beyond Imitation: RL-Based Sim-Real Co-Training for VLA Models <../../resources/publications/rlinf_co>`。
 
 概览
 ----------------------------------------
@@ -61,39 +59,27 @@
      - 基于 ManiSkill3 的数字孪生，在布局、相机视角、任务逻辑、语言与动作空间上与真机对齐；动力学经过调校以逼近真实物理。
 
 
-安装
+一键上手
 ----------------------------------------
 
-使用 ``requirements/install.sh`` 安装 OpenPI + ManiSkill 环境（中国大陆用户可在命令末尾追加 ``--use-mirror``，并在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``），或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。基础 ManiSkill 资产设置见 :doc:`ManiSkill 示例 <maniskill>`。
+.. include:: _setup_common.rst
+
+基础 ManiSkill 资产设置见 :doc:`ManiSkill 示例 <maniskill>`。你可以直接在 **阶段二** 使用已发布的 Stage I SFT 权重（推荐），或先在 **阶段一** 自行训练 SFT。
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + ManiSkill
+   .. tab-item:: 阶段一：SFT 预训练
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
+      **2. 下载资产与数据**
 
-下载资产、模型与数据
-----------------------------------------
-
-一次性下载数字孪生所需的 ManiSkill 资产、Stage II 协同训练用的 50 条真机轨迹，以及现成的 Stage I SFT checkpoint（推荐）或 Stage I 混合数据集（`RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`_，含 50 条真机轨迹 + 1499 条仿真轨迹）：
-
-.. tab-set::
-
-   .. tab-item:: 使用 SFT 预训练权重（推荐）
-
-      .. code-block:: bash
-
-         hf download RLinf/RLCo-maniskill-assets --repo-type dataset --include "custom_assets/*" --local-dir ./rlinf/envs/sim/maniskill/assets
-         hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-         hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
-
-   .. tab-item:: 自行训练 Stage I SFT
-
-      下载资产和数据集后，参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 :doc:`OpenPI 监督微调 <sft_openpi>` 运行 Stage I SFT：
+      下载数字孪生所需的 ManiSkill 资产、Stage I 混合数据集（`RLinf/RLCo-Example-Mix-Data <https://huggingface.co/datasets/RLinf/RLCo-Example-Mix-Data>`__，含 50 条真机轨迹 + 1499 条仿真轨迹），以及 Stage II 所需的 50 条真机轨迹：
 
       .. code-block:: bash
 
@@ -101,26 +87,56 @@
          hf download RLinf/RLCo-Example-Mix-Data --repo-type dataset --local-dir ./RLCo-Example-Mix-Data
          hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
 
+      **3. 启动 SFT 训练**
 
-运行
-----------------------------------------
+      参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`__ 或 :doc:`OpenPI 监督微调 <sft_openpi>` 在 ``./RLCo-Example-Mix-Data`` 上完成 Stage I SFT 训练，然后在阶段二将 ``actor.model.model_path`` 指向产出的权重目录。
 
-本阶段在 PPO 训练循环中加入 50 条真机轨迹的 SFT 损失。默认配置文件为 ``examples/embodiment/config/maniskill_ppo_co_training_openpi_pi05.yaml``。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../reference/configuration>`；PPO 参数见 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`。
+   .. tab-item:: 阶段二：仿真-真机协同训练
 
-将 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）指向 SFT 权重目录，将 ``actor.sft_data_path`` 指向真机数据目录：
+      **1. 安装环境**
 
-.. code-block:: yaml
+      .. code-block:: bash
 
-   actor:
-     sft_data_path: ./RLCo-Example-Real-Data
-     model:
-       model_path: ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-在仓库根目录启动协同训练：
+      **2. 下载资产、模型与数据**
 
-.. code:: bash
+      下载数字孪生所需的 ManiSkill 资产、现成的 Stage I SFT checkpoint，以及协同训练用的 50 条真机轨迹：
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_co_training_openpi_pi05
+      .. code-block:: bash
+
+         hf download RLinf/RLCo-maniskill-assets --repo-type dataset --include "custom_assets/*" --local-dir ./rlinf/envs/sim/maniskill/assets
+         hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
+         hf download RLinf/RLCo-Example-Real-Data --repo-type dataset --local-dir ./RLCo-Example-Real-Data
+
+      **3. 启动协同训练**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 50 26
+
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - OpenPI π₀.₅ + RL-Co
+           - ``examples/embodiment/config/maniskill_ppo_co_training_openpi_pi05.yaml``
+           - ``maniskill_ppo_co_training_openpi_pi05``
+
+      将 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）指向 SFT 权重目录，将 ``actor.sft_data_path`` 指向真机数据目录：
+
+      .. code-block:: yaml
+
+         actor:
+           sft_data_path: ./RLCo-Example-Real-Data
+           model:
+             model_path: ./RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
+
+      在仓库根目录启动协同训练（通用路径、集群和 runner 字段见 :doc:`训练配置 <../../reference/configuration>`；PPO 参数见 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_co_training_openpi_pi05
 
 .. dropdown:: 进阶配置（可选）
 
@@ -143,20 +159,14 @@
 可视化与结果
 ----------------------------------------
 
-**TensorBoard**
+运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``env/success_once`` 曲线，通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，标准指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
-.. code:: bash
+协同训练新增以下损失指标：
 
-   tensorboard --logdir ./logs --port 6006
-
-**指标**
-
-除标准指标外（见 :doc:`训练指标 <../../reference/metrics>`），协同训练还新增以下指标：
-
-- ``train/ppo_loss``: PPO（RL）损失。
-- ``train/sft_loss``: 真机数据上的 SFT 损失。
-- ``actor/total_loss``: :math:`\mathcal{L}_{Total} = \mathcal{L}_{RL} + \beta \mathcal{L}_{SFT}`。
-- ``train/loss_ratio``: :math:`\frac{\beta \lvert \mathcal{L}_{SFT} \rvert}{\lvert \mathcal{L}_{RL} \rvert}`。若该值持续过大（如 :math:`> 10^5`），日志会触发警告，此时应降低 ``sft_loss_weight``。
+- ``train/ppo_loss``：PPO（RL）损失。
+- ``train/sft_loss``：真机数据上的 SFT 损失。
+- ``actor/total_loss``：联合目标 ``RL_loss + sft_loss_weight * SFT_loss``。
+- ``train/loss_ratio``：两项损失幅值比 ``(sft_loss_weight * |SFT_loss|) / |RL_loss|``。若该值持续过大（如超过 ``1e5``），日志会触发警告，此时应降低 ``sft_loss_weight``。
 
 **示例结果**
 

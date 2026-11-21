@@ -73,59 +73,63 @@ How DSRL Works
 
 **DSRL Pipeline**
 
-1. **Observation Encoding**: Lightweight CNN (64×64 → 64-dim) and state encoder (8-dim → 64-dim) process the observation.
+1. **Observation Encoding**: A lightweight CNN (64×64 → 64-dim) and state encoder (8-dim → 64-dim) process the observation.
 
-2. **Noise Generation**: A ``GaussianPolicy`` (SquashedNormal) generates 32-dim noise actions for each action horizon step.
+2. **Noise Generation**: A squashed Gaussian noise policy generates 32-dim latent noise actions for each action horizon step.
 
-3. **Diffusion Denoising**: The noise is injected into Pi0's ``sample_actions()`` as the initial noise. The frozen diffusion denoiser converts noise into real actions.
+3. **Diffusion Denoising**: The generated noise replaces random initial noise inside Pi0's diffusion action sampler, and the frozen denoiser converts it into executable robot actions.
 
 4. **SAC Training**: Standard SAC with automatic entropy tuning trains the noise generator:
 
-   - **Actor**: ``GaussianPolicy`` with 3-layer MLP (128-dim hidden)
-   - **Critic**: ``CompactMultiQHead`` — 10 Q-network ensemble (~500K total params)
+   - **Actor**: 3-layer MLP squashed Gaussian policy (128-dim hidden)
+   - **Critic**: 10-Q-network ensemble (~500K total params)
    - **Target Network**: Float32 EMA shadow buffer for bfloat16 precision
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
-DSRL shares the OpenPI environment and model dependencies with :doc:`pi0`:
+DSRL shares the OpenPI environment and model dependencies with :doc:`pi0`.
 
 .. tab-set::
 
    .. tab-item:: OpenPI π₀ (LIBERO)
       :sync: dsrl-pi0
+
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-Download the Model
-------------------
+      **2. Download**
 
-Download the pretrained OpenPI π₀ SFT checkpoint for LIBERO-Spatial:
-
-.. tab-set::
-
-   .. tab-item:: OpenPI π₀ (LIBERO)
-      :sync: dsrl-pi0
+      Download the pretrained OpenPI π₀ SFT checkpoint for LIBERO-Spatial:
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-.. include:: _model_path.rst
+      **3. Launch**
 
-Run It
-------
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-Launch DSRL training using ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``:
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenPI π₀ + DSRL
+           - ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``
+           - ``libero_spatial_dsrl_openpi``
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
 
 .. dropdown:: Advanced configuration (optional)
 

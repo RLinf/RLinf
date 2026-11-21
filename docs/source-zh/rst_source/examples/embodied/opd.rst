@@ -6,15 +6,12 @@ OPD：OpenVLA-OFT 在线策略蒸馏
    :height: 16px
    :class: inline-icon
 
-OPD（On-Policy Distillation）在 student 策略自己的 on-policy rollout 上做蒸馏：student
-先与环境交互并保存动作 token，rollout 结束后 teacher 只对这些 student action tokens 计算
-逐 token 的 log probability。RLinf 中的 OPD 不在 rollout 阶段生成 teacher action；teacher 只在
-rollout 后打分，完成后立即 offload，以减少 rollout 延迟和显存占用。
+OPD（On-Policy Distillation）在 student 策略自己的 on-policy rollout 上做蒸馏：student 先与环境交互并保存动作 token，rollout 结束后 teacher 只对这些 student action tokens 计算逐 token 的 log probability。RLinf 中的 OPD 不在 rollout 阶段生成 teacher action；teacher 只在 rollout 后打分，完成后立即 offload，以减少 rollout 延迟和显存占用。
 
 概览
 ----------------------------------------
 
-本示例在 **LIBERO-Spatial** 上使用 **OpenVLA-OFT student** 与 **OpenVLA-OFT teacher** 进行 OPD 训练。
+本示例在 **LIBERO-Spatial** 上使用 **OpenVLA-OFT student** 与 **OpenVLA-OFT teacher** 运行 OPD 训练。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -42,16 +39,12 @@ rollout 后打分，完成后立即 offload，以减少 rollout 延迟和显存�
 | **你将完成：** 下载 student/teacher 权重 -> 检查 ``unnorm_key`` -> 启动 ``libero_spatial_opd_openvlaoft`` -> 观察 ``env/success_once`` 与 OPD actor 指标。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · :doc:`LIBERO 环境 <libero>` · 已可运行 OpenVLA-OFT + LIBERO。
 
-方法要点
+OPD 原理
 ----------------------------------------
 
-OPD 的训练信号来自 teacher 与 student 对同一条 student action token 序列的相对 logprob：
+OPD 以 teacher 与 student 在同一条 student 动作 token 序列上的 log-probability 差值作为逐 token 蒸馏 advantage（对 student 项施加 stop-gradient）。
 
-.. math::
-
-   A_{OPD} = \log \pi_{teacher}(a_{student} \mid s) - \operatorname{stop\_grad}(\log \pi_{student}(a_{student} \mid s))
-
-实现上需要注意三点：
+实现要点：
 
 - student rollout 是唯一的环境交互来源；teacher 不参与采样动作。
 - teacher 在 rollout 之后对保存的 ``forward_inputs.action_tokens`` 计算 dense token logprob。
@@ -155,12 +148,7 @@ OPD 的训练信号来自 teacher 与 student 对同一条 student action token 
 - ``actor/opd_reward``：OPD 使用的 token-level 蒸馏 reward。
 - ``actor/policy_loss`` 与 ``actor/total_loss``：actor 更新是否数值稳定。
 
-结果
-----------------------------------------
-
-下表先给出 LIBERO-Spatial 上的结果。Base student 为
-|huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_；
-teacher 为 |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_。
+下表给出 LIBERO-Spatial 上的结果。Base student 为 |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_；teacher 为 |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_。
 
 .. list-table:: **LIBERO-Spatial success rate**
    :header-rows: 1

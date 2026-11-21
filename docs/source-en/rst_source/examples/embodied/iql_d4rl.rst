@@ -75,17 +75,17 @@ How IQL Works
 
 1. **IQL (Implicit Q-Learning)**
 
-   - **Value** :math:`V(s)`: Updated with expectile regression on :math:`Q_{\mathrm{target}}(s,a) - V(s)`; weight :math:`w(d) = \tau \cdot \mathbb{I}(d>0) + (1-\tau) \cdot \mathbb{I}(d \le 0)`.
-   - **Actor** :math:`\pi(a|s)`: AWR-style advantage-weighted maximum likelihood; advantage :math:`A = Q_{\mathrm{target}}(s,a) - V(s)`, weight :math:`w = \min(\exp(A \cdot \beta), 100)`.
-   - **Critic** (twin Q): TD loss with target :math:`y = r + \gamma \cdot \mathrm{mask} \cdot V(s')`.
-   - **Target**: Soft-update of target critic with :math:`\tau`.
+   - **Value**: Updated with asymmetric expectile regression against the target Q-value minus the current value estimate, controlled by ``algorithm.expectile``.
+   - **Actor**: Advantage-weighted regression (AWR) maximum likelihood using exponentiated advantages scaled by ``algorithm.temperature`` and clipped at 100.
+   - **Critic** (twin Q): Temporal-difference (TD) regression toward the discounted next-state value estimate, controlled by ``algorithm.discount``.
+   - **Target**: Polyak soft-update of the target critic with ``algorithm.tau``.
 
 2. **Training flow**
 
-   Each update step: the actor fetches one batch from its rank-local ``DataLoader`` (built in ``EmbodiedIQLFSDPPolicy.build_offline_dataloader``), then runs IQL in the current implementation order: update Value → update Actor → update Critic → soft-update target critic.
+   Each update step fetches one batch from the rank-local offline data loader, then runs IQL updates in order: Value → Actor → Critic → soft-update target critic.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
@@ -93,47 +93,50 @@ Installation
 
    .. tab-item:: D4RL
 
+      **1. Install**
+
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
-The launch script sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl`` by default for headless runs.
+      The launch script sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl`` by default for headless runs.
 
-Run It
-------
+      **2. Launch**
 
-RLinf ships default IQL configs for three D4RL task families (D4RL datasets download automatically on first run when ``data.dataset_path`` is ``null``):
+      RLinf ships default IQL configs for three D4RL task families (D4RL datasets download automatically on first run when ``data.dataset_path`` is ``null``):
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 74
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 74
 
-   * - Task family
-     - Config
-   * - MuJoCo
-     - ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
-   * - AntMaze
-     - ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
-   * - Kitchen / Adroit
-     - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
+         * - Task family
+           - Config
+         * - MuJoCo
+           - ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
+         * - AntMaze
+           - ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
+         * - Kitchen / Adroit
+           - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
 
-Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco`` when omitted; logs write to ``logs/<timestamp>-<config_name>/``):
+      Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco`` when omitted; logs write to ``logs/<timestamp>-<config_name>/``):
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   # MuJoCo (default)
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
+         # MuJoCo (default)
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
 
-   # AntMaze
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
+         # AntMaze
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
 
-   # Kitchen / Adroit
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
+         # Kitchen / Adroit
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
 .. dropdown:: Advanced configuration (optional)
 
-   Set ``data.task_name`` and ``env.eval.task_name`` to switch D4RL tasks (for example ``antmaze-large-play-v0``). With ``data.dataset_path`` left as ``null``, RLinf reads ``~/.d4rl/datasets/<task_name>.hdf5`` if it exists and otherwise lets D4RL download the dataset. To train from an existing HDF5 file, set ``data.dataset_path`` to its path (matching the observation and action shapes of ``data.task_name``); standard D4RL files go through ``d4rl.qlearning_dataset`` using ``timeouts``, while files of prepared transitions with ``next_observations`` and without ``timeouts`` are used as is.
+   **Switching tasks and local datasets.** Set ``data.task_name`` and ``env.eval.task_name`` to switch D4RL tasks (for example ``antmaze-large-play-v0``). With ``data.dataset_path`` left as ``null``, RLinf reads ``~/.d4rl/datasets/<task_name>.hdf5`` if it exists and otherwise lets D4RL download the dataset. To train from an existing HDF5 file, set ``data.dataset_path`` to its path (matching the observation and action shapes of ``data.task_name``); standard D4RL files go through ``d4rl.qlearning_dataset`` using ``timeouts``, while files of prepared transitions with ``next_observations`` and without ``timeouts`` are used as is.
+
+   **Resume training.** Set ``runner.resume_dir`` to a checkpoint directory (for example ``checkpoints/global_step_XXXXX``), then run the same launch command. The runner loads weights and continues from that step.
 
    Key default hyperparameters in the shipped YAML configs:
 
@@ -170,11 +173,6 @@ Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco``
 
       env:
         task_name: "antmaze-large-play-v0"
-
-Resume Training
----------------
-
-Set ``runner.resume_dir`` to a checkpoint directory (e.g. ``checkpoints/global_step_XXXXX``), then run the same launch command. The runner loads weights and continues from that step.
 
 Visualization and Results
 -------------------------

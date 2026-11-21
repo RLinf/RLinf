@@ -147,6 +147,24 @@ def _iter_code_blocks(lines: list[str], cutoff_line: int) -> list[dict]:
     return blocks
 
 
+def _find_nested_tabsets(lines: list[str], cutoff_line: int) -> list[int]:
+    """Return 1-based line numbers of nested ``.. tab-set::`` directives."""
+    nested: list[int] = []
+    scopes: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines[:cutoff_line], 1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        indent = len(line) - len(line.lstrip())
+        while scopes and indent <= scopes[-1][0]:
+            scopes.pop()
+        if TAB_SET.match(line):
+            if any(kind == "tab-set" for _, kind in scopes):
+                nested.append(idx)
+            scopes.append((indent, "tab-set"))
+    return nested
+
+
 def _hardware_cutoff(lines: list[str]) -> int:
     """Line index (0-based) where the hardware-backends section begins, or len(lines)."""
     for idx in range(len(lines) - 1):
@@ -188,6 +206,15 @@ def check_page(path: Path, rel: str) -> list[route.Finding]:
 
     def add(severity: str, line: int | None, rule: str, message: str) -> None:
         findings.append(route.Finding(severity, rel, line, rule, message))
+
+    for lineno in _find_nested_tabsets(lines, cutoff):
+        add(
+            "major",
+            lineno,
+            "docs/nested-tabset",
+            "avoid nested ``.. tab-set::`` directives (stacked tab bars hurt readability); "
+            "flatten into one single-level ``.. tab-set::`` or fold secondary options into ``.. dropdown::``",
+        )
 
     for block in blocks:
         lang = block["lang"]

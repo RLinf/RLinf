@@ -108,257 +108,57 @@ Setup and Run
 
 .. include:: _setup_common.rst
 
-NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7. AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support GR00T N1.5 on LIBERO and ManiSkill, and Ascend also supports N1.6 and N1.7 on LIBERO. N1.6 and N1.7 on AMD and MUSA, and IsaacLab on every non-NVIDIA backend, remain unvalidated.
+NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7 (select a version tab below). AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support GR00T N1.5 on LIBERO and ManiSkill, and Ascend also supports N1.6 and N1.7 on LIBERO. N1.6 and N1.7 on AMD and MUSA, and IsaacLab on every non-NVIDIA backend, remain unvalidated.
 
 .. tab-set::
 
    .. tab-item:: GR00T N1.5
       :sync: gr00t
 
-      .. tab-set::
+      **1. Install**
 
-         .. tab-item:: NVIDIA CUDA
-            :sync: cuda
+      .. code-block:: bash
 
-            **1. Install**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
+      Download the LIBERO-Spatial SFT checkpoint (or swap the repo ID for another LIBERO suite from the table below):
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the SFT checkpoint for your LIBERO task suite:
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
 
-            .. code-block:: bash
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 44 34
 
-               # Spatial
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+         * - Suite
+           - SFT Checkpoint
+           - Config (``examples/embodiment/config/``)
+         * - LIBERO-Spatial
+           - ``RLinf/RLinf-Gr00t-SFT-Spatial``
+           - ``libero_spatial_ppo_gr00t.yaml``
+         * - LIBERO-Object
+           - ``RLinf/RLinf-Gr00t-SFT-Object``
+           - ``libero_object_ppo_gr00t.yaml``
+         * - LIBERO-Goal
+           - ``RLinf/RLinf-Gr00t-SFT-Goal``
+           - ``libero_goal_ppo_gr00t.yaml``
+         * - LIBERO-Long
+           - ``RLinf/RLinf-Gr00t-SFT-10``
+           - ``libero_10_ppo_gr00t.yaml``
 
-               # Object
-               hf download RLinf/RLinf-Gr00t-SFT-Object --local-dir ./RLinf-Gr00t-SFT-Object
+      .. include:: _model_path.rst
 
-               # Goal
-               hf download RLinf/RLinf-Gr00t-SFT-Goal --local-dir ./RLinf-Gr00t-SFT-Goal
+      **3. Launch**
 
-               # Long
-               hf download RLinf/RLinf-Gr00t-SFT-10 --local-dir ./RLinf-Gr00t-SFT-10
+      Launch PPO training (replace the config suffix to match your suite; see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
 
-            .. include:: _model_path.rst
+      .. code-block:: bash
 
-            **3. Launch**
-
-            Shipped N1.5 LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
-
-            .. list-table::
-               :header-rows: 1
-               :widths: 30 70
-
-               * - Suite
-                 - Config
-               * - LIBERO-Spatial
-                 - ``libero_spatial_ppo_gr00t.yaml``
-               * - LIBERO-Object / Goal / Long
-                 - ``libero_object_ppo_gr00t.yaml`` · ``libero_goal_ppo_gr00t.yaml`` · ``libero_10_ppo_gr00t.yaml``
-
-            Launch PPO training:
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-         .. tab-item:: AMD ROCm
-            :sync: rocm
-
-            ROCm uses PyTorch's CUDA-compatible API, so GR00T N1.5 follows the shared AMD accelerator and installation path without a model-specific patch.
-
-            **1. Install (LIBERO)**
-
-            .. include:: _amd_libero.rst
-
-            The published image already contains the N1.5 environment:
-
-            .. code-block:: bash
-
-               source switch_env gr00t
-
-            For a native installation on a ROCm host (omit ``--rocm`` to detect the installed version):
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
-               source .venv/bin/activate
-
-            **2. Download**
-
-            .. code-block:: bash
-
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
-
-            .. include:: _model_path.rst
-
-            **3. Launch LIBERO**
-
-            Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering (or ``egl`` on supported Radeon GPUs) in the active environment:
-
-            .. include:: _libero_osmesa.rst
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-            **ManiSkill on AMD ROCm**
-
-            Install the combined ManiSkill and LIBERO environment for GR00T N1.5:
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
-               source .venv/bin/activate
-
-            Configure CPU simulation:
-
-            .. include:: _maniskill_non_cuda.rst
-
-            RLinf provides the ManiSkill observation and action conversion path for GR00T, without bundling a ManiSkill GR00T task config or checkpoint. Start from a ManiSkill task config and select a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, then configure the actor model block (rollout inherits ``model_path``):
-
-            .. code-block:: yaml
-
-               actor:
-                 model:
-                   model_type: gr00t
-                   model_path: /path/to/maniskill-gr00t-checkpoint
-                   obs_converter_type: maniskill
-                   embodiment_tag: maniskill_widowx
-
-            Match the environment's action shape and normalization statistics to the checkpoint metadata, then launch the saved config with ``run_embodiment.sh``.
-
-         .. tab-item:: Huawei Ascend CANN
-            :sync: ascend
-
-            Use the Ascend LIBERO container or a host with CANN and the NPU driver installed.
-
-            **1. Install (LIBERO)**
-
-            .. include:: _ascend_libero.rst
-
-            Inside the published RLinf container, activate the N1.5 environment:
-
-            .. code-block:: bash
-
-               source switch_env gr00t
-
-            For a native installation, select N1.5 and LIBERO explicitly (builds ``decord`` from source when needed on aarch64, applies Ascend TensorFlow pins, skips CUDA flash-attention, and applies NPU patches on model load):
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
-               source .venv/bin/activate
-
-            .. include:: _ascend_torch.rst
-
-            **2. Download**
-
-            .. code-block:: bash
-
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
-
-            .. include:: _model_path.rst
-
-            **3. Launch LIBERO**
-
-            Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering in the active environment:
-
-            .. include:: _libero_osmesa.rst
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-            **ManiSkill on Huawei Ascend CANN**
-
-            Install the combined ManiSkill and LIBERO environment for GR00T N1.5:
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
-               source .venv/bin/activate
-
-            Configure CPU simulation:
-
-            .. include:: _maniskill_non_cuda.rst
-
-            Start from a ManiSkill task config and a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, set the ``actor.model`` block below (rollout inherits ``model_path``), match action shape and normalization statistics to checkpoint metadata, and launch with ``run_embodiment.sh``:
-
-            .. code-block:: yaml
-
-               actor:
-                 model:
-                   model_type: gr00t
-                   model_path: /path/to/maniskill-gr00t-checkpoint
-                   obs_converter_type: maniskill
-                   embodiment_tag: maniskill_widowx
-
-         .. tab-item:: Moore Threads MUSA
-            :sync: musa
-
-            MUSA uses the shared device and installation path plus an N1.5 compatibility patch for the RADIO backbone's CUDA capability check (applied automatically when the worker detects a MUSA accelerator). The vendor image provides a working MUSA flash-attention build.
-
-            **1. Install (LIBERO)**
-
-            .. include:: _musa_libero.rst
-
-            Inside the container, install GR00T N1.5 and LIBERO:
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform musa embodied --model gr00t --env libero
-               source .venv/bin/activate
-
-            **2. Download**
-
-            .. code-block:: bash
-
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
-
-            .. include:: _model_path.rst
-
-            **3. Launch LIBERO**
-
-            Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering in the active environment:
-
-            .. include:: _libero_osmesa.rst
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-            **ManiSkill on Moore Threads MUSA**
-
-            Keep the vendor simulator packages and add the GR00T N1.5 model environment inside the vendor image:
-
-            .. include:: _musa_maniskill.rst
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
-               source gr00t/bin/activate
-
-            Configure CPU simulation:
-
-            .. include:: _maniskill_non_cuda.rst
-
-            Start from a ManiSkill task config and a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, set the ``actor.model`` block below (rollout inherits ``model_path``), match action shape and normalization statistics to checkpoint metadata, and launch with ``run_embodiment.sh``:
-
-            .. code-block:: yaml
-
-               actor:
-                 model:
-                   model_type: gr00t
-                   model_path: /path/to/maniskill-gr00t-checkpoint
-                   obs_converter_type: maniskill
-                   embodiment_tag: maniskill_widowx
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
 
       .. dropdown:: Advanced configuration and design notes (optional)
 
@@ -375,7 +175,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7. AMD ROCm, Huawei Ascend CANN, a
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero && source .venv/bin/activate
 
-      For **Huawei Ascend CANN**, add ``--platform ascend`` before ``embodied`` (see the Ascend tab under GR00T N1.5 for container, driver, and OSMesa rendering setup).
+      For **Huawei Ascend CANN**, add ``--platform ascend`` before ``embodied`` (see the **Huawei Ascend CANN** tab for container, driver, and OSMesa rendering setup).
 
       **2. Download**
 
@@ -409,7 +209,7 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7. AMD ROCm, Huawei Ascend CANN, a
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero && source .venv/bin/activate
 
-      For **Huawei Ascend CANN**, add ``--platform ascend`` before ``embodied`` (see the Ascend tab under GR00T N1.5 for container, driver, and OSMesa rendering setup).
+      For **Huawei Ascend CANN**, add ``--platform ascend`` before ``embodied`` (see the **Huawei Ascend CANN** tab for container, driver, and OSMesa rendering setup).
 
       **2. Download**
 
@@ -437,11 +237,11 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7. AMD ROCm, Huawei Ascend CANN, a
 
          rollout:
            model:
-             backbone_model_path: /path/to/Cosmos-Reason2-2B
+             backbone_model_path: ./Cosmos-Reason2-2B
          actor:
            model:
-             model_path: /path/to/GR00T-N1.7-LIBERO/libero_spatial
-             backbone_model_path: /path/to/Cosmos-Reason2-2B
+             model_path: ./GR00T-N1.7-LIBERO/libero_spatial
+             backbone_model_path: ./Cosmos-Reason2-2B
 
       **3. Launch**
 
@@ -454,6 +254,198 @@ NVIDIA CUDA supports GR00T N1.5, N1.6, and N1.7. AMD ROCm, Huawei Ascend CANN, a
          - N1.7 upgrades the VLM backbone to ``nvidia/Cosmos-Reason2-2B`` (Qwen3-VL architecture) with a relative end-effector action space and expanded universal state/action limits (``max_state_dim=132``, ``max_action_dim=132``, ``action_horizon=40``).
          - The LIBERO recipe sets ``embodiment_tag: libero_sim``, ``add_value_head: True``, ``num_action_chunks: 16``, and ``denoising_steps: 4``. Set ``rl_head_config.detach_critic_input: true`` to train the value head on detached features, or ``false`` for joint gradients.
          - For BF16 N1.7 checkpoints, RLinf disables reduced-precision BF16 GEMM reductions in each worker process to avoid batch-size-dependent backbone drift between rollout and actor scoring; parameter and optimizer dtypes remain unchanged.
+
+   .. tab-item:: AMD ROCm
+      :sync: rocm
+
+      ROCm uses PyTorch's CUDA-compatible API, so GR00T N1.5 follows the shared AMD accelerator and installation path without a model-specific patch.
+
+      **1. Install (LIBERO)**
+
+      .. include:: _amd_libero.rst
+
+      The published image already contains the N1.5 environment:
+
+      .. code-block:: bash
+
+         source switch_env gr00t
+
+      For a native installation on a ROCm host (omit ``--rocm`` to detect the installed version):
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
+         source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. Launch LIBERO**
+
+      Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering (or ``egl`` on supported Radeon GPUs) in the active environment:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+      **ManiSkill on AMD ROCm**
+
+      Install the combined ManiSkill and LIBERO environment for GR00T N1.5:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
+         source .venv/bin/activate
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      RLinf provides the ManiSkill observation and action conversion path for GR00T, without bundling a ManiSkill GR00T task config or checkpoint. Start from a ManiSkill task config and select a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, then configure the actor model block (rollout inherits ``model_path``):
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_type: gr00t
+             model_path: /path/to/maniskill-gr00t-checkpoint
+             obs_converter_type: maniskill
+             embodiment_tag: maniskill_widowx
+
+      Match the environment's action shape and normalization statistics to the checkpoint metadata, then launch the saved config with ``run_embodiment.sh``.
+
+   .. tab-item:: Huawei Ascend CANN
+      :sync: ascend
+
+      Use the Ascend LIBERO container or a host with CANN and the NPU driver installed. The steps below install GR00T N1.5 (for N1.6 or N1.7 on LIBERO, replace ``--model gr00t`` with ``--model gr00t_n1d6`` or ``--model gr00t_n1d7`` and follow the download and config steps in the corresponding version tab).
+
+      **1. Install (LIBERO)**
+
+      .. include:: _ascend_libero.rst
+
+      Inside the published RLinf container, activate the N1.5 environment:
+
+      .. code-block:: bash
+
+         source switch_env gr00t
+
+      For a native installation, select N1.5 and LIBERO explicitly (builds ``decord`` from source when needed on aarch64, applies Ascend TensorFlow pins, skips CUDA flash-attention, and applies NPU patches on model load):
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
+         source .venv/bin/activate
+
+      .. include:: _ascend_torch.rst
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. Launch LIBERO**
+
+      Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering in the active environment:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+      **ManiSkill on Huawei Ascend CANN**
+
+      Install the combined ManiSkill and LIBERO environment for GR00T N1.5:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+         source .venv/bin/activate
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      Start from a ManiSkill task config and a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, set the ``actor.model`` block below (rollout inherits ``model_path``), match action shape and normalization statistics to checkpoint metadata, and launch with ``run_embodiment.sh``:
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_type: gr00t
+             model_path: /path/to/maniskill-gr00t-checkpoint
+             obs_converter_type: maniskill
+             embodiment_tag: maniskill_widowx
+
+   .. tab-item:: Moore Threads MUSA
+      :sync: musa
+
+      MUSA uses the shared device and installation path plus an N1.5 compatibility patch for the RADIO backbone's CUDA capability check (applied automatically when the worker detects a MUSA accelerator). The vendor image provides a working MUSA flash-attention build.
+
+      **1. Install (LIBERO)**
+
+      .. include:: _musa_libero.rst
+
+      Inside the container, install GR00T N1.5 and LIBERO:
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --model gr00t --env libero
+         source .venv/bin/activate
+
+      **2. Download**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. Launch LIBERO**
+
+      Set the model path in ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` and enable software rendering in the active environment:
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+      **ManiSkill on Moore Threads MUSA**
+
+      Keep the vendor simulator packages and add the GR00T N1.5 model environment inside the vendor image:
+
+      .. include:: _musa_maniskill.rst
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
+         source gr00t/bin/activate
+
+      Configure CPU simulation:
+
+      .. include:: _maniskill_non_cuda.rst
+
+      Start from a ManiSkill task config and a GR00T N1.5 checkpoint whose metadata contains the ``maniskill_widowx`` embodiment head, set the ``actor.model`` block below (rollout inherits ``model_path``), match action shape and normalization statistics to checkpoint metadata, and launch with ``run_embodiment.sh``:
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_type: gr00t
+             model_path: /path/to/maniskill-gr00t-checkpoint
+             obs_converter_type: maniskill
+             embodiment_tag: maniskill_widowx
 
 Visualization and Results
 -------------------------

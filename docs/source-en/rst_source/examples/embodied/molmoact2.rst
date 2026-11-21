@@ -91,8 +91,8 @@ Observation and Action
    * - Prompt
      - Natural-language task instruction from ``task_descriptions``.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
@@ -100,41 +100,54 @@ Installation
 
    .. tab-item:: MolmoAct2
 
+      **1. Install**
+
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
-Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
-`RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.
+      Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
+      `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.
 
-Download the Model
-------------------
+      **2. Download**
 
-Download the official `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint:
-
-.. tab-set::
-
-   .. tab-item:: MolmoAct2
+      Download the official `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint:
 
       .. code-block:: bash
 
          hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
 
-Then set ``rollout.model.model_path`` in the eval config to that directory. The
-config has no ``actor`` section, so there is no second path to keep in sync.
+      **3. Launch**
 
-Run It
-------
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 46 32
 
-Evaluate LIBERO-Long with ``evaluations/libero/libero_10_molmoact2_eval.yaml``:
+         * - Suite
+           - Config (``evaluations/libero/``)
+           - Command suffix
+         * - Spatial
+           - ``libero_spatial_molmoact2_eval.yaml``
+           - ``libero_spatial_molmoact2_eval``
+         * - Object
+           - ``libero_object_molmoact2_eval.yaml``
+           - ``libero_object_molmoact2_eval``
+         * - Goal
+           - ``libero_goal_molmoact2_eval.yaml``
+           - ``libero_goal_molmoact2_eval``
+         * - Long
+           - ``libero_10_molmoact2_eval.yaml``
+           - ``libero_10_molmoact2_eval``
 
-.. code-block:: bash
+      Set ``rollout.model.model_path`` in the eval config or pass it on the command line (the config has no ``actor`` section, so there is no second path to keep in sync). Evaluate LIBERO-Long:
 
-   bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
-     rollout.model.model_path=./MolmoAct2-LIBERO
+      .. code-block:: bash
 
-Swap in any config from the Tasks table above to evaluate another suite.
+         bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
+           rollout.model.model_path=./MolmoAct2-LIBERO
+
+      Swap in any config suffix from the table above to evaluate another suite.
 
 .. warning::
 
@@ -142,8 +155,7 @@ Swap in any config from the Tasks table above to evaluate another suite.
    ``env.eval.max_steps_per_rollout_epoch`` for a smoke test — one episode per
    environment is ``max_episode_steps``.
 
-.. admonition:: Configure further
-   :class: note
+.. dropdown:: Advanced configuration (optional)
 
    - Inference settings (``num_steps``, ``norm_tag``, action mode) → the ``molmoact2`` block in ``examples/embodiment/config/model/molmoact2.yaml``.
    - ``rollout.model.precision`` has no effect: MolmoAct2 loads its weights in fp32 upstream.

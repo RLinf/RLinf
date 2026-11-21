@@ -138,8 +138,6 @@ Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, e
 
    Example GSEnv training curves.
 
-References
-----------
+.. note::
 
-- `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__
-- `pi_RL paper <https://arxiv.org/pdf/2510.25889>`__
+   **References:** `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__ · `pi_RL paper <https://arxiv.org/pdf/2510.25889>`__.

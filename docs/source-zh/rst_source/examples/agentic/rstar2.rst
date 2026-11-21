@@ -3,7 +3,7 @@ rStar2 的强化学习训练
 
 使用本配方复现 `rStar2-Agent: Agentic Reasoning Technical Report <https://arxiv.org/abs/2508.20722>`__ 的多轮工具调用实验，通过强化学习训练大语言模型调用代码运行工具回答问题。
 
-概述
+概览
 ----------------------------------------
 
 使用本配方复现 rStar2 风格的智能体推理，包含代码执行工具与 Megatron 训练。
@@ -150,7 +150,6 @@ rStar2 的强化学习训练
      - 76.20
      - 44.64
 
-References
-----------
+.. note::
 
-- rStar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397
+   **参考：** `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/pull/3397>`__。

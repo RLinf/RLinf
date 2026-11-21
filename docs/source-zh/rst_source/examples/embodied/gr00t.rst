@@ -104,257 +104,57 @@ GR00T 模型强化学习训练
 
 .. include:: _setup_common.rst
 
-NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行，昇腾还支持 N1.6 与 N1.7 在 LIBERO 上运行。AMD 与 MUSA 上的 N1.6、N1.7，以及所有非 NVIDIA 后端上的 IsaacLab，尚未验证。
+NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7（在下方选择对应版本标签页）。AMD ROCm、华为昇腾 CANN 和摩尔线程 MUSA 支持 GR00T N1.5 在 LIBERO 和 ManiSkill 上运行，昇腾还支持 N1.6 与 N1.7 在 LIBERO 上运行。AMD 与 MUSA 上的 N1.6、N1.7，以及所有非 NVIDIA 后端上的 IsaacLab，尚未验证。
 
 .. tab-set::
 
    .. tab-item:: GR00T N1.5
       :sync: gr00t
 
-      .. tab-set::
+      **1. 安装环境**
 
-         .. tab-item:: NVIDIA CUDA
-            :sync: cuda
+      .. code-block:: bash
 
-            **1. 安装环境**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. 下载模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model gr00t --env maniskill_libero && source .venv/bin/activate
+      下载 LIBERO-Spatial 的 SFT checkpoint（其他套件可按下方对照表替换仓库名）：
 
-            **2. 下载模型**
+      .. code-block:: bash
 
-            按 LIBERO 任务套件下载对应的 SFT checkpoint：
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
 
-            .. code-block:: bash
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 44 34
 
-               # Spatial
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+         * - 套件
+           - SFT Checkpoint
+           - 配置文件（``examples/embodiment/config/``）
+         * - LIBERO-Spatial
+           - ``RLinf/RLinf-Gr00t-SFT-Spatial``
+           - ``libero_spatial_ppo_gr00t.yaml``
+         * - LIBERO-Object
+           - ``RLinf/RLinf-Gr00t-SFT-Object``
+           - ``libero_object_ppo_gr00t.yaml``
+         * - LIBERO-Goal
+           - ``RLinf/RLinf-Gr00t-SFT-Goal``
+           - ``libero_goal_ppo_gr00t.yaml``
+         * - LIBERO-Long
+           - ``RLinf/RLinf-Gr00t-SFT-10``
+           - ``libero_10_ppo_gr00t.yaml``
 
-               # Object
-               hf download RLinf/RLinf-Gr00t-SFT-Object --local-dir ./RLinf-Gr00t-SFT-Object
+      .. include:: _model_path.rst
 
-               # Goal
-               hf download RLinf/RLinf-Gr00t-SFT-Goal --local-dir ./RLinf-Gr00t-SFT-Goal
+      **3. 启动训练**
 
-               # Long
-               hf download RLinf/RLinf-Gr00t-SFT-10 --local-dir ./RLinf-Gr00t-SFT-10
+      启动 PPO 训练（按目标套件替换配置后缀；自定义 GPU 分配见 :doc:`Placement <../../concepts/placement>`）：
 
-            .. include:: _model_path.rst
+      .. code-block:: bash
 
-            **3. 启动训练**
-
-            ``examples/embodiment/config/`` 下自带以下 N1.5 LIBERO 配置（自定义 GPU 分配见 :doc:`Placement <../../concepts/placement>`）：
-
-            .. list-table::
-               :header-rows: 1
-               :widths: 30 70
-
-               * - 套件
-                 - 配置文件
-               * - LIBERO-Spatial
-                 - ``libero_spatial_ppo_gr00t.yaml``
-               * - LIBERO-Object / Goal / Long
-                 - ``libero_object_ppo_gr00t.yaml`` · ``libero_goal_ppo_gr00t.yaml`` · ``libero_10_ppo_gr00t.yaml``
-
-            启动 PPO 训练：
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-         .. tab-item:: AMD ROCm
-            :sync: rocm
-
-            ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 GR00T N1.5 可直接使用共用的 AMD accelerator 与安装路径，无需模型专用补丁。
-
-            **1. 安装环境（LIBERO）**
-
-            .. include:: _amd_libero.rst
-
-            发布镜像已经包含 N1.5 环境：
-
-            .. code-block:: bash
-
-               source switch_env gr00t
-
-            若在 ROCm 宿主机上直接安装（省略 ``--rocm`` 自动检测已安装的版本）：
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
-               source .venv/bin/activate
-
-            **2. 下载模型**
-
-            .. code-block:: bash
-
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
-
-            .. include:: _model_path.rst
-
-            **3. 启动 LIBERO 训练**
-
-            在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径，并在已激活环境中启用软件渲染（受支持的 Radeon GPU 可改用 ``egl``）：
-
-            .. include:: _libero_osmesa.rst
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-            **在 AMD ROCm 上运行 ManiSkill**
-
-            安装 GR00T N1.5 的 ManiSkill + LIBERO 组合环境：
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
-               source .venv/bin/activate
-
-            配置 CPU simulation：
-
-            .. include:: _maniskill_non_cuda.rst
-
-            RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没有随仓库提供 ManiSkill GR00T 任务配置或 checkpoint。请从一个 ManiSkill 任务配置开始，选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint，并在配置中填写以下 ``actor.model`` 字段（rollout 自动继承 ``model_path``）：
-
-            .. code-block:: yaml
-
-               actor:
-                 model:
-                   model_type: gr00t
-                   model_path: /path/to/maniskill-gr00t-checkpoint
-                   obs_converter_type: maniskill
-                   embodiment_tag: maniskill_widowx
-
-            确认环境的 action shape 与 normalization statistics 和 checkpoint metadata 一致后，通过 ``run_embodiment.sh`` 启动训练。
-
-         .. tab-item:: 华为昇腾 CANN
-            :sync: ascend
-
-            使用昇腾 LIBERO 容器，或在已安装 CANN 和 NPU 驱动的宿主机上运行。
-
-            **1. 安装环境（LIBERO）**
-
-            .. include:: _ascend_libero.rst
-
-            进入已发布的 RLinf 容器后，激活 N1.5 环境：
-
-            .. code-block:: bash
-
-               source switch_env gr00t
-
-            本地安装时，明确选择 N1.5 与 LIBERO（脚本会在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，跳过 CUDA flash-attention，并在加载模型时自动应用 NPU 补丁）：
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
-               source .venv/bin/activate
-
-            .. include:: _ascend_torch.rst
-
-            **2. 下载模型**
-
-            .. code-block:: bash
-
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
-
-            .. include:: _model_path.rst
-
-            **3. 启动 LIBERO 训练**
-
-            在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径，并在已激活环境中启用软件渲染：
-
-            .. include:: _libero_osmesa.rst
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-            **在华为昇腾 CANN 上运行 ManiSkill**
-
-            安装 GR00T N1.5 的 ManiSkill + LIBERO 组合环境：
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
-               source .venv/bin/activate
-
-            配置 CPU simulation：
-
-            .. include:: _maniskill_non_cuda.rst
-
-            从一个 ManiSkill 任务配置开始，选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint，填写以下 ``actor.model`` 字段（rollout 自动继承 ``model_path``），确认 action shape 与 normalization statistics 一致后，通过 ``run_embodiment.sh`` 启动训练：
-
-            .. code-block:: yaml
-
-               actor:
-                 model:
-                   model_type: gr00t
-                   model_path: /path/to/maniskill-gr00t-checkpoint
-                   obs_converter_type: maniskill
-                   embodiment_tag: maniskill_widowx
-
-         .. tab-item:: 摩尔线程 MUSA
-            :sync: musa
-
-            MUSA 使用共用设备与安装路径，并在 worker 检测到 MUSA accelerator 时自动为 RADIO backbone 的 CUDA capability 检查应用 N1.5 兼容补丁。厂商镜像提供可用的 MUSA flash-attention。
-
-            **1. 安装环境（LIBERO）**
-
-            .. include:: _musa_libero.rst
-
-            进入容器后，安装 GR00T N1.5 与 LIBERO：
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform musa embodied --model gr00t --env libero
-               source .venv/bin/activate
-
-            **2. 下载模型**
-
-            .. code-block:: bash
-
-               hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
-
-            .. include:: _model_path.rst
-
-            **3. 启动 LIBERO 训练**
-
-            在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径，并在已激活环境中启用软件渲染：
-
-            .. include:: _libero_osmesa.rst
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
-
-            **在摩尔线程 MUSA 上运行 ManiSkill**
-
-            保留厂商模拟器包，并在厂商镜像中添加 GR00T N1.5 模型环境：
-
-            .. include:: _musa_maniskill.rst
-
-            .. code-block:: bash
-
-               bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
-               source gr00t/bin/activate
-
-            配置 CPU simulation：
-
-            .. include:: _maniskill_non_cuda.rst
-
-            从一个 ManiSkill 任务配置开始，选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint，填写以下 ``actor.model`` 字段（rollout 自动继承 ``model_path``），确认 action shape 与 normalization statistics 一致后，通过 ``run_embodiment.sh`` 启动训练：
-
-            .. code-block:: yaml
-
-               actor:
-                 model:
-                   model_type: gr00t
-                   model_path: /path/to/maniskill-gr00t-checkpoint
-                   obs_converter_type: maniskill
-                   embodiment_tag: maniskill_widowx
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
 
       .. dropdown:: 进阶配置与设计说明（可选）
 
@@ -371,7 +171,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7。AMD ROCm、华为昇腾 CANN 和
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero && source .venv/bin/activate
 
-      在 **华为昇腾 CANN** 上运行时，在 ``embodied`` 前加上 ``--platform ascend``\ （容器、驱动与 OSMesa 软件渲染配置见 GR00T N1.5 下的华为昇腾标签页）。
+      在 **华为昇腾 CANN** 上运行时，在 ``embodied`` 前加上 ``--platform ascend``\ （容器、驱动与 OSMesa 软件渲染配置见 **华为昇腾 CANN** 标签页）。
 
       **2. 下载模型**
 
@@ -405,7 +205,7 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7。AMD ROCm、华为昇腾 CANN 和
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero && source .venv/bin/activate
 
-      在 **华为昇腾 CANN** 上运行时，在 ``embodied`` 前加上 ``--platform ascend``\ （容器、驱动与 OSMesa 软件渲染配置见 GR00T N1.5 下的华为昇腾标签页）。
+      在 **华为昇腾 CANN** 上运行时，在 ``embodied`` 前加上 ``--platform ascend``\ （容器、驱动与 OSMesa 软件渲染配置见 **华为昇腾 CANN** 标签页）。
 
       **2. 下载模型**
 
@@ -433,11 +233,11 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7。AMD ROCm、华为昇腾 CANN 和
 
          rollout:
            model:
-             backbone_model_path: /path/to/Cosmos-Reason2-2B
+             backbone_model_path: ./Cosmos-Reason2-2B
          actor:
            model:
-             model_path: /path/to/GR00T-N1.7-LIBERO/libero_spatial
-             backbone_model_path: /path/to/Cosmos-Reason2-2B
+             model_path: ./GR00T-N1.7-LIBERO/libero_spatial
+             backbone_model_path: ./Cosmos-Reason2-2B
 
       **3. 启动训练**
 
@@ -450,6 +250,198 @@ NVIDIA CUDA 支持 GR00T N1.5、N1.6 和 N1.7。AMD ROCm、华为昇腾 CANN 和
          - N1.7 将 VLM 主干升级为 ``nvidia/Cosmos-Reason2-2B``\ （Qwen3-VL 架构），采用相对末端执行器动作空间，并将通用上限扩展到 ``max_state_dim=132``、``max_action_dim=132``、``action_horizon=40``。
          - LIBERO 配方默认配置 ``embodiment_tag: libero_sim``、``add_value_head: True``、``num_action_chunks: 16`` 与 ``denoising_steps: 4``。``rl_head_config.detach_critic_input: true`` 让价值头使用分离梯度后的特征，设为 ``false`` 则联合回传梯度。
          - 加载 BF16 N1.7 权重时，RLinf 会在各 worker 进程关闭低精度 BF16 GEMM 归约，避免 rollout 与 actor 批量大小不同引起的输出漂移；参数和优化器存储类型保持不变。
+
+   .. tab-item:: AMD ROCm
+      :sync: rocm
+
+      ROCm 使用 PyTorch 的 CUDA 兼容 API，因此 GR00T N1.5 可直接使用共用的 AMD accelerator 与安装路径，无需模型专用补丁。
+
+      **1. 安装环境（LIBERO）**
+
+      .. include:: _amd_libero.rst
+
+      发布镜像已经包含 N1.5 环境：
+
+      .. code-block:: bash
+
+         source switch_env gr00t
+
+      若在 ROCm 宿主机上直接安装（省略 ``--rocm`` 自动检测已安装的版本）：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env libero
+         source .venv/bin/activate
+
+      **2. 下载模型**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. 启动 LIBERO 训练**
+
+      在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径，并在已激活环境中启用软件渲染（受支持的 Radeon GPU 可改用 ``egl``）：
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+      **在 AMD ROCm 上运行 ManiSkill**
+
+      安装 GR00T N1.5 的 ManiSkill + LIBERO 组合环境：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform amd --rocm 6.4 embodied --model gr00t --env maniskill_libero
+         source .venv/bin/activate
+
+      配置 CPU simulation：
+
+      .. include:: _maniskill_non_cuda.rst
+
+      RLinf 已提供 GR00T 的 ManiSkill observation 与 action 转换路径，但没有随仓库提供 ManiSkill GR00T 任务配置或 checkpoint。请从一个 ManiSkill 任务配置开始，选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint，并在配置中填写以下 ``actor.model`` 字段（rollout 自动继承 ``model_path``）：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_type: gr00t
+             model_path: /path/to/maniskill-gr00t-checkpoint
+             obs_converter_type: maniskill
+             embodiment_tag: maniskill_widowx
+
+      确认环境的 action shape 与 normalization statistics 和 checkpoint metadata 一致后，通过 ``run_embodiment.sh`` 启动训练。
+
+   .. tab-item:: 华为昇腾 CANN
+      :sync: ascend
+
+      使用昇腾 LIBERO 容器，或在已安装 CANN 和 NPU 驱动的宿主机上运行。下方步骤面向 GR00T N1.5（在 LIBERO 上运行 N1.6 或 N1.7 时，将 ``--model gr00t`` 替换为 ``--model gr00t_n1d6`` 或 ``--model gr00t_n1d7``，并按对应版本标签页下载权重与配置）。
+
+      **1. 安装环境（LIBERO）**
+
+      .. include:: _ascend_libero.rst
+
+      进入已发布的 RLinf 容器后，激活 N1.5 环境：
+
+      .. code-block:: bash
+
+         source switch_env gr00t
+
+      本地安装时，明确选择 N1.5 与 LIBERO（脚本会在 aarch64 上按需从源码构建 ``decord``，应用昇腾专用的 TensorFlow 版本约束，跳过 CUDA flash-attention，并在加载模型时自动应用 NPU 补丁）：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
+         source .venv/bin/activate
+
+      .. include:: _ascend_torch.rst
+
+      **2. 下载模型**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. 启动 LIBERO 训练**
+
+      在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径，并在已激活环境中启用软件渲染：
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+      **在华为昇腾 CANN 上运行 ManiSkill**
+
+      安装 GR00T N1.5 的 ManiSkill + LIBERO 组合环境：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+         source .venv/bin/activate
+
+      配置 CPU simulation：
+
+      .. include:: _maniskill_non_cuda.rst
+
+      从一个 ManiSkill 任务配置开始，选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint，填写以下 ``actor.model`` 字段（rollout 自动继承 ``model_path``），确认 action shape 与 normalization statistics 一致后，通过 ``run_embodiment.sh`` 启动训练：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_type: gr00t
+             model_path: /path/to/maniskill-gr00t-checkpoint
+             obs_converter_type: maniskill
+             embodiment_tag: maniskill_widowx
+
+   .. tab-item:: 摩尔线程 MUSA
+      :sync: musa
+
+      MUSA 使用共用设备与安装路径，并在 worker 检测到 MUSA accelerator 时自动为 RADIO backbone 的 CUDA capability 检查应用 N1.5 兼容补丁。厂商镜像提供可用的 MUSA flash-attention。
+
+      **1. 安装环境（LIBERO）**
+
+      .. include:: _musa_libero.rst
+
+      进入容器后，安装 GR00T N1.5 与 LIBERO：
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --model gr00t --env libero
+         source .venv/bin/activate
+
+      **2. 下载模型**
+
+      .. code-block:: bash
+
+         hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir ./RLinf-Gr00t-SFT-Spatial
+
+      .. include:: _model_path.rst
+
+      **3. 启动 LIBERO 训练**
+
+      在 ``examples/embodiment/config/libero_spatial_ppo_gr00t.yaml`` 中设置路径，并在已激活环境中启用软件渲染：
+
+      .. include:: _libero_osmesa.rst
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
+      **在摩尔线程 MUSA 上运行 ManiSkill**
+
+      保留厂商模拟器包，并在厂商镜像中添加 GR00T N1.5 模型环境：
+
+      .. include:: _musa_maniskill.rst
+
+      .. code-block:: bash
+
+         bash requirements/install.sh --platform musa embodied --venv gr00t --model gr00t --env libero
+         source gr00t/bin/activate
+
+      配置 CPU simulation：
+
+      .. include:: _maniskill_non_cuda.rst
+
+      从一个 ManiSkill 任务配置开始，选择 metadata 中带有 ``maniskill_widowx`` embodiment head 的 GR00T N1.5 checkpoint，填写以下 ``actor.model`` 字段（rollout 自动继承 ``model_path``），确认 action shape 与 normalization statistics 一致后，通过 ``run_embodiment.sh`` 启动训练：
+
+      .. code-block:: yaml
+
+         actor:
+           model:
+             model_type: gr00t
+             model_path: /path/to/maniskill-gr00t-checkpoint
+             obs_converter_type: maniskill
+             embodiment_tag: maniskill_widowx
 
 可视化与结果
 ----------------------------------------

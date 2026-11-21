@@ -77,30 +77,26 @@ Observation and Action
    * - Prompt
      - Natural-language instruction for the RoboVerse task.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + RoboVerse
+   .. tab-item:: OpenPI π₀.₅ + RoboVerse
       :sync: openpi-roboverse
+
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
-Download the Model
-------------------
+      **2. Download**
 
-Download the default RoboVerse resources into the RLinf repo root and the OpenPI π₀.₅ SFT checkpoint:
-
-.. tab-set::
-
-   .. tab-item:: OpenPI π₀.₅ + RoboVerse
-      :sync: openpi-roboverse
+      Download the default RoboVerse resources into the RLinf repo root and the OpenPI π₀.₅ SFT checkpoint:
 
       .. code-block:: bash
 
@@ -110,27 +106,24 @@ Download the default RoboVerse resources into the RLinf repo root and the OpenPI
          # Download the OpenPI π₀.₅ checkpoint
          hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-.. include:: _model_path.rst
+      **3. Launch**
 
-Run It
-------
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
 
-Launch the RoboVerse recipe:
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenPI π₀.₅ + PPO
+           - ``examples/embodiment/config/roboverse_ppo_openpi_pi05.yaml``
+           - ``roboverse_ppo_openpi_pi05``
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
+      .. include:: _model_path.rst
 
-   * - Recipe
-     - Config
-     - Command suffix
-   * - OpenPI π₀.₅ + PPO
-     - ``examples/embodiment/config/roboverse_ppo_openpi_pi05.yaml``
-     - ``roboverse_ppo_openpi_pi05``
+      .. code-block:: bash
 
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
+         bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix,

@@ -98,54 +98,6 @@ How DAgger Works
      from expert to student.
    - ``beta_min`` is optional and sets the lower bound of ``beta``.
 
-Online LeRobot DAgger
----------------------
-
-The classic configs above store expert-labeled trajectories in an in-memory
-**replay buffer**. ``libero_spatial_dagger_openpi_lerobot.yaml`` adds an
-**online LeRobot** path: the Actor channel collector builds completed episodes
-in LeRobot format, sends them to the actor in memory, and the actor trains from
-a rolling window via
-:class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset`.
-
-**Classic replay buffer vs online LeRobot**
-
-Both methods optimize the same DAgger objective; they differ only in how data
-are stored and sampled.
-
-- **Classic replay buffer** — stores full trajectories in an in-memory buffer
-  and samples them with a trajectory-level sliding window.
-- **Online LeRobot** — collects complete episodes in LeRobot format and samples
-  with a frame-level rolling window, with native Pi0 action-chunk supervision
-  and optional success-only filtering.
-
-The online LeRobot path yields cleaner labels, emphasizes recent data, and
-aligns with SFT and real-robot pipelines. Prefer it when training Pi0 or another
-chunk-based model, when you need success-only filtering, or when you want to
-bridge online DAgger with offline SFT or real-robot datasets.
-
-**Online LeRobot pipeline**
-
-1. **Mixed rollout and expert relabeling** — same ``beta`` scheduling and
-   expert relabeling as classic DAgger.
-2. **Episode collection** — when ``algorithm.dagger.online_lerobot.enabled`` is
-   ``True``, :class:`~rlinf.data.schema.embodied_trajectory.TrajectoryCollector`
-   accumulates per-env frames and exports completed episodes.
-3. **Actor ingestion** — completed episodes flow to the actor through
-   ``recv_lerobot_rollout_trajectories`` and append to the rolling dataset.
-4. **Rolling-window training** — the actor samples from
-   ``RollingLeRobotDataset`` (optionally with a decoded frame cache) and
-   optimizes ``embodied_dagger`` loss.
-
-**Offline vs online collection**
-
-- **Offline disk export** — ``env.train.data_collection.enabled`` writes LeRobot
-  shards to disk for later SFT or HG-DAgger. See :doc:`../../guides/data_collection`
-  and :doc:`hg-dagger`.
-- **Online in-memory collection** — ``algorithm.dagger.online_lerobot.enabled``
-  streams episodes directly to the actor during DAgger training. Do **not** enable
-  ``env.train.data_collection`` on the same train env when online LeRobot is on.
-
 Setup and Run
 -------------
 
@@ -251,6 +203,31 @@ Install with ``requirements/install.sh`` (in mainland China, append ``--use-mirr
          # Sync mode (or use run_async.sh for async mode)
          bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
 
+.. dropdown:: Online LeRobot DAgger
+
+   The classic configs store expert-labeled trajectories in an in-memory **replay buffer**. ``libero_spatial_dagger_openpi_lerobot.yaml`` adds an **online LeRobot** path that collects completed episodes in LeRobot format, streams them to the actor in memory, and trains from a frame-level rolling window.
+
+   **Classic replay buffer vs online LeRobot**
+
+   Both paths optimize the same DAgger objective and differ only in data storage and sampling:
+
+   - **Classic replay buffer** — stores full trajectories in an in-memory buffer and samples with a trajectory-level sliding window.
+   - **Online LeRobot** — collects complete episodes in LeRobot format and samples with a frame-level rolling window, supporting native Pi0 action-chunk supervision and optional success-only filtering.
+
+   Prefer the online LeRobot path for Pi0 or other chunk-based models, when you need success-only filtering, or when bridging online DAgger with offline SFT or real-robot datasets.
+
+   **Online LeRobot pipeline**
+
+   1. **Mixed rollout and expert relabeling** — same ``beta`` scheduling and expert relabeling as classic DAgger.
+   2. **Episode collection** — when ``algorithm.dagger.online_lerobot.enabled`` is ``True``, the trajectory collector accumulates per-env frames and exports completed episodes.
+   3. **Actor ingestion** — completed episodes stream to the actor and append to the rolling LeRobot dataset.
+   4. **Rolling-window training** — the actor samples from the rolling dataset (optionally with a decoded frame cache) and optimizes ``embodied_dagger`` loss.
+
+   **Offline vs online collection**
+
+   - **Offline disk export** — ``env.train.data_collection.enabled`` writes LeRobot shards to disk for later SFT or HG-DAgger. See :doc:`../../guides/data_collection` and :doc:`hg-dagger`.
+   - **Online in-memory collection** — ``algorithm.dagger.online_lerobot.enabled`` streams episodes directly to the actor during DAgger training. Do **not** enable ``env.train.data_collection`` on the same train env when online LeRobot is on.
+
 .. dropdown:: Advanced configuration (optional)
 
    The shipped configs already include working defaults for beta scheduling, replay buffer sizing, and online LeRobot settings. Override them only when tuning a run.
@@ -336,8 +313,7 @@ For metric definitions, see :doc:`Training metrics <../../reference/metrics>`. D
 - ``train/replay_buffer/total_samples``: Number of replay-buffer samples available for training.
 - ``train/replay_buffer/cache_size``: Number of cached flattened trajectories.
 
-Experimental Results
---------------------
+**3. Experimental Results**
 
 .. csv-table::
    :header: "Configuration", "Student init SR", "Expert SR", "Training Time", "Student final SR"

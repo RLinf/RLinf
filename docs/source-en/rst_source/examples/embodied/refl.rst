@@ -274,8 +274,8 @@ Each step has eight supervised updates and eight reward updates. Start with an
 Lpre weight of ``0.01``. In the results below, this run scores higher than the
 ``0.1`` run.
 
-Expected Results
-----------------
+Visualization and Results
+-------------------------
 
 The experiments use four NVIDIA A800 80 GB GPUs, SD3.5 Medium, LoRA (rank ``32``,
 alpha ``64``), FSDP2, and BF16, with learning rate ``1e-4``, seed ``42``, and

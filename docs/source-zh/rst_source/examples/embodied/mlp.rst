@@ -1,4 +1,4 @@
-MLP策略强化学习训练
+MLP 策略强化学习训练
 ===============================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg
@@ -7,8 +7,7 @@ MLP策略强化学习训练
 
    多层感知机（MLP）策略。
 
-MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末端执行器位姿、物体状态等）进行机器人控制。
-RLinf 在多个仿真器上用 PPO、SAC、GRPO 训练 MLP 策略——便于快速验证环境、训练流程与网络结构。
+MLP 策略是一种轻量网络，用于从低维状态输入（关节角、末端执行器位姿、物体状态等）控制机器人。RLinf 在多个仿真器上用 PPO、SAC、GRPO 训练 MLP 策略——便于快速验证环境、训练流程与网络结构。
 
 概览
 ----------------------------------------
@@ -85,67 +84,83 @@ RLinf 在多个仿真器上用 PPO、SAC、GRPO 训练 MLP 策略——便于快
    * - Prompt
      - MLP 策略不使用 prompt；任务通过 Hydra 配置选择。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
+无需预训练 checkpoint，MLP 策略从头训练。
+
 .. tab-set::
 
    .. tab-item:: ManiSkill / LIBERO
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
+      **2. 启动训练**
+
+      ``examples/embodiment/config/`` 下的默认配置：
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
+
+         * - 配方
+           - 配置文件
+           - 启动命令后缀
+         * - ManiSkill + PPO + MLP
+           - ``maniskill_ppo_mlp.yaml``
+           - ``maniskill_ppo_mlp``
+         * - ManiSkill + SAC + MLP
+           - ``maniskill_sac_mlp.yaml``
+           - ``maniskill_sac_mlp``
+         * - LIBERO-Spatial + GRPO + MLP
+           - ``libero_spatial_0_grpo_mlp.yaml``
+           - ``libero_spatial_0_grpo_mlp``
+
+      .. code-block:: bash
+
+         # ManiSkill（PPO-MLP）
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+         # ManiSkill（SAC-MLP）
+         bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
+
+         # LIBERO-Spatial（GRPO-MLP）
+         bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
+
    .. tab-item:: Franka-Sim
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
-运行
-----------------------------------------
+      **2. 启动训练**
 
-RLinf 在 ``examples/embodiment/config/`` 下提供覆盖不同仿真器和算法的默认 MLP 配置：
+      ``examples/embodiment/config/`` 下的默认配置：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 34 36
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
 
-   * - 配方
-     - 配置文件
-     - 启动命令后缀
-   * - ManiSkill + PPO + MLP
-     - ``maniskill_ppo_mlp.yaml``
-     - ``maniskill_ppo_mlp``
-   * - ManiSkill + SAC + MLP
-     - ``maniskill_sac_mlp.yaml``
-     - ``maniskill_sac_mlp``
-   * - LIBERO-Spatial + GRPO + MLP
-     - ``libero_spatial_0_grpo_mlp.yaml``
-     - ``libero_spatial_0_grpo_mlp``
-   * - Franka-Sim + PPO + MLP
-     - ``frankasim_ppo_mlp.yaml``
-     - ``frankasim_ppo_mlp``
+         * - 配方
+           - 配置文件
+           - 启动命令后缀
+         * - Franka-Sim + PPO + MLP
+           - ``frankasim_ppo_mlp.yaml``
+           - ``frankasim_ppo_mlp``
 
-使用 ``run_embodiment.sh`` 启动训练：
+      .. code-block:: bash
 
-.. code-block:: bash
-
-   # ManiSkill（PPO-MLP）
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-   # ManiSkill（SAC-MLP）
-   bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
-
-   # LIBERO-Spatial（GRPO-MLP）
-   bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
-
-   # Franka-Sim（PPO-MLP）
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
 .. note::
 

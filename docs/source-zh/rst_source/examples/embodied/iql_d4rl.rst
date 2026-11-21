@@ -1,4 +1,4 @@
-基于D4RL评测平台的强化学习训练
+基于 D4RL 评测平台的强化学习训练
 ============================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
@@ -68,23 +68,23 @@ RLinf 为三类 D4RL 任务族提供 IQL 配置；各任务的观测与动作空
      - 操作 / 灵巧手
      - ``d4rl_iql_kitchen_adroit.yaml``
 
-IQL 工作原理
+IQL 原理
 ----------------------------------------
 
 **核心算法组件**
 
 1. **IQL（Implicit Q-Learning）**
 
-   - **Value** :math:`V(s)`：用 expectile 回归更新，基于 :math:`Q_{\mathrm{target}}(s,a) - V(s)`，权重 :math:`w(d) = \tau \cdot \mathbb{I}(d>0) + (1-\tau) \cdot \mathbb{I}(d \le 0)`。
-   - **Actor** :math:`\pi(a|s)`：AWR 风格优势加权极大似然；优势 :math:`A = Q_{\mathrm{target}}(s,a) - V(s)`，权重 :math:`w = \min(\exp(A \cdot \beta), 100)`。
-   - **Critic** （双 Q）：TD 损失，目标 :math:`y = r + \gamma \cdot \mathrm{mask} \cdot V(s')`。
-   - **Target**：以 :math:`\tau` 软更新目标 Critic。
+   - **Value**：按目标 Q 值与当前价值估计的差值做非对称 expectile 回归，由 ``algorithm.expectile`` 控制权重。
+   - **Actor**：采用 AWR 风格的优势加权极大似然，用 ``algorithm.temperature`` 缩放优势后取指数并截断到 100。
+   - **Critic**\ （双 Q）：以折扣后的下一状态价值估计作为 TD 目标，由 ``algorithm.discount`` 控制折扣系数。
+   - **Target**：按 ``algorithm.tau`` 对目标 Critic 做 Polyak 软更新。
 
 2. **训练流程**
 
-   每个 update step：Actor 从各 rank 本地的 ``DataLoader``\ （在 ``EmbodiedIQLFSDPPolicy.build_offline_dataloader`` 中构建）取一个 batch，然后按当前实现顺序执行 IQL：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
+   每个 update step：Actor 从各 rank 本地的离线数据加载器取一个 batch，然后按顺序执行 IQL 更新：更新 Value → 更新 Actor → 更新 Critic → 软更新目标 Critic。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
@@ -93,47 +93,50 @@ IQL 工作原理
 
    .. tab-item:: D4RL
 
+      **1. 安装环境**
+
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env d4rl && source .venv/bin/activate
 
-启动脚本默认设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``，便于无头运行。
+      启动脚本默认设置 ``MUJOCO_GL=egl`` 与 ``PYOPENGL_PLATFORM=egl``，便于无头运行。
 
-运行
-----------------------------------------
+      **2. 启动训练**
 
-RLinf 为三类 D4RL 任务族内置了默认 IQL 配置（``data.dataset_path`` 保持 ``null`` 时，首次运行自动下载对应 D4RL 数据集）：
+      RLinf 为三类 D4RL 任务族内置了默认 IQL 配置（``data.dataset_path`` 保持 ``null`` 时，首次运行自动下载对应 D4RL 数据集）：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 74
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 74
 
-   * - 任务族
-     - 配置文件
-   * - MuJoCo
-     - ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
-   * - AntMaze
-     - ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
-   * - Kitchen / Adroit
-     - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
+         * - 任务族
+           - 配置文件
+         * - MuJoCo
+           - ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
+         * - AntMaze
+           - ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
+         * - Kitchen / Adroit
+           - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
 
-在仓库根目录启动任一任务族（省略参数时默认使用 ``d4rl_iql_mujoco``；日志写入 ``logs/<timestamp>-<config_name>/``）：
+      在仓库根目录启动任一任务族（省略参数时默认使用 ``d4rl_iql_mujoco``；日志写入 ``logs/<timestamp>-<config_name>/``）：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   # MuJoCo（默认）
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
+         # MuJoCo（默认）
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
 
-   # AntMaze
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
+         # AntMaze
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
 
-   # Kitchen / Adroit
-   ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
+         # Kitchen / Adroit
+         ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
 .. dropdown:: 进阶配置（可选）
 
-   修改 ``data.task_name`` 和 ``env.eval.task_name`` 可切换 D4RL 任务（如 ``antmaze-large-play-v0``）。``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，不存在时由 D4RL 自动下载。若要使用本地 HDF5 文件，将 ``data.dataset_path`` 设为对应路径（观测和动作维度须与 ``data.task_name`` 一致）；标准 D4RL 文件按 ``timeouts`` 经过 ``d4rl.qlearning_dataset`` 转换，已整理好的 transition 文件（包含 ``next_observations`` 且无 ``timeouts``）则直接使用。
+   **切换任务与本地数据集。** 修改 ``data.task_name`` 和 ``env.eval.task_name`` 可切换 D4RL 任务（如 ``antmaze-large-play-v0``）。``data.dataset_path`` 为 ``null`` 时，RLinf 优先读取 ``~/.d4rl/datasets/<task_name>.hdf5``，不存在时由 D4RL 自动下载。若要使用本地 HDF5 文件，将 ``data.dataset_path`` 设为对应路径（观测和动作维度须与 ``data.task_name`` 一致）；标准 D4RL 文件按 ``timeouts`` 经过 ``d4rl.qlearning_dataset`` 转换，已整理好的 transition 文件（包含 ``next_observations`` 且无 ``timeouts``）则直接使用。
+
+   **断点续训。** 将 ``runner.resume_dir`` 设为 checkpoint 目录（如 ``checkpoints/global_step_XXXXX``），再执行相同启动命令即可从该步加载权重并继续训练。
 
    内置配置中的主要默认超参数如下：
 
@@ -170,11 +173,6 @@ RLinf 为三类 D4RL 任务族内置了默认 IQL 配置（``data.dataset_path``
 
       env:
         task_name: "antmaze-large-play-v0"
-
-断点续训
-----------------------------------------
-
-将 ``runner.resume_dir`` 设为 checkpoint 目录（如 ``checkpoints/global_step_XXXXX``），再执行相同启动命令即可从该步加载权重并继续训练。
 
 可视化与结果
 ----------------------------------------

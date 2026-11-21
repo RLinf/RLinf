@@ -108,194 +108,191 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 .. include:: _setup_common.rst
 
+NVIDIA CUDA 按模型选择对应标签页；AMD GPU 请切换到 **AMD ROCm** 标签页。
+
 .. tab-set::
 
-   .. tab-item:: NVIDIA CUDA
-      :sync: cuda
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-      .. tab-set::
+      **1. 安装环境**
 
-         .. tab-item:: OpenVLA-OFT
-            :sync: openvla-oft
+      安装 RLinf，在同级目录克隆 ``RLinf_support`` 分支的 RoboTwin 并下载资产：
 
-            **1. 安装环境**
+      .. code-block:: bash
 
-            安装 RLinf，在同级目录克隆 ``RLinf_support`` 分支的 RoboTwin 并下载资产：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env robotwin
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
+         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOT_PLATFORM=ALOHA
 
-            .. code-block:: bash
+      **2. 下载资源与模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env robotwin
-               source .venv/bin/activate
-               git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-               (cd ../RoboTwin && bash script/_download_assets.sh)
-               export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
-               export ROBOT_PLATFORM=ALOHA
+      下载 OpenVLA-OFT SFT checkpoint（以 ``place_empty_cup`` 为例）：
 
-            **2. 下载资源与模型**
+      .. code-block:: bash
 
-            下载 OpenVLA-OFT SFT checkpoint（以 ``place_empty_cup`` 为例）：
+         hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-            .. code-block:: bash
+      **3. 启动训练**
 
-               hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
+      ``examples/embodiment/config/`` 下的可用配置：
 
-            **3. 启动训练**
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 48 28
 
-            ``examples/embodiment/config/`` 下的可用配置：
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - OpenVLA-OFT + GRPO
+           - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+           - ``robotwin_place_empty_cup_grpo_openvlaoft``
+         * - OpenVLA-OFT + PPO
+           - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
+           - ``robotwin_place_empty_cup_ppo_openvlaoft``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 24 48 28
+      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录（即 ``assets/`` 的上一级目录）：
 
-               * - 配方
-                 - 配置
-                 - 命令后缀
-               * - OpenVLA-OFT + GRPO
-                 - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
-                 - ``robotwin_place_empty_cup_grpo_openvlaoft``
-               * - OpenVLA-OFT + PPO
-                 - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
-                 - ``robotwin_place_empty_cup_ppo_openvlaoft``
+      .. code-block:: yaml
 
-            在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录（即 ``assets/`` 的上一级目录）：
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
+         env:
+           train:
+             assets_path: ../RoboTwin
+           eval:
+             assets_path: ../RoboTwin
 
-            .. code-block:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-               actor:
-                 model:
-                   model_path: ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-               env:
-                 train:
-                   assets_path: ../RoboTwin
-                 eval:
-                   assets_path: ../RoboTwin
+      .. code-block:: bash
 
-            使用 ``run_embodiment.sh`` 启动训练：
+         bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
 
-            .. code-block:: bash
+   .. tab-item:: OpenPI
+      :sync: openpi
 
-               bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
+      **1. 安装环境**
 
-         .. tab-item:: OpenPI
-            :sync: openpi
+      安装 RLinf，在同级目录克隆 ``RLinf_support`` 分支的 RoboTwin 并下载资产：
 
-            **1. 安装环境**
+      .. code-block:: bash
 
-            安装 RLinf，在同级目录克隆 ``RLinf_support`` 分支的 RoboTwin 并下载资产：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
+         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOT_PLATFORM=ALOHA
 
-            .. code-block:: bash
+      **2. 下载资源与模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openpi --env robotwin
-               source .venv/bin/activate
-               git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-               (cd ../RoboTwin && bash script/_download_assets.sh)
-               export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
-               export ROBOT_PLATFORM=ALOHA
+      下载 ``adjust_bottle`` 的 OpenPI π₀.₅ SFT checkpoint（使用 π₀ 时，改用 ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle``）：
 
-            **2. 下载资源与模型**
+      .. code-block:: bash
 
-            下载 ``adjust_bottle`` 的 OpenPI π₀.₅ SFT checkpoint（使用 π₀ 时，改用 ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle``）：
+         hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-            .. code-block:: bash
+      **3. 启动训练**
 
-               hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
+      ``examples/embodiment/config/`` 下的可用配置：
 
-            **3. 启动训练**
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 48 28
 
-            ``examples/embodiment/config/`` 下的可用配置：
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - π₀ + PPO
+           - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
+           - ``robotwin_adjust_bottle_ppo_openpi``
+         * - π₀.₅ + PPO
+           - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
+           - ``robotwin_adjust_bottle_ppo_openpi_pi05``
+         * - OpenPI + DAgger
+           - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
+           - ``robotwin_adjust_bottle_dagger_openpi``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 24 48 28
+      在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录：
 
-               * - 配方
-                 - 配置
-                 - 命令后缀
-               * - π₀ + PPO
-                 - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
-                 - ``robotwin_adjust_bottle_ppo_openpi``
-               * - π₀.₅ + PPO
-                 - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
-                 - ``robotwin_adjust_bottle_ppo_openpi_pi05``
-               * - OpenPI + DAgger
-                 - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
-                 - ``robotwin_adjust_bottle_dagger_openpi``
+      .. code-block:: yaml
 
-            在所选 YAML 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录：
+         actor:
+           model:
+             model_path: ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
+         env:
+           train:
+             assets_path: ../RoboTwin
+           eval:
+             assets_path: ../RoboTwin
 
-            .. code-block:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-               actor:
-                 model:
-                   model_path: ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
-               env:
-                 train:
-                   assets_path: ../RoboTwin
-                 eval:
-                   assets_path: ../RoboTwin
+      .. code-block:: bash
 
-            使用 ``run_embodiment.sh`` 启动训练：
+         bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
 
-            .. code-block:: bash
+   .. tab-item:: LingBotVLA
+      :sync: lingbotvla
 
-               bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
+      **1. 安装环境**
 
-         .. tab-item:: LingBotVLA
-            :sync: lingbotvla
+      安装 RLinf，在同级目录克隆 ``RLinf_support`` 分支的 RoboTwin 并下载资产：
 
-            **1. 安装环境**
+      .. code-block:: bash
 
-            安装 RLinf，在同级目录克隆 ``RLinf_support`` 分支的 RoboTwin 并下载资产：
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
+         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOT_PLATFORM=ALOHA
 
-            .. code-block:: bash
+      **2. 下载资源与模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model lingbotvla --env robotwin
-               source .venv/bin/activate
-               git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-               (cd ../RoboTwin && bash script/_download_assets.sh)
-               export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
-               export ROBOT_PLATFORM=ALOHA
+      在本地准备好你的 Lingbot-VLA SFT 检查点（例如放在 ``./LingBotVLA-RoboTwin-SFT``）。
 
-            **2. 下载资源与模型**
+      **3. 启动训练**
 
-            在本地准备好你的 Lingbot-VLA SFT 检查点（例如放在 ``./LingBotVLA-RoboTwin-SFT``）。
+      ``examples/embodiment/config/`` 下的可用配置：
 
-            **3. 启动训练**
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 48 28
 
-            ``examples/embodiment/config/`` 下的可用配置：
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - Lingbot-VLA + GRPO
+           - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+           - ``robotwin_click_bell_grpo_lingbotvla``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 24 48 28
+      将 ``actor.model.model_path`` 指向 Lingbot-VLA SFT 检查点（rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录：
 
-               * - 配方
-                 - 配置
-                 - 命令后缀
-               * - Lingbot-VLA + GRPO
-                 - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
-                 - ``robotwin_click_bell_grpo_lingbotvla``
+      .. code-block:: yaml
 
-            将 ``actor.model.model_path`` 指向 Lingbot-VLA SFT 检查点（rollout 会自动沿用同一路径），并将 ``env.train.assets_path`` 与 ``env.eval.assets_path`` 设为 ``RoboTwin`` 目录：
+         actor:
+           model:
+             model_path: ./LingBotVLA-RoboTwin-SFT
+         env:
+           train:
+             assets_path: ../RoboTwin
+           eval:
+             assets_path: ../RoboTwin
 
-            .. code-block:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-               actor:
-                 model:
-                   model_path: ./LingBotVLA-RoboTwin-SFT
-               env:
-                 train:
-                   assets_path: ../RoboTwin
-                 eval:
-                   assets_path: ../RoboTwin
+      .. code-block:: bash
 
-            使用 ``run_embodiment.sh`` 启动训练：
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
+         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
 
    .. tab-item:: AMD ROCm
       :sync: rocm

@@ -113,213 +113,169 @@ Setup and Run
 
 .. include:: _setup_common.rst
 
-NVIDIA CUDA supports all four environments listed above. AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support OpenPI π₀ / π₀.₅ on LIBERO and ManiSkill through the shared platform installer and scheduler device API; ManiSkill uses CPU simulation on non-CUDA backends, and MUSA also requires vendor simulator packages.
+NVIDIA CUDA supports all four environments listed above (select **π₀** or **π₀.₅** below). AMD ROCm, Huawei Ascend CANN, and Moore Threads MUSA support OpenPI π₀ / π₀.₅ on LIBERO and ManiSkill through the shared platform installer and scheduler device API; ManiSkill uses CPU simulation on non-CUDA backends, and MUSA also requires vendor simulator packages.
 
 .. tab-set::
 
-   .. tab-item:: NVIDIA CUDA
-      :sync: cuda
+   .. tab-item:: π₀
+      :sync: pi0
 
-      .. tab-set::
+      **1. Install**
 
-         .. tab-item:: π₀
-            :sync: pi0
+      .. code-block:: bash
 
-            **1. Install**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+      Download the LIBERO Spatial, Object, and Goal SFT checkpoint (also available on `ModelScope <https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal>`__), or pick another environment from the table below:
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the LIBERO Spatial, Object, and Goal SFT checkpoint (also available on `ModelScope <https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal>`__), or pick another environment from the table below:
+         hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-            .. code-block:: bash
+      .. list-table:: **π**\ :sub:`0`\  **Model List**
+         :header-rows: 1
+         :widths: 15 25 15 12 12
 
-               hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
+         * - Environment
+           - Task Description
+           - SFT Model
+           - Flow-SDE
+           - Flow-Noise
 
-            .. list-table:: **π**\ :sub:`0`\  **Model List**
-               :header-rows: 1
-               :widths: 15 25 15 12 12
+         * - LIBERO
+           - Spatial, Object, Goal
+           - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
+           - -
+           - -
 
-               * - Environment
-                 - Task Description
-                 - SFT Model
-                 - Flow-SDE
-                 - Flow-Noise
+         * - LIBERO
+           - Long
+           - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
+           - -
+           - -
 
-               * - LIBERO
-                 - Spatial, Object, Goal
-                 - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT>`__
-                 - -
-                 - -
+         * - ManiSkill3
+           - Multi-task
+           - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
+           - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
+           - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
 
-               * - LIBERO
-                 - Long
-                 - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Long-SFT>`__
-                 - -
-                 - -
+         * - MetaWorld
+           - MT50
+           - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
+           - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
+           - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
 
-               * - ManiSkill3
-                 - Multi-task
-                 - |huggingface| `38.4% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-SFT>`__
-                 - |huggingface| `78.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowSDE>`__
-                 - |huggingface| `77.8% <https://huggingface.co/RLinf/RLinf-Pi0-ManiSkill-25Main-RL-FlowNoise>`__
+         * - CALVIN
+           - ABC-D
+           - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
+           - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
+           - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
 
-               * - MetaWorld
-                 - MT50
-                 - |huggingface| `50.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT>`__
-                 - |huggingface| `78.1% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowSDE>`__
-                 - |huggingface| `85.8% <https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-RL-FlowNoise>`__
+      .. include:: _model_path.rst
 
-               * - CALVIN
-                 - ABC-D
-                 - |huggingface| `57.5% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT>`__
-                 - |huggingface| `61.7% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowSDE>`__
-                 - |huggingface| `59.9% <https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-RL-FlowNoise>`__
+      **3. Launch**
 
-            .. include:: _model_path.rst
+      Shipped π₀ LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
 
-            **3. Launch**
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
 
-            Shipped π₀ LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
+         * - Recipe
+           - Config
+         * - π₀ + PPO (Spatial / Quickstart)
+           - ``libero_spatial_ppo_openpi.yaml`` · ``libero_spatial_ppo_openpi_quickstart.yaml``
+         * - π₀ + PPO / GRPO (LIBERO-10)
+           - ``libero_10_ppo_openpi.yaml`` · ``libero_10_grpo_openpi.yaml``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 30 70
+      Launch LIBERO Spatial PPO training:
 
-               * - Recipe
-                 - Config
-               * - π₀ + PPO (Spatial / Quickstart)
-                 - ``libero_spatial_ppo_openpi.yaml`` · ``libero_spatial_ppo_openpi_quickstart.yaml``
-               * - π₀ + PPO / GRPO (LIBERO-10)
-                 - ``libero_10_ppo_openpi.yaml`` · ``libero_10_grpo_openpi.yaml``
+      .. code-block:: bash
 
-            Launch LIBERO Spatial PPO training:
+         bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi
 
-            .. code-block:: bash
+      Pass ``libero_spatial_ppo_openpi_quickstart`` on smaller GPU setups. For standalone evaluation, see :doc:`evaluation <../../evaluations/index>`.
 
-               bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_openpi
+   .. tab-item:: π₀.₅
+      :sync: pi05
 
-            Pass ``libero_spatial_ppo_openpi_quickstart`` on smaller GPU setups. For standalone evaluation, see :doc:`evaluation <../../evaluations/index>`.
+      **1. Install**
 
-         .. tab-item:: π₀.₅
-            :sync: pi05
+      .. code-block:: bash
 
-            **1. Install**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
+      Download the LIBERO SFT checkpoint (covers Spatial, Object, Goal, and Long), or pick another environment from the table below:
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the LIBERO SFT checkpoint (covers Spatial, Object, Goal, and Long), or pick another environment from the table below:
+         hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-            .. code-block:: bash
+      .. list-table:: **π**\ :sub:`0.5`\  **Model List**
+         :header-rows: 1
+         :widths: 15 25 15 12 12
 
-               hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
+         * - Environment
+           - Task Description
+           - SFT Model
+           - Flow-SDE
+           - Flow-Noise
 
-            .. list-table:: **π**\ :sub:`0.5`\  **Model List**
-               :header-rows: 1
-               :widths: 15 25 15 12 12
+         * - LIBERO
+           - Spatial, Object, Goal, Long
+           - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
+           - -
+           - -
 
-               * - Environment
-                 - Task Description
-                 - SFT Model
-                 - Flow-SDE
-                 - Flow-Noise
+         * - ManiSkill3
+           - Multi-task
+           - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
+           - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
+           - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
 
-               * - LIBERO
-                 - Spatial, Object, Goal, Long
-                 - |huggingface| `SFT Model <https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT>`__
-                 - -
-                 - -
+         * - MetaWorld
+           - MT50
+           - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
+           - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
+           - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
 
-               * - ManiSkill3
-                 - Multi-task
-                 - |huggingface| `40.1% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-SFT>`__
-                 - |huggingface| `90.9% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowSDE>`__
-                 - |huggingface| `89.7% <https://huggingface.co/RLinf/RLinf-Pi05-ManiSkill-25Main-RL-FlowNoise>`__
+         * - CALVIN
+           - ABC-D
+           - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
+           - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
+           - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
 
-               * - MetaWorld
-                 - MT50
-                 - |huggingface| `43.8% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT>`__
-                 - |huggingface| `70.7% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowSDE>`__
-                 - |huggingface| `66.1% <https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-RL-FlowNoise>`__
+      .. include:: _model_path.rst
 
-               * - CALVIN
-                 - ABC-D
-                 - |huggingface| `61.3% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT>`__
-                 - |huggingface| `87.0% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowSDE>`__
-                 - |huggingface| `84.5% <https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-RL-FlowNoise>`__
+      **3. Launch**
 
-            .. include:: _model_path.rst
+      Shipped π₀.₅ LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
 
-            **3. Launch**
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 70
 
-            Shipped π₀.₅ LIBERO configs under ``examples/embodiment/config/`` (see :doc:`Placement <../../concepts/placement>` to customize GPU layout):
+         * - Recipe
+           - Config
+         * - π₀.₅ + PPO (Spatial)
+           - ``libero_spatial_ppo_openpi_pi05.yaml``
+         * - π₀.₅ + PPO / GRPO (LIBERO-10)
+           - ``libero_10_ppo_openpi_pi05.yaml`` · ``libero_10_grpo_openpi_pi05.yaml``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 30 70
+      Launch LIBERO-10 PPO training:
 
-               * - Recipe
-                 - Config
-               * - π₀.₅ + PPO (Spatial)
-                 - ``libero_spatial_ppo_openpi_pi05.yaml``
-               * - π₀.₅ + PPO / GRPO (LIBERO-10)
-                 - ``libero_10_ppo_openpi_pi05.yaml`` · ``libero_10_grpo_openpi_pi05.yaml``
+      .. code-block:: bash
 
-            Launch LIBERO-10 PPO training:
+         bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
 
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
-
-            For standalone evaluation, see :doc:`evaluation <../../evaluations/index>` (or :doc:`RTC <../../guides/rtc>` for π₀.₅ inference latency hiding).
-
-      .. dropdown:: Advanced configuration (optional)
-
-         **OpenPI model and flow-RL parameters**
-
-         - **Action chunk vs. network horizon**: ``num_action_chunks`` / ``openpi.action_chunk`` sets the steps executed per rollout step, while ``openpi.action_horizon`` defaults to the official ``TrainConfig`` horizon for ``openpi.config_name`` (``50`` for ``pi0_libero``, ``10`` for ``pi05_libero``). Override ``openpi.action_horizon`` only when a checkpoint uses a different horizon.
-         - **π₀.₅ selector and critic placement**: Select π₀.₅ with ``openpi.config_name`` (such as ``pi05_libero``) and ``actor.model.pi05: True``. Set ``openpi.value_after_vlm: True`` for π₀.₅ PPO to attach the critic after the VLM output instead of the action expert.
-         - **Flow-RL noise method and steps**: Control denoising steps with ``num_steps`` and choose ``openpi.noise_method`` between `flow_sde <https://arxiv.org/abs/2505.05470>`__ (``noise_level: 0.5``, ``joint_logprob: False``, ``algorithm.entropy_bonus: 0.0``; see ``libero_spatial_ppo_openpi.yaml``) and `flow_noise <https://arxiv.org/abs/2505.22094>`__ (``noise_logvar_range: [0.08, 0.16]``, ``joint_logprob: True``, ``algorithm.entropy_bonus: 0.005``; see ``maniskill_ppo_openpi.yaml``).
-         - **Kernel compilation**: OpenPI compiles activation, rotary embedding, and gated residual kernels with ``torch.compile`` when ``actor.model.openpi.torch_compile`` is ``True`` and ``triton`` is installed (π₀.₅ enables it by default; backends without Triton stay eager). Disable it when Triton is installed but Inductor cannot run (such as with Isaac Sim):
-
-           .. code-block:: yaml
-
-              actor:
-                model:
-                  openpi:
-                    torch_compile: False
-
-         **LoRA and FSDP sharding**
-
-         - Set ``actor.model.is_lora: True`` and ``actor.model.lora_rank: 8`` to fine-tune the VLM with LoRA. Keep ``gradient_checkpointing: False``, as gradient checkpointing is not supported for OpenPI.
-         - OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard``. Set ``actor.fsdp_config.sharding_strategy: full_shard`` and ``actor.fsdp_config.use_orig_params: true`` to shard training state across actor ranks while keeping the recipe's mixed-precision settings.
-
-         **Minimum test case and OOM tuning**
-
-         ``libero_spatial_ppo_openpi_quickstart.yaml`` reduces ``env.train.rollout_epoch`` (8 → 2), ``env.train.total_num_envs`` (64 → 32), ``actor.micro_batch_size`` (128 → 64), ``actor.global_batch_size`` (2048 → 256), and ``actor.optim.lr`` (5e-6 → 1e-6), and enables offload on actor and rollout. On 4 H100 GPUs it matches the standard config at the same wall-clock time:
-
-         .. image:: https://github.com/user-attachments/assets/80d098f6-5286-4ff4-89be-547f43a4dc86
-            :alt: Minimum test case comparison
-            :width: 95%
-            :align: center
-
-         If OOM persists:
-
-         - **Rollout OOM**: Switch rendering from ``egl`` to ``osmesa``, halve ``env.train.total_num_envs`` (32 → 16) while doubling ``env.train.rollout_epoch`` (2 → 4), and set ``actor.enable_offload: True``.
-         - **Actor OOM**: Lower ``actor.micro_batch_size`` (64 → 32) while keeping ``actor.global_batch_size`` divisible by ``micro_batch_size`` × GPU count, and set ``rollout.enable_offload: True``.
-
-         **Alternative evaluation script**
-
-         For per-subtask LIBERO success rates matching upstream OpenPI, or for MetaWorld (which does not support ``env.eval.auto_reset=True``), use the standalone script in `toolkits/standalone_eval_scripts/openpi/README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/standalone_eval_scripts/openpi/README.md>`__.
+      For standalone evaluation, see :doc:`evaluation <../../evaluations/index>` (or :doc:`RTC <../../guides/rtc>` for π₀.₅ inference latency hiding).
 
    .. tab-item:: AMD ROCm
       :sync: rocm
@@ -339,7 +295,7 @@ NVIDIA CUDA supports all four environments listed above. AMD ROCm, Huawei Ascend
 
       **2. Download**
 
-      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the NVIDIA CUDA tab):
+      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the **π₀** or **π₀.₅** tab):
 
       .. code-block:: bash
 
@@ -396,7 +352,7 @@ NVIDIA CUDA supports all four environments listed above. AMD ROCm, Huawei Ascend
 
       **2. Download**
 
-      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the NVIDIA CUDA tab):
+      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the **π₀** or **π₀.₅** tab):
 
       .. code-block:: bash
 
@@ -453,7 +409,7 @@ NVIDIA CUDA supports all four environments listed above. AMD ROCm, Huawei Ascend
 
       **2. Download**
 
-      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the NVIDIA CUDA tab):
+      Download the π₀.₅ LIBERO SFT checkpoint (or pick another checkpoint from the model list in the **π₀** or **π₀.₅** tab):
 
       .. code-block:: bash
 
@@ -490,6 +446,45 @@ NVIDIA CUDA supports all four environments listed above. AMD ROCm, Huawei Ascend
       .. code-block:: bash
 
          bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+.. dropdown:: Advanced configuration (optional)
+
+   **OpenPI model and flow-RL parameters**
+
+   - **Action chunk vs. network horizon**: ``num_action_chunks`` / ``openpi.action_chunk`` sets the steps executed per rollout step, while ``openpi.action_horizon`` defaults to the official ``TrainConfig`` horizon for ``openpi.config_name`` (``50`` for ``pi0_libero``, ``10`` for ``pi05_libero``). Override ``openpi.action_horizon`` only when a checkpoint uses a different horizon.
+   - **π₀.₅ selector and critic placement**: Select π₀.₅ with ``openpi.config_name`` (such as ``pi05_libero``) and ``actor.model.pi05: True``. Set ``openpi.value_after_vlm: True`` for π₀.₅ PPO to attach the critic after the VLM output instead of the action expert.
+   - **Flow-RL noise method and steps**: Control denoising steps with ``num_steps`` and choose ``openpi.noise_method`` between `flow_sde <https://arxiv.org/abs/2505.05470>`__ (``noise_level: 0.5``, ``joint_logprob: False``, ``algorithm.entropy_bonus: 0.0``; see ``libero_spatial_ppo_openpi.yaml``) and `flow_noise <https://arxiv.org/abs/2505.22094>`__ (``noise_logvar_range: [0.08, 0.16]``, ``joint_logprob: True``, ``algorithm.entropy_bonus: 0.005``; see ``maniskill_ppo_openpi.yaml``).
+   - **Kernel compilation**: OpenPI compiles activation, rotary embedding, and gated residual kernels with ``torch.compile`` when ``actor.model.openpi.torch_compile`` is ``True`` and ``triton`` is installed (π₀.₅ enables it by default; backends without Triton stay eager). Disable it when Triton is installed but Inductor cannot run (such as with Isaac Sim):
+
+     .. code-block:: yaml
+
+        actor:
+          model:
+            openpi:
+              torch_compile: False
+
+   **LoRA and FSDP sharding**
+
+   - Set ``actor.model.is_lora: True`` and ``actor.model.lora_rank: 8`` to fine-tune the VLM with LoRA. Keep ``gradient_checkpointing: False``, as gradient checkpointing is not supported for OpenPI.
+   - OpenPI supports FSDP1 ``no_shard``, ``shard_grad_op``, and ``full_shard``. Set ``actor.fsdp_config.sharding_strategy: full_shard`` and ``actor.fsdp_config.use_orig_params: true`` to shard training state across actor ranks while keeping the recipe's mixed-precision settings.
+
+   **Minimum test case and OOM tuning**
+
+   ``libero_spatial_ppo_openpi_quickstart.yaml`` reduces ``env.train.rollout_epoch`` (8 → 2), ``env.train.total_num_envs`` (64 → 32), ``actor.micro_batch_size`` (128 → 64), ``actor.global_batch_size`` (2048 → 256), and ``actor.optim.lr`` (5e-6 → 1e-6), and enables offload on actor and rollout. On 4 H100 GPUs it matches the standard config at the same wall-clock time:
+
+   .. image:: https://github.com/user-attachments/assets/80d098f6-5286-4ff4-89be-547f43a4dc86
+      :alt: Minimum test case comparison
+      :width: 95%
+      :align: center
+
+   If OOM persists:
+
+   - **Rollout OOM**: Switch rendering from ``egl`` to ``osmesa``, halve ``env.train.total_num_envs`` (32 → 16) while doubling ``env.train.rollout_epoch`` (2 → 4), and set ``actor.enable_offload: True``.
+   - **Actor OOM**: Lower ``actor.micro_batch_size`` (64 → 32) while keeping ``actor.global_batch_size`` divisible by ``micro_batch_size`` × GPU count, and set ``rollout.enable_offload: True``.
+
+   **Alternative evaluation script**
+
+   For per-subtask LIBERO success rates matching upstream OpenPI, or for MetaWorld (which does not support ``env.eval.auto_reset=True``), use the standalone script in `toolkits/standalone_eval_scripts/openpi/README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/standalone_eval_scripts/openpi/README.md>`__.
 
 Visualization and Results
 -------------------------

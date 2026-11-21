@@ -578,3 +578,128 @@ div.highlight button.copybtn {
 .bd-article table.geniesim-results-table td:not(:first-child) {
   white-space: nowrap;
 }
+
+/* --- Modern segmented-pill tab-sets & clean dropdowns ------------------- */
+:root {
+  --rlinf-tab-bg: #f1f5f9;
+  --rlinf-tab-hover-bg: #e2e8f0;
+  --rlinf-tab-active-bg: #ffffff;
+  --rlinf-tab-active-fg: var(--pst-color-primary, #1d4ed8);
+  --rlinf-tab-active-border: rgba(37, 99, 235, 0.28);
+  --rlinf-tab-active-shadow: 0 1px 3px rgba(15, 23, 42, 0.08),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+  --rlinf-tab-panel-bg: #ffffff;
+  --rlinf-tab-panel-border: #e2e8f0;
+  --rlinf-tab-panel-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+}
+
+html[data-theme="dark"] {
+  --rlinf-tab-bg: rgba(148, 163, 184, 0.1);
+  --rlinf-tab-hover-bg: rgba(148, 163, 184, 0.18);
+  --rlinf-tab-active-bg: rgba(59, 130, 246, 0.18);
+  --rlinf-tab-active-fg: #93c5fd;
+  --rlinf-tab-active-border: rgba(96, 165, 250, 0.45);
+  --rlinf-tab-active-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  --rlinf-tab-panel-bg: rgba(30, 41, 59, 0.45);
+  --rlinf-tab-panel-border: rgba(148, 163, 184, 0.22);
+  --rlinf-tab-panel-shadow: 0 2px 12px rgba(0, 0, 0, 0.24);
+}
+
+.bd-article .sd-tab-set {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.45rem;
+  margin: 1rem 0 1.4rem;
+}
+
+.bd-article .sd-tab-set > label.sd-tab-label {
+  background: var(--rlinf-tab-bg);
+  border: 1px solid transparent !important;
+  border-radius: 8px;
+  color: var(--pst-color-text-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0;
+  padding: 0.42rem 0.9rem;
+  transition: background-color 150ms ease, color 150ms ease,
+    border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.bd-article .sd-tab-set > input:not(:checked) + label.sd-tab-label:hover {
+  background: var(--rlinf-tab-hover-bg);
+  border-color: transparent !important;
+  color: var(--pst-color-text-base);
+}
+
+.bd-article .sd-tab-set > input:checked + label.sd-tab-label {
+  background: var(--rlinf-tab-active-bg);
+  border-color: var(--rlinf-tab-active-border) !important;
+  box-shadow: var(--rlinf-tab-active-shadow);
+  color: var(--rlinf-tab-active-fg) !important;
+  font-weight: 600;
+}
+
+.bd-article .sd-tab-set > .sd-tab-content {
+  background: var(--rlinf-tab-panel-bg);
+  border: 1px solid var(--rlinf-tab-panel-border);
+  border-radius: 12px;
+  box-shadow: var(--rlinf-tab-panel-shadow);
+  margin-top: 0.35rem;
+  padding: 1.15rem 1.25rem;
+}
+
+.bd-article .sd-tab-set > .sd-tab-content .highlight pre {
+  border-radius: 8px;
+}
+
+/* Lighter visual treatment if any nested tab-set ever appears. */
+.bd-article .sd-tab-content .sd-tab-set {
+  margin: 0.75rem 0 1rem;
+}
+
+.bd-article .sd-tab-content .sd-tab-set > label.sd-tab-label {
+  font-size: 0.8125rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.bd-article .sd-tab-content .sd-tab-set > .sd-tab-content {
+  background: transparent;
+  border-style: dashed;
+  box-shadow: none;
+  padding: 0.85rem 1rem;
+}
+
+/* Clean, low-noise dropdowns matching the tab-set cards. */
+.bd-article details.sd-dropdown {
+  background: var(--rlinf-tab-panel-bg) !important;
+  border: 1px solid var(--rlinf-tab-panel-border) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 0.9rem 0 !important;
+  overflow: hidden;
+}
+
+.bd-article details.sd-dropdown:hover {
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.bd-article details.sd-dropdown > summary.sd-summary-title {
+  background: var(--rlinf-tab-bg) !important;
+  color: var(--pst-color-text-base) !important;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.65rem 1rem !important;
+  transition: background-color 150ms ease;
+}
+
+.bd-article details.sd-dropdown > summary.sd-summary-title:hover {
+  background: var(--rlinf-tab-hover-bg) !important;
+}
+
+.bd-article details.sd-dropdown > .sd-summary-content {
+  border-top: 1px solid var(--rlinf-tab-panel-border);
+  padding: 0.95rem 1.15rem !important;
+}

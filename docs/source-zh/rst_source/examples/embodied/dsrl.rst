@@ -18,7 +18,7 @@ DSRL：基于扩散模型的潜在空间强化学习
 1. **轻量级 SAC 智能体**：一个小型 SAC 智能体（约 500K 参数），配备紧凑的 CNN/MLP 编码器，处理观测并在潜在空间中生成噪声。
 2. **噪声注入**：生成的噪声作为初始噪声输入到 Pi0 的扩散去噪器中，替代随机采样。
 3. **冻结 VLM 主干**：预训练的 Pi0 VLM 和扩散专家模块保持冻结，保留泛化能力。
-4. **噪声空间中的 SAC 训练**：SAC 智能体在噪声空间上使用环境奖励进行训练，采用 10 个 Q-head 集成的 Critic 实现稳定的价值估计。
+4. **噪声空间中的 SAC 训练**：SAC 智能体在噪声空间上使用环境奖励训练，采用 10 个 Q-head 集成的 Critic 实现稳定的价值估计。
 
 概览
 ----------------------------------------
@@ -67,64 +67,68 @@ DSRL：基于扩散模型的潜在空间强化学习
    * - 动作
      - 由 π₀ 冻结的扩散去噪器生成的连续动作，由 SAC 噪声操控。
 
-DSRL 工作原理
+DSRL 原理
 ----------------------------------------
 
 **DSRL 流程**
 
-1. **观测编码**：轻量级 CNN（64×64 → 64维）和状态编码器（8维 → 64维）处理观测数据。
+1. **观测编码**：轻量级 CNN（64×64 → 64 维）和状态编码器（8 维 → 64 维）处理观测数据。
 
-2. **噪声生成**： ``GaussianPolicy`` （SquashedNormal 分布）为每个动作步生成 32 维噪声动作。
+2. **噪声生成**：压缩高斯噪声 policy（SquashedNormal 分布）为每个动作步生成 32 维潜空间噪声动作。
 
-3. **扩散去噪**：噪声作为初始噪声注入 Pi0 的 ``sample_actions()``，冻结的扩散去噪器将噪声转换为真实动作。
+3. **扩散去噪**：生成的噪声替代随机初始噪声注入 Pi0 的扩散动作采样流程，冻结的扩散去噪器将噪声转换为真实动作。
 
 4. **SAC 训练**：标准 SAC 配合自动熵调节训练噪声生成器：
 
-   - **Actor**： ``GaussianPolicy`` ，3 层 MLP（128维隐藏层）
-   - **Critic**： ``CompactMultiQHead`` — 10 个 Q 网络集成（共约 500K 参数）
+   - **Actor**：3 层 MLP 的压缩高斯噪声 policy（128 维隐藏层）
+   - **Critic**：10 个 Q 网络集成（共约 500K 参数）
    - **目标网络**：Float32 EMA 影子缓冲区，解决 bfloat16 精度问题
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-DSRL 与 :doc:`pi0` 共用 OpenPI 环境与模型依赖：
+DSRL 与 :doc:`pi0` 共用 OpenPI 环境与模型依赖。
 
 .. tab-set::
 
    .. tab-item:: OpenPI π₀（LIBERO）
       :sync: dsrl-pi0
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-下载模型
-----------------------------------------
+      **2. 下载模型**
 
-下载 LIBERO-Spatial 对应的 OpenPI π₀ SFT 检查点：
-
-.. tab-set::
-
-   .. tab-item:: OpenPI π₀（LIBERO）
-      :sync: dsrl-pi0
+      下载 LIBERO-Spatial 对应的 OpenPI π₀ SFT 检查点：
 
       .. code-block:: bash
 
          hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir ./RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
-.. include:: _model_path.rst
+      **3. 启动训练**
 
-运行
-----------------------------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-使用 ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml`` 启动 DSRL 训练：
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - OpenPI π₀ + DSRL
+           - ``examples/embodiment/config/libero_spatial_dsrl_openpi.yaml``
+           - ``libero_spatial_dsrl_openpi``
 
-.. code-block:: bash
+      .. include:: _model_path.rst
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh libero_spatial_dsrl_openpi
 
 .. dropdown:: 进阶配置（可选）
 

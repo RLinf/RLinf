@@ -82,8 +82,8 @@ MolmoAct2 评测
    * - 提示词
      - 来自 ``task_descriptions`` 的自然语言任务指令。
 
-安装
-----
+一键上手
+--------
 
 .. include:: _setup_common.rst
 
@@ -91,46 +91,59 @@ MolmoAct2 评测
 
    .. tab-item:: MolmoAct2
 
+      **1. 安装环境**
+
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
 
-安装前设置 ``MOLMOACT2_LEROBOT_PATH``，可以复用已有的 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__ checkout。
+      安装前设置 ``MOLMOACT2_LEROBOT_PATH``，可以复用已有的 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__ checkout。
 
-下载模型
---------
+      **2. 下载模型**
 
-下载官方 `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint：
-
-.. tab-set::
-
-   .. tab-item:: MolmoAct2
+      下载官方 `allenai/MolmoAct2-LIBERO <https://huggingface.co/allenai/MolmoAct2-LIBERO>`__ checkpoint：
 
       .. code-block:: bash
 
          hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
 
-然后将评测配置中的 ``rollout.model.model_path`` 指向该目录。该配置没有 ``actor`` 部分，因此不需要同步第二个路径。
+      **3. 启动评测**
 
-运行
-----
+      .. list-table::
+         :header-rows: 1
+         :widths: 22 46 32
 
-使用 ``evaluations/libero/libero_10_molmoact2_eval.yaml`` 评测 LIBERO-Long：
+         * - Suite
+           - 配置（``evaluations/libero/``）
+           - 命令后缀
+         * - Spatial
+           - ``libero_spatial_molmoact2_eval.yaml``
+           - ``libero_spatial_molmoact2_eval``
+         * - Object
+           - ``libero_object_molmoact2_eval.yaml``
+           - ``libero_object_molmoact2_eval``
+         * - Goal
+           - ``libero_goal_molmoact2_eval.yaml``
+           - ``libero_goal_molmoact2_eval``
+         * - Long
+           - ``libero_10_molmoact2_eval.yaml``
+           - ``libero_10_molmoact2_eval``
 
-.. code-block:: bash
+      在评测配置中设置 ``rollout.model.model_path`` 或通过命令行传入（该配置没有 ``actor`` 部分，不需要同步第二个路径）。评测 LIBERO-Long：
 
-   bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
-     rollout.model.model_path=./MolmoAct2-LIBERO
+      .. code-block:: bash
 
-评测其他 suite 时，替换为上方任务表中的对应配置即可。
+         bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
+           rollout.model.model_path=./MolmoAct2-LIBERO
+
+      评测其他 suite 时，替换为上表中的对应命令后缀即可。
 
 .. warning::
 
    完整 suite 包含 500 条轨迹，可能需要数小时。如果只需 smoke test，请调小 ``env.eval.max_steps_per_rollout_epoch``：每个环境跑一个 episode 即 ``max_episode_steps``。
 
-.. admonition:: 进一步配置
-   :class: note
+.. dropdown:: 进阶配置（可选）
 
    - 推理设置（``num_steps``、``norm_tag``、动作模式）→ ``examples/embodiment/config/model/molmoact2.yaml`` 中的 ``molmoact2`` 配置块。
    - ``rollout.model.precision`` 不会生效：MolmoAct2 在上游以 fp32 加载权重。

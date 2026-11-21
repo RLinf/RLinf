@@ -45,15 +45,10 @@ This example trains an **OpenVLA-OFT student** with an **OpenVLA-OFT teacher** o
 | **You'll do:** download student/teacher checkpoints -> verify ``unnorm_key`` -> launch ``libero_spatial_opd_openvlaoft`` -> watch ``env/success_once`` and OPD actor metrics.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · :doc:`LIBERO setup <libero>` · a working OpenVLA-OFT + LIBERO environment.
 
-Method
-------
+How OPD Works
+-------------
 
-OPD uses the relative log probability assigned by teacher and student to the same
-student action-token sequence:
-
-.. math::
-
-   A_{OPD} = \log \pi_{teacher}(a_{student} \mid s) - \operatorname{stop\_grad}(\log \pi_{student}(a_{student} \mid s))
+OPD computes a token-level distillation advantage as the log-probability gap between the teacher and the student on the student's own sampled action tokens, applying stop-gradient to the student term.
 
 Implementation details:
 
@@ -159,12 +154,7 @@ Key metrics:
 - ``actor/opd_reward``: token-level distillation reward used by OPD.
 - ``actor/policy_loss`` and ``actor/total_loss``: actor update stability.
 
-Results
--------
-
-The table below reports LIBERO-Spatial results. The base student is
-|huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_;
-the teacher is |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_.
+The table below reports LIBERO-Spatial results. The base student is |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora>`_; the teacher is |huggingface| `RLinf/RLinf-OpenVLAOFT-LIBERO-130 <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130>`_.
 
 .. list-table:: **LIBERO-Spatial success rate**
    :header-rows: 1

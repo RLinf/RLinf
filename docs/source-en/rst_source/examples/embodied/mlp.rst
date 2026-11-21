@@ -87,67 +87,83 @@ Observation and Action
    * - Prompt
      - Not used by the MLP policy; tasks are selected through Hydra configs.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
+
+No pretrained checkpoint is needed; the MLP policy trains from scratch.
 
 .. tab-set::
 
    .. tab-item:: ManiSkill / LIBERO
+
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
+      **2. Launch**
+
+      Default configs under ``examples/embodiment/config/``:
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
+
+         * - Recipe
+           - Config
+           - Launch command suffix
+         * - ManiSkill + PPO + MLP
+           - ``maniskill_ppo_mlp.yaml``
+           - ``maniskill_ppo_mlp``
+         * - ManiSkill + SAC + MLP
+           - ``maniskill_sac_mlp.yaml``
+           - ``maniskill_sac_mlp``
+         * - LIBERO-Spatial + GRPO + MLP
+           - ``libero_spatial_0_grpo_mlp.yaml``
+           - ``libero_spatial_0_grpo_mlp``
+
+      .. code-block:: bash
+
+         # ManiSkill (PPO-MLP)
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
+
+         # ManiSkill (SAC-MLP)
+         bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
+
+         # LIBERO-Spatial (GRPO-MLP)
+         bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
+
    .. tab-item:: Franka-Sim
+
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env frankasim && source .venv/bin/activate
 
-Run It
-------
+      **2. Launch**
 
-RLinf ships default MLP configs across simulators and algorithms under ``examples/embodiment/config/``:
+      Default config under ``examples/embodiment/config/``:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 34 36
+      .. list-table::
+         :header-rows: 1
+         :widths: 30 34 36
 
-   * - Recipe
-     - Config
-     - Launch command suffix
-   * - ManiSkill + PPO + MLP
-     - ``maniskill_ppo_mlp.yaml``
-     - ``maniskill_ppo_mlp``
-   * - ManiSkill + SAC + MLP
-     - ``maniskill_sac_mlp.yaml``
-     - ``maniskill_sac_mlp``
-   * - LIBERO-Spatial + GRPO + MLP
-     - ``libero_spatial_0_grpo_mlp.yaml``
-     - ``libero_spatial_0_grpo_mlp``
-   * - Franka-Sim + PPO + MLP
-     - ``frankasim_ppo_mlp.yaml``
-     - ``frankasim_ppo_mlp``
+         * - Recipe
+           - Config
+           - Launch command suffix
+         * - Franka-Sim + PPO + MLP
+           - ``frankasim_ppo_mlp.yaml``
+           - ``frankasim_ppo_mlp``
 
-Launch training with ``run_embodiment.sh``:
+      .. code-block:: bash
 
-.. code-block:: bash
-
-   # ManiSkill (PPO-MLP)
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp
-
-   # ManiSkill (SAC-MLP)
-   bash examples/embodiment/run_embodiment.sh maniskill_sac_mlp
-
-   # LIBERO-Spatial (GRPO-MLP)
-   bash examples/embodiment/run_embodiment.sh libero_spatial_0_grpo_mlp
-
-   # Franka-Sim (PPO-MLP)
-   bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+         bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
 
 .. note::
 

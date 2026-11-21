@@ -7,9 +7,38 @@ FastWAM 监督微调与评测
 
    Fast-WAM 使用视频扩散世界-动作模型预测机器人动作。
 
-RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 监督微调，
-并在对应 suite 上完成评测。策略输入为主视角、腕部 RGB 图像、8 维机器人状态和
-语言指令，每次预测 32 步动作，执行 10 步后重新规划。
+RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 做 FSDP 监督微调，并在对应 suite 上完成评测。策略输入为主视角、腕部 RGB 图像、8 维机器人状态和语言指令，每次预测 32 步动作，执行 10 步后重新规划。
+
+概览
+--------
+
+在四个 LIBERO 套件上使用 FSDP 对 FastWAM 做监督微调，并运行闭环评测。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      FastWAM
+
+   .. grid-item-card:: 方法
+      :text-align: center
+
+      FSDP SFT · 评测
+
+   .. grid-item-card:: 数据
+      :text-align: center
+
+      LIBERO（LeRobot）
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      1 节点 · 4–8 GPU
+
+| **你将完成：** 安装环境 → 下载 LIBERO 数据与 Wan 组件 → 预处理 embedding → 启动 ``run_vla_sft.sh`` 或 ``run_eval.sh``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · LIBERO LeRobot 数据集与 Wan2.2 / Wan2.1 权重（见下文）。
 
 一键上手
 --------
@@ -139,3 +168,8 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
         model:
           model_path: null
           freeze_non_dit: true
+
+可视化与结果
+------------
+
+执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，跟踪 SFT 阶段的训练损失及评测阶段的 ``env/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可录制评测视频；完整指标见 :doc:`训练指标 <../../reference/metrics>`，套件评测选项见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。

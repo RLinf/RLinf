@@ -74,7 +74,7 @@ Select a task with ``env.train.task_name`` and ``env.eval.task_name``, and match
      - 17
      - Unhealthy torso height or non-finite state.
 
-These five names are the tasks this recipe ships. Every world in an env worker shares one batched physics state, ``MjWarpWorld``. It loads an MJCF file or an already compiled ``MjModel``, and each physics substep advances every world together. Reward, termination, and the initial state come from a task wrapper, ``TaskWrapper``. The built-in tasks share one locomotion wrapper, ``LocomotionTask``, and ``task_name`` selects its ``TaskSpec``. A new task with this same reward form is another ``TaskSpec`` plus its MJCF, registered with the five above. A different observation or reward is a new ``TaskWrapper`` that the env constructs for that ``task_name``.
+These five names are the built-in locomotion tasks shipped with this recipe. Every world in an env worker shares one batched physics state that loads an MJCF file or compiled MuJoCo model and advances all worlds together on each physics substep. Task wrappers supply the reward, termination, and initial state; adding a task with the same locomotion reward form only registers a new task specification and MJCF, while a custom observation or reward defines a dedicated task wrapper for that ``task_name``.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -106,8 +106,8 @@ Humanoid's observation is the 45-dimensional ``qpos`` and ``qvel`` vector in the
 
    MJWarp has no PGS solver. On load, a model whose solver is already PGS is switched to CG. Among the shipped assets, only humanoid sets ``solver="PGS"``, so its contact dynamics differ from Gymnasium's MuJoCo CPU backend.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
@@ -115,31 +115,45 @@ Installation
 
    .. tab-item:: MuJoCo Warp
 
+      **1. Install**
+
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
 
-The installer pins ``mujoco-warp==3.17.0`` and ``warp-lang==1.16.0``. This verified combination works with CUDA 12 drivers and avoids resolving CUDA 13-only Warp wheels during driverless Docker builds.
+      The installer pins ``mujoco-warp==3.17.0`` and ``warp-lang==1.16.0``. This verified combination works with CUDA 12 drivers and avoids resolving CUDA 13-only Warp wheels during driverless Docker builds.
 
-Run It
-------
+      **2. Launch**
 
-Launch the default ``half_cheetah`` recipe (``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` and ``examples/embodiment/config/env/mujoco_warp.yaml``) from the repository root:
+      No pretrained checkpoint is needed; the MLP policy trains from scratch.
 
-.. code:: bash
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-   bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp
+         * - Recipe
+           - Config
+           - Command suffix
+         * - MLP + PPO
+           - ``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` (env: ``env/mujoco_warp.yaml``)
+           - ``mujoco_warp_ppo_mlp``
 
-Override both env task names and the actor dimensions to train another task:
+      Launch the default ``half_cheetah`` recipe from the repository root:
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
-       env.train.task_name=humanoid env.eval.task_name=humanoid \
-       actor.model.obs_dim=45 actor.model.action_dim=17
+         bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp
 
-Use the task table above for the other dimension pairs. Tune ``env.train.total_num_envs``, ``actor.micro_batch_size``, and ``actor.global_batch_size`` for your GPU memory.
+      Override both env task names and the actor dimensions to train another task (see the Tasks table for dimension pairs):
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
+             env.train.task_name=humanoid env.eval.task_name=humanoid \
+             actor.model.obs_dim=45 actor.model.action_dim=17
+
+      Tune ``env.train.total_num_envs``, ``actor.micro_batch_size``, and ``actor.global_batch_size`` for your GPU memory.
 
 Visualization and Results
 -------------------------

@@ -12,8 +12,7 @@
 
    RoboVerse（图片来源：`RoboVerse <https://roboverseorg.github.io/>`__）。
 
-`RoboVerse <https://roboverseorg.github.io/>`__ 是面向机器人操作任务的仿真套件，
-支持多个后端。你将使用 RLinf 在 RoboVerse 厨房操作任务上，通过 PPO 微调 OpenPI π₀.₅ 策略。
+`RoboVerse <https://roboverseorg.github.io/>`__ 是面向机器人操作任务的仿真套件，支持多个后端。你将使用 RLinf 在 RoboVerse 厨房操作任务上，通过 PPO 微调 OpenPI π₀.₅ policy。
 
 概览
 ----------------------------------------
@@ -76,30 +75,26 @@
    * - 提示词
      - RoboVerse 任务的自然语言指令。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: OpenPI + RoboVerse
+   .. tab-item:: OpenPI π₀.₅ + RoboVerse
       :sync: openpi-roboverse
+
+      **1. 安装环境**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env roboverse && source .venv/bin/activate
 
-下载模型
-----------------------------------------
+      **2. 下载资源与模型**
 
-在 RLinf 仓库根目录下载默认 RoboVerse 资源与 OpenPI π₀.₅ SFT 检查点：
-
-.. tab-set::
-
-   .. tab-item:: OpenPI π₀.₅ + RoboVerse
-      :sync: openpi-roboverse
+      在 RLinf 仓库根目录下载默认 RoboVerse 资源与 OpenPI π₀.₅ SFT 检查点：
 
       .. code-block:: bash
 
@@ -109,36 +104,30 @@
          # 下载 OpenPI π₀.₅ 检查点
          hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-.. include:: _model_path.rst
+      **3. 启动训练**
 
-运行
-----------------------------------------
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
 
-启动 RoboVerse 配方：
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - OpenPI π₀.₅ + PPO
+           - ``examples/embodiment/config/roboverse_ppo_openpi_pi05.yaml``
+           - ``roboverse_ppo_openpi_pi05``
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
+      .. include:: _model_path.rst
 
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - OpenPI π₀.₅ + PPO
-     - ``examples/embodiment/config/roboverse_ppo_openpi_pi05.yaml``
-     - ``roboverse_ppo_openpi_pi05``
+      .. code-block:: bash
 
-.. code:: bash
+         bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
 
-   bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
-
-独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
-通过配置回退机制复用相同后缀 ``roboverse_ppo_openpi_pi05``。
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，通过配置回退机制复用相同后缀 ``roboverse_ppo_openpi_pi05``。
 
 .. note::
 
-   默认配置将 actor 与 rollout 放在 GPU ``0-1``，将 env worker 放在 GPU ``2-3``。
-   请根据硬件调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和
-   ``actor.global_batch_size``。
+   默认配置将 actor 与 rollout 放在 GPU ``0-1``，将 env worker 放在 GPU ``2-3``。请根据硬件调整 ``cluster.component_placement``、``env.train.total_num_envs`` 和 ``actor.global_batch_size``。
 
 可视化与结果
 ----------------------------------------

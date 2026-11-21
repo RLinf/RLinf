@@ -277,28 +277,25 @@ The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGG
 
          - **Hydra configuration reference**: see :doc:`Training configuration <../../reference/configuration>`.
 
-Standalone Evaluation
----------------------
+.. dropdown:: Standalone evaluation
 
-Use the unified Evaluation section to verify ABot-M0 checkpoints before training. Start from the :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` and set ``actor.model.model_path`` to the ABot-M0 checkpoint.
+   Use the unified Evaluation section to verify ABot-M0 checkpoints before training. Start from the :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` and set ``actor.model.model_path`` to the ABot-M0 checkpoint.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 36 36
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 36 36
 
-   * - Suite
-     - Config source
-     - What to change
-   * - LIBERO-10
-     - ``libero_10_ppo_abot_m0`` via the Evaluation config fallback
-     - Set ``LIBERO_TYPE=standard`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.
-   * - LIBERO-10+
-     - ``libero_10_plus_ppo_abot_m0`` via the Evaluation config fallback
-     - Set ``LIBERO_TYPE=plus`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.
+      * - Suite
+        - Config source
+        - What to change
+      * - LIBERO-10
+        - ``libero_10_ppo_abot_m0`` via the Evaluation config fallback
+        - Set ``LIBERO_TYPE=standard`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.
+      * - LIBERO-10+
+        - ``libero_10_plus_ppo_abot_m0`` via the Evaluation config fallback
+        - Set ``LIBERO_TYPE=plus`` and point ``actor.model.model_path`` at the ABot-M0 checkpoint.
 
-For CLI usage, Hydra overrides, logs, and video output, use the
-:doc:`Evaluation CLI reference <../../evaluations/reference/cli>` and
-:doc:`Evaluation results reference <../../evaluations/reference/results>`.
+   For CLI usage, Hydra overrides, logs, and video output, use the :doc:`Evaluation CLI reference <../../evaluations/reference/cli>` and :doc:`Evaluation results reference <../../evaluations/reference/results>`.
 
 Visualization and Results
 -------------------------

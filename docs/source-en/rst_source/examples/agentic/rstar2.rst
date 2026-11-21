@@ -151,8 +151,6 @@ Below shows the comparison of reward curves and response length curves between R
      - 76.20
      - 44.64
 
+.. note::
 
-References
-----------
-
-- rStar2 & veRL-SGLang: https://github.com/volcengine/verl/pull/3397
+   **References:** `rStar2 & veRL-SGLang <https://github.com/volcengine/verl/pull/3397>`__.

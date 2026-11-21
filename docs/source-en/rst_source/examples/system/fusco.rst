@@ -79,8 +79,6 @@ RLinf integrates FUSCO through patching, supporting MoE training with Megatron-L
          bash tests/e2e_tests/reasoning/run.sh \
            qwen3-moe-2.5b-collocated-mg-sgl-ep-fusco-test
 
+.. note::
 
-References
-----------
-- **FUSCO Repository**: `High-performance distributed data shuffling (all-to-all) library for MoE training and inference <https://github.com/infinigence/FUSCO>`_.
-- **FUSCO Paper**: `FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion <https://arxiv.org/pdf/2512.22036>`_.
+   **References:** `FUSCO repository <https://github.com/infinigence/FUSCO>`__ · `FUSCO paper <https://arxiv.org/pdf/2512.22036>`__.

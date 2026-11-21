@@ -61,47 +61,33 @@ then sends the predicted commands to SIMPLE's whole-body controller.
    * - Instruction
      - Natural-language task instruction in ``task_descriptions``.
 
-Installation
-------------
-
-Set up Psi0 + SIMPLE in two steps: install the runtime environment, then download the shared SIMPLE assets, Qwen metadata, and OpenOven task resources. In mainland China, append ``--use-mirror`` to ``requirements/install.sh`` and set ``export HF_ENDPOINT=https://hf-mirror.com`` before running ``hf download``.
-
 .. _psi0-setup-env:
+.. _psi0-qwen-metadata:
+.. _simple-sim-assets:
+.. _simple-link-assets:
+.. _psi0-model-download:
+.. _psi0-ppo-training:
 
-1. Set Up the Environment
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Setup and Run
+-------------
+
+.. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: Psi0 + SIMPLE (uv)
+   .. tab-item:: uv (Local)
+      :sync: psi0-uv
+
+      **1. Install**
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-   .. tab-item:: Docker
+      **2. Download**
 
-      .. code-block:: bash
-
-         git clone https://github.com/RLinf/RLinf.git && cd RLinf
-         docker build -f docker/Dockerfile --build-arg BUILD_TARGET=embodied-simple -t rlinf:embodied-simple .
-         # Inside the container:
-         source switch_env psi0
-
-.. _psi0-qwen-metadata:
-.. _simple-sim-assets:
-.. _simple-link-assets:
-.. _psi0-model-download:
-
-2. Download Metadata, Assets, and Task Resources
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Download the Qwen3-VL metadata snapshot (loaded by model ID from ``HF_HOME``), the shared `USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ simulation assets (linked to ``${VIRTUAL_ENV}/SIMPLE/data``), and the official OpenOven checkpoint, reset states, and HSSD scene together:
-
-.. tab-set::
-
-   .. tab-item:: OpenOven (All Downloads & Asset Link)
+      Download the Qwen3-VL metadata snapshot (loaded by model ID from ``HF_HOME``), the shared `USC-PSI-Lab/SIMPLE <https://huggingface.co/datasets/USC-PSI-Lab/SIMPLE>`_ simulation assets (linked to ``${VIRTUAL_ENV}/SIMPLE/data``), and the official OpenOven checkpoint, reset states, and HSSD scene together:
 
       .. code-block:: bash
 
@@ -145,32 +131,106 @@ Download the Qwen3-VL metadata snapshot (loaded by model ID from ``HF_HOME``), t
          unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
          rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
 
+      **3. Launch**
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 50 26
+
+         * - Recipe
+           - Config
+           - Command suffix
+         * - Psi0 + PPO (OpenOven)
+           - ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml``
+           - ``simple_openoven_ppo_psi0``
+
+      In ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml``, set ``actor.model.model_path`` to ``PSI0_RUN_DIR`` (rollout inherits it automatically) and ``env.train.reset_dataset.path`` to ``SIMPLE_RESET_DIR``:
+
+      .. code-block:: yaml
+
+         env:
+           train:
+             reset_dataset:
+               path: ./psi0-simple-artifacts/reset-states/G1WholebodyOpenOvenTeleop-v0
+         actor:
+           model:
+             model_path: ./psi0-simple-artifacts/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+
+      Launch OpenOven training:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh simple_openoven_ppo_psi0
+
+   .. tab-item:: Docker
+      :sync: psi0-docker
+
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         docker build -f docker/Dockerfile --build-arg BUILD_TARGET=embodied-simple -t rlinf:embodied-simple .
+         # Inside the container:
+         source switch_env psi0
+
+      **2. Download**
+
+      Inside the container (where ``VIRTUAL_ENV`` is ``/opt/venv/psi0``), download the Qwen3-VL metadata snapshot, shared SIMPLE simulation assets, and OpenOven task resources:
+
+      .. code-block:: bash
+
+         export HF_HOME=./hf-cache
+         export SIMPLE_ASSETS_DIR=./simple_assets
+         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
+         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
+         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+
+         # 1. Qwen3-VL metadata snapshot (do not use --local-dir; export the same HF_HOME before training/eval)
+         hf download Qwen/Qwen3-VL-2B-Instruct \
+           chat_template.json config.json generation_config.json merges.txt \
+           preprocessor_config.json tokenizer.json tokenizer_config.json \
+           video_preprocessor_config.json vocab.json
+
+         # 2. Shared SIMPLE simulation assets + symlink into ${VIRTUAL_ENV}/SIMPLE/data
+         bash requirements/embodied/download_assets.sh --assets simple --dir "${SIMPLE_ASSETS_DIR}"
+         rm -rf "${VIRTUAL_ENV}/SIMPLE/data"
+         ln -s "$(realpath "${SIMPLE_ASSETS_DIR}")" "${VIRTUAL_ENV}/SIMPLE/data"
+
+         # 3. OpenOven checkpoint, reset states, and HSSD scene
+         hf download USC-PSI-Lab/psi-model \
+           "${PSI0_RUN_REL}/argv.txt" \
+           "${PSI0_RUN_REL}/run_config.json" \
+           "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
+           --local-dir ./psi0-simple-artifacts/psi-model
+         export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
+
+         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
+           --repo-type dataset \
+           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
+           --local-dir ./psi0-simple-artifacts/psi-data
+         export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
+         mkdir -p "${SIMPLE_RESET_DIR}"
+         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
+
+         hf download USC-PSI-Lab/SIMPLE scenes_hssd_102344280.zip \
+           --repo-type dataset \
+           --local-dir ./simple_assets
+         unzip -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip" -d "${SIMPLE_ASSETS_DIR}"
+         rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_102344280.zip"
+
+      **3. Launch**
+
+      Set ``actor.model.model_path`` and ``env.train.reset_dataset.path`` in ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml`` as shown in the **uv (Local)** tab, then launch:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh simple_openoven_ppo_psi0
+
 .. note::
 
    Keep ``HF_HOME`` exported to the same cache directory before training or evaluation. ``VIRTUAL_ENV`` is ``.venv`` by default (or ``/opt/venv/psi0`` in Docker). If you already have the shared SIMPLE assets, point ``SIMPLE_ASSETS_DIR`` to that directory and skip ``download_assets.sh``.
-
-.. _psi0-ppo-training:
-
-Run It
-------
-
-In ``examples/embodiment/config/simple_openoven_ppo_psi0.yaml``, set ``actor.model.model_path`` to ``PSI0_RUN_DIR`` (rollout inherits it automatically) and ``env.train.reset_dataset.path`` to ``SIMPLE_RESET_DIR``:
-
-.. code-block:: yaml
-
-   env:
-     train:
-       reset_dataset:
-         path: ./psi0-simple-artifacts/reset-states/G1WholebodyOpenOvenTeleop-v0
-   actor:
-     model:
-       model_path: ./psi0-simple-artifacts/psi-model/psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
-
-Then launch OpenOven training:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh simple_openoven_ppo_psi0
 
 The configuration uses stochastic-transition sampling for PPO, keeps System-2
 frozen, and trains the action expert and value head. It runs four environments
@@ -178,9 +238,9 @@ on four GPUs with DR0 and a 600-step horizon. Each iteration collects 32
 trajectories over 8 rollout epochs and performs 4 optimizer steps with
 ``global_batch_size=200`` and ``update_epoch=1``.
 
-.. note::
+.. dropdown:: Advanced configuration (optional)
 
-   Keep the following settings unchanged. The RTC defaults are in
+   Keep the following RTC and pipeline settings unchanged. The RTC defaults are in
    ``examples/embodiment/config/model/psi0.yaml``. Each rollout worker runs one
    environment, so keep ``rollout.pipeline_stage_num`` at ``1``.
 

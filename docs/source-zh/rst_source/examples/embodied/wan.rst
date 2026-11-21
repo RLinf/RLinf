@@ -98,129 +98,126 @@
 
 .. include:: _setup_common.rst
 
+NVIDIA CUDA 按任务套件选择对应标签页；昇腾 NPU 请切换到 **华为昇腾 CANN** 标签页。
+
 .. tab-set::
 
-   .. tab-item:: NVIDIA CUDA
-      :sync: cuda
+   .. tab-item:: LIBERO-Spatial
+      :sync: spatial
 
-      .. tab-set::
+      **1. 安装环境**
 
-         .. tab-item:: LIBERO-Spatial
-            :sync: spatial
+      .. code-block:: bash
 
-            **1. 安装环境**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env wan
+         source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. 下载资源与模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env wan
-               source .venv/bin/activate
+      一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
 
-            **2. 下载资源与模型**
+      .. code-block:: bash
 
-            一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
+         hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
 
-            .. code-block:: bash
+      **3. 启动训练**
 
-               hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
-               hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
+      在 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
 
-            **3. 启动训练**
+      .. code-block:: yaml
 
-            在 ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-spatial-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Spatial
 
-            .. code-block:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-               actor:
-                 model:
-                   model_path: ./Openvla-oft-SFT-libero-spatial-traj1
-               env:
-                 train:
-                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Spatial
+      .. code-block:: bash
 
-            使用 ``run_embodiment.sh`` 启动训练：
+         bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
 
-            .. code-block:: bash
+   .. tab-item:: LIBERO-Object
+      :sync: object
 
-               bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
+      **1. 安装环境**
 
-         .. tab-item:: LIBERO-Object
-            :sync: object
+      .. code-block:: bash
 
-            **1. 安装环境**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env wan
+         source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. 下载资源与模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env wan
-               source .venv/bin/activate
+      一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
 
-            **2. 下载资源与模型**
+      .. code-block:: bash
 
-            一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
+         hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Object --local-dir ./RLinf-Wan-LIBERO-Object
 
-            .. code-block:: bash
+      **3. 启动训练**
 
-               hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
-               hf download RLinf/RLinf-Wan-LIBERO-Object --local-dir ./RLinf-Wan-LIBERO-Object
+      在 ``examples/embodiment/config/wan_libero_object_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
 
-            **3. 启动训练**
+      .. code-block:: yaml
 
-            在 ``examples/embodiment/config/wan_libero_object_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-object-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Object
 
-            .. code-block:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-               actor:
-                 model:
-                   model_path: ./Openvla-oft-SFT-libero-object-traj1
-               env:
-                 train:
-                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Object
+      .. code-block:: bash
 
-            使用 ``run_embodiment.sh`` 启动训练：
+         bash examples/embodiment/run_embodiment.sh wan_libero_object_grpo_openvlaoft
 
-            .. code-block:: bash
+   .. tab-item:: LIBERO-Goal
+      :sync: goal
 
-               bash examples/embodiment/run_embodiment.sh wan_libero_object_grpo_openvlaoft
+      **1. 安装环境**
 
-         .. tab-item:: LIBERO-Goal
-            :sync: goal
+      .. code-block:: bash
 
-            **1. 安装环境**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env wan
+         source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. 下载资源与模型**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env wan
-               source .venv/bin/activate
+      一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
 
-            **2. 下载资源与模型**
+      .. code-block:: bash
 
-            一并下载 OpenVLA-OFT SFT checkpoint 与 Wan 世界模型权重和初始化数据集：
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Goal --local-dir ./RLinf-Wan-LIBERO-Goal
 
-            .. code-block:: bash
+      **3. 启动训练**
 
-               hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
-               hf download RLinf/RLinf-Wan-LIBERO-Goal --local-dir ./RLinf-Wan-LIBERO-Goal
+      在 ``examples/embodiment/config/wan_libero_goal_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
 
-            **3. 启动训练**
+      .. code-block:: yaml
 
-            在 ``examples/embodiment/config/wan_libero_goal_grpo_openvlaoft.yaml`` 中填写上述两个下载路径（rollout 会自动沿用 ``actor.model.model_path``）：
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-goal-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Goal
 
-            .. code-block:: yaml
+      使用 ``run_embodiment.sh`` 启动训练：
 
-               actor:
-                 model:
-                   model_path: ./Openvla-oft-SFT-libero-goal-traj1
-               env:
-                 train:
-                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Goal
+      .. code-block:: bash
 
-            使用 ``run_embodiment.sh`` 启动训练：
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh wan_libero_goal_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh wan_libero_goal_grpo_openvlaoft
 
    .. tab-item:: 华为昇腾 CANN
       :sync: ascend

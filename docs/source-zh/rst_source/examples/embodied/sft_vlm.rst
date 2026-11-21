@@ -7,13 +7,12 @@ Qwen-VL
 
    Qwen2.5-VL 在 Robo2VLM 视觉问答数据集上的监督微调。
 
-使用 RLinf 对视觉-语言模型（Qwen2.5-VL、Qwen3-VL、Qwen3-VL-MoE）进行 **全量监督微调
-（Full-parameter SFT）**——训练、评估，并将得到的检查点转换为 HuggingFace 格式。
+使用 RLinf 对视觉-语言模型（Qwen2.5-VL、Qwen3-VL、Qwen3-VL-MoE）做 **全量监督微调（Full-parameter SFT）**——完成训练、评估，并将检查点转换为 HuggingFace 格式。
 
 概览
 ----------------------------------------
 
-在 Robo2VLM 视觉问答数据集上对 Qwen-VL 系列模型进行全量 SFT，使用 FSDP 并内置评估。
+在 Robo2VLM 视觉问答数据集上对 Qwen-VL 系列模型做全量 SFT，使用 FSDP 并内置评估。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -41,17 +40,20 @@ Qwen-VL
 | **你将完成：** 拉取镜像 → 下载模型与 Robo2VLM → 修改配置 → 启动 ``run_vlm_sft.sh`` → 观察 loss 与评估准确率。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · Qwen-VL 权重 · Robo2VLM 数据集。
 
-本示例主要关注两个文件——启动脚本 ``examples/sft/run_vlm_sft.sh`` 和训练配置
-``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``。
+本示例围绕启动脚本 ``examples/sft/run_vlm_sft.sh`` 和训练配置 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 展开。
 
-安装
+一键上手
 ----------------------------------------
 
-一次性拉取 RLinf 镜像，并下载 `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ 权重和 `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_ 数据集。中国大陆用户可在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``\ （使用 ``requirements/install.sh`` 时可追加 ``--use-mirror``）。
+中国大陆用户可在执行 ``hf download`` 前设置 ``export HF_ENDPOINT=https://hf-mirror.com``\ （使用 ``requirements/install.sh`` 时追加 ``--use-mirror``）。通用安装选项见 :doc:`安装 </rst_source/start/installation>`。
 
 .. tab-set::
 
-   .. tab-item:: Docker 镜像与模型/数据下载
+   .. tab-item:: Qwen-VL + Robo2VLM
+
+      **1. 拉取镜像并下载模型与数据**
+
+      拉取 RLinf 镜像，并下载 `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_ 权重与 `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_ 数据集：
 
       .. code-block:: bash
 
@@ -60,46 +62,41 @@ Qwen-VL
          hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
          hf download keplerccc/Robo2VLM-1 --repo-type dataset --local-dir ./Robo2VLM-1
 
-.. warning::
+      .. warning::
 
-   Robo2VLM 下载后会把 train 与 evaluate 数据放在同一目录（如 ``train-00000-of-00262.parquet`` 与 ``test-0000X-of-00003.parquet``）。将它们分到不同文件夹，否则 RLinf 会直接读取整个数据集。
+         Robo2VLM 下载后会把 train 与 test parquet 放在同一目录（如 ``train-00000-of-00262.parquet`` 与 ``test-0000X-of-00003.parquet``）。启动前请将它们分到 ``train_data`` 和 ``test_data`` 两个文件夹，否则 RLinf 会直接读取整个数据集。
 
-.. note::
+      .. note::
 
-   如需训练 **qwen3_vl** 或 **qwen3_vl_moe**，确保 ``transformers >= 4.57.1``。
+         如需训练 **qwen3_vl** 或 **qwen3_vl_moe**，确保 ``transformers >= 4.57.1``。
 
-运行
-----------------------------------------
+      **2. 配置路径**
 
-**1. 配置**
+      在 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 中填写数据集与模型路径：
 
-在 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 中填写数据集与模型路径：
+      .. code-block:: yaml
 
-.. code:: yaml
+         data:
+           train_data_paths: "./Robo2VLM-1/train_data"
+           val_data_paths: "./Robo2VLM-1/test_data"
 
-   data:
-     train_data_paths: "./Robo2VLM-1/train_data"
-     val_data_paths: "./Robo2VLM-1/test_data"
+         actor:
+           model:
+             model_path: "./Qwen2.5-VL-3B-Instruct"
 
-   actor:
-     model:
-       model_path: "./Qwen2.5-VL-3B-Instruct"
+      **3. 启动训练**
 
-**2. 启动**
+      在仓库根目录执行（日志写入 ``logs/<timestamp>/``；传入其他配置名可运行自定义 YAML，将 ``data.train_data_paths`` 设为 ``null`` 即可进入仅评估模式）：
 
-在仓库根目录执行（脚本调用 ``examples/sft/train_vlm_sft.py`` 并将日志写入 ``logs/<timestamp>/``）：
+      .. code-block:: bash
 
-.. code:: bash
+         bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
 
-   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
-
-- 若配置文件名不同（如 ``my_vlm_config.yaml``），将其作为参数传入：``bash examples/sft/run_vlm_sft.sh my_vlm_config``。
-
-.. dropdown:: 进阶配置（可选）
+.. dropdown:: 进阶配置与字段说明
 
    仓库自带的 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 已设置好数据列名、batch size、优化器和 FSDP 默认项：
 
-   .. code:: yaml
+   .. code-block:: yaml
 
       cluster:
         num_nodes: 1
@@ -157,26 +154,55 @@ Qwen-VL
             reduce_dtype: fp32
             buffer_dtype: bf16
 
-仅评估模式
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   **常用字段：**
 
-若只想运行评估，将 ``data.train_data_paths`` 设为 ``null``，并将 ``data.val_data_paths`` 指向验证数据，启动命令保持不变：
+   - ``micro_batch_size``：单卡一次前向/反向的样本数。
+   - ``global_batch_size``：全局 batch（需满足可整除关系）。
+   - ``max_epochs``：按数据集完整遍历的轮数。
+   - ``save_interval``：每多少 step 保存一次 checkpoint。
+   - ``model_path``：本地模型目录（必须存在）。
+   - ``train_data_paths`` / ``val_data_paths``：数据目录或文件路径（``train_data_paths: null`` 时仅运行评估）。
 
-.. code:: bash
+.. dropdown:: 检查点转换（FSDP 转 HuggingFace）
 
-   bash examples/sft/run_vlm_sft.sh qwen2_5_vl_sft_vlm
+   FSDP SFT 默认保存 ``full_weights.pt``。如需导出 HuggingFace 格式，在内置的 ``fsdp_model_convertor`` 配置中填写：
+
+   - ``convertor.ckpt_path``：指向 ``full_weights.pt``
+   - ``convertor.save_path``：输出 HF 权重目录
+   - ``model.model_path``：原始基座模型路径
+   - ``model.model_type``：模型类型（``qwen2.5_vl``、``qwen3_vl`` 或 ``qwen3_vl_moe``）
+
+   然后运行内置转换工具：
+
+   .. code-block:: bash
+
+      python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+          --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+          --config-name fsdp_model_convertor
+
+   详见 :doc:`检查点转换 <../../guides/convertor>`。
+
+.. dropdown:: 常见报错与排查
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 30 70
+
+      * - 问题
+        - 处理
+      * - 找不到模型路径
+        - 检查 ``actor.model.model_path`` 是否正确且有读取权限。
+      * - 数据字段不匹配
+        - 检查 ``prompt_key``、``choice_key``、``answer_key`` 与 ``image_keys`` 是否与数据列名一致。
+      * - 显存不足（OOM）
+        - 先降低 ``micro_batch_size``，再减少 ``num_workers``；仍不足时缩小模型或降低输入长度。
+      * - 快速跑通流程
+        - 使用小数据子集，设 ``max_epochs: 1``，并调小 ``save_interval`` 以便观察。
 
 可视化与结果
 ----------------------------------------
 
-正常的训练中，**loss** 下降、**评估准确率** 上升。脚本会自动创建 ``logs/<时间戳>``；可用
-TensorBoard 可视化。各项指标的含义见
-:doc:`训练指标 <../../reference/metrics>`。
-
-.. code:: bash
-
-   tensorboard --logdir /path/to/RLinf/logs --port 6006
-   # 浏览器打开 http://localhost:6006
+正常训练中 **loss** 下降、**评估准确率** 上升。运行 ``tensorboard --logdir ./logs --port 6006`` 查看 ``logs/<timestamp>`` 中的曲线，指标含义见 :doc:`训练指标 <../../reference/metrics>`。
 
 不同规模模型的参考结果：
 
@@ -246,44 +272,3 @@ TensorBoard 可视化。各项指标的含义见
    :alt: Qwen3-VL-30B-A3B MoE VLM SFT loss
    :width: 85%
    :align: center
-
-检查点转换
-----------------------------------------
-
-使用 FSDP 训练时，SFT 保存的是 FSDP 格式权重（如 ``full_weights.pt``）。若需要 HuggingFace
-格式，请使用内置转换脚本 ``rlinf/utils/ckpt_convertor/fsdp_convertor/convert_pt_to_hf.py``
-和 ``fsdp_model_convertor`` 配置。先在
-``rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_model_convertor.yaml`` 中设置以下字段：
-
-- ``convertor.ckpt_path``：指向 ``full_weights.pt``
-- ``convertor.save_path``：输出 HF 权重目录
-- ``model.model_path``：原始基座模型路径
-- ``model.model_type``：对应模型类型（如 ``qwen2.5_vl``、``qwen3_vl`` 或 ``qwen3_vl_moe``）
-
-然后运行：
-
-.. code:: bash
-
-   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-       --config-path rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-       --config-name fsdp_model_convertor
-
-详见 :doc:`检查点转换 <../../guides/convertor>`。
-
-字段说明
-----------------------------------------
-
-- ``micro_batch_size``：单卡一次前向/反向的样本数。
-- ``global_batch_size``：全局 batch（需满足可整除关系）。
-- ``max_epochs``：按数据集完整遍历的轮数。
-- ``save_interval``：每多少 step 保存一次 checkpoint。
-- ``model_path``：本地模型目录（必须存在）。
-- ``train_data_paths`` / ``val_data_paths``：数据目录或文件路径。
-
-常见报错与排查
-----------------------------------------
-
-- **找不到模型路径** —— 检查 ``actor.model.model_path`` 是否正确、是否有读取权限。
-- **数据字段不匹配** —— 检查 ``prompt_key`` / ``choice_key`` / ``answer_key`` / ``image_keys`` 是否与数据实际列名一致。
-- **显存不足（OOM）** —— 先降低 ``micro_batch_size``，再减少 ``num_workers``；仍不足时缩小模型或降低输入长度。
-- **只想先跑通流程** —— 使用很小的数据子集，将 ``max_epochs`` 设为 1，并把 ``save_interval`` 设小一些以便观察。

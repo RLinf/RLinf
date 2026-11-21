@@ -13,6 +13,37 @@ main-camera and wrist-camera RGB images, the 8-dimensional robot state, and the
 language instruction. It predicts 32 action steps and executes 10 steps before
 replanning.
 
+Overview
+--------
+
+Fine-tune FastWAM on the four LIBERO suites with FSDP SFT and run closed-loop evaluation on LIBERO.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      FastWAM
+
+   .. grid-item-card:: Methods
+      :text-align: center
+
+      FSDP SFT · Evaluation
+
+   .. grid-item-card:: Data
+      :text-align: center
+
+      LIBERO (LeRobot)
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      1 node · 4–8 GPUs
+
+| **You'll do:** install → download LIBERO data & Wan backbones → preprocess embeddings → launch ``run_vla_sft.sh`` or ``run_eval.sh``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · LIBERO LeRobot datasets and Wan2.2 / Wan2.1 checkpoints (steps below).
+
 Setup and Run
 -------------
 
@@ -141,3 +172,8 @@ Setup and Run
         model:
           model_path: null
           freeze_non_dit: true
+
+Visualization and Results
+-------------------------
+
+Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` to track training loss during SFT and ``env/success_once`` during evaluation. Pass ``env.eval.video_cfg.save_video=True`` to record evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` for suite evaluation options.

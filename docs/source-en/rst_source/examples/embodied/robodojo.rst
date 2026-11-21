@@ -80,32 +80,6 @@ Observation and Action
      - Natural-language instruction generated from the current scene and exposed
        as ``task_descriptions``.
 
-Version Lock
-~~~~~~~~~~~~
-
-RLinf locks the RoboDojo simulator, PyTorch stack, and compatibility
-dependencies in ``requirements/install.sh`` and
-``requirements/embodied/envs/robodojo-override.txt``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - Component
-     - Pinned version
-   * - Python
-     - 3.11
-   * - RoboDojo runtime
-     - 0.3.0 · commit ``6d76a0c``
-   * - PyTorch
-     - 2.7.0 · wheel for the detected driver (cu126, cu128 on CUDA 12.8+)
-   * - TorchVision / TorchAudio
-     - 0.22.0 / 2.7.0 · same wheel index as PyTorch
-   * - Isaac Sim
-     - 5.1.0
-   * - IsaacLab
-     - 0.54.3 · commit ``afca7b09``
-
 Setup and Run
 -------------
 
@@ -116,6 +90,7 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
 .. tab-set::
 
    .. tab-item:: OpenPI Evaluation
+      :sync: openpi
 
       **1. Install**
 
@@ -162,54 +137,8 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
 
       Logs go to ``logs/<timestamp>-<config_name>/`` and results to ``runner.logger.log_path``.
 
-      .. dropdown:: Advanced configuration (optional)
-
-         - **Scale up parallel environments**: the default runs one environment; once verified, scale up with Hydra overrides such as ``env.eval.total_num_envs=4``, ``cluster.component_placement.env=0-3``, and ``cluster.component_placement.rollout=0-3``.
-         - **ModelScope mirror download**: install ``modelscope>=1.40.0`` with ``uv pip install "modelscope>=1.40.0"`` and run ``modelscope download`` with the same ``--repo-type dataset``, ``--local-dir``, and ``--include`` flags.
-         - **Verify package and CUDA imports** (without starting Isaac Sim):
-
-           .. code-block:: bash
-
-              python - <<'PY'
-              import torch
-              from robodojo_runtime import assets_root, source_root
-              from robodojo_runtime.bridge import VectorEnv
-
-              print("torch:", torch.__version__)
-              print("cuda:", torch.cuda.is_available())
-              print("source:", source_root())
-              print("assets:", assets_root())
-              PY
-
-         - **Single-environment smoke test**: verify Isaac Sim, cameras, and assets directly before launching multi-environment rollout:
-
-           .. code-block:: bash
-
-              python - <<'PY'
-              import numpy as np
-              from robodojo_runtime.bridge import VectorEnv
-
-              env = VectorEnv(
-                  {
-                      "task_name": "put_bottles_into_dustbin",
-                      "env_cfg_type": "arx_x5",
-                      "headless": True,
-                      "cuda_device": 0,
-                      "max_episode_steps": 700,
-                  },
-                  n_envs=1,
-                  env_seeds=[0],
-              )
-              try:
-                  env.reset()
-                  obs = env.get_obs()[0]
-                  print(obs["full_image"].shape, obs["state"].shape)
-                  env.step(np.zeros((1, 1, 14), dtype=np.float32))
-              finally:
-                  env.close()
-              PY
-
    .. tab-item:: Environment Only
+      :sync: env-only
 
       **1. Install**
 
@@ -261,68 +190,52 @@ RoboDojo supports Linux x86_64 with an NVIDIA CUDA GPU (CPU-only, macOS, and AMD
              env.close()
          PY
 
-      .. dropdown:: Advanced configuration (optional)
+.. dropdown:: Advanced configuration (optional)
 
-         - **ModelScope mirror download**: install ``modelscope>=1.40.0`` with ``uv pip install "modelscope>=1.40.0"`` and run ``modelscope download RoboDojo-Benchmark/RoboDojo --repo-type dataset --local-dir "$ROBODOJO_ASSETS_ROOT" --include "Assets/**"``.
-         - **Verify package and CUDA imports** (without starting Isaac Sim):
+   - **Pinned runtime and compatibility overrides**: ``requirements/install.sh`` and ``requirements/embodied/envs/robodojo-override.txt`` pin Python 3.11, RoboDojo runtime 0.3.0 (``6d76a0c``), PyTorch 2.7.0 (cu126, or cu128 on CUDA 12.8+), TorchVision 0.22.0 / TorchAudio 2.7.0, Isaac Sim 5.1.0, and IsaacLab 0.54.3 (``afca7b09``). Do not upgrade overlapping pins manually.
+   - **Scale up parallel environments**: the default runs one environment; once verified, scale up with Hydra overrides such as ``env.eval.total_num_envs=4``, ``cluster.component_placement.env=0-3``, and ``cluster.component_placement.rollout=0-3``.
+   - **ModelScope mirror download**: install ``modelscope>=1.40.0`` with ``uv pip install "modelscope>=1.40.0"`` and run ``modelscope download`` with the same ``--repo-type dataset``, ``--local-dir``, and ``--include`` flags.
+   - **Verify package and CUDA imports** (without starting Isaac Sim):
 
-           .. code-block:: bash
+     .. code-block:: bash
 
-              python - <<'PY'
-              import torch
-              from robodojo_runtime import assets_root, source_root
-              from robodojo_runtime.bridge import VectorEnv
+        python - <<'PY'
+        import torch
+        from robodojo_runtime import assets_root, source_root
+        from robodojo_runtime.bridge import VectorEnv
 
-              print("torch:", torch.__version__)
-              print("cuda:", torch.cuda.is_available())
-              print("source:", source_root())
-              print("assets:", assets_root())
-              PY
+        print("torch:", torch.__version__)
+        print("cuda:", torch.cuda.is_available())
+        print("source:", source_root())
+        print("assets:", assets_root())
+        PY
+
+   - **Single-environment smoke test**: verify Isaac Sim, cameras, and assets directly before launching multi-environment rollout (same snippet as step 3 of the **Environment Only** tab).
 
 Visualization and Results
 -------------------------
 
 Launch TensorBoard with ``tensorboard --logdir ./logs --port 6006`` and watch ``eval/success_once``. Pass ``env.eval.video_cfg.save_video=True`` to save evaluation videos; see :doc:`Training metrics <../../reference/metrics>` for metric definitions.
 
-Common Problems
----------------
+.. dropdown:: Troubleshooting
 
-**``robodojo_runtime`` is not found**
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
 
-Activate the virtual environment created by the installer. If you used
-``--venv``, activate that environment.
-
-**Dependency resolution fails**
-
-Do not install Isaac Sim, IsaacLab, or the RoboDojo runtime manually.
-Remove the failed environment and rerun the installation command so the pinned
-versions and compatibility overrides are applied together.
-
-**``pip check`` reports Isaac Sim/IsaacLab version differences**
-
-These packages use overlapping exact version pins. The installer selects the
-runtime-tested combination. Do not manually upgrade ``starlette``,
-``uvicorn``, or ``typing-extensions``.
-
-**``torch.cuda.is_available()`` returns ``False``**
-
-Run ``nvidia-smi`` to check the driver and GPU visibility. RoboDojo does not
-support CPU-only, macOS, or AMD ROCm execution.
-
-**``Assets``, ``cam_head``, or task layouts are missing**
-
-Verify that ``ROBODOJO_ASSETS_ROOT`` points to the parent of ``Assets/`` and
-that all four required subdirectories exist. Remove incomplete downloads and
-download them again.
-
-**GPU memory is insufficient**
-
-Set the environment count to one and stop other evaluation or inference
-processes. RoboDojo starts a separate Isaac Sim process per parallel
-environment, so multi-environment settings depend on the measured per-scene
-memory use.
-
-**GPU memory remains allocated after exit**
-
-Call ``env.close()`` from a ``try/finally`` block. The RoboDojo adapter supports
-a complete close and recreate, not suspend and resume.
+      * - Symptom
+        - Fix
+      * - ``robodojo_runtime`` is not found
+        - Activate the virtual environment created by the installer (``source .venv/bin/activate``, or the custom ``--venv`` path).
+      * - Dependency resolution fails
+        - Do not install Isaac Sim, IsaacLab, or the RoboDojo runtime manually. Remove the failed environment and rerun ``install.sh`` so the pinned versions and compatibility overrides apply together.
+      * - ``pip check`` reports Isaac Sim/IsaacLab version differences
+        - These packages use overlapping exact pins. Keep the installer's runtime-tested combination and do not manually upgrade ``starlette``, ``uvicorn``, or ``typing-extensions``.
+      * - ``torch.cuda.is_available()`` returns ``False``
+        - Run ``nvidia-smi`` to check the driver and GPU visibility. RoboDojo does not support CPU-only, macOS, or AMD ROCm execution.
+      * - ``Assets``, ``cam_head``, or task layouts are missing
+        - Verify that ``ROBODOJO_ASSETS_ROOT`` points to the parent of ``Assets/`` and that all four required subdirectories exist. Remove incomplete downloads and download them again.
+      * - GPU memory is insufficient
+        - Set the environment count to one and stop other evaluation or inference processes. RoboDojo starts a separate Isaac Sim process per parallel environment, so multi-environment counts depend on measured per-scene memory use.
+      * - GPU memory remains allocated after exit
+        - Call ``env.close()`` from a ``try/finally`` block. The RoboDojo adapter supports a complete close and recreate, not suspend and resume.

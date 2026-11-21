@@ -101,129 +101,126 @@ Setup and Run
 
 .. include:: _setup_common.rst
 
+Select a LIBERO suite tab for NVIDIA CUDA, or switch to **Huawei Ascend CANN** for Ascend NPU.
+
 .. tab-set::
 
-   .. tab-item:: NVIDIA CUDA
-      :sync: cuda
+   .. tab-item:: LIBERO-Spatial
+      :sync: spatial
 
-      .. tab-set::
+      **1. Install**
 
-         .. tab-item:: LIBERO-Spatial
-            :sync: spatial
+      .. code-block:: bash
 
-            **1. Install**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env wan
+         source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env wan
-               source .venv/bin/activate
+      Download the OpenVLA-OFT SFT checkpoint together with the Wan world-model weights and initialization dataset:
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the OpenVLA-OFT SFT checkpoint together with the Wan world-model weights and initialization dataset:
+         hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
 
-            .. code-block:: bash
+      **3. Launch**
 
-               hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir ./Openvla-oft-SFT-libero-spatial-traj1
-               hf download RLinf/RLinf-Wan-LIBERO-Spatial --local-dir ./RLinf-Wan-LIBERO-Spatial
+      Set the two downloaded checkpoint paths in ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
 
-            **3. Launch**
+      .. code-block:: yaml
 
-            Set the two downloaded checkpoint paths in ``examples/embodiment/config/wan_libero_spatial_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-spatial-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Spatial
 
-            .. code-block:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-               actor:
-                 model:
-                   model_path: ./Openvla-oft-SFT-libero-spatial-traj1
-               env:
-                 train:
-                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Spatial
+      .. code-block:: bash
 
-            Launch training with ``run_embodiment.sh``:
+         bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
 
-            .. code-block:: bash
+   .. tab-item:: LIBERO-Object
+      :sync: object
 
-               bash examples/embodiment/run_embodiment.sh wan_libero_spatial_grpo_openvlaoft
+      **1. Install**
 
-         .. tab-item:: LIBERO-Object
-            :sync: object
+      .. code-block:: bash
 
-            **1. Install**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env wan
+         source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env wan
-               source .venv/bin/activate
+      Download the OpenVLA-OFT SFT checkpoint together with the Wan world-model weights and initialization dataset:
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the OpenVLA-OFT SFT checkpoint together with the Wan world-model weights and initialization dataset:
+         hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Object --local-dir ./RLinf-Wan-LIBERO-Object
 
-            .. code-block:: bash
+      **3. Launch**
 
-               hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir ./Openvla-oft-SFT-libero-object-traj1
-               hf download RLinf/RLinf-Wan-LIBERO-Object --local-dir ./RLinf-Wan-LIBERO-Object
+      Set the two downloaded checkpoint paths in ``examples/embodiment/config/wan_libero_object_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
 
-            **3. Launch**
+      .. code-block:: yaml
 
-            Set the two downloaded checkpoint paths in ``examples/embodiment/config/wan_libero_object_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-object-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Object
 
-            .. code-block:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-               actor:
-                 model:
-                   model_path: ./Openvla-oft-SFT-libero-object-traj1
-               env:
-                 train:
-                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Object
+      .. code-block:: bash
 
-            Launch training with ``run_embodiment.sh``:
+         bash examples/embodiment/run_embodiment.sh wan_libero_object_grpo_openvlaoft
 
-            .. code-block:: bash
+   .. tab-item:: LIBERO-Goal
+      :sync: goal
 
-               bash examples/embodiment/run_embodiment.sh wan_libero_object_grpo_openvlaoft
+      **1. Install**
 
-         .. tab-item:: LIBERO-Goal
-            :sync: goal
+      .. code-block:: bash
 
-            **1. Install**
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env wan
+         source .venv/bin/activate
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env wan
-               source .venv/bin/activate
+      Download the OpenVLA-OFT SFT checkpoint together with the Wan world-model weights and initialization dataset:
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the OpenVLA-OFT SFT checkpoint together with the Wan world-model weights and initialization dataset:
+         hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
+         hf download RLinf/RLinf-Wan-LIBERO-Goal --local-dir ./RLinf-Wan-LIBERO-Goal
 
-            .. code-block:: bash
+      **3. Launch**
 
-               hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir ./Openvla-oft-SFT-libero-goal-traj1
-               hf download RLinf/RLinf-Wan-LIBERO-Goal --local-dir ./RLinf-Wan-LIBERO-Goal
+      Set the two downloaded checkpoint paths in ``examples/embodiment/config/wan_libero_goal_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
 
-            **3. Launch**
+      .. code-block:: yaml
 
-            Set the two downloaded checkpoint paths in ``examples/embodiment/config/wan_libero_goal_grpo_openvlaoft.yaml`` (rollout inherits ``actor.model.model_path`` automatically):
+         actor:
+           model:
+             model_path: ./Openvla-oft-SFT-libero-goal-traj1
+         env:
+           train:
+             wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Goal
 
-            .. code-block:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-               actor:
-                 model:
-                   model_path: ./Openvla-oft-SFT-libero-goal-traj1
-               env:
-                 train:
-                   wan_wm_hf_ckpt_path: ./RLinf-Wan-LIBERO-Goal
+      .. code-block:: bash
 
-            Launch training with ``run_embodiment.sh``:
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh wan_libero_goal_grpo_openvlaoft
+         bash examples/embodiment/run_embodiment.sh wan_libero_goal_grpo_openvlaoft
 
    .. tab-item:: Huawei Ascend CANN
       :sync: ascend

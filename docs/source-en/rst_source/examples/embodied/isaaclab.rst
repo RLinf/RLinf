@@ -202,9 +202,6 @@ Monitor ``env/success_once`` with ``tensorboard --logdir ./logs --port 6006``, e
    * - OpenPI π₀.₅ RL-tuned model (SFT + RL)
      - 0.953
 
-Acknowledgements
-----------------
+.. note::
 
-Credit to `Minghui Xu <https://github.com/smallcracker>`__ and
-`Nan Yang <https://github.com/AquaSage18>`__ for the GR00T N1.5 example, and
-`Yifan Wu <https://github.com/YifWRobotics>`__ for the OpenPI π₀.₅ example.
+   **Acknowledgements:** Credit to `Minghui Xu <https://github.com/smallcracker>`__ and `Nan Yang <https://github.com/AquaSage18>`__ for the GR00T N1.5 example, and `Yifan Wu <https://github.com/YifWRobotics>`__ for the OpenPI π₀.₅ example.

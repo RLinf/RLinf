@@ -112,194 +112,191 @@ Setup and Run
 
 .. include:: _setup_common.rst
 
+Select a model tab for NVIDIA CUDA, or switch to **AMD ROCm** for AMD GPUs.
+
 .. tab-set::
 
-   .. tab-item:: NVIDIA CUDA
-      :sync: cuda
+   .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-      .. tab-set::
+      **1. Install**
 
-         .. tab-item:: OpenVLA-OFT
-            :sync: openvla-oft
+      Install RLinf, clone the ``RLinf_support`` RoboTwin branch alongside it, and download RoboTwin assets:
 
-            **1. Install**
+      .. code-block:: bash
 
-            Install RLinf, clone the ``RLinf_support`` RoboTwin branch alongside it, and download RoboTwin assets:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env robotwin
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
+         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOT_PLATFORM=ALOHA
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openvla-oft --env robotwin
-               source .venv/bin/activate
-               git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-               (cd ../RoboTwin && bash script/_download_assets.sh)
-               export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
-               export ROBOT_PLATFORM=ALOHA
+      Download the OpenVLA-OFT SFT checkpoint (example: ``place_empty_cup``):
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the OpenVLA-OFT SFT checkpoint (example: ``place_empty_cup``):
+         hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-            .. code-block:: bash
+      **3. Launch**
 
-               hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
+      Available configs under ``examples/embodiment/config/``:
 
-            **3. Launch**
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 48 28
 
-            Available configs under ``examples/embodiment/config/``:
+         * - Recipe
+           - Config
+           - Command suffix
+         * - OpenVLA-OFT + GRPO
+           - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+           - ``robotwin_place_empty_cup_grpo_openvlaoft``
+         * - OpenVLA-OFT + PPO
+           - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
+           - ``robotwin_place_empty_cup_ppo_openvlaoft``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 24 48 28
+      Set ``actor.model.model_path`` (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory (the parent folder of ``assets/``):
 
-               * - Recipe
-                 - Config
-                 - Command suffix
-               * - OpenVLA-OFT + GRPO
-                 - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
-                 - ``robotwin_place_empty_cup_grpo_openvlaoft``
-               * - OpenVLA-OFT + PPO
-                 - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
-                 - ``robotwin_place_empty_cup_ppo_openvlaoft``
+      .. code-block:: yaml
 
-            Set ``actor.model.model_path`` (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory (the parent folder of ``assets/``):
+         actor:
+           model:
+             model_path: ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
+         env:
+           train:
+             assets_path: ../RoboTwin
+           eval:
+             assets_path: ../RoboTwin
 
-            .. code-block:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-               actor:
-                 model:
-                   model_path: ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-               env:
-                 train:
-                   assets_path: ../RoboTwin
-                 eval:
-                   assets_path: ../RoboTwin
+      .. code-block:: bash
 
-            Launch training with ``run_embodiment.sh``:
+         bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
 
-            .. code-block:: bash
+   .. tab-item:: OpenPI
+      :sync: openpi
 
-               bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
+      **1. Install**
 
-         .. tab-item:: OpenPI
-            :sync: openpi
+      Install RLinf, clone the ``RLinf_support`` RoboTwin branch alongside it, and download RoboTwin assets:
 
-            **1. Install**
+      .. code-block:: bash
 
-            Install RLinf, clone the ``RLinf_support`` RoboTwin branch alongside it, and download RoboTwin assets:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robotwin
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
+         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOT_PLATFORM=ALOHA
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model openpi --env robotwin
-               source .venv/bin/activate
-               git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-               (cd ../RoboTwin && bash script/_download_assets.sh)
-               export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
-               export ROBOT_PLATFORM=ALOHA
+      Download the OpenPI π₀.₅ SFT checkpoint for ``adjust_bottle`` (for π₀, use ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle`` instead):
 
-            **2. Download**
+      .. code-block:: bash
 
-            Download the OpenPI π₀.₅ SFT checkpoint for ``adjust_bottle`` (for π₀, use ``RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle`` instead):
+         hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-            .. code-block:: bash
+      **3. Launch**
 
-               hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
+      Available configs under ``examples/embodiment/config/``:
 
-            **3. Launch**
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 48 28
 
-            Available configs under ``examples/embodiment/config/``:
+         * - Recipe
+           - Config
+           - Command suffix
+         * - π₀ + PPO
+           - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
+           - ``robotwin_adjust_bottle_ppo_openpi``
+         * - π₀.₅ + PPO
+           - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
+           - ``robotwin_adjust_bottle_ppo_openpi_pi05``
+         * - OpenPI + DAgger
+           - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
+           - ``robotwin_adjust_bottle_dagger_openpi``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 24 48 28
+      Set ``actor.model.model_path`` (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory:
 
-               * - Recipe
-                 - Config
-                 - Command suffix
-               * - π₀ + PPO
-                 - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
-                 - ``robotwin_adjust_bottle_ppo_openpi``
-               * - π₀.₅ + PPO
-                 - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
-                 - ``robotwin_adjust_bottle_ppo_openpi_pi05``
-               * - OpenPI + DAgger
-                 - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
-                 - ``robotwin_adjust_bottle_dagger_openpi``
+      .. code-block:: yaml
 
-            Set ``actor.model.model_path`` (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory:
+         actor:
+           model:
+             model_path: ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
+         env:
+           train:
+             assets_path: ../RoboTwin
+           eval:
+             assets_path: ../RoboTwin
 
-            .. code-block:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-               actor:
-                 model:
-                   model_path: ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
-               env:
-                 train:
-                   assets_path: ../RoboTwin
-                 eval:
-                   assets_path: ../RoboTwin
+      .. code-block:: bash
 
-            Launch training with ``run_embodiment.sh``:
+         bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
 
-            .. code-block:: bash
+   .. tab-item:: LingBotVLA
+      :sync: lingbotvla
 
-               bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
+      **1. Install**
 
-         .. tab-item:: LingBotVLA
-            :sync: lingbotvla
+      Install RLinf, clone the ``RLinf_support`` RoboTwin branch alongside it, and download RoboTwin assets:
 
-            **1. Install**
+      .. code-block:: bash
 
-            Install RLinf, clone the ``RLinf_support`` RoboTwin branch alongside it, and download RoboTwin assets:
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin
+         source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
+         (cd ../RoboTwin && bash script/_download_assets.sh)
+         export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
+         export ROBOT_PLATFORM=ALOHA
 
-            .. code-block:: bash
+      **2. Download**
 
-               git clone https://github.com/RLinf/RLinf.git && cd RLinf
-               bash requirements/install.sh embodied --model lingbotvla --env robotwin
-               source .venv/bin/activate
-               git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-               (cd ../RoboTwin && bash script/_download_assets.sh)
-               export PYTHONPATH="$(cd ../RoboTwin && pwd):$PYTHONPATH"
-               export ROBOT_PLATFORM=ALOHA
+      Prepare your Lingbot-VLA SFT checkpoint locally (for example under ``./LingBotVLA-RoboTwin-SFT``).
 
-            **2. Download**
+      **3. Launch**
 
-            Prepare your Lingbot-VLA SFT checkpoint locally (for example under ``./LingBotVLA-RoboTwin-SFT``).
+      Available config under ``examples/embodiment/config/``:
 
-            **3. Launch**
+      .. list-table::
+         :header-rows: 1
+         :widths: 24 48 28
 
-            Available config under ``examples/embodiment/config/``:
+         * - Recipe
+           - Config
+           - Command suffix
+         * - Lingbot-VLA + GRPO
+           - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+           - ``robotwin_click_bell_grpo_lingbotvla``
 
-            .. list-table::
-               :header-rows: 1
-               :widths: 24 48 28
+      Set ``actor.model.model_path`` to your Lingbot-VLA SFT checkpoint (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory:
 
-               * - Recipe
-                 - Config
-                 - Command suffix
-               * - Lingbot-VLA + GRPO
-                 - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
-                 - ``robotwin_click_bell_grpo_lingbotvla``
+      .. code-block:: yaml
 
-            Set ``actor.model.model_path`` to your Lingbot-VLA SFT checkpoint (rollout inherits it automatically) and point ``env.train.assets_path`` / ``env.eval.assets_path`` to the ``RoboTwin`` directory:
+         actor:
+           model:
+             model_path: ./LingBotVLA-RoboTwin-SFT
+         env:
+           train:
+             assets_path: ../RoboTwin
+           eval:
+             assets_path: ../RoboTwin
 
-            .. code-block:: yaml
+      Launch training with ``run_embodiment.sh``:
 
-               actor:
-                 model:
-                   model_path: ./LingBotVLA-RoboTwin-SFT
-               env:
-                 train:
-                   assets_path: ../RoboTwin
-                 eval:
-                   assets_path: ../RoboTwin
+      .. code-block:: bash
 
-            Launch training with ``run_embodiment.sh``:
-
-            .. code-block:: bash
-
-               bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
+         bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
 
    .. tab-item:: AMD ROCm
       :sync: rocm

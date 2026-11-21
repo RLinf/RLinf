@@ -7,17 +7,14 @@
 
    一个 DAgger 训练循环。
 
-**DAgger** （Dataset Aggregation）是一种模仿学习算法：它让学生策略与环境交互，
-再让专家策略对访问到的状态进行重标注，并持续聚合这些带专家标签的轨迹用于后续
-训练。使用本页在模拟器中运行具身 DAgger 工作流。目前 DAgger 支持
-MLP 和 Pi0 模型，以及 **同步** 和 **异步** 两种训练流程。
+**DAgger** （Dataset Aggregation）是一种模仿学习算法：它让学生策略与环境交互，再让专家策略对访问到的状态重新标注，并持续聚合这些带专家标签的轨迹用于后续训练。本页介绍 RLinf 中基于模拟器的具身 DAgger 工作流，支持 MLP 和 Pi0 模型，以及 **同步** 和 **异步** 两种训练流程。
 
 真实世界中 Franka 的 HG-DAgger 全流程请参考 :doc:`hg-dagger`。
 
 概览
 ----------------------------------------
 
-DAgger 微调具身策略：学生策略与环境交互，专家对访问到的状态进行重标注，聚合后的专家数据再训练学生策略。
+使用 DAgger 微调具身策略：学生策略与环境交互，专家对访问到的状态重新标注，聚合后的专家数据再训练学生策略。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -93,44 +90,6 @@ DAgger 工作原理
    - ``init_beta`` 控制初始的专家执行概率。
    - ``beta_schedule`` 和 ``beta_decay`` 控制从专家逐步切换到学生的速度。
    - ``beta_min`` 为可选项，用于设置 ``beta`` 的下界。
-
-在线 LeRobot DAgger
-----------------------------------------
-
-上面三份经典配置将 expert 标注轨迹存入内存 **replay buffer**。
-``libero_spatial_dagger_openpi_lerobot.yaml`` 提供 **在线 LeRobot** 路径：Actor
-channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 actor，actor 通过
-:class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset` 滑动窗口训练。
-
-**经典 replay buffer vs 在线 LeRobot**
-
-两种方法优化相同的 DAgger 目标，区别仅在于数据的存储与采样方式。
-
-- **经典 replay buffer** — 将完整轨迹存入内存 buffer，通过轨迹级滑动窗口采样。
-- **在线 LeRobot** — 以 LeRobot 格式收集完整 episode，通过帧级 rolling window
-  采样，原生支持 Pi0 action-chunk 监督，并可选择仅保留成功 episode。
-
-在线 LeRobot 路径标签更干净、更强调近期数据，并与 SFT 及真机数据管线对齐。
-在训练 Pi0 或其他 chunk-based 模型、需要 success-only 过滤，或希望将在线 DAgger
-与离线 SFT / 真机数据衔接时，推荐使用该路径。
-
-**在线 LeRobot 流程**
-
-1. **混合 rollout 与专家重标注** — 与经典 DAgger 相同的 ``beta`` 调度与专家重标注。
-2. **Episode 收集** — 当 ``algorithm.dagger.online_lerobot.enabled`` 为 ``True`` 时，
-   :class:`~rlinf.data.schema.embodied_trajectory.TrajectoryCollector` 累积各 env
-   的帧并导出完整 episode。
-3. **Actor 接收** — 完成的 episode 经 ``recv_lerobot_rollout_trajectories`` 写入 rolling dataset。
-4. **滑动窗口训练** — actor 从 ``RollingLeRobotDataset`` 采样（可选 decoded cache），
-   优化 ``embodied_dagger`` 损失。
-
-**离线 vs 在线采集**
-
-- **离线落盘** — ``env.train.data_collection.enabled`` 将 LeRobot shard 写入磁盘，
-  供后续 SFT 或 HG-DAgger 使用。见 :doc:`../../guides/data_collection` 与 :doc:`hg-dagger`。
-- **在线内存采集** — ``algorithm.dagger.online_lerobot.enabled`` 在 DAgger 训练过程中
-  直接将 episode 流式传给 actor。启用 online LeRobot 时，**不要** 在同一 train env 上
-  同时开启 ``env.train.data_collection``。
 
 一键上手
 ----------------------------------------
@@ -237,6 +196,31 @@ channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 ac
          # 同步模式（异步模式换为 run_async.sh）
          bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
 
+.. dropdown:: 在线 LeRobot DAgger
+
+   三份经典配置将专家标注轨迹存入内存 **replay buffer**。``libero_spatial_dagger_openpi_lerobot.yaml`` 提供 **在线 LeRobot** 路径：以 LeRobot 格式收集完整 episode，经内存流式传给 actor，并按帧级滑动窗口训练。
+
+   **经典 replay buffer vs 在线 LeRobot**
+
+   两种路径优化相同的 DAgger 目标，区别仅在于数据的存储与采样方式：
+
+   - **经典 replay buffer** — 将完整轨迹存入内存 buffer，按轨迹级滑动窗口采样。
+   - **在线 LeRobot** — 以 LeRobot 格式收集完整 episode，按帧级 rolling window 采样，原生支持 Pi0 action-chunk 监督，并可选择仅保留成功 episode。
+
+   在线 LeRobot 路径标签更干净、更强调近期数据，并与 SFT 及真机数据管线对齐。训练 Pi0 或其他 chunk-based 模型、需要 success-only 过滤，或希望将在线 DAgger 与离线 SFT / 真机数据衔接时，推荐使用该路径。
+
+   **在线 LeRobot 流程**
+
+   1. **混合 rollout 与专家重标注** — 与经典 DAgger 相同的 ``beta`` 调度与专家重标注。
+   2. **Episode 收集** — ``algorithm.dagger.online_lerobot.enabled`` 设为 ``True`` 后，轨迹收集器累积各环境的帧并导出完整 episode。
+   3. **Actor 接收** — 完成的 episode 流式传给 actor，追加到滚动 LeRobot 数据集中。
+   4. **滑动窗口训练** — actor 从滚动数据集采样（可选开启解码帧缓存），优化 ``embodied_dagger`` 损失。
+
+   **离线 vs 在线采集**
+
+   - **离线落盘** — ``env.train.data_collection.enabled`` 将 LeRobot shard 写入磁盘，供后续 SFT 或 HG-DAgger 使用。见 :doc:`../../guides/data_collection` 与 :doc:`hg-dagger`。
+   - **在线内存采集** — ``algorithm.dagger.online_lerobot.enabled`` 在 DAgger 训练过程中直接将 episode 流式传给 actor。启用 online LeRobot 时，**不要** 在同一 train env 上同时开启 ``env.train.data_collection``。
+
 .. dropdown:: 进阶配置（可选）
 
    仓库自带配置已设置好 beta 调度、replay buffer 大小以及在线 LeRobot 参数，仅在需要调优时再覆写。
@@ -322,8 +306,7 @@ channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 ac
 - ``train/replay_buffer/total_samples``：replay buffer 中可训练样本总数。
 - ``train/replay_buffer/cache_size``：当前缓存的展平轨迹数量。
 
-实验结果
-----------------------------------------
+**3. 实验结果**
 
 .. csv-table::
    :header: "配置", "学生初始成功率", "专家成功率", "训练时间", "学生最终成功率"

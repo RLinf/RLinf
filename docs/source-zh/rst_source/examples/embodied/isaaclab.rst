@@ -200,7 +200,6 @@
    * - OpenPI π₀.₅ RL 微调模型（SFT + RL）
      - 0.953
 
-致谢
-----------------------------------------
+.. note::
 
-感谢 `许明辉 <https://github.com/smallcracker>`__ 和 `杨楠 <https://github.com/AquaSage18>`__ 对 GR00T N1.5 示例的贡献与支持，也感谢 `Yifan Wu <https://github.com/YifWRobotics>`__ 对 OpenPI π₀.₅ 示例的贡献与支持。
+   **致谢：** 感谢 `许明辉 <https://github.com/smallcracker>`__ 和 `杨楠 <https://github.com/AquaSage18>`__ 对 GR00T N1.5 示例的贡献与支持，也感谢 `Yifan Wu <https://github.com/YifWRobotics>`__ 对 OpenPI π₀.₅ 示例的贡献与支持。

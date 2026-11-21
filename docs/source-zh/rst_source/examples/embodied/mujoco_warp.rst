@@ -9,7 +9,7 @@
 
 本页介绍如何用 PPO 在五个经典 MuJoCo 运动控制任务上训练 MLP policy，并说明这些任务如何定义、维度、安装方法、启动命令和验证结果。`MuJoCo Warp (MJWarp) <https://github.com/google-deepmind/mujoco_warp>`__ 在 NVIDIA GPU 上把一个 RLinf env worker 里的全部 world 一起推进。每个物理子步是一次批量调用，一个控制步会按该任务的 frame skip 重复这次调用：half_cheetah、ant、humanoid 为 5，hopper、walker2d 为 4。
 
-概述
+概览
 ----
 
 选择任务后，即可通过 RLinf 的 actor、rollout 和 env worker 训练低维 policy。
@@ -74,7 +74,7 @@
      - 17
      - 躯干高度异常或状态包含非有限值。
 
-上表五个名字是本配方自带的任务。一个 env worker 里的全部 world 共用一份批量物理状态 ``MjWarpWorld``\ ：它可以加载 MJCF，也可以加载已经编译好的 ``MjModel``\ ，每个物理子步把所有 world 一起推进。奖励、终止和初始状态来自任务 wrapper ``TaskWrapper``\ 。内置任务共用同一个运动控制 wrapper ``LocomotionTask``\ ，``task_name`` 选择其中一份 ``TaskSpec``\ 。奖励形式相同的新任务，是再注册一份 ``TaskSpec`` 及其 MJCF。观测或奖励不同时，为该 ``task_name`` 实现新的 ``TaskWrapper``\ ，并由环境构造它。
+上表五个名字是本配方自带的运动控制任务。一个 env worker 里的全部 world 共用一份批量物理状态，可加载 MJCF 或已编译的 MuJoCo 模型，在每个物理子步把所有 world 一起推进。奖励、终止条件和初始状态由任务封装层提供；奖励形式相同的新任务只需注册新的任务配置与 MJCF，观测或奖励不同时则按 ``task_name`` 定义对应的任务封装。
 
 观测与动作
 ~~~~~~~~~~
@@ -106,8 +106,8 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
    MJWarp 没有 PGS solver。加载时，solver 已经是 PGS 的模型会改成 CG。随包资源里只有 humanoid 写了 ``solver="PGS"``\ ，因此它的接触动力学与 Gymnasium 的 MuJoCo CPU 后端不同。
 
-安装
-----
+一键上手
+--------
 
 .. include:: _setup_common.rst
 
@@ -115,31 +115,45 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
    .. tab-item:: MuJoCo Warp
 
+      **1. 安装环境**
+
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env mujoco_warp && source .venv/bin/activate
 
-安装脚本固定 ``mujoco-warp==3.17.0`` 和 ``warp-lang==1.16.0``。该组合已经过 CUDA 12 驱动验证，也避免无驱动的 Docker 构建解析到仅支持 CUDA 13 的 Warp wheel。
+      安装脚本固定 ``mujoco-warp==3.17.0`` 和 ``warp-lang==1.16.0``。该组合已经过 CUDA 12 驱动验证，也避免无驱动的 Docker 构建解析到仅支持 CUDA 13 的 Warp wheel。
 
-运行
-----
+      **2. 启动训练**
 
-在仓库根目录启动默认的 ``half_cheetah`` 配方（使用 ``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` 和 ``examples/embodiment/config/env/mujoco_warp.yaml``）：
+      无需预训练 checkpoint，MLP policy 从头训练。
 
-.. code:: bash
+      .. list-table::
+         :header-rows: 1
+         :widths: 26 48 26
 
-   bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - MLP + PPO
+           - ``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml``\ （环境：``env/mujoco_warp.yaml``）
+           - ``mujoco_warp_ppo_mlp``
 
-训练其他任务时，同时覆盖两个 env 的任务名和 actor 维度：
+      在仓库根目录启动默认的 ``half_cheetah`` 配方：
 
-.. code:: bash
+      .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
-       env.train.task_name=humanoid env.eval.task_name=humanoid \
-       actor.model.obs_dim=45 actor.model.action_dim=17
+         bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp
 
-其他任务的维度见上表。可根据 GPU 显存调整 ``env.train.total_num_envs``、``actor.micro_batch_size`` 和 ``actor.global_batch_size``。
+      训练其他任务时，同时覆盖两个 env 的任务名和 actor 维度（其他任务的维度见上方任务表）：
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp \
+             env.train.task_name=humanoid env.eval.task_name=humanoid \
+             actor.model.obs_dim=45 actor.model.action_dim=17
+
+      可根据 GPU 显存调整 ``env.train.total_num_envs``、``actor.micro_batch_size`` 和 ``actor.global_batch_size``。
 
 可视化与结果
 ------------

@@ -134,8 +134,6 @@ GSEnv（也称 ManiSkill-GS）将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
    GSEnv 训练曲线示例。
 
-参考
-----------------------------------------
+.. note::
 
-- `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__
-- `pi_RL paper <https://arxiv.org/pdf/2510.25889>`__
+   **参考：** `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__ · `pi_RL 论文 <https://arxiv.org/pdf/2510.25889>`__。

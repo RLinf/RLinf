@@ -72,42 +72,29 @@ Observation and Action
    * - Prompt
      - Not used; this is a low-dimensional state-control recipe.
 
-Installation
-------------
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
-
-Install EmbodiChain 0.3.0 and its dependencies. The installer gets
-``dexsim-engine==0.5.0`` from ``http://pyp.open3dv.site:2345/simple/dexsim-engine/``
-and resolves the remaining packages through your configured Python package index.
-Your machine must be able to reach the vendor server on port 2345.
 
 .. tab-set::
 
    .. tab-item:: EmbodiChain
+
+      **1. Install**
+
+      Install EmbodiChain 0.3.0 and its dependencies. The installer gets ``dexsim-engine==0.5.0`` from ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` and resolves the remaining packages through your configured Python package index (your machine must be able to reach port 2345).
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
 
-.. warning::
+      Use the installed package configs by default. To point at a local EmbodiChain checkout, set ``export EMBODICHAIN_PATH=/path/to/EmbodiChain``.
 
-   EmbodiChain's ``dexsim`` dependency needs ``libpython3.xx.so``. If you hit
-   ``libpython3.11.so`` runtime errors with UV's Python layout, use a Conda
-   environment and rerun ``bash requirements/install.sh embodied --env embodichain --no-root``.
+      **2. Download (Optional)**
 
-Use the installed package configs by default. To point at a local EmbodiChain
-checkout, set ``export EMBODICHAIN_PATH=/path/to/EmbodiChain``.
-
-Download the Model
-------------------
-
-No checkpoint is required; the MLP policy starts from scratch. If a run fails because task resources are missing, download them in the same Python environment:
-
-.. tab-set::
-
-   .. tab-item:: Task Resources (Optional)
+      No checkpoint is required; the MLP policy starts from scratch. If a run fails because task resources are missing, download them in the same Python environment:
 
       .. code-block:: bash
 
@@ -115,25 +102,28 @@ No checkpoint is required; the MLP policy starts from scratch. If a run fails be
          python -m embodichain.data download --name CartPole
          python -m embodichain.data download --name SimResources
 
-Run It
-------
+      **3. Launch**
 
-Launch the CartPole recipe:
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
+         * - Recipe
+           - Config
+           - Command suffix
+         * - MLP + PPO
+           - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
+           - ``embodichain_ppo_cart_pole``
 
-   * - Recipe
-     - Config
-     - Command suffix
-   * - MLP + PPO
-     - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
-     - ``embodichain_ppo_cart_pole``
+      .. code-block:: bash
 
-.. code:: bash
+         bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
+.. warning::
+
+   EmbodiChain's ``dexsim`` dependency needs ``libpython3.xx.so``. If you hit
+   ``libpython3.11.so`` runtime errors with UV's Python layout, use a Conda
+   environment and rerun ``bash requirements/install.sh embodied --env embodichain --no-root``.
 
 .. note::
 
@@ -146,9 +136,8 @@ Visualization and Results
 
 Monitor rollout rewards with ``tensorboard --logdir ./logs --port 6006`` (the default config logs to W&B; pass ``runner.logger.logger_backends='["tensorboard"]'`` to use TensorBoard), enable rollout video recording with ``env.eval.video_cfg.save_video=True``, and see :doc:`Training metrics <../../reference/metrics>` for all logged metrics and logger backends.
 
-Evaluation and CI
------------------
+.. dropdown:: Evaluation and CI
 
-EmbodiChain CartPole is also covered by embodied e2e configs under
-``tests/e2e_tests/embodied/``. Set ``EMBODICHAIN_PATH`` only when you need a
-non-default checkout.
+   EmbodiChain CartPole is also covered by embodied e2e configs under
+   ``tests/e2e_tests/embodied/``. Set ``EMBODICHAIN_PATH`` only when you need a
+   non-default checkout.

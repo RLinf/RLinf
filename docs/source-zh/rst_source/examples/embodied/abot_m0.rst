@@ -269,26 +269,25 @@ ABot-M0 作为 VLA 策略接入 RLinf：适配层冻结预训练感知模块，�
 
          - **Hydra 配置参考**：完整字段说明见 :doc:`训练配置 <../../reference/configuration>`。
 
-独立评测
-----------------------------------------
+.. dropdown:: 独立评测
 
-训练前可通过统一的 Evaluation 流程验证 ABot-M0 checkpoint。先阅读 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`，并在配置中将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
+   训练前可通过统一的 Evaluation 流程验证 ABot-M0 checkpoint。先阅读 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`，并在配置中将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 36 36
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 36 36
 
-   * - 套件
-     - 配置来源
-     - 需要修改
-   * - LIBERO-10
-     - 通过 Evaluation 配置回退使用 ``libero_10_ppo_abot_m0``
-     - 设置 ``LIBERO_TYPE=standard``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
-   * - LIBERO-10+
-     - 通过 Evaluation 配置回退使用 ``libero_10_plus_ppo_abot_m0``
-     - 设置 ``LIBERO_TYPE=plus``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
+      * - 套件
+        - 配置来源
+        - 需要修改
+      * - LIBERO-10
+        - 通过 Evaluation 配置回退使用 ``libero_10_ppo_abot_m0``
+        - 设置 ``LIBERO_TYPE=standard``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
+      * - LIBERO-10+
+        - 通过 Evaluation 配置回退使用 ``libero_10_plus_ppo_abot_m0``
+        - 设置 ``LIBERO_TYPE=plus``，并将 ``actor.model.model_path`` 指向 ABot-M0 checkpoint。
 
-CLI 用法、Hydra 覆盖、日志和视频输出见 :doc:`Evaluation CLI 参考 <../../evaluations/reference/cli>` 与 :doc:`Evaluation 结果参考 <../../evaluations/reference/results>`。
+   CLI 用法、Hydra 覆盖、日志和视频输出见 :doc:`Evaluation CLI 参考 <../../evaluations/reference/cli>` 与 :doc:`Evaluation 结果参考 <../../evaluations/reference/results>`。
 
 可视化与结果
 ----------------------------------------

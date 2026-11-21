@@ -68,30 +68,6 @@ RLinf 提供 ``put_bottles_into_dustbin`` 的环境配置，用作接入和验�
    * - 提示词
      - RoboDojo 根据当前场景生成的自然语言指令，存放在 ``task_descriptions``。
 
-版本锁定
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-RLinf 使用 ``requirements/install.sh`` 和 ``requirements/embodied/envs/robodojo-override.txt`` 统一锁定 RoboDojo 的模拟器、PyTorch 和兼容性依赖。当前组合如下：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 34 66
-
-   * - 组件
-     - 固定版本
-   * - Python
-     - 3.11
-   * - RoboDojo runtime
-     - 0.3.0 · 提交 ``6d76a0c``
-   * - PyTorch
-     - 2.7.0 · 按驱动选择 wheel（默认 cu126，CUDA 12.8+ 用 cu128）
-   * - TorchVision / TorchAudio
-     - 0.22.0 / 2.7.0 · 与 PyTorch 使用同一 wheel 索引
-   * - Isaac Sim
-     - 5.1.0
-   * - IsaacLab
-     - 0.54.3 · 提交 ``afca7b09``
-
 一键上手
 ----------------------------------------
 
@@ -102,6 +78,7 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
 .. tab-set::
 
    .. tab-item:: OpenPI 评测
+      :sync: openpi
 
       **1. 安装环境**
 
@@ -148,54 +125,8 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
 
       日志写入 ``logs/<时间戳>-<配置名>/``，结果保存在 ``runner.logger.log_path``。
 
-      .. dropdown:: 进阶配置（可选）
-
-         - **扩展多环境并行**：默认运行单个环境；稳定后可通过 Hydra 覆盖提高并行度，例如 ``env.eval.total_num_envs=4``、``cluster.component_placement.env=0-3`` 与 ``cluster.component_placement.rollout=0-3``。
-         - **使用 ModelScope 下载**：执行 ``uv pip install "modelscope>=1.40.0"`` 后，使用相同的 ``--repo-type dataset``、``--local-dir`` 与 ``--include`` 参数运行 ``modelscope download``。
-         - **验证依赖与 CUDA**\ （不启动仿真器）：
-
-           .. code-block:: bash
-
-              python - <<'PY'
-              import torch
-              from robodojo_runtime import assets_root, source_root
-              from robodojo_runtime.bridge import VectorEnv
-
-              print("torch:", torch.__version__)
-              print("cuda:", torch.cuda.is_available())
-              print("source:", source_root())
-              print("assets:", assets_root())
-              PY
-
-         - **单环境冒烟测试**：开启多环境前先用单环境验证 Isaac Sim、相机与资产：
-
-           .. code-block:: bash
-
-              python - <<'PY'
-              import numpy as np
-              from robodojo_runtime.bridge import VectorEnv
-
-              env = VectorEnv(
-                  {
-                      "task_name": "put_bottles_into_dustbin",
-                      "env_cfg_type": "arx_x5",
-                      "headless": True,
-                      "cuda_device": 0,
-                      "max_episode_steps": 700,
-                  },
-                  n_envs=1,
-                  env_seeds=[0],
-              )
-              try:
-                  env.reset()
-                  obs = env.get_obs()[0]
-                  print(obs["full_image"].shape, obs["state"].shape)
-                  env.step(np.zeros((1, 1, 14), dtype=np.float32))
-              finally:
-                  env.close()
-              PY
-
    .. tab-item:: 仅安装环境
+      :sync: env-only
 
       **1. 安装环境**
 
@@ -247,56 +178,52 @@ RoboDojo 支持 Linux x86_64 与 NVIDIA CUDA GPU（暂不支持纯 CPU、macOS �
              env.close()
          PY
 
-      .. dropdown:: 进阶配置（可选）
+.. dropdown:: 进阶配置（可选）
 
-         - **使用 ModelScope 下载**：执行 ``uv pip install "modelscope>=1.40.0"`` 后，运行 ``modelscope download RoboDojo-Benchmark/RoboDojo --repo-type dataset --local-dir "$ROBODOJO_ASSETS_ROOT" --include "Assets/**"``。
-         - **验证依赖与 CUDA**\ （不启动仿真器）：
+   - **固定版本与兼容性覆盖**：``requirements/install.sh`` 与 ``requirements/embodied/envs/robodojo-override.txt`` 统一锁定 Python 3.11、RoboDojo runtime 0.3.0（``6d76a0c``）、PyTorch 2.7.0（cu126，CUDA 12.8+ 用 cu128）、TorchVision 0.22.0 / TorchAudio 2.7.0、Isaac Sim 5.1.0 与 IsaacLab 0.54.3（``afca7b09``），不要手工升级存在重叠版本约束的包。
+   - **扩展多环境并行**：默认运行单个环境；稳定后可通过 Hydra 覆盖提高并行度，例如 ``env.eval.total_num_envs=4``、``cluster.component_placement.env=0-3`` 与 ``cluster.component_placement.rollout=0-3``。
+   - **使用 ModelScope 下载**：执行 ``uv pip install "modelscope>=1.40.0"`` 后，使用相同的 ``--repo-type dataset``、``--local-dir`` 与 ``--include`` 参数运行 ``modelscope download``。
+   - **验证依赖与 CUDA**\ （不启动仿真器）：
 
-           .. code-block:: bash
+     .. code-block:: bash
 
-              python - <<'PY'
-              import torch
-              from robodojo_runtime import assets_root, source_root
-              from robodojo_runtime.bridge import VectorEnv
+        python - <<'PY'
+        import torch
+        from robodojo_runtime import assets_root, source_root
+        from robodojo_runtime.bridge import VectorEnv
 
-              print("torch:", torch.__version__)
-              print("cuda:", torch.cuda.is_available())
-              print("source:", source_root())
-              print("assets:", assets_root())
-              PY
+        print("torch:", torch.__version__)
+        print("cuda:", torch.cuda.is_available())
+        print("source:", source_root())
+        print("assets:", assets_root())
+        PY
+
+   - **单环境冒烟测试**：开启多环境前先用单环境验证 Isaac Sim、相机与资产（脚本见 **仅安装环境** 标签页的第 3 步）。
 
 可视化与结果
 ----------------------------------------
 
 执行 ``tensorboard --logdir ./logs --port 6006`` 启动 TensorBoard，关注任务成功率指标 ``eval/success_once``。传入 ``env.eval.video_cfg.save_video=True`` 可保存评估视频，完整指标定义见 :doc:`训练指标 <../../reference/metrics>`。
 
-常见问题
-----------------------------------------
+.. dropdown:: 常见问题
 
-**安装后找不到 ``robodojo_runtime``**
+   .. list-table::
+      :header-rows: 1
+      :widths: 34 66
 
-确认已经执行 ``source .venv/bin/activate``。如果安装时使用了 ``--venv``，激活对应的虚拟环境。
-
-**依赖解析失败**
-
-不要手工安装 Isaac Sim、IsaacLab 或 RoboDojo runtime。删除失败的安装结果，重新执行本文的安装命令，让安装器应用固定版本和兼容性覆盖。
-
-**``pip check`` 报告 Isaac Sim 与 IsaacLab 版本不一致**
-
-这些包使用互相覆盖的精确版本 pin。安装器选择的是已经过运行验证的组合，不要手工升级 ``starlette``、``uvicorn``、``typing-extensions`` 等包。
-
-**``torch.cuda.is_available()`` 为 ``False``**
-
-先运行 ``nvidia-smi`` 检查驱动和 GPU 是否可见。RoboDojo 暂不支持纯 CPU、macOS 或 AMD ROCm。
-
-**找不到 ``Assets``、``cam_head`` 或任务布局**
-
-检查 ``ROBODOJO_ASSETS_ROOT`` 是否指向 ``Assets/`` 的父目录，并确认四个必需子目录都存在。资产下载不完整时，删除未完成的目录后重新下载。
-
-**启动后显存不足**
-
-先把环境数降为 1，并关闭其他评估或推理进程。RoboDojo 会为每个并行环境启动独立的 Isaac Sim 进程，多环境配置需要根据单环境的实际显存占用调整。
-
-**进程结束后显存未释放**
-
-在代码中使用 ``try/finally`` 调用 ``env.close()``。RoboDojo 适配器只支持完整关闭和重建，不支持挂起后恢复。
+      * - 现象
+        - 排查与修复
+      * - 安装后找不到 ``robodojo_runtime``
+        - 确认已经执行 ``source .venv/bin/activate``。如果安装时使用了 ``--venv``，激活对应的虚拟环境。
+      * - 依赖解析失败
+        - 不要手工安装 Isaac Sim、IsaacLab 或 RoboDojo runtime。删除失败的环境后重新执行 ``install.sh``，让安装器应用固定版本和兼容性覆盖。
+      * - ``pip check`` 报告 Isaac Sim 与 IsaacLab 版本不一致
+        - 这些包使用互相覆盖的精确版本 pin。保留安装器选定的运行验证组合，不要手工升级 ``starlette``、``uvicorn`` 或 ``typing-extensions``。
+      * - ``torch.cuda.is_available()`` 为 ``False``
+        - 先运行 ``nvidia-smi`` 检查驱动和 GPU 是否可见。RoboDojo 暂不支持纯 CPU、macOS 或 AMD ROCm。
+      * - 找不到 ``Assets``、``cam_head`` 或任务布局
+        - 检查 ``ROBODOJO_ASSETS_ROOT`` 是否指向 ``Assets/`` 的父目录，并确认四个必需子目录都存在。资产下载不完整时，删除未完成的目录后重新下载。
+      * - 启动后显存不足
+        - 先把环境数降为 1，并关闭其他评估或推理进程。RoboDojo 会为每个并行环境启动独立的 Isaac Sim 进程，多环境配置需要根据单环境的实际显存占用调整。
+      * - 进程结束后显存未释放
+        - 在代码中使用 ``try/finally`` 调用 ``env.close()``。RoboDojo 适配器只支持完整关闭和重建，不支持挂起后恢复。

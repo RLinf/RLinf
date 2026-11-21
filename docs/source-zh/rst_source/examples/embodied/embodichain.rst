@@ -7,9 +7,7 @@
 
    EmbodiChain（图片来源：`EmbodiChain <https://github.com/DexForce/EmbodiChain>`__）。
 
-`EmbodiChain <https://github.com/DexForce/EmbodiChain>`__ 是一个通过 Gym 风格接口暴露
-RL 任务的具身智能实验室框架。你将使用 RLinf 在 EmbodiChain CartPole 任务上，通过
-PPO 训练 MLP actor-critic。
+`EmbodiChain <https://github.com/DexForce/EmbodiChain>`__ 是一个通过 Gym 风格接口暴露 RL 任务的具身智能实验室框架。你将使用 RLinf 在 EmbodiChain CartPole 任务上，通过 PPO 训练 MLP actor-critic。
 
 概览
 ----------------------------------------
@@ -72,36 +70,29 @@ PPO 训练 MLP actor-critic。
    * - 提示词
      - 不使用；这是低维状态控制配方。
 
-安装
+一键上手
 ----------------------------------------
 
 .. include:: _setup_common.rst
 
-安装 EmbodiChain 0.3.0 及其依赖。安装脚本从 ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` 获取 ``dexsim-engine==0.5.0``，其余包通过配置的 Python 包索引解析。运行安装的机器需要能够访问厂商服务器的 2345 端口。
-
 .. tab-set::
 
    .. tab-item:: EmbodiChain
+
+      **1. 安装环境**
+
+      安装 EmbodiChain 0.3.0 及其依赖。安装脚本从 ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` 获取 ``dexsim-engine==0.5.0``，其余包通过配置的 Python 包索引解析（机器需要能够访问厂商服务器的 2345 端口）。
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env embodichain && source .venv/bin/activate
 
-.. warning::
+      默认使用已安装包中的配置；如需指向本地 EmbodiChain 源码目录，可设置 ``export EMBODICHAIN_PATH=/path/to/EmbodiChain``。
 
-   EmbodiChain 的 ``dexsim`` 依赖需要 ``libpython3.xx.so``。如果在 UV Python 布局下遇到 ``libpython3.11.so`` 运行时错误，请使用 Conda 环境并重新运行 ``bash requirements/install.sh embodied --env embodichain --no-root``。
+      **2. 下载任务资源（可选）**
 
-默认使用已安装包中的配置；如需指向本地 EmbodiChain 源码目录，可设置 ``export EMBODICHAIN_PATH=/path/to/EmbodiChain``。
-
-下载模型
-----------------------------------------
-
-不需要检查点，MLP policy 从头开始训练。如果运行时提示缺少任务资源，在同一个 Python 环境中下载：
-
-.. tab-set::
-
-   .. tab-item:: 任务资源（可选）
+      不需要检查点，MLP policy 从头开始训练。如果运行时提示缺少任务资源，在同一个 Python 环境中下载：
 
       .. code-block:: bash
 
@@ -109,38 +100,36 @@ PPO 训练 MLP actor-critic。
          python -m embodichain.data download --name CartPole
          python -m embodichain.data download --name SimResources
 
-运行
-----------------------------------------
+      **3. 启动训练**
 
-启动 CartPole 配方：
+      .. list-table::
+         :header-rows: 1
+         :widths: 28 46 26
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 46 26
+         * - 配方
+           - 配置
+           - 命令后缀
+         * - MLP + PPO
+           - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
+           - ``embodichain_ppo_cart_pole``
 
-   * - 配方
-     - 配置
-     - 命令后缀
-   * - MLP + PPO
-     - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
-     - ``embodichain_ppo_cart_pole``
+      .. code-block:: bash
 
-.. code:: bash
+         bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
+.. warning::
+
+   EmbodiChain 的 ``dexsim`` 依赖需要 ``libpython3.xx.so``。如果在 UV Python 布局下遇到 ``libpython3.11.so`` 运行时错误，请使用 Conda 环境并重新运行 ``bash requirements/install.sh embodied --env embodichain --no-root``。
 
 .. note::
 
-   将此配方迁移到其他 EmbodiChain 任务时，请保持 ``actor.model.obs_dim``、
-   ``actor.model.action_dim`` 和 ``actor.model.policy_setup`` 与任务配置一致。
+   将此配方迁移到其他 EmbodiChain 任务时，请保持 ``actor.model.obs_dim``、``actor.model.action_dim`` 和 ``actor.model.policy_setup`` 与任务配置一致。
 
 可视化与结果
 ----------------------------------------
 
 运行 ``tensorboard --logdir ./logs --port 6006`` 查看 rollout 奖励曲线（默认配置使用 W&B，可通过 ``runner.logger.logger_backends='["tensorboard"]'`` 切换到 TensorBoard），通过 ``env.eval.video_cfg.save_video=True`` 开启评测视频录制，完整指标和日志后端配置见 :doc:`训练指标 <../../reference/metrics>`。
 
-评测与 CI
-----------------------------------------
+.. dropdown:: 评测与 CI
 
-EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
-``tests/e2e_tests/embodied/``。仅当需要非默认 checkout 时设置 ``EMBODICHAIN_PATH``。
+   EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于 ``tests/e2e_tests/embodied/``。仅在需要非默认 checkout 时设置 ``EMBODICHAIN_PATH``。
