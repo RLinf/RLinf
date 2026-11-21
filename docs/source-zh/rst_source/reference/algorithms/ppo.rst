@@ -135,7 +135,7 @@ KL 超过目标的动作块才收紧 ratio clip 的范围。上下界各自与 1
   algorithm:
     kl_clip_target: 0.05
 
-``train/actor/conditional_kl_mean``\ 记录有效动作块的平均 KL，``train/actor/kl_clip_tightened_fraction``\ 记录收紧范围的动作块比例。实际更新预算仍由训练配置决定。
+``train/actor/conditional_kl_mean``\ 记录有效动作块的平均 KL，``train/actor/kl_clip/tight_frac``\ 记录有效动作块中裁剪范围收紧的比例。``train/actor/kl_clip/extra_frac``\ 记录有效动作块中因范围收紧才进入 PPO 裁剪分支的比例。两个比例都按整轮更新的有效动作块统计。实际更新预算仍由训练配置决定。
 
 3.2. LLM 推理任务
 ~~~~~~~~~~~~~~~~~

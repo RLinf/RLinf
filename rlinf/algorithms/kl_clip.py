@@ -54,30 +54,59 @@ def transition_kl(
     return kl.flatten(1).sum(dim=1)
 
 
-def clip_ratio_with_kl(
-    ratio: torch.Tensor,
-    clip_low: float,
-    clip_high: float,
-    kl: torch.Tensor,
-    target_kl: float,
-    loss_mask: torch.Tensor,
-) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Shrink ratio clip bounds for valid samples above the KL target."""
-    kl = kl.detach().masked_fill(~loss_mask, 0.0)
-    scale = (target_kl / kl.clamp_min(target_kl)).sqrt().clamp_min(0.25)
-    clipped = ratio.clamp(min=1.0 - clip_low * scale, max=1.0 + clip_high * scale)
-    return clipped, {
-        "actor/conditional_kl_sum": kl.sum(),
-        "actor/conditional_kl_count": loss_mask.sum(),
-        "actor/kl_clip_tightened_count": (scale < 1).sum(),
-    }
+_KL_CLIP_TOTALS = (
+    "actor/conditional_kl_sum",
+    "actor/conditional_kl_count",
+    "actor/kl_clip_tightened_count",
+    "actor/kl_clip_extra_count",
+)
+
+
+class KLClip:
+    """Apply one KL target and accumulate rollout metrics on the actor device."""
+
+    def __init__(self, target_kl: float, device: torch.device) -> None:
+        self.target_kl = target_kl
+        self._totals = torch.zeros(
+            len(_KL_CLIP_TOTALS), device=device, dtype=torch.float32
+        )
+
+    def clip_ratio(
+        self,
+        ratio: torch.Tensor,
+        clip_low: float,
+        clip_high: float,
+        kl: torch.Tensor,
+        loss_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return the clipped ratio and detached statistics for this microbatch."""
+        kl = kl.detach().masked_fill(~loss_mask, 0.0)
+        scale = (self.target_kl / kl.clamp_min(self.target_kl)).sqrt().clamp_min(0.25)
+        clipped = ratio.clamp(min=1.0 - clip_low * scale, max=1.0 + clip_high * scale)
+        return clipped, kl, scale < 1
+
+    def record(
+        self,
+        kl: torch.Tensor,
+        loss_mask: torch.Tensor,
+        tightened: torch.Tensor,
+        extra_clipped: torch.Tensor,
+    ) -> None:
+        """Add detached sample counts without reading device values."""
+        self._totals.add_(
+            torch.stack(
+                (kl.sum(), loss_mask.sum(), tightened.sum(), extra_clipped.sum())
+            )
+        )
+
+    def totals(self) -> dict[str, float]:
+        """Read the packed totals once at the end of the rollout update."""
+        return dict(zip(_KL_CLIP_TOTALS, self._totals.tolist()))
 
 
 def finalize_kl_clip_metrics(metrics: dict[str, float]) -> None:
     """Report sample-weighted KL metrics from the reduced totals."""
-    if (count := metrics.pop("actor/conditional_kl_count", None)) is None:
-        return
-    kl_sum = metrics.pop("actor/conditional_kl_sum")
-    tightened = metrics.pop("actor/kl_clip_tightened_count")
+    kl_sum, count, tightened, extra = (metrics.pop(key) for key in _KL_CLIP_TOTALS)
     metrics["actor/conditional_kl_mean"] = kl_sum / count if count else 0.0
-    metrics["actor/kl_clip_tightened_fraction"] = tightened / count if count else 0.0
+    metrics["actor/kl_clip/tight_frac"] = tightened / count if count else 0.0
+    metrics["actor/kl_clip/extra_frac"] = extra / count if count else 0.0

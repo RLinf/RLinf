@@ -146,7 +146,7 @@ Set a finite positive target in the training YAML. Omit the key or set it to ``n
   algorithm:
     kl_clip_target: 0.05
 
-Watch ``train/actor/conditional_kl_mean`` for mean KL across valid chunks and ``train/actor/kl_clip_tightened_fraction`` for the fraction with narrower bounds. The training config still determines the update budget.
+Watch ``train/actor/conditional_kl_mean`` for mean KL across valid chunks and ``train/actor/kl_clip/tight_frac`` for the share of valid chunks whose clip bounds narrowed. Use ``train/actor/kl_clip/extra_frac`` to see the share of valid chunks that enter the PPO clip branch only because the bounds narrowed. Both fractions count chunks across the full rollout update. The training config still determines the update budget.
 
 3.2. LLM Reasoning Tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~
