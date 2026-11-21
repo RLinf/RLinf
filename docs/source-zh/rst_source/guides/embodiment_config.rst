@@ -158,7 +158,9 @@ algorithm
       enabled: true
       target_kl: 0.05
 
-启用时填写有限的正数作为 KL 目标。默认按配置执行更新。如果没有有效动作块可供测量，也按配置执行。``train/actor/update_kl`` 记录最后一次测得的 KL，``train/actor/optimizer_steps_used`` 记录本轮实际执行的步数。
+启用时填写有限的正数作为 KL 目标。默认按配置执行更新。如果没有有效动作块可供测量，也按配置执行。
+
+``train/actor/kl_stop/first_kl`` 和 ``train/actor/update_kl`` 分别记录第一次和最后一次 optimizer step 后的 KL。``train/actor/kl_stop/used_frac`` 是实际执行步数占计划步数的比例，``train/actor/optimizer_steps_used`` 是实际步数。
 
 只训练 action expert 且 prefix 已冻结、未使用 dropout 时，可以在 ``kl_stop`` 下设 ``cache_prefix: true``。启用后会用额外显存保存 prefix KV cache，供每次 KL 检查复用。这个选项默认关闭。
 

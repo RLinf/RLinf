@@ -165,7 +165,9 @@ Use this setting with synchronous FSDP OpenPI PPO or GRPO. The policy must use F
       enabled: true
       target_kl: 0.05
 
-Choose a finite positive target. The actor uses the configured update budget by default, or if there are no valid chunks to score. Check ``train/actor/update_kl`` for the last measured KL and ``train/actor/optimizer_steps_used`` for how many steps ran.
+Choose a finite positive target. The actor uses the configured update budget by default, or if there are no valid chunks to score.
+
+Use ``train/actor/kl_stop/first_kl`` and ``train/actor/update_kl`` to compare the KL after the first and last optimizer steps. ``train/actor/kl_stop/used_frac`` reports the fraction of scheduled steps that ran, and ``train/actor/optimizer_steps_used`` gives the step count.
 
 For expert-only training with a frozen, dropout-free prefix, set ``cache_prefix: true`` under ``kl_stop`` to reuse the prefix attention KV cache. This saves repeated prefix computation at the cost of GPU memory. Full prefix caching is off by default.
 
