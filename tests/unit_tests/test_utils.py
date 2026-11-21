@@ -1285,6 +1285,8 @@ def test_inference_http_client_msgpack_path_does_not_import_sglang(monkeypatch):
     assert captured["kwargs"]["headers"]["Content-Type"] == "application/msgpack"
     assert captured["kwargs"]["timeout"] == 5.0
     assert np.array_equal(decoded["actions"], response_actions)
+
+
 def test_boolean_attention_mask_casts_only_binary_float_masks():
     # The NPU keeps its fused SDPA kernel for boolean masks; the cast must
     # accept exactly the {0, dtype-min} masks HF models build and refuse any

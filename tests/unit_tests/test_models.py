@@ -4972,6 +4972,8 @@ def test_phyai_http_example_uses_pi05_model_contract(monkeypatch):
     assert cfg.rollout.phyai.model_name == "pi05"
     assert cfg.rollout.model.openpi.task == "eval"
     assert "action_head_cfg" not in cfg.rollout.model
+
+
 def test_starvla_exposes_no_split_modules_for_fsdp_auto_wrap(starvla_preprocessing):
     from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 
@@ -5224,11 +5226,13 @@ def test_starvla_predict_action_batch_gates_device_images_by_vlm_and_head(
     monkeypatch.setattr(
         starvla_mod,
         "get_rollout_handler",
-        lambda _: lambda model, **kw: {
-            "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
-            "model_inputs": {},
-            "forward_inputs": {},
-        },
+        lambda _: (
+            lambda model, **kw: {
+                "output": {"normalized_actions": np.zeros((1, 2, 7), dtype=np.float32)},
+                "model_inputs": {},
+                "forward_inputs": {},
+            }
+        ),
     )
     monkeypatch.setattr(
         starvla_mod.action_space_utils,

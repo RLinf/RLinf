@@ -30,115 +30,39 @@ from typing import Any, Literal
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from tqdm import tqdm
 
-from rlinf.scheduler import Channel, Worker
-from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
+from rlinf.utils.obs_compression import infer_obs_batch_size
+from rlinf.workers.rollout.embodied_http_worker import EmbodiedHTTPRolloutWorker
 
 
-class PhyAIGatewayRolloutWorker(Worker):
+class PhyAIGatewayRolloutWorker(EmbodiedHTTPRolloutWorker):
     """Run channel-based embodied evaluation through a PhyAI Gateway."""
 
+    http_config_key = "phyai"
+    http_service_name = "PhyAI Gateway"
+    server_url_attr = "phyai_server_url"
+    server_urls_attr = "_phyai_server_urls"
+    action_path = "/v1/actions/generations"
+    missing_urls_error = (
+        "Expected Gateway URLs before init_worker(), got none; "
+        "call set_phyai_server_urls(urls) first."
+    )
+
     def __init__(self, config: DictConfig):
-        Worker.__init__(self)
-        self.cfg = config
-        self.model_cfg = config.rollout.model
-        self.http_client = None
-        self.phyai_server_url = None
-        self._phyai_server_urls: list[str] = []
+        super().__init__(config)
         self._model_name = str(
             config.rollout.get("phyai", {}).get("model_name", "pi05")
         )
-        only_eval = config.runner.get("only_eval", True)
-        if not only_eval:
-            raise ValueError(
-                "Expected runner.only_eval=True for HTTP evaluation, "
-                f"got {only_eval!r}."
-            )
-        decoupled = config.runner.get("enable_decoupled_mode", False)
-        if decoupled:
-            raise ValueError(
-                "Expected runner.enable_decoupled_mode=False for HTTP evaluation, "
-                f"got {decoupled!r}."
-            )
-        eval_cfg = config.env.eval
-        self.num_pipeline_stages = int(config.rollout.pipeline_stage_num)
-        self.eval_batch_size = int(eval_cfg.total_num_envs) // self.num_pipeline_stages
-        self.eval_rollout_epoch = int(eval_cfg.get("rollout_epoch", 1))
-        self.n_eval_chunk_steps = int(eval_cfg.max_steps_per_rollout_epoch) // int(
-            self.model_cfg.num_action_chunks
-        )
-
-    async def init_worker(self) -> None:
-        """Initialize the HTTP client after the driver supplies Gateway URLs.
-
-        Raises:
-            RuntimeError: If Gateway URLs have not been supplied.
-        """
-        from rlinf.utils.http_client import InferenceHTTPClient
-
-        if not self._phyai_server_urls:
-            raise RuntimeError(
-                "Expected Gateway URLs before init_worker(), got none; "
-                "call set_phyai_server_urls(urls) first."
-            )
-        self.phyai_server_url = self._phyai_server_urls[
-            int(self._rank) % len(self._phyai_server_urls)
-        ]
-        self.http_client = InferenceHTTPClient(self.phyai_server_url)
-        phyai_cfg = self.cfg.rollout.get("phyai", {})
-        self._http_timeout_s = float(
-            phyai_cfg.get("http_timeout_s", phyai_cfg.get("timeout_s", 120.0))
-        )
-        self._http_max_retries = int(phyai_cfg.get("http_max_retries", 5))
-        self._http_retry_backoff_s = float(phyai_cfg.get("http_retry_backoff_s", 1.0))
-        self.log_info(
-            f"PhyAI Gateway assigned: rank={self._rank} -> {self.phyai_server_url}"
-        )
 
     def set_phyai_server_urls(self, urls: Sequence[str]) -> None:
-        """Set Gateway HTTP addresses before initialization.
-
-        Args:
-            urls: Nonempty sequence of Gateway base URLs.
-
-        Raises:
-            ValueError: If a URL is missing or empty.
-        """
+        """Set Gateway HTTP addresses before initialization."""
         if (
             isinstance(urls, str)
             or not urls
             or any(not isinstance(url, str) or not url.strip() for url in urls)
         ):
             raise ValueError(f"Expected nonempty Gateway URL strings, got {urls!r}.")
-        self._phyai_server_urls = [url.strip().rstrip("/") for url in urls]
-
-    @staticmethod
-    def _merge_obs_batches(obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
-        if not obs_batches:
-            return {}
-        obs_batches = [decompress_obs(batch) for batch in obs_batches]
-        obs_dicts = [batch.get("obs", batch) for batch in obs_batches]
-        merged: dict[str, Any] = {}
-        for key in obs_dicts[0].keys():
-            values = [d[key] for d in obs_dicts]
-            first = next((v for v in values if v is not None), None)
-            if first is None:
-                merged[key] = None
-            elif isinstance(first, torch.Tensor):
-                merged[key] = torch.cat(values, dim=0)
-            elif isinstance(first, list):
-                merged[key] = [item for sub in values for item in sub]
-            else:
-                merged[key] = values
-        reset = any(b.get("final_obs") is not None for b in obs_batches)
-        return {
-            "obs": merged,
-            "reset": reset,
-            "eval_epoch_done": any(
-                bool(batch.get("eval_epoch_done", False)) for batch in obs_batches
-            ),
-        }
+        self._set_http_server_urls([url.strip().rstrip("/") for url in urls])
 
     def build_phyai_request(
         self,
@@ -242,72 +166,8 @@ class PhyAIGatewayRolloutWorker(Worker):
             raise RuntimeError("Expected finite PhyAI actions, got NaN or infinity.")
         return actions, {}
 
-    def predict(
-        self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
-    ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Request action chunks from the PhyAI Gateway.
+    def _build_http_request(self, env_obs, mode="eval"):
+        return self.build_phyai_request(env_obs, mode=mode)
 
-        Args:
-            env_obs: Batched raw environment observations.
-            mode: Evaluation mode; training is not supported.
-
-        Returns:
-            Actions shaped [B, H, D] and empty evaluation metadata.
-        """
-        payload, state = self.build_phyai_request(env_obs, mode=mode)
-        resp = self.http_client.post(
-            "/v1/actions/generations",
-            payload,
-            msgpack=True,
-            timeout_s=self._http_timeout_s,
-            max_retries=self._http_max_retries,
-            retry_backoff_s=self._http_retry_backoff_s,
-        )
-        return self.parse_phyai_response(resp, state)
-
-    async def evaluate(self, input_channel: Channel, output_channel: Channel) -> None:
-        """Receive observations and return action chunks for each evaluation epoch.
-
-        Args:
-            input_channel: Channel receiving observations from environment workers.
-            output_channel: Channel delivering actions to environment workers.
-        """
-        for _ in tqdm(
-            range(self.eval_rollout_epoch),
-            desc="Evaluating Rollout Epochs",
-            disable=(self._rank != 0),
-        ):
-            eval_epoch_done = False
-            for _ in range(self.n_eval_chunk_steps):
-                for stage_id in range(self.num_pipeline_stages):
-                    env_output = await self.recv_from(
-                        group_name=self.cfg.env.group_name,
-                        channel=input_channel,
-                        tag="eval_rollout_results",
-                        route_key=stage_id,
-                        async_op=True,
-                        batch_size=self.eval_batch_size,
-                        merge_fn=self._merge_obs_batches,
-                        infer_batch_size_fn=infer_obs_batch_size,
-                    ).async_wait()
-                    if env_output.get("eval_epoch_done"):
-                        eval_epoch_done = True
-                        break
-                    obs = {
-                        **env_output["obs"],
-                        "_rlinf_stage_id": stage_id,
-                        "_rlinf_reset": env_output.get("reset", False),
-                    }
-                    actions, _ = self.predict(obs, mode="eval")
-                    actions = actions.detach().cpu().contiguous()
-                    self.send_to(
-                        group_name=self.cfg.env.group_name,
-                        channel=output_channel,
-                        data=actions,
-                        tag="eval_rollout_results",
-                        route_key=stage_id,
-                        async_op=True,
-                        batch_size=self.eval_batch_size,
-                    )
-                if eval_epoch_done:
-                    break
+    def _parse_http_response(self, response, state):
+        return self.parse_phyai_response(response, state)
