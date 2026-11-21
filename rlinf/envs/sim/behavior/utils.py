@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
+import json
 import os
+from importlib.util import find_spec
+from pathlib import Path
 
 import torch
 import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from rlinf.utils.data_iter_utils import ceildiv
 from rlinf.utils.logging import get_logger
 
-SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
+SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rgbd_full_res")
 
 R1PRO_PROPRIO_KEYS = [
     "joint_qpos",
@@ -87,18 +90,44 @@ def sync_robot_after_pose_override(robot) -> None:
     robot.keep_still()
 
 
-def set_camera_resolution(camera_cfg: dict | None) -> None:
-    if camera_cfg is None:
+def set_camera_resolution(
+    camera_cfg: DictConfig | None,
+    robot_cfg: DictConfig,
+    r1pro: DictConfig | None = None,
+    wrapper_name: str | None = None,
+) -> None:
+    """Configure the robot cameras before the simulator creates their sensors."""
+    use_yaml = wrapper_name in (None, "rgb")
+    if use_yaml and camera_cfg is None:
         return
+    if r1pro is None:
+        import omnigibson as og
 
-    import omnigibson.learning.utils.eval_utils as eval_utils
+        r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+    cameras = r1pro.eval.camera_sensor_names
+    if use_yaml:
+        head = camera_cfg.get("head_resolution")
+        wrist = camera_cfg.get("wrist_resolution")
+        resolutions = {role: head if role == "head" else wrist for role in cameras}
+    else:
+        spec = get_env_wrapper(wrapper_name).camera_spec()
+        resolutions = spec["resolution"]
+        robot_cfg.obs_modalities = ["proprio", *spec["modalities"]]
 
-    head_resolution = camera_cfg.get("head_resolution")
-    wrist_resolution = camera_cfg.get("wrist_resolution")
-    if head_resolution is not None:
-        eval_utils.HEAD_RESOLUTION = tuple(head_resolution)
-    if wrist_resolution is not None:
-        eval_utils.WRIST_RESOLUTION = tuple(wrist_resolution)
+    sensors = robot_cfg.get("sensor_config") or {}
+    for role, name in cameras.items():
+        resolution = resolutions.get(role)
+        if resolution is None:
+            continue
+        height, width = resolution
+        link = name.split(":", 1)[1]
+        # A per-link entry takes precedence over the shared VisionSensor settings.
+        current = sensors.get(link, sensors.get("VisionSensor", {}))
+        size = {"image_height": height, "image_width": width}
+        if not use_yaml and role == "head":
+            size["horizontal_aperture"] = 40.0
+        sensor = OmegaConf.merge(current, {"sensor_kwargs": size})
+        OmegaConf.update(robot_cfg, f"sensor_config.{link}", sensor)
 
 
 def apply_runtime_renderer_settings() -> None:
@@ -119,18 +148,19 @@ def get_env_wrapper(wrapper_name: str):
         from .rgb_wrapper import RGBWrapper
 
         return RGBWrapper
-    if wrapper_name == "default":
-        from omnigibson.learning.wrappers.default_wrapper import DefaultWrapper
+    if wrapper_name in ("default", "rgb_lowres"):
+        from omnigibson.eval.wrappers import DefaultWrapper
 
         return DefaultWrapper
-    if wrapper_name == "rgb_lowres":
-        from omnigibson.learning.wrappers.rgb_low_res_wrapper import RGBLowResWrapper
+    if wrapper_name == "rgbd_full_res":
+        from omnigibson.eval.wrappers import RGBDFullResWrapper
 
-        return RGBLowResWrapper
+        return RGBDFullResWrapper
     if wrapper_name == "rich_obs":
-        from omnigibson.learning.wrappers.rich_obs_wrapper import RichObservationWrapper
-
-        return RichObservationWrapper
+        raise ValueError(
+            "OmniGibson 3.9.3 removed rich_obs. Use rgbd_full_res for RGB and depth. "
+            "It does not provide normals, optical flow or privileged task observations."
+        )
     raise ValueError(
         f"Unsupported wrapper name: {wrapper_name}, expected one of {SUPPORTED_ENV_WRAPPERS}"
     )
@@ -154,35 +184,11 @@ def convert_uint8_rgb(image: torch.Tensor) -> torch.Tensor:
     return image[..., :3]
 
 
-def patch_omnigibson_wrapper_reset_signature() -> None:
-    from omnigibson.envs.env_wrapper import EnvironmentWrapper
-
-    reset_fn = EnvironmentWrapper.reset
-    if getattr(reset_fn, "__rlinf_patched__", False):
-        return
-
-    sig = inspect.signature(reset_fn)
-    supports_kwargs = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
-    if supports_kwargs:
-        return
-
-    def _reset_with_kwargs(self, *args, **kwargs):
-        return self.env.reset(*args, **kwargs)
-
-    _reset_with_kwargs.__rlinf_patched__ = True
-    EnvironmentWrapper.reset = _reset_with_kwargs
-
-
 def apply_env_wrapper(vec_env, wrapper_name: str | None):
     if wrapper_name is None:
         return vec_env
-    patch_omnigibson_wrapper_reset_signature()
     wrapper_cls = get_env_wrapper(wrapper_name)
-    for i in range(vec_env.num_envs):
-        vec_env.envs[i] = wrapper_cls(vec_env.envs[i])
-    return vec_env
+    return wrapper_cls(vec_env)
 
 
 def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: str):
@@ -195,6 +201,56 @@ def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: s
             override_sub_cfg
             if omni_sub_cfg is None
             else OmegaConf.merge(omni_sub_cfg, override_sub_cfg),
+        )
+
+
+def resolve_eval_step_limits(cfg: DictConfig, chunk_size: int) -> None:
+    if cfg.max_episode_steps is None:
+        # Read the official task statistics without importing the simulator on the driver.
+        root = Path(
+            os.environ.get("OMNIGIBSON_DATA_PATH", "../../datasets")
+        ).expanduser()
+        if not root.is_absolute():
+            package = find_spec("omnigibson")
+            if package is None:
+                raise ModuleNotFoundError(
+                    "Set OMNIGIBSON_DATA_PATH or install OmniGibson."
+                )
+            root = Path(package.origin).resolve().parent / root
+        stats = root / "2026-challenge-task-instances" / "metadata" / "task.jsonl"
+        task = cfg.omni_config.task.activity_name
+        with stats.open() as file:
+            for line in file:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row["task_name"] == task:
+                    # The SDK tests its zero-based step counter before incrementing it.
+                    cfg.max_episode_steps = int(row["length"] * 1.5) + 1
+                    break
+            else:
+                raise ValueError(
+                    f"No human demonstration length for {task!r} in {stats}"
+                )
+    if cfg.max_episode_steps < 1 or chunk_size < 1:
+        raise ValueError(
+            "BEHAVIOR episode length and action chunk size must be positive."
+        )
+    chunks = ceildiv(cfg.max_episode_steps, chunk_size)
+    episode_budget = chunks * chunk_size
+    if cfg.max_steps_per_rollout_epoch is None:
+        cfg.max_steps_per_rollout_epoch = episode_budget
+    elif cfg.max_steps_per_rollout_epoch <= 0:
+        raise ValueError("BEHAVIOR max_steps_per_rollout_epoch must be positive.")
+    elif (
+        not cfg.auto_reset
+        and not cfg.get("early_stop_on_done", False)
+        and cfg.max_steps_per_rollout_epoch > episode_budget
+    ):
+        raise ValueError(
+            f"With auto_reset=False, the episode fits in {chunks} action chunks "
+            f"({episode_budget} rollout steps). Reduce max_steps_per_rollout_epoch "
+            "or enable early_stop_on_done."
         )
 
 
@@ -234,25 +290,29 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     )
     OmegaConf.update(omni_cfg, "robots[0]", robot_override, merge=True)
 
-    override_proprio_obs = OmegaConf.select(
-        override_cfg, "robots[0].proprio_obs", default=None
-    )
+    override_proprio_obs = robot_override.get("proprio_obs")
+    r1pro = None
     if override_proprio_obs is None:
-        override_proprio_obs = R1PRO_PROPRIO_KEYS
+        if cfg.get("use_2026_eval_proprio_and_rooms", False):
+            # Match the official 61-value state in 2026 evaluation and demonstrations.
+            r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+            override_proprio_obs = r1pro.proprio_obs
+        else:
+            override_proprio_obs = R1PRO_PROPRIO_KEYS
     OmegaConf.update(
         omni_cfg, "robots[0].proprio_obs", override_proprio_obs, merge=True
     )
 
-    # automatically set task-relevant rooms to ``scene.load_room_types`` via gello.
-    # (mirrored from OmniGibson ``learning/eval.py``)
+    # Select task-relevant rooms when partial scene loading is enabled.
     partial_scene_load = OmegaConf.select(omni_cfg, "scene.partial_scene_load")
     if partial_scene_load is not None:
         with open_dict(omni_cfg.scene):
             omni_cfg.scene.pop("partial_scene_load", None)
-        if partial_scene_load:
-            from gello.robots.sim_robot.og_teleop_utils import (
+        if partial_scene_load and omni_cfg.scene.get("load_room_instances") is None:
+            from gello.utils.og_teleop_utils import (
                 augment_rooms,
                 get_task_relevant_room_types,
+                load_available_tasks,
             )
 
             activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
@@ -263,15 +323,26 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
                     f"in omni_config; got activity_name={activity_name!r}, "
                     f"scene_model={scene_model!r}."
                 )
-            relevant_rooms = get_task_relevant_room_types(activity_name=activity_name)
-            relevant_rooms = augment_rooms(relevant_rooms, scene_model, activity_name)
-            relevant_rooms.sort()
-            OmegaConf.update(
-                omni_cfg,
-                "scene.load_room_types",
-                relevant_rooms,
-                merge=False,
-            )
+            relevant_rooms = None
+            if cfg.get("use_2026_eval_proprio_and_rooms", False):
+                # Challenge room instances are specific to the official task scene.
+                tasks = load_available_tasks().get(activity_name, {})
+                definition_id = omni_cfg.task.get("activity_definition_id", 0)
+                if tasks.get(definition_id, {}).get("scene_model") == scene_model:
+                    from omnigibson.eval.utils.eval_utils import TASK_NAMES_TO_ROOMS
+
+                    relevant_rooms = TASK_NAMES_TO_ROOMS.get(activity_name)
+            if relevant_rooms is None:
+                relevant_rooms = get_task_relevant_room_types(
+                    activity_name=activity_name
+                )
+                relevant_rooms = augment_rooms(
+                    relevant_rooms, scene_model, activity_name
+                )
+                relevant_rooms.sort()
+                omni_cfg.scene.load_room_types = relevant_rooms
+            else:
+                omni_cfg.scene.load_room_instances = relevant_rooms
             get_logger().info(
                 f"Auto-detected relevant rooms for task {activity_name}: {relevant_rooms}"
             )
@@ -279,7 +350,6 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     # setup omnigibson macros, according to configuration yaml
     macro_cfg = OmegaConf.select(omni_cfg, "macro")
     gm.HEADLESS = macro_cfg.headless
-    gm.ENABLE_FLATCACHE = macro_cfg.enable_flatcache
     gm.ENABLE_OBJECT_STATES = macro_cfg.enable_object_states
     gm.USE_GPU_DYNAMICS = macro_cfg.use_gpu_dynamics
     gm.ENABLE_TRANSITION_RULES = macro_cfg.enable_transition_rules
@@ -288,17 +358,13 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
 
     # setup head/wrist camera resolutions
     camera_cfg = OmegaConf.select(omni_cfg, "camera")
-    set_camera_resolution(camera_cfg)
+    set_camera_resolution(
+        camera_cfg, omni_cfg.robots[0], r1pro, omni_cfg.env.get("env_wrapper")
+    )
 
-    # override behavior's termination config `max_steps` field
-    max_episode_steps = (
-        OmegaConf.select(cfg, "max_episode_steps") - 1
-    )  # BEHAVIOR env will off-by-one
-    assert max_episode_steps is not None, "must set max_episode_steps in config."
+    # OmniGibson checks its zero-based step counter before incrementing it.
     OmegaConf.update(
-        omni_cfg,
-        "task.termination_config.max_steps",
-        max_episode_steps,
+        omni_cfg, "task.termination_config.max_steps", cfg.max_episode_steps - 1
     )
 
     return omni_cfg

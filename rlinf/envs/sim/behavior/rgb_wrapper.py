@@ -14,12 +14,11 @@
 
 from __future__ import annotations
 
+import os
+
+import omnigibson as og
+from omegaconf import OmegaConf
 from omnigibson.envs import Environment, EnvironmentWrapper
-from omnigibson.learning.utils.eval_utils import (
-    HEAD_RESOLUTION,
-    ROBOT_CAMERA_NAMES,
-    WRIST_RESOLUTION,
-)
 
 
 class RGBWrapper(EnvironmentWrapper):
@@ -27,14 +26,8 @@ class RGBWrapper(EnvironmentWrapper):
 
     def __init__(self, env: Environment):
         super().__init__(env=env)
-        robot = env.robots[0]
-        for camera_id, camera_name in ROBOT_CAMERA_NAMES["R1Pro"].items():
-            sensor_name = camera_name.split("::")[1]
-            if camera_id == "head":
-                robot.sensors[sensor_name].horizontal_aperture = 40.0
-                robot.sensors[sensor_name].image_height = HEAD_RESOLUTION[0]
-                robot.sensors[sensor_name].image_width = HEAD_RESOLUTION[1]
-            else:
-                robot.sensors[sensor_name].image_height = WRIST_RESOLUTION[0]
-                robot.sensors[sensor_name].image_width = WRIST_RESOLUTION[1]
-        env.load_observation_space()
+        # Resolution is configured before sensor creation; set the head camera's field of view in each scene.
+        r1pro = OmegaConf.load(os.path.join(og.root_path, "eval", "r1pro.yaml"))
+        head_sensor = r1pro.eval.camera_sensor_names.head
+        for scene in env.scenes:
+            scene.robots[0].sensors[head_sensor].horizontal_aperture = 40.0

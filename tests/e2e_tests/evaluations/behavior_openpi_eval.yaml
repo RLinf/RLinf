@@ -38,11 +38,13 @@ env:
   group_name: "EnvGroup"
 
   eval:
+    use_2026_eval_proprio_and_rooms: True
     rollout_epoch: 1
-    total_num_envs: 2
-    # BEHAVIOR subtracts one, so 33 env steps fit one 32-step action chunk.
+    # Each of the two workers shares one simulator between its two stages.
+    total_num_envs: 4
+    # Request two chunks to exercise the timeout after 32 + 1 executed actions.
     max_episode_steps: 33
-    max_steps_per_rollout_epoch: 32
+    max_steps_per_rollout_epoch: 64
     video_cfg:
       save_video: False
 
@@ -50,7 +52,7 @@ rollout:
   group_name: "RolloutGroup"
   rollout_backend: "huggingface"
   enable_offload: True
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
 
   sampling_params:
     do_sample: True

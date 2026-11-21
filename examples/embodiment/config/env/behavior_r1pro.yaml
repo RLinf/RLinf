@@ -19,7 +19,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 base_config_name: r1pro_behavior
-use_eval_utils_cfg: False
+use_2026_eval_proprio_and_rooms: False
 
 policy_wrapper: null
 
@@ -48,7 +48,6 @@ omni_config:
   macro:
     use_gpu_dynamics: False
     headless: True
-    enable_flatcache: True
     enable_object_states: True
     enable_transition_rules: True
     render_viewer_camera: False
@@ -119,7 +118,6 @@ omni_config:
     # activity_instance_dir should point to a directory of cached task instance JSON files.
     # RLinf scans filenames directly and supports official *_template.json and
     # *_template-tro_state.json instances.
-    # Use rlinf/envs/sim/behavior/instance_generator.py to generate compatible files.
     # If set and instance_resample_mode is disabled, RLinf loads activity_instance_id from this directory.
     # This directory must match scene.scene_model.
     activity_instance_dir: null

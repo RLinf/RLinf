@@ -33,6 +33,7 @@ from unittest.mock import patch
 
 import pytest
 import ray
+import torch
 from omegaconf import OmegaConf
 
 import rlinf.scheduler.hardware.accelerators.intel_gpu as intel_module
@@ -275,6 +276,437 @@ class TestWorkerGroup:
         results2 = group2.sum_with_rank(200).wait()
         assert len(results2) == num_workers
         assert sorted(results2) == [200 + i for i in range(num_workers)]
+
+
+@pytest.fixture
+def behavior_processes(monkeypatch):
+    from rlinf.envs.sim.behavior import behavior_env
+
+    processes = []
+
+    def launch(cfg, num_envs):
+        process = mock.Mock()
+        process.get_activity_name.remote.return_value = "turning_on_radio"
+        # A reset identifies each row by its actor and local index.
+        index = len(processes)
+        process.reset.remote.side_effect = lambda rows: (
+            [(index, row) for row in rows],
+            [{} for row in rows],
+        )
+
+        def step(actions, rows):
+            assert actions.shape == (num_envs, 1, 1)
+            rewards = actions[rows, 0, 0]
+            dones = [False] * len(rows)
+            return [rows], [rewards], [dones], [dones], [[{} for row in rows]]
+
+        process.chunk_step.remote.side_effect = step
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(behavior_env, "BehaviorProcess", mock.Mock(remote=launch))
+    monkeypatch.setattr(behavior_env.ray, "get", lambda results: results)
+    monkeypatch.setattr(behavior_env.ray, "kill", mock.Mock())
+    return processes
+
+
+@pytest.mark.parametrize(
+    "num_envs,num_processes,num_stages",
+    [(4, 2, 2), (4, 2, 1), (4, 4, 2), (4, 1, 2), (6, 2, 3)],
+    ids=[
+        "two-stages-two-processes",
+        "single-stage-round-robin",
+        "two-stages-with-idle-processes",
+        "two-stages-one-process",
+        "three-stages-two-processes",
+    ],
+)
+def test_behavior_stage_dispatch_and_result_order(
+    behavior_processes, num_envs, num_processes, num_stages, request
+):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorProcessPool
+
+    cfg = OmegaConf.create(
+        {"total_num_envs": num_envs, "num_env_subprocess": num_processes}
+    )
+    worker = SimpleNamespace(group_world_size=1)
+    count = num_envs // num_stages
+    for stage in range(num_stages):
+        pool, start = BehaviorProcessPool.acquire_shared(cfg, worker, count)
+        request.addfinalizer(BehaviorProcessPool.release_shared)
+        assert len(behavior_processes) == num_processes
+        assert pool.env_processes == behavior_processes
+        assert start == stage * count
+        observations, _ = pool.env_reset_slice(start, count)
+        assert observations == [
+            (i % num_processes, i // num_processes) for i in range(start, start + count)
+        ]
+        active = {actor for actor, row in observations}
+
+        actions = torch.arange(start + 1, start + count + 1).reshape(count, 1, 1)
+        _, rewards, _, _, _ = pool.env_chunk_step_slice(start, count, actions)
+        assert rewards[0].tolist() == actions[:, 0, 0].tolist()
+        for index, process in enumerate(behavior_processes):
+            assert process.reset.remote.call_count == int(index in active)
+            assert process.chunk_step.remote.call_count == int(index in active)
+            process.reset_mock()
+
+
+def test_behavior_online_sampling_requires_one_scene_per_process(behavior_processes):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorProcessPool
+
+    cfg = OmegaConf.create({"omni_config": {"task": {"online_object_sampling": True}}})
+    with pytest.raises(ValueError, match="one scene per simulator process"):
+        BehaviorProcessPool(cfg, total_num_envs=2, num_env_subprocess=1)
+    assert not behavior_processes
+
+    pool = BehaviorProcessPool(cfg, total_num_envs=2, num_env_subprocess=2)
+    assert pool.env_reset_slice(1, 1)[0] == [(1, 0)]
+
+
+@pytest.mark.parametrize("skip_intermediate_renders", [False, True])
+def test_behavior_process_forwards_indexed_actions(skip_intermediate_renders):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorProcess
+
+    cls = BehaviorProcess.__ray_metadata__.modified_class
+    worker = cls.__new__(cls)
+    worker.env = mock.Mock()
+    worker.skip_intermediate_renders = skip_intermediate_renders
+    worker.use_legacy_proprio = False
+    actions = torch.arange(1.0, 9.0).reshape(4, 2, 1)
+    rewards = torch.tensor([1.0, 0.0])
+    terminated = torch.tensor([True, False])
+    truncated = torch.tensor([False, True])
+    infos = [{"done": {"success": True}}, {"done": {"success": False}}]
+
+    for rows in ([2, 3], [0, 1]):
+        worker.env.step.return_value = (rows, rewards, terminated, truncated, infos)
+        obs, result_rewards, terms, truncs, result_infos = worker.chunk_step(
+            actions, rows
+        )
+        need_first_obs = not skip_intermediate_renders
+        assert obs == (rows if need_first_obs else None, rows)
+        torch.testing.assert_close(torch.stack(result_rewards), rewards.repeat(2, 1))
+        assert torch.stack(terms).tolist() == [[True, False], [True, False]]
+        assert torch.stack(truncs).tolist() == [[False, True], [False, True]]
+        assert result_infos == (infos, infos)
+
+        calls = worker.env.step.call_args_list
+        assert len(calls) == 2
+        for timestep, call in enumerate(calls):
+            torch.testing.assert_close(call.args[0], actions[rows, timestep])
+            need_obs = need_first_obs or timestep == 1
+            assert call.kwargs == {
+                "env_indices": rows,
+                "get_obs": need_obs,
+                "render": need_obs,
+            }
+        worker.env.reset_mock()
+
+
+@pytest.mark.parametrize(
+    "episode,budget,auto_reset,expected",
+    [
+        (None, None, False, (151, 160)),
+        (49, None, False, (49, 64)),
+        (65, 32, False, (65, 32)),
+        (49, 96, True, (49, 96)),
+        (49, 96, False, None),
+    ],
+)
+def test_behavior_eval_config_resolves_step_limits(
+    monkeypatch, tmp_path, episode, budget, auto_reset, expected
+):
+    import hydra
+
+    from rlinf import config
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/embodiment"))
+    monkeypatch.setenv("OMNIGIBSON_DATA_PATH", str(tmp_path))
+    if episode is None:
+        stats = tmp_path / "2026-challenge-task-instances/metadata/task.jsonl"
+        stats.parent.mkdir(parents=True)
+        stats.write_text('{"task_name": "turning_on_radio", "length": 100}\n')
+
+    with hydra.initialize_config_dir(
+        version_base="1.1", config_dir=str(root / "evaluations/behavior")
+    ):
+        cfg = hydra.compose(
+            config_name="behavior_openpi_pi05_eval",
+            overrides=[
+                "env.eval.omni_config.task.activity_name=turning_on_radio",
+                "rollout.model.num_action_chunks=32",
+                "++env.eval.early_stop_on_done=false",
+            ],
+        )
+    cfg.env.eval.max_episode_steps = episode
+    cfg.env.eval.max_steps_per_rollout_epoch = budget
+    cfg.env.eval.auto_reset = auto_reset
+    monkeypatch.setattr(config, "Cluster", mock.Mock())
+    monkeypatch.setattr(
+        config,
+        "HybridComponentPlacement",
+        lambda *_: mock.Mock(get_world_size=lambda _: 1),
+    )
+    if expected is None:
+        with pytest.raises(ValueError, match="max_steps_per_rollout_epoch"):
+            config.validate_embodied_cfg(cfg)
+    else:
+        config.validate_embodied_cfg(cfg)
+        assert (
+            cfg.env.eval.max_episode_steps,
+            cfg.env.eval.max_steps_per_rollout_epoch,
+        ) == expected
+        assert cfg.env.eval.is_eval
+
+
+@pytest.mark.parametrize(
+    "width,expected",
+    [
+        (62, None),
+        (61, [*range(3), *range(53, 57), *range(3, 10), *range(28, 35), 49, 99]),
+        (
+            256,
+            [
+                *range(253, 256),
+                *range(236, 240),
+                *range(158, 165),
+                *range(197, 204),
+                387,
+                465,
+            ],
+        ),
+    ],
+)
+def test_behavior_openpi_state_features(width, expected):
+    import numpy as np
+
+    pytest.importorskip("openpi")
+    from rlinf.models.embodiment.openpi.policies.behavior_policy import (
+        extract_state_from_proprio,
+    )
+
+    if expected is None:
+        with pytest.raises(ValueError, match="Expected 61 or 256"):
+            extract_state_from_proprio(np.arange(width))
+    else:
+        np.testing.assert_array_equal(
+            extract_state_from_proprio(np.arange(width)), expected
+        )
+
+
+@pytest.mark.parametrize("depth", [False, True])
+def test_behavior_camera_batch(depth):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorEnv
+
+    env = BehaviorEnv.__new__(BehaviorEnv)
+    env.num_envs, env.task_description = 2, "turn on the radio"
+    views = ["zed_link", "left_realsense_link", "right_realsense_link"]
+    scenes = []
+    for row in range(2):
+        sensors = {"proprio": torch.tensor([row])}
+        for view, link in enumerate(views):
+            height = 4 if view == 0 else 2
+            value = 10 * row + view
+            camera = {"rgb": torch.full((height, 3, 4), value, dtype=torch.uint8)}
+            if depth:
+                size = (height, 3, 1) if view == 1 else (height, 3)
+                camera["depth_linear"] = torch.full(size, value + 0.5)
+            sensors[f"{link}:Camera:0"] = camera
+        scenes.append({"robot": sensors})
+
+    obs = env._wrap_obs(scenes)
+    assert obs["main_images"].shape == (2, 4, 3, 3)
+    assert obs["wrist_images"][:, :, 0, 0, 0].tolist() == [[1, 2], [11, 12]]
+    if depth:
+        assert obs["main_depths"].shape == (2, 4, 3)
+        assert obs["main_depths"][:, 0, 0].tolist() == [0.5, 10.5]
+        assert obs["extra_view_depths"].shape == (2, 2, 2, 3)
+        assert obs["extra_view_depths"][:, :, 0, 0].tolist() == [
+            [1.5, 2.5],
+            [11.5, 12.5],
+        ]
+    else:
+        assert "main_depths" not in obs and "extra_view_depths" not in obs
+
+
+@pytest.fixture
+def behavior_config():
+    root = Path(__file__).resolve().parents[2]
+    return OmegaConf.load(root / "examples/embodiment/config/env/behavior_r1pro.yaml")
+
+
+def _make_behavior_chunk_env(
+    cfg, num_envs, monkeypatch, *, auto_reset=False, ignore_terminations=False
+):
+    from rlinf.envs.sim.behavior.behavior_env import BehaviorEnv
+
+    monkeypatch.setattr(BehaviorEnv, "device", "cpu")
+    cfg.is_eval = True
+    cfg.max_episode_steps = 5
+    cfg.auto_reset = auto_reset
+    cfg.ignore_terminations = ignore_terminations
+    cfg.enable_offload = True
+    cfg.enable_init_offload = False
+    env = BehaviorEnv(cfg, num_envs, 0, 1, SimpleNamespace(group_world_size=1))
+    env.pool, env.pool_offset = mock.Mock(), 0
+    env.pool.env_reset_slice.return_value = ([0] * num_envs, [{}] * num_envs)
+    monkeypatch.setattr(env, "_wrap_obs", lambda rows: rows)
+    return env
+
+
+def test_behavior_fixed_eval_last_chunk(behavior_config, monkeypatch):
+    env = _make_behavior_chunk_env(behavior_config, 1, monkeypatch)
+
+    def step(offset, count, actions):
+        observations = [[value] for value in actions[0, :, 0].tolist()]
+        rewards = list(actions[:, :, 0].T.float())
+        terminations = [torch.tensor([False]) for _ in observations]
+        timeouts = [torch.tensor([value == 4]) for [value] in observations]
+        return (
+            observations,
+            rewards,
+            terminations,
+            timeouts,
+            [[{}] for _ in observations],
+        )
+
+    env.pool.env_chunk_step_slice.side_effect = step
+    actions = torch.arange(6).reshape(1, 6, 1)
+    env.reset()
+    env.chunk_step(actions[:, :3])
+    obs, rewards, terminated, truncated, _ = env.chunk_step(actions[:, 3:])
+    assert obs == [[3], [4]]
+    assert rewards.tolist() == [[3, 4]]
+    assert not terminated.any() and truncated.tolist() == [[False, True]]
+    with pytest.raises(RuntimeError, match="Reset"):
+        env.chunk_step(actions)
+    assert env.pool.env_chunk_step_slice.call_count == 2
+    env.reset()
+    assert len(env.chunk_step(actions)[0]) == 5
+
+
+@pytest.mark.parametrize("auto_reset", [False, True])
+@pytest.mark.parametrize("ignore_terminations", [False, True])
+def test_behavior_chunk_end_flags(
+    behavior_config, monkeypatch, auto_reset, ignore_terminations
+):
+    env = _make_behavior_chunk_env(
+        behavior_config,
+        4,
+        monkeypatch,
+        auto_reset=auto_reset,
+        ignore_terminations=ignore_terminations,
+    )
+    # The four scenes succeed, time out, do both, or keep running on the first step.
+    success = torch.tensor([True, False, True, False])
+    timeout = torch.tensor([False, True, True, False])
+    clear = torch.zeros_like(success)
+    env.pool.env_chunk_step_slice.return_value = (
+        [[1] * 4, [2] * 4],
+        [torch.zeros(4), torch.zeros(4)],
+        [success, clear],
+        [timeout, clear],
+        [
+            [{"done": {"success": done}} for done in step.tolist()]
+            for step in (success, clear)
+        ],
+    )
+    env.reset()
+    obs, _, terminated, truncated, infos = env.chunk_step(torch.zeros(4, 2, 1))
+    assert not terminated[:, 0].any() and not truncated[:, 0].any()
+    assert terminated[:, -1].tolist() == (
+        [False] * 4 if ignore_terminations else success.tolist()
+    )
+    assert truncated[:, -1].tolist() == [ignore_terminations, True, True, False]
+
+    assert env.pool.env_reset_slice.call_count == 1 + auto_reset
+    if auto_reset:
+        assert obs[-1][:3] == [0, 0, 0]
+        assert infos[-1]["final_observation"] == [2] * 4
+        assert infos[-1]["_final_observation"].tolist() == [True, True, True, False]
+        assert infos[-1]["_final_info"].tolist() == [True, True, True, False]
+        episode = infos[-1]["final_info"]["episode"]
+    else:
+        assert obs[-1] == [2] * 4
+        assert "final_observation" not in infos[-1]
+        episode = infos[-1]["episode"]
+    assert episode["success_once"].tolist() == success.tolist()
+
+
+@pytest.mark.parametrize("has_pose", [True, False])
+def test_behavior_cached_instance_prepares_only_requested_scene(
+    behavior_config, monkeypatch, tmp_path, has_pose
+):
+    og = pytest.importorskip("omnigibson")
+    from rlinf.envs.sim.behavior.instance_loader import ActivityInstanceLoader
+
+    monkeypatch.setattr(og, "sim", mock.Mock())
+    task_cfg = behavior_config.omni_config.task
+    task_cfg.activity_instance_dir = str(tmp_path)
+    task_cfg.activity_instance_id = 301
+    task_cfg.instance_file_format = "tro_state"
+    task_cfg.instance_resample_mode = "disabled"
+    path = tmp_path / (
+        f"house_task_{task_cfg.activity_name}_{task_cfg.activity_definition_id}_301_template-tro_state.json"
+    )
+    pose = {"position": [1.0, 2.0, 3.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    state = {"radio": {"value": 42}}
+    if has_pose:
+        state["robot_poses"] = {"robot": [pose]}
+    path.write_text(json.dumps(state))
+    loader = ActivityInstanceLoader.from_omni_cfg(behavior_config.omni_config)
+    scenes = [mock.Mock(idx=i) for i in range(2)]
+    objects = [mock.Mock(), mock.Mock()]
+    robot = mock.Mock(model="R1Pro", n_joints=0)
+    task = mock.Mock(
+        object_scopes=[{"radio": obj} for obj in objects], presampled_pose_key=None
+    )
+    initial_pose = ([4.0, 5.0, 0.0], [0.0, 0.0, 1.0, 0.0])
+    robot.get_position_orientation.return_value = initial_pose
+    other_robot = mock.Mock()
+    task.get_agent.side_effect = lambda env, idx: (other_robot, robot)[idx]
+    env = SimpleNamespace(num_envs=2, scenes=scenes, task=task)
+    loader.prepare_reset(env, [1])
+    other_robot.set_position_orientation.assert_not_called()
+    assert not scenes[0].method_calls and not objects[0].method_calls
+    objects[1].load_state.assert_called_once_with({"value": 42}, serialized=False)
+    scenes[1].update_initial_file.assert_called_once_with()
+    if has_pose:
+        position, orientation = robot.set_position_orientation.call_args.args
+        assert (
+            torch.as_tensor(position).tolist() == pose["position"]
+            and torch.as_tensor(orientation).tolist() == pose["orientation"]
+        )
+        assert robot.set_position_orientation.call_args.kwargs == {"frame": "scene"}
+        write_metadata = scenes[1].write_task_metadata
+        write_metadata.assert_called_once_with(key="robot_poses", data=mock.ANY)
+        (saved_pose,) = write_metadata.call_args.kwargs["data"]["robot"]
+        assert {
+            field: torch.as_tensor(value).tolist()
+            for field, value in saved_pose.items()
+        } == pose
+    else:
+        robot.set_position_orientation.assert_called_once_with(
+            *initial_pose, frame="scene"
+        )
+        scenes[1].write_task_metadata.assert_called_once_with(
+            key="robot_poses", data=None
+        )
+
+    # The next instance has no pose after a rollout moved the robot.
+    robot.get_position_orientation.return_value = ([9.0, 9.0, 0.0], initial_pose[1])
+    state.pop("robot_poses", None)
+    for pose_fields in ({}, {"robot_poses": {}}, {"robot_poses": {"robot": []}}):
+        path.write_text(json.dumps({**state, **pose_fields}))
+        robot.set_position_orientation.reset_mock()
+        loader.prepare_reset(env, [1])
+        robot.set_position_orientation.assert_called_once_with(
+            *initial_pose, frame="scene"
+        )
+        scenes[1].write_task_metadata.assert_called_with(key="robot_poses", data=None)
+    assert not scenes[0].method_calls and not objects[0].method_calls
 
 
 class TestLoadUserExtensions:

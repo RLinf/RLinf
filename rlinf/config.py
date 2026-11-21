@@ -1637,6 +1637,11 @@ def validate_embodied_cfg(cfg):
                 "runner.only_eval=True, or runner.task_type=embodied_eval."
             )
             for eval_env_cfg in EnvLayout.env_cfgs(cfg.env.eval, "env.eval").values():
+                if eval_env_cfg.env_type == SupportedEnvType.BEHAVIOR.value:
+                    from rlinf.envs.sim.behavior.utils import resolve_eval_step_limits
+
+                    eval_env_cfg.is_eval = True
+                    resolve_eval_step_limits(eval_env_cfg, model_cfg.num_action_chunks)
                 eval_env_cfg.group_size = eval_env_cfg.get("group_size", 1)
                 eval_env_cfg.early_stop_on_done = bool(
                     eval_env_cfg.get("early_stop_on_done", False)
