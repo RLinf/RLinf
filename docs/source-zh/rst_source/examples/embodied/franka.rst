@@ -304,10 +304,18 @@ RLinf 启动 Franky 时，会尝试锁定控制进程的内存、以 ``SCHED_FIF
 
    python toolkits/realworld_check/test_franka_camera.py
 
-在以下两个现有配置中填写机器人信息：
+在以下两份配置中填写机器人信息：
 
-- ``examples/embodiment/config/realworld_collect_data.yaml``
-- ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - 阶段
+     - 配置文件
+   * - 演示采集
+     - ``examples/embodiment/config/realworld_collect_data.yaml``
+   * - 在线 RLPD 训练
+     - ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``
 
 在每个文件的 ``cluster.node_groups`` 中，仅将 ``label: franka`` 对应的条目替换为下方内容。将 ``ROBOT_IP`` 替换为机械臂地址，将 ``CAMERA_SERIAL`` 替换为输出的相机序列号：
 

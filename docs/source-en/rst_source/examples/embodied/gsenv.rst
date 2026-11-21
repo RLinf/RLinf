@@ -151,12 +151,6 @@ Launch the GSEnv recipe:
 
    bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05
 
-What this does:
-
-1. Starts the embodied training entrypoint with the GSEnv Hydra config.
-2. Creates Ray workers for the actor, rollout, and ManiSkill-backed env components.
-3. Runs PPO rollouts with OpenPI action chunks and sparse GSEnv success rewards.
-
 .. note::
 
    The default config uses ``actor,env,rollout: all``. Tune

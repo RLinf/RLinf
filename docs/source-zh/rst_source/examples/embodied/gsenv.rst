@@ -150,12 +150,6 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
 
    bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05
 
-这条命令会：
-
-1. 使用 GSEnv Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 ManiSkill-backed env 组件创建 Ray worker。
-3. 使用 OpenPI action chunk 和稀疏 GSEnv 成功奖励运行 PPO rollout。
-
 .. note::
 
    默认配置使用 ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整

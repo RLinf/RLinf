@@ -164,7 +164,7 @@ Download the checkpoint for the OpenPI model you plan to fine-tune.
 Run It
 ------
 
-Pick one training config and launch from a terminal where Isaac Sim is initialized:
+Available training configs:
 
 .. list-table::
    :header-rows: 1
@@ -180,6 +180,8 @@ Pick one training config and launch from a terminal where Isaac Sim is initializ
      - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``
      - ``polaris_tapeintocontainer_ppo_openpi``
 
+Initialize Isaac Sim, set ``POLARIS_DATA_PATH``, and launch training with ``run_embodiment.sh``:
+
 .. code:: bash
 
    source /path/to/isaac_sim/setup_conda_env.sh
@@ -187,12 +189,6 @@ Pick one training config and launch from a terminal where Isaac Sim is initializ
 
    bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
    bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and PolaRiS env components.
-3. Runs PPO with chunked OpenPI actions and Gaussian Splatting-rendered observations.
 
 Run standalone evaluation through the :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>`.
 It owns ``POLARIS_DATA_PATH``, the available eval configs
@@ -205,7 +201,7 @@ and result interpretation.
    change the Hydra env defaults to another ``polaris_droid_*`` env config and keep
    ``POLARIS_DATA_PATH`` pointed at ``PolaRiS-Hub``.
 
-A few PolaRiS-specific fields are worth knowing when tuning the action/rendering pipeline:
+Key PolaRiS configuration fields:
 
 .. list-table::
    :header-rows: 1

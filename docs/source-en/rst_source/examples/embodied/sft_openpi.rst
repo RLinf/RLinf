@@ -297,7 +297,7 @@ Typical overrides:
          embed_dtype: bf16
          config_name: "pi0_libero"   # use pi0_realworld for Franka
 
-Launch:
+Launch training from the repository root:
 
 .. code:: bash
 
@@ -410,6 +410,8 @@ The streaming loader reads only ``data:`` (no hidden defaults). Change at least:
   are not valid labels).
 - ``fine_grained_level`` / ``tolerance_s`` control streaming time alignment.
 
+Launch BEHAVIOR-1K SFT from the repository root:
+
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05
@@ -446,6 +448,8 @@ matching HF SFT weights:
 model. ``openpi_data.norm_stats_path`` pins SFT and eval to the same
 ``norm_stats.json``. Change the task name in that path when switching tasks.
 
+Launch RoboTwin SFT from the repository root:
+
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi
@@ -471,9 +475,10 @@ an SFT checkpoint, also point stats back at the training copy (RoboTwin: next
 to the base weights at ``physical-intelligence/robotwin/<task>/norm_stats.json``;
 BEHAVIOR: the training ``openpi_data.norm_stats_path``).
 
+Evaluate an SFT checkpoint in place while keeping the training normalization statistics:
+
 .. code:: bash
 
-   # Example: evaluate the SFT .pt in place (keep training-time norm stats)
    bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
      rollout.model.model_path=/path/to/logs/.../checkpoints/global_step_30000 \
      rollout.model.openpi_data.norm_stats_path=/path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json

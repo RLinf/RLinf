@@ -120,7 +120,7 @@
 运行
 ----------------------------------------
 
-选择一个配置并启动训练：
+可用训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -142,15 +142,11 @@
      - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
      - ``calvin_abcd_d_ppo_openpi_pi05``
 
+使用 ``run_embodiment.sh`` 启动训练：
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
-
-这条命令会：
-
-1. 使用选定的 Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 CALVIN env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算稀疏子任务奖励，并更新 OpenPI 策略。
 
 独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
 通过配置回退机制复用相同后缀，例如 ``calvin_d_d_ppo_openpi_pi05``。

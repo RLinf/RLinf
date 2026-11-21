@@ -245,10 +245,18 @@ Configure Further
 
 For common Hydra sections and path fields, see :doc:`Training configuration <../../reference/configuration>`.
 
-Two configs are provided, one per benchmark:
+Two configs ship under ``examples/embodiment/config/``:
 
-* LIBERO:    ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml``
-* LIBERO-Plus:  ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Benchmark
+     - Config
+   * - LIBERO
+     - ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml``
+   * - LIBERO-Plus
+     - ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml``
 
 Set both fields to the checkpoint used for evaluation or training:
 
@@ -304,10 +312,7 @@ For CLI usage, Hydra overrides, logs, and video output, use the
 Run It
 ------
 
-PPO training uses the same launch flow as evaluation. Select the target suite
-with ``LIBERO_TYPE`` and launch the corresponding config.
-
-Common environment setup:
+Set the shared environment variables and start Ray before launching training:
 
 .. code-block:: bash
 
@@ -322,14 +327,14 @@ Common environment setup:
    ray stop || true
    ray start --head --port=6379
 
-**LIBERO:**
+Launch LIBERO PPO training:
 
 .. code-block:: bash
 
    export LIBERO_TYPE=standard
    bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
 
-**LIBERO-Plus:**
+Launch LIBERO-Plus PPO training:
 
 .. code-block:: bash
 

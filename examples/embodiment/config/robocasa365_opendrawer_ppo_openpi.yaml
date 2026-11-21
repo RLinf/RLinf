@@ -115,7 +115,6 @@ rollout:
     max_new_tokens: null
 
   model:
-    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/path/to/pi0-robocasa-pretrain-human300}
     precision: null
 
 actor:

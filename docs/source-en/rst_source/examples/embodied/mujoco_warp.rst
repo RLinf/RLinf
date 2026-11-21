@@ -124,19 +124,13 @@ The installer pins ``mujoco-warp==3.17.0`` and ``warp-lang==1.16.0``. This verif
 Run It
 ------
 
-Launch the half-cheetah recipe from the repository root:
+Launch the default ``half_cheetah`` recipe (``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` and ``examples/embodiment/config/env/mujoco_warp.yaml``) from the repository root:
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp
 
-What this command does:
-
-1. Loads ``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` and ``examples/embodiment/config/env/mujoco_warp.yaml``.
-2. Starts actor, rollout, and env workers on one GPU, with 512 training worlds and 16 evaluation worlds.
-3. Collects PPO rollouts and updates the MLP policy and value head.
-
-To select another task, override both env task names and the actor dimensions. For example:
+Override both env task names and the actor dimensions to train another task:
 
 .. code:: bash
 

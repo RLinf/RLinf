@@ -251,12 +251,20 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
 **1. 配置文件**
 
-目前支持以下三份 DAgger 配置：
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-- **MLP + ManiSkill**：``examples/embodiment/config/maniskill_dagger_mlp.yaml``
-- **Pi0 + LIBERO**：``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
-- **Pi0 + LIBERO（在线 LeRobot）**：``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``
-- **Pi0 + RoboTwin**：``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
+   * - 组合
+     - 配置文件
+   * - MLP + ManiSkill
+     - ``examples/embodiment/config/maniskill_dagger_mlp.yaml``
+   * - Pi0 + LIBERO
+     - ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
+   * - Pi0 + LIBERO（在线 LeRobot）
+     - ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``
+   * - Pi0 + RoboTwin
+     - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
 
 **2. DAgger 关键参数**
 

@@ -143,7 +143,7 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
    geniesim docker --profile post-train up --headless
    geniesim docker --profile post-train into
 
-进入 ``post_train_server`` 容器后，在 ``/workspace`` 启动 server 并查看状态。下面的数量、起始端口和 GPU 都是例子，按实际的 RLinf 配置改：
+进入 ``post_train_server`` 容器后，在 ``/workspace`` 启动 server 并检查状态（按下方配方表调整 ``--count``、``--base-port`` 和 ``--devices``）：
 
 .. code:: bash
 
@@ -203,7 +203,7 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 
 把下文的 ``sim-host`` 换成训练节点能够访问的仿真节点 IP，端口用 server 实际在听的端口。详细参数见 `GenieSim server 说明 <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__。
 
-下面的 RLinf 命令都在训练节点上、已激活的 OpenPI 环境里、RLinf 仓库根目录下执行。Docker 用户用容器内的 ``/workspace/RLinf``，自定义环境用训练节点上的仓库目录。检查点路径沿用上面设好的 ``GENIESIM_CHECKPOINT_PATH``。
+下面的 RLinf 命令在训练节点的 RLinf 仓库根目录（Docker 中为 ``/workspace/RLinf``）执行，保持 OpenPI 环境已激活且已导出 ``GENIESIM_CHECKPOINT_PATH``。
 
 .. note::
 
@@ -226,7 +226,7 @@ GRPO 和多任务配方列在 `可视化与结果`_。每个配方的 ``env.trai
 
 **评测**
 
-先设好仿真 server 的地址，再跑单独的评测。下面的地址只是例子，换成实际的 IP 和端口：
+设置仿真 server 的 IP 和端口后启动独立评测：
 
 .. code:: bash
 
@@ -347,13 +347,30 @@ GRPO 和多任务配方列在 `可视化与结果`_。每个配方的 ``env.trai
 
 表里的每个成功率，对子任务的每个测试用例只算一次。一个测试用例是一个场景实例配一条指令。单独评测会跑 128 条轨迹，比一个子任务的测试用例多，所以有的用例会跑两遍。写进表里之前，重复的那一遍已经去掉。训练或评测过程中记下来的成功率还含着这些重复，所以可能和表里的数差一点。
 
-对应的训练配置都在 ``examples/embodiment/config/``：
+训练参考配置位于 ``examples/embodiment/config/``：
 
-- 单任务 PPO：``geniesim_pick_block_color_ppo_openpi_pi05.yaml``。换任务时改任务选择。
-- 单任务 GRPO：``geniesim_pick_block_color_grpo_openpi_pi05.yaml``。换任务时改任务选择。
-- 4 任务 PPO：``geniesim_multitask4_ppo_openpi_pi05.yaml``。
-- 6 任务 PPO：``geniesim_multitask6_ppo_openpi_pi05.yaml``。
-- 10 任务 PPO：``geniesim_multitask10_ppo_openpi_pi05.yaml``。
+.. list-table::
+   :header-rows: 1
+   :widths: 22 48 30
+
+   * - 配方
+     - 配置文件
+     - 说明
+   * - 单任务 PPO
+     - ``geniesim_pick_block_color_ppo_openpi_pi05.yaml``
+     - 换任务时修改任务选择。
+   * - 单任务 GRPO
+     - ``geniesim_pick_block_color_grpo_openpi_pi05.yaml``
+     - 换任务时修改任务选择。
+   * - 4 任务 PPO
+     - ``geniesim_multitask4_ppo_openpi_pi05.yaml``
+     - 4 任务混合训练。
+   * - 6 任务 PPO
+     - ``geniesim_multitask6_ppo_openpi_pi05.yaml``
+     - 6 任务混合训练。
+   * - 10 任务 PPO
+     - ``geniesim_multitask10_ppo_openpi_pi05.yaml``
+     - 10 任务混合训练。
 
 附录
 ----------------------------------------

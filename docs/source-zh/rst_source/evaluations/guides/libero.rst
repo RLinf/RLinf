@@ -1,7 +1,7 @@
 LIBERO 评测
 ===========
 
-LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA 策略并输出任务级成功率。
+LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA policy 并输出任务级成功率。
 
 相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
 
@@ -123,51 +123,33 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 ApxInf 推理后端
 ---------------
 
-ApxInf 接入仅用于评测。RLinf 通过
-`APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 接入引擎，它封装了
-`ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。先在 RLinf 运行
-环境中安装它以及它所封装的 ``apxinf_py`` CUDA binding，再将
-``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、
-``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的 checkpoint：
+ApxInf 接入仅用于评测。RLinf 通过 `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 接入引擎，它封装了 `ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。先在 RLinf 运行环境中安装它以及它所封装的 ``apxinf_py`` CUDA binding，再将 ``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的 checkpoint：
 
 .. code-block:: bash
 
    export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
    bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
 
-该配置保持原生 OpenPI 语义：两路已经完成方向处理的 LIBERO 图像、8 维
-state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。
-resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI
-transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认
-负责初始高斯 noise 采样。加载走 ``apxinf_robo.load_bare_model``，它会选中调优
-过的 GEMM tactics，使这个 bare handle 与 ApxInf 自身 policy 路径数值一致。做
-成对数值对齐时，可设置
-``rollout.model.apxinf.noise_source=observation``，并传入显式的
-``[B,10,32]`` noise tensor。
-默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测
-10 个 reset state，共 100 条轨迹。
+该配置保持原生 OpenPI 语义：两路已经完成方向处理的 LIBERO 图像、8 维 state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认负责初始高斯 noise 采样。加载走 ``apxinf_robo.load_bare_model``，它会选中调优过的 GEMM tactics，使这个 bare handle 与 ApxInf 自身 policy 路径数值一致。做成对数值对齐时，可设置 ``rollout.model.apxinf.noise_source=observation``，并传入显式的 ``[B,10,32]`` noise tensor。默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测 10 个 reset state，共 100 条轨迹。
 
 .. _libero-eval-config:
 
 评测配置详解
 ------------
 
-LIBERO 评测会对任务套件中每个 ``(task_id, trial_id)`` 组合各跑一条轨迹，并汇总 ``eval/success_once`` （轨迹中至少成功一次的比例）。以下字段均在 ``env.eval`` 下配置，共同决定 **并行规模**、**单条轨迹长度** 与 **测试集覆盖范围**。
+LIBERO 评测会对任务套件中每个 ``(task_id, trial_id)`` 组合各跑一条轨迹，并汇总 ``eval/success_once``\ （轨迹中至少成功一次的比例）。以下字段均在 ``env.eval`` 下配置，共同决定 **并行规模**、**单条轨迹长度** 与 **测试集覆盖范围**。
 
 评测协议概述
 ~~~~~~~~~~~~
 
-LIBERO 官方为每个任务提供一组固定的初始状态（``task_suite.get_task_init_states(task_id)``，来自 ``.pruned_init`` 文件），
-`官方仓库 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 的标准评测套件为 **LIBERO-Spatial**、**LIBERO-Object**、**LIBERO-Goal** 与 **LIBERO-Long** （``libero_10``），各含 10 个任务、每任务约 50 个初始状态，完整评测一个套件约 **500** 条轨迹。
-RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``：``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``。
+LIBERO 官方为每个任务提供一组固定的初始状态（``task_suite.get_task_init_states(task_id)``，来自 ``.pruned_init`` 文件），`官方仓库 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 的标准评测套件为 **LIBERO-Spatial**、**LIBERO-Object**、**LIBERO-Goal** 与 **LIBERO-Long**\ （``libero_10``），各含 10 个任务、每任务约 50 个初始状态，完整评测一个套件约 **500** 条轨迹。RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``：``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``。
 
 在 RLinf 的 ``LiberoEnv`` 中，每条评测轨迹由 ``(task_id, trial_id)`` 唯一确定：
 
 - ``task_id``：当前 ``task_suite_name`` 下的任务索引（``0 … n_tasks-1``），决定语言指令与 BDDL 场景；
 - ``trial_id``：该任务下的初始状态索引，通过 ``get_task_init_states(task_id)[trial_id]`` 加载 MuJoCo 初始位形。
 
-环境内部将各任务的 trial 依次拼接为全局 ``reset_state_id``，再由 ``reset_state_id`` 反解出 ``task_id`` 与 ``trial_id``。
-评测模式（``is_eval=True``）下按交错顺序遍历全部 ``reset_state_id``——``(task0, trial0), (task1, trial0), …, (task0, trial1), …``——以保证并行环境下各任务 trial 均匀推进；``auto_reset`` 触发时会按序分配下一个 ``reset_state_id``。
+环境内部将各任务的 trial 依次拼接为全局 ``reset_state_id``，再由 ``reset_state_id`` 反解出 ``task_id`` 与 ``trial_id``。评测模式（``is_eval=True``）下按交错顺序遍历全部 ``reset_state_id``——``(task0, trial0), (task1, trial0), …, (task0, trial1), …``——以保证并行环境下各任务 trial 均匀推进；``auto_reset`` 触发时会按序分配下一个 ``reset_state_id``。
 
 一轮 ``rollout_epoch`` 应尽量覆盖套件内全部 ``(task_id, trial_id)`` 组合。实现上有两种方式：
 
@@ -209,7 +191,7 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
 覆盖完整测试集
 ~~~~~~~~~~~~~~
 
-设套件总 init state 数为 ``S``，并行环境数为 ``E``，单条轨迹步数上限为 ``T`` （即 ``max_episode_steps``）。
+设套件总 init state 数为 ``S``，并行环境数为 ``E``，单条轨迹步数上限为 ``T``\ （即 ``max_episode_steps``）。
 
 方式一：大并行（``auto_reset`` 可有可无）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -246,7 +228,7 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
        use_ordered_reset_state_ids: True
        rollout_epoch: 1
 
-每轮 ``rollout_epoch`` 评测轨迹数约为 ``N × total_num_envs`` （``N = max_steps_per_rollout_epoch / max_episode_steps``）。例如 Spatial（``S=500``）在 ``E=128`` 时需 ``N = ceil(500/128) = 4``。
+每轮 ``rollout_epoch`` 评测轨迹数约为 ``N × total_num_envs``\ （``N = max_steps_per_rollout_epoch / max_episode_steps``）。例如 Spatial（``S=500``）在 ``E=128`` 时需 ``N = ceil(500/128) = 4``。
 
 **多轮平均**
 

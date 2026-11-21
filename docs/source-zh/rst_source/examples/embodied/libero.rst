@@ -142,31 +142,21 @@ LIBERO 提供五个任务套件，共 130 个任务，从单步抓取放置到�
 运行
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-每个方案对应 ``examples/embodiment/config/`` 下的一个 YAML 配置。OpenVLA-OFT 在 LIBERO 上：
-
-- **OpenVLA-OFT + GRPO** —— ``libero_10_grpo_openvlaoft.yaml``
-
-使用 ``run_embodiment.sh`` 启动某个配置：
+OpenVLA-OFT + GRPO 使用 ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``，运行 ``run_embodiment.sh`` 启动训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
 
-**本命令做了什么：**
-
-1. 加载 ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml`` 配置。
-2. 连接（或启动）Ray，并按 ``cluster.component_placement`` 放置 actor、rollout、env 各 worker。
-3. 运行 GRPO 训练循环，并将日志与检查点写入 ``runner.logger.log_path``。
-
 .. admonition:: 进一步配置
    :class: note
 
    - 放置与吞吐 → :doc:`放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
+   - 评测时隐藏推理延迟 → :doc:`RTC <../../guides/rtc>`
    - 全部配置项 → :doc:`配置 <../../guides/index>`
    - 指标定义与日志后端 → :doc:`训练指标 <../../reference/metrics>`
    - 从检查点恢复 → :doc:`断点续训 <../../guides/resume>`
    - 卡住或显存不足（OOM）？ → :doc:`FAQ <../../resources/faq>`
-   - 评测时隐藏推理延迟 → :doc:`RTC <../../guides/rtc>`
 
 可视化与结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

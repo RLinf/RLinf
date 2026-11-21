@@ -3,94 +3,7 @@ FAQs
 
 Below are RLinf's frequently asked questions. This section will be continuously updated, and everyone is welcome to keep asking questions to help us improve!
 
-Breakpoint Debugging
----------------------
-
-Using Ray Distributed Debugger (Recommended)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Description:** This section introduces how to use the Ray distributed debugger in VSCode or Cursor to debug your program.
-
-1. Prepare environment (one‑time):
-
-   .. code-block:: bash
-
-      uv pip install debugpy
-
-2. Register the cluster in VSCode/Cursor:
-
-   - Search for "Ray Distributed Debugger" in the VSCode/Cursor extension market, and install it.
-     
-     - If you cannot find the extension, you can download the extension VSIX file from `here <https://open-vsx.org/extension/anyscalecompute/ray-distributed-debugger>`__. After downloading, you can install it by (1) open the command palette (Ctrl+Shift+P), and type 'Extensions: Install from VSIX', and select the downloaded file. (2) Or, drag and drop the file into the VSCode/Cursor window.
-  
-   - Open the Ray extension panel in the VSCode/Cursor sidebar, and click the "+" button to register the cluster endpoint (e.g., ``127.0.0.1:8265`` by default, or the Ray address if you have already started the Ray cluster via ``ray start --head``).
-  
-   - Click the "⚙" icon (Configure Debugger Local Folder) of the added cluster, and input the path to the RLinf repo.
-
-3. Add a `breakpoint()` anywhere you want:
-
-   .. code-block:: python
-
-      chains = data["chains"]
-      denoise_inds = data["denoise_inds"]
-      
-      # Add this line to set a breakpoint
-      breakpoint()
-      
-      # input transform
-      observation = self.input_transform(data, transpose=False)
-      observation = _model.Observation.from_dict(observation)
-
-4. Run any RLinf script, for example, PPO Pi05:
-
-   .. code-block:: bash
-
-      bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
-
-5. Attach the debugger:
-
-   - When execution pauses, the task appears in the Ray extension “Paused Tasks” list.
-   - Click the play/attach icon to start an interactive debug session.
-   - Disconnect in the VSCode/Cursor debug toolbar when done so you can attach to other paused tasks.
-
-Common tips:
-
-- If you run into Runtime Error the first time you debug, reload the VSCode/Cursor window by pressing `Ctrl+Shift+P`, and type 'Developer: Reload Window'.
-
-**Reference:** Ray Distributed Debugger docs: https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html
-
-Using Ray Legacy Debugger (Fallback)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Description:** This section introduces how to debug when you cannot install the Ray distributed debugger extension using the legacy debug mode.
-
-1. First, set a breakpoint at the location where you want to debug, as shown below:
-
-.. code-block:: python
-
-   chains = data["chains"]
-   denoise_inds = data["denoise_inds"]
-   
-   # Add this line to set a breakpoint
-   breakpoint()
-   
-   # input transform
-   observation = self.input_transform(data, transpose=False)
-   observation = _model.Observation.from_dict(observation)
-
-2. Then run the corresponding program, for example, PPO Pi05:
-
-.. code-block:: bash
-
-   RAY_DEBUG=legacy bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
-
-3. Run the program until you see the ``use 'ray debug' to connect ...`` prompt, then open a new terminal and execute ``ray debug`` to connect to the debugger.
-
-.. code-block:: bash
-
-   ray debug
-
-**Reference:** See Ray's official documentation at https://docs.ray.io/en/latest/ray-observability/user-guides/debug-apps/ray-debugging.html.
+.. _faq-rendering:
 
 Rendering Issues
 ------------------------------------
@@ -181,8 +94,33 @@ interface is chosen).
 - If needed, choose the correct interface's IP address explicitly for the Ray
   head and share that IP with workers.
 
-CUDA Issues
--------------
+.. _faq-cuda:
+
+CUDA and Memory Issues
+----------------------
+
+.. _faq-oom:
+
+Out of Memory (OOM) During Training
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptom:** ``torch.OutOfMemoryError: CUDA out of memory`` during rollout or actor updates.
+
+**Fix:** Lower per-GPU memory usage and enable offload in the recipe YAML:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       total_num_envs: 8
+       enable_offload: True
+   rollout:
+     enable_offload: True
+   actor:
+     micro_batch_size: 1
+     enable_offload: True
+
+Keep ``actor.global_batch_size`` divisible by ``actor.micro_batch_size`` times the number of actor workers, and keep ``env.train.total_num_envs`` divisible by the number of env workers times ``rollout.pipeline_stage_num``.
 
 NCCL "cuda invalid argument" During Task Transfer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -305,3 +243,42 @@ created once per collective group, so a rare abort is still possible. Use
 PyTorch 2.7 or later where the rest of the stack allows it. When reporting a
 failure, include the PyTorch version and the first native stack trace; Ray's
 ``actor died`` message does not identify the cause.
+
+.. _faq-debugging:
+
+Breakpoint Debugging
+--------------------
+
+Use Ray Distributed Debugger (Recommended)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Debug Ray workers in VSCode or Cursor with the Ray Distributed Debugger extension:
+
+1. Install ``debugpy`` once:
+
+   .. code-block:: bash
+
+      uv pip install debugpy
+
+2. Install the "Ray Distributed Debugger" extension in VSCode or Cursor (or download the VSIX from `Open VSX <https://open-vsx.org/extension/anyscalecompute/ray-distributed-debugger>`__). Open the Ray sidebar panel, click "+" to register ``127.0.0.1:8265`` (or your Ray head address), and set the local folder to the RLinf repository path.
+
+3. Insert ``breakpoint()`` where you want execution to pause, then run your script:
+
+   .. code-block:: bash
+
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+4. Open the Ray extension's "Paused Tasks" list and attach to the paused worker. Disconnect when finished to attach to another task. Reload the editor window (``Developer: Reload Window``) if the first attach raises a runtime error.
+
+Reference: `Ray Distributed Debugger docs <https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html>`__.
+
+Use Ray Legacy Debugger (Fallback)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the editor extension is unavailable, insert ``breakpoint()`` and launch with ``RAY_DEBUG=legacy``:
+
+.. code-block:: bash
+
+   RAY_DEBUG=legacy bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+When the log prints ``use 'ray debug' to connect``, attach from another terminal with ``ray debug``. Reference: `Ray Debugging docs <https://docs.ray.io/en/latest/ray-observability/user-guides/debug-apps/ray-debugging.html>`__.

@@ -54,11 +54,7 @@ Set ``rollout.model.model_path`` to your local checkpoint.
 .. code-block:: bash
 
    bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval
-
-Or:
-
-.. code-block:: bash
-
+   # or:
    bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval
 
 **Step 5: Check results**

@@ -3,91 +3,7 @@
 
 下面整理了 RLinf 的常见问题。该部分会持续更新，欢迎大家不断提问，帮助我们改进！
 
-断点调试方法
-------------
-
-使用 Ray 分布式调试器（推荐）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**说明：** 在 VSCode/Cursor 中使用 Ray Distributed Debugger 远程调试 Ray 任务（断点或 post-mortem）。
-
-1. 准备环境（一次性）：
-
-   .. code-block:: bash
-
-      uv pip install debugpy
-
-2. 在 VSCode/Cursor 中注册集群：
-
-   - 在扩展市场搜索 “Ray Distributed Debugger” 并安装。
-   - 如果找不到扩展，可从 `这里 <https://open-vsx.org/extension/anyscalecompute/ray-distributed-debugger>`__ 下载 VSIX，使用“Extensions: Install from VSIX”或拖拽到 VSCode/Cursor 窗口安装。
-   - 在侧边栏打开 Ray 扩展面板，点击 “+” 注册集群地址（本地默认 ``127.0.0.1:8265``，或你通过 ``ray start --head`` 启动的地址）。
-   - 点击已添加集群的 “⚙”（Configure Debugger Local Folder），填写 RLinf 仓库路径。
-
-3. 在代码中任意位置添加 `breakpoint()`：
-
-   .. code-block:: python
-
-      chains = data["chains"]
-      denoise_inds = data["denoise_inds"]
-      
-      # 添加断点
-      breakpoint()
-      
-      # input transform
-      observation = self.input_transform(data, transpose=False)
-      observation = _model.Observation.from_dict(observation)
-
-4. 运行任意 RLinf 脚本（示例：PPO Pi05）：
-
-   .. code-block:: bash
-
-      bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
-
-5. 连接调试器：
-
-   - 执行暂停时，任务会出现在 Ray 扩展的 “Paused Tasks” 列表。
-   - 点击播放/连接图标开始交互式调试。
-   - 调试完成后在 VSCode/Cursor 调试工具栏断开连接，便于切换到其他暂停任务。
-
-常用提示：
-
-- 若首次调试遇到 Runtime Error，可 `Ctrl+Shift+P` 选择 “Developer: Reload Window” 重新加载窗口。
-
-**参考：** Ray Distributed Debugger 文档 https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html
-
-使用 Ray Legacy Debugger（备用）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**说明：** 无法使用 Ray 分布式调试器扩展时的后备方案。
-
-1. 在需要调试的位置设置断点：
-
-.. code-block:: python
-
-   chains = data["chains"]
-   denoise_inds = data["denoise_inds"]
-   
-   # 添加断点
-   breakpoint()
-   
-   # input transform
-   observation = self.input_transform(data, transpose=False)
-   observation = _model.Observation.from_dict(observation)
-
-2. 运行程序（示例：PPO Pi05）：
-
-.. code-block:: bash
-
-   RAY_DEBUG=legacy bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
-
-3. 当程序提示 ``use 'ray debug' to connect ...`` 时，另开终端执行：
-
-.. code-block:: bash
-
-   ray debug
-
-**参考：** Ray 调试文档 https://docs.ray.io/en/latest/ray-observability/user-guides/debug-apps/ray-debugging.html
+.. _faq-rendering:
 
 渲染问题
 --------
@@ -172,8 +88,33 @@ Vulkan Incompatible GPU Driver
 - 确认所选 IP 能被其他节点访问（例如使用 ping 测试）。  
 - 如有需要，请显式选择正确网卡对应的 IP 作为 Ray head，并将该 IP 告知各 Worker。
 
-CUDA 问题
-----------
+.. _faq-cuda:
+
+CUDA 与显存问题
+---------------
+
+.. _faq-oom:
+
+显存不足（OOM）
+~~~~~~~~~~~~~~~
+
+**现象：** rollout 或 actor 更新阶段报错 ``torch.OutOfMemoryError: CUDA out of memory``。
+
+**修复：** 在配置 YAML 中降低单卡显存占用并开启 offload：
+
+.. code-block:: yaml
+
+   env:
+     train:
+       total_num_envs: 8
+       enable_offload: True
+   rollout:
+     enable_offload: True
+   actor:
+     micro_batch_size: 1
+     enable_offload: True
+
+保持 ``actor.global_batch_size`` 能被 ``actor.micro_batch_size`` 乘以 actor worker 数量整除，且 ``env.train.total_num_envs`` 能被 env worker 数量乘以 ``rollout.pipeline_stage_num`` 整除。
 
 任务迁移时出现 NCCL “cuda invalid argument”
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -272,3 +213,42 @@ Ray 会在启动时捕获环境变量，因此必须在每个节点上 ``ray sta
 **可能原因：** PyTorch 2.7 之前，``torch.distributed`` 中有若干构造函数（包括 Gloo 后端和 ``TCPStore``）在未持有 GIL 的情况下登记新建的 Python 对象。RLinf 在不同线程上为不同对端创建通信组，两次登记可能重叠，从而破坏 pybind11 记录存活对象的表。BEHAVIOR 环境（PyTorch 2.5.1）和 Ascend 默认环境（PyTorch 2.6.0）都受影响。
 
 **修复：** 在这些版本上，RLinf 改用持有 GIL 完成登记的构造函数来创建 Gloo 后端和通信组选项，Gloo 通信组因此不再触发该问题。``TCPStore`` 以及 ``TORCH_DISTRIBUTED_DEBUG=DETAIL`` 启用的调试包装没有这样的构造函数；``TCPStore`` 每个通信组只创建一次，因此仍可能偶发中止。条件允许时，请使用 PyTorch 2.7 及以上版本。报告问题时，请附上 PyTorch 版本和第一份原生调用栈，Ray 的 ``actor died`` 信息不足以判断原因。
+
+.. _faq-debugging:
+
+断点调试
+--------
+
+使用 Ray 分布式调试器（推荐）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在 VSCode 或 Cursor 中用 Ray Distributed Debugger 调试 Ray worker：
+
+1. 安装 ``debugpy``：
+
+   .. code-block:: bash
+
+      uv pip install debugpy
+
+2. 在 VSCode 或 Cursor 中安装 “Ray Distributed Debugger” 扩展（也可从 `Open VSX <https://open-vsx.org/extension/anyscalecompute/ray-distributed-debugger>`__ 下载 VSIX）。随后打开 Ray 侧边栏，点击 “+” 添加 ``127.0.0.1:8265``\ （或 Ray head 地址），并将本地目录设为 RLinf 仓库路径。
+
+3. 在需要暂停的位置插入 ``breakpoint()``，再运行训练脚本：
+
+   .. code-block:: bash
+
+      bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+4. 在 Ray 扩展的 “Paused Tasks” 列表中连接到暂停的 worker。调试完断开连接即可切换其他任务；首次连接报错时，执行 ``Developer: Reload Window`` 重载窗口。
+
+参考：`Ray Distributed Debugger 文档 <https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html>`__。
+
+使用 Ray Legacy Debugger（备用）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+无法安装编辑器扩展时，插入 ``breakpoint()`` 并设置 ``RAY_DEBUG=legacy`` 启动训练：
+
+.. code-block:: bash
+
+   RAY_DEBUG=legacy bash examples/embodiment/run_embodiment.sh maniskill_ppo_openpi_pi05
+
+日志提示 ``use 'ray debug' to connect`` 后，另开终端执行 ``ray debug`` 即可连接调试。参考：`Ray 调试文档 <https://docs.ray.io/en/latest/ray-observability/user-guides/debug-apps/ray-debugging.html>`__。

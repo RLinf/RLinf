@@ -147,13 +147,13 @@ The ``frame_wise_relative`` + ``rot6d`` + ``quantile_rot`` action transform **do
 Launch Training
 ----------------------------------------
 
-Run from the RLinf repo root:
+Launch SFT with ``examples/sft/config/libero_sft_cosmos3.yaml`` from the repository root:
 
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3
 
-**What this command does:** reads ``examples/sft/config/libero_sft_cosmos3.yaml``, shards the Cosmos3 model with FSDP2 on each GPU and trains, saving checkpoints every ``save_interval`` steps to ``.../checkpoints/global_step_<N>/``, with logs to ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``.
+Checkpoints save every ``save_interval`` steps under ``.../checkpoints/global_step_<N>/``, and logs write to ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``.
 
 .. warning::
 

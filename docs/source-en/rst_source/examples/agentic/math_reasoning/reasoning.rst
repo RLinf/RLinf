@@ -11,8 +11,6 @@ Train a Qwen-based reasoning model with GRPO on math data. Compared with supervi
 Overview
 --------
 
-Use this recipe to train Qwen-based reasoning models with GRPO on math data.
-
 .. grid:: 2 4 4 4
    :gutter: 2
 
@@ -65,12 +63,12 @@ To support different dataset formats, you can adjust the configuration as needed
 
 - **Prompt key and answer key configurations**
 
-  The default configuration expects the dataset to have the `prompt` and `solutions` keys for retrieving the prompt and answer like in the Boba dataset.
+  The default configuration expects the dataset to have the ``prompt`` and ``solutions`` keys for retrieving the prompt and answer like in the Boba dataset.
 
   However, different datasets may have different key names or structures. You can customize the configuration to match your dataset's format.
-  Change the `prompt_key` and `answer_key` in the configuration yaml file to point to the correct fields in your dataset.
+  Change ``prompt_key`` and ``answer_key`` in the configuration YAML file to point to the correct fields in your dataset.
 
-  For example, if your dataset uses `prompt` and `label` as keys, you would set:
+  For example, if your dataset uses ``prompt`` and ``label`` as keys, set:
 
   .. code-block:: yaml
 
@@ -79,14 +77,13 @@ To support different dataset formats, you can adjust the configuration as needed
 
 - **apply_chat_template configuration**
 
-  Some datasets may require the use of a chat template for the prompt.
-  If so, you will need to enable the `apply_chat_template` option in the configuration.
+  Some datasets require a chat template for the prompt. Enable ``apply_chat_template`` in the configuration:
 
   .. code-block:: yaml
 
       apply_chat_template: true
 
-  For example, if your dataset has a specific structure for chat messages, you need to enable this option to properly format the prompt. Such as:
+  For example, if your dataset stores chat messages as a list:
 
   .. code-block:: json
 
@@ -95,8 +92,7 @@ To support different dataset formats, you can adjust the configuration as needed
           "label": "<str>",
       }
 
-  When the option is enabled, the raw dataset is processed through `tokenizer.apply_chat_template()` to format the prompt according to the model's chat template.
-  After processing, the prompt will be converted into a string for input.
+  When enabled, RLinf formats each prompt with ``tokenizer.apply_chat_template()`` into an input string.
 
 How GRPO Works
 --------------
@@ -116,20 +112,24 @@ Reward function:
 Run It
 ------
 
-**1. Key Parameters Configuration**
+**1. Choose and Edit a Config**
 
-Before launching, check the configuration file. For common cluster, runner, rollout, and data fields, see :doc:`Training configuration <../../../reference/configuration>`.
+Pick a Megatron GRPO config and set cluster and path fields (``cluster.num_nodes``, ``runner.output_dir``, ``rollout.model.model_path``, ``data.train_data_paths``). For common fields, see :doc:`Training configuration <../../../reference/configuration>`.
 
-**2. Configuration File**
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
 
-Recommended configurations can be found in:
+   * - Model
+     - Config
+   * - Qwen2.5-1.5B
+     - ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
+   * - Qwen2.5-7B
+     - ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
-- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
+**2. Launch Training**
 
-**3. Launch Command**
-
-Run the following commands to start the Ray cluster and begin training:
+Start the Ray cluster and launch training on the head node (pass the chosen config name without ``.yaml``):
 
 .. code-block:: bash
 
@@ -153,9 +153,9 @@ Run the following commands to start the Ray cluster and begin training:
 Visualization and Results
 -------------------------
 
-We trained both 1.5B and 7B models based on DeepSeek-R1-Distill-Qwen.
+We trained 1.5B and 7B models from DeepSeek-R1-Distill-Qwen.
 
-After launch, monitor training with:
+Monitor training with TensorBoard:
 
 .. code-block:: bash
 
@@ -182,7 +182,7 @@ Final Performance
 
 We provide an evaluation `toolkit <https://github.com/RLinf/LLMEvalKit>`_.
 
-Measured performance on AIME24, AIME25, and GPQA-diamond shows RLinf achieves SOTA performance.
+Evaluation results on AIME 24, AIME 25, and GPQA-diamond:
 
 .. list-table:: **1.5 B model results**
    :header-rows: 1

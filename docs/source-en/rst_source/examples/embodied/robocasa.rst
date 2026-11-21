@@ -138,12 +138,6 @@ Launch the CloseDrawer recipe:
 
    bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
 
-What this does:
-
-1. Starts the embodied training entrypoint with the RoboCasa Hydra config.
-2. Creates Ray workers for the actor, rollout, and RoboCasa env components.
-3. Runs PPO rollouts, computes sparse task rewards, and updates the OpenPI policy.
-
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix,
 ``robocasa_closedrawer_ppo_openpi``.

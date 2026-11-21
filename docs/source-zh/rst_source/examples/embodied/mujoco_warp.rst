@@ -124,19 +124,13 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 运行
 ----
 
-在仓库根目录启动 half-cheetah 配方：
+在仓库根目录启动默认的 ``half_cheetah`` 配方（使用 ``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` 和 ``examples/embodiment/config/env/mujoco_warp.yaml``）：
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh mujoco_warp_ppo_mlp
 
-这条命令会：
-
-1. 加载 ``examples/embodiment/config/mujoco_warp_ppo_mlp.yaml`` 和 ``examples/embodiment/config/env/mujoco_warp.yaml``。
-2. 在一张 GPU 上启动 actor、rollout 和 env worker，分别使用 512 个训练 world 和 16 个评估 world。
-3. 采集 PPO rollout，并更新 MLP policy 和 value head。
-
-训练其他任务时，同时覆盖两个 env 的任务名和 actor 维度。例如：
+训练其他任务时，同时覆盖两个 env 的任务名和 actor 维度：
 
 .. code:: bash
 

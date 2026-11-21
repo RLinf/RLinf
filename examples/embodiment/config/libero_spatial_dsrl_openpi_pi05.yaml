@@ -128,7 +128,6 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     precision: ${actor.model.precision}
 
 actor:

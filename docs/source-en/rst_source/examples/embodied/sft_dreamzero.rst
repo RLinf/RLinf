@@ -83,10 +83,21 @@ Model Preparation
 Resume from a Checkpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Set ``actor.model.model_path`` to a downloaded checkpoint directory; architecture and weights load from that path. Options:
+Set ``actor.model.model_path`` to a downloaded checkpoint directory; architecture and weights load from that path:
 
-- DreamZero 14B (DROID / AgiBot): `DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_, `DreamZero-AgiBot <https://huggingface.co/GEAR-Dreams/DreamZero-AgiBot>`_ — see ``droid_sft_dreamzero_14b.yaml``
-- RLinf 5B (LIBERO SFT): `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000>`_ — see ``libero_sft_dreamzero_5b.yaml`` and point ``model_path`` at that directory
+.. list-table::
+   :header-rows: 1
+   :widths: 22 46 32
+
+   * - Model
+     - Checkpoints
+     - Config
+   * - DreamZero 14B (DROID / AgiBot)
+     - `DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_, `DreamZero-AgiBot <https://huggingface.co/GEAR-Dreams/DreamZero-AgiBot>`_
+     - ``droid_sft_dreamzero_14b.yaml``
+   * - RLinf 5B (LIBERO SFT)
+     - `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000>`_
+     - ``libero_sft_dreamzero_5b.yaml``
 
 Download example:
 
@@ -155,12 +166,32 @@ Training data must follow the LeRobot v2/v3 layout (``meta/``, ``data/``, etc.).
 Download Datasets
 ~~~~~~~~~~~~~~~~~
 
-Supported datasets:
+Supported datasets and configs:
 
-- LIBERO: `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``; see ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
-- DROID: `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``; see ``droid_sft_dreamzero_14b.yaml``
-- Franka PnP: `RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``; transforms in ``data_transforms/franka_pnp.py`` (extends ``libero_sim`` dual-view layout)
-- Mixture SFT: ``libero_franka_mix_sft_dreamzero_5b.yaml`` uses a **list** for ``data.train_data_paths``; each entry can set ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``
+.. list-table::
+   :header-rows: 1
+   :widths: 16 26 18 40
+
+   * - Dataset
+     - Source
+     - ``embodiment_tag``
+     - Config / Notes
+   * - LIBERO
+     - `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_
+     - ``libero_sim``
+     - ``libero_sft_dreamzero_14b.yaml``, ``libero_sft_dreamzero_5b.yaml``
+   * - DROID
+     - `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_
+     - ``oxe_droid``
+     - ``droid_sft_dreamzero_14b.yaml``
+   * - Franka PnP
+     - `RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_
+     - ``franka_pnp``
+     - Extends the ``libero_sim`` dual-view layout.
+   * - Mixture SFT
+     - Multiple datasets
+     - Per-entry
+     - ``libero_franka_mix_sft_dreamzero_5b.yaml``; ``data.train_data_paths`` takes a list with ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``.
 
 Download example:
 
@@ -360,36 +391,38 @@ Model and Training Settings
 Run It
 ------
 
-From the repository root:
+Reference SFT configs under ``examples/sft/config/``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 42 32
+
+   * - Recipe
+     - Config
+     - Backbone / Mode
+   * - LIBERO 14B
+     - ``libero_sft_dreamzero_14b.yaml``
+     - WAN2.1 checkpoint (``dreamzero_14b``)
+   * - LIBERO 5B
+     - ``libero_sft_dreamzero_5b.yaml``
+     - WAN2.2 cold start (``dreamzero_5b``)
+   * - DROID 14B
+     - ``droid_sft_dreamzero_14b.yaml``
+     - WAN2.1 ``DreamZero-DROID`` (``dreamzero_14b``)
+   * - LIBERO + Franka mixture
+     - ``libero_franka_mix_sft_dreamzero_5b.yaml``
+     - WAN2.2 mixture SFT (``dreamzero_5b``)
+
+Launch training from the repository root with any config name above:
 
 .. code:: bash
 
-   # LIBERO + WAN2.1 (checkpoint, dreamzero_14b preset)
    bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_14b
-
-   # LIBERO + WAN2.2 (cold start, dreamzero_5b preset)
    bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
-
-   # DROID + WAN2.1 (dreamzero_14b preset; model_path -> DreamZero-DROID)
    bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
-
-   # LIBERO + Franka mixture (WAN2.2; see libero_franka_mix_sft_dreamzero_5b.yaml)
    bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
-Equivalent command:
-
-.. code:: bash
-
-   python examples/sft/train_vla_sft.py \
-     --config-path examples/sft/config/ \
-     --config-name <config_name> \
-     runner.logger.log_path=<auto_log_dir>
-
-Logs:
-
-- ``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``
-
-Resume training with ``runner.resume_dir`` pointing to a checkpoint directory (field provided in example configs such as ``droid_sft_dreamzero_14b.yaml`` and ``libero_sft_dreamzero_5b.yaml``).
+The launcher writes logs to ``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``. Set ``runner.resume_dir`` to a checkpoint directory to resume training.
 
 
 .. _sft-dreamzero-hardware:

@@ -144,7 +144,7 @@ task. The dataset is available on |huggingface|
 Run It
 ------
 
-Pick one config and launch training:
+Available training configs:
 
 .. list-table::
    :header-rows: 1
@@ -160,6 +160,8 @@ Pick one config and launch training:
      - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml``
      - ``isaaclab_franka_stack_cube_ppo_openpi_pi05``
 
+Launch training with ``run_embodiment.sh``:
+
 .. code:: bash
 
    # GR00T N1.5
@@ -167,12 +169,6 @@ Pick one config and launch training:
 
    # OpenPI π₀.₅
    bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and IsaacLab env components.
-3. Runs PPO rollouts, computes sparse task rewards, and updates the VLA policy.
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffixes:

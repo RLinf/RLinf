@@ -183,9 +183,7 @@ root, start and enter the server container:
    geniesim docker --profile post-train up --headless
    geniesim docker --profile post-train into
 
-Inside the ``post_train_server`` container, from ``/workspace``, start the
-servers and check their status. The count, starting port, and GPU below are
-example values; adjust them to match your RLinf configuration:
+Inside the ``post_train_server`` container at ``/workspace``, start the servers and check their status (adjust ``--count``, ``--base-port``, and ``--devices`` to match your recipe):
 
 .. code:: bash
 
@@ -253,11 +251,7 @@ node can reach, and use the port the server is listening on. For detailed
 options, see the
 `GenieSim server guide <https://github.com/AgibotTech/genie_sim/blob/HEAD/source/rlinf_geniesim/README.md>`__.
 
-Run the RLinf commands on the training node, in the activated OpenPI
-environment, from the RLinf repository root. With Docker, that is
-``/workspace/RLinf`` inside the container. With a custom installation, use
-the repository directory on the training node. Keep the
-``GENIESIM_CHECKPOINT_PATH`` set above.
+Run the RLinf commands below on the training node from the RLinf repository root (``/workspace/RLinf`` in Docker) with the OpenPI environment activated and ``GENIESIM_CHECKPOINT_PATH`` exported.
 
 .. note::
 
@@ -290,8 +284,7 @@ simulation node used for validation and start one more server for each port list
 
 **Evaluate**
 
-Set the simulation server's address and launch standalone evaluation.
-The address below is an example; replace it with the server's IP and port:
+Export the simulation server IP and port, then launch standalone evaluation:
 
 .. code:: bash
 
@@ -424,15 +417,30 @@ twice; the repeats were removed before computing the rates. The success rate
 logged during the run includes the repeats and can differ slightly from the
 table.
 
-The training reference configs are in ``examples/embodiment/config/``:
+Reference training configs under ``examples/embodiment/config/``:
 
-- Single-task PPO: ``geniesim_pick_block_color_ppo_openpi_pi05.yaml``; change
-  the task selection to train another task.
-- Single-task GRPO: ``geniesim_pick_block_color_grpo_openpi_pi05.yaml``; change
-  the task selection to train another task.
-- 4-task PPO: ``geniesim_multitask4_ppo_openpi_pi05.yaml``.
-- 6-task PPO: ``geniesim_multitask6_ppo_openpi_pi05.yaml``.
-- 10-task PPO: ``geniesim_multitask10_ppo_openpi_pi05.yaml``.
+.. list-table::
+   :header-rows: 1
+   :widths: 22 48 30
+
+   * - Recipe
+     - Config
+     - Notes
+   * - Single-task PPO
+     - ``geniesim_pick_block_color_ppo_openpi_pi05.yaml``
+     - Change task selection for other tasks.
+   * - Single-task GRPO
+     - ``geniesim_pick_block_color_grpo_openpi_pi05.yaml``
+     - Change task selection for other tasks.
+   * - 4-task PPO
+     - ``geniesim_multitask4_ppo_openpi_pi05.yaml``
+     - 4-task mix.
+   * - 6-task PPO
+     - ``geniesim_multitask6_ppo_openpi_pi05.yaml``
+     - 6-task mix.
+   * - 10-task PPO
+     - ``geniesim_multitask10_ppo_openpi_pi05.yaml``
+     - 10-task mix.
 
 Appendix
 --------

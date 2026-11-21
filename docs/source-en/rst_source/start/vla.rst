@@ -43,7 +43,7 @@ Download the ManiSkill3 scene assets once from the repository root:
 Download Model and Launch Training
 ----------------------------------
 
-Select a model tab below. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to select specific devices (:doc:`../guides/basic_config`).
+Select a model tab below. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific ones (:doc:`../guides/basic_config`).
 
 .. tab-set::
 
@@ -79,12 +79,20 @@ Select a model tab below. Both recipes use all available accelerators by default
            actor.model.model_path=$PWD/checkpoints/openvlaoft-base \
            actor.model.lora_path=$PWD/checkpoints/openvlaoft-lora
 
-Rollout inherits ``actor.model.model_path`` automatically, so you pass the checkpoint path once.
+Rollout inherits ``actor.model.model_path`` automatically. To save the path in the YAML file instead of passing it on the command line, edit these fields:
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: /path/to/downloaded-checkpoint
+       # For OpenVLA-OFT, also set:
+       lora_path: /path/to/downloaded-lora
 
 Watch Training Results
 ----------------------
 
-Logs and checkpoints are saved under ``./logs``. Open TensorBoard and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``:
+Training writes logs and checkpoints under ``./logs``. Open TensorBoard and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``:
 
 .. code-block:: bash
 
@@ -95,6 +103,22 @@ Logs and checkpoints are saved under ``./logs``. Open TensorBoard and track ``ro
    :width: 90%
 
    TensorBoard training curves for the ManiSkill3 quick start.
+
+Troubleshooting
+---------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Symptom
+     - Fix
+   * - Out of GPU memory (OOM)
+     - Lower ``actor.micro_batch_size`` and ``env.train.total_num_envs``; see :ref:`Out of Memory <faq-oom>`.
+   * - EGL or Vulkan rendering error
+     - Check graphics driver and EGL config in :ref:`Rendering Issues <faq-rendering>`.
+   * - Stale Ray / NCCL error on rerun
+     - Run ``ray stop`` before relaunching (:ref:`CUDA and Memory Issues <faq-cuda>`).
 
 Next Steps
 ----------

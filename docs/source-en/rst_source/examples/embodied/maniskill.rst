@@ -133,22 +133,31 @@ Run It
 
 Each recipe is a YAML config under ``examples/embodiment/config/``:
 
-- **OpenVLA + PPO** — ``maniskill_ppo_openvla.yaml``
-- **OpenVLA-OFT + PPO** — ``maniskill_ppo_openvlaoft.yaml``
-- **OpenVLA + GRPO** — ``maniskill_grpo_openvla.yaml``
-- **OpenVLA-OFT + GRPO** — ``maniskill_grpo_openvlaoft.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Model
+     - Algorithm
+     - Config
+   * - OpenVLA
+     - PPO
+     - ``maniskill_ppo_openvla.yaml``
+   * - OpenVLA-OFT
+     - PPO
+     - ``maniskill_ppo_openvlaoft.yaml``
+   * - OpenVLA
+     - GRPO
+     - ``maniskill_grpo_openvla.yaml``
+   * - OpenVLA-OFT
+     - GRPO
+     - ``maniskill_grpo_openvlaoft.yaml``
 
 Launch a config with ``run_embodiment.sh``:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
-
-**What this command does:**
-
-1. Loads ``examples/embodiment/config/maniskill_ppo_openvla.yaml``.
-2. Attaches to (or starts) Ray and places the actor, rollout, and env workers per ``cluster.component_placement``.
-3. Runs the PPO training loop, writing logs and checkpoints under ``runner.logger.log_path``.
 
 When PPO rollout spends time running terminal value bootstrap one environment
 slice at a time or decoding unused action tokens on OpenVLA, enable batched and

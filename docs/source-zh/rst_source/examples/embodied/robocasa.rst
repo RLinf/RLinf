@@ -139,12 +139,6 @@ OpenPI π₀ 策略。
 
    bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
 
-这条命令会：
-
-1. 使用 RoboCasa Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 RoboCasa env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算稀疏任务奖励，并更新 OpenPI 策略。
-
 独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
 通过配置回退机制复用相同后缀 ``robocasa_closedrawer_ppo_openpi``。
 

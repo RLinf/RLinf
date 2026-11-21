@@ -231,10 +231,18 @@ RLinf 的 ABot-M0 加载路径支持 ``VGGT_MODEL_PATH``。离线运行时，在
 配置 ``model_path``
 ----------------------------------------
 
-针对两个 benchmark 各提供一份配置：
+两个 benchmark 各对应一份配置：
 
-* LIBERO：      ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml``
-* LIBERO-Plus： ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Benchmark
+     - 配置文件
+   * - LIBERO
+     - ``examples/embodiment/config/libero_10_ppo_abot_m0.yaml``
+   * - LIBERO-Plus
+     - ``examples/embodiment/config/libero_10_plus_ppo_abot_m0.yaml``
 
 请将以下两项设置为用于评测或训练的 checkpoint 路径：
 
@@ -288,9 +296,7 @@ CLI 用法、Hydra 覆盖、日志和视频输出见 :doc:`Evaluation CLI 参考
 运行
 ----------------------------------------
 
-PPO 训练与评测共用同一套启动流程。通过 ``LIBERO_TYPE`` 选择目标套件，并启动对应配置。
-
-通用环境变量：
+启动训练前先设置通用环境变量并启动 Ray：
 
 .. code-block:: bash
 
@@ -305,14 +311,14 @@ PPO 训练与评测共用同一套启动流程。通过 ``LIBERO_TYPE`` 选择�
    ray stop || true
    ray start --head --port=6379
 
-**LIBERO：**
+启动 LIBERO PPO 训练：
 
 .. code-block:: bash
 
    export LIBERO_TYPE=standard
    bash examples/embodiment/run_embodiment.sh libero_10_ppo_abot_m0
 
-**LIBERO-Plus：**
+启动 LIBERO-Plus PPO 训练：
 
 .. code-block:: bash
 

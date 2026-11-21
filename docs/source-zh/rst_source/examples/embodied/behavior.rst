@@ -121,12 +121,6 @@
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
 
-**这些命令会：**
-
-1. 下载 OmniGibson 需要的 IsaacSim runtime。
-2. 下载 BEHAVIOR 机器人资产、任务资产和 2025 challenge instances。
-3. 创建训练和评估脚本需要的两个环境变量。
-
 
 下载模型
 ----------------------------------------
@@ -168,19 +162,13 @@
      - PPO
      - ``behavior_ppo_openpi_pi05.yaml``
 
-使用 ``run_embodiment.sh`` 启动一个配置：
+使用 ``run_embodiment.sh`` 启动训练：
 
 .. code-block:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
    bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
-
-**这个命令会：**
-
-1. 加载 ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml`` 及共享环境配置 ``examples/embodiment/config/env/behavior_r1pro.yaml``。
-2. 按组件放置配置启动 actor、rollout 和 BEHAVIOR env 的 Ray worker。
-3. 运行 PPO 训练，并把日志和检查点写入 ``runner.logger.log_path``。
 
 .. admonition:: 进一步配置
    :class: note

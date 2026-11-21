@@ -118,16 +118,12 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
 运行
 ----
 
+使用 ``evaluations/libero/libero_10_molmoact2_eval.yaml`` 评测 LIBERO-Long：
+
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
      rollout.model.model_path=/path/to/model/MolmoAct2-LIBERO
-
-本命令会：
-
-1. 通过 MolmoAct2 model adapter 加载官方 checkpoint。
-2. 使用 ``evaluations/libero/libero_10_molmoact2_eval.yaml`` 中的设置运行 LIBERO-Long suite。
-3. 将终端输出和 ``eval/success_once`` 写入带时间戳的日志。
 
 评测其他 suite 时，替换为上方任务表中的对应配置即可。
 

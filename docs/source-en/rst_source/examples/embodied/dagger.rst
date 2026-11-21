@@ -270,12 +270,20 @@ Run It
 
 **1. Configuration files**
 
-We currently support DAgger training with the following configs:
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-- **MLP + ManiSkill**: ``examples/embodiment/config/maniskill_dagger_mlp.yaml``
-- **Pi0 + LIBERO**: ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
-- **Pi0 + LIBERO (online LeRobot)**: ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``
-- **Pi0 + RoboTwin**: ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
+   * - Setup
+     - Config
+   * - MLP + ManiSkill
+     - ``examples/embodiment/config/maniskill_dagger_mlp.yaml``
+   * - Pi0 + LIBERO
+     - ``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
+   * - Pi0 + LIBERO (online LeRobot)
+     - ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``
+   * - Pi0 + RoboTwin
+     - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
 
 **2. Key DAgger Parameters**
 
@@ -349,8 +357,8 @@ Use the same config name with either launcher:
    # For RoboTwin, add the following two commands before running the .sh file:
    # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
 
-Visualization and Visualization and Results
--------------------------------------------
+Visualization and Results
+-------------------------
 
 **1. TensorBoard Logs**
 
@@ -370,8 +378,8 @@ For metric definitions, see :doc:`Training metrics <../../reference/metrics>`. D
 - ``train/replay_buffer/total_samples``: Number of replay-buffer samples available for training.
 - ``train/replay_buffer/cache_size``: Number of cached flattened trajectories.
 
-Visualization and Results
--------------------------
+Experimental Results
+--------------------
 
 .. csv-table::
    :header: "Configuration", "Student init SR", "Expert SR", "Training Time", "Student final SR"

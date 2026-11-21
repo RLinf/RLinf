@@ -254,7 +254,7 @@ LIBERO 与真机 Franka
          embed_dtype: bf16
          config_name: "pi0_libero"   # 真机改为 pi0_realworld
 
-启动：
+在仓库根目录启动训练：
 
 .. code:: bash
 
@@ -354,6 +354,8 @@ Pi0.5 + BEHAVIOR-1K
 - ``use_skill: false`` 用主任务文本；``true`` 时按窗口从 ``task_subtasks`` 取逐帧技能文本（数据集里折叠后的 orchestrator 不能当标签）。
 - ``fine_grained_level`` / ``tolerance_s`` 控制流式时间对齐。
 
+在仓库根目录启动 BEHAVIOR-1K SFT：
+
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh behavior_sft_openpi_pi05
@@ -384,6 +386,8 @@ Pi0 + RoboTwin
 
 14 维 ALOHA 动作、3 路图像；进模型前按 OpenPI 规则 pad 到 32 维。``openpi_data.norm_stats_path`` 把训练和评估钉到同一份 ``norm_stats.json``。换任务时改路径里的任务名。
 
+在仓库根目录启动 RoboTwin SFT：
+
 .. code:: bash
 
    bash examples/sft/run_vla_sft.sh robotwin_adjust_bottle_sft_openpi
@@ -397,9 +401,10 @@ SFT 会把 ``full_weights.pt`` 写到 ``.../checkpoints/global_step_<N>/actor/mo
 
 归一化统计也\ **不会**\ 跟着 ``full_weights.pt`` 走。现成评测 YAML 常把 ``openpi_data.norm_stats_path`` 插值成 ``${rollout.model.model_path}/.../norm_stats.json``，那是给「权重和统计在同一目录」的转换产物用的。只改 ``model_path`` 指到 SFT checkpoint 时，必须\ **另外**\ 把统计指回训练用的那份（RoboTwin：基础权重旁的 ``physical-intelligence/robotwin/<task>/norm_stats.json``；BEHAVIOR：训练时的 ``openpi_data.norm_stats_path``）。
 
+直接评测 SFT 产出的 checkpoint，并显式指定训练时的归一化统计文件：
+
 .. code:: bash
 
-   # 示例：直接评测 SFT 产出的 .pt（统计仍用训练时的文件，不要跟 model_path 走）
    bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
      rollout.model.model_path=/path/to/logs/.../checkpoints/global_step_30000 \
      rollout.model.openpi_data.norm_stats_path=/path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json

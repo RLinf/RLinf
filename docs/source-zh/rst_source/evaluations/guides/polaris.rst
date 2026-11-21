@@ -1,7 +1,7 @@
 PolaRiS 评测
 ============
 
-PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup 等 DROID 风格操作任务。RLinf 支持在 PolaRiS 上评测 OpenPI 策略。
+PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup 等 DROID 风格操作任务。RLinf 支持在 PolaRiS 上评测 OpenPI policy。
 
 相关训练文档：:doc:`../../examples/embodied/polaris`
 
@@ -54,11 +54,7 @@ PolaRiS 是桌面操作仿真平台，提供 TapeIntoContainer、MoveLatteCup �
 .. code-block:: bash
 
    bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval
-
-或：
-
-.. code-block:: bash
-
+   # 或：
    bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval
 
 **Step 5：查看结果**

@@ -99,10 +99,16 @@ Run It
 
 **1. Configuration Files**
 
-RLinf provides default configuration files for both simulation and real-world environments:
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
 
--   **Simulation (ManiSkill)**: ``examples/embodiment/config/maniskill_sac_flow_state.yaml``
--   **Real World (Franka)**: ``examples/embodiment/config/realworld_sac_flow_image.yaml``
+   * - Environment
+     - Config
+   * - Simulation (ManiSkill)
+     - ``examples/embodiment/config/maniskill_sac_flow_state.yaml``
+   * - Real World (Franka)
+     - ``examples/embodiment/config/realworld_sac_flow_image.yaml``
 
 **2. Key Parameter Configuration**
 
@@ -172,7 +178,7 @@ Launch simulation training on a single machine:
 
 **Real World Training (Franka)**
 
-Launch real-world training in a distributed environment (needs to be run on the master node with cluster configured):
+Launch real-world training on the master node after cluster setup:
 
 ::
 

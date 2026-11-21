@@ -130,12 +130,6 @@ PPO 训练 MLP actor-critic。
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-这条命令会：
-
-1. 通过 ``gym_config_path`` 加载 EmbodiChain CartPole Gym JSON。
-2. 为 actor、rollout 和 EmbodiChain env 组件创建 Ray worker。
-3. 将配置的状态字段拼接成 ``states``，并使用 PPO 训练 MLP policy。
-
 .. note::
 
    将此配方迁移到其他 EmbodiChain 任务时，请保持 ``actor.model.obs_dim``、

@@ -8,9 +8,6 @@ Related reading: :doc:`A First Look at the "Last Mile" of Agent Deployment: Curs
 Overview
 --------
 
-Use this recipe to connect Continue to an RLinf training service and update a code
-completion model from user feedback.
-
 .. grid:: 2 4 4 4
    :gutter: 2
 
@@ -54,17 +51,18 @@ completion model from user feedback.
      - RLinf training service
      - Updates the policy from feedback
 
+This recipe includes both an online RL path (with Continue) and an offline validation path that simulates human preference with an LLM judge (no Continue extension required).
+
 Installation
 ------------
 
-Install RLinf first, then add the lightweight HTTP client dependencies used by this recipe:
+Install RLinf first, then add the HTTP client dependencies:
 
 .. code-block:: bash
 
-   # Install additional dependencies
    pip install httpx asyncio
 
-If using the offline validation example, download the dataset:
+For offline validation, download the dataset:
 
 .. code-block:: bash
 
@@ -76,30 +74,18 @@ Run It
 Configure Continue Integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **Install Continue Extension**
+1. **Install the modified Continue extension**
 
-   Since the current Continue does not support uploading user preference feedback on code completions, we have modified the Continue source code to support uploading user preference feedback on code completions.
-   Users can get the compiled modified Continue plugin from `here <https://github.com/RLinf/continue/releases>`_ or build it themselves.
+   Upstream Continue does not upload code-completion preference feedback. Download the modified VSIX from `RLinf/continue releases <https://github.com/RLinf/continue/releases>`_ (or build it from source), then install it in VS Code:
 
-   After downloading the compiled Continue plugin, install it in VS Code.
+   - CLI: ``code --install-extension /path/to/continue-1.3.9.vsix``
+   - Command Palette: press ``Cmd+Shift+P``, run ``Extensions: Install from VSIX``, and select the file.
 
-   Method 1: code --install-extension /path/to/continue-1.3.9.vsix"
+2. **Configure Continue settings**
 
-   Method 2: In VSCode, press Cmd+Shift+P, type 'Extensions: Install from VSIX', and select the above file
-
-2. **Configure Continue Settings**
-
-   The Continue configuration file path is:
-
-   .. code-block:: bash
-
-      ~/.continue/config.yaml
-
-   Add the following settings to your Continue configuration file:
+   Add the following to ``~/.continue/config.yaml`` (replace ``http://xxx:xx/`` with your RLinf service host):
 
    .. code-block:: yaml
-
-      # Please replace http://xxx:xx/ with the actual RLinf online code completion service address
 
       # Add a model for code completion
       models:
@@ -111,7 +97,7 @@ Configure Continue Integration
           roles:
             - autocomplete
 
-      # Add sending user feedback on whether to accept code completions
+      # Send user accept/reject feedback on code completions
       tabAutocompleteOptions:
         enableCompletionTracking: true
         completionTrackingUrl: http://xxx:8082/api/training/submit
@@ -122,146 +108,114 @@ Configure Continue Integration
         debounceDelay: 350
         multilineCompletions: auto
 
-   After modifying and saving, open the Continue extension from the left panel, click the "Settings" gear button in the top right corner, and ensure "Autocomplete Model" is set to my-autocomplete in the "Models" page.
+   After saving, open the Continue sidebar, click the Settings gear icon, and set **Autocomplete Model** to ``my-autocomplete`` on the **Models** page.
 
 Start Training Service
 ~~~~~~~~~~~~~~~~~~~~~~
 
-1. **Prepare Model and Configuration**
+For common path, runner, rollout, and cluster fields, see :doc:`Training configuration <../../reference/configuration>`.
 
-   For common path, runner, rollout, and cluster fields, see :doc:`Training configuration <../../reference/configuration>`.
+.. list-table::
+   :header-rows: 1
+   :widths: 22 44 34
 
-   - For online RL, edit and use `examples/agent/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml`:
+   * - Mode
+     - Config
+     - Launch script
+   * - Online RL (PPO)
+     - ``examples/agent/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml``
+     - ``examples/agent/coding_online_rl/run_main_coding_online_rl.sh``
+   * - Offline validation (GRPO)
+     - ``examples/agent/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml``
+     - ``examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh``
 
-     .. code-block:: yaml
+1. **Edit the config**
 
-        runner:
-          output_dir: /path/to/your/logs
+   Set ``runner.output_dir`` and ``rollout.model.model_path`` in the chosen YAML:
 
-        rollout:
-          model:
-            model_path: /path/to/your/model
+   .. code-block:: yaml
 
-   - For offline validation, edit and use `examples/agent/coding_online_rl/config/qwen2.5-1.5b-grpo-llm_judge.yaml`:
+      runner:
+        output_dir: /path/to/your/logs
 
-     .. code-block:: yaml
+      rollout:
+        model:
+          model_path: /path/to/your/model
 
-        runner:
-          output_dir: /path/to/your/logs
+   For offline validation, also set ``data.train_data_paths`` and ``data.val_data_paths`` in ``qwen2.5-1.5b-grpo-llm_judge.yaml`` and export the LLM-as-judge credentials:
 
-        rollout:
-          model:
-            model_path: /path/to/your/model
+   .. code-block:: yaml
 
-        data:
-          train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]
-          val_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_test_1k.jsonl"]
+      data:
+        train_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_train_3k.jsonl"]
+        val_data_paths: ["/path/to/your/dataset/code-fim-v2-python-filtered_formatted_test_1k.jsonl"]
 
-     Also set the API endpoint and key for the LLM-as-judge used to simulate feedback:
+   .. code-block:: bash
 
-     .. code-block:: bash
+      export LLMASJUDGE_API_URL=your_api_url
+      export LLMASJUDGE_API_KEY=your_api_key
+      export LLMASJUDGE_MODEL=your_model  # optional; ensure the prompt fits your model
 
-        export LLMASJUDGE_API_URL=your_api_url
-        export LLMASJUDGE_API_KEY=your_api_key
-        export LLMASJUDGE_MODEL=your_model  # not recommended; the prompt should fit your model.
+2. **Launch the training service**
 
-2. **Start RLinf Training Service**
+   From the RLinf repository root, start online RL (exposes the inference API on port ``8081`` and feedback ingestion on port ``8082``):
 
-   - For online RL:
+   .. code-block:: bash
 
-     .. code-block:: bash
+      bash examples/agent/coding_online_rl/run_main_coding_online_rl.sh
 
-        # Navigate to project directory
-        cd /path/to/RLinf
+   Or start offline validation with LLM-as-judge feedback:
 
-        # Start training service
-        bash examples/agent/coding_online_rl/run_main_coding_online_rl.sh
+   .. code-block:: bash
 
-     This will start the following services:
-     - **Inference Service**: Provides code completion API on port 8081
-     - **Training Service**: Receives user feedback data on port 8082
-
-   - For offline validation:
-
-     .. code-block:: bash
-
-        # Navigate to project directory
-        cd /path/to/RLinf
-
-        # Start training service
-        bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
+      bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
 Use Continue
 ~~~~~~~~~~~~
 
-1. **Start Continue**
-
-   Launch the Continue extension in VS Code, ensuring it connects to the correct API endpoints.
-
-2. **Begin Programming**
-
-   Start writing code in Continue. The system will:
-   - Automatically send code completion requests to the inference service
-   - Receive model-generated code suggestions
-   - Collect your acceptance/rejection feedback on suggestions
-
-3. **Real-time Learning**
-
-   The system processes your feedback in real-time:
-   - Accepted suggestions are marked as positive feedback
-   - Rejected suggestions are marked as negative feedback
-   - Model parameters are updated online based on feedback
+Open VS Code with the configured Continue extension and start coding. Continue sends completion requests to port ``8081`` and submits accepted completions as positive feedback and rejected completions as negative feedback to port ``8082``, updating the policy online.
 
 Visualization and Results
 -------------------------
 
 Monitor logs, TensorBoard, and checkpoints. For common metric meanings, see :doc:`Training metrics <../../reference/metrics>`.
 
-1. **View Log Output**
+1. **View logs**
 
    .. code-block:: bash
 
-      # View training logs
       tail -f results/ppo-1.5b/train.log
 
-2. **Use TensorBoard**
+2. **Launch TensorBoard**
 
    .. code-block:: bash
 
-      # Start TensorBoard
       tensorboard --logdir results/grpo-1.5b
 
-3. **Check Model Checkpoints**
+3. **Check checkpoints**
 
-   Model checkpoints are periodically saved to the `results/grpo-1.5b/checkpoints/` directory during training.
+   Model checkpoints are saved periodically under ``results/grpo-1.5b/checkpoints/``.
 
 Verify the Client
 -----------------
 
-Use the provided test client to verify system functionality:
+Run the test client to simulate Continue requests and feedback submission:
 
 .. code-block:: bash
 
-   # Run test client
    python examples/agent/coding_online_rl/simple_online_coding_client.py
-
-The test client simulates Continue behavior by sending code completion requests and submitting feedback data.
 
 Troubleshooting
 ---------------
 
-Common issues and solutions:
+1. **Port conflicts**
 
-1. **Port Conflicts**
+   If ports ``8081`` or ``8082`` are occupied, change the port settings in the YAML config.
 
-   If ports 8081 or 8082 are occupied, modify the port settings in the configuration file.
+2. **Model loading failure**
 
-2. **Model Loading Failure**
+   Verify that ``rollout.model.model_path`` points to an accessible local model directory.
 
-   Check that the model path is correct and ensure model files exist and are accessible.
+3. **Continue connection failure**
 
-3. **Continue Connection Failure**
-
-   Ensure the API endpoint addresses in Continue configuration are correct and check network connectivity. You can also use ``simple_online_coding_client.py`` to test if feedback data can be received normally.
-
-Use this setup as the online loop: Continue sends requests, RLinf collects feedback, and the training service updates the policy.
+   Check the API endpoints in ``~/.continue/config.yaml`` and network reachability, or run ``simple_online_coding_client.py`` to verify feedback delivery.

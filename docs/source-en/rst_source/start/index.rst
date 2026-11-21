@@ -1,59 +1,89 @@
 Get Started
 ===========
 
-Welcome to RLinf. This guide takes you from install to your first training run,
-then points you to what comes next.
+Go from a fresh machine to your first RLinf run, then pick the workflow that matches your hardware and task.
+
+.. figure:: ../../_static/svg/onboarding_flow.svg
+   :align: center
+   :width: 100%
+
+   The four-step path from installation to monitoring and scaling.
+
+Core Setup
+----------
 
 .. grid:: 1 2 2 4
    :gutter: 2
 
-   .. grid-item-card:: Requirements
+   .. grid-item-card:: 1. Requirements
       :link: requirements
       :link-type: doc
 
-      The tested hardware and software configuration.
+      GPU tiers from a single 24 GB card to multi-node clusters.
 
-   .. grid-item-card:: Install
+   .. grid-item-card:: 2. Install
       :link: installation
       :link-type: doc
 
-      Install the embodied stack with Docker or a custom environment.
+      One-line ``install.sh`` setup or prebuilt Docker Hub images.
 
-   .. grid-item-card:: Quick Start
+   .. grid-item-card:: 3. VLA Quick Start
       :link: vla
       :link-type: doc
 
-      Train OpenVLA on ManiSkill3 with PPO.
+      Train OpenVLA or OpenVLA-OFT on ManiSkill3 with PPO.
 
-   .. grid-item-card:: Launch & Scale
-      :link: ../guides/launch-scale/index
+   .. grid-item-card:: 4. Cheat Sheet
+      :link: cheat_sheet
       :link-type: doc
 
-      Move from a single machine to multi-node or real-world runs.
+      Shortest commands once you know the workflow.
+
+Pick Your First Run
+-------------------
+
+Start with the entry point closest to your goal:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 22 48
+
+   * - Goal
+     - Typical Hardware
+     - Recommended Starting Point
+   * - Verify setup in ~5 minutes
+     - 1 GPU (24 GB+)
+     - :doc:`LIBERO Evaluation Quick Tour <../evaluations/get_started/quick_tour>`
+   * - Lightweight RL (no large checkpoint)
+     - 1 GPU (24 GB+)
+     - :doc:`MLP Policy RL <../examples/embodied/mlp>`
+   * - VLA RL fine-tuning in simulation
+     - 1–8 GPUs (40–80 GB)
+     - :doc:`VLA Quick Start (ManiSkill3) <vla>`
+   * - Real-world robot setup and RL
+     - Controller PC + GPU node
+     - :doc:`Real-World Robots <../examples/real_world_index>`
+   * - LLM math reasoning RL
+     - 4–8 GPUs (80 GB)
+     - :doc:`Math Reasoning GRPO <../examples/agentic/math_reasoning/reasoning>`
 
 What's Next
 -----------
 
-.. grid:: 1 2 2 2
+.. grid:: 1 2 2 4
    :gutter: 2
 
    .. grid-item-card:: Examples
       :link: ../examples/index
       :link-type: doc
 
-      Browse end-to-end recipes in the example gallery.
-
-   .. grid-item-card:: Evaluation
-      :link: ../evaluations/index
-      :link-type: doc
-
-      Measure success rates on benchmarks.
+      Browse embodied, SFT, world model, and agentic recipes.
 
    .. grid-item-card:: Concepts
       :link: ../concepts/index
       :link-type: doc
 
-      Understand how RLinf executes and schedules work.
+      Understand execution, scheduling, and the robotics interface.
 
    .. grid-item-card:: Guides
       :link: ../guides/index
@@ -61,23 +91,11 @@ What's Next
 
       Configure launches, logging, checkpoints, and clusters.
 
-   .. grid-item-card:: Why RLinf
-      :link: ../resources/why_rlinf
+   .. grid-item-card:: FAQ
+      :link: ../resources/faq
       :link-type: doc
 
-      The design, performance, and SOTA results behind RLinf.
-
-Command Reference
------------------
-
-.. grid:: 1 1 1 1
-   :gutter: 2
-
-   .. grid-item-card:: Cheat Sheet
-      :link: cheat_sheet
-      :link-type: doc
-
-      Jump to the most-used commands after you know the workflow.
+      Fixes for rendering, OOM, network, and Ray issues.
 
 .. toctree::
    :hidden:

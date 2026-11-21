@@ -129,24 +129,33 @@
 运行
 ----------------------------------------
 
-每个方案对应 ``examples/embodiment/config/`` 下的一个 YAML 配置：
+每个方案对应 ``examples/embodiment/config/`` 下的 YAML 配置：
 
-- **OpenVLA + PPO** —— ``maniskill_ppo_openvla.yaml``
-- **OpenVLA-OFT + PPO** —— ``maniskill_ppo_openvlaoft.yaml``
-- **OpenVLA + GRPO** —— ``maniskill_grpo_openvla.yaml``
-- **OpenVLA-OFT + GRPO** —— ``maniskill_grpo_openvlaoft.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
 
-使用 ``run_embodiment.sh`` 启动某个配置：
+   * - 模型
+     - 算法
+     - 配置
+   * - OpenVLA
+     - PPO
+     - ``maniskill_ppo_openvla.yaml``
+   * - OpenVLA-OFT
+     - PPO
+     - ``maniskill_ppo_openvlaoft.yaml``
+   * - OpenVLA
+     - GRPO
+     - ``maniskill_grpo_openvla.yaml``
+   * - OpenVLA-OFT
+     - GRPO
+     - ``maniskill_grpo_openvlaoft.yaml``
+
+使用 ``run_embodiment.sh`` 启动训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
-
-**本命令做了什么：**
-
-1. 加载 ``examples/embodiment/config/maniskill_ppo_openvla.yaml`` 配置。
-2. 连接（或启动）Ray，并按 ``cluster.component_placement`` 放置 actor、rollout、env 各 worker。
-3. 运行 PPO 训练循环，并将日志与检查点写入 ``runner.logger.log_path``。
 
 当 PPO rollout 在终止状态 bootstrap 上逐个切片推理，或为 OpenVLA 解码未使用的动作 token 时，可在配置中开启批量与仅价值 bootstrap：
 

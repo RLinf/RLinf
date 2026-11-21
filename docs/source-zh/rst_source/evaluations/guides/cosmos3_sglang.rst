@@ -6,7 +6,7 @@ Cosmos3 SGLang 评测
 工作原理
 ----------------------------------------
 
-每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成 HTTP 端点 ``POST /v1/actions/generations``。eval driver 把 server URL 下发给 rollout worker，worker 把 N 个环境的一步观测拆成一个或多个请求发出。
+每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作 policy 暴露成 HTTP 端点 ``POST /v1/actions/generations``。eval driver 把 server URL 下发给 rollout worker，worker 把 N 个环境的一步观测拆成一个或多个请求发出。
 
 server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3SGLangAdapter.request_groups`` 先按补全后的 prompt 给环境分组，再把每组按 ``rollout.sglang.server.batching_max_size`` 切成若干份，每份最多这么多个环境。示例配置中该值为 ``8``；不设置时 adapter 采用 SGLang 自身的默认值 ``1``，即每个环境单独发一次请求。worker 逐组发送，再把结果按原来的环境顺序拼回去。
 
@@ -38,7 +38,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 准备 Checkpoint
 ----------------------------------------
 
-评测输入是 diffusers 组件目录 ``model_diffusers``，由 SFT checkpoint 经 cosmos-framework 转换得到，完整四步见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的「转换 Checkpoint」一节。
+评测输入是 diffusers 组件目录 ``model_diffusers``，由 SFT checkpoint 经 cosmos-framework 转换得到，完整四步见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的“转换 Checkpoint”一节。
 
 .. note::
 
@@ -60,13 +60,11 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
      eval:
        total_num_envs: 128   # 按 GPU 数 / 显存调整（示例 8 卡用 128）
 
-改好后运行：
+启动评测（每张 GPU 启动一个 SGLang server，日志写入 ``logs/<时间戳>-<config>/eval_embodiment.log``）：
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
-
-每张 GPU 起一个 Cosmos3 SGLang server，逐 episode 打印成功与否，最后汇总成功率；日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
 
 关键配置
 ----------------------------------------
@@ -84,7 +82,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
    * - ``rollout.model.action_normalization``
      - ``quantile_rot``，须与训练一致。
    * - ``rollout.model.raw_action_dim`` / ``action_dim``
-     - 模型侧 10（rot6d）/ 环境侧 7（axis-angle）；**两者都必填** （见常见问题）。
+     - 模型侧 10（rot6d）/ 环境侧 7（axis-angle）；**两者都必填**\ （见常见问题）。
    * - ``rollout.model.num_action_chunks``
      - 每次请求返回的动作步数（示例 16）；``env.eval.max_steps_per_rollout_epoch`` 须能被其整除。
    * - ``rollout.model.num_inference_steps`` / ``num_frames`` / ``size``
@@ -104,7 +102,7 @@ server 只会把 token 长度相同的 prompt 放在同一批，因此 ``Cosmos3
 看 ``eval_embodiment.log``，确认这几个节点依次出现：
 
 1. 起 server：``Launching sglang server (server_type=embodied) ...``
-2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>`` （本地盘通常数十秒内；**缺这行** 说明加载卡住，见常见问题）
+2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>``\ （本地盘通常数十秒内；**缺这行** 说明加载卡住，见常见问题）
 3. server 就绪：``sglang server assigned: rank=i -> http://...``
 4. 逐 episode 结果：``[libero eval] task_id=.., trial_id=.., success=..``
 5. 汇总：``success_once`` / ``success_at_end`` / ``num_trajectories``

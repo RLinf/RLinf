@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" width="960" height="220" role="img" aria-label="RLinf 从单卡到多机集群的硬件档位">
+  <defs>
+    <filter id="shadow" x="-5%" y="-10%" width="110%" height="125%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="956" height="216" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Tier 1 -->
+  <g filter="url(#shadow)">
+    <rect x="24" y="26" width="214" height="168" rx="12" fill="#f8fafc" stroke="#99f6e4" stroke-width="1.5"/>
+    <rect x="24" y="26" width="214" height="38" rx="12" fill="#0d9488"/>
+    <rect x="24" y="52" width="214" height="12" fill="#0d9488"/>
+    <text x="131" y="50" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13" font-weight="700" fill="#ffffff">单卡（24 GB 起）</text>
+    <text x="131" y="88" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="12" font-weight="600" fill="#0f172a">入门与原型验证</text>
+    <text x="131" y="114" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">MLP / CNN 仿真强化学习</text>
+    <text x="131" y="136" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">VLA 评测与 LoRA SFT</text>
+    <text x="131" y="158" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">真机数据采集与部署</text>
+  </g>
+
+  <!-- Tier 2 -->
+  <g filter="url(#shadow)">
+    <rect x="256" y="26" width="214" height="168" rx="12" fill="#f8fafc" stroke="#bae6fd" stroke-width="1.5"/>
+    <rect x="256" y="26" width="214" height="38" rx="12" fill="#0284c7"/>
+    <rect x="256" y="52" width="214" height="12" fill="#0284c7"/>
+    <text x="363" y="50" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13" font-weight="700" fill="#ffffff">1–2 卡（40–80 GB）</text>
+    <text x="363" y="88" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="12" font-weight="600" fill="#0f172a">单机强化学习</text>
+    <text x="363" y="114" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">OpenVLA / OpenPI 快速上手</text>
+    <text x="363" y="136" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">共享式 PPO / GRPO</text>
+    <text x="363" y="158" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">中小规模推理 RL</text>
+  </g>
+
+  <!-- Tier 3 -->
+  <g filter="url(#shadow)">
+    <rect x="488" y="26" width="214" height="168" rx="12" fill="#f8fafc" stroke="#c7d2fe" stroke-width="1.5"/>
+    <rect x="488" y="26" width="214" height="38" rx="12" fill="#4f46e5"/>
+    <rect x="488" y="52" width="214" height="12" fill="#4f46e5"/>
+    <text x="595" y="50" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13" font-weight="700" fill="#ffffff">4–8 卡（80 GB）</text>
+    <text x="595" y="88" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="12" font-weight="600" fill="#0f172a">完整基准复现</text>
+    <text x="595" y="114" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">VLA 全参 SFT 与强化学习</text>
+    <text x="595" y="136" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">LIBERO / ManiSkill / RoboTwin</text>
+    <text x="595" y="158" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">7B–14B 推理与智能体 RL</text>
+  </g>
+
+  <!-- Tier 4 -->
+  <g filter="url(#shadow)">
+    <rect x="720" y="26" width="216" height="168" rx="12" fill="#f8fafc" stroke="#ddd6fe" stroke-width="1.5"/>
+    <rect x="720" y="26" width="216" height="38" rx="12" fill="#7c3aed"/>
+    <rect x="720" y="52" width="216" height="12" fill="#7c3aed"/>
+    <text x="828" y="50" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13" font-weight="700" fill="#ffffff">多机集群（8×H100 起）</text>
+    <text x="828" y="88" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="12" font-weight="600" fill="#0f172a">大规模分布式训练</text>
+    <text x="828" y="114" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">分离式与混合式流水线</text>
+    <text x="828" y="136" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">Megatron + SGLang / vLLM</text>
+    <text x="828" y="158" text-anchor="middle" font-family="system-ui, -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="11.5" fill="#475569">世界模型与集群在线学习</text>
+  </g>
+</svg>

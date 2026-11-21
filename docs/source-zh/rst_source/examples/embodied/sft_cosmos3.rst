@@ -147,13 +147,13 @@ SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``
 拉起训练
 ----------------------------------------
 
-在 RLinf 仓库根目录执行：
+在仓库根目录使用 ``examples/sft/config/libero_sft_cosmos3.yaml`` 启动 SFT：
 
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_cosmos3
 
-读取 ``examples/sft/config/libero_sft_cosmos3.yaml``，在每张 GPU 上用 FSDP2 分片 Cosmos3 模型并训练，checkpoint 每 ``save_interval`` 步存入 ``.../checkpoints/global_step_<N>/``，日志写到 ``logs/<时间戳>-libero_sft_cosmos3/run_embodiment.log``。
+checkpoint 每 ``save_interval`` 步保存到 ``.../checkpoints/global_step_<N>/``，日志写入 ``logs/<timestamp>-libero_sft_cosmos3/run_embodiment.log``。
 
 .. warning::
 

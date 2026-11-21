@@ -79,7 +79,15 @@
            actor.model.model_path=$PWD/checkpoints/openvlaoft-base \
            actor.model.lora_path=$PWD/checkpoints/openvlaoft-lora
 
-rollout 会自动沿用 ``actor.model.model_path``，只需传一次权重路径。
+rollout 会自动沿用 ``actor.model.model_path``。要把路径写进 YAML 文件，直接修改以下配置项：
+
+.. code-block:: yaml
+
+   actor:
+     model:
+       model_path: /path/to/downloaded-checkpoint
+       # 使用 OpenVLA-OFT 时同时设置：
+       lora_path: /path/to/downloaded-lora
 
 查看训练结果
 ------------
@@ -95,6 +103,22 @@ rollout 会自动沿用 ``actor.model.model_path``，只需传一次权重路径
    :width: 90%
 
    ManiSkill3 快速上手的 TensorBoard 训练曲线。
+
+常见问题速查
+------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 现象
+     - 解决方法
+   * - 训练时显存不足（OOM）
+     - 调小 ``actor.micro_batch_size`` 与 ``env.train.total_num_envs``，详见 :ref:`显存不足（OOM） <faq-oom>`。
+   * - EGL 或 Vulkan 渲染报错
+     - 按 :ref:`渲染问题 <faq-rendering>` 检查驱动与图形渲染配置。
+   * - 重复运行时报 Ray 或 NCCL 错误
+     - 先执行 ``ray stop`` 清理残留进程，详见 :ref:`CUDA 与显存问题 <faq-cuda>`。
 
 下一步
 ------

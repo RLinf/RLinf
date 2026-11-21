@@ -94,7 +94,6 @@ rollout:
   collect_transitions: True
   collect_prev_infos: False
   model:
-    model_path: "/path/to/RLinf-ResNet10-pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 7
     action_dim: 4
     num_q_heads: 10

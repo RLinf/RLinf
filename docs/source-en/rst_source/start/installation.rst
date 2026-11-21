@@ -1,7 +1,7 @@
 Installation
 ============
 
-Install RLinf into a local UV virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub.
+Install RLinf into a local uv virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub.
 
 Install Locally
 ---------------
@@ -46,7 +46,7 @@ Run ``bash requirements/install.sh --help`` for all models, environments, and fl
    * - ``--venv <dir>``
      - Choose the virtual environment directory (default ``.venv``).
    * - ``--platform <name>``
-     - Target non-NVIDIA accelerators (``amd``, ``ascend``, ``musa``; see :ref:`the hardware matrix <model-hardware-support>`).
+     - Target non-NVIDIA accelerators (for example, ``amd``, ``ascend``, ``musa``; see :ref:`the hardware matrix <model-hardware-support>`).
    * - ``--python <version>``
      - Override the Python version when needed (for example ``3.10`` for ``behavior`` or ``d4rl``).
 
@@ -69,6 +69,20 @@ Confirm that RLinf and Ray are available in the active environment:
 .. code-block:: bash
 
    python -c "import rlinf; print(rlinf.__file__)" && ray --version
+
+Troubleshooting
+---------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Symptom
+     - Fix
+   * - EGL or Vulkan rendering error
+     - Check graphics driver and EGL setup in :ref:`Rendering Issues <faq-rendering>`.
+   * - Stale Ray cluster or NCCL error
+     - Reset local Ray with ``ray stop`` (:ref:`CUDA and Memory Issues <faq-cuda>`).
 
 Next Steps
 ----------

@@ -131,12 +131,6 @@ Launch the RoboVerse recipe:
 
    bash examples/embodiment/run_embodiment.sh roboverse_ppo_openpi_pi05
 
-What this does:
-
-1. Starts the embodied training entrypoint with the RoboVerse Hydra config.
-2. Creates Ray workers for the actor, rollout, and RoboVerse env components.
-3. Runs PPO rollouts, computes sparse task rewards, and updates the OpenPI policy.
-
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix,
 ``roboverse_ppo_openpi_pi05``.

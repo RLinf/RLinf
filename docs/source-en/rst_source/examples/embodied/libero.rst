@@ -146,21 +146,11 @@ Download a pretrained base checkpoint:
 Run It
 ~~~~~~
 
-Each recipe is a YAML config under ``examples/embodiment/config/``. For OpenVLA-OFT on LIBERO:
-
-- **OpenVLA-OFT + GRPO** — ``libero_10_grpo_openvlaoft.yaml``
-
-Launch a config with ``run_embodiment.sh``:
+Launch the OpenVLA-OFT + GRPO recipe (``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``) with ``run_embodiment.sh``:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
-
-**What this command does:**
-
-1. Loads ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``.
-2. Attaches to (or starts) Ray and places the actor, rollout, and env workers per ``cluster.component_placement``.
-3. Runs the GRPO training loop, writing logs and checkpoints under ``runner.logger.log_path``.
 
 .. admonition:: Configure further
    :class: note

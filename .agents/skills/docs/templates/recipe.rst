@@ -101,13 +101,22 @@ Download the pretrained checkpoint:
 Run It
 ------
 
-Launch training with the recipe config:
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - Setting
+     - Config (``examples/embodiment/config/``)
+     - Notes
+   * - <model + algorithm>
+     - ``<config_name>.yaml``
+     - <one-line focus>
+
+Launch training:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=/path/to/checkpoint
-
-<Expected output or key config overrides, kept to 1–2 short sentences or a compact table.>
 
 Visualization and Results
 -------------------------

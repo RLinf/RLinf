@@ -182,7 +182,7 @@ For Lingbot-VLA recipes, point ``actor.model.model_path`` and
 Run It
 ------
 
-Pick one recipe and launch training:
+Available recipes:
 
 .. list-table::
    :header-rows: 1
@@ -210,16 +210,12 @@ Pick one recipe and launch training:
      - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
      - ``robotwin_click_bell_grpo_lingbotvla``
 
+Launch training with ``run_embodiment.sh``:
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
    bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected RoboTwin Hydra config.
-2. Creates Ray workers for actor, rollout, and RoboTwin env components.
-3. Runs rollouts, computes task rewards, and updates the selected VLA policy.
 
 Run standalone evaluation through the :doc:`RoboTwin evaluation guide <../../evaluations/guides/robotwin>`.
 It owns ``ROBOTWIN_PATH`` / ``assets_path`` setup, available eval configs such as

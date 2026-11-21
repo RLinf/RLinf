@@ -98,7 +98,6 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: ""
     precision: ${actor.model.precision}
 
   expert_model:

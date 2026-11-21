@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" width="960" height="220" role="img" aria-label="RLinf four-step onboarding flow">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#64748b"/>
+    </marker>
+    <filter id="shadow" x="-5%" y="-10%" width="110%" height="125%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06"/>
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="956" height="216" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Step 1 -->
+  <g filter="url(#shadow)">
+    <rect x="24" y="26" width="202" height="168" rx="12" fill="#f8fafc" stroke="#c7d2fe" stroke-width="1.5"/>
+    <rect x="24" y="26" width="202" height="34" rx="12" fill="#4f46e5"/>
+    <rect x="24" y="48" width="202" height="12" fill="#4f46e5"/>
+    <text x="125" y="48" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#ffffff">1. Install</text>
+    <text x="125" y="92" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#1e1b4b">requirements/install.sh</text>
+    <text x="125" y="120" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12" fill="#475569">One command for uv venv</text>
+    <rect x="52" y="140" width="146" height="28" rx="14" fill="#eef2ff" stroke="#c7d2fe"/>
+    <text x="125" y="158" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#4338ca">or Docker Hub image</text>
+  </g>
+
+  <line x1="230" y1="110" x2="256" y2="110" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Step 2 -->
+  <g filter="url(#shadow)">
+    <rect x="262" y="26" width="202" height="168" rx="12" fill="#f8fafc" stroke="#bae6fd" stroke-width="1.5"/>
+    <rect x="262" y="26" width="202" height="34" rx="12" fill="#0284c7"/>
+    <rect x="262" y="48" width="202" height="12" fill="#0284c7"/>
+    <text x="363" y="48" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#ffffff">2. Pick a Path</text>
+    <rect x="278" y="72" width="170" height="24" rx="6" fill="#e0f2fe"/>
+    <text x="363" y="88" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#0369a1">Evaluate VLA (~5 min)</text>
+    <rect x="278" y="102" width="170" height="24" rx="6" fill="#e0f2fe"/>
+    <text x="363" y="118" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#0369a1">Embodied Sim RL / SFT</text>
+    <rect x="278" y="132" width="170" height="24" rx="6" fill="#e0f2fe"/>
+    <text x="363" y="148" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#0369a1">Real-World Robot</text>
+    <rect x="278" y="162" width="170" height="24" rx="6" fill="#e0f2fe"/>
+    <text x="363" y="178" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#0369a1">Agentic / Reasoning RL</text>
+  </g>
+
+  <line x1="468" y1="110" x2="494" y2="110" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Step 3 -->
+  <g filter="url(#shadow)">
+    <rect x="500" y="26" width="202" height="168" rx="12" fill="#f8fafc" stroke="#99f6e4" stroke-width="1.5"/>
+    <rect x="500" y="26" width="202" height="34" rx="12" fill="#0d9488"/>
+    <rect x="500" y="48" width="202" height="12" fill="#0d9488"/>
+    <text x="601" y="48" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#ffffff">3. Download &amp; Launch</text>
+    <text x="601" y="88" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#134e4a">hf download ...</text>
+    <text x="601" y="114" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#134e4a">run_embodiment.sh</text>
+    <text x="601" y="144" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" fill="#475569">Uses all available GPUs</text>
+    <text x="601" y="164" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" fill="#475569">Auto-starts local Ray</text>
+  </g>
+
+  <line x1="706" y1="110" x2="732" y2="110" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Step 4 -->
+  <g filter="url(#shadow)">
+    <rect x="738" y="26" width="198" height="168" rx="12" fill="#f8fafc" stroke="#ddd6fe" stroke-width="1.5"/>
+    <rect x="738" y="26" width="198" height="34" rx="12" fill="#7c3aed"/>
+    <rect x="738" y="48" width="198" height="12" fill="#7c3aed"/>
+    <text x="837" y="48" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="700" fill="#ffffff">4. Track &amp; Scale</text>
+    <!-- Mini curve icon -->
+    <polyline points="772,118 794,108 818,112 848,92 878,84 902,76" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="902" cy="76" r="3.5" fill="#7c3aed"/>
+    <line x1="768" y1="122" x2="906" y2="122" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="837" y="146" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#4c1d95">TensorBoard / Videos</text>
+    <text x="837" y="168" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11.5" fill="#475569">Scale out via placement</text>
+  </g>
+</svg>

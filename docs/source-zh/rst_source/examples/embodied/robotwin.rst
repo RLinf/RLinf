@@ -174,7 +174,7 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 运行
 ----------------------------------------
 
-选择一个配方并启动训练：
+可用训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -202,16 +202,12 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
      - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
      - ``robotwin_click_bell_grpo_lingbotvla``
 
+使用 ``run_embodiment.sh`` 启动训练：
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
    bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
-
-这条命令会：
-
-1. 使用选定的 RoboTwin Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 RoboTwin env 组件创建 Ray worker。
-3. 运行 rollout，计算任务奖励，并更新选定的 VLA 策略。
 
 独立评估请走 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`。
 该指南负责 ``ROBOTWIN_PATH`` / ``assets_path`` 设置、可用评测配置

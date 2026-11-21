@@ -101,11 +101,20 @@ Run It
 
 **1. Configuration Files**
 
-RLinf provides default IQL configs for different D4RL task families:
+Default IQL configs for the three D4RL task families:
 
-- **MuJoCo**: ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
-- **AntMaze**: ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
-- **Kitchen / Adroit**: ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Task family
+     - Config
+   * - MuJoCo
+     - ``examples/embodiment/config/d4rl_iql_mujoco.yaml``
+   * - AntMaze
+     - ``examples/embodiment/config/d4rl_iql_antmaze.yaml``
+   * - Kitchen / Adroit
+     - ``examples/embodiment/config/d4rl_iql_kitchen_adroit.yaml``
 
 **2. Key Parameter Configuration**
 
@@ -161,40 +170,19 @@ Set ``data.dataset_type`` to ``d4rl`` , ``data.task_name`` and ``env.eval.task_n
 
 With ``data.dataset_path`` left as ``null``, RLinf reads ``~/.d4rl/datasets/<task_name>.hdf5`` if it exists and otherwise lets D4RL download the dataset for the task. To train from an existing D4RL HDF5 file, set ``data.dataset_path`` to its path; its observation and action shapes must match the environment named by ``data.task_name``. A standard D4RL file goes through the same ``d4rl.qlearning_dataset`` conversion as a downloaded dataset, which uses the ``timeouts`` field so that the last observation of an episode is never paired with the first observation of the next one. A file of prepared transitions, one with ``next_observations`` and without ``timeouts``, is used as is.
 
-**3. Launch Script**
+**3. Launch Training**
 
-- Script: ``examples/embodiment/run_offline_rl.sh``
-- Default config (no argument): ``d4rl_iql_mujoco``
-- Logs: ``<repo>/logs/<timestamp>-<config_name>/``
-- Actual command:
+Launch any task family from the repository root (defaults to ``d4rl_iql_mujoco`` when omitted; logs write to ``<repo>/logs/<timestamp>-<config_name>/``):
 
 .. code-block:: bash
 
-   python examples/embodiment/train_offline_rl.py \
-     --config-path examples/embodiment/config/ \
-     --config-name <config_name> \
-     runner.logger.log_path=<log_dir> runner.logger.experiment_name=<config_name>
-
-**4. Launch Commands**
-
-From the repository root:
-
-**MuJoCo (default)**
-
-::
-
+   # MuJoCo (default)
    ./examples/embodiment/run_offline_rl.sh d4rl_iql_mujoco
 
-**AntMaze**
-
-::
-
+   # AntMaze
    ./examples/embodiment/run_offline_rl.sh d4rl_iql_antmaze
 
-**Kitchen / Adroit**
-
-::
-
+   # Kitchen / Adroit
    ./examples/embodiment/run_offline_rl.sh d4rl_iql_kitchen_adroit
 
 Resume Training

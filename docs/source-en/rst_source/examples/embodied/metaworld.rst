@@ -142,12 +142,6 @@ Launch a config with ``run_embodiment.sh``:
 
    bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
 
-**What this command does:**
-
-1. Loads ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``.
-2. Starts Meta-World MT50 rollout/evaluation workers according to ``cluster.component_placement``.
-3. Runs the PPO training loop and writes logs/checkpoints under ``runner.logger.log_path``.
-
 .. admonition:: Configure further
    :class: note
 

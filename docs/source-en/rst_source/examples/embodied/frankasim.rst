@@ -115,7 +115,7 @@ Then set the same checkpoint path for rollout and actor in
 Run It
 ------
 
-Pick one recipe and launch training:
+Available recipes:
 
 .. list-table::
    :header-rows: 1
@@ -134,6 +134,8 @@ Pick one recipe and launch training:
      - ``run_async.sh``
      - ``frankasim_sac_cnn_async``
 
+Launch training with the matching script:
+
 .. code:: bash
 
    # State-observation PPO recipe
@@ -141,12 +143,6 @@ Pick one recipe and launch training:
 
    # Vision SAC recipe
    bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
-
-What this does:
-
-1. Starts the selected embodied training entrypoint.
-2. Creates Ray workers for the actor, rollout, and Franka-Sim env components.
-3. Runs rollouts, computes task rewards, and updates the selected policy.
 
 .. note::
 

@@ -94,37 +94,27 @@
 奖励模型
 ------------
 
-reward model 侧与 :doc:`franka_reward_model` 中的 Franka 真机流程一致。
-
-对当前灵巧手抓放环境：
-
-- reward 图像默认沿用 ``env.main_image_key``
-- ``examples/embodiment/config/env/realworld_dex_pnp.yaml`` 中的 ``main_image_key`` 默认为 ``wrist_1``
-- ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` 通过 ``reward`` 段接入 reward model
+reward model 流程与 :doc:`franka_reward_model` 一致。reward 图像默认沿用 ``env.main_image_key``\ （在 ``examples/embodiment/config/env/realworld_dex_pnp.yaml`` 中默认为 ``wrist_1``），``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` 通过 ``reward`` 字段接入 reward model。
 
 配置文件
 ----------------------------------------
 
-数据采集使用 ``examples/embodiment/config/realworld_collect_dexhand_data.yaml``。
-该配置包含：
+.. list-table::
+   :header-rows: 1
+   :widths: 52 48
 
-- ``end_effector_type: "ruiyan_hand"``
-- 数据手套遥操作参数
-- ``data_collection``，同时写出 ``replay_buffer``\ （``demo_buffer/``）和 ``pickle_episode``\ （``pickle_episode/``）
+   * - 配置文件
+     - 用途
+   * - ``examples/embodiment/config/realworld_collect_dexhand_data.yaml``
+     - 数据采集，包含 ``end_effector_type: "ruiyan_hand"``、数据手套遥操作参数，以及同时写出 ``replay_buffer``\ （``demo_buffer/``）和 ``pickle_episode``\ （``pickle_episode/``）的 ``data_collection`` 配置。
+   * - ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``
+     - 异步 RLPD CNN 训练，启用 ``reward`` 配置。
+   * - ``examples/embodiment/config/env/realworld_dex_pnp.yaml``
+     - 灵巧手抓放环境默认配置（``main_image_key`` 默认为 ``wrist_1``）。
 
-RL 训练使用 ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``。
-启动前需要填写：
+启动 ``realworld_dexpnp_rlpd_cnn_async.yaml`` 前，需要填写 ``robot_ip``、``target_ee_pose``、policy ``model_path``、reward ``model.model_path``，以及 ``end_effector_config`` 和 ``glove_config`` 中的串口参数。
 
-- ``robot_ip``
-- ``target_ee_pose``
-- 策略 ``model_path``
-- reward ``model.model_path``
-- ``end_effector_config`` 与 ``glove_config`` 中的串口参数
-
-如果需要自定义相机命名或 crop，请直接在 ``override_cfg`` 中按序列号 serial
-填写；本 PR 默认不提交任何特定 serial 的配置，避免影响其他项目。不配置
-``camera_names`` 时，默认命名会按照 ``camera_serials`` 列表顺序分配：第一个
-serial 是 ``wrist_1``，第二个 serial 是 ``wrist_2``，不会按序列号排序。例如：
+需要自定义相机命名或 crop 时，直接在 ``override_cfg`` 中按序列号填写。未配置 ``camera_names`` 时，默认命名按 ``camera_serials`` 列表顺序分配：第一个序列号为 ``wrist_1``，第二个为 ``wrist_2``，不按序列号排序。例如：
 
 .. code-block:: yaml
 
@@ -134,8 +124,7 @@ serial 是 ``wrist_1``，第二个 serial 是 ``wrist_2``，不会按序列号�
    camera_crop_regions:
      "SERIAL1": [0.4, 0.3, 0.85, 0.7]
 
-如果你把某个相机命名成 ``global``，记得同时把任务 YAML 中的
-``main_image_key`` 改成 ``global``。
+如果将某个相机命名为 ``global``，同时把任务 YAML 中的 ``main_image_key`` 改为 ``global``。
 
 运行
 ----------------------------------------

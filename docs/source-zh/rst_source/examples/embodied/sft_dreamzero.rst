@@ -80,10 +80,21 @@ DreamZero 监督微调和 Franka 真机部署
 从 checkpoint 继续训练
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-设置 ``actor.model.model_path`` 为已下载的权重目录；架构与权重从该目录加载。可选 checkpoint：
+将 ``actor.model.model_path`` 设为已下载的权重目录，架构与权重会从该目录加载：
 
-- DreamZero 14B（DROID / AgiBot）： `DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_、 `DreamZero-AgiBot <https://huggingface.co/GEAR-Dreams/DreamZero-AgiBot>`_ — 参考 ``droid_sft_dreamzero_14b.yaml``
-- RLinf 5B（LIBERO SFT）： `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000>`_ — 参考 ``libero_sft_dreamzero_5b.yaml`` 并将 ``model_path`` 指向该目录
+.. list-table::
+   :header-rows: 1
+   :widths: 22 46 32
+
+   * - 模型
+     - Checkpoint
+     - 配置文件
+   * - DreamZero 14B（DROID / AgiBot）
+     - `DreamZero-DROID <https://huggingface.co/GEAR-Dreams/DreamZero-DROID>`_、`DreamZero-AgiBot <https://huggingface.co/GEAR-Dreams/DreamZero-AgiBot>`_
+     - ``droid_sft_dreamzero_14b.yaml``
+   * - RLinf 5B（LIBERO SFT）
+     - `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000>`_
+     - ``libero_sft_dreamzero_5b.yaml``
 
 下载示例：
 
@@ -151,12 +162,32 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 数据集下载
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-当前支持：
+支持的数据集与配置：
 
-- LIBERO： `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``，配置见 ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
-- DROID： `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``，配置见 ``droid_sft_dreamzero_14b.yaml``
-- Franka PnP：`RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``\ （继承 ``libero_sim`` 双视角布局）
-- 混合训练：``libero_franka_mix_sft_dreamzero_5b.yaml`` 中 ``data.train_data_paths`` 为列表，每项可指定不同的 ``dataset_path`` / ``embodiment_tag`` / ``metadata_json_path`` / ``weight``
+.. list-table::
+   :header-rows: 1
+   :widths: 16 26 18 40
+
+   * - 数据集
+     - 来源
+     - ``embodiment_tag``
+     - 配置文件 / 说明
+   * - LIBERO
+     - `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_
+     - ``libero_sim``
+     - ``libero_sft_dreamzero_14b.yaml``、``libero_sft_dreamzero_5b.yaml``
+   * - DROID
+     - `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_
+     - ``oxe_droid``
+     - ``droid_sft_dreamzero_14b.yaml``
+   * - Franka PnP
+     - `RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_
+     - ``franka_pnp``
+     - 沿用 ``libero_sim`` 双视角布局。
+   * - 混合训练
+     - 多数据集混合
+     - 按子项指定
+     - ``libero_franka_mix_sft_dreamzero_5b.yaml``；``data.train_data_paths`` 为列表，每项指定 ``dataset_path``、``embodiment_tag``、``metadata_json_path`` 和 ``weight``。
 
 下载示例：
 
@@ -355,36 +386,38 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 运行
 ----------------------------------------
 
-在仓库根目录执行：
+``examples/sft/config/`` 下的 SFT 参考配置：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 42 32
+
+   * - 配方
+     - 配置文件
+     - 骨干网络 / 模式
+   * - LIBERO 14B
+     - ``libero_sft_dreamzero_14b.yaml``
+     - WAN2.1 checkpoint（``dreamzero_14b``）
+   * - LIBERO 5B
+     - ``libero_sft_dreamzero_5b.yaml``
+     - WAN2.2 冷启动（``dreamzero_5b``）
+   * - DROID 14B
+     - ``droid_sft_dreamzero_14b.yaml``
+     - WAN2.1 ``DreamZero-DROID``\ （``dreamzero_14b``）
+   * - LIBERO + Franka 混合
+     - ``libero_franka_mix_sft_dreamzero_5b.yaml``
+     - WAN2.2 混合 SFT（``dreamzero_5b``）
+
+在仓库根目录用上表中的任一配置名启动训练：
 
 .. code:: bash
 
-   # LIBERO + WAN2.1（checkpoint，dreamzero_14b 预设）
    bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_14b
-
-   # LIBERO + WAN2.2（冷启动，dreamzero_5b 预设）
    bash examples/sft/run_vla_sft.sh libero_sft_dreamzero_5b
-
-   # DROID + WAN2.1（dreamzero_14b 预设，model_path 指向 DreamZero-DROID）
    bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
-
-   # LIBERO + Franka 混合（WAN2.2，见 libero_franka_mix_sft_dreamzero_5b.yaml）
    bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
-脚本等价于：
-
-.. code:: bash
-
-   python examples/sft/train_vla_sft.py \
-     --config-path examples/sft/config/ \
-     --config-name CONFIG_NAME \
-     runner.logger.log_path=LOG_DIR
-
-日志目录：
-
-- 仓库根目录下 ``logs/时间戳-config_name/run_embodiment.log``
-
-断点续训可设置 ``runner.resume_dir`` 指向 checkpoint 目录。
+启动脚本将日志写入 ``<repo>/logs/<timestamp>-<config_name>/run_embodiment.log``。断点续训时将 ``runner.resume_dir`` 指向 checkpoint 目录。
 
 
 .. _sft-dreamzero-hardware:

@@ -135,12 +135,6 @@ Launch the CartPole recipe:
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-What this does:
-
-1. Loads the EmbodiChain CartPole Gym JSON through ``gym_config_path``.
-2. Creates Ray workers for the actor, rollout, and EmbodiChain env components.
-3. Concatenates the configured state fields into ``states`` and trains an MLP policy with PPO.
-
 .. note::
 
    Keep ``actor.model.obs_dim``, ``actor.model.action_dim``, and

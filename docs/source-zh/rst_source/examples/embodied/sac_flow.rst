@@ -100,10 +100,16 @@ SAC-Flow 工作原理
 
 **1. 配置文件**
 
-RLinf 提供了针对仿真和真机环境的默认配置文件：
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
 
--   **仿真 (ManiSkill)**: ``examples/embodiment/config/maniskill_sac_flow_state.yaml``
--   **真机 (Franka)**: ``examples/embodiment/config/realworld_sac_flow_image.yaml``
+   * - 环境
+     - 配置文件
+   * - 仿真（ManiSkill）
+     - ``examples/embodiment/config/maniskill_sac_flow_state.yaml``
+   * - 真机（Franka）
+     - ``examples/embodiment/config/realworld_sac_flow_image.yaml``
 
 **2. 关键参数配置**
 
@@ -163,7 +169,7 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
 
 **3. 启动命令**
 
-**仿真训练 (ManiSkill)**
+**仿真训练（ManiSkill）**
 
 在单机上启动仿真训练：
 
@@ -171,9 +177,9 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
 
    bash examples/embodiment/run_embodiment.sh maniskill_sac_flow_state
 
-**真机训练 (Franka)**
+**真机训练（Franka）**
 
-在分布式环境下启动真机训练（需在主节点运行，并配置好集群）：
+在已配置集群的主节点上启动真机训练：
 
 ::
 

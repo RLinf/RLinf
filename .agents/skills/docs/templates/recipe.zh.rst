@@ -99,13 +99,22 @@
 运行
 ----
 
-用对应的配方启动训练：
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - 场景
+     - 配置（``examples/embodiment/config/``）
+     - 说明
+   * - <模型 + 算法>
+     - ``<config_name>.yaml``
+     - <一句话说明>
+
+启动训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=/path/to/checkpoint
-
-<用 1–2 句简短说明或紧凑表格给出预期输出及常用配置项。>
 
 可视化与结果
 ------------

@@ -111,7 +111,6 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora"
     precision: ${actor.model.precision}
 
   expert_model:

@@ -123,12 +123,6 @@ Download BEHAVIOR-1K assets and set ``OMNIGIBSON_DATA_PATH`` before every run:
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
 
-**What this does:**
-
-1. Downloads the IsaacSim runtime that OmniGibson uses.
-2. Downloads the BEHAVIOR robot assets, task assets, and 2025 challenge instances.
-3. Creates the two environment variables that the training and evaluation scripts need.
-
 Download the Model
 ------------------
 
@@ -176,12 +170,6 @@ Launch a config with ``run_embodiment.sh``:
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
    bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
-
-**What this command does:**
-
-1. Loads ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml`` and its shared env config ``examples/embodiment/config/env/behavior_r1pro.yaml``.
-2. Starts Ray workers for the actor, rollout, and BEHAVIOR env placement.
-3. Runs PPO training and writes logs/checkpoints under ``runner.logger.log_path``.
 
 .. admonition:: Configure further
    :class: note

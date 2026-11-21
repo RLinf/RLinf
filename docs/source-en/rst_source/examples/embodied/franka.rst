@@ -406,10 +406,18 @@ First, check the camera stream and record its serial number:
 
    python toolkits/realworld_check/test_franka_camera.py
 
-Configure the robot in these two existing recipes:
+Configure the robot in both recipes:
 
-- ``examples/embodiment/config/realworld_collect_data.yaml``
-- ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Stage
+     - Config
+   * - Demonstration collection
+     - ``examples/embodiment/config/realworld_collect_data.yaml``
+   * - Online RLPD training
+     - ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``
 
 In each file, replace only the ``label: franka`` entry under
 ``cluster.node_groups`` with the following block. Replace ``ROBOT_IP`` with

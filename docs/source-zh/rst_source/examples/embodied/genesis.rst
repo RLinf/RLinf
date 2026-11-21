@@ -110,7 +110,7 @@ MLP + PPO 配方可跳过本节。CNN + PPO 配方需要下载 ResNet 检查点�
 运行
 ----------------------------------------
 
-选择一个配方并启动训练：
+可用训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -126,16 +126,12 @@ MLP + PPO 配方可跳过本节。CNN + PPO 配方需要下载 ResNet 检查点�
      - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
      - ``genesis_cubepick_ppo_cnn``
 
+使用 ``run_embodiment.sh`` 启动训练：
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
    bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
-
-这条命令会：
-
-1. 使用选定的 Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 Genesis env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算 cube-pick 奖励，并更新选定策略。
 
 .. note::
 

@@ -1,7 +1,7 @@
 安装说明
 ========
 
-使用 ``requirements/install.sh`` 在本地 UV 虚拟环境中安装 RLinf，或从 Docker Hub 拉取预构建镜像。
+使用 ``requirements/install.sh`` 在本地 uv 虚拟环境中安装 RLinf，或从 Docker Hub 拉取预构建镜像。
 
 本地安装
 --------
@@ -46,7 +46,7 @@
    * - ``--venv <dir>``
      - 指定虚拟环境目录（默认 ``.venv``）。
    * - ``--platform <name>``
-     - 指定非 NVIDIA 加速卡（``amd``、``ascend``、``musa``，详见 :ref:`硬件支持矩阵 <model-hardware-support>`）。
+     - 指定非 NVIDIA 加速卡（如 ``amd``、``ascend``、``musa`` 等，详见 :ref:`硬件支持矩阵 <model-hardware-support>`）。
    * - ``--python <version>``
      - 按需指定 Python 版本（如 ``behavior`` 和 ``d4rl`` 需要 ``3.10``）。
 
@@ -69,6 +69,20 @@
 .. code-block:: bash
 
    python -c "import rlinf; print(rlinf.__file__)" && ray --version
+
+常见问题速查
+------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 现象
+     - 解决方法
+   * - EGL 或 Vulkan 渲染报错
+     - 按 :ref:`渲染问题 <faq-rendering>` 检查驱动与图形渲染配置。
+   * - Ray 残留或 NCCL 报错
+     - 执行 ``ray stop`` 清理本机残留进程，详见 :ref:`CUDA 与显存问题 <faq-cuda>`。
 
 下一步
 ------

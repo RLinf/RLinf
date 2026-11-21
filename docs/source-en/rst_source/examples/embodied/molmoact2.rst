@@ -121,16 +121,12 @@ config has no ``actor`` section, so there is no second path to keep in sync.
 Run It
 ------
 
+Evaluate LIBERO-Long with ``evaluations/libero/libero_10_molmoact2_eval.yaml``:
+
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
      rollout.model.model_path=/path/to/model/MolmoAct2-LIBERO
-
-What this command does:
-
-1. Loads the official checkpoint through the MolmoAct2 model adapter.
-2. Runs the LIBERO-Long suite with the settings in ``evaluations/libero/libero_10_molmoact2_eval.yaml``.
-3. Writes terminal output and ``eval/success_once`` to a timestamped log.
 
 Swap in any config from the Tasks table above to evaluate another suite.
 

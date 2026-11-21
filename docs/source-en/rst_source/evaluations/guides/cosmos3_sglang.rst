@@ -60,13 +60,11 @@ The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.ya
      eval:
        total_num_envs: 128   # adjust by GPU count / memory (example: 128 for 8 GPUs)
 
-Then run:
+Launch evaluation (one SGLang server per GPU; logs go to ``logs/<timestamp>-<config>/eval_embodiment.log``):
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
-
-**What this command does:** launches one Cosmos3 SGLang server per GPU, starts the LIBERO environment for evaluation, prints per-episode success/failure, and summarizes the success rate at the end. Logs are written to ``logs/<timestamp>-<config>/eval_embodiment.log``.
 
 Key Configuration
 ----------------------------------------

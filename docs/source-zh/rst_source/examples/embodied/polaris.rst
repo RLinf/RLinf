@@ -163,7 +163,7 @@
 运行
 ----------------------------------------
 
-选择一个训练配置，并在已初始化 Isaac Sim 的终端中启动：
+可用训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -179,6 +179,8 @@
      - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``
      - ``polaris_tapeintocontainer_ppo_openpi``
 
+初始化 Isaac Sim 并设置 ``POLARIS_DATA_PATH`` 后，使用 ``run_embodiment.sh`` 启动训练：
+
 .. code:: bash
 
    source /path/to/isaac_sim/setup_conda_env.sh
@@ -186,12 +188,6 @@
 
    bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
    bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
-
-这条命令会：
-
-1. 使用选定的 Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 PolaRiS env 组件创建 Ray worker。
-3. 使用 chunked OpenPI 动作和 Gaussian Splatting 渲染观测运行 PPO。
 
 独立评估请走 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`。
 该指南负责 ``POLARIS_DATA_PATH``、可用评测配置
@@ -204,7 +200,7 @@
    env defaults 改为其他 ``polaris_droid_*`` 环境配置，并保持 ``POLARIS_DATA_PATH``
    指向 ``PolaRiS-Hub``。
 
-在调优动作 / 渲染流水线时，以下 PolaRiS 专有字段值得了解：
+PolaRiS 常用配置项：
 
 .. list-table::
    :header-rows: 1

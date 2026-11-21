@@ -1,7 +1,7 @@
 RoboTwin 评测
 =============
 
-RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种桌面操作任务。RLinf 支持在 RoboTwin 上并行评测 VLA 策略，并输出 ``eval/success_once`` 等指标。
+RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种桌面操作任务。RLinf 支持在 RoboTwin 上并行评测 VLA policy，并输出 ``eval/success_once`` 等指标。
 
 相关训练文档：:doc:`../../examples/embodied/robotwin`
 
@@ -17,8 +17,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 支持的模型包括 ``openvla-oft``、``openpi``、``lingbotvla``、``lingbotvlav2``，安装时替换 ``--model`` 参数即可。
 
-在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，
-详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
+在 AMD ROCm 上安装时需加 ``--platform``，并在 task config 里设置 ``planner_backend: mplib``，详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`。
 
 **RoboTwin 仓库与 Assets**
 
@@ -33,9 +32,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    # 2. 下载并解压 Assets
    bash script/_download_assets.sh
 
-默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。
-下载完成后，请将 ``env.eval.assets_path``
-设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
+默认情况下，该脚本会将资产下载到 ``/path/to/RoboTwin/assets/``。下载完成后，请将 ``env.eval.assets_path`` 设置为 ``/path/to/RoboTwin``\ （即 ``assets/`` 的上一级目录）。
 
 RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认的 0.1 m：SAPIEN 3.0.1 会裁掉比近裁剪面更近的物体，0.1 m 会让腕部相机看不到夹爪手指。可通过 ``env.eval.camera_near`` 修改该值，设为 ``null`` 即沿用 RoboTwin 自身的取值。
 
@@ -112,7 +109,7 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 - π\ :sub:`0`：`RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
 - π\ :sub:`0.5`：`RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
 
-下载命令见训练文档「模型下载」一节。
+下载命令见训练文档“模型下载”一节。
 
 **Step 3：编辑配置**
 
@@ -135,18 +132,18 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 评测配置详解
 ------------
 
-RoboTwin 评测对 ``eval_seeds.json`` 中每个任务的 **success seed** 各跑一条轨迹，并汇总 ``eval/success_once`` （轨迹中至少成功一次的比例）。以下字段均在 ``env.eval`` 下配置，共同决定 **并行规模**、**单条轨迹长度** 与 **测试集覆盖范围**。
+RoboTwin 评测对 ``eval_seeds.json`` 中每个任务的 **success seed** 各跑一条轨迹，并汇总 ``eval/success_once``\ （轨迹中至少成功一次的比例）。以下字段均在 ``env.eval`` 下配置，共同决定 **并行规模**、**单条轨迹长度** 与 **测试集覆盖范围**。
 
 评测协议概述
 ~~~~~~~~~~~~
 
-RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。种子列表位于 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``，按 ``task_name`` 索引；当前文件覆盖 **22 个任务** （150–320 条种子不等）。
+RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。内置的 ``eval_seeds.json`` 按 ``task_name`` 索引，覆盖 **22 个任务**\ （每个任务 150–320 条种子）。
 
 在 ``RoboTwinEnv`` 中：
 
 - 启动时从 ``seeds_path`` 加载对应任务的 ``success_seeds``，经全局 shuffle 后按 worker 切分，保证各 env worker 分到不重叠的子集；
 - 每条轨迹由分配到的 **seed** 唯一确定初始场景与语言指令；
-- ``is_eval: True`` 时，``auto_reset`` 触发后会为已完成的环境分配下一个 seed（当 ``use_fixed_reset_state_ids: False`` 时）。
+- ``is_eval: True`` 且 ``use_fixed_reset_state_ids: False`` 时，``auto_reset`` 触发后会为已完成的环境分配下一个 seed。
 
 默认示例配置（``total_num_envs: 128``、``rollout_epoch: 1``、``use_fixed_reset_state_ids: True``）下，每个并行环境在一轮内只评测一条固定种子的轨迹。以 8 GPU（``component_placement: 0-7``）为例，一轮约评测 128 条轨迹，不一定覆盖该任务的全部 seeds。
 
@@ -208,8 +205,8 @@ OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ，demo_clean 协议）
 LingbotVLA 1.0
 
 - 除 ``rollout.model.model_path`` 外，还须配置 ``tokenizer_path`` 与 ``rollout.model.lingbotvla.config_path``
-- ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400`` （``click_bell``、``place_shoe`` 等）
-- ``use_custom_reward: False`` （须关闭自定义奖励）
+- ``rollout.model.num_action_chunks: 50``；``max_episode_steps: 400``\ （``click_bell``、``place_shoe`` 等）
+- ``use_custom_reward: False``\ （须关闭自定义奖励）
 
 LingbotVLA 2.0
 
@@ -221,7 +218,7 @@ LingbotVLA 2.0
 覆盖完整测试集
 ~~~~~~~~~~~~~~
 
-设任务 seeds 总数为 ``S``，并行环境数为 ``E``，单条轨迹步数上限为 ``T`` （即 ``max_episode_steps``）。
+设任务 seeds 总数为 ``S``，并行环境数为 ``E``，单条轨迹步数上限为 ``T``\ （即 ``max_episode_steps``）。
 
 **方式一：大并行**
 
@@ -281,9 +278,9 @@ LingbotVLA 2.0
 
 **从训练配置派生其他任务**
 
-``eval_seeds.json`` 中另有 ``beat_block_hammer``、``handover_block``、``lift_pot`` 等任务的种子。可复制 ``evaluations/robotwin/`` 中结构相近的 YAML，将 ``defaults`` 中的 env preset 改为 ``env/robotwin_<task>@env.eval`` （对应 ``examples/embodiment/config/env/`` 下的 preset），并调整 ``rollout.model`` 与任务相关的 ``unnorm_key`` / ``openpi.config_name``。
+``eval_seeds.json`` 中另有 ``beat_block_hammer``、``handover_block``、``lift_pot`` 等任务的种子。可复制 ``evaluations/robotwin/`` 中结构相近的 YAML，将 ``defaults`` 中的 env preset 改为 ``env/robotwin_<task>@env.eval``\ （对应 ``examples/embodiment/config/env/`` 下的 preset），并调整 ``rollout.model`` 与任务相关的 ``unnorm_key`` / ``openpi.config_name``。
 
-**加载 RL  checkpoint**
+**加载 RL checkpoint**
 
 .. code-block:: bash
 

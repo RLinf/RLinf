@@ -137,17 +137,11 @@
      - π₀ + PPO
      - ``metaworld_45_ppo_openpi.yaml``
 
-使用 ``run_embodiment.sh`` 启动一个配置：
+使用 ``run_embodiment.sh`` 启动训练：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh metaworld_50_ppo_openpi
-
-**这个命令会：**
-
-1. 加载 ``examples/embodiment/config/metaworld_50_ppo_openpi.yaml``。
-2. 按 ``cluster.component_placement`` 启动 Meta-World MT50 的 rollout/eval worker。
-3. 运行 PPO 训练循环，并把日志和检查点写入 ``runner.logger.log_path``。
 
 .. admonition:: 进一步配置
    :class: note

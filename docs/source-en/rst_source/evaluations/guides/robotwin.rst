@@ -139,7 +139,7 @@ RoboTwin evaluation runs one trajectory per **success seed** in ``eval_seeds.jso
 Evaluation Protocol
 ~~~~~~~~~~~~~~~~~~~
 
-RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. Seeds are listed in ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``, indexed by ``task_name``; the file currently covers **22 tasks** (150–320 seeds each).
+RoboTwin evaluation uses pre-filtered **success seeds** as the random seed for each trajectory, fixing the initial scene and language instruction. The bundled ``eval_seeds.json`` file indexes seeds by ``task_name`` and covers **22 tasks** (150–320 seeds each).
 
 In ``RoboTwinEnv``:
 

@@ -122,7 +122,7 @@ Download the checkpoint for the OpenPI model you plan to fine-tune.
 Run It
 ------
 
-Pick one config and launch training:
+Available recipes:
 
 .. list-table::
    :header-rows: 1
@@ -144,15 +144,11 @@ Pick one config and launch training:
      - ``examples/embodiment/config/calvin_abcd_d_ppo_openpi_pi05.yaml``
      - ``calvin_abcd_d_ppo_openpi_pi05``
 
+Launch training with ``run_embodiment.sh``:
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh calvin_d_d_ppo_openpi_pi05
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and CALVIN env components.
-3. Runs PPO rollouts, computes sparse subtask rewards, and updates the OpenPI policy.
 
 For standalone evaluation, use the unified :doc:`Evaluation CLI
 <../../evaluations/reference/cli>` with config fallback and the same suffix, for

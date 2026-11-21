@@ -114,7 +114,7 @@ MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点�
 运行
 ----------------------------------------
 
-选择一个配方并启动训练：
+可用训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -133,6 +133,8 @@ MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点�
      - ``run_async.sh``
      - ``frankasim_sac_cnn_async``
 
+使用对应脚本启动训练：
+
 .. code:: bash
 
    # 状态观测 PPO 配方
@@ -140,12 +142,6 @@ MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点�
 
    # 视觉 SAC 配方
    bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
-
-这条命令会：
-
-1. 启动选定的 embodied 训练入口。
-2. 为 actor、rollout 和 Franka-Sim env 组件创建 Ray worker。
-3. 运行 rollout，计算任务奖励，并更新选定策略。
 
 .. note::
 

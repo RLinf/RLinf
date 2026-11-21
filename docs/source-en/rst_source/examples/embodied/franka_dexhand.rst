@@ -94,38 +94,27 @@ Dexterous-hand teleoperation uses:
 Reward Model
 ------------
 
-The reward-model path is the same as the Franka real-world reward-model workflow described in :doc:`franka_reward_model`.
-
-For the dexterous-hand pick-and-place environment:
-
-- the default reward image follows ``env.main_image_key``
-- ``main_image_key`` defaults to ``wrist_1`` in ``examples/embodiment/config/env/realworld_dex_pnp.yaml``
-- ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` uses the reward model through the ``reward`` section
+The reward-model path follows :doc:`franka_reward_model`. The reward image uses ``env.main_image_key`` (``wrist_1`` by default in ``examples/embodiment/config/env/realworld_dex_pnp.yaml``), and ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` enables it through the ``reward`` section.
 
 Configurations
 --------------
 
-Use ``examples/embodiment/config/realworld_collect_dexhand_data.yaml`` for data collection.
-This config includes:
+.. list-table::
+   :header-rows: 1
+   :widths: 52 48
 
-- ``end_effector_type: "ruiyan_hand"``
-- glove settings for teleoperation
-- ``data_collection`` writing both ``replay_buffer`` (``demo_buffer/``) and ``pickle_episode`` (``pickle_episode/``)
+   * - Config
+     - Purpose
+   * - ``examples/embodiment/config/realworld_collect_dexhand_data.yaml``
+     - Data collection with ``end_effector_type: "ruiyan_hand"``, glove teleop, and export to ``replay_buffer`` (``demo_buffer/``) and ``pickle_episode`` (``pickle_episode/``).
+   * - ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``
+     - Async RLPD CNN training with the ``reward`` section enabled.
+   * - ``examples/embodiment/config/env/realworld_dex_pnp.yaml``
+     - Dexterous pick-and-place env defaults (``main_image_key`` defaults to ``wrist_1``).
 
-Use ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` for RL training.
-Before running, fill in:
+Before running ``realworld_dexpnp_rlpd_cnn_async.yaml``, fill in ``robot_ip``, ``target_ee_pose``, policy ``model_path``, reward ``model.model_path``, and the dexterous-hand serial ports in ``end_effector_config`` and ``glove_config``.
 
-- ``robot_ip``
-- ``target_ee_pose``
-- policy ``model_path``
-- reward ``model.model_path``
-- dexterous-hand serial ports in ``end_effector_config`` and ``glove_config``
-
-Camera naming and crop are configured directly in ``override_cfg`` when needed.
-This PR does not ship any serial-specific defaults so that other projects are
-not affected. Without ``camera_names``, default names follow the
-``camera_serials`` list order: the first serial is ``wrist_1``, the second is
-``wrist_2``. Serial numbers are not sorted. For example:
+Configure camera naming and crop directly in ``override_cfg`` when needed. Without ``camera_names``, default names follow the ``camera_serials`` list order: the first serial is ``wrist_1`` and the second is ``wrist_2`` (serial numbers are not sorted). For example:
 
 .. code-block:: yaml
 
@@ -135,8 +124,7 @@ not affected. Without ``camera_names``, default names follow the
    camera_crop_regions:
      "SERIAL1": [0.4, 0.3, 0.85, 0.7]
 
-If you rename a camera to ``global``, update ``main_image_key`` to ``global``
-in the task YAML as well.
+If you rename a camera to ``global``, update ``main_image_key`` to ``global`` in the task YAML as well.
 
 Run It
 ------

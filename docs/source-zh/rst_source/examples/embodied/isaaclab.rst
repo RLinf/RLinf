@@ -143,7 +143,7 @@
 运行
 ----------------------------------------
 
-选择一个配置并启动训练：
+可用训练配置：
 
 .. list-table::
    :header-rows: 1
@@ -159,6 +159,8 @@
      - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml``
      - ``isaaclab_franka_stack_cube_ppo_openpi_pi05``
 
+使用 ``run_embodiment.sh`` 启动训练：
+
 .. code:: bash
 
    # GR00T N1.5
@@ -166,12 +168,6 @@
 
    # OpenPI π₀.₅
    bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
-
-这条命令会：
-
-1. 使用选定的 Hydra 配置启动 embodied 训练入口。
-2. 为 actor、rollout 和 IsaacLab env 组件创建 Ray worker。
-3. 运行 PPO rollout，计算稀疏任务奖励，并更新 VLA 策略。
 
 独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
 通过配置回退机制复用相同后缀：``isaaclab_franka_stack_cube_ppo_gr00t`` 和

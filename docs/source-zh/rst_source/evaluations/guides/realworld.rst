@@ -1,7 +1,7 @@
 真机评测
 ========
 
-RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-relocation（pick-and-place）任务，以及通过 YAML 配置的通用真机环境（``FrankaEnv-v1``，用于自定义任务）。
+RLinf 支持在 Franka 机械臂上评测与部署 VLA policy，涵盖 Bin-relocation（pick-and-place）任务，以及通过 YAML 配置的通用真机环境（``FrankaEnv-v1``，用于自定义任务）。
 
 相关训练文档：:doc:`../../examples/embodied/franka_pi0_sft_deploy`、:doc:`../../examples/embodied/franka`、:doc:`../../examples/embodied/sft_dreamzero`
 
@@ -11,7 +11,7 @@ RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-reloc
 **硬件**
 
 - Franka Emika Panda 机械臂 + Intel RealSense 相机（默认）
-- 一台 **GPU 节点** （训练 / rollout）与一台 **机器人控制节点** （直连 Franka 与相机，无需 GPU）
+- 一台 **GPU 节点**\ （训练 / rollout）与一台 **机器人控制节点**\ （直连 Franka 与相机，无需 GPU）
 - 所有节点处于同一局域网；机械臂仅需与控制节点互通
 
 使用 ZED 相机或 Robotiq 夹爪时，请参阅 :doc:`../../examples/embodied/franka_zed_robotiq`。
@@ -32,13 +32,13 @@ RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-reloc
    bash requirements/install.sh embodied --model openpi --env franka
    source .venv/bin/activate
 
-控制节点使用默认的 Franky backend。如需改用 ROS 控制机械臂，请参考 :doc:`../../examples/embodied/franka` 的「旧版 ROS 后端（可选）」章节。
+控制节点使用默认的 Franky backend。如需改用 ROS 控制机械臂，请参考 :doc:`../../examples/embodied/franka` 的“旧版 ROS 后端（可选）”章节。
 
 DreamZero 真机评测还需在 GPU 节点安装 DreamZero 依赖，详见 :doc:`../../examples/embodied/sft_dreamzero`。
 
 **节点拓扑**
 
-真机评测通常采用 **「1 个 GPU 节点 + 1 个 Franka 控制节点」** 的异构布局：
+真机评测通常采用“**1 个 GPU 节点 + 1 个 Franka 控制节点**”的异构布局：
 
 .. list-table::
    :header-rows: 1
@@ -54,7 +54,7 @@ DreamZero 真机评测还需在 GPU 节点安装 DreamZero 依赖，详见 :doc:
      - 机器人控制
      - 运行 ``env`` worker，直连 Franka 与相机
 
-``realworld_pnp_eval.yaml`` 与 ``realworld_pnp_eval_dreamzero.yaml`` 使用上述双节点布局；``realworld_eval.yaml`` （自定义任务）为 **单机** 布局，``env`` 与 ``rollout`` 均部署在同一 Franka 节点。
+``realworld_pnp_eval.yaml`` 与 ``realworld_pnp_eval_dreamzero.yaml`` 使用上述双节点布局；``realworld_eval.yaml``\ （自定义任务）为 **单机** 布局，``env`` 与 ``rollout`` 均部署在同一 Franka 节点。
 
 Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../examples/embodied/franka` 与 :doc:`../../guides/realworld_robot`。
 
@@ -80,15 +80,14 @@ Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../e
      - 自定义任务（``FrankaEnv-v1``）
      - π₀
 
-若 ``evaluations/realworld/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``）。详见 :doc:`../reference/cli`。
-双节点 Dual Franka 部署通过该回退路径使用 ``realworld_eval_dual_franka``。单机 RTC 评测使用 ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``。
+若 ``evaluations/realworld/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``）。详见 :doc:`../reference/cli`。双节点 Dual Franka 部署通过该回退路径使用 ``realworld_eval_dual_franka``。单机 RTC 评测使用 ``evaluations/realworld/realworld_dual_franka_pi05_RTC.yaml``。
 
 启动前检查
 ----------
 
 在正式评测前，建议依次完成以下检查：
 
-1. **相机连接** （控制节点）：
+1. **相机连接**\ （控制节点）：
 
    .. code-block:: bash
 
@@ -96,7 +95,7 @@ Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../e
 
    记录输出的相机序列号，填入 ``env.eval.override_cfg.camera_serials``。
 
-2. **目标位姿** （PnP 任务，控制节点）：
+2. **目标位姿**\ （PnP 任务，控制节点）：
 
    .. code-block:: bash
 
@@ -106,7 +105,7 @@ Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../e
 
    将结果填入 ``env.eval.override_cfg.target_ee_pose``。PnP 任务中该位姿表示运动空间中间的最低点，并用于成功判定与工作空间截断；详见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`。
 
-3. **Ray 集群连通** （各节点）：
+3. **Ray 集群连通**\ （各节点）：
 
    .. code-block:: bash
 
@@ -165,7 +164,7 @@ Ray 集群启动
 
 π₀ PnP 评测需要：
 
-- ``rollout.model.model_path``：Pi0 基座模型目录，且须包含 ``<repo_id>/norm_stats.json`` （SFT 前置步骤生成，见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`）
+- ``rollout.model.model_path``：Pi0 基座模型目录，且须包含 ``<repo_id>/norm_stats.json``\ （SFT 前置步骤生成，见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`）
 - ``runner.ckpt_path``：SFT 导出的 ``full_weights.pt``
 
 **Step 3：编辑配置**
@@ -223,7 +222,7 @@ Ray 集群启动
 
 **Step 5：查看结果**
 
-策略以 ``runner.only_eval: True`` 模式运行；终端输出任务指标，日志见 :doc:`../reference/results`。
+policy 以 ``runner.only_eval: True`` 模式运行；终端输出任务指标，日志见 :doc:`../reference/results`。
 
 .. _realworld-eval-config:
 
@@ -281,11 +280,11 @@ Ray 集群启动
    * - ``max_episode_steps``
      - 单条轨迹最大步数，默认 200
    * - ``max_steps_per_rollout_epoch``
-     - 每轮 rollout 步数上限；**必须能被** ``rollout.model.num_action_chunks`` **整除** （PnP 默认 ``num_action_chunks=10``）
+     - 每轮 rollout 步数上限；**必须能被** ``rollout.model.num_action_chunks`` **整除**\ （PnP 默认 ``num_action_chunks=10``）
    * - ``total_num_envs``
      - 并行环境数，真机通常为 1
    * - ``teleop``
-     - 从策略手中接管的设备，评测时通常填 ``none``
+     - 从 policy 手中接管的设备，评测时通常填 ``none``
 
 ``run_eval.sh`` 行为
 ~~~~~~~~~~~~~~~~~~~~
@@ -301,7 +300,7 @@ DreamZero 真机评测（``realworld_pnp_eval_dreamzero.yaml``）完整流程见
 
 本节面向 **你自己定义的任务**，与上文内置的 Bin-relocation（PnP）任务不同。
 
-RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_description``、目标/复位位姿、工作空间限位等即可，**无需编写新的 Python 环境类**。典型用法是：采集示教数据 → 监督微调（SFT）训练策略 → 在真机上部署评测（流程见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`）。环境模板为 ``examples/embodiment/config/env/realworld_franka_sft_env.yaml``；评测配置为 ``evaluations/realworld/realworld_eval.yaml``。
+RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_description``、目标/复位位姿、工作空间限位等即可，**无需编写新的 Python 环境类**。典型用法是：采集示教数据 → 监督微调（SFT）训练 policy → 在真机上部署评测（流程见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`）。环境模板为 ``examples/embodiment/config/env/realworld_franka_sft_env.yaml``；评测配置为 ``evaluations/realworld/realworld_eval.yaml``。
 
 **节点拓扑**
 

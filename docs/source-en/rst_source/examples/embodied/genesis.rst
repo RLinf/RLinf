@@ -112,7 +112,7 @@ Then set the same checkpoint path for rollout and actor in
 Run It
 ------
 
-Pick one recipe and launch training:
+Available recipes:
 
 .. list-table::
    :header-rows: 1
@@ -128,16 +128,12 @@ Pick one recipe and launch training:
      - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
      - ``genesis_cubepick_ppo_cnn``
 
+Launch training with ``run_embodiment.sh``:
+
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
    bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
-
-What this does:
-
-1. Starts the embodied training entrypoint with the selected Hydra config.
-2. Creates Ray workers for the actor, rollout, and Genesis env components.
-3. Runs PPO rollouts, computes cube-pick rewards, and updates the selected policy.
 
 .. note::
 
