@@ -5876,45 +5876,102 @@ def test_gr00t_libero_no_complete_chunks(gr00t_libero_parquet):
     assert len(dataset) == 0
 
 
-def test_gr00t_sft_metadata(gr00t_libero_parquet, monkeypatch):
-    import json
-
+@pytest.fixture
+def gr00t_sft_config(gr00t_libero_parquet, monkeypatch):
     processing = pytest.importorskip("gr00t.model.gr00t_n1d7.processing_gr00t_n1d7")
     from gr00t.configs.data.embodiment_configs import MODALITY_CONFIGS
-    from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
 
     from rlinf.data.datasets.gr00t.libero import LiberoEpisodeLoader
-    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
-        GR00T_N1_7_ForRLActionPrediction,
-    )
 
     monkeypatch.setattr(
         processing,
         "build_processor",
         lambda *args, **kwargs: SimpleNamespace(tokenizer=SimpleNamespace()),
     )
-    statistics = {
-        "libero_sim": LiberoEpisodeLoader(
-            gr00t_libero_parquet, None
-        ).compute_statistics()
-    }
-    old_statistics = copy.deepcopy(statistics)
-    old_statistics["libero_sim"]["state"]["x"]["mean"] = [-99.0]
-    options = {
-        "modality_configs": {"libero_sim": MODALITY_CONFIGS["libero_sim"]},
-        "image_target_size": [256, 256],
-        "image_crop_size": [224, 224],
-    }
-    training_processor = processing.Gr00tN1d7Processor(statistics=statistics, **options)
+    statistics = LiberoEpisodeLoader(gr00t_libero_parquet, None).compute_statistics()
+    statistics["state"]["x"]["mean"] = [-99.0]
+    processor = processing.Gr00tN1d7Processor(
+        statistics={"libero_sim": statistics},
+        modality_configs={"libero_sim": MODALITY_CONFIGS["libero_sim"]},
+        image_target_size=[256, 256],
+        image_crop_size=[224, 224],
+    )
+    model_path = gr00t_libero_parquet / "initial"
+    model_path.mkdir()
+    processor.save_pretrained(model_path)
+    return OmegaConf.create(
+        {
+            "runner": {"max_steps": 1, "max_epochs": -1},
+            "actor": {
+                "model": {
+                    "embodiment_tag": "libero_sim",
+                    "model_path": str(model_path),
+                },
+                "seed": 0,
+                "micro_batch_size": 1,
+            },
+            "data": {
+                "format": "physical_libero",
+                "statistics_path": str(gr00t_libero_parquet / "statistics.json"),
+                "num_workers": 0,
+                "num_shards_per_epoch": 1,
+            },
+        }
+    )
+
+
+def test_gr00t_libero_rejects_empty_mixture_source(
+    gr00t_libero_parquet, gr00t_sft_config, tmp_path
+):
+    import json
+    import shutil
+
+    import pandas as pd
+
+    from rlinf.data.datasets.gr00t import build_gr00t_sft_dataloader
+
+    empty = tmp_path / "too-short"
+    shutil.copytree(gr00t_libero_parquet / "meta", empty / "meta")
+    episode = empty / "data/chunk-000/episode_000000.parquet"
+    episode.parent.mkdir(parents=True)
+    pd.read_parquet(gr00t_libero_parquet / episode.relative_to(empty)).iloc[
+        :2
+    ].to_parquet(episode)
+    (empty / "meta/episodes.jsonl").write_text(
+        json.dumps({"episode_index": 0, "length": 2, "tasks": ["pick up bowl"]}) + "\n"
+    )
+    with pytest.raises(ValueError, match=r"too-short has no valid action chunks"):
+        build_gr00t_sft_dataloader(
+            gr00t_sft_config, 1, 0, [str(gr00t_libero_parquet), str(empty)]
+        )
+
+
+def test_gr00t_sft_metadata(gr00t_libero_parquet, gr00t_sft_config):
+    import json
+
+    from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
+
+    from rlinf.data.datasets.gr00t import build_gr00t_sft_dataloader
+    from rlinf.data.datasets.gr00t.libero import LiberoEpisodeLoader
+    from rlinf.models.embodiment.gr00t.gr00t_n1d7.gr00t_action_model import (
+        GR00T_N1_7_ForRLActionPrediction,
+    )
+
+    loader, _ = build_gr00t_sft_dataloader(
+        gr00t_sft_config, 1, 0, [str(gr00t_libero_parquet)]
+    )
     policy = GR00T_N1_7_ForRLActionPrediction.__new__(GR00T_N1_7_ForRLActionPrediction)
     torch.nn.Module.__init__(policy)
     policy.config = Gr00tN1d7Config(action_horizon=16, max_action_dim=7)
-    policy.processor = processing.Gr00tN1d7Processor(
-        statistics=old_statistics, **options
-    )
     output = gr00t_libero_parquet / "checkpoint"
-    policy.save_sft_checkpoint_metadata(str(output), {"processor": training_processor})
-    assert json.loads((output / "statistics.json").read_text()) == statistics
+    output.mkdir()
+    policy.save_sft_checkpoint_metadata(str(output))
+    loader.save_sft_checkpoint_metadata(str(output))
+    statistics = json.loads((output / "statistics.json").read_text())
+    expected = LiberoEpisodeLoader(gr00t_libero_parquet, None).compute_statistics()
+    assert (
+        statistics["libero_sim"]["state"]["x"]["mean"] == expected["state"]["x"]["mean"]
+    )
     assert (output / "processor_config.json").is_file()
     assert (output / "embodiment_id.json").is_file()
     restored = Gr00tN1d7Config.from_pretrained(output)

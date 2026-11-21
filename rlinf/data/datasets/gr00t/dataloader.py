@@ -20,6 +20,14 @@ import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 
+class Gr00tSftDataLoader(StatefulDataLoader):
+    """Save the training processor alongside the SFT checkpoint."""
+
+    def save_sft_checkpoint_metadata(self, save_path: str) -> None:
+        """Save the processor configured by the dataset mixture."""
+        self.dataset.processor.save_pretrained(save_path)
+
+
 def build_gr00t_sft_dataloader(
     cfg, world_size: int, rank: int, data_paths: Any, eval_dataset: bool = False
 ):
@@ -64,6 +72,7 @@ def build_gr00t_sft_dataloader(
     )
     paths = [data_paths] if isinstance(data_paths, str) else list(data_paths)
     datasets = []
+    sizes = []
     for path in paths:
         if data_cfg.get("format") == "physical_libero":
             from .libero import LiberoEpisodeLoader, LiberoParquetDataset
@@ -77,26 +86,23 @@ def build_gr00t_sft_dataloader(
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
             statistics = reader.load_statistics(statistics_path)
-            datasets.append(
-                LiberoParquetDataset(
-                    episode_loader=reader,
-                    embodiment_tag=tag,
-                    modality_configs=modality_configs,
-                    statistics=statistics,
-                    shard_size=data_cfg.get("shard_size", 1024),
-                    episode_sampling_rate=data_cfg.get("episode_sampling_rate", 1.0),
-                    seed=cfg.actor.seed,
-                    allow_padding=data_cfg.get("allow_padding", False),
-                )
+            dataset = LiberoParquetDataset(
+                episode_loader=reader,
+                embodiment_tag=tag,
+                modality_configs=modality_configs,
+                statistics=statistics,
+                shard_size=data_cfg.get("shard_size", 1024),
+                episode_sampling_rate=data_cfg.get("episode_sampling_rate", 1.0),
+                seed=cfg.actor.seed,
+                allow_padding=data_cfg.get("allow_padding", False),
             )
-            continue
-        if rank == 0:
-            generate_stats(path)
-            generate_rel_stats(path, tag)
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-        datasets.append(
-            ShardedSingleStepDataset(
+        else:
+            if rank == 0:
+                generate_stats(path)
+                generate_rel_stats(path, tag)
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+            dataset = ShardedSingleStepDataset(
                 dataset_path=Path(path),
                 embodiment_tag=tag,
                 modality_configs=modality_configs,
@@ -106,15 +112,17 @@ def build_gr00t_sft_dataloader(
                 seed=cfg.actor.seed,
                 allow_padding=data_cfg.get("allow_padding", False),
             )
-        )
+
+        size = sum(dataset.get_shard_length(i) for i in range(len(dataset)))
+        if not size:
+            raise ValueError(f"GR00T SFT dataset {path} has no valid action chunks")
+        datasets.append(dataset)
+        sizes.append(size)
+
     # Match DatasetFactory: paths within one embodiment are weighted by size.
-    sizes = [
-        sum(dataset.get_shard_length(i) for i in range(len(dataset)))
-        for dataset in datasets
-    ]
     total = sum(sizes)
-    if total == 0:
-        raise ValueError("GR00T SFT requires at least one valid action chunk")
+    if not datasets:
+        raise ValueError("GR00T SFT requires at least one training dataset")
     dataset = ShardedMixtureDataset(
         datasets=datasets,
         weights=[size / total for size in sizes],
@@ -134,7 +142,7 @@ def build_gr00t_sft_dataloader(
         raise ValueError(
             "num_shards_per_epoch must cover every distributed dataloader worker"
         )
-    loader = StatefulDataLoader(
+    loader = Gr00tSftDataLoader(
         dataset,
         batch_size=cfg.actor.micro_batch_size,
         num_workers=workers,
@@ -144,4 +152,4 @@ def build_gr00t_sft_dataloader(
         persistent_workers=workers > 0,
         **({"prefetch_factor": data_cfg.get("prefetch_factor", 2)} if workers else {}),
     )
-    return loader, {"processor": processor, "num_frames": total}
+    return loader, {"num_frames": total}

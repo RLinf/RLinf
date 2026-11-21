@@ -112,12 +112,8 @@ class BasePolicy(ABC):
     def prepare_nft_reference_model(self) -> None:
         """Release state unused by NFT forward on a cached reference model."""
 
-    def save_sft_checkpoint_metadata(self, save_path: str, data_config: Any) -> None:
-        """Save optional model and preprocessing metadata beside SFT weights.
-
-        Called on rank zero with the data configuration returned by the SFT
-        dataloader builder, after model and dataloader state have been saved.
-        """
+    def save_sft_checkpoint_metadata(self, save_path: str) -> None:
+        """Save optional model configuration beside the SFT weights on rank zero."""
 
     @abstractmethod
     def default_forward(self, **kwargs): ...

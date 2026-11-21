@@ -121,8 +121,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().save_checkpoint(save_path, step)
         self._save_data_checkpoint(save_path)
         if self._rank == 0:
-            self.model.save_sft_checkpoint_metadata(save_path, self.data_config)
-        torch.distributed.barrier()
+            self.model.save_sft_checkpoint_metadata(save_path)
+            save_data_metadata = getattr(
+                self.data_loader, "save_sft_checkpoint_metadata", None
+            )
+            if save_data_metadata is not None:
+                save_data_metadata(save_path)
 
     def _save_data_checkpoint(self, save_path: str) -> None:
         """Save per-rank data order and RNG state alongside the model checkpoint."""
