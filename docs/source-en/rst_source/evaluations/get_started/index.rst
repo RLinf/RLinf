@@ -1,19 +1,28 @@
 Get Started
 ===========
 
-This section introduces embodied evaluation in RLinf, covering the evaluation architecture, environment setup, and your first benchmark run.
+Pick this section to understand RLinf's embodied evaluation layout, install dependencies, and run your first benchmark.
 
-.. list-table::
-   :header-rows: 1
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-   * - Page
-     - What you get
-   * - :doc:`Overview <overview>`
-     - How the unified evaluation entry point works and how code and configs are organized under ``evaluations/``.
-   * - :doc:`Installation <installation>`
-     - Install embodied dependencies with ``requirements/install.sh`` and set benchmark-specific environment variables.
-   * - :doc:`Quick Tour <quick_tour>`
-     - Run your first LIBERO Spatial evaluation with OpenPI π₀.₅ in about 5 minutes.
+   .. grid-item-card:: Overview
+      :link: overview
+      :link-type: doc
+
+      Unified evaluation architecture and the ``evaluations/`` directory layout.
+
+   .. grid-item-card:: Installation
+      :link: installation
+      :link-type: doc
+
+      Install embodied dependencies with ``requirements/install.sh`` and configure benchmark variables.
+
+   .. grid-item-card:: Quick Tour
+      :link: quick_tour
+      :link-type: doc
+
+      Run your first LIBERO-Spatial evaluation with OpenPI π₀.₅ in about 5 minutes.
 
 .. toctree::
    :hidden:

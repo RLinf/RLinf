@@ -27,7 +27,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
    .. grid-item-card:: 关联训练
       :text-align: center
 
-      :doc:`RoboTwin 训练 <../../examples/embodied/robotwin>`
+      :doc:`RoboTwin <../../examples/embodied/robotwin>` · :doc:`LingbotVLA 1.0 <../../examples/embodied/lingbotvla>` · :doc:`LingbotVLA 2.0 <../../examples/embodied/lingbotvlav2>`
 
 一键上手
 --------
@@ -43,8 +43,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
          # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-         (cd ../RoboTwin && bash script/_download_assets.sh)
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
          # 2. 下载模型
          hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
@@ -63,8 +62,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
          # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-         (cd ../RoboTwin && bash script/_download_assets.sh)
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
          # 2. 下载模型
          hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
@@ -83,8 +81,7 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
          # 1. 安装并下载 RoboTwin 资产
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-         (cd ../RoboTwin && bash script/_download_assets.sh)
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
          # 2. 下载模型
          hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
@@ -96,7 +93,61 @@ RoboTwin 是双臂操作仿真平台，内置 22 个带评测种子的桌面任�
            rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
            env.eval.assets_path="${ROBOTWIN_PATH}"
 
-LingbotVLA 安装时将 ``--model`` 替换为 ``lingbotvla`` 或 ``lingbotvlav2``。在 AMD ROCm 上安装需加 ``--platform``，并在任务配置中设 ``planner_backend: mplib``\ （详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`）。``run_eval.sh`` 会将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``，``env.eval.assets_path`` 指向 ``assets/`` 的父目录。RLinf 默认使用 ``0.01 m`` 相机近裁剪面，避免 SAPIEN 3.0.1 在腕部视角裁掉夹爪手指（可通过 ``env.eval.camera_near`` 修改，设为 ``null`` 沿用 RoboTwin 默认 ``0.1 m``）。
+   .. tab-item:: LingbotVLA 1.0（click_bell）
+
+      .. code-block:: bash
+
+         # 1. 安装并下载 RoboTwin 资产
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
+
+         # 2. 下载基座权重、指定版本的 RoboTwin SFT 权重与 Qwen2.5-VL 骨干
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+
+         # 3. 启动评测
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOT_PLATFORM=ALOHA
+         export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
+           rollout.model.model_path=./lingbot-vla-4b-posttrain-robotwin \
+           rollout.model.tokenizer_path=./Qwen2.5-VL-3B-Instruct \
+           rollout.model.lingbotvla.config_path=./lingbot-vla-4b \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      将配置名替换为 ``robotwin_place_shoe_lingbotvla_eval`` 即可用同一权重评测 ``place_shoe``\ （详见 :doc:`../../examples/embodied/lingbotvla`）。
+
+   .. tab-item:: LingbotVLA 2.0（click_bell）
+
+      .. code-block:: bash
+
+         # 1. 安装并下载 RoboTwin 资产
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
+
+         # 2. 下载 RoboTwin 权重与 Qwen3-VL 骨干
+         hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
+         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
+
+         # 3. 启动评测
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
+         export ROBOT_PLATFORM=ALOHA
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
+           rollout.model.model_path="$(pwd)/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt" \
+           rollout.model.tokenizer_path="$(pwd)/Qwen3-VL-4B-Instruct" \
+           rollout.model.lingbotvlav2.training_config_path="$(pwd)/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml" \
+           rollout.model.lingbotvlav2.robot_config_path="$(pwd)/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml" \
+           rollout.model.lingbotvlav2.stats_path="$(pwd)/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json"
+
+      默认使用 2 张 GPU（``rollout: 0``、``env: 1``）。LingbotVLA 1.0 与 2.0 均安装 ``lingbotvla`` 包，须分别使用独立的虚拟环境（详见 :doc:`../../examples/embodied/lingbotvlav2`）。
+
+在 AMD ROCm 上安装需加 ``--platform amd``，并在任务配置中设 ``planner_backend: mplib``\ （详见 :ref:`在不同硬件后端上运行 <robotwin-hardware>`）。``run_eval.sh`` 会将 ``ROBOTWIN_PATH`` 加入 ``PYTHONPATH``，``env.eval.assets_path`` 指向 ``assets/`` 的父目录。RLinf 默认使用 ``0.01 m`` 相机近裁剪面，避免 SAPIEN 3.0.1 在腕部视角裁掉夹爪手指（可通过 ``env.eval.camera_near`` 修改，设为 ``null`` 沿用 RoboTwin 默认 ``0.1 m``）。
 
 .. dropdown:: Docker 镜像与示例配置
 
@@ -177,7 +228,7 @@ LingbotVLA 安装时将 ``--model`` 替换为 ``lingbotvla`` 或 ``lingbotvlav2`
    - **OpenVLA-OFT（``demo_randomized``）：** ``task_config.embodiment: [piper, piper, 0.6]``、``center_crop: True``\ （及 ``rollout.model.center_crop: True``）、保持域随机化开启、``num_action_chunks: 25``、匹配 SFT 的 ``unnorm_key``\ （如 ``place_empty_cup_1k``）、``implement_version: "official"``。
    - **OpenPI π₀ / π₀.₅（``demo_clean``）：** ``task_config.embodiment: [aloha-agilex]``、``center_crop: False``、``collect_wrist_camera: true``、关闭全部 ``task_config.domain_randomization``、``num_action_chunks: 50``、``openpi.config_name: pi0_aloha_robotwin`` 或 ``pi05_aloha_robotwin``；建议开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True`` 降低显存。
    - **LingbotVLA 1.0：** 配置 ``model_path``、``tokenizer_path`` 与 ``rollout.model.lingbotvla.config_path``；``num_action_chunks: 50``、``max_episode_steps: 400``、``use_custom_reward: False``。
-   - **LingbotVLA 2.0：** 填写 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 中的路径；``precision: bf16``、``embodiment: [aloha-agilex]``、``collect_wrist_camera: true``、``num_action_chunks: 50``、``max_episode_steps: 400``。
+   - **LingbotVLA 2.0：** 在 ``examples/embodiment/config/model/lingbotvlav2.yaml`` 或 Hydra 参数中填写路径；``precision: bf16``、``embodiment: [aloha-agilex]``、``collect_wrist_camera: true``、``num_action_chunks: 50``、``max_episode_steps: 400``。
 
    **覆盖完整测试集**
 
@@ -221,10 +272,13 @@ LingbotVLA 安装时将 ``--model`` 替换为 ``lingbotvla`` 或 ``lingbotvlav2`
 
       bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
         env.eval.total_num_envs=64 \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
+        env.eval.assets_path="${ROBOTWIN_PATH}"
 
       bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
-        runner.ckpt_path=/path/to/checkpoint.pt
+        rollout.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+        runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt \
+        env.eval.assets_path="${ROBOTWIN_PATH}"
 
    **从训练配置派生其他任务**
 
@@ -244,7 +298,7 @@ LingbotVLA 安装时将 ``--model`` 替换为 ``lingbotvla`` 或 ``lingbotvlav2`
    * - 导入时找不到 ``ROBOTWIN_PATH``
      - 将 ``ROBOTWIN_PATH`` 导出为 RoboTwin 仓库根目录（``RLinf_support`` 分支）；``run_eval.sh`` 仅在该变量已设置时将其加入 ``PYTHONPATH``。
    * - 启动失败或场景缺失
-     - 将 ``env.eval.assets_path`` 指向 ``assets/`` 的父目录（自动写入 ``ASSETS_PATH``），并导出 ``ROBOT_PLATFORM=ALOHA``。
+     - 将 ``env.eval.assets_path``\ （LingbotVLA 2.0 使用 ``ROBOTWIN_ASSETS_PATH``）指向 ``assets/`` 的父目录，并导出 ``ROBOT_PLATFORM=ALOHA``。
    * - GPU 显存不足
      - 在 YAML 中开启 ``env.enable_offload: True`` 与 ``rollout.enable_offload: True``，或调小 ``env.eval.total_num_envs``。
    * - 种子覆盖不完整

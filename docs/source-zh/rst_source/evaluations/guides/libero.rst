@@ -17,7 +17,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    .. grid-item-card:: 支持模型
       :text-align: center
 
-      OpenPI · OpenVLA-OFT · StarVLA · DreamZero · FastWAM · MolmoAct2 · π₀-FAST · Cosmos3
+      OpenPI · OpenVLA-OFT · FastWAM · MolmoAct2 · StarVLA · π₀-FAST · DreamZero · Cosmos3
 
    .. grid-item-card:: 配置目录
       :text-align: center
@@ -27,7 +27,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    .. grid-item-card:: 关联训练
       :text-align: center
 
-      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>`
+      :doc:`LIBERO <../../examples/embodied/libero>` · :doc:`FastWAM <../../examples/embodied/sft_fastwam>` · :doc:`DreamZero <../../examples/embodied/sft_dreamzero>`
 
 一键上手
 --------
@@ -36,7 +36,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅（LIBERO-Spatial）
+   .. tab-item:: OpenPI π₀.₅
 
       .. code-block:: bash
 
@@ -47,11 +47,13 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
          # 2. 下载模型
          hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir ./RLinf-Pi05-LIBERO-SFT
 
-         # 3. 启动评测
+         # 3. 启动评测（LIBERO-Spatial）
          bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
 
-   .. tab-item:: OpenVLA-OFT（LIBERO-10）
+      评测其他套件时，可将配置名替换为 ``libero_object_openpi_pi05_eval``、``libero_goal_openpi_eval``\ （π₀）或 ``libero_10_openpi_pi05_eval``。
+
+   .. tab-item:: OpenVLA-OFT
 
       .. code-block:: bash
 
@@ -62,11 +64,154 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
          # 2. 下载模型
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
 
-         # 3. 启动评测
+         # 3. 启动评测（LIBERO-10）
          bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
 
-使用 ``--env libero`` 时，``install.sh`` 会将 LIBERO 克隆到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录）并写入 ``.venv/bin/activate`` 的 ``PYTHONPATH``。其他模型可将 ``--model`` 替换为 ``starvla``、``dreamzero``、``fastwam``、``molmoact2`` 或 ``pi0_fast``。SGLang 后端见 :doc:`dreamzero_sglang` 与 :doc:`cosmos3_sglang`；如需与动作块执行重叠以隐藏推理延迟，见 :doc:`RTC <../../guides/rtc>`。
+      评测其他套件时，可将配置名替换为 ``libero_object_openvlaoft_eval`` 或 ``libero_goal_openvlaoft_eval``。
+
+   .. tab-item:: FastWAM
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model fastwam --env libero && source .venv/bin/activate
+
+         # 2. 下载模型与归一化统计
+         hf download yuanty/fastwam libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json --local-dir ./fastwam
+
+         # 3. 启动评测（LIBERO-Spatial）
+         bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
+           rollout.model.model_path=./fastwam/libero_uncond_2cam224.pt \
+           rollout.model.dataset_stats_path=./fastwam/libero_uncond_2cam224_dataset_stats.json
+
+      默认使用 4 卡（20 槽位 × 25 回合 = 500 个初始状态）；可替换为 ``libero_object_fastwam_eval``、``libero_goal_fastwam_eval`` 或 ``libero_10_fastwam_eval``。
+
+   .. tab-item:: MolmoAct2
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model molmoact2 --env libero && source .venv/bin/activate
+
+         # 2. 下载模型
+         hf download allenai/MolmoAct2-LIBERO --local-dir ./MolmoAct2-LIBERO
+
+         # 3. 启动评测（LIBERO-10）
+         bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
+           rollout.model.model_path=./MolmoAct2-LIBERO
+
+      评测其他套件时，可将配置名替换为 ``libero_spatial_molmoact2_eval``、``libero_object_molmoact2_eval`` 或 ``libero_goal_molmoact2_eval``\ （详见 :doc:`../../examples/embodied/molmoact2`）。
+
+   .. tab-item:: StarVLA
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model starvla --env libero && source .venv/bin/activate
+
+         # 2. 下载模型与基座 VLM
+         hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+
+         # 3. 启动评测（LIBERO-Spatial）
+         bash evaluations/run_eval.sh libero libero_spatial_starvla_eval \
+           rollout.model.model_path=./Qwen2.5-VL-OFT-LIBERO-4in1
+
+      执行第 3 步前，将 ``Qwen2.5-VL-OFT-LIBERO-4in1/config.yaml`` 中的 ``framework.qwenvl.base_vlm`` 改为 ``./Qwen2.5-VL-3B-Instruct``\ （详见 :doc:`../../examples/embodied/starvla`）。
+
+   .. tab-item:: π₀-FAST
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
+           --model pi0_fast --env libero \
+           --python 3.12.12 --torch 2.11.0 --no-flash-attn && source .venv/bin/activate
+
+         # 2. 下载模型与 tokenizer
+         hf download lerobot/pi0fast-libero \
+           --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
+           --local-dir ./pi0fast-libero
+         hf download google/paligemma-3b-pt-224 \
+           --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+           --local-dir ./paligemma-3b-pt-224
+         hf download jadechoghari/tokenizer-lib-mean \
+           --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
+           --local-dir ./tokenizer-lib-mean
+
+         # 3. 启动评测（LIBERO-10）
+         bash evaluations/run_eval.sh libero libero_10_pi0_fast_eval \
+           rollout.model.model_path=./pi0fast-libero \
+           rollout.model.pi0_fast.text_tokenizer_name=./paligemma-3b-pt-224 \
+           rollout.model.pi0_fast.action_tokenizer_name=./tokenizer-lib-mean
+
+      下载前须在 Hugging Face 同意 PaliGemma 使用协议并执行 ``hf auth login``。默认配置使用 2 节点 10 卡（``cluster.num_nodes=2``），详见 :doc:`../../examples/embodied/pi0_fast`。
+
+   .. tab-item:: DreamZero
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model dreamzero --env libero && source .venv/bin/activate
+         git clone https://github.com/RLinf/dreamzero.git ../dreamzero
+
+         # 2. 下载权重、WAN2.2 组件并生成 LIBERO metadata
+         hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000 --local-dir ./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000
+         hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
+         hf download Wan-AI/Wan2.1-I2V-14B-480P models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
+         hf download google/umt5-xxl --local-dir ./umt5-xxl
+         hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
+         python toolkits/lerobot/generate_dreamzero_metadata.py \
+           --preset libero_sim \
+           --dataset-root ./libero \
+           --output-metadata ./libero_metadata.json
+
+         # 3. 启动评测（LIBERO-Spatial）
+         export DREAMZERO_PATH="$(realpath ../dreamzero)"
+         bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval \
+           runner.ckpt_path=./RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step18000/model.pt \
+           rollout.model.tokenizer_path=./umt5-xxl \
+           rollout.model.diffusion_model_pretrained_path=./Wan2.2-TI2V-5B \
+           rollout.model.image_encoder_pretrained_path=./Wan2.1-CLIP/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth \
+           rollout.model.text_encoder_pretrained_path=./Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth \
+           rollout.model.vae_pretrained_path=./Wan2.2-TI2V-5B/Wan2.2_VAE.pth \
+           rollout.model.metadata_json_path=./libero_metadata.json
+
+      将 ``runner.ckpt_path`` 指向实际的 ``.pt`` 权重文件（如 SFT 导出的 ``full_weights.pt``）。如需以 SGLang 后端评测 Diffusers 格式权重，见 :doc:`dreamzero_sglang`。
+
+   .. tab-item:: ApxInf
+
+      .. code-block:: bash
+
+         # 1. 安装 RLinf 并编译 APXinf-robo CUDA binding
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env libero && source .venv/bin/activate
+         git clone --recursive https://github.com/RLinf/APXinf-robo.git ../APXinf-robo
+         (cd ../APXinf-robo && pip install maturin && \
+           CARGO_TARGET_DIR=target/wheel maturin build --release --features cuda \
+             --auditwheel skip -m apxinf/crates/apxinf-py/Cargo.toml && \
+           pip install --force-reinstall target/wheel/wheels/apxinf_py-*.whl && \
+           pip install -e ./apxinf/python/apxinf --config-settings editable_mode=strict && \
+           pip install -e ".[rlinf]")
+
+         # 2. 下载 π₀.₅ 权重与归一化统计
+         hf download lerobot/pi05_libero_base --local-dir ./pi05_libero_base
+         curl -fL https://storage.googleapis.com/openpi-assets/checkpoints/pi05_libero/assets/physical-intelligence/libero/norm_stats.json \
+           -o ./pi05_libero_base/norm_stats.json
+
+         # 3. 启动评测（LIBERO-10）
+         export APXINF_PI05_MODEL_DIR="$(pwd)/pi05_libero_base"
+         bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+
+      需要 Linux + NVIDIA GPU、CUDA 工具链与 Rust 工具链，详见 :ref:`ApxInf 推理后端 <apxinf-backend>` 与 :doc:`../../guides/apxinf`。
+
+使用 ``--env libero`` 时，``install.sh`` 会将 LIBERO 克隆到 ``.venv/libero``\ （若已设置 ``LIBERO_PATH`` 则复用已有目录）并写入 ``.venv/bin/activate`` 的 ``PYTHONPATH``。SGLang 后端见 :doc:`dreamzero_sglang` 与 :doc:`cosmos3_sglang`；如需与动作块执行重叠以隐藏推理延迟，见 :doc:`RTC <../../guides/rtc>`。
 
 .. dropdown:: 示例配置
 
@@ -147,14 +292,14 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 .. dropdown:: ApxInf 推理后端
 
-   ApxInf 路径仅用于评测。RLinf 通过 `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 调用 `ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。先在运行环境中安装它及 ``apxinf_py`` CUDA binding，再将 ``APXINF_PI05_MODEL_DIR`` 指向含 ``config.json``、``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的目录：
+   ApxInf 路径仅用于评测。RLinf 通过 `APXinf-robo <https://github.com/RLinf/APXinf-robo>`_ 调用 `ApxInf <https://github.com/infinigence/ApxInf>`_ 的 L1 接口。将 ``APXINF_PI05_MODEL_DIR`` 指向含 ``config.json``、``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的目录：
 
    .. code-block:: bash
 
-      export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
+      export APXINF_PI05_MODEL_DIR="$(pwd)/pi05_libero_base"
       bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
 
-   该配置保持原生 OpenPI 语义：两路方向已处理的 LIBERO 图像、8 维 state、π₀.₅ 无 state prompt、5 个 flow step、预测 10 步并执行前 5 步。resize、tokenize、归一化与反归一化由 RLinf 原生 OpenPI transforms 负责；ApxInf 的 ``Model.infer_rgb`` 负责推理及默认高斯噪声采样，经 ``apxinf_robo.load_bare_model`` 加载以对齐数值精度。做数值对齐测试时可设 ``rollout.model.apxinf.noise_source=observation`` 并传入显式 ``[B,10,32]`` 噪声张量。默认 10 个环境 × 10 轮评测 LIBERO-10 每任务 10 个初始状态（共 100 条轨迹）。
+   该配置保持原生 OpenPI 语义：两路方向已处理的 LIBERO 图像、8 维 state、π₀.₅ 无 state prompt、5 个 flow step、预测 10 步并执行前 5 步。做数值对齐测试时可设 ``rollout.model.apxinf.noise_source=observation`` 并传入显式 ``[B,10,32]`` 噪声张量。默认 10 个环境 × 10 轮评测 LIBERO-10 每任务 10 个初始状态（共 100 条轨迹）。完整编译与后端说明见 :doc:`../../guides/apxinf`。
 
 .. _libero-eval-config:
 
@@ -247,7 +392,8 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
       export LIBERO_TYPE=pro
       export LIBERO_PERTURBATION=all
-      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
+      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
+        rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
 
    **LIBERO-PLUS**
 
@@ -255,7 +401,8 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
       export LIBERO_TYPE=plus
       export LIBERO_SUFFIX=all
-      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
+      bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval \
+        rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall
 
    **调整并行规模**
 
@@ -267,7 +414,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
       bash evaluations/run_eval.sh libero libero_spatial_openpi_pi05_eval \
         env.eval.total_num_envs=128 \
         env.eval.max_steps_per_rollout_epoch=960 \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./RLinf-Pi05-LIBERO-SFT
 
 结果与常见问题
 --------------

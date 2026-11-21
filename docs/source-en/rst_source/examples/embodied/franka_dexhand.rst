@@ -1,172 +1,187 @@
 Using Dexterous Hand with Franka
 ================================
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dexhand.jpg
    :align: center
    :width: 80%
 
    Franka arm paired with a Ruiyan five-finger dexterous hand for real-world manipulation.
 
-Adapt the Franka real-world workflow to a Ruiyan five-finger dexterous hand. You'll keep the same cluster and reward-model flow, then change the end effector, teleoperation input, action layout, and dex-hand configs.
-
 Overview
 --------
 
-Run the Franka real-world recipe with a dexterous hand end effector.
+Adapt the Franka real-world RLPD and reward-model workflow to a Ruiyan five-finger dexterous hand. You keep the same two-node cluster and reward-model pipeline while switching the end effector, SpaceMouse + data-glove teleoperation input, action layout, and dexterous-hand task configs.
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Models
+   .. grid-item-card:: Robot
       :text-align: center
 
-      CNN policy · reward model
+      Franka Emika Panda + Ruiyan 5-Finger Hand
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: Sensors & Teleop
       :text-align: center
 
-      SAC/RLPD · reward-model assist
+      RealSense · SpaceMouse · Data Glove
 
-   .. grid-item-card:: Tasks
+   .. grid-item-card:: Workflow
       :text-align: center
 
-      Dexterous pick-and-place
+      Collect → Reward Model → Online RLPD
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · Ruiyan dex hand · glove
-
-| **You'll do:** install Franka deps → install dex-hand deps → configure glove/hand → collect data → train.
-| **Prerequisites:** :doc:`franka` · :doc:`franka_reward_model` · Ruiyan hand driver · glove device.
+      Controller Node + NVIDIA GPU Node
 
 Tasks
 ~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 20 34 46
 
-   * - Task
-     - Config / entry point
+   * - Stage
+     - Config
      - Description
    * - Collection
      - ``realworld_collect_dexhand_data``
-     - Collect dexterous-hand demonstrations.
+     - Collect dexterous pick-and-place demonstrations with SpaceMouse and data glove.
+   * - Reward model
+     - :doc:`franka_reward_model`
+     - Preprocess raw episodes and train a ResNet reward model for dexterous manipulation.
    * - Training
      - ``realworld_dexpnp_rlpd_cnn_async``
-     - Train a CNN policy with dex-hand actions.
-   * - Reward model
-     - Franka reward-model workflow
-     - Reuse the reward-model path for dexterous manipulation.
+     - Train a CNN policy asynchronously with arm + dexterous-hand actions and learned rewards.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 24 76
 
    * - Field
      - Description
    * - Observation
-     - Franka camera frames plus dex-hand/glove state when configured.
+     - Franka camera frames (``wrist_1`` by default) plus dexterous-hand and glove state when configured.
    * - Action
-     - Arm action plus dexterous-hand joint or command vector.
+     - 6-D Franka arm Cartesian motion plus 6-D Ruiyan dexterous-hand finger commands.
    * - Reward
-     - Task completion or reward-model prediction.
+     - Learned reward-model prediction (using ``env.main_image_key``) or target-pose completion.
    * - Prompt
-     - Task text from the real-world env config.
+     - Task instruction defined in ``examples/embodiment/config/env/realworld_dex_pnp.yaml``.
 
-Installation
-------------
+Hardware and Safety
+-------------------
 
-Follow :doc:`franka` for base Franka controller and real-time kernel prerequisites.
+You need a Franka arm fitted with a Ruiyan five-finger dexterous hand (connected over USB serial, such as ``/dev/ttyUSB0``), a compatible data glove, a SpaceMouse, Intel RealSense camera(s), a Franka controller node, and an NVIDIA GPU training node. Complete the base Franka firmware check, real-time kernel setup, and FCI activation in :doc:`franka`, and review the reward-model pipeline in :doc:`franka_reward_model`.
+
+.. warning::
+
+   Keep the emergency stop within reach and supervise every hardware run. Clear the workspace, confirm your account has read/write permission to the hand and glove serial ports (``/dev/ttyUSB*``), and verify finger-closure limits before starting teleoperation or autonomous RL.
+
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: Franka Control Node
+   .. tab-item:: Franka + Dexterous Hand
 
-      The ``franka`` environment includes ``RLinf-dexterous-hands``, which provides the Ruiyan dexterous-hand and data-glove drivers:
+      **1. Install**
+
+      Install the ``franka`` environment on the Franka control node (and GPU training node). It automatically includes ``RLinf-dexterous-hands`` for the Ruiyan hand and data-glove drivers:
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-Teleoperation
--------------
+      **2. Teleoperation and target pose setup**
 
-Dexterous-hand teleoperation uses:
+      During teleoperation, the SpaceMouse controls 6-D arm motion, the data glove controls 6-D finger articulation, and holding the SpaceMouse left button enables relative glove control.
 
-- SpaceMouse for 6-D arm motion
-- a data glove for 6-D finger control
-- the SpaceMouse left button to enable relative glove control
+      Put the Franka arm into programming mode, move it manually to the target pose, unlock FCI in Franka Desk, and read the target pose (enter ``getpos_euler`` at the prompt):
 
-Reward Model
-------------
+      .. code-block:: bash
 
-The reward-model path follows :doc:`franka_reward_model`. The reward image uses ``env.main_image_key`` (``wrist_1`` by default in ``examples/embodiment/config/env/realworld_dex_pnp.yaml``), and ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml`` enables it through the ``reward`` section.
+         python -m toolkits.realworld_check.test_franka_controller \
+           --robot-ip 192.168.1.10 \
+           --end-effector-type ruiyan_hand \
+           --hand-port /dev/ttyUSB0
 
-Configurations
---------------
+      Fill ``robot_ip``, ``target_ee_pose``, ``end_effector_config``, and ``glove_config`` (serial ports) in ``examples/embodiment/config/realworld_collect_dexhand_data.yaml`` and ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``, plus policy ``model_path`` and reward ``model.model_path`` in the RL config.
+
+      **3. Collect data, train reward model, and launch RL**
+
+      On the Franka control node, collect expert demonstrations first, then collect reward raw episodes with a larger ``env.eval.override_cfg.success_hold_steps`` in a separate log directory:
+
+      .. code-block:: bash
+
+         # Expert demos
+         bash examples/embodiment/collect_data.sh realworld_collect_dexhand_data
+
+         # Reward raw episodes (increase success_hold_steps and use a separate RLINF_LOG_DIR)
+         RLINF_LOG_DIR="$PWD/logs/dexhand-reward-raw" \
+           bash examples/embodiment/collect_data.sh realworld_collect_dexhand_data \
+           "env.eval.override_cfg.success_hold_steps=20"
+
+      Copy the reward raw episodes to the training node (or use shared storage), preprocess with ``examples/reward/preprocess_reward_dataset.py``, and train the reward model with ``examples/reward/run_reward_training.sh`` per :doc:`franka_reward_model`.
+
+      Start the two-node Ray cluster per :doc:`franka` (training node as head, Franka control node as worker), then launch async RLPD on the training node:
+
+      .. code-block:: bash
+
+         bash examples/embodiment/run_realworld_async.sh realworld_dexpnp_rlpd_cnn_async
+
+      .. dropdown:: Advanced configuration (optional)
+
+         **Shipped config files**
+
+         .. list-table::
+            :header-rows: 1
+            :widths: 52 48
+
+            * - Config
+              - Purpose
+            * - ``examples/embodiment/config/realworld_collect_dexhand_data.yaml``
+              - Collection with ``end_effector_type: "ruiyan_hand"``, glove teleoperation, and export to ``replay_buffer`` (``demo_buffer/``) and ``pickle_episode`` (``pickle_episode/``).
+            * - ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``
+              - Async RLPD CNN training with the ``reward`` section enabled.
+            * - ``examples/embodiment/config/env/realworld_dex_pnp.yaml``
+              - Dexterous pick-and-place env defaults (``env.main_image_key`` defaults to ``wrist_1``).
+
+         **Camera naming and crop regions**
+
+         Without ``camera_names``, cameras follow the ``camera_serials`` list order (``wrist_1``, then ``wrist_2``; serials are not sorted). To rename or crop views in ``override_cfg``:
+
+         .. code-block:: yaml
+
+            camera_names:
+              "SERIAL1": global
+              "SERIAL2": wrist_1
+            camera_crop_regions:
+              "SERIAL1": [0.4, 0.3, 0.85, 0.7]
+
+         If you rename the primary view to ``global``, update ``main_image_key`` to ``global`` in the task YAML so the reward model reads the same view.
+
+Results and Troubleshooting
+---------------------------
+
+Monitor ``env/success_once``, reward-model predictions, and SAC losses in TensorBoard (``tensorboard --logdir ./logs``); see :doc:`Training metrics <../../reference/metrics>` for logging options.
 
 .. list-table::
    :header-rows: 1
-   :widths: 52 48
+   :widths: 38 62
 
-   * - Config
-     - Purpose
-   * - ``examples/embodiment/config/realworld_collect_dexhand_data.yaml``
-     - Data collection with ``end_effector_type: "ruiyan_hand"``, glove teleop, and export to ``replay_buffer`` (``demo_buffer/``) and ``pickle_episode`` (``pickle_episode/``).
-   * - ``examples/embodiment/config/realworld_dexpnp_rlpd_cnn_async.yaml``
-     - Async RLPD CNN training with the ``reward`` section enabled.
-   * - ``examples/embodiment/config/env/realworld_dex_pnp.yaml``
-     - Dexterous pick-and-place env defaults (``main_image_key`` defaults to ``wrist_1``).
-
-Before running ``realworld_dexpnp_rlpd_cnn_async.yaml``, fill in ``robot_ip``, ``target_ee_pose``, policy ``model_path``, reward ``model.model_path``, and the dexterous-hand serial ports in ``end_effector_config`` and ``glove_config``.
-
-Configure camera naming and crop directly in ``override_cfg`` when needed. Without ``camera_names``, default names follow the ``camera_serials`` list order: the first serial is ``wrist_1`` and the second is ``wrist_2`` (serial numbers are not sorted). For example:
-
-.. code-block:: yaml
-
-   camera_names:
-     "SERIAL1": global
-     "SERIAL2": wrist_1
-   camera_crop_regions:
-     "SERIAL1": [0.4, 0.3, 0.85, 0.7]
-
-If you rename a camera to ``global``, update ``main_image_key`` to ``global`` in the task YAML as well.
-
-Run It
-------
-
-1. On the Franka control node, activate the ``franka`` environment installed above (which includes ``RLinf-dexterous-hands`` for the Ruiyan dexterous-hand and data-glove drivers).
-2. Put the Franka robot into programming mode, manually move it to the task target pose, then run the script on the Franka control node to acquire the target end-effector pose:
-
-   .. code-block:: bash
-
-      python -m toolkits.realworld_check.test_franka_controller \
-        --robot-ip <FRANKA_IP> \
-        --end-effector-type ruiyan_hand \
-        --hand-port /dev/ttyUSB0
-
-   After the script starts, enter ``getpos_euler``, record the Euler-angle pose it prints, and fill that value into ``target_ee_pose``.
-3. On the Franka control node, fill in the collection-time task configuration: ``robot_ip``, ``target_ee_pose``, ``end_effector_config``, ``glove_config``, and related settings.
-4. On the Franka control node, collect expert demos with:
-
-   .. code-block:: bash
-
-      bash examples/embodiment/collect_data.sh realworld_collect_dexhand_data
-
-5. On the Franka control node, collect reward raw episodes with the same entrypoint. For this pass, increase ``env.eval.override_cfg.success_hold_steps`` and use a separate log directory.
-6. Copy the collected reward raw data from the Franka control node to the training node, or place it on shared storage in advance.
-7. On the training node, preprocess the raw reward episodes with ``examples/reward/preprocess_reward_dataset.py`` as described in :doc:`franka_reward_model`.
-8. On the training node, train the reward model with ``examples/reward/run_reward_training.sh``.
-9. Before the final RL run, follow the cluster setup section in :doc:`franka` to start a two-node Ray cluster with the training node as head and the Franka control node as worker.
-10. On the training node, launch RL with:
-
-   .. code-block:: bash
-
-      bash examples/embodiment/run_realworld_async.sh realworld_dexpnp_rlpd_cnn_async
+   * - Symptom
+     - Fix
+   * - Permission denied opening ``/dev/ttyUSB0``
+     - Add your user to the ``dialout`` group (``sudo usermod -aG dialout "$USER"``) and re-login, or verify the port path in ``end_effector_config`` / ``glove_config``.
+   * - Dexterous hand fingers do not follow the data glove
+     - Hold the SpaceMouse left button to engage relative glove control and confirm the glove serial port matches ``glove_config``.
+   * - Reward model evaluates the wrong camera view
+     - Ensure ``env.main_image_key`` matches your camera name (update it to ``global`` if you renamed a camera in ``camera_names``).

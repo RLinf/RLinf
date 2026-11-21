@@ -56,24 +56,18 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
          hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
          # 3. 启动评测
-         export OMNIGIBSON_DATASET_PATH="${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/"
-         export OMNIGIBSON_KEY_PATH="${OMNIGIBSON_DATA_PATH}/omnigibson.key"
-         export OMNIGIBSON_ASSET_PATH="${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/"
          bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
-``evaluations/behavior/`` 仅提供 OpenPI π₀.₅ 示例；OpenVLA-OFT 可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。使用第三方 OpenPI 权重（如 OpenPI-Comet）前，需先转换为 PyTorch 格式再填入 ``rollout.model.model_path``。
+``run_eval.sh`` 会根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 自动补全 ``OMNIGIBSON_DATASET_PATH``、``OMNIGIBSON_KEY_PATH``、``OMNIGIBSON_ASSET_PATH``、``EXP_PATH`` 与 ``CARB_APP_PATH``。使用第三方 OpenPI 权重（如 OpenPI-Comet）前须转换为 PyTorch 格式；OpenVLA-OFT 可从 ``examples/embodiment/config/`` 中的训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
 .. dropdown:: 硬件要求、Isaac Sim 与示例配置
 
-   BEHAVIOR 依赖 Isaac Sim 4.5，硬件与驱动要求见 `Isaac Sim 依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_：
+   BEHAVIOR 依赖 Isaac Sim 4.5（`依赖说明 <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_）：
 
-   - 建议使用支持 Ray Tracing 的 GPU（如 RTX 30/40 系列）；A100、H100 等无 RT 能力的卡渲染画面会出现马赛克或模糊。
-   - Hopper 及以上架构 GPU 需使用 570 及以上版本 NVIDIA 驱动。
-   - 也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.4-behavior``，详见 :doc:`../../examples/embodied/behavior`。
-   - ``run_eval.sh`` 会根据 ``ISAAC_PATH`` 与 ``OMNIGIBSON_DATA_PATH`` 自动补全 ``OMNIGIBSON_DATASET_PATH``、``EXP_PATH``、``CARB_APP_PATH`` 等衍生变量。
-
-   ``evaluations/behavior/`` 已有示例配置：
+   - 使用支持 Ray Tracing 的 GPU（RTX 30/40 系列或更新）；A100、H100 等无 RT 能力的卡渲染画面会出现马赛克或模糊。
+   - Hopper 及以上架构 GPU 须使用 570 及以上版本 NVIDIA 驱动。
+   - 预构建 Docker 镜像：``rlinf/rlinf:agentic-rlinf0.4-behavior``\ （详见 :doc:`../../examples/embodied/behavior`）。
 
    .. list-table::
       :header-rows: 1
@@ -86,53 +80,48 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
         - ``behavior_r1pro``
         - π₀.₅（``openpi``）
 
-   若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（如 ``behavior_ppo_openpi_pi05``），设置 ``runner.only_eval: True`` 后仍可正常评测。
-
-   ``behavior_openpi_pi05_eval.yaml`` 中的 OpenPI 参数须与训练一致（``action_dim: 23``、``num_action_chunks: 32``、``openpi.config_name: pi05_behavior``）。``num_action_chunks`` 是环境实际执行的 chunk；网络 horizon 来自 ``pi05_behavior`` 官方 ``TrainConfig.model.action_horizon``\ （**32**），除非另外设置 ``openpi.action_horizon``。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
+   若 ``evaluations/behavior/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（如 ``behavior_ppo_openpi_pi05`` 配合 ``runner.only_eval: True``）。保持 ``action_dim: 23``、``num_action_chunks: 32`` 与 ``openpi.config_name: pi05_behavior`` 与训练一致。通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`。
 
 .. _behavior-eval-config:
 
 .. dropdown:: 评测配置详解
 
-   BEHAVIOR 评测 **每次运行对应单个任务**\ （由 ``omni_config.task.activity_name`` 指定），不会单次自动遍历全部 50 个任务。``behavior_r1pro`` 默认任务为 ``turning_on_radio``，场景为 ``house_double_floor_lower``。
+   每次启动评测 **单个任务**\ （由 ``omni_config.task.activity_name`` 指定，默认 ``house_double_floor_lower`` 场景下的 ``turning_on_radio``）。评测多个任务时可在脚本中循环修改 ``activity_name``；评测多个实例时使用 ``instance_resample_mode: offline`` 并通过 ``rollout_epoch`` 取平均。
 
-   **评测协议**
+   **实例采样模式**\ （``env.eval.omni_config.task.instance_resample_mode``）
 
-   每条评测轨迹由 ``omni_config.task.activity_name``\ （语言指令与 BDDL 定义）、``activity_definition_id``\ （通常为 ``0``）以及 ``activity_instance_id`` / ``instance_resample_mode``\ （初始物体布局与机器人位姿）决定：
+   - ``disabled``\ （默认）：每次 reset 加载 ``activity_instance_id`` 对应的固定实例（若设置了 ``activity_instance_dir`` 则从中读取）。
+   - ``offline``：每次 reset 从 ``activity_instance_dir`` 随机选取缓存实例。
+   - ``online``：reset 时在线重采样物体布局（需 ``online_object_sampling: True`` 与 ``use_presampled_robot_pose: False``，启动较慢）。
 
-   - ``disabled``\ （默认）：每次 reset 加载 ``activity_instance_id`` 对应的固定实例；若设置了 ``activity_instance_dir``，则从该目录读取对应 JSON。
-   - ``offline``：每次 reset 从 ``activity_instance_dir`` 中 **随机** 选取缓存实例（需先下载 ``2025-challenge-task-instances`` 或用 ``instance_generator.py`` 生成）。
-   - ``online``：reset 时在线重采样物体布局（需 ``online_object_sampling: True`` 且 ``use_presampled_robot_pose: False``，启动较慢）。
-
-   评测多个任务时，在批量脚本中修改 ``activity_name`` 依次运行；评测多个 instance 时，使用 ``instance_resample_mode: offline`` 并配合 ``rollout_epoch`` 取平均。
-
-   **通用评测字段**
+   **核心评测字段**
 
    .. list-table::
       :header-rows: 1
       :widths: 28 72
 
       * - 字段
-        - BEHAVIOR 设置建议
+        - 说明
       * - ``total_num_envs``
-        - 全局并行环境数。单个 BEHAVIOR 环境约占 **10 GiB** 显存，示例默认 ``8``。
+        - 全局并行环境数。单个环境约占 **10 GiB** 显存，``behavior_openpi_pi05_eval.yaml`` 默认为 ``4``。
       * - ``rollout_epoch``
-        - 评测轮次，重复运行并取指标平均，示例默认 ``2``。
+        - 评测轮次，多轮指标取平均；``behavior_openpi_pi05_eval.yaml`` 默认为 ``4``。
       * - ``max_episode_steps``
-        - 单条轨迹步数上限。π₀.₅ 示例使用 ``4096``\ （预设默认 ``2000`` 对长程任务偏短）。
+        - 单条轨迹步数上限（π₀.₅ 示例为 ``4096``，预设默认 ``2000`` 对长程任务偏短）。
       * - ``max_steps_per_rollout_epoch``
-        - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。无 ``auto_reset`` 时通常等于 ``max_episode_steps``。
+        - 每轮 rollout 的总交互步数，**必须能被** ``rollout.model.num_action_chunks`` **整除**。
       * - ``num_env_subprocess``
-        - 单个 env worker 内的 Isaac 仿真子进程数（默认 ``1``）。``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
+        - 单个 env worker 内的 Isaac Sim 子进程数（默认 ``1``）。``total_num_envs`` 须能被 ``num_env_subprocess × pipeline_stage_num`` 整除。
       * - ``skip_intermediate_renders``
-        - 设为 ``True`` 时跳过 chunk 内中间渲染，显著加速步进；保存的视频仅含 chunk 边界帧。
+        - 设为 ``True`` 时跳过动作块内中间渲染以加速步进；视频仅保留块边界帧。
 
-   **核心场景与任务配置**
-
-   以下字段位于 ``env.eval.omni_config`` 下（继承自 ``examples/embodiment/config/env/behavior_r1pro.yaml``）：
+   **任务、场景与集群布局配置**
 
    .. code-block:: yaml
 
+      cluster:
+        component_placement:
+          rollout,env: all                   # 共享全部 GPU，或将 env 与 rollout 分卡部署
       env:
         eval:
           omni_config:
@@ -140,36 +129,29 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
               activity_name: turning_on_radio
               activity_definition_id: 0
               activity_instance_id: 0
-              activity_instance_dir: null          # 指向缓存 instance JSON 目录
+              activity_instance_dir: null
               instance_file_format: tro_state      # template | tro_state
               instance_resample_mode: disabled     # disabled | offline | online
             scene:
               scene_model: house_double_floor_lower
-              partial_scene_load: true             # 仅加载任务相关房间，缩短启动时间
+              partial_scene_load: true             # 仅加载任务相关房间
 
-   更完整的字段说明（``partial_scene_load``、``instance_generator.py`` 用法等）见 :doc:`../../examples/embodied/behavior`。
-
-   **GPU 与集群布局**
-
-   BEHAVIOR 环境步进较慢，建议给 env 分配足够 GPU，并与 rollout 共享或分离 placement：
-
-   .. code-block:: yaml
-
-      cluster:
-        component_placement:
-          rollout,env: all          # env 与 rollout 共享全部 GPU（示例默认）
-
-   也可将 ``env`` 与 ``rollout`` 分到不同 GPU 以缓解显存压力，详见 :doc:`../../examples/embodied/behavior`。
+   缓存实例生成与多卡布局详情见 :doc:`../../examples/embodied/behavior`。
 
 .. dropdown:: 进阶用法
 
-   **切换评测任务**
+   **切换评测任务或调整并行规模**
 
    .. code-block:: bash
 
       bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-        rollout.model.model_path=/path/to/model \
+        rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.omni_config.task.activity_name=picking_up_trash
+
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+        rollout.model.model_path=./RLinf-Pi0-Behavior \
+        env.eval.total_num_envs=4 \
+        env.eval.num_env_subprocess=2
 
    **使用离线 instance 随机采样**
 
@@ -184,21 +166,12 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
               instance_resample_mode: offline
           rollout_epoch: 5
 
-   **调整并行规模**
-
-   .. code-block:: bash
-
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-        rollout.model.model_path=/path/to/model \
-        env.eval.total_num_envs=4 \
-        env.eval.num_env_subprocess=2
-
    **从训练配置评测**
 
    .. code-block:: bash
 
       bash evaluations/run_eval.sh behavior behavior_ppo_openpi_pi05 \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./RLinf-Pi0-Behavior
 
 结果与常见问题
 --------------
@@ -214,15 +187,15 @@ BEHAVIOR-1K 是基于 OmniGibson 与 Isaac Sim 4.5 的大规模家居场景仿�
    * - 缺少 BEHAVIOR 资源或 license 报错
      - 按 :doc:`../../examples/embodied/behavior` 完成 Isaac Sim、OmniGibson 资产与 license 配置后再评测。
    * - ``ISAAC_PATH`` 未设置
-     - 将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录，否则 Isaac Sim 无法启动；``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
+     - 将 ``ISAAC_PATH`` 导出为 Isaac Sim 安装目录；``run_eval.sh`` 默认设置 ``OMNIGIBSON_HEADLESS=1``。
    * - 显存不足
      - 降低 ``total_num_envs`` 或 ``num_env_subprocess``；单个环境约占 10 GiB 显存。
    * - 渲染马赛克或模糊
-     - 换用支持 Ray Tracing 的 GPU（RTX 30/40 系列或更高）。
+     - 换用支持 Ray Tracing 的 GPU（RTX 30/40 系列或更新）。
    * - 启动极慢
      - 保持 ``partial_scene_load: true``，只加载任务相关房间。
    * - 视频帧数少于预期
-     - ``skip_intermediate_renders: True`` 会跳过 chunk 内中间帧，仅保留 policy 消费的观测帧。
+     - ``skip_intermediate_renders: True`` 会跳过块内中间帧，仅保留 policy 消费的观测帧。
    * - instance 加载失败
      - 核对 ``activity_instance_dir`` 中的 JSON 文件名与 ``activity_name``、``activity_definition_id``、``scene_model`` 一致。
    * - 步数校验失败

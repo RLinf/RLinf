@@ -56,24 +56,18 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          hf download RLinf/RLinf-Pi0-Behavior --local-dir ./RLinf-Pi0-Behavior
 
          # 3. Evaluate
-         export OMNIGIBSON_DATASET_PATH="${OMNIGIBSON_DATA_PATH}/behavior-1k-assets/"
-         export OMNIGIBSON_KEY_PATH="${OMNIGIBSON_DATA_PATH}/omnigibson.key"
-         export OMNIGIBSON_ASSET_PATH="${OMNIGIBSON_DATA_PATH}/omnigibson-robot-assets/"
          bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
            rollout.model.model_path=./RLinf-Pi0-Behavior
 
-``evaluations/behavior/`` ships an OpenPI π₀.₅ example only; you can derive an eval YAML for OpenVLA-OFT from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`). Convert third-party OpenPI weights (such as OpenPI-Comet) to PyTorch format before setting ``rollout.model.model_path``.
+``run_eval.sh`` fills ``OMNIGIBSON_DATASET_PATH``, ``OMNIGIBSON_KEY_PATH``, ``OMNIGIBSON_ASSET_PATH``, ``EXP_PATH``, and ``CARB_APP_PATH`` from ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH``. Convert third-party OpenPI checkpoints (such as OpenPI-Comet) to PyTorch format before setting ``rollout.model.model_path``; for OpenVLA-OFT, derive an eval YAML from ``examples/embodiment/config/`` (see :doc:`../reference/configuration`).
 
 .. dropdown:: Hardware, Isaac Sim, and Example Configs
 
-   BEHAVIOR depends on Isaac Sim 4.5 (see the `Isaac Sim requirements <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_):
+   BEHAVIOR requires Isaac Sim 4.5 (`requirements <https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html>`_):
 
-   - Use a GPU with Ray Tracing support (such as RTX 30/40 series); GPUs without RT (A100, H100) produce visible rendering artifacts.
-   - Hopper and later GPUs require NVIDIA driver 570 or later.
-   - Official Docker image: ``rlinf/rlinf:agentic-rlinf0.4-behavior`` (see :doc:`../../examples/embodied/behavior`).
-   - ``run_eval.sh`` auto-fills derived variables (``OMNIGIBSON_DATASET_PATH``, ``EXP_PATH``, ``CARB_APP_PATH``) from ``ISAAC_PATH`` and ``OMNIGIBSON_DATA_PATH``.
-
-   Available under ``evaluations/behavior/``:
+   - Use a ray-tracing GPU (RTX 30/40 series or newer); non-RT GPUs (A100, H100) show rendering artifacts.
+   - Hopper and later GPUs require NVIDIA driver 570 or newer.
+   - Prebuilt Docker image: ``rlinf/rlinf:agentic-rlinf0.4-behavior`` (see :doc:`../../examples/embodied/behavior`).
 
    .. list-table::
       :header-rows: 1
@@ -86,53 +80,48 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
         - ``behavior_r1pro``
         - π₀.₅ (``openpi``)
 
-   If ``evaluations/behavior/<config>.yaml`` is missing, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` with the same name (such as ``behavior_ppo_openpi_pi05``), which still works for evaluation when ``runner.only_eval: True``.
-
-   Keep OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` matched to training (``action_dim: 23``, ``num_action_chunks: 32``, ``openpi.config_name: pi05_behavior``). ``num_action_chunks`` is the env-executed chunk; the network horizon comes from ``TrainConfig.model.action_horizon`` for ``pi05_behavior`` (**32**) unless ``openpi.action_horizon`` is set. Generic ``env.eval`` fields are documented in :doc:`../reference/configuration` (:ref:`env-eval-fields`).
+   When ``evaluations/behavior/<config>.yaml`` is absent, ``run_eval.sh`` falls back to ``examples/embodiment/config/`` (such as ``behavior_ppo_openpi_pi05`` with ``runner.only_eval: True``). Keep ``action_dim: 23``, ``num_action_chunks: 32``, and ``openpi.config_name: pi05_behavior`` aligned with training. Generic ``env.eval`` fields live in :ref:`env-eval-fields` (:doc:`../reference/configuration`).
 
 .. _behavior-eval-config:
 
 .. dropdown:: Evaluation Configuration
 
-   BEHAVIOR evaluation runs **one task per launch** (selected by ``omni_config.task.activity_name``); a single run does not sweep all 50 tasks. The ``behavior_r1pro`` preset defaults to ``turning_on_radio`` on ``house_double_floor_lower``.
+   Each launch evaluates **one task** selected by ``omni_config.task.activity_name`` (default ``turning_on_radio`` on ``house_double_floor_lower``). To sweep multiple tasks, loop over ``activity_name`` in a script; to evaluate multiple instances, set ``instance_resample_mode: offline`` and average across ``rollout_epoch``.
 
-   **Evaluation protocol**
+   **Instance sampling modes** (``env.eval.omni_config.task.instance_resample_mode``)
 
-   Each evaluation trajectory is determined by ``omni_config.task.activity_name`` (language instruction and BDDL definition), ``activity_definition_id`` (usually ``0``), and ``activity_instance_id`` / ``instance_resample_mode`` (initial layout and robot pose):
+   - ``disabled`` (default): loads the fixed ``activity_instance_id`` (from ``activity_instance_dir`` if set).
+   - ``offline``: picks a cached instance at random from ``activity_instance_dir`` on each reset.
+   - ``online``: resamples object layouts online (requires ``online_object_sampling: True`` and ``use_presampled_robot_pose: False``; slower startup).
 
-   - ``disabled`` (default): loads the fixed instance for ``activity_instance_id`` (reading the matching JSON from ``activity_instance_dir`` if set).
-   - ``offline``: randomly picks a cached instance from ``activity_instance_dir`` on each reset (download ``2025-challenge-task-instances`` or generate files with ``instance_generator.py``).
-   - ``online``: resamples object layouts online on reset (requires ``online_object_sampling: True`` and ``use_presampled_robot_pose: False``; slower startup).
-
-   To evaluate multiple tasks, change ``activity_name`` and rerun in a batch script; for multiple instances, use ``instance_resample_mode: offline`` and average over ``rollout_epoch``.
-
-   **Generic evaluation fields**
+   **Key evaluation fields**
 
    .. list-table::
       :header-rows: 1
       :widths: 28 72
 
       * - Field
-        - BEHAVIOR guidance
+        - Guidance
       * - ``total_num_envs``
-        - Global parallel env count. Each BEHAVIOR env uses roughly **10 GiB** GPU memory; default is ``8``.
+        - Global parallel envs. Each env uses ~**10 GiB** GPU memory; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
       * - ``rollout_epoch``
-        - Number of eval rounds with the same config; metrics are averaged. Default is ``2``.
+        - Eval rounds averaged into final metrics; ``behavior_openpi_pi05_eval.yaml`` defaults to ``4``.
       * - ``max_episode_steps``
-        - Max steps per trajectory. The π₀.₅ example uses ``4096`` (the preset default ``2000`` can be short for long-horizon tasks).
+        - Max steps per trajectory (``4096`` in the π₀.₅ example; preset default ``2000`` can truncate long tasks).
       * - ``max_steps_per_rollout_epoch``
-        - Total interaction steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks``. Without ``auto_reset``, usually equals ``max_episode_steps``.
+        - Steps per rollout round; **must be divisible by** ``rollout.model.num_action_chunks``.
       * - ``num_env_subprocess``
-        - Isaac sim subprocesses per env worker (default ``1``). ``total_num_envs`` must be divisible by ``num_env_subprocess × pipeline_stage_num``.
+        - Isaac Sim subprocesses per env worker (default ``1``). ``total_num_envs`` must divide by ``num_env_subprocess × pipeline_stage_num``.
       * - ``skip_intermediate_renders``
-        - When ``True``, skips intermediate renders inside action chunks for faster stepping; saved videos contain chunk-boundary frames only.
+        - Skips renders inside action chunks when ``True`` for faster stepping; videos keep chunk-boundary frames only.
 
-   **Key OmniGibson task and scene fields**
-
-   Under ``env.eval.omni_config`` (inherited from ``examples/embodiment/config/env/behavior_r1pro.yaml``):
+   **Task, scene, and placement overrides**
 
    .. code-block:: yaml
 
+      cluster:
+        component_placement:
+          rollout,env: all                   # share GPUs, or split env and rollout across GPUs
       env:
         eval:
           omni_config:
@@ -140,36 +129,29 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
               activity_name: turning_on_radio
               activity_definition_id: 0
               activity_instance_id: 0
-              activity_instance_dir: null          # directory of cached instance JSON files
+              activity_instance_dir: null
               instance_file_format: tro_state      # template | tro_state
               instance_resample_mode: disabled     # disabled | offline | online
             scene:
               scene_model: house_double_floor_lower
               partial_scene_load: true             # load task-relevant rooms only
 
-   For full field descriptions (``partial_scene_load``, ``instance_generator.py``), see :doc:`../../examples/embodied/behavior`.
-
-   **GPU and cluster placement**
-
-   Allocate enough GPUs to env workers and share or split placement with rollout:
-
-   .. code-block:: yaml
-
-      cluster:
-        component_placement:
-          rollout,env: all          # share all GPUs (example default)
-
-   You can also place ``env`` and ``rollout`` on separate GPUs to reduce memory pressure; see :doc:`../../examples/embodied/behavior`.
+   For cached instance generation and placement details, see :doc:`../../examples/embodied/behavior`.
 
 .. dropdown:: Advanced Usage
 
-   **Switch evaluation task**
+   **Switch task or parallel scale**
 
    .. code-block:: bash
 
       bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-        rollout.model.model_path=/path/to/model \
+        rollout.model.model_path=./RLinf-Pi0-Behavior \
         env.eval.omni_config.task.activity_name=picking_up_trash
+
+      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
+        rollout.model.model_path=./RLinf-Pi0-Behavior \
+        env.eval.total_num_envs=4 \
+        env.eval.num_env_subprocess=2
 
    **Random offline instance sampling**
 
@@ -184,26 +166,17 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
               instance_resample_mode: offline
           rollout_epoch: 5
 
-   **Adjust parallel scale**
-
-   .. code-block:: bash
-
-      bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
-        rollout.model.model_path=/path/to/model \
-        env.eval.total_num_envs=4 \
-        env.eval.num_env_subprocess=2
-
    **Evaluate from a training config**
 
    .. code-block:: bash
 
       bash evaluations/run_eval.sh behavior behavior_ppo_openpi_pi05 \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./RLinf-Pi0-Behavior
 
 Results and Troubleshooting
 ---------------------------
 
-The terminal prints ``eval/success_once``; logs and videos are written under ``logs/<timestamp>-<config>/`` (see :doc:`../reference/results`).
+The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timestamp>-<config>/`` (see :doc:`../reference/results`).
 
 .. list-table::
    :header-rows: 1
@@ -214,15 +187,15 @@ The terminal prints ``eval/success_once``; logs and videos are written under ``l
    * - Missing BEHAVIOR assets or license errors
      - Complete Isaac Sim, OmniGibson asset, and license setup per :doc:`../../examples/embodied/behavior` before evaluation.
    * - ``ISAAC_PATH`` not set
-     - Export ``ISAAC_PATH`` to your Isaac Sim install directory so Isaac Sim can start. ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
+     - Export ``ISAAC_PATH`` to your Isaac Sim directory so Isaac Sim can start; ``run_eval.sh`` sets ``OMNIGIBSON_HEADLESS=1`` by default.
    * - Out of GPU memory
      - Lower ``total_num_envs`` or ``num_env_subprocess``; each env uses about 10 GiB GPU memory.
    * - Blurry or blocky rendering
-     - Use a GPU with Ray Tracing support (RTX 30/40 series or later).
+     - Use a ray-tracing GPU (RTX 30/40 series or newer).
    * - Slow startup
      - Keep ``partial_scene_load: true`` to load task-relevant rooms only.
    * - Fewer video frames than expected
-     - ``skip_intermediate_renders: True`` skips intermediate chunk frames and keeps only observations consumed by the policy.
+     - ``skip_intermediate_renders: True`` skips intermediate chunk frames and records only policy observations.
    * - Instance load failure
      - Confirm JSON filenames under ``activity_instance_dir`` match ``activity_name``, ``activity_definition_id``, and ``scene_model``.
    * - Step count validation error

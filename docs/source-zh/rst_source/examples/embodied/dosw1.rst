@@ -1,10 +1,5 @@
 Dexmal DOS-W1 真机强化学习
-========================================
-
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
+==========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dos-w1.png
    :align: center
@@ -12,484 +7,323 @@ Dexmal DOS-W1 真机强化学习
 
    用于 Flow Matching 单臂抓取流程的 Dexmal DOS-W1 双臂机器人。
 
-在 Dexmal DOS-W1 双臂机器人上训练 Flow Matching 策略。当前流程运行单臂抓取任务，使用 AirBot 服务、RealSense 相机、键盘门控 episode，以及 SAC/RLPD 风格真机训练。
+在 Dexmal DOS-W1 双臂机器人上接入 AirBot gRPC 服务、RealSense 相机与键盘门控，运行 SAC / RLPD Flow Matching 真机抓取训练。
 
 概览
-----------------------------------------
+----
 
-为 DOS-W1 抓取任务训练视觉 flow policy。
+机器人控制节点运行 AirBot 服务与环境，GPU 节点运行同步或异步 SAC / RLPD Flow Matching 训练。
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: 模型
+   .. grid-item-card:: 机器人
       :text-align: center
 
-      Flow policy · ResNet-10
+      Dexmal DOS-W1 · 双臂 + 主动臂
 
-   .. grid-item-card:: 算法
+   .. grid-item-card:: 传感器与遥操
       :text-align: center
 
-      SAC · RLPD optional
+      最多 3 路 RealSense · 主动臂 · 键盘门控
 
-   .. grid-item-card:: 任务
+   .. grid-item-card:: 工作流
       :text-align: center
 
-      Single-arm pick
+      目标关节标定 · 遥操采数 · SAC / RLPD Flow
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      DOS-W1 · AirBot · RealSense
-
-| **你将完成:** 安装 DOS-W1 env → 校准目标关节 → 配置键盘门控 → 可选采集示教 → 训练.
-| **前置条件:** :doc:`安装 </rst_source/start/installation>` · robot node 上的 AirBot SDK · 局域网 · 安全操作员.
+      AirBot gRPC · 控制主机 · GPU（≥ 4090）
 
 任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24 24
+   :widths: 22 34 44
 
    * - 任务
      - 配置 / 入口
      - 说明
-   * - Dummy smoke test
+   * - Dummy 自检
      - ``dosw1_dummy_sac_mlp_pick.yaml``
-     - 在无相机和无硬件调用情况下验证配置。
-   * - Data collection
+     - 无需相机与真机，验证配置和集群连通性。
+   * - 数据采集
      - ``dosw1_collect_data``
-     - 可选采集遥操作示教，用于 RLPD warm start。
-   * - Training
+     - 可选采集主动臂遥操示教，用于 RLPD 热启动。
+   * - 真机训练
      - ``dosw1_pick_sac_flow(_async)``
-     - 在抓取任务上用 SAC 训练 flow policy。
+     - 在抓取任务上用 SAC 训练 ResNet-10 Flow Matching policy。
 
 观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 24 76
 
    * - 字段
      - 说明
-   * - Observation
-     - ``cam_front``、``cam_left``、``cam_right`` 图像，加双臂关节/夹爪状态。
-   * - Action
-     - 14 维关节空间动作：左右各 6 个关节加夹爪宽度。
-   * - Reward
-     - reach/grasp/lift 稠密 shaping，并在 ``target_lift_joint`` 达成时终止成功。
-   * - Prompt
+   * - 观测
+     - ``cam_front``、``cam_left``、``cam_right`` 三路 RGB 图像，加双臂关节与夹爪状态。
+   * - 动作
+     - 14 维关节空间动作：左右各 6 个关节角加夹爪宽度。
+   * - 奖励
+     - 接近、抓取、抬升阶段的稠密奖励，到达 ``target_lift_joint`` 时判定成功。
+   * - 指令
      - ``Perform the DOSW1 dual-arm manipulation task.``
 
-硬件环境搭建
-----------------------------------------
+硬件与安全准备
+--------------
 
-- **机器人**：DOS-W1 双臂机器人（含主动臂）。
-- **相机**：最多 3 路 Intel RealSense 相机，序列号填入
-  ``cluster.node_groups[<dosw1>].hardware.configs[*].camera_serials``。
-  若只用 1 路相机，可将 ``image_num: 1``，并只填一个序列号。
-- **训练 / Rollout 节点**：至少 1 块 CUDA GPU（建议 RTX 4090 或更高）。
-- **机器人控制节点**：DOS-W1 自身（或与之在同一局域网的小型计算机），
-  运行 AirBot 的 gRPC 服务。
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - 组件
+     - 要求
+   * - 机器人
+     - DOS-W1 双臂机器人及配套主动臂。
+   * - 相机
+     - 最多 3 路 Intel RealSense 相机（序列号填入 ``camera_serials``；单路相机可将 ``image_num`` 设为 ``1``）。
+   * - 机器人控制节点
+     - DOS-W1 本机或同一局域网主机，运行 AirBot gRPC 服务（默认端口：左主动臂 ``50050``、左从动臂 ``50051``、右主动臂 ``50052``、右从动臂 ``50053``）。
+   * - 训练 / Rollout 节点
+     - 同一局域网下的 Linux GPU 服务器（建议 RTX 4090 及以上）。
 
 .. warning::
 
-   训练节点与 DOS-W1 必须在 **同一局域网** 内互通。AirBot gRPC 默认端口：
+   训练节点与 DOS-W1 须在同一局域网互通。真机运行时须有安全操作员守在急停开关旁，并清空双臂活动空间。请始终从完整的 ``dosw1_pick_sac_flow.yaml`` 模板修改配置（不要拼接局部片段），核对 ``cluster.num_nodes`` 与各机 ``RLINF_NODE_RANK`` 一致，并保持 ``keyboard_intervention_wrapper: True`` 与 ``enable_human_in_loop: True`` 开启。
 
-   - ``left_arm_port = 50051``\ （左从动臂）
-   - ``left_lead_port = 50050``\ （左主动臂）
-   - ``right_arm_port = 50053``\ （右从动臂）
-   - ``right_lead_port = 50052``\ （右主动臂）
+.. dropdown:: 安全限幅与末端安全盒机制
 
-安装
-----------------------------------------
+   向 AirBot SDK 下发指令前，DOS-W1 环境会对 policy 与 ``TELEOP`` 模式统一施加三层防护：
+
+   1. **单步关节钳位**：将目标关节裁剪到 ``current ± max_joint_delta``\ （默认 ``0.1`` 弧度，约 5.7°/步）。
+   2. **绝对关节限幅**：将目标裁剪到 ``[joint_limit_min, joint_limit_max]``\ （默认 ``±π``，可按工况收紧）。
+   3. **末端安全盒**：沿关节空间插值做二分搜索，取正运动学结果仍落在 ``left_ee_pose_limit_min/max`` 和 ``right_ee_pose_limit_min/max`` 内的最大比例，自动截断越界动作。
+
+一键上手
+--------
 
 .. include:: _setup_common.rst
-
-机器人节点与训练 / Rollout 节点用同一条命令安装依赖，但机器人端额外需要官方 **AirBot SDK**\ （``airbot_py`` wheel + ``airbot_api`` 源码）；GPU 端只通过 gRPC 与机器人通信，不需要 SDK。
 
 .. tab-set::
 
    .. tab-item:: 机器人控制节点
 
-      AirBot SDK 通常预部署在 DOS-W1 机器的 ``~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl`` 和 ``~/dos_w1/airbot/airbot_api``\ （如果 SDK 在其他路径，安装前先导出 ``DOSW1_SDK_WHEEL`` 和 ``DOSW1_API_PATH``）：
+      **1. 安装 RLinf 与 AirBot SDK**
+
+      AirBot SDK 通常预装在 ``~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl`` 与 ``~/dos_w1/airbot/airbot_api``\ （路径不同时先导出 ``DOSW1_SDK_WHEEL`` 与 ``DOSW1_API_PATH``）。请执行完整安装脚本，不要仅运行 ``uv pip install -e .``，否则会缺少 ``evdev``、``opencv-python`` 和 RealSense 绑定：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
+
+      **2. 启动 AirBot 服务并标定目标关节**
+
+      启动从动臂与主动臂服务（例如 ``sh ~/dos_w1/airbot/whole_start.sh``）并确认各面板无报错，然后运行标定脚本（将 ``192.168.1.20`` 替换为 DOS-W1 IP）：
+
+      .. code-block:: bash
+
+         python toolkits/realworld_check/test_dosw1_controller.py \
+             --robot-url 192.168.1.20 \
+             --print-hz 5
+
+      用左主动臂将左从动臂拖至目标抓取位，复制 ``left_joint`` 的前 6 个弧度值（第 7 位为夹爪宽度）填入 ``target_grasp_joint``；再抬至安全抬升位，将新的 ``left_joint[:6]`` 填入 ``target_lift_joint``。
+
+      **3. 开启键盘门控权限**
+
+      授予当前用户访问 ``/dev/input`` 的权限并重新登录（多键盘主机如何指定 ``RLINF_KEYBOARD_DEVICE`` 见 :doc:`franka`）：
+
+      .. code-block:: bash
+
+         sudo usermod -aG input $USER
+
+      .. list-table::
+         :header-rows: 1
+         :widths: 14 86
+
+         * - 按键
+           - 作用
+         * - ``s`` / ``r`` / ``d``
+           - 从自由遥操开始新 episode / 中止并丢弃当前 episode / 标记完成并保存。
+         * - ``p`` / ``t`` / ``m``
+           - 从 ``MODEL`` 或 ``TELEOP`` 暂停 / 切入 ``TELEOP`` / 切回 ``MODEL``\ （开启 ``manual_episode_control_only`` 时忽略）。
+
+      **4. 加入 Ray 集群**
+
+      激活 ``.venv`` 并导出 ``RLINF_NODE_RANK`` 后再启动 Ray（将 ``192.168.1.10`` 替换为 GPU 节点 IP）：
+
+      .. code-block:: bash
+
+         export RLINF_NODE_RANK=1
+         ray start --address=192.168.1.10:6379
+
+      .. dropdown:: 采集遥操示教用于 RLPD（可选）
+
+         先修改 ``examples/embodiment/config/dosw1_collect_data.yaml`` 中的 ``robot_url``、四个 gRPC 端口与 ``camera_serials``\ （单节点运行，``cluster.num_nodes: 1``），再在机器人节点运行：
+
+         .. code-block:: bash
+
+            bash examples/embodiment/collect_data.sh dosw1_collect_data
+
+         用主动臂摆好初始姿态后按 ``s`` 开始，遥操完成抓取与抬起，按 ``d`` 保存或按 ``r`` 放弃重来。达到 ``runner.num_data_episodes``\ （默认 ``20``）条后自动退出，数据写入 ``<log_path>/demo_buffer/``\ （原始回合位于 ``<log_path>/pickle_episode/``）。在训练配置中指向该目录即可启用 RLPD：
+
+         .. code-block:: yaml
+
+            algorithm:
+              demo_buffer:
+                load_path: "/path/to/logs/dosw1-collect/<timestamp>/demo_buffer"
 
    .. tab-item:: 训练与 Rollout 节点
 
-      GPU 节点通常没有 ``~/dos_w1/airbot`` 目录，安装脚本会打印 warning 并跳过 AirBot SDK，其余依赖正常安装：
+      **1. 安装 RLinf 并下载 ResNet-10 权重**
+
+      GPU 节点通常不含 ``~/dos_w1/airbot``，安装脚本会打印 warning 并跳过 AirBot SDK，其余训练依赖照常安装：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --env dosw1 && source .venv/bin/activate
+         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
 
-.. note::
+      **2. 启动 Ray head**
 
-   **不要** 只执行 ``uv pip install -e .``，这样不会安装 ``embodied`` extra，会缺少环境侧依赖（``evdev``、``opencv-python``、RealSense Python 绑定等）。
-
-下载模型
-----------------------------------------
-
-下载 Flow Matching 策略使用的 ResNet-10 预训练权重（配置中的 ``actor.model.encoder_config.ckpt_name: resnet10_pretrained.pt``）：
-
-.. tab-set::
-
-   .. tab-item:: ResNet-10
+      先导出 ``RLINF_NODE_RANK=0`` 再启动 Ray head（将 ``192.168.1.10`` 替换为本机 IP），并用 ``ray status`` 确认双节点已加入：
 
       .. code-block:: bash
 
-         hf download RLinf/RLinf-ResNet10-pretrained --local-dir ./RLinf-ResNet10-pretrained
+         export RLINF_NODE_RANK=0
+         ray start --head --port=6379 --node-ip-address=192.168.1.10
+         ray status
 
-.. include:: _model_path.rst
+      **3. 修改硬件、目标关节与权重路径**
 
-运行
-----------------------------------------
+      编辑 ``examples/embodiment/config/dosw1_pick_sac_flow.yaml``\ （异步解耦版本为 ``dosw1_pick_sac_flow_async.yaml``）：
 
-目标关节标定
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      .. code-block:: yaml
 
-``target_grasp_joint`` 与 ``target_lift_joint`` 必须反映你工作台的实际
-布局。推荐的标定方式是：用主动臂把从动臂遥操到目标位姿，然后读取当前关节角。
+         cluster:
+           node_groups:
+             - label: dosw1
+               node_ranks: 1
+               hardware:
+                 type: DOSW1
+                 configs:
+                   - robot_url: "192.168.1.20"
+                     camera_serials: ["SERIAL_1", "SERIAL_2", "SERIAL_3"]
+                     node_rank: 1
 
-1. 在机器人节点启动从动臂服务（例如
-   ``sh ~/dos_w1/airbot/whole_start.sh``），确认弹出的 tmux 各 panel
-   没有报错。
+         env:
+           train:
+             override_cfg:
+               is_dummy: False
+               target_grasp_joint: [...]   # 标定得到的 6 个弧度值
+               target_lift_joint:  [...]   # 标定得到的 6 个弧度值
 
-2. 激活虚拟环境，运行遥操检查脚本（将 ``192.168.1.20`` 替换为你的 DOS-W1 IP）：
+         actor:
+           model:
+             model_path: "./RLinf-ResNet10-pretrained"
 
-.. code-block:: bash
+      .. dropdown:: 完整配置参考（可选）
 
-   source .venv/bin/activate
+         .. code-block:: yaml
 
-   python toolkits/realworld_check/test_dosw1_controller.py \
-       --robot-url 192.168.1.20 \
-       --print-hz 5
+            cluster:
+              num_nodes: 2
+              component_placement:
+                actor:   { node_group: "gpu",   placement: 0 }
+                rollout: { node_group: "gpu",   placement: 0 }
+                env:     { node_group: dosw1,   placement: 0 }
+              node_groups:
+                - label: "gpu"
+                  node_ranks: 0
+                - label: dosw1
+                  node_ranks: 1
+                  hardware:
+                    type: DOSW1
+                    configs:
+                      - robot_url: "192.168.1.20"
+                        left_arm_port: 50051
+                        right_arm_port: 50053
+                        left_lead_port: 50050
+                        right_lead_port: 50052
+                        camera_serials:
+                          - "SERIAL_1"
+                          - "SERIAL_2"
+                          - "SERIAL_3"
+                        node_rank: 1
 
-3. 用左主动臂把左从动臂拖到期望的 **抓取** 位。终端会持续打印类似
-   下面的内容::
+            env:
+              train:
+                keyboard_intervention_wrapper: True
+                override_cfg:
+                  is_dummy: False
+                  use_dense_reward: True
+                  target_grasp_joint: [...]
+                  target_lift_joint:  [...]
+                  max_joint_delta: 0.1
+                  action_scale: 1.0
+                  left_ee_pose_limit_min: [0.1, -0.35, 0.02]
+                  left_ee_pose_limit_max: [0.4,  0.08, 0.40]
+                  right_ee_pose_limit_min: [0.28, -0.01, 0.16]
+                  right_ee_pose_limit_max: [0.30,  0.01, 0.17]
+                  enable_human_in_loop: True
 
-     [1713600000.000] left_joint=[-0.4725 -1.1332  0.6510  1.4082 -0.5987 -1.0904  0.0700]
-     [1713600000.000] left_eef=[...] right_eef=[...]
+            actor:
+              model:
+                model_path: "./RLinf-ResNet10-pretrained"
+                state_dim: 14        # 双臂：每臂 6 关节 + 1 夹爪
+                action_dim: 14
+                image_num: 3         # 1 仅用 cam_left；3 使用全部三路相机
 
-   ``left_joint`` 共 **7** 个值：前 6 个是关节角（弧度），最后 1 个是
-   夹爪宽度。将 **前 6 个** 值填入 ``target_grasp_joint``。
+      **4. 运行 Dummy 自检（可选）并启动训练**
 
-4. 继续把主动臂抬到安全的 lift 位，读取新的 ``left_joint[:6]`` 并填入
-   ``target_lift_joint``。
+      可先在单机运行纯状态 dummy 配置验证流程，再从 GPU 节点启动真机训练（日志保存在 ``logs/<timestamp>-<config>/``）：
 
-.. tip::
+      .. code-block:: bash
 
-   ``left_eef`` / ``right_eef`` 可以辅助确认末端是否到达预期位置，但
-   ``target_grasp_joint`` / ``target_lift_joint`` 需要的是 **关节角**，
-   不是 ee pose。
+         # 可选：单机 dummy 冒烟自检（无需相机与真机）
+         export REPO_PATH=$(pwd)
+         python examples/embodiment/train_embodied_agent.py \
+             --config-path $REPO_PATH/tests/e2e_tests/embodied/ \
+             --config-name dosw1_dummy_sac_mlp_pick \
+             runner.max_epochs=1
 
-Ray 集群启动
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         # 同步真机训练
+         bash examples/embodiment/run_realworld.sh dosw1_pick_sac_flow
 
-真机训练采用双节点 Ray 集群：GPU 节点跑 ``actor`` / ``rollout``，机器人
-节点跑 ``env``。
+         # 异步真机训练
+         bash examples/embodiment/run_realworld_async.sh dosw1_pick_sac_flow_async
 
-1. 在 **每一台** 节点上先 ``source`` 虚拟环境、再 ``export RLINF_NODE_RANK``
-   才能启动 Ray。Ray 会在 ``ray start`` 时锁定当前的 Python 解释器与
-   环境变量，之后再设置的变量对 Ray worker 不可见。
+结果与常见问题
+--------------
 
-2. 启动 Ray（将 ``192.168.1.10`` 替换为你的 GPU 服务器 IP）：
-
-.. code-block:: bash
-
-   # GPU 节点（node rank 0，Ray head）
-   export RLINF_NODE_RANK=0
-   ray start --head --port=6379 --node-ip-address=192.168.1.10
-
-   # 机器人节点（node rank 1，Ray worker）
-   export RLINF_NODE_RANK=1
-   ray start --address=192.168.1.10:6379
-
-3. 用 ``ray status`` 确认两个节点都已加入。
-
-配置文件
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-直接基于 ``examples/embodiment/config/dosw1_pick_sac_flow.yaml`` 模板修改；
-带权重同步解耦的异步版本为 ``dosw1_pick_sac_flow_async.yaml``。
-
-常见需要改动的字段：
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 2
-     component_placement:
-       actor:   { node_group: "gpu",   placement: 0 }
-       rollout: { node_group: "gpu",   placement: 0 }
-       env:     { node_group: dosw1,   placement: 0 }
-     node_groups:
-       - label: "gpu"
-         node_ranks: 0
-       - label: dosw1
-         node_ranks: 1
-         # 机器人连接信息（gRPC URL / 端口 / 相机序列号）由 scheduler 管理，
-         # 不再写在 env 配置里。
-         hardware:
-           type: DOSW1
-           configs:
-             - robot_url: "<ROBOT_IP>"            # DOS-W1 gRPC 地址
-               left_arm_port: 50051
-               right_arm_port: 50053
-               left_lead_port: 50050
-               right_lead_port: 50052
-               camera_serials:                    # RealSense 相机序列号
-                 - "<SERIAL_1>"
-                 - "<SERIAL_2>"
-                 - "<SERIAL_3>"
-               node_rank: 1
-
-   env:
-     train:
-       keyboard_intervention_wrapper: True
-       override_cfg:
-         is_dummy: False
-         use_dense_reward: True
-         target_grasp_joint: [...]                # 来自上文标定
-         target_lift_joint:  [...]                # 来自上文标定
-         max_joint_delta: 0.1                     # 每步最大关节变化（弧度，约 5.7°）
-         action_scale: 1.0
-         # 末端安全盒（xyz 单位米，含端点）
-         left_ee_pose_limit_min: [0.1, -0.35, 0.02]
-         left_ee_pose_limit_max: [0.4,  0.08, 0.40]
-         right_ee_pose_limit_min: [0.28, -0.01, 0.16]
-         right_ee_pose_limit_max: [0.30,  0.01, 0.17]
-         enable_human_in_loop: True
-
-   actor:
-     model:
-       model_path: "/path/to/RLinf-ResNet10-pretrained"
-       state_dim: 14        # 双臂：每只手臂 6 关节 + 1 夹爪
-       action_dim: 14
-       image_num: 3         # 1 = 仅 cam_left；3 = 三路相机全用
-
-.. warning::
-
-   ``cluster.num_nodes`` 必须与实际节点数一致，每个 ``node_ranks``
-   必须等于该机器上的 ``RLINF_NODE_RANK``。不要从 diff 片段里手拼
-   一份"精简"配置 —— 真机训练请始终以
-   ``dosw1_pick_sac_flow.yaml`` 完整模板为起点进行修改。
-
-键盘干预
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-DOS-W1 的 episode 进度由机器人节点上的键盘监听器控制。只要在 YAML 中
-保持下面两项打开即可（提供的模板默认已打开）：
-
-.. code-block:: yaml
-
-   env:
-     train:
-       keyboard_intervention_wrapper: True
-       override_cfg:
-         enable_human_in_loop: True
-
-训练开始前，需要授予当前用户访问 ``/dev/input`` 设备的权限
-（关于 ``RLINF_KEYBOARD_DEVICE`` 的详细配置请参阅 :doc:`franka`
-的 *无显示器键盘奖励包装器* 章节）：
-
-.. code-block:: bash
-
-   sudo usermod -aG input $USER
-   # 退出当前登录并重新登录使组权限生效
-
-运行时支持的按键：
+在 Ray head 节点运行 ``tensorboard --logdir ./logs --port 6006``，主要观察 ``env/success_once``、``env/return``、``train/sac/*`` 与 ``train/replay_buffer/*``，完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
 
 .. list-table::
    :header-rows: 1
-   :widths: 10 90
+   :widths: 36 64
 
-   * - 按键
-     - 功能
-   * - ``s``
-     - 在 free-teleop / reset 阶段请求开始新 episode。
-   * - ``r``
-     - 中止当前 episode，回到 free-teleop（不保存）。
-   * - ``d``
-     - 将当前 episode 标记为 "manual done" 并保存。
-   * - ``p``
-     - 从 ``MODEL`` 或 ``TELEOP`` 切到 ``PAUSE``。
-   * - ``t``
-     - 从 ``PAUSE`` 切到 ``TELEOP``\ （策略让位于主动臂）。
-   * - ``m``
-     - 从 ``PAUSE`` 切回 ``MODEL``\ （由策略驱动机械臂）。
+   * - 现象
+     - 解决方法
+   * - 机器人节点报 ``ImportError: airbot_sdk is not installed``
+     - 导出指向实际 SDK 文件的 ``DOSW1_SDK_WHEEL`` 与 ``DOSW1_API_PATH`` 后重跑 ``install.sh``；仅验证管线时可设 ``is_dummy: true``。
+   * - 5 秒内未读到 DOS-W1 状态（``TimeoutError``）
+     - 确认 AirBot 服务已运行（``sh ~/dos_w1/airbot/whole_start.sh``），核对 ``robot_url`` 与 50050–50053 端口，并检查 GPU 节点到机器人的 TCP 连通性。
+   * - ``RuntimeError: DOSW1Connection is not connected``
+     - 回看前文连接日志中的具体报错原因。
+   * - 相机不出帧
+     - 在机器人节点运行 ``rs-enumerate-devices`` 核对 ``camera_serials`` 并检查 USB 接线；无显示器服务器可设 ``override_cfg.enable_camera_player: false`` 关闭预览窗。
+   * - 奖励恒为 0 或卡在 ``reach``
+     - 确认 ``is_dummy: false``，用 ``test_dosw1_controller.py`` 重新标定可达的 ``target_grasp_joint``，并将 ``joint_reward_sharpness`` 尝试降到 ``1.0``。
+   * - ``Missing key runner`` 或 Hydra 报错
+     - 从完整的 ``dosw1_pick_sac_flow.yaml``\ （或 ``dosw1_pick_sac_flow_async.yaml``）模板修改，不要拼接局部片段。
+   * - 训练不稳定或发散
+     - 调低 ``actor.optim.lr`` 与 ``actor.critic_optim.lr``\ （如 ``1e-4``），增大 ``algorithm.replay_buffer.min_buffer_size``，将 ``algorithm.gamma`` 尝试调至 ``0.8–0.9``，或通过 ``algorithm.demo_buffer.load_path`` 启用 RLPD。
 
-当 ``manual_episode_control_only`` 打开时，``p`` / ``t`` / ``m`` 被忽略，
-系统保持在主动臂遥操模式下，仅 ``s`` / ``r`` / ``d`` 生效。
-
-数据采集（可选，用于 RLPD）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-如果希望用遥操示教数据 warm start 训练，可以用下面的脚本采集。
-``dosw1_collect_data.yaml`` 已经打开了 ``enable_human_in_loop`` 和
-键盘包装器，且只用 **单节点** 运行（``cluster.num_nodes: 1``，直接跑在
-机器人节点上）。
-
-在机器人节点执行：
-
-.. code-block:: bash
-
-   source .venv/bin/activate
-
-   bash examples/embodiment/collect_data.sh dosw1_collect_data
-
-执行前请先编辑 ``examples/embodiment/config/dosw1_collect_data.yaml``
-里 ``cluster.node_groups[<dosw1>].hardware.configs`` 下的
-``robot_url``、四个 gRPC 端口以及 ``camera_serials``。
-
-典型的采集流程：
-
-1. 环境进入 free-teleop，用主动臂把从动臂摆到初始姿态。
-2. 按 ``s`` 开始一个 episode。
-3. 通过主动臂完成抓取与抬起。
-4. 成功后按 ``d`` 保存；如果这条不要了，按 ``r`` 放弃并重来。
-5. 达到 ``runner.num_data_episodes``\ （默认 ``20``）条后脚本自动退出。
-
-成功的轨迹会保存在 ``<log_path>/demo_buffer/``。同一配置还会把原始 episode 写到 ``<log_path>/pickle_episode/``。RLPD 读取 replay buffer 目录：
-
-.. code-block:: yaml
-
-   algorithm:
-     demo_buffer:
-       load_path: "/path/to/logs/dosw1-collect/<timestamp>/demo_buffer"
-
-若不启用 RLPD，直接去掉 ``demo_buffer`` 段即可。
-
-Dummy 自检（可选）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-接真机之前，推荐先跑一遍 CI 中使用的最小 dummy 配置 —— 它设置
-``is_dummy: true``\ （完全不调用硬件）且用 state-only MLP，可以单机、无
-相机运行，用于验证配置树与集群管线：
-
-.. code-block:: bash
-
-   export REPO_PATH=$(pwd)
-   ray start --head
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-path $REPO_PATH/tests/e2e_tests/embodied/ \
-       --config-name dosw1_dummy_sac_mlp_pick \
-       runner.max_epochs=1
-
-这一步 **不是** 真机训练 recipe —— 图像相关路径被禁用，只用于流程自检。
-
-启动训练
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-标定、demo、YAML 都就位后，在 GPU 节点发起训练：
-
-.. code-block:: bash
-
-   # 同步管线
-   bash examples/embodiment/run_realworld.sh dosw1_pick_sac_flow
-
-   # 异步管线（rollout / learner 权重同步解耦）
-   bash examples/embodiment/run_realworld_async.sh dosw1_pick_sac_flow_async
-
-日志写到 ``logs/<timestamp>-<config>/`` 下。
-
-关键安全机制
-----------------------------------------
-
-``DOSW1Env._execute_model_action`` 在把命令发到 SDK 之前，会做三层防护：
-
-1. **单步关节钳位**：目标关节会被 clip 到
-   ``current ± max_joint_delta``\ （默认 ``0.1`` 弧度，约 5.7°/步）。
-2. **绝对关节限幅**：再 clip 到
-   ``[joint_limit_min, joint_limit_max]``\ （默认 ``±π``，可根据实际工况收紧）。
-3. **末端安全盒**：沿着"当前关节 → 目标关节"在关节空间做二分搜索，找到
-   经正运动学换算后仍落在
-   ``left_ee_pose_limit_min/max`` / ``right_ee_pose_limit_min/max``
-   之内的最大插值比例；超出安全盒的动作会自动被截断。
-
-这三层在 TELEOP 模式下同样生效，因此即便操作者用主动臂做剧烈运动，从动臂
-也不会越过安全盒。
-
-可视化与结果
-----------------------------------------
-
-**TensorBoard**
-
-在 Ray head 节点上：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs --port 6006
-
-**关键指标**
-
-- **环境**：``env/episode_len``、``env/return``、``env/reward``、
-  ``env/success_once``\ （未归一化的 episode 成功率，主要监控指标）。
-- **训练（SAC）**：``train/sac/critic_loss``、``train/sac/actor_loss``、
-  ``train/sac/alpha_loss``、``train/sac/alpha``、``train/actor/entropy``、
-  ``train/actor/grad_norm``、``train/critic/grad_norm``。
-- **Replay buffer**：``train/replay_buffer/size``、
-  ``train/replay_buffer/{mean,max,min,std}_reward``、
-  ``train/replay_buffer/utilization``。
-
-常见问题
-----------------------------------------
-
-**``ImportError: airbot_sdk is not installed``**\ （机器人节点）
-  默认路径下找不到 AirBot wheel。用 ``DOSW1_SDK_WHEEL`` /
-  ``DOSW1_API_PATH`` 指向实际 SDK 文件后重跑 ``install.sh``。
-  如果只是想做流程自检，改用 ``env.train.override_cfg.is_dummy: true``。
-
-**``TimeoutError: Timed out waiting for DOSW1 state from AirbotRobot``**
-  5 秒内没有从 gRPC 读到状态。排查：
-
-  - 机器人是否上电，从动/主动臂服务是否正常（
-    ``sh ~/dos_w1/airbot/whole_start.sh``）。
-  - ``cluster.node_groups[<dosw1>].hardware.configs`` 下的 ``robot_url``
-    与四个端口是否与机器配置一致。
-  - GPU 节点能否 ``ping`` 到机器人，并能在 50050–50053 建立 TCP 连接。
-
-**``RuntimeError: DOSW1Connection is not connected``**
-  connect 没有成功执行。回看此前日志中
-  ``[DOSW1SDK] Connecting via AirbotRobot`` 一行的错误原因。
-
-**相机问题 / ``Camera ... is not producing frames``**
-  在机器人节点执行 ``rs-enumerate-devices``，确认
-  ``cluster.node_groups[<dosw1>].hardware.configs[*].camera_serials``
-  中每个序列号都能被识别，USB 线牢固。
-  若跑在无显示器服务器上，可设
-  ``override_cfg.enable_camera_player: false`` 关闭预览窗口（不影响训练）。
-
-**reward 恒为 0 / phase 卡在 ``reach``**
-  常见原因：
-
-  - 当前配置中 ``is_dummy`` 还是 ``true``。
-  - ``target_grasp_joint`` 不可达 —— 重新用
-    ``test_dosw1_controller.py`` 标定，确认机械臂能物理到达。
-  - ``joint_reward_sharpness`` 过大（密集奖励在远离目标时迅速衰减到 0），
-    可尝试降到 ``1.0``。
-
-**``Missing key runner`` / Hydra 报错**
-  配置不是从完整模板来的，而是拼接片段。真机训练请始终以
-  ``examples/embodiment/config/dosw1_pick_sac_flow.yaml``
-  （或 ``dosw1_pick_sac_flow_async.yaml``）为起点覆盖字段；快速自检可用
-  ``tests/e2e_tests/embodied/dosw1_dummy_sac_mlp_pick.yaml``。
-
-**训练不稳定 / 发散**
-  几个常用的 SAC 调节旋钮：
-
-  - 降低 ``actor.optim.lr`` 与 ``actor.critic_optim.lr``\ （如 ``1e-4``）。
-  - 提高 ``algorithm.replay_buffer.min_buffer_size``，让 buffer
-    积累更多数据再开始更新。
-  - 若任务 horizon 较短，可适当调低 ``algorithm.gamma``
-    （pick 任务通常 ``0.8 – 0.9`` 是不错的起点）。
-  - 采一小批遥操示教数据，通过 ``algorithm.demo_buffer.load_path``
-    启用 RLPD。
+如需在 DOS-W1 上开发自定义操作任务，参见 :doc:`新增真机任务 <../../extending/new_task>`。

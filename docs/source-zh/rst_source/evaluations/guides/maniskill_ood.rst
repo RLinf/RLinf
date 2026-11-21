@@ -36,7 +36,7 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA-OFT + ManiSkill
+   .. tab-item:: 单场景评测
 
       .. code-block:: bash
 
@@ -49,12 +49,36 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-         # 3. 启动评测
+         # 3. 启动评测（默认训练分布内场景；覆盖 id 与 obj_set 可测任意 OOD 场景）
          bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
            rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-``evaluations/maniskill/`` 提供 OpenVLA-OFT 示例配置（基座模型 `RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ + ManiSkill LoRA `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_）。OpenVLA、OpenPI 或其他 ManiSkill 任务可参考 :ref:`从训练配置派生评测 <maniskill-derive-from-train>`。评测 RL 训练产出的 ``.pt`` 权重时，单场景用 ``runner.ckpt_path``、批量 ``mani-ood`` 模式用 ``CKPT_PATH`` 覆盖初始权重。
+      覆盖 ``env.eval.init_params.id`` 与 ``env.eval.init_params.obj_set`` 即可评测任意 OOD 场景；传入 ``runner.ckpt_path`` 可加载 RL 训练产出的 ``.pt`` 权重。
+
+   .. tab-item:: 批量 16 场景 OOD（mani-ood）
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+
+         # 2. 下载资产与模型权重
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+         # 3. 批量评测全部 16 个 OOD 场景（须先在 evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml 中填写 model_path 与 lora_path）
+         export EVAL_NAME=my_ood_eval
+         export CKPT_PATH=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
+         export TOTAL_NUM_ENVS=16
+         export EVAL_ROLLOUT_EPOCH=1
+         bash evaluations/run_eval.sh mani-ood maniskill_ood_openvlaoft_eval
+
+      执行第 3 步前，先在 ``evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml`` 中设置 ``rollout.model.model_path: ./Openvla-oft-SFT-libero10-trajall`` 与 ``rollout.model.lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora``。批量日志保存在 ``logs/eval/<EVAL_NAME>/<时间戳>-<env_id>-<obj_set>/run_ppo.log``；``mani-ood`` 默认将 ``HF_ENDPOINT`` 设为 ``https://hf-mirror.com``，提前导出即可覆盖。
+
+``evaluations/maniskill/`` 提供 OpenVLA-OFT 示例配置（基座模型 `RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ + ManiSkill LoRA `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_）。OpenVLA、OpenPI 或其他 ManiSkill 任务可参考 :ref:`从训练配置派生评测 <maniskill-derive-from-train>`。
 
 .. _maniskill-eval-config:
 
@@ -142,33 +166,7 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
       * - ``policy_setup``
         - 动作空间配置，OpenVLA-OFT 使用 ``widowx_bridge``。
 
-   通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`\ （示例通常设 ``max_episode_steps=80``、``max_steps_per_rollout_epoch=80`` 与 ``ignore_terminations=True``）。OpenVLA-OFT 还须在 ``rollout.model`` 下配置 ``unnorm_key: bridge_orig``、``is_lora: True``、``lora_path``、``add_value_head: True`` 与 ``max_prompt_length: 30``。
-
-.. dropdown:: 单场景与批量 OOD 评测
-
-   **单场景评测**
-
-   通过 Hydra 覆盖 ``env.eval.init_params.id`` 与 ``obj_set`` 评测训练分布内或任意 OOD 场景：
-
-   .. code-block:: bash
-
-      # 训练分布内（plate-25-main）
-      bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
-        env.eval.init_params.id=PutOnPlateInScene25Main-v3 \
-        env.eval.init_params.obj_set=train \
-        rollout.model.model_path=/path/to/model \
-        rollout.model.lora_path=/path/to/lora
-
-      # 单个 OOD 场景（Vision 示例）
-      bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
-        env.eval.init_params.id=PutOnPlateInScene25VisionImage-v1 \
-        env.eval.init_params.obj_set=test \
-        rollout.model.model_path=/path/to/model \
-        runner.ckpt_path=/path/to/checkpoint.pt
-
-   资源受限时，可在 ``auto_reset: True`` 下将 ``max_steps_per_rollout_epoch`` 设为 ``max_episode_steps`` 的整数倍（例如 ``total_num_envs: 16``、``max_episode_steps: 80``、``max_steps_per_rollout_epoch: 320``），让每轮串行覆盖更多 ``episode_id``。
-
-   **批量 OOD 评测（``mani-ood``，共 16 次）**
+   **批量 ``mani-ood`` 环境变量**
 
    .. list-table::
       :header-rows: 1
@@ -185,32 +183,29 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
       * - ``EVAL_ROLLOUT_EPOCH``
         - 评测轮次（``env.eval.rollout_epoch``）。
 
-   .. code-block:: bash
-
-      export EVAL_NAME=my_ood_eval
-      export CKPT_PATH=/path/to/checkpoint.pt
-      export TOTAL_NUM_ENVS=16
-      export EVAL_ROLLOUT_EPOCH=1
-      bash evaluations/run_eval.sh mani-ood maniskill_ood_openvlaoft_eval
-
-   批量日志位于 ``logs/eval/<EVAL_NAME>/<时间戳>-<env_id>-<obj_set>/run_ppo.log``。``mani-ood`` 默认将 ``HF_ENDPOINT`` 设为 ``https://hf-mirror.com``，运行前导出即可覆盖。
+   通用 ``env.eval`` 字段见 :doc:`../reference/configuration` 中的 :ref:`env-eval-fields`\ （示例通常设 ``max_episode_steps=80``、``max_steps_per_rollout_epoch=80`` 与 ``ignore_terminations=True``）。OpenVLA-OFT 还须在 ``rollout.model`` 下配置 ``unnorm_key: bridge_orig``、``is_lora: True``、``lora_path``、``add_value_head: True`` 与 ``max_prompt_length: 30``。
 
 .. _maniskill-derive-from-train:
 
-.. dropdown:: 进阶用法（从训练配置派生、并行规模与 RL Checkpoint）
+.. dropdown:: 进阶用法（单个 OOD 场景、并行规模与从训练配置派生）
 
-   **从训练配置派生评测**
-
-   ManiSkill 还支持 ``PickCube-v1``、``PutCarrotOnPlateInScene-v2`` 等训练任务（位于 ``examples/embodiment/config/env/``）。复制对应训练 YAML，设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``，移除 ``algorithm``、``actor`` 等训练段，仅保留 ``env.eval`` 与 ``rollout``。
-
-   **调整并行规模或加载 RL checkpoint**
+   **单个 OOD 场景与 RL checkpoint**
 
    .. code-block:: bash
 
       bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
+        env.eval.init_params.id=PutOnPlateInScene25VisionImage-v1 \
+        env.eval.init_params.obj_set=test \
         env.eval.total_num_envs=32 \
-        runner.ckpt_path=/path/to/checkpoint.pt \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
+        rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
+        runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
+
+   资源受限时，可在 ``auto_reset: True`` 下将 ``max_steps_per_rollout_epoch`` 设为 ``max_episode_steps`` 的整数倍（例如 ``total_num_envs: 16``、``max_episode_steps: 80``、``max_steps_per_rollout_epoch: 320``），让每轮串行覆盖更多 ``episode_id``。
+
+   **从训练配置派生评测**
+
+   ManiSkill 还支持 ``PickCube-v1``、``PutCarrotOnPlateInScene-v2`` 等训练任务（位于 ``examples/embodiment/config/env/``）。复制对应训练 YAML，设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``，移除 ``algorithm``、``actor`` 等训练段，仅保留 ``env.eval`` 与 ``rollout``。
 
 结果与常见问题
 --------------
@@ -228,7 +223,7 @@ ManiSkill OOD 评测用于检验 VLA policy 在分布外（Out-of-Distribution�
    * - GPU 仿真报错
      - ``sim_backend: gpu`` 需要 NVIDIA GPU。
    * - OpenVLA-OFT 加载失败
-     - 设置 ``rollout.model.lora_path`` 指向 ``RLinf-OpenVLAOFT-ManiSkill-Base-Lora``。
+     - 设置 ``rollout.model.lora_path`` 指向 ``./RLinf-OpenVLAOFT-ManiSkill-Base-Lora``。
    * - RL checkpoint 未生效
      - 批量 ``mani-ood`` 模式通过 ``CKPT_PATH`` 传入 ``.pt`` 权重，单场景评测使用 ``runner.ckpt_path``。
    * - 始终在训练场景评测而非 OOD

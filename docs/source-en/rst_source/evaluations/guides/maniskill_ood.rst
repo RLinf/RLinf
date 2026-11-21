@@ -36,7 +36,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
 
 .. tab-set::
 
-   .. tab-item:: OpenVLA-OFT + ManiSkill
+   .. tab-item:: Single-Scene Eval
 
       .. code-block:: bash
 
@@ -49,12 +49,36 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-         # 3. Evaluate
+         # 3. Evaluate (in-distribution default; override id/obj_set for any OOD scene)
          bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
            rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
            rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
-``evaluations/maniskill/`` ships an OpenVLA-OFT example config (`RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ base + `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_ LoRA). For OpenVLA, OpenPI, or other ManiSkill tasks, see :ref:`Derive Eval Configs from Training <maniskill-derive-from-train>`. Pass an RL-trained ``.pt`` checkpoint via ``runner.ckpt_path`` (single scene) or ``CKPT_PATH`` (batch ``mani-ood``) to override base weights.
+      Override ``env.eval.init_params.id`` and ``env.eval.init_params.obj_set`` to test any OOD scene, or pass ``runner.ckpt_path`` to evaluate an RL-trained ``.pt`` checkpoint.
+
+   .. tab-item:: Batch 16-Scene OOD (mani-ood)
+
+      .. code-block:: bash
+
+         # 1. Install
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+
+         # 2. Download assets and checkpoints
+         hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
+         hf download RLinf/Openvla-oft-SFT-libero10-trajall --local-dir ./Openvla-oft-SFT-libero10-trajall
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora
+
+         # 3. Evaluate all 16 OOD runs (after setting model_path and lora_path in evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml)
+         export EVAL_NAME=my_ood_eval
+         export CKPT_PATH=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
+         export TOTAL_NUM_ENVS=16
+         export EVAL_ROLLOUT_EPOCH=1
+         bash evaluations/run_eval.sh mani-ood maniskill_ood_openvlaoft_eval
+
+      Before step 3, set ``rollout.model.model_path: ./Openvla-oft-SFT-libero10-trajall`` and ``rollout.model.lora_path: ./RLinf-OpenVLAOFT-ManiSkill-Base-Lora`` in ``evaluations/maniskill/maniskill_ood_openvlaoft_eval.yaml``. Batch logs go to ``logs/eval/<EVAL_NAME>/<timestamp>-<env_id>-<obj_set>/run_ppo.log``; ``mani-ood`` defaults ``HF_ENDPOINT`` to ``https://hf-mirror.com`` unless already exported.
+
+``evaluations/maniskill/`` ships an OpenVLA-OFT example config (`RLinf/Openvla-oft-SFT-libero10-trajall <https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall>`_ base + `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_ LoRA). For OpenVLA, OpenPI, or other ManiSkill tasks, see :ref:`Derive Eval Configs from Training <maniskill-derive-from-train>`.
 
 .. _maniskill-eval-config:
 
@@ -142,33 +166,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
       * - ``policy_setup``
         - Action-space setup; OpenVLA-OFT uses ``widowx_bridge``.
 
-   See :ref:`env-eval-fields` in :doc:`../reference/configuration` for generic ``env.eval`` fields (examples typically set ``max_episode_steps=80``, ``max_steps_per_rollout_epoch=80``, and ``ignore_terminations=True``). OpenVLA-OFT also sets ``unnorm_key: bridge_orig``, ``is_lora: True``, ``lora_path``, ``add_value_head: True``, and ``max_prompt_length: 30`` under ``rollout.model``.
-
-.. dropdown:: Single-Scene and Batch OOD Evaluation
-
-   **Single-scene evaluation**
-
-   Override ``env.eval.init_params.id`` and ``obj_set`` for in-distribution or any OOD scene:
-
-   .. code-block:: bash
-
-      # In-distribution (plate-25-main)
-      bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
-        env.eval.init_params.id=PutOnPlateInScene25Main-v3 \
-        env.eval.init_params.obj_set=train \
-        rollout.model.model_path=/path/to/model \
-        rollout.model.lora_path=/path/to/lora
-
-      # Single OOD scene (Vision example)
-      bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
-        env.eval.init_params.id=PutOnPlateInScene25VisionImage-v1 \
-        env.eval.init_params.obj_set=test \
-        rollout.model.model_path=/path/to/model \
-        runner.ckpt_path=/path/to/checkpoint.pt
-
-   To cover more ``episode_id`` values with fewer parallel envs, set ``max_steps_per_rollout_epoch`` to a multiple of ``max_episode_steps`` under ``auto_reset: True`` (for example, ``total_num_envs: 16``, ``max_episode_steps: 80``, ``max_steps_per_rollout_epoch: 320``).
-
-   **Batch OOD evaluation (``mani-ood``, 16 runs)**
+   **Batch ``mani-ood`` environment variables**
 
    .. list-table::
       :header-rows: 1
@@ -185,32 +183,29 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
       * - ``EVAL_ROLLOUT_EPOCH``
         - Eval epochs (``env.eval.rollout_epoch``).
 
-   .. code-block:: bash
-
-      export EVAL_NAME=my_ood_eval
-      export CKPT_PATH=/path/to/checkpoint.pt
-      export TOTAL_NUM_ENVS=16
-      export EVAL_ROLLOUT_EPOCH=1
-      bash evaluations/run_eval.sh mani-ood maniskill_ood_openvlaoft_eval
-
-   Batch logs go to ``logs/eval/<EVAL_NAME>/<timestamp>-<env_id>-<obj_set>/run_ppo.log``. ``mani-ood`` sets ``HF_ENDPOINT`` to ``https://hf-mirror.com`` by default; export your own value beforehand to override it.
+   See :ref:`env-eval-fields` in :doc:`../reference/configuration` for generic ``env.eval`` fields (examples typically set ``max_episode_steps=80``, ``max_steps_per_rollout_epoch=80``, and ``ignore_terminations=True``). OpenVLA-OFT also sets ``unnorm_key: bridge_orig``, ``is_lora: True``, ``lora_path``, ``add_value_head: True``, and ``max_prompt_length: 30`` under ``rollout.model``.
 
 .. _maniskill-derive-from-train:
 
-.. dropdown:: Advanced Usage (Derive Configs from Training, Parallelism, RL Checkpoints)
+.. dropdown:: Advanced Usage (Single OOD Scene, Parallelism, Derive from Training)
 
-   **Derive eval configs from training**
-
-   ManiSkill also supports training tasks such as ``PickCube-v1`` and ``PutCarrotOnPlateInScene-v2`` under ``examples/embodiment/config/env/``. Copy the matching training config, set ``runner.task_type: embodied_eval`` and ``runner.only_eval: True``, remove training sections (``algorithm``, ``actor``), and keep ``env.eval`` and ``rollout``.
-
-   **Adjust parallelism or load an RL checkpoint**
+   **Single OOD scene and RL checkpoint**
 
    .. code-block:: bash
 
       bash evaluations/run_eval.sh maniskill maniskill_ood_openvlaoft_eval \
+        env.eval.init_params.id=PutOnPlateInScene25VisionImage-v1 \
+        env.eval.init_params.obj_set=test \
         env.eval.total_num_envs=32 \
-        runner.ckpt_path=/path/to/checkpoint.pt \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./Openvla-oft-SFT-libero10-trajall \
+        rollout.model.lora_path=./RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
+        runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt
+
+   To cover more ``episode_id`` values with fewer parallel envs, set ``max_steps_per_rollout_epoch`` to a multiple of ``max_episode_steps`` under ``auto_reset: True`` (for example, ``total_num_envs: 16``, ``max_episode_steps: 80``, ``max_steps_per_rollout_epoch: 320``).
+
+   **Derive eval configs from training**
+
+   ManiSkill also supports training tasks such as ``PickCube-v1`` and ``PutCarrotOnPlateInScene-v2`` under ``examples/embodiment/config/env/``. Copy the matching training config, set ``runner.task_type: embodied_eval`` and ``runner.only_eval: True``, remove training sections (``algorithm``, ``actor``), and keep ``env.eval`` and ``rollout``.
 
 Results and Troubleshooting
 ---------------------------
@@ -228,7 +223,7 @@ The terminal prints ``eval/success_once``; single-run logs and videos go to ``lo
    * - GPU simulation errors
      - ``sim_backend: gpu`` requires an NVIDIA GPU.
    * - OpenVLA-OFT policy fails to load
-     - Provide ``rollout.model.lora_path`` pointing to ``RLinf-OpenVLAOFT-ManiSkill-Base-Lora``.
+     - Provide ``rollout.model.lora_path`` pointing to ``./RLinf-OpenVLAOFT-ManiSkill-Base-Lora``.
    * - RL checkpoint ignored
      - Pass ``.pt`` weights via ``CKPT_PATH`` in batch ``mani-ood`` mode, or ``runner.ckpt_path`` in single-scene runs.
    * - Still evaluating training scene instead of OOD

@@ -1,111 +1,125 @@
 .. _dual-franka-pico-dagger-zh:
 
 双臂 Franka 的 PICO 数据采集与 DAgger
-================================================
+=====================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
    :align: center
    :width: 80%
    :alt: 双 Franka VR 遥操作
 
-   使用 VR / PICO 进行双 Franka 遥操作数据采集。
+   使用 VR / PICO 采集双 Franka 遥操作示教数据。
 
-本指南介绍如何在双 Franka TCP-rot6d 环境中使用 PICO 进行示教数据采集，并以
-PICO 人工接管运行在线 Human-Gated DAgger。双臂硬件、实时内核和相机检查请先参考
-:doc:`dual_franka`；PICO / XRoboToolkit 数据发布链路请先参考 :doc:`franka_vr`；
-HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
+用两只 PICO 手柄采集双臂 Franka ``tcp_rot6d`` 示教数据，准备 OpenPI π₀.₅ 基础 checkpoint，并在真机上运行支持按臂接管的在线 Human-Gated DAgger（HG-DAgger）。
 
 概览
-----------------------------------------
+----
 
-用 PICO 左右手柄分别控制双臂 Franka，先采集 tcp_rot6d 格式 LeRobot 数据，
-再参考 :doc:`dual_franka` 准备 OpenPI π₀.₅ student checkpoint，最后在真机上启动在线 HG-DAgger。
+使用 PICO 左右手柄在 ``tcp_rot6d`` 环境中遥操作两台 Franka 机械臂，参照 :doc:`dual_franka` 准备 OpenPI π₀.₅ student checkpoint，再启动在线 HG-DAgger 归档完整成功轨迹并只用全接管 action chunk 训练。双臂硬件、实时内核与相机自检见 :doc:`dual_franka`，PICO / XRoboToolkit 发布链路见 :doc:`franka_vr`，单臂 HG-DAgger 见 :doc:`hg-dagger`。
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: 模型
+   .. grid-item-card:: 机器人
       :text-align: center
 
-      OpenPI π₀.₅
+      2× Franka（Franky）· 2× Robotiq
 
-   .. grid-item-card:: 算法
+   .. grid-item-card:: 遥操与相机
       :text-align: center
 
-      SFT · HG-DAgger
+      PICO 双手柄 · USB 脚踏 · 3 路相机
 
-   .. grid-item-card:: 任务
+   .. grid-item-card:: 工作流
       :text-align: center
 
-      Dual-arm manipulation
+      PICO 采数 → π₀.₅ SFT → 在线 HG-DAgger
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      2× Franka · PICO · 3 cameras
-
-| **你将完成:** 启动 PICO publisher → 采集双臂 tcp_rot6d 示教 → 复用双臂 SFT checkpoint 流程 → 运行在线 HG-DAgger.
-| **前置条件:** :doc:`dual_franka` · :doc:`franka_vr` · OpenPI π₀.₅ checkpoint · Ray cluster.
-
-任务
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 30 46
-
-   * - 任务
-     - 配置 / 入口
-     - 说明
-   * - PICO stream
-     - ``vr_data_publisher``
-     - 从 PICO / XRoboToolkit 发布左右手柄和按键数据。
-   * - Collection
-     - ``realworld_dual_franka_collect_data_pico``
-     - 用 PICO 双手遥操作采集 tcp_rot6d LeRobot 数据。
-   * - HG-DAgger
-     - ``realworld_dual_franka_dagger_openpi``
-     - 策略自主执行，PICO 按臂接管；归档完整成功轨迹，并仅用全接管 action chunk 训练。
+      单机（采数）· 3 节点（GPU + 2 台机器人节点跑 DAgger）
 
 观测与动作
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 24
+   :widths: 22 78
 
    * - 字段
      - 说明
-   * - Observation
-     - 左腕、右腕、全局相机，加双臂 TCP / 夹爪状态。
-   * - Action
-     - 双臂 tcp_rot6d：``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``。
-   * - Reward
-     - 来自 USB 键盘或脚踏（``keyboard_device``）的人工标记。
-   * - Prompt
-     - ``task_description`` 写入数据并作为 OpenPI 语言条件。
+   * - 观测
+     - 左腕、右腕与全局相机图像，加上双臂 TCP 与夹爪状态。
+   * - 动作
+     - 20 维双臂 ``tcp_rot6d`` 目标：``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``。
+   * - 奖励
+     - 来自 USB 键盘或脚踏（``keyboard_device`` / ``RLINF_KEYBOARD_DEVICE``）的人工标记。
+   * - 提示词
+     - 写入数据集并作为 OpenPI 语言条件的 ``task_description``。
 
-这个标记不来自 PICO 正面按键。采集和 DAgger 在 ``keyboard_device`` 上的按键不同：
+回合标记来自 USB 键盘或脚踏：采集阶段（``start_end``）用 ``a`` 开始或中止录制、``b`` 递增 ``segment_id``、``c`` 标记成功并落盘；DAgger 阶段（``eval_control``）用 ``a`` 启动 policy、``b`` 标记失败、``c`` 标记成功。PICO 手柄上的 ``X/Y`` 与 ``A/B`` 仅用于开合左右夹爪。
 
-* 采集（``start_end``）：``c`` 记成功并写入本段数据。``a`` 开始或中止录制。``b`` 递增 ``segment_id``，不是失败。
-* DAgger（``eval_control``）：``a`` 开始 policy，``b`` 记失败，``c`` 记成功。
+硬件与安全准备
+--------------
 
-PICO 的 A/B/X/Y 只开合夹爪。按键时序写在「执行采集」和「执行 DAgger」。
+数据采集默认使用单机（rank ``0`` 通过双网卡或交换机直连两台机械臂、两个夹爪、三路相机、USB 键盘/脚踏与 PICO consumer；启动脚本会自动拉起本地 Ray，无需手动执行 ``ray start``）。在线 HG-DAgger 使用三个 Ray 节点：
 
+.. list-table::
+   :header-rows: 1
+   :widths: 14 34 52
 
-安装与节点布局
-----------------------------------------
+   * - Rank
+     - 角色（HG-DAgger）
+     - 接线与环境要求
+   * - ``0``
+     - OpenPI actor / rollout / inference
+     - 运行 student 模型与在线训练的 GPU 节点。
+   * - ``1``
+     - 左臂控制、env worker、三路相机、PICO consumer
+     - 接入 USB 键盘或脚踏并在 ``ray start`` 前导出 ``RLINF_KEYBOARD_DEVICE``；确保 PICO ZeroMQ 地址可达。
+   * - ``2``
+     - 右臂控制
+     - 仅需右臂 Franka 与 Robotiq 控制链路。
 
-软件环境
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. warning::
 
-在每台直接与 Franka 通信的机器人节点上安装基于 Franky 的 ``franka`` 环境，在 GPU 训练 / rollout 节点上安装 OpenPI 环境。中国大陆用户可在 ``requirements/install.sh`` 末尾追加 ``--use-mirror``，并在下载 Hugging Face 资源前设置 ``export HF_ENDPOINT=https://hf-mirror.com``。
+   启用运动前，确保急停开关触手可及并清空双臂工作空间。在 DAgger 配置中，将全零占位的 ``joint_reset_qpos`` 替换为数据集首帧关节均值或安全 home 姿态（每臂 7 个关节角），并确认每臂 ``target_ee_pose`` 落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位盒内：``x`` 在 ``[0.3, 0.9]``，``y`` 在 ``[-0.4, 0.4]``，``z`` 在 ``[0.02, 0.7]``。Ray 在 ``ray start`` 时捕获 Python 虚拟环境与环境变量，多机运行前务必先导出 ``PYTHONPATH``、``RLINF_NODE_RANK`` 与 ``RLINF_KEYBOARD_DEVICE``。
+
+.. dropdown:: 多机 Ray 集群启动（HG-DAgger 或双机采数必填）
+
+   单机采数跳过此项（若残留旧集群，先执行 ``ray stop --force``）。三节点 HG-DAgger，或两台机器人分机采数（设 ``num_nodes: 2``、``node_rank: 0``、``left_controller_node_rank: 0``、``right_controller_node_rank: 1``）时，按实际环境修改并在每个节点 source ``ray_utils/realworld/setup_before_ray.sh``，再导出变量并启动 Ray：
+
+   .. code-block:: bash
+
+      # 每个节点均需执行（按节点设置 RLINF_NODE_RANK 为 0/1/2；单网卡可省略 NIC）
+      export PYTHONPATH=$PWD:$PYTHONPATH
+      export RLINF_NODE_RANK=0
+      export RLINF_COMM_NET_DEVICES=eth0
+
+      # 在 DAgger 的 env 节点（rank 1）上导出 USB 键盘或脚踏设备
+      export RLINF_KEYBOARD_DEVICE=/dev/input/by-id/usb-KEYBOARD-event-kbd
+
+      # head 节点（rank 0）
+      export HEAD_NODE_IP=192.168.1.10
+      ray start --head --port=6379 --node-ip-address="$HEAD_NODE_IP"
+
+      # worker 节点（rank 1、2）
+      export HEAD_NODE_IP=192.168.1.10
+      ray start --address="${HEAD_NODE_IP}:6379"
+
+   在 head 节点执行 ``ray status`` 确认全部节点在线。配置中的 ``node_rank`` 与 controller rank 均为集群全局 rank（DAgger 默认为 ``node_rank: 1``、``left_controller_node_rank: 1``、``right_controller_node_rank: 2``，且 ``node_rank`` 须属于 ``franka`` node group）。
+
+一键上手
+--------
+
+.. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: 机器人 / 环境节点
+   .. tab-item:: 1. 安装与启动 PICO
 
-      双臂 Franka 始终通过 Franky 控制机械臂。预编译 wheel 仅支持 x86_64 下的 libfranka ``0.15.0`` 和 ``0.19.0``\ （默认）；按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 选择与固件匹配的 ``LIBFRANKA_VERSION``\ （其他固件版本需自行构建 wheel 并通过 ``FRANKY_WHEEL`` 传入）。``franka`` 环境同时安装相机、输入设备和 ``pyzmq``，PICO / XRoboToolkit 安装见 :doc:`franka_vr`。
+      **机器人 / 环境节点**\ （每台直连 Franka 的机器）：预编译 Franky wheel 在 x86_64 上内置 libfranka ``0.15.0`` 或 ``0.19.0``\ （默认）；按 Franka 官方 `兼容性表 <https://frankarobotics.github.io/docs/compatibility.html>`_ 匹配 ``LIBFRANKA_VERSION``\ （其他固件版本可通过 ``FRANKY_WHEEL`` 传入自编译 wheel）。``franka`` 环境已包含相机、输入设备与 ``pyzmq`` 依赖，PICO / XRoboToolkit 安装见 :doc:`franka_vr`。
 
       .. code-block:: bash
 
@@ -113,315 +127,121 @@ PICO 的 A/B/X/Y 只开合夹爪。按键时序写在「执行采集」和「执
          export LIBFRANKA_VERSION=0.19.0
          bash requirements/install.sh embodied --env franka && source .venv/bin/activate
 
-   .. tab-item:: 训练与 Rollout 节点
-
-      在运行在线 DAgger actor 和 rollout 的 GPU 推理 / 训练节点安装 OpenPI 环境：
+      **训练与 Rollout 节点**\ （在线 DAgger GPU 节点）：
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env maniskill_libero && source .venv/bin/activate
 
-Ray 节点布局
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      **启动 PICO 数据流并在 env 节点验流**\ （确认数据正常后再启用机械臂）：
 
-采集配置使用一台主机。两台机械臂使用不同的 FCI IP，可以直连到这台主机（每台机械臂一根网线接到主机的一块网卡），也可以经过交换机（两台机械臂和主机接在同一台交换机上）。两个夹爪和三路相机都在 rank ``0``，``left_controller_node_rank``、``right_controller_node_rank`` 和 ``node_rank`` 都是 ``0``。采集前不要执行 ``ray start``，启动脚本会自己拉起本地 Ray。两台机械臂分到两台机器时，把 ``num_nodes`` 设为 2，两台机器放在同一个 node group，``node_rank`` 和 ``left_controller_node_rank`` 设为 env 所在机器（通常是 ``0``），``right_controller_node_rank`` 设为另一台（通常是 ``1``）。这种拆分用下面「集群设置」里的 Ray 启动步骤，不要套用后面的三节点 DAgger 表。
+      .. code-block:: bash
 
-.. list-table::
-   :header-rows: 1
-   :widths: 18 32 50
+         # publisher 机器终端 1：启动 XRoboToolkit PC Service
+         (cd /opt/apps/roboticsservice && bash runService.sh)
 
-   * - Rank
-     - 角色
-     - 注意事项
-   * - ``0``
-     - 双臂控制、env worker、三路相机、PICO consumer
-     - 需要键盘或脚踏，以及本机可达的 PICO ZeroMQ 地址。
+         # publisher 机器终端 2（在 pico_software 目录下）：启动 VR 数据发布进程
+         source XRoboToolkit-Teleop-Sample-Python/.venv/bin/activate
+         python -m vr_data_publisher --config configs/vr_bridge.yaml
 
-在线 DAgger 配置使用三个节点：
+         # env 节点（在 RLinf 根目录且 .venv 已激活；将 IP:端口 替换为 publisher 地址）
+         export PYTHONPATH=$PWD:${PYTHONPATH:-}
+         python toolkits/realworld_check/test_pico_data.py \
+             --zmq-addr tcp://192.168.1.20:5555
 
-.. list-table::
-   :header-rows: 1
-   :widths: 18 32 50
+      确认终端输出持续刷新，且按下 ``grip``、``trigger``、``A/B`` 与 ``X/Y`` 时数值变化后再继续。
 
-   * - Rank
-     - 角色
-     - 注意事项
-   * - ``0``
-     - inference / rollout / actor
-     - 通常为 GPU 节点，运行 OpenPI。
-   * - ``1``
-     - 左臂控制、env worker、三路相机、PICO consumer
-     - 需要键盘或脚踏。``ray start`` 前导出 ``RLINF_KEYBOARD_DEVICE``。PICO ZeroMQ 地址须可达。
-   * - ``2``
-     - 右臂控制
-     - 只需要右臂 Franka / Robotiq 控制链路。
+   .. tab-item:: 2. 采数与准备权重
 
-.. warning::
+      **启动 PICO 双臂采集**\ （在单机机器人主机上先激活 Python 3.11 虚拟环境；若有旧 Ray 集群先执行 ``ray stop --force``）：
 
-   Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。请在启动 Ray 前完成 ``source .venv/bin/activate``、``PYTHONPATH``、``RLINF_NODE_RANK`` 以及 Franka 专用环境变量的配置。设置了 ``keyboard_device`` 时，路径直接传给监听器。该字段未设置时，监听器读取 ``RLINF_KEYBOARD_DEVICE``，并且不会改写进程环境变量。DAgger 配置没有这一项，env 所在节点仍要在 ``ray start`` 前导出键盘或脚踏设备。
+      .. code-block:: bash
 
-集群设置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         bash examples/embodiment/collect_data.sh realworld_dual_franka_collect_data_pico
 
-单机采集跳过这一节。启动脚本会自己拉起本地 Ray，不要执行 ``ray start``。下面的步骤在 DAgger 或多机采集拆到多台机器上时使用。
+      **采集操作步骤：**
 
-在这种多机拆分之前，需要先正确地搭建 Ray 集群。
+      1. 戴好头显面向工作台正前方，扣下 ``trigger`` 完成操作者基准标定。
+      2. 在 USB 键盘或脚踏上按 ``a`` 开始录制（1.5 秒内误触忽略，之后再按中止并丢弃缓存）；按 ``b`` 递增 ``segment_id``\ （1 秒防抖）；按 ``c`` 标记成功并写入 LeRobot shard。
+      3. 按住左 / 右手 ``grip`` 接管对应机械臂（松开后保持当前 TCP），用 ``X/Y`` 控制左夹爪、``A/B`` 控制右夹爪。
 
-.. warning::
-  这一步非常关键，请谨慎操作！任何细微的配置错误，都可能导致依赖缺失或无法正确控制机器人。
+      数据默认写入 ``logs/<timestamp>/`` 下的 ``demo_buffer/`` 与 ``lerobot_dataset/rank_0/id_0/``\ （无图形界面保持 ``enable_camera_player: False``；需多次续写时设 ``data_collection.resume: True`` 并将 ``data_collection.save_dir`` 改为固定路径）。
 
-RLinf 使用 ray 来管理分布式环境，这意味着：
-当你在某个节点上执行 `ray start` 时，ray 会记录当时的 Python 解释器路径和相关环境变量；
-之后在该节点上由 ray 启动的所有进程都会继承同一套 Python 环境与环境变量。
+      **准备 OpenPI π₀.₅ checkpoint**\ ：按 :doc:`dual_franka` 中的 SFT 与部署权重准备步骤执行。PICO 采集已直接记录 ``tcp_rot6d`` 动作，跳过 ``backfill_tcp_rot6d.py``。随后在 ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml`` 中配置权重路径（rollout 自动沿用 ``actor.model.model_path``）：
 
-我们提供了脚本 ``ray_utils/realworld/setup_before_ray.sh``，
-用于在每个节点启动 ray 之前帮助你统一设置环境。你可以根据自己的环境修改该脚本，并在每个节点上 source 它。
+      .. code-block:: yaml
 
-该脚本主要负责以下内容：
+         actor:
+           model:
+             model_path: /path/to/deploy/global_step_N
+             openpi_data:
+               repo_id: your_repo/tcp_rot6d_v1
 
-1. 在使用自定义环境安装方式时，source 正确的虚拟环境；
+   .. tab-item:: 3. 启动在线 HG-DAgger
 
-2. 在 Franka 控制节点上，加载 Franka / Robotiq / 相机所需的运行环境；
+      确认三节点 Ray 集群已就绪（见“硬件与安全准备”中的多机集群折叠项），在 head 节点启动在线训练：
 
-3. 在所有节点上设置 RLinf 相关环境变量（按各节点替换 ``RLINF_NODE_RANK`` 和网卡名）：
+      .. code-block:: bash
 
-.. code-block:: bash
+         bash examples/embodiment/run_realworld_async.sh realworld_dual_franka_dagger_openpi
 
-   export PYTHONPATH=$PWD:$PYTHONPATH
-   export RLINF_NODE_RANK=0
-   export RLINF_COMM_NET_DEVICES=eth0  # 如果只有一个网卡可以省略
+      **运行期按键与接管：**
 
-其中 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``，用来在配置文件中唯一标识每个节点。DAgger 的 env 节点没有 ``keyboard_device``，需要在 ``ray start`` 前导出键盘或脚踏：
+      * ``a``：从 idle 状态启动一次自主 rollout。
+      * 左 / 右手 ``grip``：接管对应机械臂，另一侧继续执行 policy；任一侧按下即合成为 20 维 ``[PICO 10D, rollout 10D]`` 记录并标记为接管帧。
+      * ``b``：标记失败，丢弃当前 rollout 并复位。
+      * ``c``：标记成功，将完整回合发送给 actor 归档为在线 LeRobot shard 并复位。
 
-.. code-block:: bash
+      每回合复位后环境等待再次按 ``a``。actor 保留完整成功轨迹，但训练仅采样所有非 padding 帧均带接管标记的 action chunk。
 
-   export RLINF_KEYBOARD_DEVICE=/dev/input/by-id/usb-KEYBOARD-event-kbd
+.. dropdown:: 硬件占位符与 PICO 配置
 
-采集配置 ``N=1``，两台机械臂都在这一台主机上：rank ``0`` 同时运行双臂控制器、env、三路相机和 PICO consumer。不要执行 ``ray start``。如果 ``ray status`` 还能看到上次留下的集群，先执行 ``ray stop --force``，避免启动脚本连上那个集群。DAgger 配置 ``N=3``：rank ``0`` 为 OpenPI inference / actor，rank ``1`` 为左臂 / env / PICO consumer，rank ``2`` 为右臂。这些都是集群 rank，不是 node group 内的下标。DAgger 硬件条目写 ``node_rank: 1``、``left_controller_node_rank: 1``、``right_controller_node_rank: 2``。``node_rank`` 是 env 节点，必须落在 franka 这个 node group 里。只有某条臂接到了别的机器上，才改对应的 controller rank。
+   主要配置文件：
 
-多机运行时，按下面的方式在各节点启动 Ray。单机采集跳过这一步：
+   * ``examples/embodiment/config/realworld_dual_franka_collect_data_pico.yaml``\ （PICO 采集，默认三路 ``realsense``）
+   * ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml``\ （三节点在线 HG-DAgger，默认底座 ``realsense`` + 双腕 ``lumos``）
+   * ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``\ （双臂 ``tcp_rot6d`` 共享默认配置）
 
-其中 ``HEAD_NODE_IP`` 为 head 节点的 IP 地址，**必须** 能被集群中其他节点访问（替换为实际 IP）：
+   按工作站替换 ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``、``BASE_CAMERA_SERIAL`` / ``LEFT_CAMERA_SERIAL`` / ``RIGHT_CAMERA_SERIAL``\ （RealSense 填 librealsense ASIC serial，Lumos 填 ``/dev/v4l/by-id`` 路径）、``left_gripper_type`` / ``right_gripper_type``、``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``、``keyboard_device``\ （采集配置）、``TASK_DESCRIPTION``、``joint_reset_qpos``\ （DAgger）和 ``target_ee_pose``\ （须落在 TCP 限位盒内，例如 ``[0.5, ±0.2, 0.5, -3.14, 0, 0]``）。
 
-.. code-block:: bash
+   ``teleop`` 为按臂绑定的列表，``pico.hand: dual`` 将左右手柄分别对应左右臂。采集在 ``env.eval`` 中设 ``hold_current_when_inactive: True``\ （松开 ``grip`` 保持当前 TCP）；DAgger 在 ``env.train`` 中设 ``hold_current_when_inactive: False``\ （松开 ``grip`` 继续执行 rollout 动作）。跨机通信时，publisher 绑定 ``tcp://0.0.0.0:<port>``，consumer 的 ``zmq_addr`` 填 ``tcp://<vr_publisher_ip>:<port>``\ （切勿填 ``0.0.0.0``）。
 
-   # 在 head 节点（节点 rank 0）上
-   export HEAD_NODE_IP=192.168.1.10
-   ray start --head --port=6379 --node-ip-address="$HEAD_NODE_IP"
+   .. code-block:: yaml
 
-   # 在 worker 节点（节点 rank 1 ~ N-1）上
-   export HEAD_NODE_IP=192.168.1.10
-   ray start --address="${HEAD_NODE_IP}:6379"
+      env:
+        eval:
+          teleop:
+            - {pico: {drives: left}}
+            - {pico: {drives: right}}
+          keyboard_device: null  # 或 /dev/input/by-id/usb-...-event-kbd
+          keyboard_reward_wrapper: start_end
+          pico:
+            zmq_addr: "ipc:///tmp/vr_data.ipc"
+            hand: "dual"
+            hold_current_when_inactive: True
+            control_trigger: "grip"
+            calibration:
+              button: "trigger"
 
-可以通过执行 `ray status` 来检查集群是否已正确启动。
+.. dropdown:: 机械臂柔顺性参数（可选）
 
+   采集配置在硬件条目中设置了双臂共用的 ``compliance``\ （平移刚度 1000 N/m、旋转刚度 56 Nm/rad、平移限幅 0.024 m、旋转限幅 0.15 rad、每步平移上限 0.06 m、每步旋转上限 0.15 rad、默认 ``max_delta_tau`` 为 0.3 N·m/控制周期）。带 Robotiq 负载时，10 Hz 下 ``max_step: 0.03`` 可能触发 ``joint_velocity_violation``，出现时调小 ``max_step``。DAgger 配置省略此项并使用 Franky 默认值，如需与采集手感一致可将同一段复制到 DAgger 硬件条目。默认值与复位影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。
 
-配置
-----------------------------------------
+   填写单侧 ``left_compliance`` 或 ``right_compliance`` 会替换该臂的共享参数，未写字段回退为 Franky 默认值（``{}`` 表示全部使用后端默认值）：
 
-主要配置文件
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. code-block:: yaml
 
-.. list-table::
-   :header-rows: 1
-   :widths: 44 56
+      compliance:
+        translational_stiffness: 900.0
+      left_compliance:
+        max_step: 0.02
 
-   * - 配置
-     - 用途
-   * - ``examples/embodiment/config/realworld_dual_franka_collect_data_pico.yaml``
-     - PICO 双臂 tcp_rot6d 数据采集。
-   * - ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml``
-     - PICO 人工接管的在线 HG-DAgger。
-   * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
-     - 双臂 TCP-rot6d 真机环境默认配置。
+   这些笛卡尔参数同时作用于 DAgger 中的 policy 目标，不影响 GELLO 关节遥操作。
 
-硬件占位符
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. dropdown:: 在线 HG-DAgger 进阶配置（可选）
 
-在采集和 DAgger 配置中替换以下字段：
-
-* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``：左右臂 FCI IP。
-* ``BASE_CAMERA_SERIAL``、``LEFT_CAMERA_SERIAL``、``RIGHT_CAMERA_SERIAL``：RealSense 用 librealsense 的 ASIC serial，不是 V4L USB serial。Lumos 腕部改用该相机的 ``/dev/v4l/by-id`` 路径。
-* ``base_camera_type``、``left_camera_type``、``right_camera_type``：采集示例三路都是 ``realsense``。DAgger 示例的底座是 ``realsense``，左右腕是 ``lumos``。图像落到错误的手臂上时，对调对应 serial。
-* ``left_gripper_type`` / ``right_gripper_type``：左右夹爪类型。
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定 ``/dev/serial/by-id`` 路径。
-* ``keyboard_device``：采集配置里的 evdev 节点；留空则使用 ``RLINF_KEYBOARD_DEVICE``。按键来自这台 USB 键盘或脚踏，不来自采集终端。
-* ``left_controller_node_rank`` / ``right_controller_node_rank`` / ``node_rank``：采集示例三者都是 ``0``。DAgger 示例分别是集群 rank ``1``、``2``、``1``。``node_rank`` 是 env 节点，必须落在 franka node group 内；两侧 controller rank 是接该臂的那台机器的集群 rank。
-* ``TASK_DESCRIPTION``：采集和 DAgger 使用的任务文本，应与 checkpoint 训练时一致。
-* ``joint_reset_qpos``：采集配置不写这一项，reset 使用环境默认关节位。DAgger 配置里的全零占位要换成数据集首帧关节均值或安全 home。它是每臂 7 个关节角，不是 ``target_ee_pose``。
-* ``target_ee_pose``：每臂 ``[x, y, z, roll, pitch, yaw]``。xyz 必须落在共享环境 ``realworld_dual_franka_tcp_rot6d`` 的限位内：x ∈ [0.3, 0.9]，y ∈ [-0.4, 0.4]，z ∈ [0.02, 0.7]。示例 ``[0.5, ±0.2, 0.5, -3.14, 0, 0]`` 在这个盒子里。
-
-PICO 配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-采集配置中 PICO consumer 地址位于 ``env.eval.pico.zmq_addr``；DAgger 配置中位于 ``env.train.pico.zmq_addr``。该地址必须与 publisher 绑定地址匹配。采集和 DAgger 示例都默认 ``ipc:///tmp/vr_data.ipc``，即 publisher 和 env worker 在同一台机器。
-
-``teleop`` 是按臂绑定的列表，不是单个 ``pico``。``pico.hand: dual`` 让左右手柄分别对应左右臂。
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       teleop:
-         - {pico: {drives: left}}
-         - {pico: {drives: right}}
-       keyboard_device: null  # 或 /dev/input/by-id/usb-...-event-kbd
-       keyboard_reward_wrapper: start_end
-       pico:
-         zmq_addr: "ipc:///tmp/vr_data.ipc"
-         hand: "dual"
-         hold_current_when_inactive: True
-         control_trigger: "grip"
-         calibration:
-           button: "trigger"
-
-DAgger 把同一段 ``teleop`` 列表和 ``pico`` 放在 ``env.train``，并设置 ``hold_current_when_inactive: False``、``keyboard_reward_wrapper: eval_control``。跨机器时，publisher 绑定 ``tcp://0.0.0.0:<port>``，consumer 填写 ``tcp://<vr_publisher_ip>:<port>``，不要把 ``0.0.0.0`` 写到 consumer 配置里。
-
-默认手柄语义：
-
-.. code-block:: text
-
-   左手 grip -> 接管左臂
-   右手 grip -> 接管右臂
-   左手 X/Y   -> 关 / 开左夹爪
-   右手 A/B   -> 关 / 开右夹爪
-   trigger    -> 以当前头显朝向重新标定 operator base
-
-采集和 DAgger 的 ``hold_current_when_inactive`` 语义不同：
-
-* 采集配置为 ``True``：未按 ``grip`` 的手臂保持当前 TCP，适合纯遥操作数据采集。
-* DAgger 配置为 ``False``：未按 ``grip`` 的手臂保留 rollout action；按下任意一侧 ``grip`` 时，只用对应侧的 PICO action 覆盖 policy 动作，另一侧仍保留 rollout action。
-
-双臂 DAgger 的接管与记录按臂合成。例如只接管左臂时，实际执行并写入 ``intervene_action`` 的 20D 动作为：
-
-.. code-block:: text
-
-   [左臂 PICO 10D action, 右臂 rollout 10D action]
-
-只接管右臂时则相反。任意一臂发生替换都会设置 ``intervene_flag=True``；只有两臂都未接管时才不会产生 intervention 记录。完整成功 episode 仍会由 online LeRobot collector 保存。启用 ``only_save_expert: True`` 后，sampler 使用 ``intervene_flag``，只暴露所有非 padding 帧均为人工纠正的 action chunk。
-
-
-机械臂柔顺性参数
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-采集配置在 ``DualFranka`` 硬件条目里写了两条臂共用的 ``compliance``：平移刚度 1000 N/m，旋转刚度 56 Nm/rad，平移限幅 0.024 m，旋转限幅 0.15 rad，每步平移上限 0.06 m，每步旋转上限 0.15 rad。``max_delta_tau`` 未设置，使用默认值 0.3 N·m/控制周期。``max_step`` 0.03 m（10 Hz）在带 Robotiq 负载时容易触发 ``joint_velocity_violation``；若当前负载和控制频率下出现此错误，应减小 ``max_step``。DAgger 配置没有这段 mapping，因此使用 Franky 默认值；要和采集手感一致，把同一段抄到 DAgger 的硬件条目。默认值和 reset 请求的影响见 :ref:`配置机械臂运动 <franka-motion-settings>`。
-
-单侧 mapping 会替换该机械臂使用的共享 mapping，其中未填写的字段使用 Franky 默认值。例如：
-
-.. code-block:: yaml
-
-   compliance:
-     translational_stiffness: 900.0
-   left_compliance:
-     max_step: 0.02
-
-这里右臂使用 900 N/m 的刚度和默认的 3 cm 目标变化上限；左臂使用默认的 1000 N/m 刚度和 2 cm 上限。不填写 ``left_compliance`` 时，左臂也使用共享 mapping；填写 ``left_compliance: {}`` 则让左臂全部使用 backend 默认值。``right_compliance`` 遵循相同规则。这些参数也作用于 DAgger 中的 policy 目标。GELLO 关节遥操作使用关节控制，不受这些 Cartesian 参数影响。
-
-
-启动 PICO 数据流
-----------------------------------------
-
-先在 PICO publisher 机器启动 XRoboToolkit PC Service，再启动 VR 数据发布进程。示例命令如下，具体安装路径见 :doc:`franka_vr`：
-
-.. code-block:: bash
-
-   cd /opt/apps/roboticsservice
-   bash runService.sh
-
-.. code-block:: bash
-
-   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
-   source .venv/bin/activate
-   cd /path/to/pico_software
-   python -m vr_data_publisher --config configs/vr_bridge.yaml
-
-在运行 env worker 的节点上验证 PICO 数据可达（将 IP 和端口替换为 PICO publisher 地址）：
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   source .venv/bin/activate
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python toolkits/realworld_check/test_pico_data.py \
-       --zmq-addr tcp://192.168.1.20:5555
-
-输出持续刷新，并且按下 ``grip``、``trigger``、``A/B``、``X/Y`` 时数值变化，才继续启动真机采集或 DAgger。
-
-
-采集 PICO 示教数据
-----------------------------------------
-
-执行采集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-确认左右 Franka、Robotiq、相机、``keyboard_device``、PICO 数据流都正常后，在这台机器上执行。采集脚本调用的是当前环境里的 ``python``，需要先激活 Python 3.11 虚拟环境；系统 ``/usr/bin/python`` 不能运行这份脚本。
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh realworld_dual_franka_collect_data_pico
-
-按键来自 ``keyboard_device``，不是终端，也不是 PICO A/B/X/Y：
-
-* ``a``：开始录制。开始后 1.5 秒内再按 ``a`` 会被忽略；之后再按则中止并丢弃 buffer。
-* ``b``：录制中递增 ``segment_id``。1 秒内的重复按下会被忽略，未在录制时按下也会被忽略。
-* ``c``：标记成功并写入 LeRobot shard。未在录制时按下会被忽略。
-
-PICO 操作：
-
-1. 戴好头显并面向工作台正前方。
-2. 扣下 ``trigger`` 完成 PICO base 标定。
-3. 按住左 / 右手 ``grip`` 分别接管左 / 右臂。
-4. 用 ``X/Y`` 控制左夹爪，用 ``A/B`` 控制右夹爪。
-5. 松开某只手的 ``grip`` 后，对应手臂保持当前 TCP。
-
-采集脚本会在 ``logs/<timestamp>/`` 下写出：
-
-* replay-buffer 轨迹：``demo_buffer/``
-* LeRobot 数据：``lerobot_dataset/rank_0/id_0/``，后续 shard 为 ``id_1``、``id_2``
-
-PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数据动作就是 tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``。无图形界面的 OpenCV 打不开预览，采集示例因此把 ``enable_camera_player`` 设为 ``False``。
-
-.. note::
-
-   配置中 ``data_collection.resume: True`` 只会在相同 ``save_dir`` 下续写。
-   ``collect_data.sh`` 默认每次创建新的 ``logs/<timestamp>``，若要多次追加到同一数据集，
-   请把 ``data_collection.save_dir`` 改为固定路径。
-
-
-准备 checkpoint
-----------------------------------------
-
-在线 DAgger 需要一个可部署的 OpenPI checkpoint。数据整理、norm stats、SFT
-和 checkpoint 目录准备请直接参考 :doc:`dual_franka` 中的 SFT 与部署 checkpoint
-流程。
-
-使用本页 PICO 采集的数据时，数据已经来自 ``realworld_dual_franka_tcp_rot6d`` 环境，
-不需要再执行 GELLO 关节数据流程中的 ``backfill_tcp_rot6d.py``。
-
-完成 checkpoint 准备后，在 ``examples/embodiment/config/realworld_dual_franka_dagger_openpi.yaml`` 中设置 ``actor.model.model_path``\ （rollout 会自动沿用同一路径）和 ``openpi_data.repo_id``：
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       model_path: /path/to/deploy/global_step_N
-       openpi_data:
-         repo_id: your_repo/tcp_rot6d_v1
-
-
-运行在线 HG-DAgger
-----------------------------------------
-
-确认 DAgger Ray 集群已经启动后，在 head 节点启动在线训练：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_async.sh realworld_dual_franka_dagger_openpi
-
-.. dropdown:: 进阶配置（可选）
-
-   仓库自带的 ``realworld_dual_franka_dagger_openpi.yaml`` 已启用在线 LeRobot 归档、``smooth_intervene``、双臂 PICO 接管与纯策略评测：
+   ``realworld_dual_franka_dagger_openpi.yaml`` 已默认启用在线 LeRobot 归档、``smooth_intervene``、双臂 PICO 接管与纯 policy 评测：
 
    .. code-block:: yaml
 
@@ -453,53 +273,28 @@ PICO 双臂采集已经使用 ``realworld_dual_franka_tcp_rot6d`` 环境，数�
         eval:
           teleop: none
 
-   ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入滚动 LeRobot 数据集训练，因此在线训练不再使用 trajectory replay buffer。
+   * ``online_lerobot.enabled: True`` 将过滤后的回合直接送入 actor 滚动 LeRobot 数据集（归档于 ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``）。
+   * ``smooth_intervene: True`` 消除接管期间 action chunk 边界停顿：若 chunk 末帧仍由人工接管，则跳过下一次推理并继续输出兼容动作，要求 ``env.train.teleop`` 全部为 ``pico`` 且每个 pipeline stage 仅运行一个环境。
+   * ``only_success: True`` 丢弃失败回合；``only_save_expert: True`` 只采样所有非 padding 帧均带 ``intervene_flag=True`` 的 chunk；``env.eval.teleop: none`` 保证评测阶段纯 policy 运行。因人工接管来自 PICO 而无 ``rollout.expert_model``，配置省略 beta 相关字段。
 
-   ``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式要求 ``env.train.teleop`` 每一项均为 pico，且每个 env worker pipeline stage 只运行一个环境。
+结果与常见问题
+--------------
 
-   ``only_success: True`` 会丢弃失败 rollout，只保存成功 episode；``only_save_expert: True`` 仍归档完整成功 episode，但训练只采样 action chunk 内所有非 padding 帧均满足 ``intervene_flag=True`` 的起点。双臂任意一臂被替换时该帧即标记为接管，因此这类 chunk 可能由一侧 PICO action 与另一侧 rollout action 共同组成。每个成功 episode 会立即归档到 ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``。``env.eval.teleop: none`` 表示评测阶段只运行策略本身，不混入人工接管。
+运行 ``tensorboard --logdir ./logs`` 监控 ``train/dagger/actor_loss``、``train/lerobot_dataset/total_episodes``、``train/lerobot_dataset/physical_frames``、``train/lerobot_dataset/logical_samples``、``train/lerobot_dataset/num_sub_datasets``、``train/actor/lr`` 与 ``train/actor/grad_norm``。日志位于 ``logs/<timestamp>/run_embodiment.log``，在线 DAgger shard 归档在 ``logs/<timestamp>-realworld_dual_franka_dagger_openpi/online_lerobot/rank_0/``。
 
-   真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；这里的人工接管由 PICO intervention wrapper 决定。
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-运行中的操作方式：
-
-* ``a``：从 idle 状态启动一次策略 rollout。
-* 左 / 右手 ``grip``：接管对应机械臂；未接管的手臂继续执行策略动作。
-* ``b``：标记失败并结束当前 rollout。
-* ``c``：标记成功并结束当前 rollout。
-
-每次 episode 结束后，env 会 reset 并再次等待 ``a``。策略执行中只在需要纠正时按住
-``grip``，松开后让策略继续运行。按住任意一侧 ``grip`` 时，该侧 PICO action 与
-另一侧 rollout action 会合成为完整 20D ``info["intervene_action"]``。成功结束后，
-整条 episode 经内存发送给 actor，并写入 online LeRobot shard；失败 episode 被丢弃。
-actor 保留完整物理归档，但只向训练暴露全程带接管标记的 action chunk。
-
-监控
-----------------------------------------
-
-启动 TensorBoard：
-
-.. code-block:: bash
-
-   tensorboard --logdir ./logs
-
-推荐关注：
-
-* ``train/dagger/actor_loss``：基于 expert-only action chunk 的监督损失。
-* ``train/lerobot_dataset/total_episodes``：actor 已接收的成功 episode 数量。
-* ``train/lerobot_dataset/physical_frames``：已接收的 LeRobot 物理帧数量。
-* ``train/lerobot_dataset/logical_samples``：rolling window 内符合专家条件、可训练的 chunk 起点数。
-* ``train/lerobot_dataset/num_sub_datasets``：当前加载的 LeRobot shard 数量。
-* ``train/actor/lr`` 和 ``train/actor/grad_norm``：训练稳定性。
-
-采集和在线 DAgger 阶段都可以查看 ``logs/<timestamp>/run_embodiment.log``，确认成功
-episode 计数和 LeRobot 写出路径。在线 DAgger shard 位于
-``logs/<timestamp>-realworld_dual_franka_dagger_openpi/online_lerobot/rank_0/``。
-
-
-故障排查
-----------------------------------------
-
-**DAgger 等待时间过长未启动**
-   这是 ``keyboard_reward_wrapper: eval_control`` 的预期行为。若 DAgger 运行后长时间
-   等待未开始，在 USB 键盘或脚踏上按 ``a`` 启动 rollout。
+   * - 现象
+     - 处理方法
+   * - DAgger 启动后长时间等待
+     - ``keyboard_reward_wrapper: eval_control`` 的预期行为；在 USB 键盘或脚踏上按 ``a`` 启动 rollout。
+   * - 回合按键无响应
+     - 确认按键来自 ``keyboard_device`` / ``RLINF_KEYBOARD_DEVICE`` 对应的 USB 键盘或脚踏（SSH 终端与 PICO 正面按键无效），且 DAgger 需在 ``ray start`` 前导出该环境变量。
+   * - ``test_pico_data.py`` 收不到数据
+     - 检查 XRoboToolkit PC Service 与 ``vr_data_publisher`` 是否运行，并将 ``zmq_addr`` 设为可达的 publisher IP（勿填 ``0.0.0.0``）。
+   * - 快速运动触发 ``joint_velocity_violation``
+     - 针对当前 Robotiq 负载与 10 Hz 控制频率调小 ``compliance.max_step``\ （或单侧 ``left_compliance`` / ``right_compliance``）。
+   * - 单机采数误连到旧 Ray 集群
+     - 启动 ``collect_data.sh`` 前执行 ``ray stop --force``，并确认已激活 Python 3.11 虚拟环境。

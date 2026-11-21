@@ -4,7 +4,7 @@ SIMPLE 评测
 概览
 ----
 
-通过 RLinf 在 SIMPLE 的八个 G1 人形全身 Teleop 任务上评测 Psi0，每个任务使用对应的 checkpoint、reset states 与 HSSD 场景。八个任务均运行在 ``mujoco_isaac``\ （50 Hz 渲染、200 Hz 物理与 30/24/6 RTC 协议），并输出 ``eval/success``。
+在 SIMPLE 的八个 G1 人形全身 Teleop 任务上评测 Psi0，每个任务使用对应的 checkpoint、reset states 与 HSSD 场景。八个任务均运行在 ``mujoco_isaac``\ （50 Hz 渲染、200 Hz 物理与 30/24/6 RTC 协议），并输出 ``eval/success``。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -38,44 +38,48 @@ SIMPLE 评测
 一键上手
 --------
 
-先完成 :doc:`Psi0 指南 </rst_source/examples/embodied/psi0>` 第 1–4 步的共用准备（Docker 见 :ref:`第 1 步 <psi0-setup-env>`）：:ref:`下载 Qwen Metadata <psi0-qwen-metadata>`\ （使用 ``HF_HOME``，不使用 ``--local-dir``）、:ref:`下载仿真资源 <simple-sim-assets>` 到 ``SIMPLE_ASSETS_DIR``，并将资源 :ref:`链接 <simple-link-assets>` 到 ``${VIRTUAL_ENV}/SIMPLE/data``。
+先按 :doc:`Psi0 指南 </rst_source/examples/embodied/psi0>` 完成共用准备：:ref:`环境或 Docker 配置 <psi0-setup-env>`、:ref:`下载 Qwen3-VL 元数据 <psi0-qwen-metadata>`\ （通过 ``HF_HOME`` 缓存，不使用 ``--local-dir``）、将 :ref:`SIMPLE 仿真资源 <simple-sim-assets>` 下载到 ``SIMPLE_ASSETS_DIR``，并 :ref:`软链资源 <simple-link-assets>` 到 ``${VIRTUAL_ENV}/SIMPLE/data``。
 
 中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::
 
-   .. tab-item:: Psi0 + SIMPLE（默认 OpenOven）
+   .. tab-item:: 单条轨迹快测（DR0）
+
+      **1. 安装**
 
       .. code-block:: bash
 
-         # 1. 安装
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
 
-         # 2. 下载任务 checkpoint、reset 数据与 HSSD 场景
+      **2. 下载任务资源**
+
+      下载 OpenOven checkpoint、reset 数据与对应 HSSD 场景（依赖 Psi0 指南中导出的 ``SIMPLE_ASSETS_DIR`` 与 ``HF_HOME``）：
+
+      .. code-block:: bash
+
          export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
          export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
          export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
          export SIMPLE_SCENE=102344280
 
-         mkdir -p "${PSI0_ARTIFACT_ROOT}"
          hf download USC-PSI-Lab/psi-model \
            "${PSI0_RUN_REL}/argv.txt" \
            "${PSI0_RUN_REL}/run_config.json" \
            "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
            --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
-           --local-dir "${PSI0_ARTIFACT_ROOT}/psi-model"
+           --local-dir ./psi0-simple-artifacts/psi-model
 
          hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
            --repo-type dataset \
            --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
-           --local-dir "${PSI0_ARTIFACT_ROOT}/psi-data"
+           --local-dir ./psi0-simple-artifacts/psi-data
 
          export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
          export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
          mkdir -p "${SIMPLE_RESET_DIR}"
-         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" \
-           -d "${SIMPLE_RESET_DIR}"
+         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
 
          hf download USC-PSI-Lab/SIMPLE "scenes_hssd_${SIMPLE_SCENE}.zip" \
            --repo-type dataset \
@@ -83,27 +87,73 @@ SIMPLE 评测
          unzip -o -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip" -d "${SIMPLE_ASSETS_DIR}"
          rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip"
 
-         # 3. 启动评测（1 条轨迹，DR0）
+      **3. 启动评测**
+
+      .. code-block:: bash
+
          bash evaluations/run_eval.sh simple simple_psi0_eval \
            rollout.model.model_path="${PSI0_RUN_DIR}" \
            env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}"
 
+   .. tab-item:: 完整三档 DR（30 条轨迹）
+
+      在三个域随机化（DR）档位各运行 10 条轨迹，并分别报告三个 level 的成功率。
+
+      **1. 安装**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model psi0 --env simple && source .venv/bin/activate
+
+      **2. 下载任务资源**
+
+      下载 OpenOven checkpoint、reset 数据与 HSSD 场景（与单条轨迹快测相同）：
+
+      .. code-block:: bash
+
+         export PSI0_ARTIFACT_ROOT=./psi0-simple-artifacts
+         export SIMPLE_TASK=G1WholebodyOpenOvenTeleop-v0
+         export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
+         export SIMPLE_SCENE=102344280
+
+         hf download USC-PSI-Lab/psi-model \
+           "${PSI0_RUN_REL}/argv.txt" \
+           "${PSI0_RUN_REL}/run_config.json" \
+           "${PSI0_RUN_REL}/checkpoints/ckpt_40000/model.safetensors" \
+           --revision d34a91932d25c45ef211582315b9224c7dc8ace9 \
+           --local-dir ./psi0-simple-artifacts/psi-model
+
+         hf download USC-PSI-Lab/psi-data "simple-eval/${SIMPLE_TASK}.zip" \
+           --repo-type dataset \
+           --revision 6eeff2d02fdaac5dd4f3e84244fc83d3fad2c203 \
+           --local-dir ./psi0-simple-artifacts/psi-data
+
+         export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
+         export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
+         mkdir -p "${SIMPLE_RESET_DIR}"
+         unzip -q "${PSI0_ARTIFACT_ROOT}/psi-data/simple-eval/${SIMPLE_TASK}.zip" -d "${SIMPLE_RESET_DIR}"
+
+         hf download USC-PSI-Lab/SIMPLE "scenes_hssd_${SIMPLE_SCENE}.zip" \
+           --repo-type dataset \
+           --local-dir "${SIMPLE_ASSETS_DIR}"
+         unzip -o -q "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip" -d "${SIMPLE_ASSETS_DIR}"
+         rm "${SIMPLE_ASSETS_DIR}/scenes_hssd_${SIMPLE_SCENE}.zip"
+
+      **3. 启动评测**
+
+      .. code-block:: bash
+
+         for SIMPLE_DR_LEVEL in 0 1 2; do
+           bash evaluations/run_eval.sh simple simple_psi0_eval \
+             rollout.model.model_path="${PSI0_RUN_DIR}" \
+             env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}" \
+             env.eval.reset_dataset.dr_level="${SIMPLE_DR_LEVEL}" \
+             env.eval.reset_dataset.num_episodes=10 \
+             env.eval.rollout_epoch=10
+         done
+
 ``evaluations/simple/simple_psi0_eval.yaml`` 默认运行 OpenOven（1 条轨迹，DR0）。所有任务共用 ``PSI0_ARTIFACT_ROOT``；切换任务时按 :ref:`任务列表 <simple-tasks>` 同一行同步替换 ``SIMPLE_TASK``、``PSI0_RUN_REL`` 与 ``SIMPLE_SCENE``。
-
-.. dropdown:: 完整三档 DR 评测
-
-   在三个域随机化（DR）档位各运行 10 条轨迹（应分别报告三个 level；单条 smoke 或总成功数不能作为严格复现结论）：
-
-   .. code-block:: bash
-
-      for SIMPLE_DR_LEVEL in 0 1 2; do
-        bash evaluations/run_eval.sh simple simple_psi0_eval \
-          rollout.model.model_path="${PSI0_RUN_DIR}" \
-          env.eval.reset_dataset.path="${SIMPLE_RESET_DIR}" \
-          env.eval.reset_dataset.dr_level="${SIMPLE_DR_LEVEL}" \
-          env.eval.reset_dataset.num_episodes=10 \
-          env.eval.rollout_epoch=10
-      done
 
 .. _simple-tasks:
 
@@ -213,7 +263,7 @@ SIMPLE 评测
       export PSI0_RUN_REL=psi0/simple-checkpoints/g1wholebodyopenoventeleop-v0.simple.flow1000.cosine.lr1.0e-04.b128.gpus8.2605120604
       export PSI0_RUN_DIR="${PSI0_ARTIFACT_ROOT}/psi-model/${PSI0_RUN_REL}"
       export SIMPLE_RESET_DIR="${PSI0_ARTIFACT_ROOT}/reset-states/${SIMPLE_TASK}"
-      export PSI0_PPO_CHECKPOINT=/absolute/path/to/global_step_20
+      export PSI0_PPO_CHECKPOINT=./logs/psi0_ppo/checkpoints/global_step_20
 
       bash evaluations/run_eval.sh simple simple_psi0_eval \
         rollout.model.model_path="${PSI0_RUN_DIR}" \

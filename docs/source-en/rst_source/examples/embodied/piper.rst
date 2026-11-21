@@ -1,30 +1,48 @@
 AgileX Piper Setup and Control
 ==============================
 
-This doc walks you through setting up an AgileX Piper arm and running the RLinf
-hardware test script to read feedback and check joint and gripper movement.
-
 .. figure:: https://raw.githubusercontent.com/agilexrobotics/piper_ros/noetic/asserts/pictures/piper_urdf_zero.png
    :align: center
    :width: 70%
 
    Piper arm and gripper model. Image: AgileX Robotics, piper_ros.
 
+Set up an AgileX Piper 6-DoF arm over Linux SocketCAN and verify joint and gripper feedback and motion with the RLinf hardware test script.
+
 Overview
 --------
 
-The test runs on the Linux machine connected to the arm. It requires no GPU or
-model checkpoint. RLinf does not yet provide a supported real-world task or
-training workflow for AgileX Piper; this guide covers hardware checks only.
+This guide covers hardware setup and motion checks on the Linux machine connected to the arm. No GPU or model checkpoint is required; RLinf does not ship a training task for AgileX Piper yet.
 
-Hardware Setup
---------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-Prepare the arm and controller machine before installing the software.
+   .. grid-item-card:: Robot
+      :text-align: center
+
+      AgileX Piper 6-DoF · AgxGripper
+
+   .. grid-item-card:: Sensors & Teleop
+      :text-align: center
+
+      Joint & TCP feedback · optional cameras
+
+   .. grid-item-card:: Workflow
+      :text-align: center
+
+      CAN bring-up · Read-only · Joint & gripper check
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Linux PC · USB-to-CAN (SocketCAN) · no GPU
+
+Hardware and Safety
+-------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 28 72
 
    * - Component
      - Requirement
@@ -33,20 +51,24 @@ Prepare the arm and controller machine before installing the software.
    * - Controller machine
      - Linux computer with a USB-to-CAN adapter in SocketCAN mode and a CAN cable to the arm.
 
-Mount the arm on a stable surface and leave space for small joint movements.
-Connect the power supply and CAN cable according to the manufacturer's wiring
-instructions before powering it on.
+Mount the arm on a stable surface with space for small joint moves, and connect power and CAN wiring according to the manufacturer's instructions before powering it on.
 
-Installation
-------------
+.. warning::
 
-Install the robot dependencies on the controller machine connected to the arm. Run subsequent commands from this checkout with the environment activated.
+   Connecting enables the motors even with ``--read-only``. Clear the workspace before connecting, and keep hands away during joint and gripper commands. Closing the test script is not an emergency stop and does not cut motor power.
+
+Setup and Run
+-------------
 
 .. include:: _setup_common.rst
 
 .. tab-set::
 
-   .. tab-item:: Piper
+   .. tab-item:: AgileX Piper
+
+      **1. Install RLinf**
+
+      Install the Piper runtime (includes the pinned ``pyAgxArm`` driver) on the controller machine connected to the arm:
 
       .. code-block:: bash
 
@@ -54,86 +76,68 @@ Install the robot dependencies on the controller machine connected to the arm. R
          bash requirements/install.sh embodied --env piper && source .venv/bin/activate
          export REPO_PATH="$PWD"
 
-The installer includes the pinned ``pyAgxArm`` driver for Piper; see
-:doc:`Installation </rst_source/start/installation>` for platform prerequisites.
+      **2. Bring up the SocketCAN interface**
 
-Prepare the CAN Connection
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+      Find the adapter with ``ip -brief link`` (normally ``can0``; replace below if yours differs), bring it up at 1 Mbit/s, and confirm five feedback frames arrive with the arm powered on:
 
-Find the SocketCAN interface with ``ip -brief link``. A USB-to-CAN adapter in
-SocketCAN mode normally appears as ``can0``; replace that name below if yours
-differs. Bring this interface up at 1 Mbit/s before opening the robot:
+      .. code-block:: bash
 
-.. code-block:: bash
+         sudo ip link set can0 down
+         sudo ip link set can0 type can bitrate 1000000
+         sudo ip link set can0 up
+         ip -details link show can0
+         candump -n 5 can0
 
-   sudo ip link set can0 down
-   sudo ip link set can0 type can bitrate 1000000
-   sudo ip link set can0 up
-   ip -details link show can0
+      The ``ip`` output should show an enabled interface at ``bitrate 1000000``. The SDK does not configure CAN; see the `pyAgxArm documentation <https://github.com/agilexrobotics/pyAgxArm>`__ for adapter setup.
 
-The output should show an enabled interface and ``bitrate 1000000``. With the
-arm powered on, run ``candump -n 5 can0`` to inspect five feedback frames. If it
-waits without receiving frames, press Ctrl+C and check the arm's power, CAN
-wiring, selected adapter, and bitrate before continuing. The SDK does not
-configure the CAN interface. Consult the
-`pyAgxArm documentation <https://github.com/agilexrobotics/pyAgxArm>`_ for adapter
-setup and supported hardware.
+      **3. Check feedback, joints, and gripper**
 
-Run It
-------
+      Read feedback first without sending position targets or resetting the arm (prints six joint angles in degrees, tool pose in metres plus xyzw quaternion, gripper opening in ``[0, 1]``, and detected firmware profile):
 
-With CAN configured and the arm powered on, read its feedback first:
+      .. code-block:: bash
 
-.. code-block:: bash
+         python -m toolkits.realworld_check.test_piper_controller \
+           --channel can0 --read-only
 
-   python -m toolkits.realworld_check.test_piper_controller \
-     --channel can0 --read-only
+      Add ``--gripper-max-width 0.1`` for an AgxGripper with a 0.1 m stroke, or ``--no-gripper`` if no gripper is fitted.
 
-The command prints six joint angles in degrees, a tool pose (position in metres
-and an xyzw quaternion), and the gripper opening in ``[0, 1]``, then exits.
-It enables the motors and reads feedback without sending a position
-target or resetting the arm. The detected firmware profile appears in the log.
-For an AgxGripper with a 0.1 m stroke, add ``--gripper-max-width 0.1``; for an arm
-without a gripper, add ``--no-gripper``.
+      Next, omit ``--read-only`` to test small movements at 10% speed:
 
-To test a small movement, omit ``--read-only`` and enter the commands below one
-at a time, waiting for the arm after each movement:
+      .. code-block:: bash
 
-.. code-block:: bash
+         python -m toolkits.realworld_check.test_piper_controller \
+           --channel can0 --speed-percent 10
 
-   python -m toolkits.realworld_check.test_piper_controller \
-     --channel can0 --speed-percent 10
+      Enter these commands one at a time, waiting for each move to finish:
 
-.. code-block:: text
+      .. code-block:: text
 
-   where
-   joint 1 2
-   where
-   joint 1 -2
-   grip 0.5
-   where
-   quit
+         where
+         joint 1 2
+         where
+         joint 1 -2
+         grip 0.5
+         where
+         quit
 
-``joint 1 2`` moves joint 1 by two degrees from its measured position. The
-script accepts joints 1 through 6 and increments within five degrees; the arm
-driver also clips targets to its travel. ``grip 0.5`` requests half the fitted
-gripper's stroke. ``where`` reads feedback, so repeat it after the gripper has
-settled. ``quit``, EOF, or Ctrl+C closes the CAN session and leaves the motors
-holding position.
+      ``joint 1 2`` steps joint 1 by 2 degrees (accepts joints 1–6 within 5 degrees, clipped to travel limits); ``grip 0.5`` requests half stroke; ``where`` reads updated feedback; ``quit``, EOF, or Ctrl+C closes the CAN session while motors hold position.
 
-.. warning::
+Results and Troubleshooting
+---------------------------
 
-   Connection enables the motors even with ``--read-only``. Clear the workspace
-   before connecting, and keep hands away during joint and gripper commands.
-   Closing the test is not an emergency stop and does not cut motor power.
+Setup is verified once ``candump -n 5 can0`` prints five frames, ``--read-only`` reports live joint and gripper readings, and ``where`` reflects the commanded 2-degree step and gripper move.
 
-To use the arm in your own program or attach cameras, see
-:doc:`Robotics Interface </rst_source/concepts/robotics>`.
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-New Real-World Tasks
---------------------
+   * - Symptom
+     - Fix
+   * - ``candump -n 5 can0`` blocks with no frames
+     - Press Ctrl+C and check arm power, CAN wiring, interface name from ``ip -brief link``, and ``bitrate 1000000``.
+   * - Gripper scaling mismatch or no gripper installed
+     - Pass ``--gripper-max-width 0.1`` for a 0.1 m AgxGripper stroke, or ``--no-gripper`` when running bare arm only.
+   * - Motors remain holding torque after ``quit``
+     - Expected behavior; use the arm's hardware power or emergency stop switch to cut motor power.
 
-After the hardware checks pass, follow
-:doc:`New Real-World Tasks </rst_source/extending/new_task>` to define a task's
-reset procedure, observations, actions, reward, and success condition. A working
-real-world task is required before starting training.
+To control Piper programmatically or attach cameras, see :doc:`Robotics Interface <../../concepts/robotics>`; to define a real-world task before training, see :doc:`New Real-World Tasks <../../extending/new_task>`.

@@ -1,16 +1,17 @@
 安装说明
 ========
 
-使用一行 ``requirements/install.sh`` 命令在本地 uv 虚拟环境中安装 RLinf，或前往 Docker Hub 拉取预构建镜像。
+使用 ``requirements/install.sh`` 在本地 ``uv`` 虚拟环境中一键安装 RLinf，或直接拉取 Docker Hub 预构建镜像。
 
-本地安装
---------
+安装与验证
+----------
 
-选择目标场景，直接复制运行完整安装命令：
+选择目标场景，直接复制运行完整安装与验证命令：
 
 .. tab-set::
 
-   .. tab-item:: 具身智能（Embodied）
+   .. tab-item:: 具身仿真（Embodied）
+      :sync: embodied
 
       以下为 ManiSkill3 快速上手的默认安装命令（其他模型与环境按下方表格替换 ``--model`` 与 ``--env``）：
 
@@ -18,15 +19,45 @@
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+         python -c "import rlinf; print(rlinf.__file__)" && ray --version
+
+   .. tab-item:: 真机机器人（Real-World）
+      :sync: realworld
+
+      在机器人控制节点安装驱动与传感器依赖（无需 GPU），在 GPU 节点安装模型与驱动（按需将 ``franka`` 替换为 ``arx5``、``yam``、``xsquare_turtle2``、``so101``、``piper``、``lekiwi``、``dosw1`` 或 ``gim_arm``，详见 :doc:`../examples/real_world_index`）：
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+
+         # 机器人控制节点（驱动与传感器）
+         bash requirements/install.sh embodied --env franka && source .venv/bin/activate
+
+         # GPU 训练 / 推理节点（或单机同配 GPU 与机器人）
+         bash requirements/install.sh embodied --model openpi --env franka && source .venv/bin/activate
 
    .. tab-item:: 智能体 / 推理（Agentic）
+      :sync: agentic
 
       .. code-block:: bash
 
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh agentic --engine sglang && source .venv/bin/activate
+         python -c "import rlinf; print(rlinf.__file__)" && ray --version
+
+   .. tab-item:: 预构建 Docker 镜像
+      :sync: docker
+
+      .. grid:: 1 1 1 1
+         :gutter: 2
+
+         .. grid-item-card:: Docker Hub — rlinf/rlinf
+            :link: https://hub.docker.com/r/rlinf/rlinf
+
+            在 Docker Hub 查看全部预构建镜像标签、容器启动命令与国内镜像站说明。
 
    .. tab-item:: 文档构建（Docs）
+      :sync: docs
 
       .. code-block:: bash
 
@@ -63,48 +94,29 @@
    * - ``--platform``
      - ``nvidia``\ （默认）、``amd``、``ascend``、``musa``、``kunlun``、``biren``、``metax``\ （详见 :ref:`硬件支持矩阵 <model-hardware-support>`）
 
-常用选项
---------
+.. dropdown:: 更多安装参数（可选）
 
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
+   .. list-table::
+      :header-rows: 1
+      :widths: 28 72
 
-   * - 参数
-     - 作用
-   * - ``--use-mirror``
-     - 使用中国大陆镜像源加速依赖与 GitHub 下载（运行 ``hf download`` 前也可设置 ``export HF_ENDPOINT=https://hf-mirror.com``）。
-   * - ``--venv <dir>``
-     - 指定虚拟环境目录（默认 ``.venv``）。
-   * - ``--python <version>``
-     - 按需指定 Python 版本（如 ``behavior`` 和 ``d4rl`` 需要 ``3.10``）。
-   * - ``--no-root``
-     - 跳过 ``sudo`` 系统库安装，适合已预装系统依赖的主机。
+      * - 参数
+        - 作用
+      * - ``--use-mirror``
+        - 使用中国大陆镜像源加速依赖与 GitHub 下载（运行 ``hf download`` 前也可设置 ``export HF_ENDPOINT=https://hf-mirror.com``）。
+      * - ``--venv <dir>``
+        - 指定虚拟环境目录（默认 ``.venv``）。
+      * - ``--python <version>``
+        - 按需指定 Python 版本（如 ``behavior`` 和 ``d4rl`` 需要 ``3.10``）。
+      * - ``--no-root``
+        - 跳过 ``sudo`` 系统库安装，适合已预装系统依赖的主机。
+      * - ``--no-flash-attn`` / ``--no-apex``
+        - 在不需要或无匹配 CUDA 编译工具链的主机上跳过 ``flash-attn`` 或 ``apex`` 编译。
 
-运行 ``bash requirements/install.sh --help`` 查看更多版本锁定参数。
+   运行 ``bash requirements/install.sh --help`` 查看全部版本覆盖参数。
 
-预构建 Docker 镜像
-------------------
-
-.. grid:: 1 1 1 1
-   :gutter: 2
-
-   .. grid-item-card:: Docker Hub — rlinf/rlinf
-      :link: https://hub.docker.com/r/rlinf/rlinf
-
-      在 Docker Hub 查看全部预构建镜像标签、容器启动命令与国内镜像站说明。
-
-验证安装
---------
-
-在当前环境中确认 RLinf 和 Ray 可用：
-
-.. code-block:: bash
-
-   python -c "import rlinf; print(rlinf.__file__)" && ray --version
-
-常见问题速查
-------------
+常见问题与下一步
+----------------
 
 .. list-table::
    :header-rows: 1
@@ -117,9 +129,23 @@
    * - Ray 残留或 NCCL 报错
      - 执行 ``ray stop`` 清理本机残留进程，详见 :ref:`CUDA 与显存问题 <faq-cuda>`。
 
-下一步
-------
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-- :doc:`运行 VLA 快速上手 <vla>`
-- :doc:`扩展到多机 <../guides/launch-scale/index>`
-- :doc:`打开速查表 <cheat_sheet>`
+   .. grid-item-card:: VLA 快速上手
+      :link: vla
+      :link-type: doc
+
+      四步在 ManiSkill3 上用 PPO 训练 OpenVLA 或 OpenVLA-OFT。
+
+   .. grid-item-card:: 扩展到多机集群
+      :link: ../guides/launch-scale/index
+      :link-type: doc
+
+      配置多 GPU 与多节点 Ray 集群部署。
+
+   .. grid-item-card:: 命令速查表
+      :link: cheat_sheet
+      :link-type: doc
+
+      安装、训练与评测的最短常用命令。

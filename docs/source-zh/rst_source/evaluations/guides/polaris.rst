@@ -32,7 +32,7 @@ PolaRiS 是基于 Isaac Sim 5.1.0 的桌面操作仿真平台，提供 TapeIntoC
 一键上手
 --------
 
-先按 :doc:`../../examples/embodied/polaris` 安装 Isaac Sim 5.1.0 并执行其 ``setup_conda_env.sh``。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
+先按 :doc:`../../examples/embodied/polaris` 安装 Isaac Sim 5.1.0，并在每个新终端中执行其 ``setup_conda_env.sh``。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
 
 .. tab-set::
 
@@ -70,23 +70,31 @@ PolaRiS 是基于 Isaac Sim 5.1.0 的桌面操作仿真平台，提供 TapeIntoC
          bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval \
            rollout.model.model_path=./RLinf-Pi0-Polaris-droid_jointpos
 
-.. dropdown:: 示例配置
+.. dropdown:: 示例配置与覆盖参数
 
    ``evaluations/polaris/`` 已有示例配置：
 
    .. list-table::
       :header-rows: 1
-      :widths: 44 30 26
+      :widths: 38 22 12 14 14
 
       * - 配置文件
         - 任务
         - 模型
+        - ``rollout_epoch``
+        - ``max_episode_steps``
       * - ``polaris_tapeintocontainer_openpi_pi05_eval.yaml``
         - TapeIntoContainer
         - π₀.₅
+        - 5
+        - 450
       * - ``polaris_movelattecup_openpi_eval.yaml``
         - MoveLatteCup
         - π₀
+        - 25
+        - 456
+
+   两个配置默认在 0 号 GPU 上以 ``total_num_envs: 1`` 运行，并将 ``open_loop_horizon`` 绑定为 ``${rollout.model.num_action_chunks}``\ （π₀.₅ 为 15，π₀ 为 8）。评测 RL 权重可传入 ``runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt``；评测其他 DROID 任务可复制任一 YAML 并将 ``env/polaris_droid_*@env.eval`` 切换为 :doc:`../../examples/embodied/polaris` 中的对应任务配置。
 
 结果与常见问题
 --------------
@@ -104,4 +112,6 @@ PolaRiS 是基于 Isaac Sim 5.1.0 的桌面操作仿真平台，提供 TapeIntoC
    * - checkpoint 格式不匹配
      - 若使用 JAX checkpoint，先按 :doc:`../../examples/embodied/polaris` 转换为 PyTorch 格式。
    * - Isaac Sim 导入或启动报错
-     - 安装 Isaac Sim 5.1.0 并在激活 ``.venv`` 与运行 ``run_eval.sh`` 前执行其 ``setup_conda_env.sh``。
+     - 安装 Isaac Sim 5.1.0，并在每个新终端激活 ``.venv`` 与运行 ``run_eval.sh`` 前执行其 ``setup_conda_env.sh``。
+   * - 步数校验失败
+     - 将 ``max_steps_per_rollout_epoch`` 设为 ``rollout.model.num_action_chunks`` 的整数倍（π₀.₅ 为 15，π₀ 为 8）。

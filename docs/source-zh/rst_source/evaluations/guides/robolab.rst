@@ -36,7 +36,7 @@
 
 .. tab-set::
 
-   .. tab-item:: OpenPI π₀.₅ + RoboLab
+   .. tab-item:: 单任务（默认）
 
       .. code-block:: bash
 
@@ -51,7 +51,31 @@
          bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
            rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos
 
-``RLinf/RLinf-Pi05-RoboLab-droid-jointpos`` 是 RoboLab ``pi05_droid_jointpos`` checkpoint 的 PyTorch 转换版本，包含 ``model.safetensors``、``config.json`` 与 ``assets/droid/norm_stats.json``。也可直接修改 ``evaluations/robolab/robolab_pi05_droid_jointpos.yaml`` 中的 ``rollout.model.model_path``。
+   .. tab-item:: 全部 120 任务评测
+
+      保持 ``total_num_envs=10`` 与 ``rollout_epoch=1``\ （共 1200 个回合），在单张 GPU 上依次跑完全部 120 个 benchmark 任务：
+
+      .. code-block:: bash
+
+         # 1. 安装
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openpi --env robolab && source .venv/bin/activate
+
+         # 2. 下载模型
+         hf download RLinf/RLinf-Pi05-RoboLab-droid-jointpos --local-dir ./RLinf-Pi05-RoboLab-droid-jointpos
+
+         # 3. 导出任务表并运行全部 120 个任务
+         python -m toolkits.standalone_eval_scripts.robolab.export_tasks
+         while IFS=$'\t' read -r task max_steps rest; do
+             bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
+                 rollout.model.model_path=./RLinf-Pi05-RoboLab-droid-jointpos \
+                 "env.eval.init_params.task=${task}" \
+                 "env.eval.max_episode_steps=${max_steps}" \
+                 "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
+                 "env.eval.init_params.output_dir=./logs/robolab/${task}" || break
+         done < <(tail -n +2 robolab_tasks.tsv)
+
+``RLinf/RLinf-Pi05-RoboLab-droid-jointpos`` 是 RoboLab ``pi05_droid_jointpos`` checkpoint 的 PyTorch 转换版本（包含 ``model.safetensors``、``config.json`` 与 ``assets/droid/norm_stats.json``）。120 任务循环遇错会停止且不自动续跑；复制 ``robolab_tasks.tsv`` 删除已完成的行，并为新实验换用独立输出目录即可继续。
 
 .. dropdown:: 查询 Benchmark 任务
 
@@ -113,22 +137,6 @@
         - RoboLab 任务配置与 ``run_<index>.hdf5`` 轨迹输出目录（默认 ``./logs/robolab/BowlStackingLeftOnRightTask``）。
 
    120 个任务的原生步数均为动作块长度 15 的整数倍；自定义上限时，将 ``max_steps_per_rollout_epoch`` 向上取整为 15 的整数倍（例如 17 步回合需设 30）。
-
-.. dropdown:: 运行全部 120 个任务
-
-   导出 ``robolab_tasks.tsv`` 并在 YAML 中设置 ``rollout.model.model_path`` 后，保持 ``total_num_envs: 10`` 与 ``rollout_epoch: 1``\ （共 1200 回合），在单张 GPU 上依次运行全部任务：
-
-   .. code-block:: bash
-
-      while IFS=$'\t' read -r task max_steps rest; do
-          bash evaluations/run_eval.sh robolab robolab_pi05_droid_jointpos \
-              "env.eval.init_params.task=${task}" \
-              "env.eval.max_episode_steps=${max_steps}" \
-              "env.eval.max_steps_per_rollout_epoch=${max_steps}" \
-              "env.eval.init_params.output_dir=./logs/robolab/${task}" || break
-      done < <(tail -n +2 robolab_tasks.tsv)
-
-   命令失败时循环自动停止，无自动续跑功能；复制 TSV 并删除已完成的行即可继续，新实验请使用独立输出目录。
 
 结果与常见问题
 --------------

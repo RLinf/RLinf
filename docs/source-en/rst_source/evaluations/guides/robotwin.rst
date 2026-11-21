@@ -27,7 +27,7 @@ RoboTwin is a bimanual manipulation simulation platform covering tabletop tasks 
    .. grid-item-card:: Related Training
       :text-align: center
 
-      :doc:`RoboTwin Training <../../examples/embodied/robotwin>`
+      :doc:`RoboTwin <../../examples/embodied/robotwin>` · :doc:`LingbotVLA 1.0 <../../examples/embodied/lingbotvla>` · :doc:`LingbotVLA 2.0 <../../examples/embodied/lingbotvlav2>`
 
 Setup and Run
 -------------
@@ -43,8 +43,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-         (cd ../RoboTwin && bash script/_download_assets.sh)
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
          # 2. Download model
          hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir ./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
@@ -63,8 +62,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-         (cd ../RoboTwin && bash script/_download_assets.sh)
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
          # 2. Download model
          hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi05-RoboTwin-SFT-adjust_bottle
@@ -83,8 +81,7 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
          # 1. Install and download RoboTwin assets
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openpi --env robotwin && source .venv/bin/activate
-         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin
-         (cd ../RoboTwin && bash script/_download_assets.sh)
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
 
          # 2. Download model
          hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir ./RLinf-Pi0-RoboTwin-SFT-adjust_bottle
@@ -96,7 +93,61 @@ In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF
            rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
            env.eval.assets_path="${ROBOTWIN_PATH}"
 
-Replace ``--model`` with ``lingbotvla`` or ``lingbotvlav2`` for LingbotVLA. On AMD ROCm, install with ``--platform`` and set ``planner_backend: mplib`` in the task config (see :ref:`Run on Different Hardware Backends <robotwin-hardware>`). ``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``, and ``env.eval.assets_path`` points to the parent folder of ``assets/``. RLinf uses a ``0.01 m`` camera near plane so SAPIEN 3.0.1 keeps gripper fingers visible in wrist views (override ``env.eval.camera_near`` or set ``null`` for RoboTwin's default ``0.1 m``).
+   .. tab-item:: LingbotVLA 1.0 (click_bell)
+
+      .. code-block:: bash
+
+         # 1. Install and download RoboTwin assets
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvla --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
+
+         # 2. Download base weights, pinned RoboTwin SFT checkpoint, and Qwen2.5-VL backbone
+         hf download robbyant/lingbot-vla-4b --local-dir ./lingbot-vla-4b
+         hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
+           --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
+           --local-dir ./lingbot-vla-4b-posttrain-robotwin
+         hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
+
+         # 3. Evaluate
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOT_PLATFORM=ALOHA
+         export LINGBOT_VLA_PATH="$(python -c "import lingbotvla, os; print(os.path.dirname(lingbotvla.__path__[0]))")"
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvla_eval \
+           rollout.model.model_path=./lingbot-vla-4b-posttrain-robotwin \
+           rollout.model.tokenizer_path=./Qwen2.5-VL-3B-Instruct \
+           rollout.model.lingbotvla.config_path=./lingbot-vla-4b \
+           env.eval.assets_path="${ROBOTWIN_PATH}"
+
+      Swap the config name for ``robotwin_place_shoe_lingbotvla_eval`` to evaluate ``place_shoe`` with the same checkpoint (see :doc:`../../examples/embodied/lingbotvla`).
+
+   .. tab-item:: LingbotVLA 2.0 (click_bell)
+
+      .. code-block:: bash
+
+         # 1. Install and download RoboTwin assets
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model lingbotvlav2 --env robotwin && source .venv/bin/activate
+         git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support ../RoboTwin && (cd ../RoboTwin && bash script/_download_assets.sh)
+
+         # 2. Download RoboTwin checkpoint and Qwen3-VL backbone
+         hf download robbyant/lingbot-vla-v2-6b-robotwin --local-dir ./lingbot-vla-v2-6b-robotwin
+         hf download Qwen/Qwen3-VL-4B-Instruct --local-dir ./Qwen3-VL-4B-Instruct
+
+         # 3. Evaluate
+         export ROBOTWIN_PATH="$(cd ../RoboTwin && pwd)"
+         export ROBOTWIN_ASSETS_PATH="${ROBOTWIN_PATH}"
+         export ROBOT_PLATFORM=ALOHA
+         bash evaluations/run_eval.sh robotwin robotwin_click_bell_lingbotvlav2_eval \
+           rollout.model.model_path="$(pwd)/lingbot-vla-v2-6b-robotwin/checkpoints/global_step_50000/hf_ckpt" \
+           rollout.model.tokenizer_path="$(pwd)/Qwen3-VL-4B-Instruct" \
+           rollout.model.lingbotvlav2.training_config_path="$(pwd)/lingbot-vla-v2-6b-robotwin/lingbotvla_cli.yaml" \
+           rollout.model.lingbotvlav2.robot_config_path="$(pwd)/.venv/lingbot-vla-v2/configs/robot_configs/robotwin.yaml" \
+           rollout.model.lingbotvlav2.stats_path="$(pwd)/.venv/lingbot-vla-v2/assets/norm_stats/robotwin.json"
+
+      Default placement uses 2 GPUs (``rollout: 0``, ``env: 1``). Keep LingbotVLA 1.0 and 2.0 in separate virtual environments because both install a ``lingbotvla`` package (see :doc:`../../examples/embodied/lingbotvlav2`).
+
+On AMD ROCm, install with ``--platform amd`` and set ``planner_backend: mplib`` in the task config (see :ref:`Run on Different Hardware Backends <robotwin-hardware>`). ``run_eval.sh`` adds ``ROBOTWIN_PATH`` to ``PYTHONPATH``, and ``env.eval.assets_path`` points to the parent folder of ``assets/``. RLinf uses a ``0.01 m`` camera near plane so SAPIEN 3.0.1 keeps gripper fingers visible in wrist views (override ``env.eval.camera_near`` or set ``null`` for RoboTwin's default ``0.1 m``).
 
 .. dropdown:: Docker and Example Configs
 
@@ -177,7 +228,7 @@ Replace ``--model`` with ``lingbotvla`` or ``lingbotvlav2`` for LingbotVLA. On A
    - **OpenVLA-OFT (``demo_randomized``):** ``task_config.embodiment: [piper, piper, 0.6]``, ``center_crop: True`` (and ``rollout.model.center_crop: True``), domain randomization enabled, ``num_action_chunks: 25``, matching ``unnorm_key`` (such as ``place_empty_cup_1k``), ``implement_version: "official"``.
    - **OpenPI π₀ / π₀.₅ (``demo_clean``):** ``task_config.embodiment: [aloha-agilex]``, ``center_crop: False``, ``collect_wrist_camera: true``, all ``task_config.domain_randomization`` fields ``false``, ``num_action_chunks: 50``, ``openpi.config_name: pi0_aloha_robotwin`` or ``pi05_aloha_robotwin``; set ``env.enable_offload: True`` and ``rollout.enable_offload: True`` to save GPU memory.
    - **LingbotVLA 1.0:** set ``model_path``, ``tokenizer_path``, and ``rollout.model.lingbotvla.config_path``; ``num_action_chunks: 50``, ``max_episode_steps: 400``, ``use_custom_reward: False``.
-   - **LingbotVLA 2.0:** fill paths in ``examples/embodiment/config/model/lingbotvlav2.yaml``; ``precision: bf16``, ``embodiment: [aloha-agilex]``, ``collect_wrist_camera: true``, ``num_action_chunks: 50``, ``max_episode_steps: 400``.
+   - **LingbotVLA 2.0:** set paths in ``examples/embodiment/config/model/lingbotvlav2.yaml`` or via Hydra overrides; ``precision: bf16``, ``embodiment: [aloha-agilex]``, ``collect_wrist_camera: true``, ``num_action_chunks: 50``, ``max_episode_steps: 400``.
 
    **Covering the full test set**
 
@@ -221,10 +272,13 @@ Replace ``--model`` with ``lingbotvla`` or ``lingbotvlav2`` for LingbotVLA. On A
 
       bash evaluations/run_eval.sh robotwin robotwin_adjust_bottle_openpi_eval \
         env.eval.total_num_envs=64 \
-        rollout.model.model_path=/path/to/model
+        rollout.model.model_path=./RLinf-Pi0-RoboTwin-SFT-adjust_bottle \
+        env.eval.assets_path="${ROBOTWIN_PATH}"
 
       bash evaluations/run_eval.sh robotwin robotwin_place_empty_cup_openvlaoft_eval \
-        runner.ckpt_path=/path/to/checkpoint.pt
+        rollout.model.model_path=./RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup \
+        runner.ckpt_path=./logs/checkpoints/global_step_100/actor/model_state_dict/full_weights.pt \
+        env.eval.assets_path="${ROBOTWIN_PATH}"
 
    **Derive configs for other tasks**
 
@@ -244,7 +298,7 @@ The terminal prints ``eval/success_once``; logs and videos go to ``logs/<timesta
    * - ``ROBOTWIN_PATH`` not found on import
      - Export ``ROBOTWIN_PATH`` to your RoboTwin checkout (``RLinf_support`` branch); ``run_eval.sh`` adds it to ``PYTHONPATH`` when set.
    * - Startup failure or missing scenes
-     - Set ``env.eval.assets_path`` to the parent directory of ``assets/`` (``ASSETS_PATH`` is populated from it). Also export ``ROBOT_PLATFORM=ALOHA``.
+     - Set ``env.eval.assets_path`` (or ``ROBOTWIN_ASSETS_PATH`` for LingbotVLA 2.0) to the parent directory of ``assets/``, and export ``ROBOT_PLATFORM=ALOHA``.
    * - GPU out of memory
      - Set ``env.enable_offload: True`` and ``rollout.enable_offload: True``, or lower ``env.eval.total_num_envs``.
    * - Incomplete seed coverage

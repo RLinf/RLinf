@@ -26,28 +26,31 @@
 
       TensorBoard 监控指标
 
-前置条件
+一键上手
 --------
 
-先按 :doc:`安装说明 <installation>` 准备好 ManiSkill 环境。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``。
-
-下载资源与启动训练
-------------------
-
-切换下方标签选择模型，所有下载与启动命令均集中在同一标签内。两个快速上手配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。
+切换下方标签选择模型，每个标签内均包含完整的安装、下载与启动命令。两个快速上手配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。中国大陆用户在 ``install.sh`` 末尾追加 ``--use-mirror``，并在 ``hf download`` 前执行 ``export HF_ENDPOINT=https://hf-mirror.com``\ （或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像）。
 
 .. tab-set::
 
    .. tab-item:: OpenVLA
+      :sync: openvla
 
-      下载 ManiSkill3 场景资产与预训练权重（`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）：
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+
+      **2. 下载场景资产与预训练权重**\ （`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
-      启动 PPO 训练：
+      **3. 启动 PPO 训练**
 
       .. code-block:: bash
 
@@ -55,8 +58,16 @@
            actor.model.model_path=$PWD/checkpoints/openvla-7b-rlvla-warmup
 
    .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-      下载 ManiSkill3 场景资产、基座模型与 LoRA 权重：
+      **1. 安装环境**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+
+      **2. 下载场景资产、基座模型与 LoRA 权重**
 
       .. code-block:: bash
 
@@ -64,7 +75,7 @@
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
-      启动 PPO 训练：
+      **3. 启动 PPO 训练**
 
       .. code-block:: bash
 
@@ -82,23 +93,16 @@ rollout 会自动沿用 ``actor.model.model_path``。要把路径写进 YAML 文
        # 使用 OpenVLA-OFT 时同时设置：
        lora_path: /path/to/downloaded-lora
 
-查看训练结果
-------------
+结果与常见问题
+--------------
 
-日志与权重保存在 ``./logs``。启动 TensorBoard，重点关注 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``：
-
-.. code-block:: bash
-
-   tensorboard --host 0.0.0.0 --logdir ./logs
+日志与权重保存在 ``./logs``。启动 TensorBoard（``tensorboard --host 0.0.0.0 --logdir ./logs``），重点关注 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``。
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
    :align: center
    :width: 90%
 
    ManiSkill3 快速上手的 TensorBoard 训练曲线。
-
-常见问题速查
-------------
 
 .. list-table::
    :header-rows: 1
@@ -113,9 +117,23 @@ rollout 会自动沿用 ``actor.model.model_path``。要把路径写进 YAML 文
    * - 重复运行时报 Ray 或 NCCL 错误
      - 先执行 ``ray stop`` 清理残留进程，详见 :ref:`CUDA 与显存问题 <faq-cuda>`。
 
-下一步
-------
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-- :doc:`浏览示例库 <../examples/index>`，查看 LIBERO、RoboTwin、OpenPI 与真机示例。
-- :doc:`运行独立评测 <../evaluations/index>`，评估训练后的权重。
-- :doc:`性能优化指南 <../guides/performance/index>`，了解 :doc:`训练流水线模式 <../guides/training_pipeline>` 与 :doc:`执行模式 <../concepts/execution_modes>`。
+   .. grid-item-card:: 浏览示例库
+      :link: ../examples/index
+      :link-type: doc
+
+      查看 LIBERO、RoboTwin、OpenPI 与真机示例。
+
+   .. grid-item-card:: 运行独立评测
+      :link: ../evaluations/index
+      :link-type: doc
+
+      在具身基准上评估训练后的权重。
+
+   .. grid-item-card:: 性能优化指南
+      :link: ../guides/performance/index
+      :link-type: doc
+
+      了解 :doc:`训练流水线模式 <../guides/training_pipeline>` 与 :doc:`执行模式 <../concepts/execution_modes>`。

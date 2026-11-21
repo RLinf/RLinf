@@ -26,28 +26,31 @@ Train **OpenVLA** or **OpenVLA-OFT** on `ManiSkill3 <https://github.com/haosulab
 
       TensorBoard curves
 
-Prerequisites
+Setup and Run
 -------------
 
-Install the ManiSkill environment first (:doc:`installation`). In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download``.
-
-Download and Launch Training
-----------------------------
-
-Select a model tab below. Each tab groups all required downloads and the launch command together. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific ones (:doc:`../guides/basic_config`).
+Select a model tab below — each tab contains the full install, download, and launch commands. Both recipes use all available accelerators by default; edit ``cluster.component_placement`` to target specific devices (:doc:`../guides/basic_config`). In mainland China, append ``--use-mirror`` to ``install.sh`` and run ``export HF_ENDPOINT=https://hf-mirror.com`` before ``hf download`` (or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__).
 
 .. tab-set::
 
    .. tab-item:: OpenVLA
+      :sync: openvla
 
-      Download ManiSkill assets and the warmup checkpoint (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__):
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
+
+      **2. Download Assets and Checkpoint** (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__)
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
          hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
-      Launch PPO training:
+      **3. Launch PPO Training**
 
       .. code-block:: bash
 
@@ -55,8 +58,16 @@ Select a model tab below. Each tab groups all required downloads and the launch 
            actor.model.model_path=$PWD/checkpoints/openvla-7b-rlvla-warmup
 
    .. tab-item:: OpenVLA-OFT
+      :sync: openvla-oft
 
-      Download ManiSkill assets, the base model, and the LoRA adapter:
+      **1. Install**
+
+      .. code-block:: bash
+
+         git clone https://github.com/RLinf/RLinf.git && cd RLinf
+         bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
+
+      **2. Download Assets, Base Model, and LoRA**
 
       .. code-block:: bash
 
@@ -64,7 +75,7 @@ Select a model tab below. Each tab groups all required downloads and the launch 
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base
          hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
-      Launch PPO training:
+      **3. Launch PPO Training**
 
       .. code-block:: bash
 
@@ -82,23 +93,16 @@ Rollout inherits ``actor.model.model_path`` automatically. To save the path in t
        # For OpenVLA-OFT, also set:
        lora_path: /path/to/downloaded-lora
 
-Watch Training Results
-----------------------
+Results and Troubleshooting
+---------------------------
 
-Training writes logs and checkpoints under ``./logs``. Open TensorBoard and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``:
-
-.. code-block:: bash
-
-   tensorboard --host 0.0.0.0 --logdir ./logs
+Training writes logs and checkpoints under ``./logs``. Open TensorBoard (``tensorboard --host 0.0.0.0 --logdir ./logs``) and track ``rollout/env_info/return`` and ``rollout/env_info/success_once``.
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
    :align: center
    :width: 90%
 
    TensorBoard training curves for the ManiSkill3 quick start.
-
-Troubleshooting
----------------
 
 .. list-table::
    :header-rows: 1
@@ -113,9 +117,23 @@ Troubleshooting
    * - Stale Ray / NCCL error on rerun
      - Run ``ray stop`` before relaunching (:ref:`CUDA and Memory Issues <faq-cuda>`).
 
-Next Steps
-----------
+.. grid:: 1 3 3 3
+   :gutter: 2
 
-- :doc:`Browse the Example Gallery <../examples/index>` for LIBERO, RoboTwin, OpenPI, and real-world robots.
-- :doc:`Run standalone evaluation <../evaluations/index>` on trained checkpoints.
-- :doc:`Tune performance <../guides/performance/index>` (including :doc:`Training Pipeline Mode <../guides/training_pipeline>` and :doc:`Execution Modes <../concepts/execution_modes>`).
+   .. grid-item-card:: Example Gallery
+      :link: ../examples/index
+      :link-type: doc
+
+      Explore LIBERO, RoboTwin, OpenPI, and real-world robots.
+
+   .. grid-item-card:: Standalone Evaluation
+      :link: ../evaluations/index
+      :link-type: doc
+
+      Evaluate trained checkpoints across embodied benchmarks.
+
+   .. grid-item-card:: Performance Tuning
+      :link: ../guides/performance/index
+      :link-type: doc
+
+      Learn :doc:`Training Pipeline Mode <../guides/training_pipeline>` and :doc:`Execution Modes <../concepts/execution_modes>`.
