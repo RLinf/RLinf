@@ -198,6 +198,18 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
 
         await self._finish_background_weight_sync(work)
 
+    @Worker.timer("rollout/wait_pending_weight_sync")
+    async def wait_for_pending_weight_sync(self) -> int:
+        """Drain every requested actor patch before a checkpoint is taken."""
+        while self._weight_sync_requested or self._weight_sync_work is not None:
+            self._start_background_weight_sync_if_needed()
+            work = self._weight_sync_work
+            if work is None:
+                await asyncio.sleep(0)
+                continue
+            await self._finish_background_weight_sync(work)
+        return int(self.version)
+
     @Worker.timer("rollout/request_weight_sync")
     async def request_actor_sync_model(self) -> int:
         """Request a background sync and return once its weights are applied.

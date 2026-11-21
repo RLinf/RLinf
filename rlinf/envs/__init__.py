@@ -48,6 +48,7 @@ class SupportedEnvType(Enum):
     POLARIS = "polaris"
     ROBOLAB = "robolab"
     SIMPLE = "simple"
+    TIANJI = "tianji"
 
     @classmethod
     def _missing_(cls, value: object) -> "SupportedEnvType | None":
@@ -155,7 +156,28 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return Robocasa365Env
     elif env_type == SupportedEnvType.REAL:
+        init_id = (
+            env_cfg.get("init_params", {}).get("id", None)
+            if env_cfg is not None
+            else None
+        )
+        backend = (
+            env_cfg.get("override_cfg", {}).get("backend", None)
+            if env_cfg is not None
+            else None
+        )
+        if (isinstance(init_id, str) and init_id.startswith("Tianji")) or backend in (
+            "loopinfra",
+            "dummy",
+        ):
+            from rlinf.envs.realworld.realworld_env import RealWorldEnv
+
+            return RealWorldEnv
         from rlinf.envs.real import RealWorldEnv
+
+        return RealWorldEnv
+    elif env_type == SupportedEnvType.TIANJI:
+        from rlinf.envs.realworld.realworld_env import RealWorldEnv
 
         return RealWorldEnv
     elif env_type == SupportedEnvType.WORLD_MODEL:

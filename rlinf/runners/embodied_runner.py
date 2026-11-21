@@ -188,9 +188,24 @@ class EmbodiedRunner:
             self.reward.init_worker().wait()
 
         rollout_handle.wait()
-        env_handle.wait()
+        # Tianji HIL: the env's first reset waits for the operator's Start.
+        # Actor, resume and the first weight sync are finished while it waits,
+        # so Start begins the episode with everything loaded.
+        prestart = bool(self.cfg.runner.get("init_before_start", False))
+        if not prestart:
+            env_handle.wait()
         self.actor.init_worker().wait()
+        self._resume_actor()
+        if prestart:
+            if bool(self.cfg.runner.get("deploy_actor_updates", True)):
+                self.update_rollout_weights()
+                self._initial_weights_synced = True
+            from rlinf.utils.tianji_startup import publish_stage2_ready
 
+            publish_stage2_ready("TIANJI_STAGE2_PRESTART_FILE")
+            env_handle.wait()
+
+    def _resume_actor(self):
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
             return

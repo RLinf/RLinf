@@ -95,6 +95,7 @@ SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
 SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
@@ -144,6 +145,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
+        SupportedModel.OPENPI_RLINF,
         SupportedModel.PSI0,
         SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
@@ -1408,6 +1410,97 @@ def validate_refl_cfg(cfg: DictConfig) -> None:
         )
 
 
+def _validate_tianji_prefetch(cfg, model_cfg):
+    """Tianji only: the prefetch timetable, reference offset and stages agree.
+
+    RLT_REF_OFFSET is read at import by the rollout, actor and transition
+    code, so it must equal num_action_chunks - 1 - prefetch_at, and the
+    offset chunk must fit inside the frozen model's reference chunk.
+    """
+    env_ids = {
+        OmegaConf.select(env_cfg, "init_params.id", default=None)
+        for split in ("train", "eval")
+        for env_cfg in EnvLayout.env_cfgs(
+            OmegaConf.select(cfg, f"env.{split}", default=None), f"env.{split}"
+        ).values()
+    }
+    if "TianjiRLTEnv-v1" not in env_ids:
+        return
+    offset = int(os.environ.get("RLT_REF_OFFSET", "0"))
+    chunk = int(model_cfg.num_action_chunks)
+    reference = int(OmegaConf.select(model_cfg, "ref_num_action_chunks", default=chunk))
+    # 11-04 speed-up: each executed row advances TIANJI_ROW_SCALE model rows (1 = off).
+    from rlinf.envs.realworld.tianji.tianji_contract import (
+        dense_rows_from_env,
+        row_scale_from_env,
+    )
+
+    scale = row_scale_from_env()
+    from rlinf.algorithms.rlt.action_grid import ActionGrid
+
+    grid = ActionGrid.from_config(model_cfg)
+    if grid.aligned:
+        assert grid.offset == offset and grid.row_scale == scale, (
+            "model action grid must match the launcher timetable"
+        )
+        assert os.environ.get("RLT_OVERWRITE_REF_WITH_HUMAN", "0") != "1", (
+            "executor-grid actors keep the original VLA reference; "
+            "human actions are separate BC labels"
+        )
+    for key in ("prefetch_at", "eval_prefetch_at"):
+        prefetch_at = cfg.rollout.get(key, None)
+        if prefetch_at is not None:
+            assert 0 <= int(prefetch_at) < chunk - 1, (
+                f"rollout.{key} must be inside the chunk"
+            )
+            assert offset == round(scale * (chunk - 1 - int(prefetch_at))), (
+                f"RLT_REF_OFFSET={offset} must equal "
+                f"TIANJI_ROW_SCALE*(num_action_chunks-1-rollout.{key})="
+                f"{scale * (chunk - 1 - int(prefetch_at)):g}; "
+                "launch through the Tianji launchers"
+            )
+    assert offset + scale * chunk <= reference + 1e-9, (
+        f"RLT_REF_OFFSET={offset} + TIANJI_ROW_SCALE*num_action_chunks="
+        f"{scale * chunk:g} exceeds the reference chunk {reference}"
+    )
+    # 11-05 dense rows: TIANJI_DENSE_ROWS=1 runs every model row of the chunk on the executor.
+    dense = dense_rows_from_env()
+    if grid.aligned:
+        assert grid.dense == bool(dense), (
+            "model action_grid_dense must match the executor"
+        )
+    if scale != 1 and bool(cfg.runner.get("deploy_actor_updates", True)):
+        assert grid.aligned and bool(dense), (
+            "scaled residual deployment requires the aligned dense target grid"
+        )
+    if dense:
+        assert (
+            OmegaConf.select(cfg, "env.train.override_cfg.action_space", default=None)
+            == "joint"
+        ), (
+            "TIANJI_DENSE_ROWS=1 needs the joint Stage2 "
+            "(env.train.override_cfg.action_space=joint)"
+        )
+        assert grid.dense or not grid.aligned, (
+            "dense executor and model action_grid_dense must agree"
+        )
+        assert not bool(cfg.runner.get("deploy_actor_updates", True)) or grid.aligned, (
+            "dense actor deployment requires executor_action_grid=true"
+        )
+        assert os.environ.get("LOOPINFRA_RTJ_POLICY_LIMITS") == "x2", (
+            "TIANJI_DENSE_ROWS=1 needs the x2 executor limits: "
+            "set LOOPINFRA_RTJ_POLICY_LIMITS=x2"
+        )
+    stages = int(OmegaConf.select(model_cfg, "num_stage_actors", default=0) or 0)
+    onehot = int(os.environ.get("RLT_NUM_STAGES", "8"))
+    assert stages <= onehot, f"num_stage_actors={stages} exceeds RLT_NUM_STAGES={onehot}"
+    if stages > 0:
+        dim = int(OmegaConf.select(model_cfg, "stage_onehot_dim", default=8))
+        assert dim == onehot, (
+            f"actor.model.stage_onehot_dim={dim} must equal RLT_NUM_STAGES={onehot}"
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -2028,6 +2121,7 @@ def validate_embodied_cfg(cfg):
             stage_num=stage_num,
             actor_world_size=component_placement.get_world_size("actor"),
         )
+    _validate_tianji_prefetch(cfg, model_cfg)
     with open_dict(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"

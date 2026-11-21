@@ -79,6 +79,10 @@ from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import 
 from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
     SO101JointDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.tianji_dataconfig import (
+    TianjiDataConfig,
+    TianjiJointDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.yam_dataconfig import (
     LeRobotYamDataConfig,
 )
@@ -507,6 +511,41 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
         num_train_steps=20_000,
+    ),
+    TrainConfig(
+        name="tianji_stage1",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            discrete_state_input=True,
+        ),
+        data=TianjiDataConfig(
+            repo_id="tianji_stage1",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/tianji_stage1/assets",
+                asset_id="tianji_stage1",
+            ),
+        ),
+        pytorch_weight_path="checkpoints/torch/tianji_stage1",
+    ),
+    TrainConfig(
+        # Joint fork: 16D joint Stage1 (pi05_tianji_joint_30hz checkpoints).
+        name="tianji_stage1_joint",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            discrete_state_input=True,
+        ),
+        data=TianjiJointDataConfig(
+            repo_id="tianji_stage1_joint",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/tianji_stage1_joint/assets",
+                asset_id="tianji_stage1_joint",
+            ),
+        ),
+        pytorch_weight_path="checkpoints/torch/tianji_stage1_joint",
     ),
     TrainConfig(
         name="pi0_behavior",

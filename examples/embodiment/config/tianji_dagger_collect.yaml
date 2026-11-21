@@ -1,0 +1,274 @@
+# Tianji DAgger Data Collection configuration (joint 30 Hz / 10 Hz / 15 Hz).
+# Keeps the frozen Stage1 VLA driving the robot while recording complete
+# human-in-the-loop takeover & correction episodes under hil/episodes/
+# (hil_mode: dagger, episode_archive: true, deploy_actor_updates: false).
+#
+# RL optimizer updates and replay disk auto-save are explicitly disabled via
+# algorithm.rlt_schedule and algorithm.replay_buffer.auto_save=false, and
+# training-only reward/shadow-monitor hooks stay off when hil_mode == "dagger".
+#
+# Launch via: bash deploy/tianji/run_tianji_dagger_local.sh
+defaults:
+- env/realworld_tianji@env.train
+- env/realworld_tianji@env.eval
+- model/tianji_rlt_mlp_joint@actor.model
+- hybrid_engines/fsdp@actor.fsdp_config
+- weight_syncer/patch_syncer@weight_syncer
+- override hydra/job_logging: stdout
+- _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 1
+    env: 0
+    rollout: 0
+
+runner:
+  task_type: embodied
+  weight_sync_interval: 1
+  # Keep rollout executing the frozen Stage1 VLA reference (never push actor updates).
+  deploy_actor_updates: false
+  # Finish worker initialization and preflight before opening the HIL Start button.
+  init_before_start: true
+  per_worker_log: true
+  logger:
+    log_path: ${oc.env:TIANJI_RLT_OUTPUT,./tianji_runs}
+    project_name: rlinf-tianji
+    experiment_name: tianji_dagger_collect
+    logger_backends:
+    - tensorboard
+  max_epochs: 1000000
+  max_steps: -1
+  only_eval: false
+  val_check_interval: -1
+  # Pure DAgger collection does not train/save actor checkpoints.
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  update_epoch: 8
+  utd_ratio: 0
+  warmup_transitions: 999999999
+  staleness_threshold: null
+  group_size: 1
+  agg_q: min
+  actor_agg_q: q1
+  enable_drq: false
+  q_head_type: ${actor.model.q_head_type}
+  adv_type: embodied_sac
+  loss_type: rlt_ac
+  loss_agg_func: token-mean
+  q_weight: 0.0
+  critic_target: v_bootstrap
+  stage_time_cost_steps: [953, 3699, 2915, 445]
+  critic_value_samples: all
+  critic_human_samples: all
+  critic_penalty_window: 2
+  critic_failure_window: 2
+  critic_penalty_decay: 0.0
+  critic_balance_penalized: true
+  critic_conservative_alpha: 1.0
+  preload_utd_ratio: 0
+  takeover_penalty: -1.0
+  takeover_kinds:
+  - 2
+  - 3
+  takeover_q_uses_policy_action: true
+  critic_policy_label: commanded
+  smooth_weight: 300
+  bc_weight: 5.0
+  human_bc_target: direct
+  require_exec_action_validity: true
+  bc_human_weight_mult: 2.0
+  human_bc_within_cap: false
+  bc_skip_penalized_chunks: true
+  z_noise_frac: 0.1
+  critic_z_noise_frac: 0.3
+  correction_metrics: true
+  reference_dropout_prob: 0.0
+  bootstrap_type: standard
+  q_target_min: null
+  q_target_max: null
+  actor_uses_min_q: true
+  gamma: 0.9995
+  tau: 0.005
+  entropy_tuning:
+    alpha_type: fixed_alpha
+    initial_alpha: 0.0
+    optim:
+      lr: 0.0003
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  replay_buffer:
+    enable_cache: true
+    cache_size: 6000
+    min_buffer_size: 2
+    sample_window_size: 6000
+    # Disable RL replay buffer disk persistence during pure DAgger collection.
+    auto_save: false
+    auto_save_path: ${runner.logger.log_path}/replay
+    load_path: null
+  rlt_schedule:
+    # Disable online RL updates while keeping the AsyncEmbodiedRunner + HIL archive loop active.
+    enable: true
+    max_updates_per_train_step: 0
+    warmup_min_size: 999999999
+    warmup_post_collect_updates: 0
+    train_every_episodes: 0
+    train_every_transitions: 0
+  target_update_freq: 1
+  target_update_type: all
+  train_actor_steps: 2
+  critic_actor_ratio: 2
+  critic_subsample_size: 0
+  backup_entropy: false
+
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    max_episode_steps: null
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:TIANJI_STAGE2_EPOCH_STEPS,240}}
+    smooth_intervene: true
+    intervene_prefetch: true
+    use_pico: true
+    # Hold episodes until Success/Failure/Discard; Discarded episodes are deleted cleanly.
+    discard_episodes: true
+    override_cfg:
+      hil_mode: dagger
+      tactile_enabled: ${oc.decode:${oc.env:TIANJI_TACTILE_REQUIRED,0}}
+      tactile_raw_archive: true
+      backend: loopinfra
+      action_space: joint
+      reset_to_saved_pose: true
+      reset_after_episode: true
+      recorder_source_jpeg: true
+      episode_archive: true
+      episode_archive_image_hz: 15
+      server_url: ${oc.env:LOOPINFRA_URL,http://127.0.0.1:8780}
+      read_only: false
+      hil_control: true
+      hil_port: ${oc.decode:${oc.env:TIANJI_HIL_PORT,8879}}
+      manual_episode_control_only: true
+      request_timeout_s: 2.0
+      image_hw:
+      - 224
+      - 224
+      step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+      stream_chunks: true
+      subtask_prompts_file: ${oc.env:TIANJI_SUBTASK_PROMPTS,null}
+      max_num_steps: 600
+      recorder_dir: ${runner.logger.log_path}/hil
+      control_profile: wuji_compat
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    max_episode_steps: 600
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:TIANJI_STAGE2_EPOCH_STEPS,240}}
+    override_cfg:
+      tactile_enabled: ${oc.decode:${oc.env:TIANJI_TACTILE_REQUIRED,0}}
+      backend: loopinfra
+      action_space: joint
+      server_url: ${oc.env:LOOPINFRA_URL,http://127.0.0.1:8780}
+      read_only: true
+      request_timeout_s: 2.0
+      image_hw:
+      - 224
+      - 224
+      step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+
+rollout:
+  default_actor_switch: true
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: true
+  collect_prev_infos: false
+  prefetch_at: ${oc.decode:${oc.env:TIANJI_STAGE2_PREFETCH_AT,17}}
+  early_policy_recv: true
+  gc_after_weight_sync: false
+  model:
+    model_type: rlt_mlp_policy
+    model_path: inline://tianji_rlt_mlp_policy
+    precision: ${actor.model.precision}
+    action_dim: ${actor.model.action_dim}
+    num_action_chunks: ${actor.model.num_action_chunks}
+    ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
+  rlt_feature_model:
+    model_type: openpi_rlinf
+    precision: bf16
+    is_lora: false
+    num_action_chunks: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+    action_dim: 16
+    num_steps: 4
+    model_path: ${oc.env:TIANJI_RLT_STAGE1_MODEL_PATH,null}
+    openpi_data:
+      repo_id: tianji_stage1_joint
+      norm_stats_path: ${oc.env:TIANJI_RLT_STAGE1_NORM_STATS_PATH,null}
+    openpi:
+      task: eval
+      config_name: tianji_stage1_joint
+      num_images_in_input: 3
+      action_chunk: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+      action_horizon: ${oc.decode:${oc.env:TIANJI_ACTION_HORIZON,30}}
+      action_env_dim: 16
+      model_action_dim: 32
+      num_steps: 4
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: true
+      state_indices: []
+      noise_method: flow_noise
+      noise_params:
+      - 0.16
+      - 0.12
+      - 200
+      joint_logprob: true
+      use_rlt: true
+      rlt_prefix_seq_len: 1024
+      rlt_image_only: false
+      rlt_use_mask: true
+
+actor:
+  model:
+    # Keep tactile_enabled consistent across actor & train/eval env.
+    tactile_enabled: ${oc.decode:${oc.env:TIANJI_TACTILE_REQUIRED,0}}
+    # Disable residual exploration noise during DAgger collection.
+    rollout_noise: false
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: false
+  sync_weight_no_wait: true
+  optim:
+    clip_grad: 1.0
+    lr: 0.0001
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 1.0
+    lr: 0.0003
+    lr_scheduler: torch_constant
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

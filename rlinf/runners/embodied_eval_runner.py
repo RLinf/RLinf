@@ -59,6 +59,16 @@ class EmbodiedEvalRunner:
 
         rollout_handle.wait()
         env_handle.wait()
+        if self.cfg.rollout.get("joint_actor_eval", False):
+            marker = (
+                "STAGE1_HIL_READY"
+                if self.cfg.rollout.get("joint_vla_only", False)
+                else "STAGE2_JOINT_DEPLOY_READY"
+            )
+            print(
+                f"{marker} http://127.0.0.1:{self.cfg.env.eval.override_cfg.hil_port}",
+                flush=True,
+            )
 
     def evaluate(self):
         # Channel direction convention (names follow the receiver, not the sender):

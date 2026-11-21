@@ -49,6 +49,14 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
+    if cfg.rollout.get("joint_actor_eval", False):
+        from rlinf.workers.env.tianji_joint_eval_worker import TianjiJointEvalWorker
+
+        env_worker_cls = TianjiJointEvalWorker
+        if cfg.rollout.get("joint_vla_only", False):
+            from rlinf.workers.env.tianji_joint_eval_worker import TianjiVLAEnvWorker
+
+            env_worker_cls = TianjiVLAEnvWorker
     if rollout_backend == "apxinf":
         from rlinf.workers.rollout.apxinf import ApxInfRolloutWorker
 
@@ -80,6 +88,12 @@ def main(cfg) -> None:
             rollout_worker_cls = RTCMultiStepRolloutWorker
         else:
             rollout_worker_cls = MultiStepRolloutWorker
+            if cfg.rollout.get("joint_vla_only", False):
+                from rlinf.workers.rollout.hf.tianji_vla_eval_worker import (
+                    TianjiVLAEvalWorker,
+                )
+
+                rollout_worker_cls = TianjiVLAEvalWorker
 
         # Create rollout worker group
         rollout_placement = component_placement.get_strategy("rollout")

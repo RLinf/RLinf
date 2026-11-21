@@ -1,0 +1,48 @@
+env_type: realworld
+total_num_envs: null
+auto_reset: True
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 50
+max_episode_steps: 600
+use_spacemouse: False
+use_gello: False
+use_pico: False
+keyboard_intervention_wrapper: False
+no_gripper: False
+main_image_key: head
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  id: "TianjiRLTEnv-v1"
+  num_envs: null
+
+# Stage1 v2: state20, absolute TCP rot6 actions20; the horizon and control
+# rate are the deployment's (TIANJI_ACTION_HORIZON / TIANJI_CONTROL_HZ).
+# Gripper values are commanded closure [0,1], never measured opening.
+override_cfg:
+  backend: dummy
+  # HTTP transport stays loopinfra; the collector must select this profile.
+  control_profile: wuji_compat
+  # On hardware, use LoopInfra's currently loaded measured saved pose before
+  # each HIL episode. Read-only and dummy backends do not issue a reset.
+  reset_to_saved_pose: True
+  reset_after_episode: True
+  recorder_source_jpeg: True
+  server_url: "http://127.0.0.1:8780"
+  read_only: True
+  request_timeout_s: 2.0
+  image_hw: [224, 224]
+  step_frequency: ${oc.decode:${oc.env:TIANJI_CONTROL_HZ,10}}
+  human_action_max_interval_s: 0.25
+  max_num_steps: 600
+  # The global prompt; a subtask prompts JSON replaces it per subtask.
+  task_description: "Fold the flat cardboard blank into a box and place it on the right side of the table."

@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .utils.omega_resolver import omegaconf_register
+import os
 
-omegaconf_register()
+if os.environ.get("RLINF_TIANJI_STAGE1_ONLY") != "1":
+    from .utils.omega_resolver import omegaconf_register
+
+    omegaconf_register()

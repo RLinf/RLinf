@@ -24,6 +24,7 @@ from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
+from rlinf.utils.tianji_startup import publish_stage2_ready
 
 if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
@@ -99,7 +100,17 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
             results, metric_field="time"
         )
-        return time_metrics, ranked_time_metrics_list
+        return (
+            time_metrics,
+            ranked_time_metrics_list,
+        )
+
+    def _save_checkpoint(self):
+        """Take the actor snapshot only after an in-flight weight patch finishes."""
+        self.drain_pending_rollout_weight_sync()
+        if hasattr(self.rollout, "wait_for_pending_weight_sync"):
+            self.rollout.wait_for_pending_weight_sync().wait()
+        super()._save_checkpoint()
 
     def evaluate(self):
         env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
@@ -131,9 +142,22 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         start_time = time.time()
         self.rollout.set_global_step(self.global_step).wait()
         self.env.set_global_step(self.global_step).wait()
+        cfg = getattr(self, "cfg", None)
+        deploy = (
+            bool(cfg.runner.get("deploy_actor_updates", True))
+            if cfg is not None
+            else True
+        )
+        if not deploy:
+            print(
+                "STAGE2_ACTOR_NOT_DEPLOYED: executing the VLA reference; "
+                "actor updates are trained and checkpointed only",
+                flush=True,
+            )
         # Rollout must start from the actor's exact initial/resumed weights, so
         # this first sync always blocks even when overlap is enabled.
-        self.update_rollout_weights()
+        if deploy and not getattr(self, "_initial_weights_synced", False):
+            self.update_rollout_weights()
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
@@ -156,6 +180,9 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             input_channel=self.actor_channel
         )
 
+        # init_workers (including resume) and the initial blocking sync are done.
+        publish_stage2_ready()
+
         while self.global_step < self.max_steps:
             # Use the step we're ABOUT to run as the profiling key, mirroring
             # ``EmbodiedRunner.run`` which gates before ``self.global_step += 1``.
@@ -175,7 +202,7 @@ class AsyncEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
                 if not skip_step:
                     self.global_step += 1
-                    if self.global_step % self.weight_sync_interval == 0:
+                    if deploy and self.global_step % self.weight_sync_interval == 0:
                         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
                     training_metrics = {

@@ -15,7 +15,11 @@
 import asyncio
 import copy
 import gc
+import inspect
+import os
 import time
+from collections import defaultdict
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Collection, Hashable, Iterable, Literal, Optional
 
 import numpy as np
@@ -31,11 +35,15 @@ from rlinf.algorithms.rlt.transition import extract_rlt_obs_from_forward_inputs
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import (
     EnvPart,
+    EnvTransition,
     PolicyInput,
     PolicyOutput,
     PolicyPart,
+    TrajectoryKey,
+    TrajectorySource,
     batch_format,
     merge_batch_values,
+    put_tensor_device,
     split_batch_value,
 )
 from rlinf.envs.layout import EnvLayout, EnvSpec
@@ -49,9 +57,55 @@ from rlinf.scheduler import (
     Worker,
     split_channel_message,
 )
+from rlinf.utils.nested_dict_process import copy_dict_tensor
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.placement import HybridComponentPlacement
+
+
+def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    getter = getattr(obj, "get", None)
+    if callable(getter):
+        return getter(key, default)
+    return getattr(obj, key, default)
+
+
+@dataclass(kw_only=True)
+class RolloutActionOutput:
+    """Action reply carrying optional forward metadata for Tianji stage routing."""
+
+    actions: torch.Tensor
+    forward_inputs: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.actions, torch.Tensor):
+            self.actions = self.actions.detach().cpu().contiguous()
+        self.forward_inputs = put_tensor_device(
+            self.forward_inputs or {}, "cpu", detach=True
+        )
+
+    def split(self, split_sizes: list[int]) -> list["RolloutActionOutput"]:
+        action_shards = [
+            shard.contiguous() for shard in torch.split(self.actions, split_sizes, dim=0)
+        ]
+        fi_shards = split_batch_value(self.forward_inputs, split_sizes)
+        return [
+            type(self)(actions=act, forward_inputs=fi)
+            for act, fi in zip(action_shards, fi_shards)
+        ]
+
+    @classmethod
+    def merge(cls, outputs: list["RolloutActionOutput"]) -> "RolloutActionOutput":
+        if not outputs:
+            raise ValueError("Cannot merge an empty list of action outputs.")
+        return cls(
+            actions=torch.cat([item.actions for item in outputs], dim=0),
+            forward_inputs=merge_batch_values(
+                [item.forward_inputs for item in outputs]
+            ),
+        )
 
 
 class MultiStepRolloutWorker(Worker):
@@ -208,10 +262,30 @@ class MultiStepRolloutWorker(Worker):
             self.cfg, "rollout.rlt_feature_model", default=None
         )
         if rlt_feature_model_config is not None:
-            self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
+            if os.environ.get("TIANJI_PI05_SERVICE", "").strip() not in ("", "0"):
+                # Opt-in (pi05_client.py): the frozen VLA runs in the resident
+                # tianji-pi05 service; nothing is loaded here. Its identity
+                # (model, weights, norm stats, config, code) is checked first.
+                from rlinf.models.embodiment.openpi_rlinf.pi05_client import (
+                    Pi05ServiceFeatureModel,
+                )
+
+                self.rlt_feature_model = Pi05ServiceFeatureModel(
+                    copy.deepcopy(rlt_feature_model_config), self.device
+                )
+            else:
+                self.rlt_feature_model = get_model(
+                    copy.deepcopy(rlt_feature_model_config)
+                )
             self.rlt_feature_model.eval()
             self.rlt_feature_model.requires_grad_(False)
             self.rlt_route = build_rlt_route(self.cfg)
+            if os.environ.get("TIANJI_FAST_INFER", "").strip() not in ("", "0"):
+                # Opt-in (fast_infer.py, in-process model only): capture the
+                # CUDA graphs now, not at the first chunks.
+                from rlinf.models.embodiment.openpi_rlinf.fast_infer import warmup
+
+                warmup(self.rlt_feature_model)
 
         if self.cfg.rollout.get("expert_model", None) and not self.enable_opd:
             expert_model_config = build_expert_model_config(
@@ -706,6 +780,209 @@ class MultiStepRolloutWorker(Worker):
             dagger_beta=dagger_beta,
         )
 
+    def _is_tianji_rlt_active(self) -> bool:
+        """Return whether Tianji RLT Stage1/Stage2 schema-2 routing is active."""
+        if not getattr(self, "enable_rlt", False):
+            return False
+        if getattr(self, "rlt_feature_model", None) is not None:
+            return True
+        cfg = getattr(self, "cfg", None)
+        if cfg is None:
+            return False
+        rollout_cfg = getattr(cfg, "rollout", None)
+        env_train = _cfg_get(getattr(cfg, "env", None), "train", None)
+        actor_model = _cfg_get(getattr(cfg, "actor", None), "model", None)
+        algo_cfg = getattr(cfg, "algorithm", None)
+        if _cfg_get(rollout_cfg, "prefetch_at", None) is not None:
+            return True
+        if _cfg_get(env_train, "discard_episodes", False):
+            return True
+        if _cfg_get(actor_model, "executor_action_grid", None) is not None:
+            return True
+        if _cfg_get(algo_cfg, "human_bc_target", "fitted") == "direct":
+            return True
+        return False
+
+    def _ensure_schema2_keys(self, fi: dict[str, Any] | None) -> None:
+        """Ensure schema-2 RLT keys exist uniformly across every chunk."""
+        if (
+            not self._is_tianji_rlt_active()
+            or not isinstance(fi, dict)
+            or "action" not in fi
+        ):
+            return
+        fi.pop("target_actions_by_stage", None)
+        fi.pop("actions_by_stage", None)
+        bsz = int(fi["action"].shape[0])
+        actor_model = _cfg_get(getattr(self.cfg, "actor", None), "model", None)
+        chunk_len = int(
+            _cfg_get(actor_model, "num_action_chunks", None)
+            or _cfg_get(getattr(self, "model_cfg", None), "num_action_chunks", 1)
+        )
+        action_dim = int(
+            _cfg_get(actor_model, "action_dim", None)
+            or _cfg_get(getattr(self, "model_cfg", None), "action_dim", 1)
+        )
+        if actor_model is not None and _cfg_get(actor_model, "executor_action_grid", None) is not None:
+            from rlinf.algorithms.rlt.action_grid import ActionGrid
+
+            grid = ActionGrid.from_config(actor_model)
+            if grid.aligned:
+                fi.setdefault(
+                    "target_grid_observed", torch.zeros(bsz, 1, dtype=torch.bool)
+                )
+                fi.setdefault("target_action_grid", grid.metadata(bsz))
+                fi.setdefault(
+                    "target_policy_action",
+                    torch.zeros(bsz, grid.target_steps * action_dim),
+                )
+                fi.setdefault(
+                    "target_model_action",
+                    torch.zeros_like(fi["target_policy_action"]),
+                )
+                if "policy_action_tcp" in fi:
+                    critic_dim = int(
+                        _cfg_get(actor_model, "critic_action_dim", action_dim)
+                    )
+                    fi.setdefault(
+                        "target_policy_action_tcp",
+                        torch.zeros(bsz, grid.target_steps * critic_dim),
+                    )
+        fi.setdefault("iv_kind", torch.zeros(bsz, chunk_len, dtype=torch.int8))
+        fi.setdefault("switch_step", torch.zeros(bsz, chunk_len, dtype=torch.int8))
+        fi.setdefault("data_schema", torch.full((bsz, 1), 2, dtype=torch.int8))
+        fi.setdefault(
+            "policy_action", fi.get("model_action", fi["action"]).clone()
+        )
+        algo_cfg = _cfg_get(getattr(self, "cfg", None), "algorithm", None)
+        if _cfg_get(algo_cfg, "human_bc_target", "fitted") == "direct":
+            fi.setdefault(
+                "exec_action_available", torch.zeros(bsz, chunk_len, dtype=torch.bool)
+            )
+            fi.setdefault(
+                "human_bc_available", torch.zeros(bsz, chunk_len, dtype=torch.bool)
+            )
+            fi.setdefault("human_bc_actions", torch.zeros_like(fi["policy_action"]))
+            fi.setdefault(
+                "transition_padding", torch.zeros(bsz, chunk_len, dtype=torch.bool)
+            )
+        if "policy_action_tcp" in fi:
+            fi.setdefault("exec_action_joint", torch.zeros_like(fi["policy_action"]))
+            fi.setdefault("human_bc_actions_tcp", torch.zeros_like(fi["action"]))
+
+    def _build_env_reply_forward_inputs(
+        self, raw_fi: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Collect forward inputs needed by EnvWorker for stage selection & archiving."""
+        if not isinstance(raw_fi, dict):
+            return {}
+        keep_keys = (
+            "actions_by_stage",
+            "target_actions_by_stage",
+            "ref_chunk",
+            "target_action_grid",
+            "target_policy_action",
+            "target_policy_action_tcp",
+            "policy_action",
+            "policy_action_tcp",
+            "action",
+            "model_action",
+            "proprio",
+            "critic_proprio",
+            "rlt_transition_proprio",
+            "rlt_transition_critic_proprio",
+            "record_transition",
+            "car_stage_meta",
+            "z_rl",
+        )
+        out = {key: raw_fi[key] for key in keep_keys if key in raw_fi}
+        return out
+
+    def _build_dummy_rlt_policy_output(
+        self,
+        actions: torch.Tensor,
+        template_fi: dict[str, Any] | None = None,
+        template_output: PolicyOutput | None = None,
+    ) -> PolicyOutput:
+        """Construct a masked placeholder PolicyOutput for RLT trajectory joining."""
+        bsz = int(actions.shape[0])
+        flat_actions = actions.detach().cpu().reshape(bsz, -1).to(torch.float32)
+        if isinstance(template_fi, dict):
+            fi = {}
+            for key, value in template_fi.items():
+                if isinstance(value, torch.Tensor):
+                    if key in ("data_schema", "target_action_grid"):
+                        fi[key] = value[:bsz].clone()
+                    else:
+                        fi[key] = torch.zeros(
+                            (bsz, *value.shape[1:]), dtype=value.dtype
+                        )
+                else:
+                    fi[key] = copy.deepcopy(value)
+            fi["action"] = flat_actions.clone()
+            fi["record_transition"] = torch.zeros((bsz, 1), dtype=torch.bool)
+        else:
+            fi = {
+                "action": flat_actions.clone(),
+                "record_transition": torch.zeros((bsz, 1), dtype=torch.bool),
+            }
+            if getattr(self, "rlt_feature_model", None) is not None:
+                z_dim = int(getattr(self.rlt_feature_model, "z_dim", 0) or 0)
+                if z_dim > 0:
+                    fi["z_rl"] = torch.zeros((bsz, z_dim), dtype=torch.float32)
+            fi["ref_chunk"] = flat_actions.reshape(
+                bsz, int(_cfg_get(getattr(self, "model_cfg", None), "num_action_chunks", 1)), -1
+            ).clone()
+        self._ensure_schema2_keys(fi)
+        if template_output is not None and template_output.prev_logprobs is not None:
+            prev_logprobs = (
+                torch.zeros((bsz, *template_output.prev_logprobs.shape[1:]), dtype=template_output.prev_logprobs.dtype)
+                if self.collect_prev_infos
+                else None
+            )
+        else:
+            prev_logprobs = (
+                torch.zeros((bsz, 1), dtype=torch.float32)
+                if self.collect_prev_infos
+                else None
+            )
+        if template_output is not None and template_output.prev_values is not None:
+            prev_values = (
+                torch.zeros((bsz, *template_output.prev_values.shape[1:]), dtype=template_output.prev_values.dtype)
+                if self.collect_prev_infos
+                else None
+            )
+        else:
+            prev_values = (
+                torch.zeros((bsz, 1), dtype=torch.float32)
+                if self.collect_prev_infos
+                else None
+            )
+        if template_output is not None and template_output.versions is not None:
+            versions = (
+                torch.full((bsz, *template_output.versions.shape[1:]), float(self.version), dtype=template_output.versions.dtype)
+                if self.collect_prev_infos
+                else None
+            )
+        else:
+            versions = (
+                torch.full((bsz, 1), float(self.version), dtype=torch.float32)
+                if self.collect_prev_infos
+                else None
+            )
+        intervene_flags = (
+            torch.zeros((bsz, *template_output.intervene_flags.shape[1:]), dtype=template_output.intervene_flags.dtype)
+            if template_output is not None and template_output.intervene_flags is not None
+            else None
+        )
+        return PolicyOutput(
+            prev_logprobs=prev_logprobs,
+            prev_values=prev_values,
+            intervene_flags=intervene_flags,
+            forward_inputs=fi,
+            versions=versions,
+        )
+
     def _build_policy_output(
         self, actions: torch.Tensor, result: dict[str, Any]
     ) -> PolicyOutput:
@@ -721,11 +998,13 @@ class MultiStepRolloutWorker(Worker):
                 dtype=torch.bool,
                 device=actions.device,
             )
+        fi = dict(result["forward_inputs"]) if isinstance(result.get("forward_inputs"), dict) else {}
+        self._ensure_schema2_keys(fi)
         return PolicyOutput(
             prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
             prev_values=result["prev_values"] if self.collect_prev_infos else None,
             intervene_flags=intervene_flags,
-            forward_inputs=result["forward_inputs"],
+            forward_inputs=fi,
             versions=torch.full_like(
                 result["prev_logprobs"], float(self.version), dtype=torch.float32
             )
@@ -776,13 +1055,20 @@ class MultiStepRolloutWorker(Worker):
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(applied_version)
 
-        gc.collect()
-        self.torch_platform.empty_cache()
+        if _cfg_get(getattr(self.cfg, "rollout", None), "gc_after_weight_sync", True):
+            gc.collect()
+            self.torch_platform.empty_cache()
 
     @classmethod
     def _infer_policy_input_batch_size(cls, policy_input: PolicyInput) -> int:
         """Infer the batch size of a routed policy input."""
-        return cls._infer_env_batch_size(policy_input.obs)
+        if policy_input.obs:
+            return cls._infer_env_batch_size(policy_input.obs)
+        if policy_input.request_sizes:
+            return int(sum(policy_input.request_sizes))
+        if policy_input.env_parts and policy_input.env_parts[0] is not None:
+            return sum(source.size for source in policy_input.env_parts[0].sources)
+        return 1
 
     @staticmethod
     def _decompress_policy_input(policy_input: PolicyInput) -> PolicyInput:
@@ -840,6 +1126,279 @@ class MultiStepRolloutWorker(Worker):
         _, result = self._predict_rollout_actions(env_obs, policy_kwargs=policy_kwargs)
         return result
 
+    def _deferred_policy_parts_store(
+        self,
+    ) -> dict[TrajectoryKey, tuple[PolicyPart, torch.Tensor]]:
+        store = getattr(self, "_deferred_policy_parts", None)
+        if store is None:
+            store = {}
+            self._deferred_policy_parts = store
+        return store
+
+    def _cached_next_rlt_store(
+        self,
+    ) -> dict[TrajectoryKey, tuple[dict[str, Any] | None, torch.Tensor | None]]:
+        store = getattr(self, "_cached_next_rlt_obs", None)
+        if store is None:
+            store = {}
+            self._cached_next_rlt_obs = store
+        return store
+
+    def _last_cached_rlt_store(
+        self,
+    ) -> dict[tuple[int, int], tuple[dict[str, Any] | None, torch.Tensor | None]]:
+        store = getattr(self, "_last_cached_rlt_by_env", None)
+        if store is None:
+            store = {}
+            self._last_cached_rlt_by_env = store
+        return store
+
+    def _held_episode_chunks_store(
+        self,
+    ) -> dict[tuple[int, int], dict[int, list[tuple[PolicyPart, EnvPart]]]]:
+        store = getattr(self, "_held_episode_chunks", None)
+        if store is None:
+            store = defaultdict(lambda: defaultdict(list))
+            self._held_episode_chunks = store
+        return store
+
+    def _cache_next_rlt_for_sources(
+        self,
+        sources: list[TrajectorySource],
+        forward_inputs: dict[str, Any] | None,
+        prev_values: torch.Tensor | None,
+        request_sizes: list[int],
+    ) -> None:
+        if not self.enable_rlt or not isinstance(forward_inputs, dict):
+            return
+        if not all(
+            f"rlt_transition_{k}" in forward_inputs
+            for k in ("z_rl", "proprio", "ref_chunk")
+        ):
+            return
+        next_rlt_all = extract_rlt_obs_from_forward_inputs(
+            forward_inputs, transition=True
+        )
+        next_rlt_shards = split_batch_value(next_rlt_all, request_sizes)
+        val_shards = (
+            torch.split(prev_values.detach().cpu().contiguous(), request_sizes, dim=0)
+            if isinstance(prev_values, torch.Tensor)
+            else [None] * len(sources)
+        )
+        cache = self._cached_next_rlt_store()
+        last_cache = self._last_cached_rlt_store()
+        for source, next_rlt, val in zip(sources, next_rlt_shards, val_shards):
+            payload = (next_rlt, val)
+            if source.key.chunk_id > 0:
+                prev_key = replace(source.key, chunk_id=source.key.chunk_id - 1)
+                cache[prev_key] = payload
+            last_cache[(source.key.env_rank, source.key.stage_id)] = payload
+
+    @staticmethod
+    def _relabel_stage_onehot_dict(obs_dict: dict[str, Any], stages: list[int]) -> None:
+        n = int(os.environ.get("RLT_NUM_STAGES", "8"))
+        if n <= 0:
+            return
+        for key in ("proprio", "critic_proprio"):
+            t = obs_dict.get(key)
+            if not isinstance(t, torch.Tensor) or t.shape[-1] < n or t.shape[0] != len(stages):
+                continue
+            t = t.clone()
+            oh = torch.zeros(t.shape[0], n, dtype=t.dtype, device=t.device)
+            for b_i, st in enumerate(stages):
+                if 1 <= int(st) <= n:
+                    oh[b_i, int(st) - 1] = 1
+            t[..., -n:] = oh
+            obs_dict[key] = t
+
+    def _apply_tianji_updates_to_pair(
+        self,
+        policy_part: PolicyPart,
+        actions: torch.Tensor,
+        updates: dict[str, Any] | None,
+        next_rlt_obs: dict[str, Any] | None,
+    ) -> tuple[PolicyPart, dict[str, Any] | None]:
+        if not isinstance(updates, dict):
+            return policy_part, next_rlt_obs
+        if updates.get("_is_stale", False):
+            template_fi = (
+                policy_part.output.forward_inputs
+                if policy_part.output is not None
+                else None
+            )
+            policy_part = PolicyPart(
+                sources=policy_part.sources,
+                obs=policy_part.obs,
+                output=self._build_dummy_rlt_policy_output(
+                    actions, template_fi, template_output=policy_part.output
+                ),
+            )
+        elif policy_part.output is not None and isinstance(
+            policy_part.output.forward_inputs, dict
+        ):
+            fi = policy_part.output.forward_inputs
+            for key in (
+                "proprio",
+                "critic_proprio",
+                "action",
+                "policy_action",
+                "policy_action_tcp",
+                "target_policy_action",
+                "target_policy_action_tcp",
+                "target_grid_observed",
+                "record_transition",
+            ):
+                if key in updates and updates[key] is not None:
+                    val = updates[key]
+                    fi[key] = (
+                        val.detach().cpu().contiguous()
+                        if isinstance(val, torch.Tensor)
+                        else val
+                    )
+        if isinstance(next_rlt_obs, dict):
+            next_rlt_obs = dict(next_rlt_obs)
+            if updates.get("rlt_transition_proprio") is not None:
+                val = updates["rlt_transition_proprio"]
+                next_rlt_obs["proprio"] = (
+                    val.detach().cpu().contiguous()
+                    if isinstance(val, torch.Tensor)
+                    else val
+                )
+            if updates.get("rlt_transition_critic_proprio") is not None:
+                val = updates["rlt_transition_critic_proprio"]
+                next_rlt_obs["critic_proprio"] = (
+                    val.detach().cpu().contiguous()
+                    if isinstance(val, torch.Tensor)
+                    else val
+                )
+            if updates.get("_stage_at_end") is not None:
+                self._relabel_stage_onehot_dict(next_rlt_obs, updates["_stage_at_end"])
+        return policy_part, next_rlt_obs
+
+    def _emit_rlt_pair(
+        self,
+        policy_part: PolicyPart,
+        completed_env_part: EnvPart,
+        updates: dict[str, Any] | None,
+        actor_channel: Channel,
+    ) -> None:
+        env_train = _cfg_get(getattr(self.cfg, "env", None), "train", None)
+        discard_episodes = bool(_cfg_get(env_train, "discard_episodes", False))
+        if (
+            not discard_episodes
+            or not isinstance(updates, dict)
+            or "_episode_serial" not in updates
+        ):
+            actor_channel.put(policy_part, async_op=True)
+            actor_channel.put(completed_env_part, async_op=True)
+            return
+
+        key = completed_env_part.sources[0].key
+        env_key = (key.env_rank, key.stage_id)
+        serial = int(updates["_episode_serial"])
+        held = self._held_episode_chunks_store()
+        held[env_key][serial].append((policy_part, completed_env_part))
+        if not updates.get("_episode_done", False):
+            return
+
+        if updates.get("_episode_discarded", False):
+            for pp, ep in held[env_key][serial]:
+                if pp.output is not None and isinstance(
+                    pp.output.forward_inputs, dict
+                ):
+                    rt = pp.output.forward_inputs.get("record_transition")
+                    if isinstance(rt, torch.Tensor):
+                        pp.output.forward_inputs["record_transition"] = (
+                            torch.zeros_like(rt, dtype=torch.bool)
+                        )
+                if ep.transition.rewards is not None:
+                    ep.transition.rewards = torch.zeros_like(ep.transition.rewards)
+
+        ready_serials = sorted(s for s in held[env_key] if s <= serial)
+        for ready_serial in ready_serials:
+            for pp, ep in held[env_key].pop(ready_serial):
+                actor_channel.put(pp, async_op=True)
+                actor_channel.put(ep, async_op=True)
+
+    def _pad_early_epoch_chunks(
+        self,
+        last_env_part: EnvPart,
+        template_fi: dict[str, Any] | None,
+        template_actions: torch.Tensor,
+        sample_next_rlt: dict[str, Any] | None,
+        actor_channel: Channel,
+        template_output: PolicyOutput | None = None,
+    ) -> None:
+        last_key = last_env_part.sources[0].key
+        bsz = int(last_env_part.sources[0].size)
+        deferred = self._deferred_policy_parts_store()
+        deferred.pop(replace(last_key, chunk_id=last_key.chunk_id + 1), None)
+        chunk_count = last_key.chunk_id + 1
+        train_layout = getattr(self, "train_layout", None)
+        if train_layout is not None:
+            chunk_count = train_layout.spec_of_rank(last_key.env_rank).chunk_steps(
+                int(self.model_cfg.num_action_chunks)
+            )
+        chunk_len = (
+            int(last_env_part.transition.dones.shape[1])
+            if last_env_part.transition.dones is not None
+            else int(_cfg_get(getattr(self, "model_cfg", None), "num_action_chunks", 1))
+        )
+        t_tmpl = last_env_part.transition
+        for pad_chunk_id in range(last_key.chunk_id + 1, chunk_count):
+            pad_key = replace(last_key, chunk_id=pad_chunk_id)
+            source = TrajectorySource(key=pad_key, size=bsz)
+            dummy_out = self._build_dummy_rlt_policy_output(
+                template_actions, template_fi=template_fi, template_output=template_output
+            )
+            pad_policy_part = PolicyPart(
+                sources=[source],
+                obs={},
+                output=dummy_out,
+            )
+            pad_next_rlt = (
+                copy_dict_tensor(sample_next_rlt)
+                if self.enable_rlt and isinstance(sample_next_rlt, dict)
+                else None
+            )
+            pad_transition_kwargs: dict[str, Any] = {
+                "rewards": torch.zeros((bsz, chunk_len), dtype=torch.float32),
+                "dones": torch.zeros((bsz, chunk_len), dtype=torch.bool),
+                "terminations": torch.zeros((bsz, chunk_len), dtype=torch.bool),
+                "truncations": torch.zeros((bsz, chunk_len), dtype=torch.bool),
+            }
+            for fname in (
+                "intervene_actions",
+                "intervene_flags",
+                "rlt_switch_flags",
+                "iv_kind",
+                "exec_actions",
+                "exec_action_available",
+                "intervene_action_available",
+                "transition_padding",
+                "exec_actions_joint",
+                "intervene_actions_tcp",
+            ):
+                val = getattr(t_tmpl, fname, None)
+                if isinstance(val, torch.Tensor):
+                    pad_transition_kwargs[fname] = torch.zeros_like(val)
+            pad_env_part = EnvPart(
+                sources=[source],
+                transition=EnvTransition(**pad_transition_kwargs),
+                next_obs={},
+                requires_inference=False,
+            ).complete(
+                next_obs=None,
+                next_rlt_obs=pad_next_rlt,
+                final_prev_values=(
+                    torch.zeros((bsz, 1), dtype=torch.float32)
+                    if self.collect_final_values and self.collect_prev_infos
+                    else None
+                ),
+            )
+            actor_channel.put(pad_policy_part, async_op=True)
+            actor_channel.put(pad_env_part, async_op=True)
+
     def _publish_env_part(
         self,
         env_part: EnvPart,
@@ -849,10 +1408,34 @@ class MultiStepRolloutWorker(Worker):
         bootstrap_result: dict[str, Any] | None = None,
         policy_kwargs: dict[str, Any] | None = None,
     ) -> None:
+        updates = None
+        if (
+            isinstance(env_part.next_rlt_obs, dict)
+            and "__tianji_updates__" in env_part.next_rlt_obs
+        ):
+            raw_rlt = dict(env_part.next_rlt_obs)
+            updates = raw_rlt.pop("__tianji_updates__", None)
+            env_part.next_rlt_obs = None
+
         next_obs = env_part.next_obs if env_part.next_obs is not None else policy_obs
         final_prev_values = None
+        tianji_active = self._is_tianji_rlt_active() or updates is not None
+        if tianji_active and env_part.sources:
+            key = env_part.sources[0].key
+            cached = self._cached_next_rlt_store().pop(key, None)
+            if cached is None and not env_part.requires_inference:
+                cached = self._last_cached_rlt_store().get((key.env_rank, key.stage_id))
+            if cached is not None:
+                cached_rlt, cached_val = cached
+                if next_rlt_obs is None:
+                    next_rlt_obs = cached_rlt
+                if final_prev_values is None and self.collect_final_values:
+                    final_prev_values = cached_val
+
         # Terminal inference contributes values or transition features only.
-        if env_part.requires_inference:
+        if env_part.requires_inference and (
+            not tianji_active or next_rlt_obs is None or final_prev_values is None
+        ):
             if next_obs is None:
                 raise ValueError(
                     "Terminal inference requires a post-action observation."
@@ -866,12 +1449,44 @@ class MultiStepRolloutWorker(Worker):
             if (
                 self.enable_rlt
                 and self.model_cfg.model_type != SupportedModel.PSI0.value
+                and next_rlt_obs is None
             ):
                 next_rlt_obs = extract_rlt_obs_from_forward_inputs(
                     result.get("forward_inputs"), transition=True
                 )
-            if values is not None:
+            if values is not None and final_prev_values is None:
                 final_prev_values = values.cpu().contiguous()
+
+        if tianji_active and env_part.sources:
+            key = env_part.sources[0].key
+            deferred = self._deferred_policy_parts_store().pop(key, None)
+            if deferred is not None:
+                policy_part, deferred_actions = deferred
+                policy_part, next_rlt_obs = self._apply_tianji_updates_to_pair(
+                    policy_part, deferred_actions, updates, next_rlt_obs
+                )
+                completed = env_part.complete(
+                    next_obs=(next_obs if self.collect_raw_transition_obs else None),
+                    next_rlt_obs=next_rlt_obs if self.enable_rlt else None,
+                    final_prev_values=final_prev_values,
+                )
+                self._emit_rlt_pair(policy_part, completed, updates, actor_channel)
+                if isinstance(updates, dict) and updates.get("_early_epoch_end"):
+                    template_fi = (
+                        policy_part.output.forward_inputs
+                        if policy_part.output is not None
+                        else None
+                    )
+                    self._pad_early_epoch_chunks(
+                        env_part,
+                        template_fi,
+                        deferred_actions,
+                        next_rlt_obs,
+                        actor_channel,
+                        template_output=policy_part.output,
+                    )
+                return
+
         # Republish environment-owned data here to keep one Actor-channel writer.
         actor_channel.put(
             env_part.complete(
@@ -920,7 +1535,7 @@ class MultiStepRolloutWorker(Worker):
         )
         policy_observations = (
             split_batch_value(policy_input.obs, policy_input.request_sizes)
-            if needs_policy_obs
+            if needs_policy_obs and policy_input.obs
             else [None] * part_count
         )
         bootstrap_results = [None] * part_count
@@ -983,14 +1598,22 @@ class MultiStepRolloutWorker(Worker):
     def _send_actions(
         self,
         channel: Channel,
-        actions: torch.Tensor,
+        actions: torch.Tensor | RolloutActionOutput,
         stage_id: int,
         split_sizes: list[int] | None,
         peer_ranks: Collection[int] | None = None,
     ) -> None:
         # Send by value on CPU: a device-resident tensor reaches a same-device env
         # as a CUDA IPC handle aliasing the buffer the next forward pass reuses.
-        actions = actions.detach().cpu().contiguous()
+        if isinstance(actions, RolloutActionOutput):
+            actions = RolloutActionOutput(
+                actions=actions.actions.detach().cpu().contiguous(),
+                forward_inputs=put_tensor_device(
+                    actions.forward_inputs, "cpu", detach=True
+                ),
+            )
+        else:
+            actions = actions.detach().cpu().contiguous()
         if self.env_decoupled_mode:
             if split_sizes is None:
                 raise ValueError("Decoupled policy output requires recorded routes.")
@@ -1060,12 +1683,14 @@ class MultiStepRolloutWorker(Worker):
             for index, request in enumerate(requests)
             if request.requires_inference
         ]
+        send_forward_inputs = getattr(self, "rlt_feature_model", None) is not None
         single_reply_group = len(groups) == 1 and len(replied) == len(requests)
-        request_actions: list[torch.Tensor | None] | None = (
+        request_replies: list[torch.Tensor | RolloutActionOutput | None] | None = (
             None if single_reply_group else [None] * len(requests)
         )
-        direct_actions: torch.Tensor | None = None
+        direct_reply: torch.Tensor | RolloutActionOutput | None = None
         published = []
+        lat_trace = os.environ.get("RLT_LAT_TRACE") == "1"
         for (_, _, policy_fields, dagger_beta), indices in groups.items():
             policy_input = (
                 requests[indices[0]]
@@ -1075,8 +1700,18 @@ class MultiStepRolloutWorker(Worker):
             if not policy_input.requires_inference:
                 actions = policy_input.external_actions
                 forward_inputs = None
-                policy_output = None
+                if (
+                    self.enable_rlt
+                    and not getattr(self, "enable_online_lerobot", False)
+                ):
+                    policy_output = self._build_dummy_rlt_policy_output(
+                        actions, template_fi=getattr(self, "_last_rlt_fi_template", None)
+                    )
+                else:
+                    policy_output = None
+                reply_payload: torch.Tensor | RolloutActionOutput = actions
             else:
+                _t1 = time.time() if lat_trace else 0.0
                 actions, result = self._predict_rollout_actions(
                     policy_input.obs,
                     rlt_switch_flags=policy_input.rlt_switch_flags,
@@ -1084,17 +1719,42 @@ class MultiStepRolloutWorker(Worker):
                     policy_kwargs=dict(policy_fields),
                     dagger_beta=dagger_beta,
                 )
+                _t2 = time.time() if lat_trace else 0.0
+                if lat_trace:
+                    with open("/tmp/rlt_lat_roll.log", "a") as _f:
+                        _f.write("%.4f %.4f %.4f\n" % (_t1, _t2, time.time()))
                 forward_inputs = result.get("forward_inputs")
                 policy_output = self._build_policy_output(actions, result)
+                if (
+                    self._is_tianji_rlt_active()
+                    and policy_output is not None
+                    and isinstance(policy_output.forward_inputs, dict)
+                ):
+                    self._last_rlt_fi_template = policy_output.forward_inputs
+                reply_payload = (
+                    RolloutActionOutput(
+                        actions=actions,
+                        forward_inputs=self._build_env_reply_forward_inputs(
+                            forward_inputs
+                        ),
+                    )
+                    if send_forward_inputs
+                    else actions
+                )
             if single_reply_group:
-                direct_actions = actions
+                direct_reply = reply_payload
             else:
                 sizes = [
                     self._infer_policy_input_batch_size(requests[index])
                     for index in indices
                 ]
-                for index, shard in zip(indices, torch.split(actions, sizes, dim=0)):
-                    request_actions[index] = shard
+                shards = (
+                    reply_payload.split(sizes)
+                    if isinstance(reply_payload, RolloutActionOutput)
+                    else torch.split(reply_payload, sizes, dim=0)
+                )
+                for index, shard in zip(indices, shards):
+                    request_replies[index] = shard
             published.append(
                 (policy_input, actions, forward_inputs, policy_output, policy_fields)
             )
@@ -1105,11 +1765,15 @@ class MultiStepRolloutWorker(Worker):
             if peer_ranks is not None:
                 peer_ranks = [peer_ranks[index] for index in replied]
         if replied:
-            actions_to_send = (
-                direct_actions
-                if single_reply_group
-                else torch.cat([request_actions[index] for index in replied])
-            )
+            if single_reply_group:
+                actions_to_send = direct_reply
+            else:
+                replied_items = [request_replies[index] for index in replied]
+                actions_to_send = (
+                    RolloutActionOutput.merge(replied_items)
+                    if isinstance(replied_items[0], RolloutActionOutput)
+                    else torch.cat(replied_items, dim=0)
+                )
             self._send_actions(
                 output_channel,
                 actions_to_send,
@@ -1117,6 +1781,8 @@ class MultiStepRolloutWorker(Worker):
                 split_sizes,
                 peer_ranks,
             )
+
+        tianji_active = self._is_tianji_rlt_active()
         for (
             policy_input,
             actions,
@@ -1126,7 +1792,7 @@ class MultiStepRolloutWorker(Worker):
         ) in published:
             # Omit raw observations when the collector does not consume them.
             transition_obs = policy_input.obs if self.collect_raw_transition_obs else {}
-            if not policy_input.requires_inference:
+            if policy_output is None:
                 trajectory_part = PolicyPart(
                     sources=policy_input.sources,
                     obs=transition_obs,
@@ -1138,9 +1804,25 @@ class MultiStepRolloutWorker(Worker):
                     obs=transition_obs,
                     output=policy_output,
                 )
-            # Publish model-owned data immediately; its environment half
-            # arrives later through an EnvPart with the same key.
-            actor_channel.put(trajectory_part, async_op=True)
+
+            if tianji_active:
+                self._cache_next_rlt_for_sources(
+                    policy_input.sources,
+                    forward_inputs,
+                    policy_output.prev_values if policy_output is not None else None,
+                    policy_input.request_sizes
+                    or [source.size for source in policy_input.sources],
+                )
+                split_parts = trajectory_part.split()
+                split_sizes_src = [source.size for source in policy_input.sources]
+                action_shards = torch.split(actions.detach().cpu(), split_sizes_src, dim=0)
+                deferred = self._deferred_policy_parts_store()
+                for part, act_shard in zip(split_parts, action_shards):
+                    deferred[part.sources[0].key] = (part, act_shard)
+            else:
+                # Publish model-owned data immediately; its environment half
+                # arrives later through an EnvPart with the same key.
+                actor_channel.put(trajectory_part, async_op=True)
             # Attached parts close previously executed chunks.
             self._publish_env_parts(
                 policy_input, forward_inputs, actor_channel, dict(policy_fields)
@@ -1198,12 +1880,22 @@ class MultiStepRolloutWorker(Worker):
             active_requests: list[PolicyInput] = []
             active_sizes: list[int] = []
             active_routes: list[Any] = []
+            completions: list[PolicyInput] = []
+            completion_ranks: list[int] = []
             finals: list[PolicyInput] = []
             final_ranks: list[int] = []
             for request, size, route in zip(requests, split_sizes, routes):
                 if request.is_last:
                     finals.append(request)
                     final_ranks.append(split_channel_message(route)[0])
+                elif (
+                    not request.obs
+                    and not request.sources
+                    and request.env_parts
+                    and request.requires_inference
+                ):
+                    completions.append(request)
+                    completion_ranks.append(split_channel_message(route)[0])
                 else:
                     active_requests.append(request)
                     active_sizes.append(size)
@@ -1219,6 +1911,7 @@ class MultiStepRolloutWorker(Worker):
                     split_sizes=active_sizes,
                 )
             self._publish_final_inputs(finals, final_ranks, actor_channel)
+            self._publish_final_inputs(completions, completion_ranks, actor_channel)
             served += len(requests)
         self._decoupled_step += 1
 
@@ -1363,17 +2056,28 @@ class MultiStepRolloutWorker(Worker):
                     infer_batch_size_fn=self._infer_policy_input_batch_size,
                     peer_ranks=peers,
                 ).async_wait()
-                finals, final_ranks, requests, request_ranks = [], [], [], []
+                finals, final_ranks, completions, completion_ranks = [], [], [], []
+                requests, request_ranks = [], []
                 for env_rank, item in zip(peers, received):
-                    if not item.is_last:
+                    if item.is_last:
+                        # The final message closes the last chunk without requesting actions.
+                        finals.append(item)
+                        final_ranks.append(env_rank)
+                        left[env_rank] -= 1
+                    elif (
+                        not item.obs
+                        and not item.sources
+                        and item.env_parts
+                        and item.requires_inference
+                    ):
+                        # Prefetch-mode completion closes the finished chunk without requesting actions.
+                        completions.append(item)
+                        completion_ranks.append(env_rank)
+                    else:
                         requests.append(item)
                         request_ranks.append(env_rank)
-                        continue
-                    # The final message closes the last chunk without requesting actions.
-                    finals.append(item)
-                    final_ranks.append(env_rank)
-                    left[env_rank] -= 1
                 self._publish_final_inputs(finals, final_ranks, actor_channel)
+                self._publish_final_inputs(completions, completion_ranks, actor_channel)
                 if not requests:
                     continue
                 self._serve_policy_inputs(
@@ -1442,20 +2146,33 @@ class MultiStepRolloutWorker(Worker):
                     )
                     for sender, shard in zip(senders, shards)
                 )
-                shard_actions: list[torch.Tensor | None] = [None] * len(shards)
+                shard_actions: list[torch.Tensor | RolloutActionOutput | None] = [
+                    None
+                ] * len(shards)
                 for (_, policy_fields), indices in groups.items():
                     actions = self._predict_eval_actions(
                         self._merge_obs_batches([shards[index] for index in indices]),
                         policy_fields,
                     )
                     sizes = [split_sizes[index] for index in indices]
-                    for index, shard in zip(indices, torch.split(actions, sizes)):
+                    split_items = (
+                        actions.split(sizes)
+                        if isinstance(actions, RolloutActionOutput)
+                        else torch.split(actions, sizes)
+                    )
+                    for index, shard in zip(indices, split_items):
                         shard_actions[index] = shard
+                merged_eval = (
+                    RolloutActionOutput.merge(shard_actions)
+                    if isinstance(shard_actions[0], RolloutActionOutput)
+                    else torch.cat(shard_actions, dim=0)
+                )
                 self.send_to_recorded_batch_routes(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
-                    data=torch.cat(shard_actions, dim=0),
+                    data=merged_eval,
                     tag="rollout_results",
+                    split_fn=self._split_actions,
                     split_sizes=split_sizes,
                 )
         else:
@@ -1492,16 +2209,20 @@ class MultiStepRolloutWorker(Worker):
                                 )
                                 left[rank] = (left[rank] - 1) // epoch * epoch
                             continue
-                        self.send_to(
-                            group_name=self.cfg.env.group_name,
-                            channel=output_channel,
-                            data=self._predict_eval_shards(shards, policy_fields),
-                            tag="eval_rollout_results",
-                            route_key=stage_id,
-                            async_op=True,
-                            batch_size=self.eval_batch_size,
-                            peer_ranks=group,
-                        )
+                        eval_reply = self._predict_eval_shards(shards, policy_fields)
+                        send_kwargs: dict[str, Any] = {
+                            "group_name": self.cfg.env.group_name,
+                            "channel": output_channel,
+                            "data": eval_reply,
+                            "tag": "eval_rollout_results",
+                            "route_key": stage_id,
+                            "async_op": True,
+                            "batch_size": self.eval_batch_size,
+                            "peer_ranks": group,
+                        }
+                        if isinstance(eval_reply, RolloutActionOutput):
+                            send_kwargs["split_fn"] = self._split_actions
+                        self.send_to(**send_kwargs)
                         for rank in group:
                             left[rank] -= 1
 
@@ -1512,7 +2233,7 @@ class MultiStepRolloutWorker(Worker):
         self,
         shards: list[dict[str, Any]],
         policy_fields: tuple[tuple[str, Any], ...],
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | RolloutActionOutput:
         """Return the CPU actions for eval shards that share policy fields.
 
         Shards whose observations differ in format run separate forward passes,
@@ -1522,33 +2243,58 @@ class MultiStepRolloutWorker(Worker):
         formats = self._group_indices(
             batch_format(shard.get("obs", shard)) for shard in shards
         )
-        shard_actions: list[torch.Tensor | None] = [None] * len(shards)
+        shard_actions: list[torch.Tensor | RolloutActionOutput | None] = [None] * len(
+            shards
+        )
         for indices in formats.values():
             actions = self._predict_eval_actions(
                 self._merge_obs_batches([shards[index] for index in indices]),
                 policy_fields,
             )
             sizes = [self._infer_env_batch_size(shards[index]) for index in indices]
-            for index, shard in zip(indices, torch.split(actions, sizes)):
+            split_items = (
+                actions.split(sizes)
+                if isinstance(actions, RolloutActionOutput)
+                else torch.split(actions, sizes)
+            )
+            for index, shard in zip(indices, split_items):
                 shard_actions[index] = shard
+        if isinstance(shard_actions[0], RolloutActionOutput):
+            return RolloutActionOutput.merge(shard_actions)
         return torch.cat(shard_actions, dim=0)
 
     def _predict_eval_actions(
         self,
         env_output: dict[str, Any],
         policy_fields: tuple[tuple[str, Any], ...],
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | RolloutActionOutput:
         """Return the CPU actions for one merged batch of eval observations."""
-        actions, _ = self._predict_rollout_actions(
-            env_output["obs"],
-            mode="eval",
-            final_obs=env_output.get("final_obs", None),
-            rlt_switch_flags=env_output.get("rlt_switch_flags", None),
-            intervene_requested=env_output.get("intervene_flags", None),
-            policy_kwargs=dict(policy_fields),
+        sig = inspect.signature(self._predict_rollout_actions)
+        call_kwargs: dict[str, Any] = {
+            "mode": "eval",
+            "final_obs": env_output.get("final_obs", None),
+            "rlt_switch_flags": env_output.get("rlt_switch_flags", None),
+            "intervene_requested": env_output.get("intervene_flags", None),
+        }
+        if "policy_kwargs" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            call_kwargs["policy_kwargs"] = dict(policy_fields)
+        actions, result = self._predict_rollout_actions(
+            env_output["obs"], **call_kwargs
         )
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().contiguous()
+        if _cfg_get(getattr(self, "cfg", None), "rollout", None) is not None and _cfg_get(
+            self.cfg.rollout, "joint_actor_eval", False
+        ):
+            fi = {
+                key: value.detach().cpu().contiguous()
+                if isinstance(value, torch.Tensor)
+                else value
+                for key, value in (result.get("forward_inputs") or {}).items()
+            }
+            return RolloutActionOutput(actions=actions, forward_inputs=fi)
         return actions
 
     def offload_model(self):
@@ -1659,8 +2405,12 @@ class MultiStepRolloutWorker(Worker):
         }
 
     @staticmethod
-    def _split_actions(actions: torch.Tensor, sizes: list[int]) -> list[torch.Tensor]:
+    def _split_actions(
+        actions: torch.Tensor | RolloutActionOutput, sizes: list[int]
+    ) -> list[torch.Tensor | RolloutActionOutput]:
         """Split policy actions for the environment workers that requested them."""
+        if isinstance(actions, RolloutActionOutput):
+            return actions.split(sizes)
         return [shard.contiguous() for shard in torch.split(actions, sizes, dim=0)]
 
     def set_global_step(self, global_step: int):

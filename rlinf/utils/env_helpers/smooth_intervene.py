@@ -75,51 +75,76 @@ class SmoothInterveneController:
             and OmegaConf.select(cfg, "env.train.smooth_intervene", default=False)
         )
         if enabled:
-            if OmegaConf.select(cfg, "algorithm.loss_type") != "embodied_dagger":
+            loss_type = OmegaConf.select(cfg, "algorithm.loss_type")
+            env_type = SupportedEnvType(OmegaConf.select(cfg, "env.train.env_type"))
+            if env_type not in (SupportedEnvType.REAL, SupportedEnvType.TIANJI):
                 raise ValueError(
-                    "smooth_intervene requires algorithm.loss_type=embodied_dagger"
+                    "smooth_intervene requires env.train.env_type to be 'realworld' or 'tianji'"
                 )
-            if not bool(
-                OmegaConf.select(
-                    cfg,
-                    "algorithm.dagger.online_lerobot.enabled",
-                    default=False,
-                )
-            ):
-                raise ValueError(
-                    "smooth_intervene requires algorithm.dagger.online_lerobot.enabled=True"
-                )
-            if (
-                SupportedEnvType(OmegaConf.select(cfg, "env.train.env_type"))
-                is not SupportedEnvType.REAL
-            ):
-                raise ValueError(
-                    "smooth_intervene requires env.train.env_type to be 'realworld'"
-                )
+            env_id = str(OmegaConf.select(cfg, "env.train.init_params.id", default="") or "")
+            intervene_prefetch = bool(
+                OmegaConf.select(cfg, "env.train.intervene_prefetch", default=False)
+            )
+            hil_control = bool(
+                OmegaConf.select(cfg, "env.train.override_cfg.hil_control", default=False)
+            )
+            is_tianji_rlt = loss_type in {"rlt_ac", "rlt_td3"} and (
+                intervene_prefetch
+                or env_type is SupportedEnvType.TIANJI
+                or env_id.startswith("Tianji")
+                or hil_control
+            )
+            if not is_tianji_rlt:
+                if loss_type != "embodied_dagger":
+                    raise ValueError(
+                        "smooth_intervene requires algorithm.loss_type=embodied_dagger"
+                    )
+                if not bool(
+                    OmegaConf.select(
+                        cfg,
+                        "algorithm.dagger.online_lerobot.enabled",
+                        default=False,
+                    )
+                ):
+                    raise ValueError(
+                        "smooth_intervene requires algorithm.dagger.online_lerobot.enabled=True"
+                    )
             if train_num_envs_per_stage != 1:
                 raise ValueError(
                     "smooth_intervene requires exactly one env per EnvWorker stage"
                 )
-            # Imported here so a worker that never touches real hardware does
-            # not pay for the realworld env package at import time.
-            from rlinf.envs.real.wrappers.teleop.config import (
-                resolve_teleop_devices,
-            )
-            from rlinf.robotics.parts.teleop import TeleopDevice
-
-            # Every registered device, so a config naming a real one that this
-            # check then rejects says why -- rather than reporting it as a
-            # device that does not exist.
-            devices = resolve_teleop_devices(
-                OmegaConf.select(cfg, "env.train") or {},
-                supported=TeleopDevice.names(),
-            )
-            named = [d if isinstance(d, str) else next(iter(dict(d))) for d in devices]
-            if not named or any(name != "pico" for name in named):
+            if bool(OmegaConf.select(cfg, "env.train.use_spacemouse", default=False)):
                 raise ValueError(
-                    "smooth_intervene requires every env.train.teleop entry to be "
-                    f"pico (PICO-only; got {named!r})"
+                    "smooth_intervene does not support SpaceMouse intervention"
                 )
+            use_pico = bool(OmegaConf.select(cfg, "env.train.use_pico", default=False))
+            use_piper = bool(
+                OmegaConf.select(cfg, "env.train.use_piper_intervention", default=False)
+            )
+            teleop_cfg = OmegaConf.select(cfg, "env.train.teleop", default=None)
+            if teleop_cfg is not None or not (use_pico or use_piper):
+                # Imported here so a worker that never touches real hardware does
+                # not pay for the realworld env package at import time.
+                from rlinf.envs.real.wrappers.teleop.config import (
+                    resolve_teleop_devices,
+                )
+                from rlinf.robotics.parts.teleop import TeleopDevice
+
+                # Every registered device, so a config naming a real one that this
+                # check then rejects says why -- rather than reporting it as a
+                # device that does not exist.
+                devices = resolve_teleop_devices(
+                    OmegaConf.select(cfg, "env.train") or {},
+                    supported=TeleopDevice.names(),
+                )
+                named = [
+                    d if isinstance(d, str) else next(iter(dict(d))) for d in devices
+                ]
+                if not named or any(name != "pico" for name in named):
+                    raise ValueError(
+                        "smooth_intervene requires every env.train.teleop entry to be "
+                        f"pico (PICO-only; got {named!r})"
+                    )
         model_path = "actor.model" if enable_train else "rollout.model"
         return cls(
             stage_num=stage_num,
@@ -161,14 +186,8 @@ class SmoothInterveneController:
             )
         return actions[:, -1, :].float().cpu().numpy()
 
-    def build_external_policy_input(
-        self,
-        stage_id: int,
-        *,
-        env,
-        obs: dict,
-    ) -> PolicyInput:
-        """Build a self-contained request for a chunk without model inference."""
+    def build_hold_actions(self, stage_id: int, env) -> torch.Tensor:
+        """Build a chunk of hold actions without skipping model inference."""
         get_hold_actions = get_env_attr(env, "get_hold_actions")
         if not callable(get_hold_actions):
             raise ValueError(
@@ -183,8 +202,22 @@ class SmoothInterveneController:
                 f"hold_actions has shape {tuple(hold_actions.shape)}, "
                 f"expected {expected_shape} for stage {stage_id}"
             )
-        actions = hold_actions.unsqueeze(1).expand(-1, self.num_action_chunks, -1)
-        return PolicyInput(obs=obs, external_actions=actions.contiguous())
+        return (
+            hold_actions.unsqueeze(1)
+            .expand(-1, self.num_action_chunks, -1)
+            .contiguous()
+        )
+
+    def build_external_policy_input(
+        self,
+        stage_id: int,
+        *,
+        env,
+        obs: dict,
+    ) -> PolicyInput:
+        """Build a self-contained request for a chunk without model inference."""
+        actions = self.build_hold_actions(stage_id, env)
+        return PolicyInput(obs=obs, external_actions=actions)
 
     def on_chunk_done(
         self,
