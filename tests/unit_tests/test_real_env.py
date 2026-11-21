@@ -4901,7 +4901,7 @@ def test_real_robosuite_imports_with_a_mismatched_egl_index():
 
 
 # ---------------------------------------------------------------------------
-# HIP -> Vulkan render device (AMD, DRI_PRIME)
+# HIP -> render device (AMD: DRI_PRIME for Vulkan, device index for EGL)
 # ---------------------------------------------------------------------------
 
 # An 8x W7900D node: KFD nodes 0-1 are the CPU sockets, 2-9 the GPUs in PCI bus
@@ -4935,12 +4935,30 @@ def kfd_topology(tmp_path, monkeypatch):
             if openable is None or index in openable:
                 (dri / f"renderD{128 + index}").write_text("")
 
+    def egl_lists(render_minors):
+        """Make EGL enumerate the GPUs with these render minors, in this order."""
+        monkeypatch.setattr(
+            amd_gpu,
+            "_query_egl_index_by_render_node",
+            lambda: {
+                str(dri / f"renderD{minor}"): egl_index
+                for egl_index, minor in enumerate(render_minors)
+            },
+        )
+
+    make.egl_lists = egl_lists
+
     monkeypatch.setattr(amd_gpu, "_KFD_TOPOLOGY_NODES", str(nodes))
     monkeypatch.setattr(amd_gpu, "_DRI_DEVICE_DIR", str(dri))
     monkeypatch.delenv("ROCR_VISIBLE_DEVICES", raising=False)
-    amd_gpu._dri_prime_by_hip_device.cache_clear()
+    monkeypatch.delenv("MUJOCO_GL", raising=False)
+    # No EGL devices unless a test asks for them; never the host's.
+    egl_lists([])
+    amd_gpu._rdna_gpus_by_hip_device.cache_clear()
+    amd_gpu._egl_index_by_hip_device.cache_clear()
     yield make
-    amd_gpu._dri_prime_by_hip_device.cache_clear()
+    amd_gpu._rdna_gpus_by_hip_device.cache_clear()
+    amd_gpu._egl_index_by_hip_device.cache_clear()
 
 
 def test_every_hip_device_renders_on_its_own_pci_slot(kfd_topology):
@@ -5055,8 +5073,65 @@ def test_the_kfd_topology_is_read_once(kfd_topology, monkeypatch):
 
     AMDGPUManager.get_dri_prime(0)
     AMDGPUManager.get_dri_prime(1)
+    AMDGPUManager.get_egl_device_id(0)
+    AMDGPUManager.get_worker_local_env_var([1])
 
     assert len(reads) == 10
+
+
+def test_a_worker_renders_egl_on_its_own_gpu(kfd_topology):
+    # Mesa lists the two GPUs in the reverse of the HIP order: HIP 0 is EGL 1
+    # and HIP 1 is EGL 0.
+    kfd_topology([0x46, 0x23], gfx_target=120001)
+    kfd_topology.egl_lists([129, 128])
+
+    assert AMDGPUManager.get_egl_device_id(0) == 1
+    assert AMDGPUManager.get_egl_device_id("1") == 0
+    assert AMDGPUManager.get_worker_local_env_var([1, 0]) == {
+        DRI_PRIME_ENV: "pci-0000_23_00_0",
+        MUJOCO_EGL_DEVICE_ID: "0",
+        EGL_DEVICE_ID: "0",
+    }
+
+
+@pytest.mark.parametrize("backend", ["osmesa", "glx"])
+def test_cpu_rendering_gets_no_egl_device(kfd_topology, monkeypatch, backend):
+    kfd_topology(_W7900D_GPU_BUSES)
+    kfd_topology.egl_lists(range(128, 136))
+    monkeypatch.setenv("MUJOCO_GL", backend)
+
+    env_vars = AMDGPUManager.get_worker_local_env_var([5])
+
+    assert env_vars == {DRI_PRIME_ENV: "pci-0000_a3_00_0"}
+
+
+def test_a_gpu_egl_does_not_list_gets_no_egl_device(kfd_topology):
+    # Mesa too old for the GPU enumerates only its software device.
+    kfd_topology(_W7900D_GPU_BUSES)
+    kfd_topology.egl_lists([])
+
+    assert AMDGPUManager.get_egl_device_id(0) is None
+    assert AMDGPUManager.get_worker_local_env_var([0]) == {
+        DRI_PRIME_ENV: "pci-0000_03_00_0"
+    }
+
+
+def test_a_node_without_egl_gets_no_egl_device(kfd_topology, monkeypatch):
+    kfd_topology(_W7900D_GPU_BUSES)
+
+    def no_egl():
+        raise OSError("libEGL.so.1: cannot open shared object file")
+
+    monkeypatch.setattr(amd_gpu, "_query_egl_index_by_render_node", no_egl)
+
+    assert AMDGPUManager.get_egl_device_id(0) is None
+
+
+def test_cdna_gpus_get_no_egl_device(kfd_topology):
+    kfd_topology([0x0C, 0x22], gfx_target=90402)  # gfx942
+    kfd_topology.egl_lists([128, 129])
+
+    assert AMDGPUManager.get_egl_device_id(0) is None
 
 
 class _FakeCudaTensor:
