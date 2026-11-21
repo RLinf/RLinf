@@ -14,6 +14,8 @@ settings before launching a run.
      - How RLinf config files are structured and overridden.
    * - :doc:`Embodied Configuration <../embodiment_config>`
      - Config keys specific to embodied training.
+   * - :doc:`Heterogeneous Envs <../hetero_envs>`
+     - Run different env configurations, such as ManiSkill and LIBERO, for one policy in one run.
    * - :doc:`Agentic Configuration <../agentic_config>`
      - Config keys specific to agentic and reasoning training.
    * - :doc:`Logging <../logger>`
@@ -24,5 +26,6 @@ settings before launching a run.
 
    Basic Configuration <../basic_config>
    Embodied Configuration <../embodiment_config>
+   Heterogeneous Envs <../hetero_envs>
    Agentic Configuration <../agentic_config>
    Logging <../logger>

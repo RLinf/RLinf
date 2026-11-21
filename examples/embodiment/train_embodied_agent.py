@@ -99,6 +99,16 @@ def main(cfg) -> None:
         )
 
         actor_worker_cls = EmbodiedSuperMimicFSDPPolicy
+    elif cfg.algorithm.loss_type == "embodied_refl":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for embodied_refl."
+            )
+        from rlinf.workers.actor.fsdp_refl_policy_worker import (
+            EmbodiedReFLFSDPPolicy,
+        )
+
+        actor_worker_cls = EmbodiedReFLFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_art":
         if use_training_pipeline:
             raise ValueError(
@@ -122,6 +132,12 @@ def main(cfg) -> None:
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
+
+    runner_cls = EmbodiedRunner
+    if cfg.algorithm.loss_type == "embodied_refl":
+        from rlinf.runners.refl_runner import ReFLRunner
+
+        runner_cls = ReFLRunner
 
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")

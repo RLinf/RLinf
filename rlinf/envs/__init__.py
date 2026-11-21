@@ -196,7 +196,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return MujocoWarpEnv
     elif env_type == SupportedEnvType.DIFFUSION:
-        from rlinf.envs.sim.diffusion import GenerationEnv
+        from rlinf.envs.sim.diffusion.generation_env import GenerationEnv
 
         return GenerationEnv
     elif env_type == SupportedEnvType.POLARIS:

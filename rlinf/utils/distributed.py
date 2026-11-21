@@ -967,12 +967,18 @@ def masked_normalization(
             op=torch.distributed.ReduceOp.SUM,
             group=group,
         )
-    mean = x_sum / factor
-    meansq = x_sum_sq / factor
-    var = meansq - mean**2
+    safe_factor = factor.clamp(min=1)
+    mean = x_sum / safe_factor
+    meansq = x_sum_sq / safe_factor
+    var = (meansq - mean**2).clamp(min=0)
     if unbiased:
-        var *= factor / (factor - 1)
-    return ((x - mean) / (var.sqrt() + eps)).float()
+        var = torch.where(
+            factor > 1,
+            var * factor / (factor - 1).clamp(min=1),
+            torch.zeros_like(var),
+        )
+    normalized = ((x - mean) / (var.sqrt() + eps)).float()
+    return torch.where(factor > 0, normalized, torch.zeros_like(normalized))
 
 
 def masked_stats(x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:

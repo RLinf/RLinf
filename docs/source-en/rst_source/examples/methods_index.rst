@@ -105,6 +105,17 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
            <b>SuperMimic: G1 Motion Tracking</b>
          </a><br>
          Train a G1 whole-body tracking policy through a differentiable world model in MuJoCo Warp
+        </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/refl.html" style="display: block;"><img src="https://raw.githubusercontent.com/zai-org/ImageReward/78f8051059b34fef8e0032ccb40561c23a2ddbbb/figures/ImageReward.jpg"
+            style="width: 100%; height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/refl.html" style="text-decoration: underline; color: blue;">
+           <b>ReFL</b>
+         </a><br>
+         Fine-tune SD3 with ImageReward and optional supervised image-text updates
        </p>
      </div>
 
@@ -123,3 +134,4 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    OPD <embodied/opd>
    RL Token <embodied/rlt>
    SuperMimic <embodied/supermimic>
+   ReFL <embodied/refl>
