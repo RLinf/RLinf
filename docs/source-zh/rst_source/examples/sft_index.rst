@@ -78,11 +78,21 @@ VLA / WAM 模型监督微调
 
    </div>
 
+.. grid:: 1
+   :gutter: 2
+
+   .. grid-item-card:: GR00T N1.7
+      :link: embodied/sft_gr00t_n1d7
+      :link-type: doc
+
+      在 RoboCasa365 上采样独立随机窗口，完成原生 H40 Flow Matching SFT。
+
 .. toctree::
    :hidden:
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   GR00T N1.7 <embodied/sft_gr00t_n1d7>
    DreamZero <embodied/sft_dreamzero>
    FastWAM <embodied/sft_fastwam>
    Cosmos3 <embodied/sft_cosmos3>

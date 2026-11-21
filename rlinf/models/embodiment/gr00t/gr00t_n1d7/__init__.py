@@ -23,6 +23,11 @@ from .npu_patches import apply_npu_patches, restore_npu_patches
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
+    if cfg.get("native_sft", False):
+        from .sft import build_model
+
+        return build_model(cfg, torch_dtype)
+
     from gr00t.configs.model.gr00t_n1d7 import Gr00tN1d7Config
     from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7
     from transformers import AutoConfig, AutoModel

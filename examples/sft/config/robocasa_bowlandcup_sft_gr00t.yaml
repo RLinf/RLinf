@@ -1,0 +1,108 @@
+# Independent observation-action windows; batch sizes count windows.
+defaults:
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-7
+  tracer:
+    enable: false
+
+runner:
+  task_type: sft
+  logger:
+    project_name: rlinf
+    experiment_name: gr00t_random_window
+    log_path: ./logs/gr00t_random_window
+    logger_backends: [tensorboard]
+  max_epochs: -1
+  max_steps: 30000
+  val_check_interval: -1
+  save_interval: 5000
+  resume_dir: null
+  per_worker_log: false
+  per_worker_log_path: null
+
+data:
+  train_data_paths: /path/to/BowlAndCup/lerobot
+  val_data_paths: null
+  expected_episodes: null
+  num_workers: 2
+  prefetch_factor: 1
+  video_backend: torchcodec
+  gr00t_sft:
+    sampling_mode: random_window
+    action_horizon: 40
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 16
+  global_batch_size: 128
+  seed: 42
+  enable_offload: false
+  model:
+    model_type: gr00t_n1d7
+    native_sft: true
+    precision: fp32
+    load_to_device: false
+    is_lora: false
+    add_value_head: false
+    model_path: /path/to/GR00T-N1.7-3B
+    backbone_model_path: /path/to/Cosmos-Reason2-2B
+    dependency_commit: null
+    embodiment_tag: new_embodiment
+    obs_converter_type: robocasa365
+    action_dim: 12
+    valid_action_dim: 12
+    image_nums: 3
+    num_action_chunks: 8
+    denoising_steps: 4
+    binary_action_threshold: 0.0
+    gradient_checkpointing: true
+    disable_dropout: true
+  optim:
+    lr: 2.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: cosine
+    lr_warmup_steps: 200
+    total_training_steps: 30000
+    min_lr: 5.0e-6
+    min_lr_rate: 0.25
+    num_cycles: 0.5
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: full_shard
+    gradient_checkpointing: false
+    cpu_offload: false
+    offload_pin_memory: false
+    reshard_after_forward: true
+    enable_gradient_accumulation: true
+    forward_prefetch: false
+    limit_all_gathers: true
+    backward_prefetch: null
+    use_orig_params: true
+    use_liger_kernel: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+    amp_autocast:
+      enabled: false
+      precision: bf16
+    grad_scaler:
+      enabled: false
+      init_scale: null
+      growth_interval: null
+    save_full_model_weights: true
