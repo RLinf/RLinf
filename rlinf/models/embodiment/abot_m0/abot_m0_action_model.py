@@ -20,7 +20,7 @@ through the `BasePolicy` interface.
 
 import os
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Literal, Mapping, Optional
 
 import numpy as np
@@ -362,6 +362,10 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
                 first_param = next(iter(spatial_model.parameters()), None)
                 if first_param is not None:
                     spatial_dtype = first_param.dtype
+                # A wrapped aggregator still exposes its master weights here.
+                precision = getattr(spatial_model.aggregator, "mixed_precision", None)
+                if precision is not None and precision.param_dtype is not None:
+                    spatial_dtype = precision.param_dtype
             spatial_input = preprocess_images(
                 batch_images,
                 batch_images[0][0].size[0],
@@ -526,23 +530,29 @@ class ABotM0ForRLActionPrediction(nn.Module, BasePolicy):
             raise KeyError(
                 "ABot-M0 forward_inputs must include 'spatial_images' or legacy 'main_images'."
             )
-        vl_embs, state_tensor = self._encode_observations(
-            qwen_inputs=self._extract_qwen_inputs(forward_inputs),
-            spatial_images=spatial_images,
-            state=forward_inputs.get("state"),
-            device=forward_inputs["chains"].device,
-        )
-
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
 
-        log_probs, values = self.action_head_rl(
-            vl_embs=vl_embs,
-            state=state_tensor,
-            chains=chains,
-            denoise_inds=denoise_inds,
-            compute_values=compute_values,
-        )
+        # The actor's FSDP forward dtype may differ from its stored weight dtype.
+        compute_dtype = next(self.parameters()).dtype
+        with (
+            torch.autocast(device_type=chains.device.type, dtype=compute_dtype)
+            if compute_dtype in (torch.float16, torch.bfloat16)
+            else nullcontext()
+        ):
+            vl_embs, state_tensor = self._encode_observations(
+                qwen_inputs=self._extract_qwen_inputs(forward_inputs),
+                spatial_images=spatial_images,
+                state=forward_inputs.get("state"),
+                device=chains.device,
+            )
+            log_probs, values = self.action_head_rl(
+                vl_embs=vl_embs,
+                state=state_tensor,
+                chains=chains,
+                denoise_inds=denoise_inds,
+                compute_values=compute_values,
+            )
 
         runtime_action_dim = self._get_runtime_action_dim()
         log_probs = log_probs[:, :, : self.num_action_chunks, :]
