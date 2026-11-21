@@ -56,6 +56,9 @@ actor:
       # Used as OpenPI's norm-stats asset id. Keep this identical in Stage2.
       repo_id: "realworld_peg_insertion_rlt_stage1"
 
+    prefix:
+      pool: rlt_token
+      image_only: false
     openpi:
       embed_dtype: bf16
       task: sft
@@ -83,7 +86,6 @@ actor:
       use_rlt: True
       rlt_alpha: 1.0
       rlt_prefix_seq_len: 1024
-      rlt_image_only: False
       rlt_use_mask: True
 
   optim:

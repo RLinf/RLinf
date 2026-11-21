@@ -1,0 +1,32 @@
+defaults:
+  - maniskill_prefix_stage2_td3_mlp_steam
+  - _self_
+
+runner:
+  logger:
+    experiment_name: maniskill_prefix_stage2_td3_mlp_steam_calibration
+    logger_backends: ["tensorboard"]
+  max_steps: 20
+  val_check_interval: -1
+  save_interval: -1
+
+algorithm:
+  rlt_gate_calibration:
+    enable: True
+
+env:
+  train:
+    rlt_policy_switch:
+      routing_source: environment
+  eval:
+    rlt_policy_switch:
+      routing_source: environment
+
+rollout:
+  routing_gate:
+    actor_switch:
+      enable: False
+      phase_head_path: null
+      collect_phase_features: True
+    expert_takeover:
+      mode: shadow

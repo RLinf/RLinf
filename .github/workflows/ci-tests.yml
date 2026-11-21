@@ -98,9 +98,8 @@ jobs:
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_art_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_prefix_off_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_refl_policy_worker.py'
-              - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
-              - 'rlinf/workers/actor/fsdp_rlt_td3_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/embodied_fsdp_actor_worker.py'
               - 'rlinf/workers/env/**'
@@ -131,6 +130,7 @@ jobs:
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
               - 'toolkits/cosmos3/**'
+              - 'toolkits/rlt/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared

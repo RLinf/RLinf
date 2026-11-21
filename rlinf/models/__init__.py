@@ -19,6 +19,8 @@ from omegaconf import DictConfig
 from rlinf.config import (
     DIFFUSION_MODELS,
     EMBODIED_MODEL,
+    MODEL_OBS_CONTRACT,
+    ObsContract,
     SupportedModel,
     torch_dtype_from_precision,
 )
@@ -33,8 +35,14 @@ def register_model(
     model_builder: ModelBuilder,
     category: str = "embodied",
     force: bool = False,
+    obs_contract: ObsContract = ObsContract.STATE,
 ):
-    """Register a model builder for cfg.model_type."""
+    """Register a model builder for cfg.model_type.
+
+    ``obs_contract`` declares the observation shape the policy consumes at its
+    training entry point, so config validation can match a policy to an
+    algorithm without instantiating the model.
+    """
     if not model_type:
         raise ValueError("model_type must be a non-empty string.")
     if not callable(model_builder):
@@ -51,6 +59,7 @@ def register_model(
         EMBODIED_MODEL.add(model_kind)
     elif category == "diffusion":
         DIFFUSION_MODELS.add(model_kind)
+    MODEL_OBS_CONTRACT[model_kind] = obs_contract
 
 
 def _register_builtin_models():
@@ -99,13 +108,8 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_rlt_mlp_policy(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.mlp_policy import get_model
-
-        return get_model(cfg, torch_dtype)
-
-    def _build_rlt_td3_mlp_policy(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.mlp_policy import get_model
+    def _build_prefix_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy.prefix_mlp_policy import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -254,16 +258,11 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        SupportedModel.RLT_MLP_POLICY.value,
-        _build_rlt_mlp_policy,
+        SupportedModel.PREFIX_POLICY.value,
+        _build_prefix_policy,
         category="embodied",
         force=True,
-    )
-    register_model(
-        SupportedModel.RLT_TD3_MLP_POLICY.value,
-        _build_rlt_td3_mlp_policy,
-        category="embodied",
-        force=True,
+        obs_contract=ObsContract.PREFIX,
     )
     register_model(
         SupportedModel.GR00T.value,

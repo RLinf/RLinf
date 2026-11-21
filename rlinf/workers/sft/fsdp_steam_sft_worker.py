@@ -235,6 +235,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
         from rlinf.data.datasets.steam import (
             BinaryPairDataCollator,
             PairDataset,
+            RLTChunkPairDataset,
         )
         from rlinf.data.datasets.steam.mixture import PairMixtureDataset
         from rlinf.models.embodiment.value_model.recap.checkpoint_utils import (
@@ -383,25 +384,39 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                     data_cfg.get("length_scale_percentile", 90.0),
                 )
             )
-            return PairDataset(
-                dataset_path=ds_path,
-                camera_keys=tuple(
-                    data_cfg.get(
-                        "camera_keys",
-                        (
-                            "base_0_rgb",
-                            "left_wrist_0_rgb",
-                            "right_wrist_0_rgb",
-                        ),
-                    )
+            dataset_kwargs = {
+                "dataset_path": ds_path,
+                "camera_keys": camera_keys_tuple,
+                "k": k,
+                "dataset_type": dataset_type,
+                "only_success": only_success,
+                "num_bins": num_bins,
+                "length_scale_enabled": length_scale_enabled,
+                "length_scale_percentile": length_scale_percentile,
+                "prompt": entry.get(
+                    "default_prompt", data_cfg.get("default_prompt", None)
                 ),
-                k=k,
-                dataset_type=dataset_type,
-                only_success=only_success,
-                min_episode_length=data_cfg.get("min_episode_length", None),
-                num_bins=num_bins,
-                length_scale_enabled=length_scale_enabled,
-                length_scale_percentile=length_scale_percentile,
+                "min_episode_length": data_cfg.get("min_episode_length", None),
+            }
+
+            rlt_keys = ("temporal_stride", "anchor_stride", "boundary_mode")
+            use_rlt_chunk_dataset = any(
+                key in entry or key in data_cfg for key in rlt_keys
+            )
+            if not use_rlt_chunk_dataset:
+                return PairDataset(**dataset_kwargs)
+
+            return RLTChunkPairDataset(
+                **dataset_kwargs,
+                temporal_stride=int(
+                    entry.get("temporal_stride", data_cfg.get("temporal_stride", 1))
+                ),
+                anchor_stride=int(
+                    entry.get("anchor_stride", data_cfg.get("anchor_stride", 1))
+                ),
+                boundary_mode=str(
+                    entry.get("boundary_mode", data_cfg.get("boundary_mode", "clamp"))
+                ),
             )
 
         balance_dataset_weights = bool(

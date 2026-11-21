@@ -1,0 +1,484 @@
+FlexRLT: Frozen VLA Features and Pluggable Policies
+===================================================
+
+Add a feature model, policy head, or update rule to FlexRLT. Download the checkpoints, launch ManiSkill training, and calibrate STEAM from :doc:`FlexRLT <../examples/embodied/flexrlt>`. This page starts from that running config and shows the observation contract and the registration points you change.
+
+Here, *prefix* means the image and language hidden states that the VLA computes before generating actions. The VLA stays frozen during online RL. A separate actor learns to use those features, the robot state, and the VLA's reference actions to produce an action chunk.
+
+Overview
+--------
+
+The main choice is whether to use the VLA's existing features directly or first learn an RL-specific representation. With ``prefix.pool: masked_mean``, you can start from a base or SFT VLA checkpoint and average its valid prefix tokens into ``z_rl``. The RL Token route instead uses ``prefix.pool: rlt_token`` and needs the token transformer trained in Stage 1. Follow :doc:`../examples/embodied/rlt` if you want that learned representation; both routes use the same actor-critic training path.
+
+Online updates train only the actor and critic heads, rather than backpropagating through the VLA. Replay stores ``{z_rl, proprio, ref_chunk}`` instead of the image observations, so learner batches reuse the extracted features. The VLA still runs during rollout to extract features and generate the reference action chunk; freezing it does not remove that inference work.
+
+The RLT-specific AC and TD3 policy/worker implementations are replaced by one ``prefix_policy`` model and one ``prefix_off_policy`` worker. Choose the actor head, critic head, and algorithm separately in the config. Chunk-reward discounting, BC targets, and weight schedules are shared by AC and TD3. This is useful when comparing a new representation or head without copying the training loop. Evaluate pooled and learned features on your task before choosing between them.
+
+How the Pieces Fit
+------------------
+
+Four independent choices make up a FlexRLT run. Each one has its own config field and its own registration point, so you change only the part you are actually replacing.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 26 22 32
+
+   * - Choice
+     - Config field
+     - Registered by
+     - Code
+   * - Frozen feature model
+     - ``rollout.prefix_feature_model``
+     - ``register_model(..., category="embodied")``
+     - any module implementing ``extract_prefix_obs``
+   * - Trainable policy
+     - ``actor.model.model_type``
+     - ``register_model(..., obs_contract=ObsContract.PREFIX)``
+     - ``rlinf/models/embodiment/mlp_policy/prefix_mlp_policy.py``
+   * - Actor and critic heads
+     - ``actor.model.actor_head.name``, ``critic_head.name``
+     - ``register_prefix_actor`` / ``register_prefix_critic``
+     - ``rlinf/models/embodiment/mlp_policy/heads.py``
+   * - Update rule
+     - ``algorithm.name`` (with ``loss_type: prefix_off_policy``)
+     - ``register_prefix_off_policy_algorithm``
+     - ``rlinf/algorithms/prefix_off_policy/``
+
+The layer boundaries follow what each piece owns:
+
+* The **feature model** owns how raw observations become ``{z_rl, proprio, ref_chunk}``. It is frozen, holds no optimizer, and never receives gradients.
+* The **policy** owns how those three tensors become a policy state and a reference input. ``prefix_policy`` adds no parameters of its own; it builds the two heads and exposes the ``BasePolicy`` forward types the worker calls.
+* The **heads** own the networks. Actor and critic are separate objects behind separate registries, so you can pair a stochastic actor with a CrossQ critic, or swap one side only.
+* The **algorithm** owns the losses and the update schedule. It reads what the heads declare in ``capabilities`` and rejects a combination it cannot train.
+
+Config validation matches the policy to ``prefix_off_policy`` through its *observation contract* rather than its name, so a new policy registered with ``obs_contract=ObsContract.PREFIX`` passes validation without edits to ``rlinf/config.py``. It must still meet the policy contract in :ref:`flexrlt-policy-contract`.
+
+Extending it
+^^^^^^^^^^^^
+
+Pick the row you need and change only that row:
+
+* **A new VLA** — write an adapter with ``z_dim`` and ``extract_prefix_obs``, register it as an embodied model, and point ``rollout.prefix_feature_model`` at it. The policy, heads, algorithm, and replay format stay as they are. See :ref:`Extending the BaseVLA Feature Model <flexrlt-feature-model>`.
+* **A new network** — subclass ``PrefixActorHead`` or ``PrefixCriticHead``, declare its capabilities, and register it. The rollout runtime, replay format, and training loop are untouched. See :ref:`Extending MLP Actor and Critic Heads <flexrlt-heads>`.
+* **A new update rule** — subclass ``PrefixOffPolicyAlgorithm``, implement ``actor_loss`` and ``target_actions``, and declare ``requirements``. Chunk discounting, BC targets, and the weight schedule stay shared. See :ref:`Extending the FlexRLT Algorithm <flexrlt-algorithm>`.
+* **A different policy over the same features**: for example a recurrent actor. Subclass ``BasePolicy``, meet the contract below, register it with ``obs_contract=ObsContract.PREFIX``, and set ``actor.model.model_type``. The algorithm, replay format, and rollout runtime stay as they are.
+
+.. _flexrlt-policy-contract:
+
+Policy Contract
+^^^^^^^^^^^^^^^
+
+The algorithm, the FSDP worker, and the rollout runtime call the policy directly, so a replacement for ``prefix_policy`` must provide what they use:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Requirement
+     - Used by
+   * - Accept ``actor.model.actor_head`` and ``critic_head`` with registered ``name`` values
+     - Config validation and the algorithm read both head names to check the actor distribution, action noise, and Q-head count. The policy should build those heads, or at least behave as their capabilities declare.
+   * - ``forward(forward_type=ForwardType.SAC, obs=...)`` returns ``actions, logprobs, None``
+     - Actor loss and target actions. ``actions`` is flat ``[B, num_action_chunks * action_dim]``; the call also receives ``deterministic``, ``apply_action_noise``, ``apply_reference_dropout``, and ``reference_dropout_prob``.
+   * - ``ForwardType.SAC_Q`` returns ``[B, num_q_heads]``; ``ForwardType.CROSSQ_Q`` returns ``current_q, next_q``
+     - Critic loss and the Q term of the actor loss. ``CROSSQ_Q`` is needed only when the critic head declares ``supports_cross_q``. Both accept ``detach_encoder``.
+   * - Critic parameters live under a ``q_head`` attribute
+     - The worker puts parameters whose names contain ``q_head``, ``encoder``, ``encoders``, or ``state_proj`` in the critic optimizer and the rest in the actor optimizer. Do not name an actor-only module ``encoder``.
+   * - ``predict_action_batch(env_obs, mode=..., return_obs=True)``
+     - Rollout. Return actions as ``[B, num_action_chunks, action_dim]`` and put ``action`` plus the ``z_rl``, ``proprio``, and ``ref_chunk`` tensors in ``forward_inputs``, which become the replay transition.
+
+A stateful policy, such as a recurrent actor, has no rollout hook for per-environment reset; keep its state inside the observation the feature model returns.
+
+Run the Example
+---------------
+
+The ManiSkill peg-insertion preset, checkpoint layout, routing settings, and STEAM calibration commands are documented in :doc:`FlexRLT <../examples/embodied/flexrlt>`. Use that page to launch ``maniskill_prefix_stage2_td3_mlp_steam``. The sections below explain the data the run stores and the code you change to add a component.
+
+Replay and Updates
+------------------
+
+Routing may execute a base, actor, or expert action. Its ``ActionPayload`` carries the executable actions and optional feedback. The gate declares the feedback keys in ``rollout_info_keys``; a gate-enabled environment must implement ``RolloutInfoReceiver.set_rollout_infos``, which the env worker checks at startup.
+
+An environment declares calibration labels through ``TrajectoryInfoProvider.trajectory_info_spec``. Those labels and gate diagnostics travel in ``Trajectory.trajectory_infos``, separate from ``forward_inputs``. The trace writer reads them before replay drops them. Replay pairs the action actually sent to the environment with its current and next feature observations:
+
+.. code:: text
+
+   curr_obs = {z_rl, proprio, ref_chunk}
+   action   = action chunk actually sent to the environment
+   next_obs = {next_z_rl, next_proprio, next_ref_chunk}
+
+The critic discounts rewards within each chunk by ``gamma`` and bootstraps the next-state Q with ``gamma ** chunk_horizon``. The actor objective is ``-q_weight * Q + bc_weight * BC``. BC normally targets ``ref_chunk``; steps marked as interventions use the executed intervention action.
+
+Minimal Configuration
+---------------------
+
+When adapting the example, keep the frozen VLA under ``rollout.prefix_feature_model`` and the trainable heads under ``actor.model``. The fragment below shows that split for AC with a stochastic MLP actor and twin-Q critic. Add the task's environment, placement, optimizer, and rollout settings from a complete preset before launching it.
+
+.. code:: yaml
+
+   algorithm:
+     loss_type: prefix_off_policy
+     name: ac
+     gamma: 0.99
+     q_weight: 1.0
+     bc_weight: 1.0
+     entropy_tuning:
+       alpha_type: fixed_alpha
+       initial_alpha: 0.0
+
+   rollout:
+     prefix_feature_model:
+       model_type: openpi
+       model_path: /path/to/base-or-sft-vla
+       precision: bf16
+       prefix:
+         pool: masked_mean
+         image_only: false
+       openpi_data:
+         repo_id: my_lerobot_dataset
+         norm_stats_path: /path/to/norm_stats.json
+       openpi:
+         task: eval
+         config_name: pi05_franka_state
+
+   actor:
+     model:
+       model_type: prefix_policy
+       z_dim: 2048
+       proprio_dim: 19
+       action_dim: 7
+       num_action_chunks: 10
+       ref_num_action_chunks: 20
+       actor_head:
+         name: fixed_std_mlp
+         hidden_dims: [256, 256, 256]
+         activation: tanh
+         fixed_std: 0.002
+       critic_head:
+         name: multi_q_mlp
+         hidden_dims: [256, 256, 256]
+         num_q_heads: 2
+
+``actor.model.z_dim`` is the width of the feature model's ``z_rl`` output. Match ``proprio_dim`` to the returned robot state, ``action_dim`` to one environment action, and ``num_action_chunks`` to the executed chunk length. The reference must cover at least that many actions; ``ref_num_action_chunks`` may be longer.
+
+Config validation requires ``loss_type: prefix_off_policy``, a policy whose observation contract is ``prefix``, both registered head names, and a registered ``algorithm.name``. It checks the actor distribution, action-noise support, and Q-head count before workers start. ``prefix_policy`` is the in-tree policy with that contract; any model registered with ``obs_contract=ObsContract.PREFIX`` is accepted.
+
+Current Implementation
+----------------------
+
+The frozen VLA and the trainable policy meet at a three-tensor observation. This section follows that observation from feature extraction to actor and critic calls; use the same shapes when adding another VLA or head.
+
+How the Frozen VLA Creates a Prefix Observation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The rollout worker passes raw environment observations to ``extract_prefix_obs``. The feature model reports its output width as ``z_dim`` and returns a ``PrefixObs``. This interface is defined in ``rlinf/models/embodiment/prefix_features.py``, next to ``base_policy.py``. It is orthogonal to model architecture, so any VLA can implement it:
+
+.. code:: python
+
+   from typing import Any, Protocol
+   from rlinf.models.embodiment.prefix_features import (
+       PrefixFeatureModel,
+       PrefixObs,
+   )
+
+   class PrefixFeatureModel(Protocol):
+       @property
+       def z_dim(self) -> int: ...
+
+       def extract_prefix_obs(
+           self, env_obs: dict[str, Any]
+       ) -> PrefixObs: ...
+
+``PrefixObs`` contains three batch-first tensors. The table shows what the feature model returns:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 36 40
+
+   * - key
+     - shape
+     - meaning
+   * - ``z_rl``
+     - ``[B, z_dim]``
+     - Frozen VLA Prefix representation.
+   * - ``proprio``
+     - ``[B, proprio_dim]``
+     - Current robot or simulator state used by the policy.
+   * - ``ref_chunk``
+     - ``[B, ref_num_action_chunks, action_dim]``
+     - Reference action chunk sampled from the frozen VLA and passed to the actor as a condition.
+
+OpenPI's ``Pi0Eval`` implements this interface through ``OpenPiPrefixMixin``, which adds no parameters or checkpoint keys. It converts the environment input to an OpenPI observation, computes the image and language prefix once, then uses that cache for both ``z_rl`` and reference action generation. The selected robot state becomes ``proprio``. ``PrefixRolloutRuntime`` puts the feature model in ``eval`` mode and disables its gradients.
+
+Prefix Pooling
+^^^^^^^^^^^^^^
+
+Choose which tokens contribute to ``z_rl`` before choosing how to reduce them. ``prefix.image_only: true`` selects image tokens; ``false`` retains image and language tokens. Set ``prefix.pool`` beside it, at the same level as the model's ``openpi`` block:
+
+* ``masked_mean`` averages valid tokens and is the default when ``openpi.use_rlt`` is false.
+* ``mean`` averages the complete selected token sequence, including masked positions.
+* ``last`` reads the last valid token, or the final sequence position if no mask is supplied.
+* ``rlt_token`` runs the Stage 1 ``rlt_module.encode_flat`` instead of pooling.
+
+``pool_prefix`` accepts ``hidden`` with shape ``[B, T, D]`` and an optional boolean mask; the three pooling modes return ``[B, D]``. When ``prefix.pool`` is unset, ``resolve_prefix_pool`` chooses ``rlt_token`` if ``openpi.use_rlt`` is true and ``masked_mean`` otherwise. ``prefix.image_only`` defaults to true. Set both fields explicitly when comparing representations.
+
+At startup, rollout checks the feature model's ``z_dim`` against ``actor.model.z_dim``. It also checks each extracted ``z_rl`` width against the feature model's declared width.
+
+PrefixPolicy Forward Contract
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``PrefixPolicy`` lives in ``rlinf/models/embodiment/mlp_policy/prefix_mlp_policy.py``. It concatenates the flattened ``z_rl`` and ``proprio`` into the policy state, truncates ``ref_chunk`` to the executed ``num_action_chunks``, and flattens it for the actor's reference input and BC target. It adds no parameters of its own: it builds the configured actor and critic heads, which is all its weights come from. ``PrefixRolloutRuntime`` owns the frozen VLA, the optional expert and gate, and the terminal feature cache. The FSDP worker identifies critic parameters through the ``q_head`` attribute.
+
+Use the standard ``ForwardType`` entries, the same ones ``MLPPolicy`` exposes:
+
+* ``ForwardType.SAC``: ``actions, logprobs, None`` from the actor head.
+* ``ForwardType.SAC_Q``: current-state Q values, concatenated over heads.
+* ``ForwardType.CROSSQ_Q``: ``current_q, next_q`` for a joint CrossQ critic.
+* ``predict_action_batch``: actions reshaped to ``[B, num_action_chunks, action_dim]``, with the action and feature observation in ``forward_inputs``.
+
+The algorithm chooses ``SAC_Q`` or ``CROSSQ_Q`` from the critic head's ``supports_cross_q`` capability, so both backends reach the same policy method. All training calls go through the FSDP-wrapped ``forward``.
+
+.. _flexrlt-feature-model:
+
+Extending the BaseVLA Feature Model
+-----------------------------------
+
+To use another VLA, adapt its observations and outputs to ``PrefixObs``. The existing OpenPI adapter is one implementation, not a requirement of the policy heads. Here, BaseVLA means your vendor or base model, not an RLinf base class. The concrete adapter must support ``eval``, ``requires_grad_``, ``to``, and ``extract_prefix_obs``; routes that call the VLA's action API also need that API.
+
+Implement an Adapter
+^^^^^^^^^^^^^^^^^^^^
+
+The skeleton below extracts prefix features and a reference chunk from one observation. Its preprocessing, encoding, and sampling methods are illustrative: implement those calls with your VLA's actual API.
+
+.. code:: python
+
+   import torch
+   from rlinf.models.embodiment.prefix_features import pool_prefix
+
+   class MyBaseVLAAdapter(torch.nn.Module):
+       def __init__(self, base_vla):
+           super().__init__()
+           self.base_vla = base_vla
+           self.z_dim = base_vla.prefix_width
+
+       @torch.no_grad()
+       def extract_prefix_obs(self, env_obs):
+           observation = self.base_vla.encode_observation(env_obs)
+           hidden, mask = self.base_vla.encode_prefix(observation)
+           z_rl = pool_prefix(hidden, mask, mode="masked_mean")
+           ref_chunk = self.base_vla.sample_action_chunk(observation)
+           proprio = torch.as_tensor(env_obs["states"], device=z_rl.device)
+           return {
+               "z_rl": z_rl.float(),
+               "proprio": proprio.float(),
+               "ref_chunk": ref_chunk.float(),
+           }
+
+``extract_prefix_obs`` accepts the observation dictionary supplied by the environment wrapper and returns the three ``PREFIX_OBS_KEYS`` as float32 batch tensors. The example pools ``hidden`` with its mask for ``z_rl``, samples actions for ``ref_chunk``, and reads the state for ``proprio``. Check the reference action dimension and horizon against the environment, and keep state normalization consistent with the training data.
+
+Connect the Model Factory
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The rollout worker creates ``rollout.prefix_feature_model`` through ``get_model``. Register a builder with ``register_model`` from ``rlinf.models`` and set ``category="embodied"``. The builder receives the model config and ``torch_dtype`` and returns your adapter. Registration also adds the model type to config validation.
+
+Make the registration run in every worker process: import in-tree builders from ``rlinf/models/__init__.py`` or load an external registration module with ``RLINF_EXT_MODULE``. See :doc:`new_model_fsdp` for the model registration workflow. You can then keep the existing ``prefix_policy``, algorithm, and replay format. Test the adapter's batch shapes, device and dtype, reset behavior, and action chunks through that rollout path.
+
+.. _flexrlt-heads:
+
+Extending MLP Actor and Critic Heads
+------------------------------------
+
+Replace a head when you want a different network over the same features. The actor receives the assembled state and reference; its ``forward`` returns flat actions and per-dimension log probabilities, while ``mean_action`` returns a noise-free prediction for supervised forwards. The critic receives state and flat actions, and returns one value per Q head. A joint CrossQ critic also returns next-state Q values.
+
+Register an Actor Head
+^^^^^^^^^^^^^^^^^^^^^^
+
+Subclass ``PrefixActorHead`` and declare its behavior in ``ActorHeadCapabilities``. The registry passes ``state_dim``, ``reference_dim``, ``action_dim``, and the head config to the builder. This example registers a deterministic MLP with reference dropout and action noise:
+
+.. code:: python
+
+   import torch
+   from torch import nn
+   from rlinf.models.embodiment.mlp_policy.heads import (
+       ActorHeadCapabilities,
+       PrefixActorHead,
+       register_prefix_actor,
+   )
+
+   class CustomMLPActor(PrefixActorHead):
+       capabilities = ActorHeadCapabilities(
+           distribution="deterministic", supports_action_noise=True,
+       )
+
+       def __init__(self, state_dim, reference_dim, action_dim, cfg):
+           super().__init__()
+           hidden_dim = int(cfg.get("hidden_dim", 256))
+           self.net = nn.Sequential(
+               nn.Linear(state_dim + reference_dim, hidden_dim),
+               nn.ReLU(),
+               nn.Linear(hidden_dim, action_dim),
+           )
+
+       def mean_action(self, state, reference):
+           return self.net(torch.cat([state, reference], dim=-1)).clamp(-1, 1)
+
+       def forward(
+           self, state, reference, *, deterministic,
+           apply_reference_dropout, reference_dropout_prob,
+           apply_action_noise,
+       ):
+           if apply_reference_dropout:
+               probability = float(reference_dropout_prob or 0.0)
+               keep = torch.rand(reference.shape[0], 1, device=reference.device)
+               reference = reference * (keep >= probability).to(reference.dtype)
+           action = self.mean_action(state, reference)
+           if apply_action_noise and not deterministic:
+               action = (action + torch.randn_like(action) * 0.1).clamp(-1, 1)
+           return action, torch.zeros_like(action)
+
+   @register_prefix_actor(
+       "custom_mlp", capabilities=CustomMLPActor.capabilities,
+   )
+   def make_custom_mlp_actor(state_dim, reference_dim, action_dim, cfg):
+       return CustomMLPActor(state_dim, reference_dim, action_dim, cfg)
+
+``register_prefix_actor`` makes ``custom_mlp`` available to the model builder. Its ``mean_action`` supplies the noise-free prediction used by the policy's SFT forward; ``forward`` applies the requested dropout and exploration behavior before returning actions and log probabilities. Built-in actors are ``fixed_std_mlp`` for AC and ``deterministic_mlp`` for TD3. AC requires a stochastic actor; TD3 requires a deterministic actor with action-noise support.
+
+Register a Critic Head
+^^^^^^^^^^^^^^^^^^^^^^
+
+A critic declares ``CriticHeadCapabilities`` and ``num_q_heads``. The example below evaluates two independent Q networks on the same state-action input and registers them as ``custom_twin``:
+
+.. code:: python
+
+   import torch
+   from torch import nn
+   from rlinf.models.embodiment.mlp_policy.heads import (
+       CriticHeadCapabilities,
+       PrefixCriticHead,
+       register_prefix_critic,
+   )
+
+   class CustomTwinCritic(PrefixCriticHead):
+       capabilities = CriticHeadCapabilities(fixed_num_q_heads=2)
+
+       def __init__(self, state_dim, action_dim, cfg):
+           super().__init__()
+           self.num_q_heads = 2
+           width = int(cfg.get("hidden_dim", 256))
+           def q_network():
+               return nn.Sequential(
+                   nn.Linear(state_dim + action_dim, width),
+                   nn.ReLU(),
+                   nn.Linear(width, 1),
+               )
+           self.q1 = q_network()
+           self.q2 = q_network()
+
+       def forward(self, state, actions, *, next_state=None, next_actions=None):
+           del next_state, next_actions
+           inputs = torch.cat([state, actions], dim=-1)
+           return torch.cat([self.q1(inputs), self.q2(inputs)], dim=-1)
+
+   @register_prefix_critic(
+       "custom_twin", capabilities=CustomTwinCritic.capabilities,
+   )
+   def make_custom_twin_critic(state_dim, action_dim, cfg):
+       return CustomTwinCritic(state_dim, action_dim, cfg)
+
+Its ``forward`` returns ``[B, 2]``. ``multi_q_mlp`` builds ``num_q_heads`` independent Q heads from the shared ``MultiQHead``, and ``cross_q_mlp`` evaluates current and next state jointly with batch renormalization. A two-head TD3 critic is ``multi_q_mlp`` with ``num_q_heads: 2``. Choose a head whose capabilities satisfy the algorithm.
+
+In-tree heads live in ``rlinf/models/embodiment/mlp_policy/heads.py`` and register when that module is imported, which happens as soon as the policy or the algorithm is built. For an out-of-tree head, register it in a module loaded through ``RLINF_EXT_MODULE`` so every worker process runs the registration. Select the registered names in the config:
+
+.. code:: yaml
+
+   actor:
+     model:
+       actor_head:
+         name: custom_mlp
+       critic_head:
+         name: custom_twin
+
+This replaces the two networks while retaining the feature model and training worker. Both AC and TD3 can use ``multi_q_mlp`` when its Q-head count meets their requirements.
+
+.. _flexrlt-algorithm:
+
+Extending the FlexRLT Algorithm
+-------------------------------
+
+Change the algorithm when the actor objective, critic target, or next-action rule changes. The three entry points are ``critic_loss``, ``actor_loss``, and ``target_actions``. The base ``critic_loss`` already handles chunk-discounted Bellman targets and critic MSE; inherit it unless those rules differ. Declare the required head behavior in ``requirements`` and register the subclass.
+
+This example reuses the shared BC/Q objective with minimum-Q aggregation and gets bootstrap actions from the target actor:
+
+.. code:: python
+
+   from rlinf.algorithms.prefix_off_policy import (
+       PrefixAlgorithmRequirements, PrefixOffPolicyAlgorithm,
+       register_prefix_off_policy_algorithm,
+   )
+   from rlinf.models.embodiment.base_policy import ForwardType
+
+   @register_prefix_off_policy_algorithm("my_algorithm")
+   class MyAlgorithm(PrefixOffPolicyAlgorithm):
+       requirements = PrefixAlgorithmRequirements(
+           actor_distribution="deterministic",
+           requires_action_noise=True,
+       )
+
+       def actor_loss(self, context, batch):
+           return self._actor_loss(
+               context,
+               batch,
+               actor_agg_q="min",
+               apply_reference_dropout=False,
+               apply_action_noise=True,
+           )
+
+       def target_actions(self, context, next_obs):
+           actions, _, _ = context.target_model(
+               forward_type=ForwardType.SAC,
+               obs=next_obs,
+           )
+           return actions
+
+``actor_loss`` returns the shared helper's loss, entropy statistic, and metrics. ``target_actions`` passes ``next_obs`` to the worker-owned ``context.target_model`` and returns the flat actions for the critic target. Both it and ``context.model`` are wrapped training models: call them through ``forward`` as shown, rather than bypassing FSDP via ``.module``. ``PrefixPolicy`` handles the ordinary-Q or CrossQ backend.
+
+The optional ``_actor_loss`` helper shares intervention-aware BC targets, BC/Q weight schedules, and Q aggregation between AC and TD3. Implement ``actor_loss`` directly for a different objective. Import the algorithm module from the registry's ``_load_builtin_algorithms`` and select ``algorithm.name: my_algorithm`` with ``loss_type: prefix_off_policy``.
+
+The built-in ``ac`` uses the online stochastic actor for next actions and requires ``algorithm.actor_agg_q: q1``. ``td3`` keeps the fixed-variance Gaussian actor in the `RLT paper <https://arxiv.org/html/2604.23073>`_ (Section IV-B, equations 4–5): actor updates sample actions by default, and both the Q objective and BC use that sample. The actor optimizes Q1; the critic target uses the minimum of the first two Q heads. ``algorithm.actor_update_action_noise: false`` selects mean actions for actor updates instead.
+
+For target policy smoothing, ``td3`` obtains the target actor's mean action, adds one clipped Gaussian sample, and clips the result to [-1, 1]. ``algorithm.target_policy_noise`` defaults to the actor head's ``noise_sigma`` (0.1 for ``deterministic_mlp``); ``algorithm.target_noise_clip`` defaults to 0.5. The presets use 0.1 for both action-sampling scales; the paper specifies a small fixed standard deviation without a numerical value. Target smoothing does not add another sample from the actor head. Setting either target-noise parameter to zero disables smoothing.
+
+The actor and both target networks update together after every ``algorithm.critic_actor_ratio`` critic updates, starting with the second critic update at the default ratio of 2. This matches RLT's two-critic-to-one-actor schedule and the coupled target updates in the `TD3 reference implementation <https://github.com/sfujim/TD3/blob/master/TD3.py>`_. With actor training disabled, TD3 leaves both targets unchanged. If set, ``algorithm.target_update_freq`` must equal ``critic_actor_ratio``, and ``algorithm.target_update_type`` must be ``all``. BC, reference dropout, and the BC/Q weight schedule remain shared with AC.
+
+The critic target in either algorithm is the minimum of the first two Q heads. Extra ``multi_q_mlp`` heads regress to the same target, so leave ``algorithm.agg_q`` unset or set it to ``min``. Both algorithms require ``algorithm.entropy_tuning.alpha_type: fixed_alpha``; they do not train an entropy temperature. These settings are checked when the algorithm is built.
+
+Implementation and Checkpoints
+------------------------------
+
+Use these files to trace a config choice to its implementation:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Component
+     - Code location
+   * - ``PrefixObs``, feature contract, pooling, policy input width
+     - ``rlinf/models/embodiment/prefix_features.py``
+   * - trainable policy
+     - ``rlinf/models/embodiment/mlp_policy/prefix_mlp_policy.py``
+   * - actor/critic heads and registry
+     - ``rlinf/models/embodiment/mlp_policy/heads.py``
+   * - runtime config parsing
+     - ``rlinf/algorithms/prefix_off_policy/config.py``
+   * - off-policy algorithms
+     - ``rlinf/algorithms/prefix_off_policy/``
+   * - Rollout lifecycle and replay/scheduling
+     - ``rlinf/algorithms/prefix_off_policy/rollout.py``, ``replay.py``, ``schedule.py``
+   * - OpenPI feature mixin
+     - ``rlinf/models/embodiment/openpi/prefix.py``
+   * - FSDP actor worker
+     - ``rlinf/workers/actor/fsdp_prefix_off_policy_worker.py``
+
+For shape errors, compare the feature model's ``z_dim``, ``actor.model.z_dim``, and the environment's flat action width ``num_action_chunks * action_dim``. For action-scale errors, check the OpenPI data config and ``norm_stats.json`` used by each checkpoint. An RLT-token feature model must also load the complete ``rlt_module`` from its Stage 1 checkpoint; see :doc:`../examples/embodied/rlt`.

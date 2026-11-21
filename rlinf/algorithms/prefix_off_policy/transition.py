@@ -18,10 +18,10 @@ import torch
 
 from rlinf.envs import SupportedEnvType
 from rlinf.envs.layout import EnvLayout
+from rlinf.models.embodiment.prefix_features import PREFIX_OBS_KEYS
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
-RLT_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
-RLT_TRANSITION_PREFIX = "rlt_transition_"
+PREFIX_TRANSITION_PREFIX = "rlt_transition_"
 
 
 def use_simulator_transition_replay(cfg: Any) -> bool:
@@ -31,6 +31,9 @@ def use_simulator_transition_replay(cfg: Any) -> bool:
         ValueError: If only some of the train envs store a row per env step;
             the actor keeps one replay layout.
     """
+    algo_cfg = cfg.get("algorithm", None)
+    if algo_cfg is not None and "rlt_transition_replay" in algo_cfg:
+        return bool(algo_cfg.get("rlt_transition_replay"))
     env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
     per_step = {path: _is_maniskill_rlt(env_cfg) for path, env_cfg in env_cfgs.items()}
     if len(set(per_step.values())) > 1:
@@ -51,29 +54,35 @@ def _is_maniskill_rlt(env_cfg: Any) -> bool:
         return False
 
 
-def extract_rlt_obs_from_forward_inputs(
+def use_maniskill_rlt_env(cfg: Any) -> bool:
+    """Return True when the train env is ManiSkill RLT (expert route path)."""
+    env_cfgs = EnvLayout.env_cfgs(cfg.env.get("train", None), "env.train")
+    return any(_is_maniskill_rlt(env_cfg) for env_cfg in env_cfgs.values())
+
+
+def extract_prefix_obs_from_forward_inputs(
     forward_inputs: dict[str, Any],
     *,
     transition: bool = False,
 ) -> dict[str, Any]:
-    prefix = RLT_TRANSITION_PREFIX if transition else ""
+    prefix = PREFIX_TRANSITION_PREFIX if transition else ""
     missing = [
         f"{prefix}{key}"
-        for key in RLT_OBS_KEYS
+        for key in PREFIX_OBS_KEYS
         if f"{prefix}{key}" not in forward_inputs
     ]
     if missing:
         raise ValueError(
-            f"Missing RLT forward_inputs keys: {missing}. Ensure "
-            "rollout.rlt_feature_model is configured and the rollout worker "
-            "populates RLT features."
+            f"Missing Prefix forward_inputs keys: {missing}. Ensure "
+            "rollout.prefix_feature_model is configured and the rollout worker "
+            "populates Prefix features."
         )
     return copy_dict_tensor(
-        {key: forward_inputs[f"{prefix}{key}"] for key in RLT_OBS_KEYS}
+        {key: forward_inputs[f"{prefix}{key}"] for key in PREFIX_OBS_KEYS}
     )
 
 
-def apply_rlt_interventions(
+def apply_prefix_interventions(
     obs: dict[str, Any],
     actions: torch.Tensor | None,
     flags: torch.Tensor | None,

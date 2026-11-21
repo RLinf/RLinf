@@ -1443,7 +1443,7 @@ def test_off_policy_targets_discount_each_sample_with_its_envs_gamma():
 
 
 def test_off_policy_bf16_gamma_exponentiates_in_fp32_before_casting():
-    from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACLossMixin
+    from rlinf.algorithms.prefix_off_policy.base import PrefixOffPolicyAlgorithm
 
     actor = _embodied_actor(
         OmegaConf.create({"envs": {"a": _embodied_env(2), "b": _embodied_env(2)}})
@@ -1463,10 +1463,10 @@ def test_off_policy_bf16_gamma_exponentiates_in_fp32_before_casting():
     assert discount[0].item() == pytest.approx(expected_a.item())
     assert discount[0].item() < 1.0
 
-    rlt = object.__new__(RLTACLossMixin)
-    rlt.torch_dtype = torch.bfloat16
     rewards = torch.ones((2, 8), dtype=torch.bfloat16)
-    discounted = rlt._discounted_chunk_rewards(rewards, gamma)
+    discounted = PrefixOffPolicyAlgorithm._discounted_chunk_rewards(
+        rewards, torch.bfloat16, gamma
+    )
     expected_r0 = sum(0.999**k for k in range(8))
     assert discounted.dtype == torch.bfloat16
     assert abs(discounted[0].item() - expected_r0) < 0.05
