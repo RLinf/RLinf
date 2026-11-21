@@ -66,6 +66,7 @@ jobs:
             shared_filter: &shared
               - *install
               - 'rlinf/data/**'
+              - 'rlinf/quantization/**'
               - 'rlinf/algorithms/**'
               - 'rlinf/scheduler/**'
               - 'rlinf/utils/**'

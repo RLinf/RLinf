@@ -1,0 +1,11 @@
+enabled: true
+# Glob patterns over adapter-supported projection paths.
+# Examples: ["*"], ["img.*"], ["llm.*"], ["action_in_proj", "action_out_proj"].
+targets: ["*"]
+weight: {format: nvfp4, granularity: per_block, axis: input, block_size: 16, scale: dynamic}
+activation: {format: nvfp4, granularity: per_block, axis: input, block_size: 16, scale: dynamic}
+rounding: nearest_even
+correction:
+  mode: importance_sampling
+  max_weight: 2.0
+  reject_weight_above: null

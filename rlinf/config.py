@@ -2559,7 +2559,6 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         with open_dict(cfg):
             cfg.runner.only_eval = True
         cfg = validate_embodied_cfg(cfg)
-        return cfg
     elif cfg.runner.task_type == "reasoning":
         cfg = validate_reasoning_cfg(cfg)
     elif cfg.runner.task_type == "coding_online_rl":
@@ -2571,6 +2570,14 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         cfg = validate_sft_cfg(cfg)
     elif cfg.runner.task_type == "offline":
         cfg = validate_offline_cfg(cfg)
+
+    if cfg.runner.task_type in ("embodied", "embodied_eval"):
+        if "qat" in cfg:
+            from rlinf.quantization.config import validate_qat_config
+
+            validate_qat_config(cfg)
+        if cfg.runner.task_type == "embodied_eval":
+            return cfg
 
     if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
         if adv_requires_group_baseline(

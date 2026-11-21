@@ -41,6 +41,7 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.quantization.runtime import configure_quantized_policy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.pinned_offload import pinned_offload_context
@@ -49,6 +50,17 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):
+        if OmegaConf.select(cfg, "qat.enabled", default=False) and any(
+            cls.__module__
+            in {
+                "rlinf.workers.rollout.hf.async_huggingface_worker",
+                "rlinf.workers.rollout.hf.rtc_huggingface_worker",
+            }
+            for cls in type(self).__mro__
+        ):
+            raise ValueError(
+                "quantization supports synchronous HF rollout only; async/RTC workers are unsupported"
+            )
         Worker.__init__(self)
 
         self.cfg = cfg
@@ -136,6 +148,7 @@ class MultiStepRolloutWorker(Worker):
         self.finished_episodes = None
 
         self.weight_syncer = None
+        self.quantization_runtime = None
         self._sync_weight_comm_options = None
         if not self.only_eval:
             weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
@@ -178,6 +191,10 @@ class MultiStepRolloutWorker(Worker):
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
+
+        self.quantization_runtime = configure_quantized_policy(
+            self.hf_model, self.cfg, "rollout", self.device
+        )
 
         rlt_feature_model_config = OmegaConf.select(
             self.cfg, "rollout.rlt_feature_model", default=None
@@ -519,6 +536,8 @@ class MultiStepRolloutWorker(Worker):
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        if self.quantization_runtime is not None:
+            self.quantization_runtime.assert_ready()
         kwargs = (
             self._train_sampling_params
             if mode == "train"
@@ -661,6 +680,8 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
+        if self.quantization_runtime is not None:
+            self.quantization_runtime.invalidate()
 
         async def recv_func() -> Any:
             return await self.broadcast(
@@ -695,6 +716,8 @@ class MultiStepRolloutWorker(Worker):
             )
 
         applied_version = await self.weight_syncer.apply(self.hf_model, recv_func)
+        if self.quantization_runtime is not None:
+            self.quantization_runtime.load_weights(applied_version)
         self.version = applied_version
         if self.finished_episodes is None:
             self.finished_episodes = (
