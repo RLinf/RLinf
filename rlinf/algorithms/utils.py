@@ -125,12 +125,12 @@ def preprocess_embodied_advantages_inputs(
     Unify names & formats, align with math interfaces.
     """
     if kwargs["reward_type"] == "chunk_level":
-        # TODO: need check
-        # rewards, dones, loss_mask, loss_mask_sum: [n_chunk_steps, bsz, num_action_chunks] -> [n_chunk_steps, bsz, 1]
+        if loss_mask is not None:
+            if kwargs["adv_type"] == "grpo_video":
+                rewards = rewards.masked_fill(~loss_mask.bool(), 0)
+            loss_mask = loss_mask.max(dim=-1, keepdim=True)[0]
         rewards = rewards.sum(dim=-1, keepdim=True)
         dones = dones.max(dim=-1, keepdim=True)[0]
-        if loss_mask is not None:
-            loss_mask = loss_mask.max(dim=-1, keepdim=True)[0]
         if loss_mask_sum is not None:
             loss_mask_sum = loss_mask_sum.max(dim=-1, keepdim=True)[0]
 
@@ -145,14 +145,10 @@ def preprocess_embodied_advantages_inputs(
         }
     )
 
-    # Transpose(1, 2) -> [num-chunk, chunk-size, bsz]
-    # Reshape -> [n_steps, bsz]
-    # Rewards [n_steps, bsz]
-    rewards = rewards.transpose(1, 2).reshape(n_steps, bsz)
-
-    # Loss Mask (T steps) [bsz, n_steps]
+    # Broadcast group-level masks before flattening to [n_steps, bsz].
     if loss_mask is not None:
-        loss_mask = loss_mask.transpose(1, 2).reshape(n_steps, bsz)
+        loss_mask = loss_mask.expand_as(rewards).transpose(1, 2).reshape(n_steps, bsz)
+    rewards = rewards.transpose(1, 2).reshape(n_steps, bsz)
 
     # Dones (T+1 steps) [num-chunk+1, bsz, chunk-size]
     flattened_dones_full = dones.transpose(1, 2).reshape(

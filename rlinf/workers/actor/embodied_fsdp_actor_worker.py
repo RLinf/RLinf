@@ -240,6 +240,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         """
         rollout_epoch = self.cfg.env.train.rollout_epoch
         rollout_batch = process_nested_dict_for_adv(rollout_batch, rollout_epoch)
+        action_loss_mask = rollout_batch.get("loss_mask")
 
         if (
             not self.cfg.env.train.auto_reset
@@ -248,7 +249,8 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             dones = rollout_batch[
                 "dones"
             ]  # [n_chunk_step, rollout_epoch x bsz, num_action_chunks]
-            loss_mask, loss_mask_sum = compute_loss_mask(dones)
+            action_loss_mask, loss_mask_sum = compute_loss_mask(dones)
+            loss_mask = action_loss_mask
 
             if self.cfg.algorithm.reward_type == "chunk_level":
                 loss_mask = loss_mask.any(dim=-1, keepdim=True)
@@ -262,7 +264,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self._group_success_metrics = compute_group_success_metrics(
                 rollout_batch["rewards"],
                 group_size=self.cfg.algorithm.group_size,
-                loss_mask=rollout_batch.get("loss_mask", None),
+                loss_mask=action_loss_mask,
                 rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
                 rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
             )
@@ -272,9 +274,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             rewards = rollout_batch[
                 "rewards"
             ]  # [n_chunk_step, batch, num_action_chunks]
-            if rollout_batch.get("loss_mask", None) is not None:
-                rewards = rewards * rollout_batch["loss_mask"]
-            n_chunk_step, batch_size, num_action_chunks = rewards.shape
+            if action_loss_mask is not None:
+                rewards = rewards.masked_fill(~action_loss_mask.bool(), 0)
+            n_chunk_step, batch_size, _ = rewards.shape
 
             group_size = self.cfg.algorithm.group_size
             assert batch_size % group_size == 0, (
@@ -326,6 +328,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.cfg.algorithm.adv_type == "opd":
             self.compute_opd_teacher_logprobs()
 
+        loss_mask = self.rollout_batch.get("loss_mask")
+        if (
+            loss_mask is not None
+            and self.cfg.algorithm.adv_type == "grpo_video"
+            and self.cfg.algorithm.reward_type == "chunk_level"
+            and not self.cfg.env.train.auto_reset
+            and not self.cfg.env.train.ignore_terminations
+        ):
+            # The stored chunk mask keeps a partially valid chunk trainable.
+            action_loss_mask, _ = compute_loss_mask(self.rollout_batch["dones"])
+            loss_mask = loss_mask & action_loss_mask
+
         kwargs = {
             "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
@@ -339,7 +353,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
             "group_size": self.cfg.algorithm.get("group_size", 8),
             "reward_type": self.cfg.algorithm.reward_type,
-            "loss_mask": self.rollout_batch.get("loss_mask", None),
+            "loss_mask": loss_mask,
             "loss_mask_sum": self.rollout_batch.get("loss_mask_sum", None),
             "advantage_mode": self.cfg.algorithm.get("advantage_mode", None),
         }
@@ -347,10 +361,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
 
         self.rollout_batch.update(advantages_and_returns)
-        if kwargs["loss_mask"] is not None:
-            self.rollout_batch.update({"loss_mask": kwargs["loss_mask"]})
-        if kwargs["loss_mask_sum"] is not None:
-            self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
 
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         rollout_metrics.update(self._group_success_metrics)
