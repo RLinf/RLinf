@@ -16,6 +16,7 @@
 from .dual_relative_frame import DualRelativeFrame, DualRelativeTargetFrame
 from .euler_obs import DualQuat2EulerWrapper, Quat2EulerWrapper
 from .gripper_close import GripperCloseEnv
+from .normalize_action import NormalizeAction
 from .relative_frame import RelativeFrame, RelativeTargetFrame
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "DualRelativeFrame",
     "DualRelativeTargetFrame",
     "GripperCloseEnv",
+    "NormalizeAction",
     "Quat2EulerWrapper",
     "RelativeFrame",
     "RelativeTargetFrame",
