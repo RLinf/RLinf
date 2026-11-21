@@ -618,9 +618,8 @@ class CollectEpisode(gym.Wrapper):
                 if is_success and done_by_term:
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
-                else:
-                    if done_by_trunc:
-                        self._reset_env_buffer(env_idx)
+                elif done_by_term or done_by_trunc:
+                    self._reset_env_buffer(env_idx)
             else:
                 if done_by_term or done_by_trunc:
                     self._flush_episode(env_idx, is_success)

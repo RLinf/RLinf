@@ -2861,6 +2861,61 @@ def test_online_lerobot_accumulator_filters_unsuccessful_episodes():
     assert episode[-1]["done"].item()
 
 
+def test_collect_episode_only_success_resets_buffer_on_failed_termination(tmp_path):
+    """Failed natural terminations must clear the episode buffer when only_success=True."""
+    import pickle
+
+    class _SeqEnv:
+        def __init__(self):
+            self._step = 0
+
+        def reset(self, **kwargs):
+            self._step = 0
+            return {"states": np.array([[0.0]], dtype=np.float32)}, {}
+
+        def step(self, action):
+            self._step += 1
+            if self._step == 1:
+                # Episode 1 fails via natural termination (terminated=True, truncated=False)
+                return (
+                    {"states": np.array([[10.0]], dtype=np.float32)},
+                    np.array([0.0], dtype=np.float32),
+                    np.array([True]),
+                    np.array([False]),
+                    {"success": np.array([False])},
+                )
+            # Episode 2 succeeds via natural termination
+            return (
+                {"states": np.array([[20.0]], dtype=np.float32)},
+                np.array([1.0], dtype=np.float32),
+                np.array([True]),
+                np.array([False]),
+                {"success": np.array([True])},
+            )
+
+    collector = CollectEpisode(
+        _SeqEnv(),
+        save_dir=str(tmp_path),
+        num_envs=1,
+        export_format="pickle_episode",
+        only_success=True,
+    )
+    try:
+        collector.reset()
+        collector.step(np.array([[1.0]], dtype=np.float32))
+        collector.step(np.array([[2.0]], dtype=np.float32))
+    finally:
+        collector.close()
+
+    pkl_files = sorted((tmp_path / "pickle_episode").glob("*.pkl"))
+    assert len(pkl_files) == 1
+    with open(pkl_files[0], "rb") as f:
+        ep = pickle.load(f)
+    assert ep["success"] is True
+    assert len(ep["actions"]) == 1
+    assert float(np.asarray(ep["actions"][0]).reshape(-1)[0]) == 2.0
+
+
 def test_online_lerobot_accumulator_expands_vectorized_action_chunks():
     accumulator = LeRobotEpisodeAccumulator(
         num_envs=2,
