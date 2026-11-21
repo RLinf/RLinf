@@ -1,5 +1,5 @@
-RL with the 2026 BEHAVIOR Challenge
-===================================
+RL with Behavior Benchmark
+==========================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
    :align: center
@@ -7,14 +7,15 @@ RL with the 2026 BEHAVIOR Challenge
 
    The BEHAVIOR benchmark (image: `BEHAVIOR <https://behavior.stanford.edu>`__).
 
-The `2026 BEHAVIOR Challenge <https://behavior.stanford.edu/challenge/index.html>`__
-uses OmniGibson and NVIDIA Isaac Sim to simulate household tasks.
-The RLinf recipes use the dual-arm R1 Pro mobile robot to train vision-language-action (VLA) policies.
+`BEHAVIOR <https://behavior.stanford.edu>`__ is a benchmark of everyday household
+activities built on NVIDIA IsaacSim / OmniGibson. A dual-arm R1 Pro robot performs
+long-horizon manipulation; RLinf uses it to RL-fine-tune vision-language-action (VLA)
+policies.
 
 Overview
 --------
 
-Prepare the 2026 simulation assets in your RLinf environment and select an RLinf PPO training or evaluation config for a household task.
+RL-finetune a VLA on BEHAVIOR household tasks with PPO.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -39,8 +40,8 @@ Prepare the 2026 simulation assets in your RLinf environment and select an RLinf
 
       1 node · ray-tracing GPUs
 
-| **You'll do:** check the simulator versions → download the 2026 assets and a base model → select an RLinf config.
-| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Python 3.11 · the BEHAVIOR-1K v3.9.4 fork installed by RLinf · Isaac Sim 5.1.
+| **You'll do:** install IsaacSim deps → download assets + base model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Python 3.11 · the BEHAVIOR-1K v3.9.4 fork installed by RLinf · Isaac Sim 5.1 + 2026 BEHAVIOR assets · a base checkpoint (steps below).
 
 Tasks
 ~~~~~
@@ -52,9 +53,9 @@ Tasks
    * - Field
      - Detail
    * - Tasks
-     - The task list includes all 100 challenge tasks. Set ``omni_config.task.activity_name`` to the name of the task to evaluate. The default is ``turning_on_radio``.
+     - 100 household manipulation tasks from the 2026 BEHAVIOR Challenge (select via ``omni_config.task.activity_name``).
    * - Robot
-     - The RLinf recipes and the default challenge configuration use the dual-arm R1 Pro mobile robot.
+     - Dual-arm R1 Pro on IsaacSim / OmniGibson.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -65,12 +66,12 @@ Observation and Action
 
    * - Field
      - Specification
-   * - RLinf observation
-     - Head RGB (720×720), left and right wrist RGB (480×480 each), robot proprioception, and the task instruction.
+   * - Observation
+     - Head-camera RGB (720×720) plus left/right wrist RealSense RGB (480×480).
    * - Challenge observation
      - The default profile returns three 224×224 RGB images and proprioception. The full-resolution profile adds depth and uses 720×720 for the head and 480×480 for each wrist. See the `challenge evaluation rules <https://behavior.stanford.edu/challenge/evaluation.html>`_.
    * - Action
-     - The R1 Pro’s 23-dimensional continuous action includes 3 base velocity commands (forward/backward, sideways, and turning), 4 joint position targets for the torso, 7 joint position targets per arm, and 1 open/close command per gripper.
+     - 23-dim continuous: 3-DOF base (x, y, rz), 4-DOF torso, 2×7-DOF arms, and 2×1-DOF parallel-jaw grippers.
 
 
 Installation
@@ -78,29 +79,30 @@ Installation
 
 .. warning::
 
-   Use an NVIDIA GPU with RT cores. Check the supported operating systems, drivers, and VRAM in the
-   `Isaac Sim 5.1 system requirements <https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html>`_.
+   Check the IsaacSim software and hardware requirements before installing:
+
+   - https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html
+   - https://docs.omniverse.nvidia.com/dev-guide/latest/common/technical-requirements.html
+
+   Linux requires NVIDIA driver 580.65.06 or newer. GPUs without ray tracing
+   support, such as A100 or H100, are unsupported by Isaac Sim 5.1.
+   Prefer RTX 30/40 series or newer GPUs for visual quality and training stability.
 
 .. include:: _setup_common.rst
    :end-before: Then set up the dependencies
 
 **Option 1: Docker image** — The RLinf Docker image for the BEHAVIOR-1K v3.9.4 fork is pending release.
 
-**Option 2: Custom environment**
-
-From the RLinf repository root, install RLinf, OpenPI, and the simulator in one
-Python 3.11.14 environment. The installer sets up Torch 2.7.0 and the required
-versions of LeRobot, Hugging Face Hub, and Warp.
+**Option 2: Custom environment** — install bundle ``--env behavior``:
 
 .. code-block:: bash
 
+   # Add --use-mirror for faster downloads in mainland China.
    unset ISAAC_PATH EXP_PATH CARB_APP_PATH
-   bash requirements/install.sh embodied --model openpi --env behavior
+   bash requirements/install.sh embodied --model openvla-oft --env behavior
+   # Or install the OpenPI environment:
+   # bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
-   python -c "from importlib.metadata import version; print(version('omnigibson'), version('isaacsim'))"
-   git -C "${BEHAVIOR_PATH:-$VIRTUAL_ENV/BEHAVIOR-1K}" rev-parse HEAD
-
-The v3.9.4 checkout reports OmniGibson 3.9.3 in its Python package metadata. For the default installation, the Git revision should match the commit pinned in ``requirements/install.sh``, and Isaac Sim should report 5.1.x.
 
 
 .. _behavior-sim-assets:
@@ -137,7 +139,7 @@ Once the SDK is installed, run the command above that calls ``download_behavior_
 Download the Model
 ------------------
 
-RLinf released these two BEHAVIOR checkpoints in 2025. Download the checkpoint for your model using either method below.
+RLinf released the following checkpoints in 2025. Download the checkpoint for your model family (either method works):
 
 .. code-block:: bash
 
@@ -181,7 +183,7 @@ Each recipe is a YAML config under ``examples/embodiment/config/``:
      - PPO
      - ``behavior_ppo_openpi_pi05.yaml``
 
-Launch PPO training with the existing entry point.
+Launch a config with ``run_embodiment.sh``:
 
 .. code-block:: bash
 
@@ -198,18 +200,54 @@ Launch PPO training with the existing entry point.
    :class: note
 
    - BEHAVIOR throughput → increase env GPU count first, then tune ``env.num_env_subprocess`` and ``env.train.total_num_envs``.
-   - Set the number of simulator subprocesses to fit your scene and available GPU memory.
+   - Tune subprocess count for your GPU memory and scene size.
+   - Cached task instances → use the official 2026 instances as described in the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
    - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
 
 .. warning::
 
-   Training success rates for OpenVLA-OFT and π₀ on the BEHAVIOR-1K v3.9.4 fork have yet to be verified.
+   Known issue: under the current BEHAVIOR setup, training success rate
+   (``env/success_once``) may stay at 0 for OpenVLA-OFT / π₀.
+   This issue will be fixed in a later release.
 
 Standalone Evaluation
 ~~~~~~~~~~~~~~~~~~~~~
 
-The radio evaluation uses the `π₀.₅ PT50 checkpoint <https://huggingface.co/RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32>`_. Follow the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>` to download the weights and run the default task or a public instance.
+The radio evaluation has been verified with the `π₀.₅ PT50 checkpoint <https://huggingface.co/RLinf/RLinf-Pi05-BEHAVIOR-1K-PT50-CS32>`_. Download and launch it as described in the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
+
+In principle, any ``pi05`` checkpoint that has non-zero success rate on
+Behavior and has been converted to PyTorch format can be used for evaluation
+with this config. We use OpenPI-Comet only as an example source:
+
+- https://huggingface.co/sunshk/openpi_comet/tree/main
+
+After download, you can use the following repository to convert weights to
+PyTorch format:
+
+- https://github.com/mli0603/openpi-comet
+
+Thanks to the OpenPI-Comet authors for open-sourcing the model and tools, which
+helps reproducibility and evaluation in RLinf.
+
+After conversion, update ``behavior_openpi_pi05_eval.yaml`` as follows:
+
+1. Set ``rollout.model.model_path`` to the converted model directory.
+2. Leave ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in ``env.eval``
+   at ``null`` to use the selected task's official timeout. Set integer values for
+   a custom episode limit and rollout budget.
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       max_episode_steps: null
+       max_steps_per_rollout_epoch: null
+
+Run standalone evaluation through the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
+It owns the required ``OMNIGIBSON_DATA_PATH`` setup, the
+``behavior_openpi_pi05_eval`` launch command, and result interpretation.
+
 
 Configure Further
 -----------------
@@ -233,20 +271,26 @@ performance.
      - Keep ``BehaviorTask`` / ``InteractiveTraversableScene`` explicit so the intended
        upstream OmniGibson classes are selected after overrides are applied.
    * - ``omni_config.task.activity_name``
-     - Task name, for example ``turning_on_radio``. Use ``omni_config.task.activity_instance_id`` to select an initial layout for that task.
+     - Task name, such as ``turning_on_radio``. The task list covers all 100 challenge tasks.
    * - ``omni_config.task.instance_resample_mode``
-     - Use ``disabled`` for a fixed layout, ``offline`` to sample cached layouts, or ``online`` to resample with one environment per simulator process. See :ref:`behavior-eval-config` for the required settings.
+     - Reset-time instance switching: ``disabled`` (load the fixed ``activity_instance_id``),
+       ``offline`` (scan ``activity_instance_dir`` once and sample a cached instance per reset —
+       ``*_template.json`` use the heavy scene-reload path, ``*_template-tro_state.json`` the
+       lighter in-place path), or ``online`` (requires ``online_object_sampling: True`` and
+       ``use_presampled_robot_pose: False`` and one environment per simulator process).
    * - ``omni_config.task.activity_instance_dir``
      - Directory of cached instance JSONs (``*_template.json`` / ``*_template-tro_state.json``),
        used by ``offline`` mode and by fixed-id loading when the mode is ``disabled``.
    * - ``omni_config.task.instance_file_format``
-     - ``template`` loads a full scene. ``tro_state`` restores task-relevant object states and uses the recorded robot pose when available, or the scene’s default starting pose otherwise.
+     - Cached-instance format: ``template`` (full reload) or ``tro_state`` (light, task-relevant
+       only). RLinf accepts ``tro_state`` files without ``robot_poses``; it then clears stale
+       cached robot-pose metadata and restores the scene's initial robot pose.
    * - ``omni_config.scene.partial_scene_load``
      - Set to ``true`` to load only the rooms needed for the task.
    * - ``omni_config.camera.head_resolution`` / ``omni_config.camera.wrist_resolution``
      - Head / wrist camera resolutions (defaults 720×720 / 480×480, applied to R1Pro sensors).
    * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``
-     - Action, rendering, and physics update rates. The RLinf R1 Pro preset sets them to 60, 60, and 120 Hz, respectively.
+     - Action / render / physics stepping frequency (default 60 / 60 / 120 Hz). Higher is slower.
    * - ``omni_config.env.automatic_reset``
      - Keep ``False`` — reset is controlled explicitly by the RLinf train/eval loop.
    * - ``omni_config.env.flatten_obs_space`` / ``flatten_action_space``
@@ -260,17 +304,27 @@ performance.
    * - ``omni_config.macro.use_numpy_controller_backend``
      - ``True`` uses the numpy controller backend, usually faster in single-/moderate-parallel runs.
    * - ``skip_intermediate_renders``
-     - Set to ``True`` to render and collect observations only on the last executed step of each action chunk.
+     - When ``True``, skips rendering and collecting intermediate observations inside an action
+       chunk. Saved videos then show only the frames the policy observes at chunk boundaries.
    * - ``num_env_subprocess``
-     - Simulator processes per environment worker (default 1). See :ref:`how pipeline stages share a simulator process <behavior-eval-config>`.
+     - Splits ``num_envs`` across child processes, each hosting its own Isaac/OmniGibson sim
+       (see ``BehaviorProcess``). Default ``1``. **Constraint:** ``num_envs`` must be divisible by
+       ``num_env_subprocess``. Higher values cut env-step bottlenecks but multiply processes and memory.
+       For sharing a process across pipeline stages, see :ref:`behavior-eval-config`.
 
-The 2026 asset bundle includes the official evaluation instances. See the :doc:`BEHAVIOR evaluation guide <../../evaluations/guides/behavior>` to select one. The tool for generating additional training layouts requires OmniGibson 3.7.2.
+Generating cached task instances
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+The 2026 assets include the official evaluation instances; see the
+:doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>` to select one.
+The existing ``rlinf/envs/sim/behavior/instance_generator.py`` requires OmniGibson 3.7.2
+to generate additional training layouts.
 
 --------------
 
 **5. Evaluate a JAX-aligned Pi0.5 checkpoint**
 
+The existing :doc:`SFT recipe <sft_openpi>` uses the 2025 dataset.
 BEHAVIOR evaluation uses ``model_type: openpi``. For weights from
 :doc:`sft_openpi` or the OpenPI checkpoint convertor, the eval config is:
 
@@ -287,8 +341,10 @@ paths directly in the config as ``/path/to/...`` placeholders:
 Normalization statistics are loaded from the converted checkpoint's bundled
 ``physical-intelligence/behavior/norm_stats.json`` asset.
 
-Launch the checkpoint from the same environment using the command in the
-:doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
+.. code:: bash
+
+   export OMNIGIBSON_DATA_PATH=/path/to/behavior-2026-data
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval
 
 .. note::
 
