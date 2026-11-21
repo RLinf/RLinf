@@ -3006,6 +3006,32 @@ def test_lerobot_frame_owns_observation_and_image_conversion():
     assert output["segment_id"].item() == 3
 
 
+def test_robotwin_converter_writes_rgb_frames(monkeypatch):
+    cv2 = pytest.importorskip("cv2")
+    pytest.importorskip("h5py")
+    pytest.importorskip("lerobot")
+
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "toolkits/lerobot/convert_robotwin_to_lerobot.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "robotwin_lerobot_converter_test", script
+    )
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+
+    red_bgr = np.zeros((4, 4, 3), dtype=np.uint8)
+    red_bgr[..., 2] = 255
+    encoded_ok, encoded = cv2.imencode(".png", red_bgr)
+    assert encoded_ok, "OpenCV failed to encode the synthetic RGB frame"
+
+    image = module.decode_frame(encoded.tobytes())
+
+    assert tuple(image[0, 0]) == (255, 0, 0)
+
+
 def test_offline_lerobot_export_reuses_canonical_frame_conversion():
     collector = object.__new__(CollectEpisode)
     collector.num_envs = 1

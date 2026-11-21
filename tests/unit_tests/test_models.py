@@ -20,6 +20,7 @@ import asyncio
 import copy
 import importlib.util
 import inspect
+import json
 import logging
 import math
 import os
@@ -4494,6 +4495,194 @@ def test_lingbotvlav2_rl_trains_the_action_expert_but_not_its_routers():
     assert not is_rl_trainable(
         "model.qwenvl_with_expert.qwenvl.model.layers.0.mlp.gate_proj.weight"
     )
+
+
+def test_lingbotvlav2_sft_preserves_upstream_mask_and_forwards_noise_time(monkeypatch):
+    # Upstream kernel registration queries hardware even for this CPU contract test.
+    pytest.importorskip("lingbotvla")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
+    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
+        LingbotVLAV2ActionModel,
+    )
+
+    class CapturingPolicy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Linear(1, 1)
+            self.received = None
+
+        def forward(self, **kwargs):
+            self.received = kwargs
+            scalar = torch.tensor(1.0)
+            return scalar, scalar, scalar, scalar, scalar, scalar, {}, None
+
+    adapter = LingbotVLAV2ActionModel.__new__(LingbotVLAV2ActionModel)
+    torch.nn.Module.__init__(adapter)
+    policy = CapturingPolicy()
+    adapter.vla_model = policy
+    joint_mask = torch.tensor([[[True, False], [True, True]]])
+    action_is_pad = torch.tensor([[False, True]])
+    noise = torch.randn(1, 2, 2)
+    time = torch.tensor([0.25])
+    data = {
+        "images": torch.randn(1, 1, 3, 2, 2),
+        "img_masks": torch.ones(1, 1, dtype=torch.bool),
+        "state": torch.randn(1, 2),
+        "lang_tokens": torch.ones(1, 2, dtype=torch.long),
+        "lang_masks": torch.ones(1, 2, dtype=torch.bool),
+        "actions": torch.randn(1, 2, 2),
+        "joint_mask": joint_mask,
+        "action_is_pad": action_is_pad,
+        "noise": noise,
+        "time": time,
+    }
+    original_joint_mask = joint_mask.clone()
+    original_noise = noise.clone()
+    original_time = time.clone()
+
+    adapter.sft_forward(data)
+
+    assert torch.equal(policy.received["joint_mask"], original_joint_mask)
+    assert torch.equal(policy.received["action_is_pad"], action_is_pad)
+    assert torch.equal(policy.received["noise"], original_noise)
+    assert torch.equal(policy.received["time"], original_time)
+    assert torch.equal(data["joint_mask"], original_joint_mask)
+
+
+def test_lingbotvlav2_reads_incomplete_foundation_metadata_from_release_config(
+    monkeypatch, tmp_path
+):
+    pytest.importorskip("lingbotvla")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
+    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
+        _read_checkpoint_values,
+    )
+
+    checkpoint = tmp_path / "foundation"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
+    release_config = tmp_path / "lingbotvla_cli.yaml"
+    release_config.write_text(
+        json.dumps(
+            {
+                "model": {
+                    "max_action_dim": 55,
+                    "max_state_dim": 55,
+                    "chunk_size": 32,
+                },
+                "train": {"chunk_size": 50},
+            }
+        )
+    )
+
+    values = _read_checkpoint_values(checkpoint, release_config)
+
+    assert values == {
+        "max_action_dim": 55,
+        "max_state_dim": 55,
+        "chunk_size": 50,
+    }
+
+
+def test_lingbotvlav2_prefers_complete_checkpoint_metadata(monkeypatch, tmp_path):
+    pytest.importorskip("lingbotvla")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
+    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
+        _read_checkpoint_values,
+    )
+
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    expected = {"max_action_dim": 55, "chunk_size": 50, "source": "checkpoint"}
+    (checkpoint / "config.json").write_text(json.dumps(expected))
+    release_config = tmp_path / "lingbotvla_cli.yaml"
+    release_config.write_text("invalid: [")
+
+    assert _read_checkpoint_values(checkpoint, release_config) == expected
+
+
+def test_lingbotvlav2_prefers_checkpoint_release_config(monkeypatch, tmp_path):
+    pytest.importorskip("lingbotvla")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device=None: "CPU test")
+    from rlinf.models.embodiment.lingbotvlav2.lingbotvlav2_action_model import (
+        _read_checkpoint_values,
+    )
+
+    checkpoint = tmp_path / "run" / "checkpoints" / "global_step_0" / "hf_ckpt"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
+    checkpoint_release_config = tmp_path / "run" / "lingbotvla_cli.yaml"
+    checkpoint_release_config.write_text(
+        json.dumps(
+            {
+                "model": {"max_action_dim": 55, "max_state_dim": 55},
+                "train": {"chunk_size": 50},
+            }
+        )
+    )
+    fallback_config = tmp_path / "fallback.yaml"
+    fallback_config.write_text("invalid: [")
+
+    values = _read_checkpoint_values(checkpoint, fallback_config)
+
+    assert values == {"max_action_dim": 55, "max_state_dim": 55, "chunk_size": 50}
+
+
+def test_lingbotvlav2_sft_config_resolves_module_precision(monkeypatch, tmp_path):
+    from hydra import compose, initialize_config_dir
+
+    root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("EMBODIED_PATH", str(root / "examples/sft"))
+    monkeypatch.setenv("LINGBOT_VLA_SFT_OUTPUT", str(tmp_path / "output"))
+    monkeypatch.setenv("LINGBOT_VLA_SFT_DATASET", str(tmp_path / "manifest.txt"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_CHECKPOINT", str(tmp_path / "foundation"))
+    monkeypatch.setenv("QWEN3VL_PATH", str(tmp_path / "tokenizer"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_PATH", str(tmp_path / "lingbot-vla-v2"))
+    monkeypatch.setenv("LINGBOT_VLA_V2_MODEL_ROOT", str(tmp_path / "model-root"))
+
+    with initialize_config_dir(
+        config_dir=str(root / "examples/sft/config"), version_base="1.1"
+    ):
+        cfg = compose(config_name="robotwin_sft_lingbotvlav2")
+    OmegaConf.resolve(cfg)
+
+    assert cfg.actor.fsdp_config.strategy == "fsdp2"
+    assert list(cfg.actor.fsdp_config.wrap_policy.transformer_layer_cls_to_wrap) == [
+        "Qwen2DecoderLayer",
+        "Qwen3VLTextDecoderLayer",
+        "Qwen3VLVisionBlock",
+    ]
+    assert cfg.actor.model.lingbotvlav2.data_name == "multi"
+    assert cfg.actor.fsdp_config.mixed_precision.param_dtype == "bf16"
+    assert cfg.actor.fsdp_config.mixed_precision.reduce_dtype == "fp32"
+    assert cfg.actor.fsdp_config.mixed_precision.cast_forward_inputs is True
+    assert cfg.actor.fsdp_config.mixed_precision.buffer_dtype is None
+    assert (
+        cfg.actor.fsdp_config.fsdp2_mixed_precision_policies.action_expert_fp32.param_dtype
+        == "fp32"
+    )
+    assert (
+        cfg.actor.fsdp_config.fsdp2_mixed_precision_policies.action_expert_fp32.reduce_dtype
+        == "fp32"
+    )
+    assert (
+        cfg.actor.fsdp_config.fsdp2_mixed_precision_policies.action_expert_fp32.output_dtype
+        == "fp32"
+    )
+    assert cfg.actor.model.sft_constructor_alignment_fix is True
+    assert cfg.actor.model.enable_expert_lr_multiplier is True
+    assert cfg.actor.fsdp_config.amp_autocast.enabled is False
+
+
+@pytest.mark.parametrize("path", ["click_alarmclock.txt", ["click_alarmclock.txt"]])
+def test_lingbotvlav2_sft_preserves_manifest_path(path):
+    from rlinf.models.embodiment.lingbotvlav2.sft_builder import _resolve_data_path
+
+    assert _resolve_data_path(path) == "click_alarmclock.txt"
 
 
 def _lingbotvlav2_ppo_cfg(overrides: dict):

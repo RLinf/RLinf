@@ -265,6 +265,62 @@ instead of the released weights, pass its full weights file:
     bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
       runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt
 
+Supervised Fine-Tuning
+----------------------
+
+Fine-tune the Foundation Base on RoboTwin actions. SFT trains the action expert
+and projection layers while freezing Qwen-VL and MoE routers. It shares the
+upstream model configuration with inference. The SFT FSDP2 policy uses BF16 for
+the backbone, FP32 for the action expert, and FP32 gradient reduction.
+
+Install the ModelScope CLI and download the Foundation Base snapshot from `ModelScope <https://modelscope.cn/models/Robbyant/lingbot-vla-v2-6b>`__:
+
+.. code-block:: bash
+
+    python -m pip install modelscope
+    modelscope download --model Robbyant/lingbot-vla-v2-6b --local_dir lingbot-vla-v2-6b-foundation-modelscope
+
+Set the model, source checkout, and dataset paths before converting data:
+
+.. code-block:: bash
+
+    export LINGBOT_VLA_V2_PATH=/path/to/.venv/lingbot-vla-v2
+    export LINGBOT_VLA_V2_MODEL_ROOT=/path/to/lingbot-vla-v2-6b-robotwin
+    export LINGBOT_VLA_V2_CHECKPOINT=/path/to/lingbot-vla-v2-6b-foundation-modelscope
+    export QWEN3VL_PATH=/path/to/Qwen3-VL-4B-Instruct
+    export LINGBOT_VLA_SFT_DATASET=/path/to/robotwin_train.txt
+
+``LINGBOT_VLA_V2_MODEL_ROOT`` points to the directory containing the shared
+``lingbotvla_cli.yaml``. If the Foundation checkpoint omits model fields, SFT
+reads them from this YAML. ``LINGBOT_VLA_V2_PATH`` points to the source checkout
+that contains the robot config and normalization statistics. Set
+``LINGBOT_VLA_V2_CHECKPOINT`` to the downloaded Foundation Base directory.
+
+Convert an extracted RoboTwin dataset. Each input directory must
+contain ``data/episode<i>.hdf5`` and ``instructions/episode<i>.json``:
+
+.. code-block:: bash
+
+    python toolkits/lerobot/convert_robotwin_to_lerobot.py \
+      --raw-root /path/to/click_bell/aloha-agilex_clean_50 \
+      --output-root /path/to/robotwin2_lerobot/click_bell_clean_50
+    printf 'robotwin /path/to/robotwin2_lerobot/click_bell_clean_50\n' > "$LINGBOT_VLA_SFT_DATASET"
+
+The manifest contains one ``robot_name dataset_path`` entry per line. Start SFT:
+
+.. code-block:: bash
+
+    bash examples/sft/run_vla_sft.sh robotwin_sft_lingbotvlav2
+
+Track ``train/l1_loss`` during SFT. Evaluate the saved full weights with the
+same attention setting used for SFT:
+
+.. code-block:: bash
+
+    bash evaluations/run_eval.sh robotwin_click_bell_lingbotvlav2_eval \
+      runner.ckpt_path=/path/to/checkpoints/global_step_N/actor/model_state_dict/full_weights.pt \
+      rollout.model.lingbotvlav2.attention_implementation=flex_cached
+
 Visualization and Results
 -------------------------
 

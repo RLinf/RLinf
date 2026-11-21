@@ -26,6 +26,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import fnmatch
 import functools
 import math
 import warnings
@@ -43,7 +44,7 @@ from torch.distributed.fsdp.wrap import (
 from torch.optim import Optimizer
 from transformers.trainer_pt_utils import get_module_class_from_name
 
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.schema.actor_batch import TokenRows
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
@@ -547,10 +548,13 @@ def apply_fsdp2_to_model(
     # be applied inside-out. Reversing ensures child modules are wrapped first,
     # so the parent only shards the remaining (non-wrapped) parameters.
     for name, submodule, module_type in reversed(modules_to_shard):
+        submodule_mp_policy = _resolve_fsdp2_module_precision_policy(
+            name, config, mp_policy
+        )
         fully_shard(
             submodule,
             mesh=device_mesh,
-            mp_policy=mp_policy,
+            mp_policy=submodule_mp_policy,
             offload_policy=offload_policy,
             reshard_after_forward=reshard_after_forward,
         )
@@ -583,6 +587,25 @@ def apply_fsdp2_to_model(
         )
 
     return fully_shard(module, **root_kwargs)
+
+
+def _resolve_fsdp2_module_precision_policy(
+    module_name: str, config: dict, default_policy: MixedPrecisionPolicy
+) -> MixedPrecisionPolicy:
+    """Select a per-module FSDP2 policy, preserving the default for other units."""
+    for rule in config.get("fsdp2_mixed_precision_rules", {}).values():
+        if any(
+            fnmatch.fnmatchcase(module_name, pattern)
+            for pattern in rule["module_names"]
+        ):
+            policy = config["fsdp2_mixed_precision_policies"][rule["policy"]]
+            return MixedPrecisionPolicy(
+                param_dtype=torch_dtype_from_precision(policy["param_dtype"]),
+                reduce_dtype=torch_dtype_from_precision(policy["reduce_dtype"]),
+                output_dtype=torch_dtype_from_precision(policy["output_dtype"]),
+                cast_forward_inputs=policy.get("cast_forward_inputs", True),
+            )
+    return default_policy
 
 
 def get_fsdp2_full_state_dict_all_ranks(
