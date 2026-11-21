@@ -151,6 +151,27 @@ algorithm
 ``algorithm.group_size`` (responses per prompt; always > 1 for GRPO) is shared and
 documented in :doc:`basic_config`.
 
+Stop Actor Updates at a KL Target
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+KL early stopping skips the remaining actor updates for a rollout batch once the mean conditional KL reaches the target. Before the first optimizer step, the actor records the denoising transition distributions for a fixed set of action chunks. After each step, it compares the updated distributions with those recorded for the same transitions. The step that reaches the target still takes effect.
+
+Use this setting with synchronous FSDP OpenPI PPO or GRPO. The policy must use Flow-SDE with positive noise and joint log probabilities disabled. Use chunk-level rewards and log probabilities. Add these keys to the training YAML, for example ``libero_object_ppo_openpi.yaml``.
+
+.. code:: yaml
+
+  algorithm:
+    kl_stop:
+      enabled: true
+      target_kl: 0.05
+
+Choose a finite positive target. The actor uses the configured update budget by default, or if there are no valid chunks to score.
+
+Use ``train/actor/kl_stop/first_kl`` and ``train/actor/update_kl`` to compare the KL after the first and last optimizer steps. ``train/actor/kl_stop/used_frac`` reports the fraction of scheduled steps that ran, and ``train/actor/optimizer_steps_used`` gives the step count.
+
+For expert-only training with a frozen, dropout-free prefix, set ``cache_prefix: true`` under ``kl_stop`` to reuse the prefix attention KV cache. This saves repeated prefix computation at the cost of GPU memory. Full prefix caching is off by default.
+
+
 env
 ~~~~~~~~~~~~~~~
 

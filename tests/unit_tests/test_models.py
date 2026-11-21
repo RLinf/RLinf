@@ -1320,6 +1320,7 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
     policy = SimpleNamespace(
         img=vision, _config=SimpleNamespace(short_memory=True), pcd=False
     )
+    policy.embed_images = Pi0.embed_images.__get__(policy)
     with torch.no_grad():
         expected = torch.cat(
             [
@@ -1338,8 +1339,13 @@ def test_openpi_prefix_preserves_camera_inputs(siglip_with_history):
             decisions.append(kwargs["current_only"])
 
         handle = vision.register_forward_pre_hook(record_decision, with_kwargs=True)
-        actual, input_mask, _ = Pi0.embed_prefix(policy, observation)
+        features = policy.embed_images(observation)
         handle.remove()
+        observation.images = {}
+        observation.image_masks = {}
+        actual, input_mask, _ = Pi0.embed_prefix(
+            policy, observation, image_features=features
+        )
 
     assert decisions == [False, True, True]
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)

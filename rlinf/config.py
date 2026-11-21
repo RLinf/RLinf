@@ -1296,6 +1296,44 @@ def validate_embodied_cfg(cfg):
                 "false for LingBot-VLA V2, which keeps its SDE samples in fp32."
             )
 
+    kl_stop = algorithm_cfg.get("kl_stop") or {}
+    kl_stop_enabled = kl_stop.get("enabled", False)
+    if not only_eval and not isinstance(kl_stop_enabled, bool):
+        raise ValueError(
+            f"Expected boolean algorithm.kl_stop.enabled, got {kl_stop_enabled!r}."
+        )
+    if not only_eval and kl_stop_enabled:
+        cache_prefix = kl_stop.get("cache_prefix", False)
+        if not isinstance(cache_prefix, bool):
+            raise ValueError(
+                f"Expected boolean algorithm.kl_stop.cache_prefix, got {cache_prefix!r}."
+            )
+        target_kl = kl_stop.get("target_kl")
+        if type(target_kl) not in (int, float) or not 0 < target_kl < float("inf"):
+            raise ValueError(
+                "Expected a finite positive algorithm.kl_stop.target_kl, "
+                f"got {target_kl!r}."
+            )
+        openpi_cfg = model_cfg.get("openpi", {})
+        if not (
+            model_type == SupportedModel.OPENPI
+            and openpi_cfg.get("task") == "rl"
+            and openpi_cfg.get("noise_method") == "flow_sde"
+            and openpi_cfg.get("noise_level", 0) > 0
+            and not openpi_cfg.get("joint_logprob", False)
+            and algorithm_cfg.get("loss_type") in ("actor", "actor_critic")
+            and algorithm_cfg.get("logprob_type") == "chunk_level"
+            and algorithm_cfg.get("reward_type") == "chunk_level"
+            and algorithm_cfg.get("update_epoch", 1) >= 1
+            and not cfg.runner.get("use_training_pipeline", False)
+            and cfg.actor.training_backend == "fsdp"
+        ):
+            raise ValueError(
+                "algorithm.kl_stop requires synchronous FSDP OpenPI "
+                "PPO or GRPO with chunk-level rewards and logprobs, at least "
+                "one update epoch, and single-step flow_sde with positive noise."
+            )
+
     if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
         # The actor-side recompute reshapes flat logprobs by ``action_dim`` for
         # the OpenVLA family and LingBot-VLA V2. OpenPI already returns the
