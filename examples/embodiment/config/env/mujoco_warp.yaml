@@ -1,0 +1,24 @@
+env_type: mujoco_warp
+task_name: half_cheetah
+device: cuda
+
+total_num_envs: null
+group_size: 1
+max_steps_per_rollout_epoch: 1000
+max_episode_steps: 1000
+
+seed: 42
+auto_reset: true
+ignore_terminations: false
+use_rel_reward: false
+reward_scale: 1.0
+use_fixed_reset_state_ids: false
+use_ordered_reset_state_ids: false
+specific_reset_id: null
+is_eval: false
+render_width: 480
+render_height: 480
+
+video_cfg:
+  save_video: false
+  video_base_dir: ${runner.logger.log_path}/video/train
