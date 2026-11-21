@@ -27,7 +27,7 @@
      - :doc:`VLA 快速上手 <vla>`
    * - 4–8 卡（80 GB）
      - VLA 全参 SFT 与基准复现（LIBERO、ManiSkill、RoboTwin）、7B–14B 推理 RL
-     - :doc:`示例库 <../examples/index>`
+     - :doc:`具身训练 <../examples/index>`
    * - 多机集群（8×H100 起）
      - 大规模分离式与混合式训练、Megatron + SGLang / vLLM、世界模型
      - :doc:`多节点训练 <../guides/multi_node>`

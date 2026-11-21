@@ -34,14 +34,13 @@ Install locally with ``install.sh`` (append ``--use-mirror`` and run ``export HF
 Run Training
 ------------
 
-Single-node runs start Ray automatically. Launch a recipe by config name and pass the checkpoint path once:
+Single-node runs start Ray automatically, and quickstart configs download their default Hugging Face checkpoints on first run:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
-     actor.model.model_path=/path/to/checkpoint
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-Both quick start configs default to ``all`` accelerators; change ``cluster.component_placement`` to target specific devices (:doc:`../guides/basic_config`). For multi-node runs, set ``RLINF_NODE_RANK`` before running ``ray start`` on each node (:doc:`../guides/multi_node`).
+Pass ``actor.model.model_path=/path/to/checkpoint`` (or another Hugging Face ``owner/repo``) to override the model; rollout inherits it automatically. Quickstart configs default to ``all`` accelerators; change ``cluster.component_placement`` to target specific devices (:doc:`../reference/configuration`). For multi-node runs, set ``RLINF_NODE_RANK`` before running ``ray start`` on each node (:doc:`../guides/multi_node`).
 
 Evaluate
 --------

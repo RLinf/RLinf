@@ -1,12 +1,7 @@
 基础配置
 =========
 
-下面给出 RLinf 核心配置参数的完整参考说明，适用于所有工作负载。
-我们对 YAML 中每个重要键做了说明，便于你针对自己的集群、模型或研究需求进行调整。
-各参数按顶层键分组组织。
-
-本节涵盖具身智能与智能体训练共用的基础 GPU 和集群配置。
-任务专用配置请参见 :doc:`embodiment_config` 和 :doc:`agentic_config`。
+如需带注释的最小 YAML、Hydra 预设地图及单卡最常调参数，建议先阅读 :doc:`../reference/configuration`。本页提供具身智能与智能体训练共用基础参数的完整逐字段说明；任务专用字段请参见 :doc:`embodiment_config` 与 :doc:`agentic_config`。
 
 hydra
 ~~~~~~

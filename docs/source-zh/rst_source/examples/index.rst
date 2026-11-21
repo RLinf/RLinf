@@ -1,10 +1,7 @@
-示例库
-========================================
+具身训练
+========
 
-本节展示了 **RLinf 目前支持的示例集合**，
-展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
-
-具身智能是 RLinf 的核心方向。具身示例被拆分为以下七个入口，便于按你的实际起点快速定位：
+按仿真基准、模型系列或训练范式选择具身训练入口：
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -13,63 +10,30 @@
       :link: simulators_index
       :link-type: doc
 
-      以模拟器 / 基准为出发点 —— LIBERO、ManiSkill、RoboTwin、IsaacLab 等。
-
-   .. grid-item-card:: 真机
-      :link: real_world_index
-      :link-type: doc
-
-      在真实机器人硬件上运行 —— Franka 系列，以及 GimArm、XSquare Turtle2、DOS-W1。
+      从评测基准切入——LIBERO、ManiSkill、RoboTwin、BEHAVIOR-1K、IsaacLab 等。
 
    .. grid-item-card:: 具身模型
       :link: vla_wam_index
       :link-type: doc
 
-      对具身模型做 RL 微调 —— π₀、GR00T、StarVLA、Lingbot-VLA 等。
+      微调 VLA / WAM 模型——π₀ / π₀.₅、OpenVLA-OFT、GR00T、StarVLA、LingBot-VLA、ABot-M0 等。
+
+   .. grid-item-card:: SFT 与模仿学习
+      :link: sft_index
+      :link-type: doc
+
+      OpenPI、VLM、DreamZero、FastWAM 与 Cosmos3 监督微调配方。
+
+   .. grid-item-card:: RL 算法示例
+      :link: methods_index
+      :link-type: doc
+
+      按算法切入——DAgger、RECAP、STEAM、RLT、SAC-Flow、DSRL、IQL、仿真-真机协同训练与 MLP。
 
    .. grid-item-card:: 世界模型
       :link: world_model_index
       :link-type: doc
 
-      训练和微调世界模型 —— OpenSora、Wan 等。
+      结合世界模型的闭环强化学习——OpenSora、Wan、WoVR 与 BWM。
 
-   .. grid-item-card:: 奖励模型
-      :link: embodied/reward_model_index
-      :link-type: doc
-
-      构建用于仿真与真实机器人强化学习流程的奖励模型。
-
-   .. grid-item-card:: SFT
-      :link: sft_index
-      :link-type: doc
-
-      用于产出 RL 冷启动检查点的监督微调（SFT）配方。
-
-   .. grid-item-card:: RL
-      :link: methods_index
-      :link-type: doc
-
-      以训练算法为主线 —— DAgger、RECAP、DSRL、IQL 离线 RL、仿真-真机协同训练、MLP / SAC-Flow。
-
-具身之外：
-
-.. grid:: 1 2 3 3
-   :gutter: 3
-
-   .. grid-item-card:: 图像与视频生成
-      :link: video_models
-      :link-type: doc
-
-      准备 SD3 与 Wan2.2 模型，再选择 Diffusion-NFT 或 DiffusionART 训练。
-
-   .. grid-item-card:: 智能体
-      :link: agentic/index
-      :link-type: doc
-
-      数学推理与智能体 AI 工作流，涵盖单智能体与多智能体设置。
-
-   .. grid-item-card:: 系统
-      :link: system/index
-      :link-type: doc
-
-      计算资源的灵活与动态调度，并将任务分配到最合适的硬件设备。
+其他方向请见 :doc:`真机机器人 <real_world_index>`、:doc:`统一评测 <../evaluations/index>`、:doc:`智能体与推理 <agentic/index>` 与 :doc:`图像与视频生成 <video_models>`。

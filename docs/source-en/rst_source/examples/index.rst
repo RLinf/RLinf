@@ -1,13 +1,7 @@
-Example Gallery
-===============
+Embodied Training
+=================
 
-This section presents the collection of **examples currently supported by RLinf**,
-showcasing how the framework can be applied across different scenarios and
-demonstrating its efficiency in practice.
-This example gallery is continuously expanding, covering new scenarios and tasks to highlight RLinf's flexibility and efficiency.
-
-Embodied intelligence is RLinf's primary focus. The embodied gallery is split into seven
-entry points — pick the one that matches your starting question:
+Choose an entry point by benchmark, model family, or training paradigm:
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -16,63 +10,30 @@ entry points — pick the one that matches your starting question:
       :link: simulators_index
       :link-type: doc
 
-      Start from a benchmark — LIBERO, ManiSkill, RoboTwin, IsaacLab, and more.
-
-   .. grid-item-card:: Robots
-      :link: real_world_index
-      :link-type: doc
-
-      Run on physical robot hardware — the Franka family plus GimArm, XSquare Turtle2, and DOS-W1.
+      Start from a benchmark — LIBERO, ManiSkill, RoboTwin, BEHAVIOR-1K, IsaacLab, and more.
 
    .. grid-item-card:: Embodied Models
       :link: vla_wam_index
       :link-type: doc
 
-      RL-fine-tune embodied model families — π₀, GR00T, StarVLA, Lingbot-VLA, and more.
+      RL-fine-tune VLA and WAM families — π₀ / π₀.₅, OpenVLA-OFT, GR00T, StarVLA, LingBot-VLA, ABot-M0, and more.
+
+   .. grid-item-card:: SFT & Imitation
+      :link: sft_index
+      :link-type: doc
+
+      Supervised fine-tuning recipes for OpenPI, VLM, DreamZero, FastWAM, and Cosmos3.
+
+   .. grid-item-card:: RL Recipes
+      :link: methods_index
+      :link-type: doc
+
+      Algorithm-focused recipes — DAgger, RECAP, STEAM, RLT, SAC-Flow, DSRL, IQL, Co-Training, and MLP.
 
    .. grid-item-card:: World Models
       :link: world_model_index
       :link-type: doc
 
-      Train and fine-tune world models — OpenSora, Wan, and more.
+      Closed-loop RL with learned world models — OpenSora, Wan, WoVR, and BWM.
 
-   .. grid-item-card:: Reward Models
-      :link: embodied/reward_model_index
-      :link-type: doc
-
-      Build reward models for simulation and real-world reinforcement learning workflows.
-
-   .. grid-item-card:: SFT
-      :link: sft_index
-      :link-type: doc
-
-      Supervised fine-tuning recipes that produce strong RL cold-start checkpoints.
-
-   .. grid-item-card:: RL
-      :link: methods_index
-      :link-type: doc
-
-      Algorithm-centric examples — DAgger, RECAP, DSRL, IQL offline RL, sim-real co-training, MLP / SAC-Flow.
-
-Beyond embodiment:
-
-.. grid:: 1 2 3 3
-   :gutter: 3
-
-   .. grid-item-card:: Image and Video Generation
-      :link: video_models
-      :link-type: doc
-
-      Prepare SD3 and Wan2.2 models, then train with Diffusion-NFT or DiffusionART.
-
-   .. grid-item-card:: Agents
-      :link: agentic/index
-      :link-type: doc
-
-      Math reasoning and agentic AI workflows, in both single-agent and multi-agent settings.
-
-   .. grid-item-card:: Systems
-      :link: system/index
-      :link-type: doc
-
-      Flexible, dynamic scheduling of compute resources across the most suitable hardware devices.
+Looking for other tracks? See :doc:`Real-World Robots <real_world_index>`, :doc:`Evaluation <../evaluations/index>`, :doc:`Agentic & Reasoning <agentic/index>`, and :doc:`Image & Video Generation <video_models>`.

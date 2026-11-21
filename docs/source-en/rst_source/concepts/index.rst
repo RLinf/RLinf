@@ -11,6 +11,12 @@ Choose a Concept Area
 .. grid:: 1 2 2 2
    :gutter: 2
 
+   .. grid-item-card:: Architecture Overview
+      :link: overview
+      :link-type: doc
+
+      Five-minute visual map of the RL loop, deployment modes, and data formats.
+
    .. grid-item-card:: Execution
       :link: execution-model/index
       :link-type: doc
@@ -44,6 +50,7 @@ Choose a Concept Area
 .. toctree::
    :hidden:
 
+   Overview <overview>
    Execution <execution-model/index>
    Scheduling <scheduling-model/index>
    Robotics Interface <robotics>

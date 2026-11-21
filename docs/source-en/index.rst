@@ -26,7 +26,7 @@ RLinf is an open-source infrastructure for reinforcement learning post-training 
       :link-type: doc
       :text-align: center
 
-   .. grid-item-card:: Examples
+   .. grid-item-card:: Embodied Training
       :link: rst_source/examples/index
       :link-type: doc
       :text-align: center
@@ -123,7 +123,7 @@ Why RLinf
   :titlesonly:
   :hidden:
 
-  Example Gallery <rst_source/examples/index>
+  Overview <rst_source/examples/index>
   Simulators <rst_source/examples/simulators_index>
   Embodied Models <rst_source/examples/vla_wam_index>
   SFT & Imitation <rst_source/examples/sft_index>
@@ -181,7 +181,7 @@ Why RLinf
   :titlesonly:
   :hidden:
 
-  Guides Overview <rst_source/guides/index>
+  Overview <rst_source/guides/index>
   Configure <rst_source/guides/configure/index>
   Data & Checkpoints <rst_source/guides/data-checkpoints/index>
   Launch & Scale <rst_source/guides/launch-scale/index>

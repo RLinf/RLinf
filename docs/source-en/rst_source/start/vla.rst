@@ -43,19 +43,17 @@ Select a model tab below — each tab contains the full install, download, and l
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
-      **2. Download Assets and Checkpoint** (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__)
+      **2. Download ManiSkill Assets** (`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__)
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-         hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
-      **3. Launch PPO Training**
+      **3. Launch PPO Training** (downloads ``gen-robot/openvla-7b-rlvla-warmup`` into your Hugging Face cache automatically on first run)
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
-           actor.model.model_path=$PWD/checkpoints/openvla-7b-rlvla-warmup
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
    .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
@@ -67,31 +65,19 @@ Select a model tab below — each tab contains the full install, download, and l
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-      **2. Download Assets, Base Model, and LoRA**
+      **2. Download ManiSkill Assets**
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base
-         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
-      **3. Launch PPO Training**
+      **3. Launch PPO Training** (downloads ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` and ``Base-Lora`` automatically on first run)
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart \
-           actor.model.model_path=$PWD/checkpoints/openvlaoft-base \
-           actor.model.lora_path=$PWD/checkpoints/openvlaoft-lora
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-Rollout inherits ``actor.model.model_path`` automatically. To save the path in the YAML file instead of passing it on the command line, edit these fields:
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       model_path: /path/to/downloaded-checkpoint
-       # For OpenVLA-OFT, also set:
-       lora_path: /path/to/downloaded-lora
+Rollout inherits ``actor.model.model_path`` automatically. To use pre-downloaded local checkpoints instead of Hugging Face repo IDs, pass overrides on the command line (``actor.model.model_path=/path/to/checkpoint`` and, for OpenVLA-OFT, ``actor.model.lora_path=/path/to/lora``) or see :doc:`Training Configuration <../reference/configuration>`.
 
 Results and Troubleshooting
 ---------------------------
@@ -120,11 +106,11 @@ Training writes logs and checkpoints under ``./logs``. Open TensorBoard (``tenso
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: Example Gallery
+   .. grid-item-card:: Embodied Training
       :link: ../examples/index
       :link-type: doc
 
-      Explore LIBERO, RoboTwin, OpenPI, and real-world robots.
+      Explore LIBERO, RoboTwin, OpenPI, SFT, and world models.
 
    .. grid-item-card:: Standalone Evaluation
       :link: ../evaluations/index

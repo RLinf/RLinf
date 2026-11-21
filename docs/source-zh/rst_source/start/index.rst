@@ -73,11 +73,11 @@
 .. grid:: 1 2 2 4
    :gutter: 2
 
-   .. grid-item-card:: 示例库
+   .. grid-item-card:: 具身训练
       :link: ../examples/index
       :link-type: doc
 
-      浏览具身、SFT、世界模型与智能体示例。
+      浏览模拟器、具身模型、SFT、RL 算法与世界模型配方。
 
    .. grid-item-card:: 概念
       :link: ../concepts/index

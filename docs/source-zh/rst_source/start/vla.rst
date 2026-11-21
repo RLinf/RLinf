@@ -43,19 +43,17 @@ VLA 快速上手
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla --env maniskill_libero && source .venv/bin/activate
 
-      **2. 下载场景资产与预训练权重**\ （`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）
+      **2. 下载场景资产**\ （`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-         hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
-      **3. 启动 PPO 训练**
+      **3. 启动 PPO 训练**\ （首次运行自动缓存下载 ``gen-robot/openvla-7b-rlvla-warmup``）
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
-           actor.model.model_path=$PWD/checkpoints/openvla-7b-rlvla-warmup
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
    .. tab-item:: OpenVLA-OFT
       :sync: openvla-oft
@@ -67,31 +65,19 @@ VLA 快速上手
          git clone https://github.com/RLinf/RLinf.git && cd RLinf
          bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero && source .venv/bin/activate
 
-      **2. 下载场景资产、基座模型与 LoRA 权重**
+      **2. 下载场景资产**
 
       .. code-block:: bash
 
          hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
-         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base
-         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
-      **3. 启动 PPO 训练**
+      **3. 启动 PPO 训练**\ （首次运行自动缓存下载 ``RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main`` 与 ``Base-Lora``）
 
       .. code-block:: bash
 
-         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart \
-           actor.model.model_path=$PWD/checkpoints/openvlaoft-base \
-           actor.model.lora_path=$PWD/checkpoints/openvlaoft-lora
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
-rollout 会自动沿用 ``actor.model.model_path``。要把路径写进 YAML 文件，直接修改以下配置项：
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       model_path: /path/to/downloaded-checkpoint
-       # 使用 OpenVLA-OFT 时同时设置：
-       lora_path: /path/to/downloaded-lora
+rollout 会自动沿用 ``actor.model.model_path``。若使用本地预下载权重，只需在命令行覆盖 ``actor.model.model_path=/path/to/checkpoint``\ （OpenVLA-OFT 同步传 ``actor.model.lora_path=/path/to/lora``），配置细节见 :doc:`训练配置 <../reference/configuration>`。
 
 结果与常见问题
 --------------
@@ -120,11 +106,11 @@ rollout 会自动沿用 ``actor.model.model_path``。要把路径写进 YAML 文
 .. grid:: 1 3 3 3
    :gutter: 2
 
-   .. grid-item-card:: 浏览示例库
+   .. grid-item-card:: 具身训练
       :link: ../examples/index
       :link-type: doc
 
-      查看 LIBERO、RoboTwin、OpenPI 与真机示例。
+      查看 LIBERO、RoboTwin、OpenPI、SFT 与世界模型示例。
 
    .. grid-item-card:: 运行独立评测
       :link: ../evaluations/index

@@ -34,14 +34,13 @@ RLinf 常用工作流的最短命令。
 启动训练
 --------
 
-单机运行会自动启动本地 Ray。传入配置名和权重路径即可启动：
+单机运行会自动启动本地 Ray，快速上手配置首次运行时会自动缓存下载默认 Hugging Face 权重：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
-     actor.model.model_path=/path/to/checkpoint
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
 
-快速上手配置默认使用全部加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。多机训练前，先在每个节点设置 ``RLINF_NODE_RANK``，再执行 ``ray start``，详见 :doc:`../guides/multi_node`。
+如需替换为本地权重或其他 Hugging Face ``owner/repo``，传入 ``actor.model.model_path=...`` 即可（rollout 自动继承）。快速上手配置默认使用全部加速卡；需要指定设备时修改 ``cluster.component_placement``，详见 :doc:`../reference/configuration`。多机训练前，先在每个节点设置 ``RLINF_NODE_RANK``，再执行 ``ray start``，详见 :doc:`../guides/multi_node`。
 
 运行评测
 --------

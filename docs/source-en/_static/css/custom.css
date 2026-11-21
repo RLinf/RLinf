@@ -738,3 +738,16 @@ html[data-theme="dark"] {
   border-top: 1px solid var(--rlinf-tab-panel-border);
   padding: 0.95rem 1.15rem !important;
 }
+
+/* Transparent canvas + dark-mode adaptation for RLinf architecture/flow SVGs
+   (overrides pydata-sphinx-theme's default white image backdrop in dark mode). */
+.bd-article img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"] {
+  background-color: transparent !important;
+}
+
+html[data-theme="dark"]
+  .bd-article
+  img[src^="https://raw.githubusercontent.com/RLinf/misc/"][src$=".svg"] {
+  background-color: transparent !important;
+  filter: invert(0.92) hue-rotate(180deg) saturate(1.15);
+}

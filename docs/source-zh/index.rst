@@ -26,7 +26,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
       :link-type: doc
       :text-align: center
 
-   .. grid-item-card:: 示例
+   .. grid-item-card:: 具身训练
       :link: rst_source/examples/index
       :link-type: doc
       :text-align: center
@@ -123,7 +123,7 @@ RLinf 是面向具身 policy 与基础模型强化学习后训练的开源基础
   :titlesonly:
   :hidden:
 
-  示例库 <rst_source/examples/index>
+  具身总览 <rst_source/examples/index>
   模拟器 <rst_source/examples/simulators_index>
   具身模型 <rst_source/examples/vla_wam_index>
   SFT 与模仿学习 <rst_source/examples/sft_index>

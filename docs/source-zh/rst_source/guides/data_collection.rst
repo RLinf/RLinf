@@ -1,12 +1,16 @@
 数据采集
 ========
 
-采集有两个入口，写出的目录相同。``save_dir`` 默认是
-``${runner.logger.log_path}``。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/data_formats_zh.svg
+   :align: center
+   :width: 100%
+   :alt: RLinf 数据格式流转图：采集来源、三种存储格式与下游消费阶段
 
-- **真机遥操**：``examples/embodiment/collect_data.sh`` 启动
-  ``collect_real_data.py``。``export_format`` 可以选一种，也可以让
-  ``replay_buffer`` 和一种 episode 格式一起写。
+   数据采集来源、落盘格式与下游训练阶段。
+
+采集有两个入口，写出的目录相同。``save_dir`` 默认是 ``${runner.logger.log_path}``。
+
+- **真机遥操作**：``examples/embodiment/collect_data.sh`` 启动 ``collect_real_data.py``。``export_format`` 可以选一种，也可以让 ``replay_buffer`` 和一种 episode 格式一起写。
 - **训练或评估**：在 ``env`` 的 ``data_collection`` 里打开。env worker 一次只写一种
   episode 格式。
 

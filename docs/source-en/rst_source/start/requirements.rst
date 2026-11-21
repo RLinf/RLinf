@@ -27,7 +27,7 @@ GPU Tiers by Workload
      - :doc:`VLA Quick Start <vla>`
    * - 4–8 GPUs (80 GB)
      - Full-parameter VLA SFT and RL benchmarks (LIBERO, ManiSkill, RoboTwin), 7B–14B reasoning RL
-     - :doc:`Example Gallery <../examples/index>`
+     - :doc:`Embodied Training <../examples/index>`
    * - Multi-node (8×H100+)
      - Large-scale disaggregated and hybrid runs, Megatron + SGLang / vLLM, world models
      - :doc:`Multi-Node Training <../guides/multi_node>`

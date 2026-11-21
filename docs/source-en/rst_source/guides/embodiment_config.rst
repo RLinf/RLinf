@@ -1,9 +1,7 @@
 Embodied Configuration
 ======================
 
-This section covers configuration parameters specific to embodied RL training
-(robot manipulation, simulators, VLA models). These extend the shared
-configuration described in :doc:`basic_config`.
+For an annotated minimal embodied YAML and Hydra preset overview, see :doc:`../reference/configuration`. This page documents embodied-specific RL keys (robot manipulation, simulators, and VLA models) extending :doc:`basic_config`.
 
 defaults
 ~~~~~~~~~~~~~~~
@@ -11,16 +9,14 @@ defaults
 .. code:: yaml
 
   defaults:
+    - base/embodied_rl
     - env/maniskill_put_on_plate_in_scene_25_main@env.train
     - env/maniskill_ood_template@env.eval
     - model/openvla_oft@actor.model
-    - hybrid_engines/fsdp@actor.fsdp_config
-    - weight_syncer/patch_syncer@weight_syncer
+    - algorithm/ppo@algorithm
+    - _self_
 
-``defaults``: Hydra configuration inheritance. Selects the environment, model,
-training-backend, and weight-syncer presets to compose into the run. The
-``<group>@<target>`` syntax mounts a preset onto a config node (e.g.
-``model/openvla_oft@actor.model`` fills ``actor.model``).
+``defaults``: Hydra configuration inheritance. ``base/embodied_rl`` brings in the default ``cluster/collocated``, ``runner``, ``hybrid_engines/fsdp``, and ``weight_syncer/patch_syncer`` presets; ``<group>@<target>`` mounts a preset onto a config node (e.g. ``model/openvla_oft@actor.model`` fills ``actor.model``).
 
 hydra
 ~~~~~~~~~~~~~~~

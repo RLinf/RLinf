@@ -73,11 +73,11 @@ What's Next
 .. grid:: 1 2 2 4
    :gutter: 2
 
-   .. grid-item-card:: Examples
+   .. grid-item-card:: Embodied Training
       :link: ../examples/index
       :link-type: doc
 
-      Browse embodied, SFT, world model, and agentic recipes.
+      Browse simulator, VLA model, SFT, RL, and world model recipes.
 
    .. grid-item-card:: Concepts
       :link: ../concepts/index

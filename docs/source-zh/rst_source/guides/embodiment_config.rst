@@ -1,8 +1,7 @@
 具身智能配置
 =============
 
-本节介绍具身智能 RL 训练专用的配置参数（机器人操作、模拟器、VLA 模型）。
-这些参数扩展了 :doc:`basic_config` 中的共享配置。
+如需带注释的最小具身 YAML 与 Hydra 预设地图，请先阅读 :doc:`../reference/configuration`。本页给出具身智能 RL 训练专用参数的完整说明，扩展自 :doc:`basic_config`。
 
 defaults
 ~~~~~~~~~~~~~~~
@@ -10,15 +9,14 @@ defaults
 .. code:: yaml
 
   defaults:
+    - base/embodied_rl
     - env/maniskill_put_on_plate_in_scene_25_main@env.train
     - env/maniskill_ood_template@env.eval
     - model/openvla_oft@actor.model
-    - hybrid_engines/fsdp@actor.fsdp_config
-    - weight_syncer/patch_syncer@weight_syncer
+    - algorithm/ppo@algorithm
+    - _self_
 
-``defaults``：Hydra 配置继承。选择要组合到本次运行中的环境、模型、训练后端与权重同步器预设。
-``<group>@<target>`` 语法把某个预设挂载到配置节点上（例如
-``model/openvla_oft@actor.model`` 填充 ``actor.model``）。
+``defaults``：Hydra 配置继承。``base/embodied_rl`` 默认引入 ``cluster/collocated``、``runner``、``hybrid_engines/fsdp`` 与 ``weight_syncer/patch_syncer`` 预设；``<group>@<target>`` 语法把预设挂载到对应配置节点（例如 ``model/openvla_oft@actor.model`` 填充 ``actor.model``）。
 
 hydra
 ~~~~~~~~~~~~~~~
