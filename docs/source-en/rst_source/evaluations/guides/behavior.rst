@@ -90,7 +90,7 @@ The OpenPI fields in ``behavior_openpi_pi05_eval.yaml`` must match training (``a
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path="$MODEL_DIR"
 
-The default run evaluates instance 0 of ``turning_on_radio``. To evaluate public instance 301, set the fields in :ref:`behavior-public-instances` and rerun the launcher.
+The default run evaluates instance 0 of ``turning_on_radio``.
 
 **Step 5: Check results**
 
@@ -169,26 +169,6 @@ These live under ``env.eval.omni_config`` (inherited from ``examples/embodiment/
 
 For full field descriptions (``partial_scene_load``, instance settings, etc.), see "behavior_r1pro.yaml key settings" in :doc:`../../examples/embodied/behavior`.
 
-.. _behavior-public-instances:
-
-Evaluate Public Instance 301
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Public radio instance 301 contains the starting poses of the robot and task objects. The simulator builds the room from the full scene template for instance 0, then applies layout 301. Merge the fields below into the matching sections of the evaluation YAML, keeping its other settings.
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       omni_config:
-         task:
-           activity_instance_id: 301
-           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
-         scene:
-           scene_instance: house_double_floor_lower_task_turning_on_radio_0_0_template
-
-To run instance 302 of the same task, change only ``activity_instance_id`` to ``302``. For another task, set its task and scene names and select the matching full template and instance directory.
-
 GPU and cluster placement
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -201,8 +181,6 @@ BEHAVIOR stepping is slow; allocate enough GPUs to env workers and share or spli
        rollout,env: all          # share all GPUs (example default)
 
 You can also place env and rollout on separate GPUs to reduce memory pressure; see "Key cluster settings" in the training doc.
-
-With the default ``rollout.pipeline_stage_num: 1``, all environments in a simulator process receive actions together. If stages share a process, all scenes advance in physics, and a waiting robot can keep moving under its previous command.
 
 Advanced Usage
 --------------
@@ -217,7 +195,7 @@ Advanced Usage
 
 **Random offline instance sampling**
 
-Use the scene template and instance directory from :ref:`behavior-public-instances`. At each reset, each environment randomly selects a cached layout from that directory and may select the same layout again.
+At each reset, each environment samples a layout from the radio task directory below.
 
 .. code-block:: yaml
 
@@ -225,6 +203,7 @@ Use the scene template and instance directory from :ref:`behavior-public-instanc
      eval:
        omni_config:
          task:
+           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
            instance_file_format: tro_state
            instance_resample_mode: offline
        rollout_epoch: 5

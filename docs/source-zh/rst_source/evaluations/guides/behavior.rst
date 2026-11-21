@@ -90,7 +90,7 @@ BEHAVIOR 资源体积超过 30 GB，2026 资产下载与 license 配置步骤见
    bash evaluations/run_eval.sh behavior behavior_openpi_pi05_eval \
      rollout.model.model_path="$MODEL_DIR"
 
-默认运行 ``turning_on_radio`` 的实例 0。运行公开实例 301 时，按 :ref:`behavior-public-instances` 修改评测 YAML 后重新运行上面的命令。
+默认运行 ``turning_on_radio`` 的实例 0。
 
 **Step 5：查看结果**
 
@@ -169,26 +169,6 @@ BEHAVIOR 评测 **每次运行对应单个任务** （由 ``omni_config.task.act
 
 更完整的字段说明（``partial_scene_load``、实例设置等）见 :doc:`../../examples/embodied/behavior` 中的「behavior_r1pro.yaml 关键配置说明」。
 
-.. _behavior-public-instances:
-
-固定评测公开实例 301
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-收音机的公开实例 301 记录了机器人和任务物体的初始位姿。仿真器先用 0 号完整模板创建场景，再从实例目录读取 301 的布局。将下列字段合入评测 YAML 中同名的配置项，保留原有的其他设置。
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       omni_config:
-         task:
-           activity_instance_id: 301
-           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
-         scene:
-           scene_instance: house_double_floor_lower_task_turning_on_radio_0_0_template
-
-运行同一任务的实例 302，只需将 ``activity_instance_id`` 改为 ``302``\ 。更换任务时，更新任务名和场景名，并选用对应的完整模板和实例目录。
-
 GPU 与集群布局
 ~~~~~~~~~~~~~~
 
@@ -201,8 +181,6 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
        rollout,env: all          # env 与 rollout 共享全部 GPU（示例默认）
 
 也可将 env 与 rollout 分到不同 GPU 以缓解显存压力，详见训练文档「关键集群配置」一节。
-
-默认使用一个流水线阶段（\ ``rollout.pipeline_stage_num: 1``），同一仿真进程中的环境一起接收动作。多个阶段共享进程时，所有场景的物理时间都会推进，等待新动作的机器人可能继续按上一条指令运动。
 
 进阶用法
 --------
@@ -217,7 +195,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
 
 **使用离线 instance 随机采样**
 
-沿用 :ref:`behavior-public-instances` 中的场景模板和实例目录。每次重置时，每个环境各自从目录中随机选择一个布局，同一布局可能重复出现。
+每次重置时，每个环境从下方收音机任务的实例目录中随机选择一个布局。
 
 .. code-block:: yaml
 
@@ -225,6 +203,7 @@ BEHAVIOR 环境步进较慢，通常建议给 env 分配足够 GPU，并与 roll
      eval:
        omni_config:
          task:
+           activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2026-challenge-task-instances/scene_test/public/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
            instance_file_format: tro_state
            instance_resample_mode: offline
        rollout_epoch: 5
