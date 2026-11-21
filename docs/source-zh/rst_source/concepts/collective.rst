@@ -29,7 +29,9 @@
 
 在内部，会分别为 GPU (NCCL) 和 CPU (Gloo) 创建独立的 **发送** 和 **接收** 进程组，形成专用的单向通道；  
 在双 Worker 设置中，精心配置的广播等价于 send/recv。  
-初始化过程使用 TCP rendezvous 协调端口分配与同步，确保双方准备就绪。  
+
+第一个 worker 在操作系统分配的端口上启动 TCP 监听。端口绑定后，它才向其他 worker 公布端口号，并保持监听，直到其他 worker 建立连接并初始化进程组。
+
 每个方向都有一个基于专用 CUDA stream 的工作队列，严格保证 send/recv 操作的顺序，避免消息交错。  
 
 建立进程组后，``CollectiveGroup`` 可以执行通信。主要 API 有：
