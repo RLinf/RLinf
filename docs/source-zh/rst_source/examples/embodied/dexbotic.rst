@@ -95,23 +95,6 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code-block:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 在容器内切换到 Dexbotic 虚拟环境：
-   source switch_env dexbotic
-
-**选项 2：自定义环境** — 安装 ``--model dexbotic --env maniskill_libero`` 依赖组合：
-
 .. code-block:: bash
 
    # 国内用户可以添加 --use-mirror 加速下载。
@@ -121,19 +104,12 @@ RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型�
 下载模型
 ----------------------------------------
 
-下载一个或两个 Dexbotic 检查点（任选一种方式）：
+下载一个或两个 Dexbotic 检查点：
 
 .. code-block:: bash
 
-   # 方法 1：git clone
-   git lfs install
-   git clone https://huggingface.co/Dexmal/libero-db-pi0
-   git clone https://huggingface.co/Dexmal/DM0-libero
-
-   # 方法 2：huggingface-hub（国内用户可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
-   huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-   huggingface-cli download Dexmal/DM0-libero --local-dir DM0-libero
+   hf download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
+   hf download Dexmal/DM0-libero --local-dir DM0-libero
 
 .. include:: _model_path.rst
 

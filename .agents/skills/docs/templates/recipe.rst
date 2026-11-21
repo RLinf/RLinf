@@ -82,25 +82,32 @@ Installation
 
 .. include:: _setup_common.rst
 
-<The recipe-specific image tag or install command, each introduced by what it does.>
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model <model> --env <env>
+   source .venv/bin/activate
 
 Download the Model
 ------------------
 
-<The download command for the exact weights this recipe uses.>
+Download the pretrained checkpoint:
+
+.. code-block:: bash
+
+   hf download <org>/<repo> --local-dir /path/to/checkpoint
 
 .. include:: _model_path.rst
 
 Run It
 ------
 
-<One sentence on what the command does.>
+Launch training with the recipe config:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh <config_name>
+   bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=/path/to/checkpoint
 
-<What this command does, in order, and the config keys you may change.>
+<Expected output or key config overrides, kept to 1–2 short sentences or a compact table.>
 
 Visualization and Results
 -------------------------

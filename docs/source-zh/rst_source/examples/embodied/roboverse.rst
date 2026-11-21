@@ -81,28 +81,6 @@
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-roboverse
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-roboverse
-
-在镜像中切换到 OpenPI 虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**自定义环境**
-
 安装 RoboVerse 与 OpenPI 依赖：
 
 .. code:: bash
@@ -127,13 +105,7 @@
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
-
-   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-Pi05-LIBERO-SFT --local-dir RLinf-Pi05-LIBERO-SFT
 
 .. include:: _model_path.rst

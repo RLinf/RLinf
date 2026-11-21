@@ -80,28 +80,6 @@ Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-frankasim
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-frankasim
-
-在镜像中切换到虚拟环境：
-
-.. code:: bash
-
-   source switch_env openvla
-
-**自定义环境**
-
 安装 Franka-Sim 依赖：
 
 .. code:: bash
@@ -118,13 +96,7 @@ MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点�
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 然后在 ``examples/embodiment/config/frankasim_sac_cnn_async.yaml`` 中为 rollout 和 actor

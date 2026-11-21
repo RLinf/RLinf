@@ -204,34 +204,11 @@ CAN 总线需要在使用机械臂之前完成初始化。
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-首先像上面一样克隆 RLinf 仓库，然后安装相关依赖。
-
-安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像来运行实验。
+像上面一样克隆 RLinf 仓库，然后使用 ``requirements/install.sh`` 安装依赖，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 中国大陆用户可使用下面的镜像以获得更好的下载速度：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**选项 2：自建环境**
-
-直接在你的环境中安装依赖，运行下列命令：
-
-.. code:: bash
-
-   # 中国大陆用户可以追加 `--use-mirror` 参数以获得更好的下载速度。
-
+   # 中国大陆用户可添加 `--use-mirror` 加速下载。
    bash requirements/install.sh embodied --env gim_arm
    source .venv/bin/activate
 

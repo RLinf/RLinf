@@ -43,7 +43,7 @@ SO101 配置与控制
 在连接机器人的主机上克隆 RLinf，然后安装对应环境。
 
 .. include:: _setup_common.rst
-   :end-before: 然后，使用
+   :end-before: 使用下面的
 
 在仓库根目录安装机器人依赖：
 

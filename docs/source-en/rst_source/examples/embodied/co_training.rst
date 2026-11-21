@@ -78,26 +78,7 @@ Installation
 2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Option 1: Docker**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-   # For faster image pull in mainland China you can use:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Then switch to the OpenPI env inside the container:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Local install**
+Install dependencies with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code:: bash
 
@@ -147,12 +128,6 @@ Skip training and use the provided SFT checkpoint:
 
 .. code:: bash
 
-   # Download the Spatial-Object-Goal model (choose one method)
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
-
-   # Method 2: huggingface-hub
    # For faster download in some regions you can set:
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT

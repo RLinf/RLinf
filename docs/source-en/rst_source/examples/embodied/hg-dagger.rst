@@ -97,32 +97,11 @@ recipe runs the OpenPI actor and rollout on a separate GPU node.
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use the same environment as simulator Pi0 DAgger.
-
-**Option 1: Docker Image**
+Use the same environment as simulator Pi0 DAgger, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Inside the container:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
+   # For mainland China users, add `--use-mirror` for faster downloads.
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 

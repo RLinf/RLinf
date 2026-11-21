@@ -116,31 +116,11 @@ Installation
 2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Option 1: Docker Image**
+Install the OpenPI embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the OpenPI virtual environment via the built-in ``switch_env`` utility:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
+   # For mainland China users, add `--use-mirror` for faster downloads.
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
@@ -158,16 +138,7 @@ The RECAP pipeline requires the following pretrained models:
 
 .. code:: bash
 
-   # Download models (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/google/siglip2-so400m-patch14-224
-   git clone https://huggingface.co/google/gemma-3-270m
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download google/siglip2-so400m-patch14-224 --local-dir siglip2-so400m-patch14-224
    hf download google/gemma-3-270m --local-dir gemma-3-270m
 

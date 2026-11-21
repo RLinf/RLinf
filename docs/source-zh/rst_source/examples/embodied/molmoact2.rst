@@ -93,23 +93,6 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code-block:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 在容器内切换到 MolmoAct2 虚拟环境：
-   source switch_env molmoact2
-
-**选项 2：自定义环境** — 安装 ``--model molmoact2 --env libero`` 依赖组合：
-
 .. code-block:: bash
 
    # 国内用户可以添加 --use-mirror 加速下载。

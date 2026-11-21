@@ -111,50 +111,20 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 如果需要国内加速下载镜像，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-
+   # 国内用户可添加 --use-mirror 以提升下载速度。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-在开始训练之前，您需要下载相应的预训练模型。例如，针对 LIBERO 环境的 Spatial、Object、Goal 类型的任务，您可以通过如下方式进行下载：
+开始训练前，下载对应的预训练模型。例如，针对 LIBERO 的 Spatial、Object、Goal 任务：
 
 .. code:: bash
 
-   # 下载 Spatial-Object-Goal 模型（选择以下任一方式）
-   # 方式1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
-
-   # 方式2：使用 huggingface-hub
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT
 
 或者，您可以从 ModelScope 下载该模型 https://www.modelscope.cn/models/RLinf/RLinf-Pi0-SFT-Spatial-Object-Goal。

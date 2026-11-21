@@ -105,20 +105,9 @@ LIBERO 训练流程根据图像和任务提示生成动作块。
 
 .. include:: _setup_common.rst
 
-在仓库根目录启动 NVIDIA 容器：
-
 .. code-block:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g --network host \
-      -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero bash
-   source switch_env openvla-oft
-
-也可以在本地仅安装 OpenVLA-OFT 和 LIBERO 的依赖：
-
-.. code-block:: bash
-
+   # 国内用户可添加 --use-mirror 以提升下载速度。
    bash requirements/install.sh embodied --model openvla-oft --env libero
    source .venv/bin/activate
 

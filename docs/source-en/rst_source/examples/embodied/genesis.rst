@@ -77,22 +77,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-genesis
-
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-genesis
-
-**Custom environment**
-
 Install Genesis dependencies:
 
 .. code:: bash
@@ -110,13 +94,7 @@ ResNet checkpoint:
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 Then set the same checkpoint path for rollout and actor in

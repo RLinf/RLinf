@@ -42,6 +42,10 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/11] 🎉 [RLinf 官网](https://rlinf.org/zh/)上线了！欢迎阅读[博客](https://rlinf.org/zh/blog/)并查看[社区活动](https://rlinf.org/zh/events/)。
 - [2026/11] 🔥 RLinf 接入 MuJoCo Warp，支持五个经典运动控制任务的 GPU 批量仿真及 MLP + PPO 示例。文档：[MuJoCo Warp](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/mujoco_warp.html)。
 - [2026/11] 🔥 RLinf 支持 LeKiwi 三轮全向移动底盘，提供分部件调试工具，并注册了真机驱动环境。文档：[LeKiwi](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lekiwi.html)。
+
+<details>
+<summary><b>更多更新</b></summary>
+
 - [2026/11] 🔥 RLinf 支持双臂 ARX X5 搭配 Pico 遥操作的数据采集。文档：[ARX X5](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/arx5.html)。
 - [2026/11] 🔥 RLinf 支持 DiffusionART，使用 OCR 奖励微调 SD3 图像生成模型和 Wan2.2 视频生成模型，达到同一奖励阈值所需时间比 NFT 减少约 30%、轨迹数减少约三分之一。文档：[DiffusionART](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/diffusion_art.html)。
 - [2026/11] 🔥 RLinf 支持 LIBERO-Mem，并为 OpenPI 提供受 MEM 启发的视觉短期记忆，用于监督微调和评测，在 LIBERO-Mem 上把严格成功率从 20.0% 提升到 35.5%。文档：[LIBERO-Mem](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html#zh-libero-mem-benchmark)、[OpenPI Short Memory](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0/short_memory.html)。
@@ -76,10 +80,6 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/07] 🔥 RLinf 支持 OPD，用于在 LIBERO 上对 OpenVLA-OFT 进行在线策略蒸馏。文档：[OPD](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html)。
 - [2026/07] 🎉 RLinf v0.3 发布，主要升级：真机 RL 全流程（数据采集 → SFT → RL → 部署）、更多模拟器与 SOTA 模型、系统级优化。发布说明：[RLinf v0.3](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.3.html)。
 - [2026/07] 🔥 RLinf 支持 RLT，用于 VLA 策略的在线强化学习微调。文档：[RLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rlt.html)。
-
-<details>
-<summary><b>更多更新</b></summary>
-
 - [2026/06] 🔥 RLinf 支持 STEAM 离线优势评估与策略优化。文档：[STEAM](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/steam.html)。
 - [2026/06] 🔥 RLinf 现在已经支持强化学习微调 [GR00T-N1.7](https://github.com/NVIDIA/Isaac-GR00T)！文档：[RL on GR00T-N1.7](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html)。
 - [2026/06] 🔥 RLinf 支持基于 Polaris 模拟器的强化学习微调。文档：[Polaris 强化学习训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/polaris.html)。
@@ -115,7 +115,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 - [2026/02] 🔥 RLinf 支持 π₀ 和 π₀.₅ 的仿真-真实协同训练。文档：[仿真-真实协同训练](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/co_training.html)。
 - [2026/02] 🔥 RLinf 正式支持基于世界模型对 VLA 进行强化学习微调，文档：[WoVR](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/wovr.html)， 论文：[WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL](https://arxiv.org/abs/2602.13977)。
 - [2026/02] 🔥 RLinf 支持基于 [Wan World Model](https://github.com/RLinf/diffsynth-studio) 对 VLA 进行强化学习微调，文档：[RL on Wan World Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/wan.html)。
-- [2026/02] 🔥 RLinf 现已上线 [PyPI](https://pypi.org/project/rlinf/) ，可以通过pip作为库安装。文档：[作为库安装](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html#install-as-library)。
+- [2026/02] 🔥 RLinf 现已上线 [PyPI](https://pypi.org/project/rlinf/)，可通过 pip 作为库安装。文档：[安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html)。
 - [2026/02] 🔥 RLinf真机在线学习系统的论文 [USER: A Unified and Extensible System for Real-World Online Policy Learning in Embodied AI](https://arxiv.org/abs/2602.07837) 发布了！文档：[USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
 - [2026/02] 🔥 RLinf 支持 [Dexbotic](https://github.com/dexmal/dexbotic) 强化学习微调。文档：[RL on Dexbotic Model](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexbotic.html)。
 - [2026/02] 🔥 RLinf 支持基于 [GSEnv](https://github.com/chenkang455/ManiSkill-GS) 的 Real2Sim2Real 强化学习。文档：[RL with GSEnv](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gsenv.html)。
@@ -140,6 +140,17 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 
 </details>
 
+## 快速开始
+
+使用 `requirements/install.sh` 本地安装，或前往 [Docker Hub](https://hub.docker.com/r/rlinf/rlinf) 拉取预构建镜像：
+
+```bash
+git clone https://github.com/RLinf/RLinf.git && cd RLinf
+bash requirements/install.sh embodied --model openvla --env maniskill_libero
+source .venv/bin/activate
+```
+
+完成安装后，按[快速上手](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html)运行第一个 ManiSkill3 PPO 示例，或前往[示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html)与[安装说明](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html)查看更多配方与选项。
 
 ## 核心特性
 
@@ -439,14 +450,6 @@ RLinf 用统一的底层接口屏蔽异构硬件差异，同一套训练栈可�
     </tr>
   </tbody>
 </table>
-
-## 快速开始
-**安装步骤：** 请参考我们的[安装指南](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html)安装RLinf。鉴于具身强化学习的环境配置较为复杂，我们推荐直接使用我们提供的Docker镜像（即[安装方法一：Docker镜像](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/installation.html#installation-method-1-docker-image)）。
-
-**运行简单示例：** 环境配置完成后，用户可以参照[该文档](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla.html)的内容，运行基于ManiSkill3模拟器的具身强化学习基础示例。
-
-**SOTA RL 训练复现：** RLinf 提供了端到端的配置和脚本，可以直接运行，无需额外工程改造，即可复现业界领先的训练效果。请参考[示例库](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/index.html)了解更多细节。
-
 
 ## 基于 RLinf 的社区项目精选
 我们非常高兴地看到围绕RLinf构建或集成的项目生态系统正在蓬勃发展，涵盖具身智能、机器人技术以及长时序代理系统等领域。以下是一些优秀的社区项目：

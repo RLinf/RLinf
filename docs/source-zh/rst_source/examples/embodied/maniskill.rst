@@ -97,23 +97,6 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 进入容器后，切换到模型对应的虚拟环境：
-   source switch_env openvla        # 或：source switch_env openvla-oft
-
-**选项 2：自定义环境** —— 安装包 ``--env maniskill_libero``：
-
 .. code:: bash
 
    # 国内用户可添加 --use-mirror 以提升下载速度。
@@ -124,34 +107,21 @@
 下载资产
 ----------------------------------------
 
-下载 ManiSkill 资产：
+在仓库根目录下载 ManiSkill 场景资产：
 
 .. code:: bash
 
    # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./maniskill_assets
-
-.. important::
-
-   资产 **必须** 放置在 ``rlinf/envs/sim/maniskill/assets`` 目录下——环境会从该路径加载资产。请将其复制到环境包目录：
-
-.. code:: bash
-
-   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
 下载模型
 ----------------------------------------
 
-下载预训练基座检查点（任选一种方式）：
+下载预训练基座检查点：
 
 .. code:: bash
 
-   # 方式 1：git clone
-   git lfs install
-   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
-
-   # 方式 2：huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 .. include:: _model_path.rst

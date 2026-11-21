@@ -92,30 +92,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-calvin
-
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-calvin
-
-Switch to the OpenPI virtual environment inside the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Custom environment**
-
-Install CALVIN with the OpenPI dependencies:
-
 .. code:: bash
 
    # Mainland China users can add --use-mirror.
@@ -131,28 +107,14 @@ Download the checkpoint for the OpenPI model you plan to fine-tune.
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
-
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
 
 **OpenPI π₀.₅**
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
-
-   # Or use huggingface-hub:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
 
 .. include:: _model_path.rst

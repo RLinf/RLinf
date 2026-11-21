@@ -97,23 +97,7 @@ Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as 
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # Inside the container, switch to the ABot-M0 virtual environment:
-   source switch_env abot_m0
-
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``. The
-installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` / ``VGGT_PATH``
+The installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` and ``VGGT_PATH``
 first to reuse local checkouts:
 
 .. code:: bash
@@ -126,12 +110,11 @@ first to reuse local checkouts:
    bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
    source .venv/bin/activate
 
-For LIBERO-Plus experiments, install the additional ``LIBERO-plus`` runtime in
-the same environment:
+For LIBERO-Plus experiments, install the ``LIBERO-plus`` runtime instead:
 
 .. code:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   # Add --use-mirror for faster downloads in mainland China.
    bash requirements/install.sh embodied --model abot_m0 --env liberoplus
    source .venv/bin/activate
 
@@ -226,17 +209,6 @@ weights:
 
 .. code-block:: bash
 
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/acvlab/ABot-M0-LIBERO
-   git clone https://huggingface.co/HaoyunOvO/ABot-m0-LIBERO-10k-step
-   git clone https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action
-   git clone https://huggingface.co/facebook/VGGT-1B
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
    hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
    hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action

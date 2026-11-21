@@ -50,7 +50,7 @@ Robot Controller Node
 Clone RLinf on the machine connected to the robot, then install its environment.
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
+   :end-before: Install dependencies
 
 Install the robot dependencies from the repository root:
 

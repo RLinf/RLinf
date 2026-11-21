@@ -81,32 +81,6 @@
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-isaaclab
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-isaaclab
-
-在镜像中切换到对应的虚拟环境：
-
-.. code:: bash
-
-   # GR00T N1.5
-   source switch_env gr00t
-
-   # OpenPI π₀.₅
-   # source switch_env openpi
-
-**自定义环境**
-
 为你要运行的模型安装环境：
 
 .. code:: bash
@@ -149,13 +123,7 @@
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
-
-   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
 **OpenPI π₀.₅**
@@ -163,13 +131,7 @@
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/YifWRobotics/RLinf-pi05-SFT-Stack-cube
-
-   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
 
 .. include:: _model_path.rst

@@ -135,35 +135,13 @@ channel collector 以 LeRobot 格式收集完整 episode，经内存发送给 ac
 安装
 ----------------------------------------
 
-安装细节请先参考 :doc:`../../start/installation`。下面的 DAgger 示例使用具身
-Docker 镜像或等价的本地环境。
-
-**选项 1：Docker 镜像**
+使用 ``requirements/install.sh`` 安装具身环境，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像。通用安装选项见 :doc:`../../start/installation`。
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 如果需要国内加速下载镜像，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
+   # 中国大陆用户可添加 `--use-mirror` 加速下载。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   # 如果是robotwin环境，请使用下面的安装命令：
+   # RoboTwin 环境请运行：
    # bash requirements/install.sh embodied --model openpi --env robotwin
    source .venv/bin/activate
 
@@ -204,9 +182,7 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
 .. code:: bash
 
-   # 如果需要国内加速下载，可以使用：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
 
 专家策略的checkpoint可以来自运行 :doc:`pi0` 的PPO训练结果。
@@ -231,9 +207,7 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
 .. code:: bash
 
-   # 如果需要国内加速下载，可以使用：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download RLinf/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir /path/to/model
 
 专家策略的checkpoint可以来自运行 :doc:`pi0` 的PPO训练结果。

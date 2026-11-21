@@ -89,10 +89,10 @@ Robbyant R2
 
       Run hardware checks, whole-body PICO VR teleoperation, and ``R2ReachEnv-v1`` on the Robbyant R2 wheeled humanoid.
 
-Piper, SO101, and LeKiwi Setup
-------------------------------
+Piper, SO101, and LeKiwi
+------------------------
 
-Use these guides to connect a robot and run its hardware test script. Piper, SO101, and LeKiwi do not yet have supported real-world training workflows.
+Use the SO-101 guide for hardware checks, leader demonstration collection, OpenPI SFT, and local evaluation. Piper and LeKiwi cover hardware setup and test scripts.
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -107,7 +107,7 @@ Use these guides to connect a robot and run its hardware test script. Piper, SO1
       :link: embodied/so101
       :link-type: doc
 
-      Set up motors, calibrate an SO-101, and run the joint and gripper test script.
+      Set up an SO-101 arm, collect leader demonstrations, run OpenPI SFT, and evaluate locally.
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi

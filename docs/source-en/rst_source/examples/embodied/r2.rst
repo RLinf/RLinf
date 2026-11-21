@@ -114,7 +114,7 @@ Robot Controller Node
 Clone RLinf on the machine connected to the R2 middleware:
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
+   :end-before: Install dependencies
 
 Because ``rclpy`` and ``rframe`` load compiled CPython extensions from the host ROS 2 and Robbyant installation, create the RLinf virtual environment with the same Python ``major.minor`` version as the host ROS 2 distribution (for example ``3.10`` on Ubuntu 22.04 with ROS 2 Humble):
 

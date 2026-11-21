@@ -80,25 +80,32 @@
 
 .. include:: _setup_common.rst
 
-<本示例专用的镜像标签或安装命令，每条命令前说明它做什么。>
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model <model> --env <env>
+   source .venv/bin/activate
 
 下载模型
 --------
 
-<下载本示例所用权重的命令。>
+下载预训练权重：
+
+.. code-block:: bash
+
+   hf download <org>/<repo> --local-dir /path/to/checkpoint
 
 .. include:: _model_path.rst
 
 运行
 ----
 
-<一句话说明这条命令做什么。>
+用对应的配方启动训练：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh <config_name>
+   bash examples/embodiment/run_embodiment.sh <config_name> actor.model.model_path=/path/to/checkpoint
 
-<这条命令依次做了什么，以及可以修改哪些配置项。>
+<用 1–2 句简短说明或紧凑表格给出预期输出及常用配置项。>
 
 可视化与结果
 ------------

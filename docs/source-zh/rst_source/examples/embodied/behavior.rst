@@ -86,35 +86,6 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — BEHAVIOR 提供 **两个独立镜像**，每个对应一个模型：
-``agentic-rlinf0.4-behavior``\ （OpenVLA-OFT）和 ``agentic-rlinf0.4-behavior-openpi``
-（OpenPI）。每个镜像只内置各自的虚拟环境，因此请根据要训练的模型拉取对应镜像
-（两者之间无法通过 ``switch_env`` 互相切换）：
-
-.. code-block:: bash
-
-   # OpenVLA-OFT 模型：
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-behavior
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
-
-   # OpenPI 模型（独立镜像）：
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-
-   # 两个镜像都会默认激活各自对应的虚拟环境。
-
-**选项 2：自定义环境** — 安装 ``--env behavior`` 依赖组合：
-
 .. code-block:: bash
 
    # 国内用户可以添加 --use-mirror 加速下载。
@@ -160,18 +131,11 @@
 下载模型
 ----------------------------------------
 
-下载对应模型族的检查点（任选一种方式）：
+下载对应模型族的检查点：
 
 .. code-block:: bash
 
-   # 方法 1：git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
-
-   # 方法 2：huggingface-hub（国内用户可设置 HF_ENDPOINT=https://hf-mirror.com）
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内用户可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
    hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
 

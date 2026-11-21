@@ -106,8 +106,7 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 
 .. code-block:: bash
 
-    git lfs install
-    git clone https://huggingface.co/MINT-SJTU/Evo1_LIBERO
+    hf download MINT-SJTU/Evo1_LIBERO --local-dir Evo1_LIBERO
 
 然后把配置里的 ``rollout.model.model_path`` 与 ``actor.model.model_path`` 设为本地权重路径。
 ``actor.model.evo1.arm_key`` / ``dataset_key`` 必须与权重 ``norm_stats.json`` 的顶层 key 一致。
@@ -118,7 +117,7 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 
 .. code-block:: bash
 
-    git clone https://huggingface.co/OpenGVLab/InternVL3-1B
+    hf download OpenGVLab/InternVL3-1B --local-dir InternVL3-1B
 
 运行
 ----

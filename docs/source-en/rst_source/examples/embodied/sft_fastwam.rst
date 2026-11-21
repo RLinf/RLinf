@@ -39,7 +39,7 @@ Download and extract the four LIBERO LeRobot suites:
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/LIBERO-fastwam \
+   hf download yuanty/LIBERO-fastwam \
      --repo-type dataset \
      --local-dir /your_path_to/LIBERO-fastwam
 
@@ -51,7 +51,7 @@ Download the normalization statistics:
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/fastwam \
+   hf download yuanty/fastwam \
      libero_uncond_2cam224_dataset_stats.json \
      --local-dir /your_path_to/fastwam
 
@@ -59,9 +59,9 @@ Download the Wan components and generate the ActionDiT backbone:
 
 .. code-block:: bash
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B \
+   hf download Wan-AI/Wan2.2-TI2V-5B \
      --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.2-TI2V-5B
-   huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B \
+   hf download Wan-AI/Wan2.1-T2V-1.3B \
      --include "google/umt5-xxl/*" \
      --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.1-T2V-1.3B
 
@@ -119,7 +119,7 @@ Download the released checkpoint:
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/fastwam \
+   hf download yuanty/fastwam \
      libero_uncond_2cam224.pt \
      --local-dir /your_path_to/fastwam
 

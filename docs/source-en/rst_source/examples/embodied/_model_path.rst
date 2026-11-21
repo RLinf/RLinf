@@ -1,16 +1,5 @@
 .. This file is a reusable include, not a standalone page.
-   It holds the identical "point your config at the downloaded checkpoint" tail
-   shared by the embodied recipes. Include it right after the recipe-specific
-   download commands with ``.. include:: _model_path.rst``.
+   Include right after the recipe-specific download command with
+   ``.. include:: _model_path.rst``.
 
-After downloading, point your config YAML at the checkpoint — set the **same** path
-for both the rollout and the actor model:
-
-.. code:: yaml
-
-   rollout:
-      model:
-         model_path: /path/to/downloaded-checkpoint
-   actor:
-      model:
-         model_path: /path/to/downloaded-checkpoint
+Set ``actor.model.model_path`` in the recipe YAML, or pass ``actor.model.model_path=/path/to/checkpoint`` on the launch command. Rollout uses the same path unless you set ``rollout.model.model_path`` separately.

@@ -38,7 +38,7 @@ LeKiwi 底盘由三个工作在速度模式下的 Feetech STS3215 舵机驱动�
 以下步骤请在连接舵机控制板的计算机（例如树莓派 5）上执行，而不是你的笔记本。
 
 .. include:: _setup_common.rst
-   :end-before: 然后，使用
+   :end-before: 使用下面的
 
 在仓库根目录安装机器人依赖：
 

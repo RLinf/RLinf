@@ -111,21 +111,6 @@ humanoid 的观测是任务表中的 45 维 ``qpos`` 与 ``qvel``\ 。乘 ``rewa
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-构建 MuJoCo Warp target，并启动可访问 GPU 的容器：
-
-.. code:: bash
-
-   docker build -f docker/Dockerfile \
-       --build-arg BUILD_TARGET=embodied-mujoco_warp \
-       -t rlinf:embodied-mujoco_warp .
-   docker run -it --rm --gpus all \
-       --shm-size 32g --network host --name rlinf \
-       -v .:/workspace/RLinf rlinf:embodied-mujoco_warp
-
-**自定义环境**
-
 安装依赖并激活环境：
 
 .. code:: bash

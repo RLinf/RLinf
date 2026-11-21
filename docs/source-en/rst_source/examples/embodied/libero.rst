@@ -124,23 +124,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # Inside the container, switch to the model's virtual environment:
-   source switch_env openvla-oft
-
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
-
 .. code:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
@@ -150,17 +133,11 @@ Installation
 Download the Model
 ~~~~~~~~~~~~~~~~~~
 
-Download a pretrained base checkpoint (either method works):
+Download a pretrained base checkpoint:
 
 .. code:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
@@ -333,23 +310,6 @@ Install the RLinf-maintained forks for the suite you want.
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — pick the tag for the suite:
-
-.. code:: bash
-
-   # LIBERO-Pro: tag agentic-rlinf0.4-liberopro
-   # LIBERO-Plus: tag agentic-rlinf0.4-liberoplus
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-liberopro   # or ...-liberoplus
-      # Mainland China mirror (LIBERO-Pro): infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberopro
-      # Mainland China mirror (LIBERO-Plus): infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberoplus
-
-**Option 2: Custom environment** — pick the install bundle for the suite:
-
 .. code:: bash
 
     # Add --use-mirror for faster downloads in mainland China.
@@ -395,9 +355,9 @@ LIBERO-Pro / LIBERO-Plus reuse the standard LIBERO base checkpoints:
 
 .. code-block:: bash
 
-    git lfs install
-    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+    # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 .. include:: _model_path.rst
 

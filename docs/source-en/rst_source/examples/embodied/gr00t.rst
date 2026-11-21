@@ -108,63 +108,15 @@ Use the NVIDIA setup below, or follow :ref:`the backend-specific setup <gr00t-ha
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-**N1.5:**
-
-.. code:: bash
-
-   source switch_env gr00t
-
-**N1.6:**
-
-.. code:: bash
-
-   source switch_env gr00t_n1d6
-
-**N1.7:**
-
-.. code:: bash
-
-   source switch_env gr00t_n1d7
-
-**Option 2: Custom Environment**
-
-**N1.5:**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   # Add --use-mirror for faster downloads in mainland China.
+   # N1.5
    bash requirements/install.sh embodied --model gr00t --env maniskill_libero
-   source .venv/bin/activate
-
-**N1.6:**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-   bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
-   source .venv/bin/activate
-
-**N1.7:**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+   # N1.6
+   # bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
+   # N1.7
+   # bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
    source .venv/bin/activate
 
 Download the Model
@@ -178,14 +130,7 @@ We currently support four LIBERO tasks: Spatial, Object, Goal, and Long.
 
 .. code:: bash
 
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 SFT model downloads for other tasks:
@@ -199,15 +144,8 @@ We currently support LIBERO task Spatial and regard it as the RLinf demo for Gr0
 
 .. code:: bash
 
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf-Gr00t-N1.6-SFT-Spatial
 
 
 **N1.7: Temporary official release checkpoint usage**
@@ -230,16 +168,13 @@ Before RLinf ships its own N1.7 SFT checkpoint, you can use the following offlin
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    # Download Cosmos-Reason2-2B backbone
-   uv run hf download nvidia/Cosmos-Reason2-2B \
+   hf download nvidia/Cosmos-Reason2-2B \
       --local-dir checkpoints/Cosmos-Reason2-2B
 
    # Download GR00T-N1.7-LIBERO task checkpoint (libero_spatial minimum file set)
-   uv run hf download nvidia/GR00T-N1.7-LIBERO \
+   hf download nvidia/GR00T-N1.7-LIBERO \
       --include "libero_spatial/config.json" \
                 "libero_spatial/embodiment_id.json" \
                 "libero_spatial/model-*.safetensors" \

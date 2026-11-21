@@ -208,38 +208,15 @@ From the ``gim_arm_control`` repository:
 Training / Rollout Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Clone the RLinf repository (same as above), then install dependencies.
-
-Install Dependencies
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
+Clone the RLinf repository (same as above), then install dependencies with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
-
+   # For mainland China users, add `--use-mirror` for faster downloads.
    bash requirements/install.sh embodied --env gim_arm
    source .venv/bin/activate
 
-   # To install model-specific dependencies (e.g. OpenVLA), add the --model flag:
+   # To install model-specific dependencies (e.g., OpenVLA), add the --model flag:
    # bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 

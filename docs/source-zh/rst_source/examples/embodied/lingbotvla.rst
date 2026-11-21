@@ -104,28 +104,7 @@ LingbotVLA 1.0 模型强化学习
 2. 安装依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像运行基于 RoboTwin 的具身训练：
-
-.. code-block:: bash
-
-    docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robotwin
-
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code-block:: bash
-
-    source switch_env lingbotvla
-
-**选项 2：自定义环境**
-
-在本地环境中一键安装 LingbotVLA 1.0 原生环境与 RoboTwin 基础依赖：
+使用下面的命令安装 LingbotVLA 1.0 原生环境与 RoboTwin 基础依赖，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
 
 .. code-block:: bash
 
@@ -152,22 +131,11 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 
 .. code-block:: bash
 
-    # 方法 1：使用 git clone
-    git lfs install
-    git clone https://huggingface.co/robbyant/lingbot-vla-4b
-    git clone https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin
-    cd lingbot-vla-4b-posttrain-robotwin
-    git checkout 3e0c7c476bde3daaac00f79f3741a292a299f60a
-    cd ..
-    git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
-
-    # 方法 2：使用 huggingface-hub
-    pip install huggingface-hub
-    huggingface-cli download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
-    huggingface-cli download robbyant/lingbot-vla-4b-posttrain-robotwin \
+    hf download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
+    hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
         --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
         --local-dir lingbot-vla-4b-posttrain-robotwin
-    huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
+    hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
 
 
 然后在配置中将 ``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地模型路径（如基础权重 ``/path/to/model/lingbot-vla-4b``，或固定 revision 的 RoboTwin SFT 权重 ``/path/to/model/lingbot-vla-4b-posttrain-robotwin``），并务必将对应的 ``tokenizer_path`` 设为下载的 Tokenizer 路径（如 ``/path/to/model/Qwen2.5-VL-3B-Instruct``），否则 Rollout 节点在解析文本指令时会报错。

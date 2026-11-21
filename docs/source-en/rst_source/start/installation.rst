@@ -1,86 +1,78 @@
 Installation
 ============
 
-Install RLinf in one of two ways: **Option 1 (UV)** builds a local virtual
-environment matched to your machine, while **Option 2 (Docker)** gives the most
-reproducible setup.
+Install RLinf into a local UV virtual environment with ``requirements/install.sh``, or pull a prebuilt image from Docker Hub.
 
-Option 1: UV
-------------
+Install Locally
+---------------
 
-Build a UV virtual environment with ``install.sh``. Pass an install target
-(``embodied``, ``agentic``, or ``docs``) plus any target-specific flags:
+Clone the repository, install one target, and activate the virtual environment:
 
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
 
-More targets and combinations:
+Pick the command that matches your workload:
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
 
-   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
-   bash requirements/install.sh embodied --model openpi --env libero
-   bash requirements/install.sh agentic
-   bash requirements/install.sh docs
+   * - Workload
+     - Install command
+   * - OpenVLA + ManiSkill / LIBERO
+     - ``bash requirements/install.sh embodied --model openvla --env maniskill_libero``
+   * - OpenVLA-OFT + ManiSkill / LIBERO
+     - ``bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero``
+   * - OpenPI + LIBERO
+     - ``bash requirements/install.sh embodied --model openpi --env libero``
+   * - Agentic / Reasoning
+     - ``bash requirements/install.sh agentic``
+   * - Documentation
+     - ``bash requirements/install.sh docs``
 
-Run ``bash requirements/install.sh --help`` for the complete model and
-environment list.
+Run ``bash requirements/install.sh --help`` for all models, environments, and flags. Common options:
 
-- Use ``--venv <dir>`` to choose the virtual environment directory.
-- Use ``--use-mirror`` for faster downloads from mainland China.
-- Use ``--python <version>`` only when a package requires it. The default is
-  Python 3.11.14, and Python 3.12.12 for the ``agentic`` target on its default
-  torch 2.11 stack; some environments such as ``behavior`` and ``d4rl`` require
-  Python 3.10.
-- Use ``--torch <version>`` only when you need a different PyTorch wheel.
-- Select ``--platform amd``, ``--platform ascend``, or ``--platform musa`` for the matching hardware. Choose a supported model/environment combination in :ref:`the model gallery <model-hardware-support>` and follow its setup instructions.
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
 
-Option 2: Docker
-----------------
+   * - Flag
+     - Purpose
+   * - ``--use-mirror``
+     - Use mainland China mirrors for faster downloads.
+   * - ``--venv <dir>``
+     - Choose the virtual environment directory (default ``.venv``).
+   * - ``--platform <name>``
+     - Target non-NVIDIA accelerators (``amd``, ``ascend``, ``musa``; see :ref:`the hardware matrix <model-hardware-support>`).
+   * - ``--python <version>``
+     - Override the Python version when needed (for example ``3.10`` for ``behavior`` or ``d4rl``).
 
-Each image bundles a ready-to-run stack (for example,
-``agentic-rlinf0.4-maniskill_libero``). Pull and run it, then select the model
-environment inside the container:
+Prebuilt Docker Images
+----------------------
 
-.. code-block:: bash
+.. grid:: 1 1 1 1
+   :gutter: 2
 
-   docker pull rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-   docker run -it --gpus all \
-      --shm-size 100g \
-      --net=host \
-      --name rlinf \
-      -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero /bin/bash
+   .. grid-item-card:: Docker Hub — rlinf/rlinf
+      :link: https://hub.docker.com/r/rlinf/rlinf
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-   source switch_env openvla
-
-- Keep ``-e NVIDIA_DRIVER_CAPABILITIES=all`` for GPU rendering.
-- Do not mount over ``/root`` or ``/opt``; those directories contain assets and
-  virtual environments in the image.
-- If your platform changes ``$HOME`` or remounts ``/root``, run ``link_assets``
-  inside the container before launching an example.
-- Switch model environments with ``source switch_env openvla``,
-  ``source switch_env openvla-oft``, or ``source switch_env openpi``.
+      Browse prebuilt images, tag lists, container launch commands, and regional mirrors on Docker Hub.
 
 Verify
 ------
 
-After activation, verify that RLinf and Ray are visible in the environment:
+Confirm that RLinf and Ray are available in the active environment:
 
 .. code-block:: bash
 
-   python -c "import rlinf; print(rlinf.__file__)"
-   ray --version
+   python -c "import rlinf; print(rlinf.__file__)" && ray --version
 
 Next Steps
 ----------
 
-- :doc:`Run the VLA quickstart <vla>`.
-- :doc:`Scale beyond one machine <../guides/launch-scale/index>`.
-- :doc:`Open the cheat sheet <cheat_sheet>` when you only need commands.
+- :doc:`Run the VLA Quick Start <vla>`
+- :doc:`Scale beyond one machine <../guides/launch-scale/index>`
+- :doc:`Open the Cheat Sheet <cheat_sheet>`

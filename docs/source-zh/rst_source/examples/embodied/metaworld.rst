@@ -86,23 +86,6 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.4-metaworld``：
-
-.. code-block:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-metaworld
-      # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-metaworld
-
-   # 在容器内切换到对应模型的虚拟环境：
-   source switch_env openpi        # 或：source switch_env openvla-oft
-
-**选项 2：自定义环境** — 安装 ``--env metaworld`` 依赖组合：
-
 .. code-block:: bash
 
    # 国内用户可以添加 --use-mirror 加速下载。
@@ -116,19 +99,11 @@
 下载模型
 ----------------------------------------
 
-下载参考配方使用的 SFT 检查点（任选一种方式）：
+下载参考配方使用的 SFT 检查点：
 
 .. code-block:: bash
 
-   # 方法 1：git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT
-
-   # 方法 2：huggingface-hub（国内用户可设置 HF_ENDPOINT=https://hf-mirror.com）
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内用户可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
    hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
    hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT

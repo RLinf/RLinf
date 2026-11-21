@@ -193,12 +193,7 @@ policy (``actor.model.encoder_config.ckpt_name: resnet10_pretrained.pt``):
 
 .. code:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # Method 2: huggingface-hub (mainland China: export HF_ENDPOINT=https://hf-mirror.com)
-   pip install huggingface-hub
+   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 Point ``actor.model.model_path`` and ``rollout.model.model_path`` in the YAML

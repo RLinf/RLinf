@@ -94,23 +94,6 @@ VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，�
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-opensora``：
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-opensora
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-opensora
-
-   # 进入容器后，切换到 OpenVLA-OFT 虚拟环境：
-   source switch_env openvla-oft
-
-**选项 2：自定义环境** —— 安装套件 ``--env opensora``：
-
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加 --use-mirror。
@@ -124,15 +107,6 @@ VLA 模型下载
 
 .. code:: bash
 
-   # 方法 1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
-
-   # 方法 2：使用 huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
@@ -159,13 +133,6 @@ rollout 的 3000 条轨迹构建）：
 
 .. code:: bash
 
-   # 方法 1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenSora-LIBERO-Spatial
-   git clone https://huggingface.co/RLinf/RLinf-OpenSora-LIBERO-Object
-
-   # 方法 2：使用 huggingface-hub
-   pip install huggingface-hub
    hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir RLinf-OpenSora-LIBERO-Spatial
    hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir RLinf-OpenSora-LIBERO-Object
 

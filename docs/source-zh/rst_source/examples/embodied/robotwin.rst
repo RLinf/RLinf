@@ -108,37 +108,6 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robotwin
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robotwin
-
-在镜像中切换到对应虚拟环境：
-
-.. code:: bash
-
-   # OpenVLA-OFT
-   source switch_env openvla-oft
-
-   # OpenPI π₀ / π₀.₅
-   # source switch_env openpi
-
-   # Lingbot-VLA，如镜像中可用
-   # source switch_env lingbotvla
-
-**自定义环境**
-
-为你要运行的模型安装依赖：
-
 .. code:: bash
 
    # 国内用户可添加 --use-mirror。
@@ -182,29 +151,14 @@ RLinf 以 0.01 m 的近裁剪面创建 RoboTwin 相机，而非 RoboTwin 默认�
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
-
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
 **OpenPI π₀ / π₀.₅**
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle
-
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi0-RoboTwin-SFT-adjust_bottle
    hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 

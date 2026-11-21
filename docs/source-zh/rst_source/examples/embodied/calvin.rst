@@ -90,30 +90,6 @@
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-calvin
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-calvin
-
-在镜像中切换到 OpenPI 虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**自定义环境**
-
-安装 CALVIN 与 OpenPI 依赖：
-
 .. code:: bash
 
    # 国内用户可添加 --use-mirror。
@@ -129,28 +105,14 @@
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT
-
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi0-CALVIN-ABC-D-SFT --local-dir RLinf-Pi0-CALVIN-ABC-D-SFT
 
 **OpenPI π₀.₅**
 
 .. code-block:: bash
 
-   cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT
-
-   # 或使用 huggingface-hub：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-CALVIN-ABC-D-SFT --local-dir RLinf-Pi05-CALVIN-ABC-D-SFT
 
 .. include:: _model_path.rst

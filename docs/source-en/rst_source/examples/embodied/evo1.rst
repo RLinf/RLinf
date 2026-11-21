@@ -107,8 +107,7 @@ Download the Evo-1 LIBERO checkpoint from HuggingFace (a checkpoint directory co
 
 .. code-block:: bash
 
-    git lfs install
-    git clone https://huggingface.co/MINT-SJTU/Evo1_LIBERO
+    hf download MINT-SJTU/Evo1_LIBERO --local-dir Evo1_LIBERO
 
 Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the config to your
 local checkpoint path. ``actor.model.evo1.arm_key`` / ``dataset_key`` must match the
@@ -121,7 +120,7 @@ HuggingFace for it. On a machine without internet, fetch it once and point
 
 .. code-block:: bash
 
-    git clone https://huggingface.co/OpenGVLab/InternVL3-1B
+    hf download OpenGVLab/InternVL3-1B --local-dir InternVL3-1B
 
 Run It
 ------

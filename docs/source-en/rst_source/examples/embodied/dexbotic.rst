@@ -95,23 +95,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code-block:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # Inside the container, switch to the Dexbotic virtual environment:
-   source switch_env dexbotic
-
-**Option 2: Custom environment** — install bundle ``--model dexbotic --env maniskill_libero``:
-
 .. code-block:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
@@ -121,19 +104,12 @@ Installation
 Download the Model
 ------------------
 
-Download one or both Dexbotic checkpoints (either method works):
+Download one or both Dexbotic checkpoints:
 
 .. code-block:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/Dexmal/libero-db-pi0
-   git clone https://huggingface.co/Dexmal/DM0-libero
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
-   huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-   huggingface-cli download Dexmal/DM0-libero --local-dir DM0-libero
+   hf download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
+   hf download Dexmal/DM0-libero --local-dir DM0-libero
 
 .. include:: _model_path.rst
 

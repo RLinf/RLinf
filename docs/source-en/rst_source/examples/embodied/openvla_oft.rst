@@ -110,20 +110,9 @@ Use the NVIDIA setup below for the default recipe. For AMD, Ascend, or MUSA, use
 
 .. include:: _setup_common.rst
 
-Start the NVIDIA container from the repository root:
-
 .. code-block:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g --network host \
-      -v "$PWD":/workspace/RLinf -w /workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero bash
-   source switch_env openvla-oft
-
-Alternatively, install only the OpenVLA-OFT and LIBERO dependencies locally:
-
-.. code-block:: bash
-
+   # Add --use-mirror for faster downloads in mainland China.
    bash requirements/install.sh embodied --model openvla-oft --env libero
    source .venv/bin/activate
 

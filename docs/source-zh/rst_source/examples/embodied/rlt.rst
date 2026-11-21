@@ -89,31 +89,11 @@ RLT 将表示学习和在线 RL 控制拆开。
 2. 安装依赖
 ~~~~~~~~~~~
 
-**方式一：Docker 镜像**
+使用 ``requirements/install.sh`` 安装 OpenPI 具身环境，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 为提高国内下载速度，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-进入容器后，切换到 OpenPI 虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**方式二：自建环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令
-
+   # 中国大陆用户可添加 `--use-mirror` 加速下载。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
@@ -493,7 +473,7 @@ Stage 1 和 Stage 2 的 OpenPI feature model 使用
 .. code:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   huggingface-cli download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
+   hf download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
        --repo-type dataset \
        --local-dir ${HF_LEROBOT_HOME}/maniskill_peginsertionside_joint
 

@@ -76,22 +76,6 @@
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-genesis
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-genesis
-
-**自定义环境**
-
 安装 Genesis 依赖：
 
 .. code:: bash
@@ -108,13 +92,7 @@ MLP + PPO 配方可跳过本节。CNN + PPO 配方需要下载 ResNet 检查点�
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 然后在 ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml`` 中为 rollout 和 actor

@@ -187,12 +187,7 @@ Flow Matching 策略使用的 ResNet-10 预训练权重（配置里的
 
 .. code:: bash
 
-   # 方式 1：git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # 方式 2：huggingface-hub（中国大陆：export HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
+   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 下载完成后，把 YAML 中的 ``actor.model.model_path`` 与

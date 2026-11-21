@@ -77,17 +77,11 @@ OPD 的训练信号来自 teacher 与 student 对同一条 student action token 
      - ``rollout.expert_model.model_path``
      - ``libero_130_no_noops_trajall``
 
-下载权重（任选一种方式）：
+下载权重：
 
 .. code-block:: bash
 
-   # 方法 1：git-lfs
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130
-
-   # 方法 2：huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
+   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130 --local-dir RLinf-OpenVLAOFT-LIBERO-130
 

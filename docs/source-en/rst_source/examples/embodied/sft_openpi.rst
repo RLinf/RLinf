@@ -262,22 +262,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker** — image ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   source switch_env openpi
-
-**Option 2: Custom environment**:
-
 .. code:: bash
 
    # Add --use-mirror in mainland China.

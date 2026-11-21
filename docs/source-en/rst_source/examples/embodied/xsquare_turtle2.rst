@@ -136,26 +136,12 @@ A. Clone RLinf Repository
 B. Install Dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-**Option 1: Docker Image**
+Install dependencies with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code:: bash
 
-   # use maniskill_libero image for training / rollout nodes
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # install openvla + maniskill_libero environment on training / rollout nodes
-   # For mainland China users, you can add the `--use-mirror` flag for better speed.
+   # Install the openvla + maniskill_libero environment on training / rollout nodes.
+   # For mainland China users, add `--use-mirror` for faster downloads.
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
 
@@ -167,14 +153,7 @@ Before starting training, download the pretrained ResNet CNN backbone:
 
 .. code:: bash
 
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 After downloading, update the ``model_path`` field in the configuration YAML file.

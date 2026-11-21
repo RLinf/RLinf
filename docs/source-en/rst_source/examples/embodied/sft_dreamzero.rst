@@ -92,8 +92,7 @@ Download example:
 
 .. code:: bash
 
-   pip install -U huggingface_hub
-   huggingface-cli download GEAR-Dreams/DreamZero-DROID --local-dir ./DreamZero-DROID
+   hf download GEAR-Dreams/DreamZero-DROID --local-dir ./DreamZero-DROID
 
 
 YAML example (DROID + official 14B; see ``droid_sft_dreamzero_14b.yaml``):
@@ -124,10 +123,10 @@ Download example:
 
 .. code:: bash
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
-   huggingface-cli download Wan-AI/Wan2.1-I2V-14B-480P \
+   hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
+   hf download Wan-AI/Wan2.1-I2V-14B-480P \
      models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
-   huggingface-cli download google/umt5-xxl --local-dir ./umt5-xxl
+   hf download google/umt5-xxl --local-dir ./umt5-xxl
 
 YAML example (LIBERO cold start; see ``libero_sft_dreamzero_5b.yaml``):
 
@@ -167,13 +166,12 @@ Download example:
 
 .. code:: bash
 
-   pip install -U huggingface_hub
    # LIBERO
-   huggingface-cli download physical-intelligence/libero --repo-type dataset --local-dir ./libero
+   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
    # DROID
-   huggingface-cli download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
+   hf download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
    # Franka PnP real-world data
-   huggingface-cli download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
+   hf download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
 
 Generate ``metadata.json``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

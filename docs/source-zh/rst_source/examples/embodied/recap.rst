@@ -108,31 +108,11 @@ RECAP 工作原理
 2. 安装依赖
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**方式一：Docker 镜像**
+使用 ``requirements/install.sh`` 安装 OpenPI 具身环境，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 为提高国内下载速度，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-进入容器后，切换到 OpenPI 虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**方式二：自建环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-
+   # 中国大陆用户可添加 `--use-mirror` 加速下载。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
@@ -150,16 +130,7 @@ RECAP 流程需要以下预训练模型：
 
 .. code:: bash
 
-   # 下载模型（选择任一方法）
-   # 方法 1: 使用 git clone
-   git lfs install
-   git clone https://huggingface.co/google/siglip2-so400m-patch14-224
-   git clone https://huggingface.co/google/gemma-3-270m
-
-   # 方法 2: 使用 huggingface-hub
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 中国大陆用户可设置 HF_ENDPOINT=https://hf-mirror.com 加速下载。
    hf download google/siglip2-so400m-patch14-224 --local-dir siglip2-so400m-patch14-224
    hf download google/gemma-3-270m --local-dir gemma-3-270m
 

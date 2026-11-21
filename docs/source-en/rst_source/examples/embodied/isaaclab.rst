@@ -82,32 +82,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-isaaclab
-
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-isaaclab
-
-Switch to the matching virtual environment inside the image:
-
-.. code:: bash
-
-   # GR00T N1.5
-   source switch_env gr00t
-
-   # OpenPI π₀.₅
-   # source switch_env openpi
-
-**Custom environment**
-
 Install the environment for the model you want to run:
 
 .. code:: bash
@@ -150,13 +124,7 @@ Download the checkpoint for the model you plan to fine-tune.
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
-
-   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
 
 **OpenPI π₀.₅**
@@ -164,13 +132,7 @@ Download the checkpoint for the model you plan to fine-tune.
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/YifWRobotics/RLinf-pi05-SFT-Stack-cube
-
-   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
 
 .. include:: _model_path.rst

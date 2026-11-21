@@ -89,10 +89,10 @@ Robbyant R2
 
       在 Robbyant R2 轮式双臂人形机器人上运行硬件检查、全身 PICO VR 遥操作与 ``R2ReachEnv-v1``。
 
-Piper、SO101 与 LeKiwi 配置
---------------------------------
+Piper、SO101 与 LeKiwi
+----------------------
 
-通过以下指南连接机器人并运行硬件测试脚本。Piper、SO101 和 LeKiwi 目前尚未提供真机训练流程。
+SO-101 指南涵盖硬件测试、leader 示教采数、OpenPI SFT 与本地评测；Piper 和 LeKiwi 指南涵盖硬件连接与测试脚本。
 
 .. grid:: 1 2 2 2
    :gutter: 2
@@ -107,7 +107,7 @@ Piper、SO101 与 LeKiwi 配置
       :link: embodied/so101
       :link-type: doc
 
-      配置电机、标定 SO-101，并运行关节与夹爪测试脚本。
+      配置与标定 SO-101，采集 leader 示教数据，并运行 OpenPI SFT 与本地评测。
 
    .. grid-item-card:: LeKiwi
       :link: embodied/lekiwi

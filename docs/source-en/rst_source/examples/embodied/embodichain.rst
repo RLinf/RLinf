@@ -77,28 +77,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-embodichain
-
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-embodichain
-
-Switch to the EmbodiChain virtual environment inside the image:
-
-.. code:: bash
-
-   source switch_env embodichain
-
-**Custom environment**
-
 Install EmbodiChain 0.3.0 and its dependencies. The installer gets
 ``dexsim-engine==0.5.0`` from ``http://pyp.open3dv.site:2345/simple/dexsim-engine/``
 and resolves the remaining packages through your configured Python package index.

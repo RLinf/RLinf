@@ -37,7 +37,7 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/LIBERO-fastwam \
+   hf download yuanty/LIBERO-fastwam \
      --repo-type dataset \
      --local-dir /your_path_to/LIBERO-fastwam
 
@@ -49,7 +49,7 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/fastwam \
+   hf download yuanty/fastwam \
      libero_uncond_2cam224_dataset_stats.json \
      --local-dir /your_path_to/fastwam
 
@@ -57,9 +57,9 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 
 .. code-block:: bash
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B \
+   hf download Wan-AI/Wan2.2-TI2V-5B \
      --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.2-TI2V-5B
-   huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B \
+   hf download Wan-AI/Wan2.1-T2V-1.3B \
      --include "google/umt5-xxl/*" \
      --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.1-T2V-1.3B
 
@@ -117,7 +117,7 @@ RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/fastwam \
+   hf download yuanty/fastwam \
      libero_uncond_2cam224.pt \
      --local-dir /your_path_to/fastwam
 

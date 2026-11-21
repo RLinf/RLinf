@@ -88,35 +88,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — BEHAVIOR ships **two separate images**, one per model:
-``agentic-rlinf0.4-behavior`` (OpenVLA-OFT) and ``agentic-rlinf0.4-behavior-openpi``
-(OpenPI). Each image bundles only its own virtual environment, so pull the one that
-matches the model you intend to train (there is no ``switch_env`` between them):
-
-.. code-block:: bash
-
-   # OpenVLA-OFT model:
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-behavior
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior
-
-   # OpenPI model (separate image):
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-behavior-openpi
-
-   # In either image the matching virtual environment is already activated by default.
-
-**Option 2: Custom environment** — install bundle ``--env behavior``:
-
 .. code-block:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
@@ -161,18 +132,11 @@ Download BEHAVIOR-1K assets and set ``OMNIGIBSON_DATA_PATH`` before every run:
 Download the Model
 ------------------
 
-Download the checkpoint for your model family (either method works):
+Download the checkpoint for your model family:
 
 .. code-block:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
    hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
 

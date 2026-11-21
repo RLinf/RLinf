@@ -106,28 +106,7 @@ First, clone the RLinf repository and enter the main directory:
 2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Option 1: Docker Image**
-
-Run embodied training based on RoboTwin using the Docker image:
-
-.. code-block:: bash
-
-    docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robotwin
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code-block:: bash
-
-    source switch_env lingbotvla
-
-**Option 2: Custom Environment**
-
-Install the LingbotVLA 1.0 native environment and RoboTwin base dependencies in one command:
+Install the LingbotVLA 1.0 native environment and RoboTwin base dependencies in one command, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code-block:: bash
 
@@ -154,22 +133,11 @@ Before starting training, download the LingbotVLA 1.0 base weights, the RoboTwin
 
 .. code-block:: bash
 
-    # Method 1: Using git clone
-    git lfs install
-    git clone https://huggingface.co/robbyant/lingbot-vla-4b
-    git clone https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin
-    cd lingbot-vla-4b-posttrain-robotwin
-    git checkout 3e0c7c476bde3daaac00f79f3741a292a299f60a
-    cd ..
-    git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
-
-    # Method 2: Using huggingface-hub
-    pip install huggingface-hub
-    huggingface-cli download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
-    huggingface-cli download robbyant/lingbot-vla-4b-posttrain-robotwin \
+    hf download robbyant/lingbot-vla-4b --local-dir lingbot-vla-4b
+    hf download robbyant/lingbot-vla-4b-posttrain-robotwin \
         --revision 3e0c7c476bde3daaac00f79f3741a292a299f60a \
         --local-dir lingbot-vla-4b-posttrain-robotwin
-    huggingface-cli download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
+    hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir Qwen2.5-VL-3B-Instruct
 
 
 Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the configuration to your local model path (for example, ``/path/to/model/lingbot-vla-4b`` for base weights or ``/path/to/model/lingbot-vla-4b-posttrain-robotwin`` for the pinned RoboTwin SFT checkpoint), and **be sure to** set the corresponding ``tokenizer_path`` to the downloaded Tokenizer path (e.g., ``/path/to/model/Qwen2.5-VL-3B-Instruct``). Otherwise, the Rollout node will throw an error when parsing text instructions.

@@ -94,39 +94,23 @@ value clipping、可选 entropy 正则）。
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
+安装脚本会自动克隆 ABot-M0 和 VGGT；如需复用本地源码目录，请先设置 ``ABOT_PATH`` 和 ``VGGT_PATH``：
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 进入容器后，切换到 ABot-M0 虚拟环境：
-   source switch_env abot_m0
-
-**选项 2：自定义环境** —— 安装套件 ``--env maniskill_libero``。安装脚本会自动克隆 ABot-M0
-和 VGGT；若要复用本地 checkout，请先设置 ``ABOT_PATH`` / ``VGGT_PATH``：
-
-.. code:: bash
-
-   # 可选：使用本地源码 checkout，而不是由安装脚本自动克隆。
+   # 可选：使用本地源码目录，而不是由安装脚本自动克隆。
    # export ABOT_PATH=<path_to_ABot-Manipulation>
    # export VGGT_PATH=<path_to_vggt>
 
-   # 为提高国内依赖安装速度，可以添加 --use-mirror。
+   # 国内用户可添加 --use-mirror 加速下载。
    bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
    source .venv/bin/activate
 
-如果需要运行 LIBERO-Plus 实验，请在同一环境中额外安装 ``LIBERO-plus`` 运行时：
+如需运行 LIBERO-Plus 实验，请改用 ``LIBERO-plus`` 运行时安装命令：
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 到下面的 install.sh 命令。
+   # 国内用户可添加 --use-mirror 加速下载。
    bash requirements/install.sh embodied --model abot_m0 --env liberoplus
    source .venv/bin/activate
 
@@ -218,17 +202,6 @@ LIBERO-Plus 的完整说明见 LIBERO 基准文档的 :ref:`LIBERO-Pro 与 LIBER
 
 .. code-block:: bash
 
-   # 方式 1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/acvlab/ABot-M0-LIBERO
-   git clone https://huggingface.co/HaoyunOvO/ABot-m0-LIBERO-10k-step
-   git clone https://huggingface.co/StarVLA/Qwen3-VL-4B-Instruct-Action
-   git clone https://huggingface.co/facebook/VGGT-1B
-
-   # 方式 2：使用 huggingface-hub
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download acvlab/ABot-M0-LIBERO --local-dir ./ABot-M0-LIBERO
    hf download HaoyunOvO/ABot-m0-LIBERO-10k-step --local-dir ./ABot-m0-LIBERO-10k-step
    hf download StarVLA/Qwen3-VL-4B-Instruct-Action --local-dir ./Qwen3-VL-4B-Instruct-Action

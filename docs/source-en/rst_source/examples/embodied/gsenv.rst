@@ -88,28 +88,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # For mainland China users:
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Switch to the OpenPI virtual environment inside the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Custom environment**
-
 Install the ManiSkill/LIBERO environment with OpenPI dependencies:
 
 .. code:: bash
@@ -148,13 +126,7 @@ Download the OpenPI π₀.₅ SFT checkpoint:
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
-
-   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
 .. include:: _model_path.rst

@@ -1,165 +1,104 @@
 快速上手
 ========
 
-本快速教程将带你使用 **RLinf** 框架，在  
-`ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ 环境中训练视觉-语言-动作模型（VLA），包括  
-`OpenVLA <https://github.com/openvla/openvla>`_。
+四步在 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`__ 上用 PPO 训练 **OpenVLA** 或 **OpenVLA-OFT**。
 
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-环境简介
---------------------------
+   .. grid-item-card:: 1. 安装环境
+      :text-align: center
 
-ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，  
-专注于复杂接触操作和具身智能任务。  
-该基准涵盖多个领域，包括机械臂、移动操作器、人形机器人以及灵巧手，  
-支持抓取、组装、绘图、移动等多种任务。
+      ``install.sh`` 或 Docker Hub
 
-我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../concepts/execution_modes`）。
+   .. grid-item-card:: 2. 下载资源
+      :text-align: center
 
-启动训练
---------------------------
+      模型权重与 ManiSkill 资产
 
-**步骤 1：下载预训练模型**
+   .. grid-item-card:: 3. 启动训练
+      :text-align: center
 
-若使用 **OpenVLA** 模型，请运行以下命令：
+      一行命令直接跑通
 
-.. code-block:: bash
+   .. grid-item-card:: 4. 查看曲线
+      :text-align: center
 
-   # 下载 OpenVLA 预训练模型
-   hf download gen-robot/openvla-7b-rlvla-warmup \
-   --local-dir /path/to/model/openvla-7b-rlvla-warmup/
+      TensorBoard 监控指标
 
-该模型已在论文中引用：`paper <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`_
+前置条件
+--------
 
-若使用 **OpenVLA-OFT** 模型，请运行以下命令：
+先按 :doc:`安装说明 <installation>` 准备好 ManiSkill 环境。中国大陆用户可先执行 ``export HF_ENDPOINT=https://hf-mirror.com`` 加速下载。
 
-.. code-block:: bash
+下载环境资产
+------------
 
-   # 下载 OpenVLA-OFT 预训练模型
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main \
-   --local-dir /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/
-   
-   # 下载在maniskill上lora微调过的检查点
-   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
-   --local-dir /path/to/model/oft-sft/lora_004000
-
-**步骤 2：下载 ManiSkill 资源文件**
-
-该步骤对在 ManiSkill3 上训练 **OpenVLA** 和 **OpenVLA-OFT** 都是必需的。
+在仓库根目录下载 ManiSkill3 场景资产（只需下载一次）：
 
 .. code-block:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/sim/maniskill
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
+下载模型并启动训练
+------------------
 
-**步骤 3：修改配置文件**
+切换下方标签选择模型。两个快速上手配置默认使用所有可用加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。
 
-在运行脚本之前，你需要根据模型和数据集的下载路径，修改 ``./examples/embodiment/config/maniskill_ppo_openvla_quickstart.yaml`` 文件。具体而言，将以下配置更新为 `gen-robot/openvla-7b-rlvla-warmup` 检查点所在的路径。
+.. tab-set::
 
-- ``rollout.model.model_path``  
-- ``actor.model.model_path``   
+   .. tab-item:: OpenVLA
 
+      下载预训练权重（`论文 <https://proceedings.neurips.cc/paper_files/paper/2025/hash/8c0fabe372177d2aded596be2d3b4544-Abstract-Conference.html>`__）：
 
+      .. code-block:: bash
 
-对于 **OpenVLA-OFT**，修改 ``maniskill_ppo_openvlaoft_quickstart.yaml`` 文件。将下列模型配置项设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
+         hf download gen-robot/openvla-7b-rlvla-warmup --local-dir ./checkpoints/openvla-7b-rlvla-warmup
 
-- ``rollout.model.model_path``  
-- ``actor.model.model_path``  
-- ``actor.model.lora_path``
-- ``actor.model.is_lora: True``
+      启动 PPO 训练：
 
-**步骤 4：启动训练**
+      .. code-block:: bash
 
-完成上述配置文件修改后，运行以下命令启动训练：
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
+           actor.model.model_path=$PWD/checkpoints/openvla-7b-rlvla-warmup
 
-.. code-block:: bash
+   .. tab-item:: OpenVLA-OFT
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+      下载基座模型与 LoRA 权重：
 
-.. note::
-   如果你是通过 Docker 镜像安装的 **RLinf** （见 :doc:`./installation`），请确保已切换到目标模型对应的 Python 环境。
-   默认环境为 ``openvla``。
-   若使用 OpenVLA-OFT 或 openpi，请使用内置脚本 `switch_env` 切换环境：
-   ``source switch_env openvla-oft`` 或 ``source switch_env openpi``。
+      .. code-block:: bash
 
-   如果你是通过自定义环境安装的 **RLinf**，请确保已安装对应模型的依赖，详见 :doc:`./installation`。
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main --local-dir ./checkpoints/openvlaoft-base && \
+         hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora --local-dir ./checkpoints/openvlaoft-lora
 
-对于 **OpenVLA-OFT**：
+      启动 PPO 训练：
 
-.. code-block:: bash
+      .. code-block:: bash
 
-   source switch_env openvla-oft
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
+         bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart \
+           actor.model.model_path=$PWD/checkpoints/openvlaoft-base \
+           actor.model.lora_path=$PWD/checkpoints/openvlaoft-lora
 
-训练流水线模式
---------------------------
-
-对于具身 FSDP 训练，可以通过 ``runner.use_training_pipeline`` 开启环境交互
-与 actor 训练之间的流水线执行路径。设置为 ``True`` 后，环境 worker 会先处理
-rollout 轨迹，将其转换为打包后的 actor micro-batch，并通过 channel 流式发送给
-actor。actor 可以在 rollout 仍在生成时训练这些已经准备好的 micro-batch。
-
-当 rollout 数据中包含嵌套 observation 或较大的 tensor 时，该模式通常更有用。
-发送打包后的 micro-batch 可以让 channel payload 更适合 tensor fast path，同时减少
-actor 侧重新组装和处理 batch 的额外开销。尤其当 env worker 和 actor worker
-部署在不同节点，并且节点之间通过广域网连接时，较小且打包后的 tensor payload
-可以降低跨节点传输开销。
-
-示例配置：
-
-.. code-block:: yaml
-
-   runner:
-     use_training_pipeline: True
-
-   algorithm:
-     adv_type: gae
-     normalize_advantages: True
-
-说明与限制：
-
-- 该模式支持 ``algorithm.normalize_advantages``。pipeline 路径会在 env worker
-  侧计算 raw advantages，聚合所有会发送到同一 actor rank 的 env worker 的 masked
-  advantage 统计量，并在流式发送 actor micro-batch 之前完成 normalization。
-- ``algorithm.adv_type`` 在该模式下目前仅支持 ``gae``。
-- 该模式面向具身 FSDP actor 训练中的 PPO/GRPO 类 actor loss；目前不支持
-  ``embodied_sac``、``embodied_dagger`` 或 ``embodied_nft``。
-
+rollout 会自动沿用 ``actor.model.model_path``，只需传一次权重路径。
 
 查看训练结果
---------------------------
+------------
 
-- 最终模型与指标保存路径：``./logs``  
-- 启动方式如下：
+日志与权重保存在 ``./logs``。启动 TensorBoard，重点关注 ``rollout/env_info/return`` 和 ``rollout/env_info/success_once``：
 
-  .. code-block:: bash
+.. code-block:: bash
 
-     tensorboard --host 0.0.0.0 --logdir path/to/tensorboard/
+   tensorboard --host 0.0.0.0 --logdir ./logs
 
-打开 TensorBoard 后，你会看到类似下图的界面。  
-建议重点关注以下指标：
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/embody-quickstart-metric.jpg
+   :align: center
+   :width: 90%
 
-- ``rollout/env_info/return``  
-- ``rollout/env_info/success_once``  
+   ManiSkill3 快速上手的 TensorBoard 训练曲线。
 
-.. raw:: html
+下一步
+------
 
-   <img src="https://github.com/RLinf/misc/raw/main/pic/embody-quickstart-metric.jpg" width="800"/>
-
-.. note::
-   如果你想指定 GPU 使用数量，
-   可以修改配置文件中的参数  
-   ``cluster.component_placement``。
-
-   根据实际资源将该项设置为 **0-3** 或 **0-7** 来使用 4/8 张 GPU。
-   查看 :doc:`../guides/basic_config` 以获取有关 Placement 配置的更详细说明。
-
-   .. code-block:: yaml
-
-      cluster:
-      num_nodes: 1
-      component_placement:
-         actor,env,rollout: 0-3
+- :doc:`浏览示例库 <../examples/index>`，查看 LIBERO、RoboTwin、OpenPI 与真机示例。
+- :doc:`运行独立评测 <../evaluations/index>`，评估训练后的权重。
+- :doc:`性能优化指南 <../guides/performance/index>`，了解 :doc:`训练流水线模式 <../guides/training_pipeline>` 与 :doc:`执行模式 <../concepts/execution_modes>`。

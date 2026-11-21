@@ -110,27 +110,10 @@ executes the first ``N`` steps (``1 <= N <= T``), then replans.
 Installation
 ------------
 
-For NVIDIA CUDA, use either option below. For Huawei Ascend CANN, follow
+For NVIDIA CUDA, follow the steps below. For Huawei Ascend CANN, follow
 :ref:`starvla-hardware`.
 
 .. include:: _setup_common.rst
-
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # Inside the container, switch to the StarVLA virtual environment:
-   source switch_env starvla
-
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
 
 .. code:: bash
 
@@ -145,13 +128,6 @@ Download the StarVLA checkpoint and the base VLM:
 
 .. code-block:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
-   git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   uv pip install huggingface-hub
    hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
    hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 

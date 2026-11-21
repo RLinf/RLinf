@@ -95,23 +95,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-opensora``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-opensora
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-opensora
-
-   # Inside the container, switch to the OpenVLA-OFT virtual environment:
-   source switch_env openvla-oft
-
-**Option 2: Custom environment** — install bundle ``--env opensora``:
-
 .. code:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
@@ -125,15 +108,6 @@ Download the OpenVLA-OFT SFT checkpoints:
 
 .. code:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-spatial-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-object-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero-goal-traj1
-   git clone https://huggingface.co/Haozhan72/Openvla-oft-SFT-libero10-traj1
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
    hf download Haozhan72/Openvla-oft-SFT-libero-spatial-traj1 --local-dir Openvla-oft-SFT-libero-spatial-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-object-traj1 --local-dir Openvla-oft-SFT-libero-object-traj1
    hf download Haozhan72/Openvla-oft-SFT-libero-goal-traj1 --local-dir Openvla-oft-SFT-libero-goal-traj1
@@ -159,13 +133,6 @@ provides weights and data for libero-spatial and libero-object:
 
 .. code:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenSora-LIBERO-Spatial
-   git clone https://huggingface.co/RLinf/RLinf-OpenSora-LIBERO-Object
-
-   # Method 2: huggingface-hub
-   pip install huggingface-hub
    hf download RLinf/RLinf-OpenSora-LIBERO-Spatial --local-dir RLinf-OpenSora-LIBERO-Spatial
    hf download RLinf/RLinf-OpenSora-LIBERO-Object --local-dir RLinf-OpenSora-LIBERO-Object
 

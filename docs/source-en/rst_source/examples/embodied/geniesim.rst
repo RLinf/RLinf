@@ -115,19 +115,12 @@ Installation
 On the training node, outside any container, run the repository setup commands.
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
+   :end-before: Install dependencies
 
-Choose one of the following installation methods. Both install
-``rlinf-geniesim-client`` from GenieSim ``v3.5.0``, which ``install.sh``
-clones automatically. To install from an existing GenieSim checkout instead,
-set ``GENIESIM_PATH`` to it. See
-:doc:`Installation </rst_source/start/installation>` for prerequisites and
-GPU driver setup.
-
-**Custom environment**
-
-On the training node, from the RLinf repository root, install OpenPI and the
-GenieSim client, then activate the environment:
+On the training node, from the RLinf repository root, install OpenPI and
+``rlinf-geniesim-client`` from GenieSim ``v3.5.0`` (``install.sh`` clones
+GenieSim automatically; set ``GENIESIM_PATH`` to use an existing checkout),
+then activate the environment:
 
 .. code:: bash
 
@@ -135,39 +128,9 @@ GenieSim client, then activate the environment:
    bash requirements/install.sh embodied --model openpi --env geniesim
    source .venv/bin/activate
 
-**Docker image**
-
-On the training node, run this build from the RLinf repository root:
-
-.. code:: bash
-
-   docker build -f docker/Dockerfile \
-     --build-arg BUILD_TARGET=embodied-geniesim \
-     --build-arg NO_MIRROR=1 \
-     -t rlinf:embodied-geniesim .
-
-The image provides an NVIDIA CUDA 12.8 training environment with OpenPI and
-the GenieSim client. Connect it to your GenieSim service to run training.
-
-Still on the training node, in the RLinf repository root, start the container
-with the repository mounted:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v "$(pwd):/workspace/RLinf" \
-      --workdir /workspace/RLinf \
-      rlinf:embodied-geniesim
-
-The container opens in ``/workspace/RLinf``. Inside the RLinf container,
-activate OpenPI:
-
-.. code:: bash
-
-   source switch_env openpi
+You can also pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__
+or build the ``embodied-geniesim`` target from ``docker/Dockerfile``. See
+:doc:`Installation </rst_source/start/installation>` for prerequisites and shared options.
 
 Download the Model
 ------------------
@@ -187,8 +150,6 @@ root. If you already have the checkpoint, set ``GENIESIM_CHECKPOINT_PATH`` to
 a directory that environment can read, then continue to ``Run It``.
 
 .. code:: bash
-
-   pip install huggingface-hub
 
    # For mainland China users:
    # export HF_ENDPOINT=https://hf-mirror.com

@@ -107,26 +107,9 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
 安装
 ----------------------------------------
 
-NVIDIA CUDA 可使用以下两种安装方式。华为昇腾 CANN 请参照 :ref:`starvla-hardware`。
+NVIDIA CUDA 按以下步骤安装。华为昇腾 CANN 请参照 :ref:`starvla-hardware`。
 
 .. include:: _setup_common.rst
-
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 进入容器后，切换到 StarVLA 虚拟环境：
-   source switch_env starvla
-
-**选项 2：自定义环境** —— 安装套件 ``--env maniskill_libero``：
 
 .. code:: bash
 
@@ -141,13 +124,6 @@ NVIDIA CUDA 可使用以下两种安装方式。华为昇腾 CANN 请参照 :ref
 
 .. code-block:: bash
 
-   # 方式1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
-   git clone https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
-
-   # 方式2：使用 huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install -U huggingface-hub
    hf download StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1 --local-dir ./Qwen2.5-VL-OFT-LIBERO-4in1
    hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir ./Qwen2.5-VL-3B-Instruct
 

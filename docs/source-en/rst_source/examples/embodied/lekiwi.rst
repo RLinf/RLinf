@@ -63,7 +63,7 @@ Run these steps on the computer (for example, a Raspberry Pi 5) wired to the
 servo controller, not on your laptop.
 
 .. include:: _setup_common.rst
-   :end-before: Then set up the dependencies
+   :end-before: Install dependencies
 
 Install the robot dependencies from the repository root:
 

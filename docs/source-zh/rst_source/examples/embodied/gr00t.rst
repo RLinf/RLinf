@@ -104,69 +104,21 @@ GR00T模型强化学习训练
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 如果需要国内加速下载镜像，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-**N1.5:**
-
-.. code:: bash
-
-   source switch_env gr00t
-
-**N1.6:**
-
-.. code:: bash
-
-   source switch_env gr00t_n1d6
-
-**N1.7:**
-
-.. code:: bash
-
-   source switch_env gr00t_n1d7
-
-**选项 2：自定义环境**
-
-**N1.5:**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加``--use-mirror``到下面的install.sh命令
+   # 国内用户可添加 --use-mirror 以提升下载速度。
+   # N1.5
    bash requirements/install.sh embodied --model gr00t --env maniskill_libero
-   source .venv/bin/activate
-
-**N1.6:**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加``--use-mirror``到下面的install.sh命令
-   bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
-   source .venv/bin/activate
-
-**N1.7:**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加``--use-mirror``到下面的install.sh命令
-   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+   # N1.6
+   # bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
+   # N1.7
+   # bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
    source .venv/bin/activate
 
 下载模型
 ----------------------------------------
 
-开始训练前，您需要下载相应的预训练模型。
+开始训练前，下载对应的预训练模型。
 
 **N1.5: GR00T-N1.5 少样本SFT模型下载**
 
@@ -174,14 +126,7 @@ GR00T模型强化学习训练
 
 .. code:: bash
 
-   # 方法1：使用git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
-
-   # 方法2：使用huggingface-hub
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Gr00t-SFT-Spatial --local-dir RLinf-Gr00t-SFT-Spatial
 
 其他任务的SFT模型下载:
@@ -195,15 +140,8 @@ GR00T模型强化学习训练
 
 .. code:: bash
 
-   # 方法1：使用git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
-
-   # 方法2：使用huggingface-hub
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
+   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf-Gr00t-N1.6-SFT-Spatial
 
 **N1.7：当前临时使用官方 release checkpoint**
 
@@ -224,16 +162,13 @@ RLinf 目前还没有提供一个由本仓库产出的、专门用于这个 RL �
 
 .. code:: bash
 
-   # 为提升国内下载速度，可以设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    # 下载 Cosmos-Reason2-2B backbone
-   uv run hf download nvidia/Cosmos-Reason2-2B \
+   hf download nvidia/Cosmos-Reason2-2B \
       --local-dir checkpoints/Cosmos-Reason2-2B
 
    # 下载 GR00T-N1.7-LIBERO 任务 checkpoint（仅 libero_spatial 所需文件）
-   uv run hf download nvidia/GR00T-N1.7-LIBERO \
+   hf download nvidia/GR00T-N1.7-LIBERO \
       --include "libero_spatial/config.json" \
                 "libero_spatial/embodiment_id.json" \
                 "libero_spatial/model-*.safetensors" \

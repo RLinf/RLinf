@@ -93,32 +93,11 @@
 训练 / Rollout 节点
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-该节点使用与模拟器 Pi0 DAgger 相同的软件环境。
-
-**选项 1：Docker 镜像**
+训练 / rollout 节点使用与模拟器 Pi0 DAgger 相同的软件环境，或从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 如果需要国内加速下载镜像，可以使用：
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-进入容器后执行：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**选项 2：自定义环境**
-
-.. code:: bash
-
-   # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
+   # 中国大陆用户可添加 `--use-mirror` 加速下载。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 

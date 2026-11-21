@@ -1,51 +1,45 @@
 速查表
 ======
 
-当你已经熟悉流程，只需要最短可运行命令时，使用本页。
+RLinf 常用工作流的最短命令。
 
 安装
 ----
 
+使用 ``install.sh`` 本地安装，或前往 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像：
+
 .. code-block:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   git clone https://github.com/RLinf/RLinf.git && cd RLinf
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   source .venv/bin/activate
 
-启动 Ray
+启动训练
 --------
 
-单节点运行可以在本机启动 Ray。
+单机运行会自动启动本地 Ray。传入配置名和权重路径即可启动：
 
 .. code-block:: bash
 
-   ray start --head
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart \
+     actor.model.model_path=/path/to/checkpoint
 
-多节点运行时，必须在每个节点执行 ``ray start`` 之前设置 ``RLINF_NODE_RANK``。
-参见 :doc:`../guides/multi_node`。
-
-运行训练
---------
-
-通过配置名启动具身智能训练。
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla_quickstart
+快速上手配置默认使用全部加速卡；需要指定设备时，修改 ``cluster.component_placement``，详见 :doc:`../guides/basic_config`。多机训练前，先在每个节点设置 ``RLINF_NODE_RANK``，再执行 ``ray start``，详见 :doc:`../guides/multi_node`。
 
 运行评测
 --------
 
-使用统一评测入口运行具身智能 benchmark。
+运行具身独立评测：
 
 .. code-block:: bash
 
-   bash evaluations/run_eval.sh libero/libero_spatial_openpi_pi05_eval
+   bash evaluations/run_eval.sh libero_spatial_openpi_pi05_eval \
+     rollout.model.model_path=/path/to/checkpoint
 
 下一步
 ------
 
-- :doc:`安装 <installation>` — 安装 RLinf 和可选依赖。
-- :doc:`快速上手 <vla>` — 运行快速开始训练示例。
-- :doc:`启动与扩展 <../guides/launch-scale/index>` — 扩展到多节点运行。
-- :doc:`评测 <../evaluations/index>` — 运行独立具身智能评测。
+- :doc:`安装说明 <installation>`：安装目标、常用参数与 Docker Hub 入口。
+- :doc:`快速上手 <vla>`：ManiSkill3 四步入门示例。
+- :doc:`启动与扩展 <../guides/launch-scale/index>`：多机与真机部署。
+- :doc:`评测 <../evaluations/index>`：支持的 benchmark 与评测配置。

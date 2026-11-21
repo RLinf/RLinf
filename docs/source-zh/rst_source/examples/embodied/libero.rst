@@ -120,23 +120,6 @@ LIBERO 提供五个任务套件，共 130 个任务，从单步抓取放置到�
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # 国内镜像加速：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # 进入容器后，切换到模型对应的虚拟环境：
-   source switch_env openvla-oft
-
-**选项 2：自定义环境** —— 安装包 ``--env maniskill_libero``：
-
 .. code:: bash
 
    # 国内用户可添加 --use-mirror 以提升下载速度。
@@ -146,17 +129,11 @@ LIBERO 提供五个任务套件，共 130 个任务，从单步抓取放置到�
 下载模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-下载预训练基座检查点（任选一种方式）：
+下载预训练基座检查点：
 
 .. code:: bash
 
-   # 方式 1：git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-
-   # 方式 2：huggingface-hub（国内可设置 HF_ENDPOINT=https://hf-mirror.com）
-   pip install huggingface-hub
+   # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
@@ -326,23 +303,6 @@ LIBERO-Pro 与 LIBERO-Plus 套件
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 按套件选择镜像标签：
-
-.. code:: bash
-
-   # LIBERO-Pro：标签 agentic-rlinf0.4-liberopro
-   # LIBERO-Plus：标签 agentic-rlinf0.4-liberoplus
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-liberopro   # 或 ...-liberoplus
-      # 国内镜像加速（LIBERO-Pro）：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberopro
-      # 国内镜像加速（LIBERO-Plus）：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-liberoplus
-
-**选项 2：自定义环境** —— 按套件选择安装包：
-
 .. code:: bash
 
     # 国内用户可添加 --use-mirror 以提升下载速度。
@@ -387,9 +347,9 @@ LIBERO-Pro / LIBERO-Plus 复用标准 LIBERO 基座检查点：
 
 .. code-block:: bash
 
-    git lfs install
-    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+    # 国内可设置 HF_ENDPOINT=https://hf-mirror.com
+    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
 .. include:: _model_path.rst
 

@@ -99,23 +99,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # Inside the container, switch to the model's virtual environment:
-   source switch_env openvla        # or: source switch_env openvla-oft
-
-**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
-
 .. code:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
@@ -126,34 +109,21 @@ Installation
 Download the Assets
 -------------------
 
-Download the ManiSkill assets:
+Download the ManiSkill scene assets from the repository root:
 
 .. code:: bash
 
    # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./maniskill_assets
-
-.. important::
-
-   The assets **must** be placed under ``rlinf/envs/sim/maniskill/assets`` — this is where the env loads them from. Copy them into the env package directory:
-
-.. code:: bash
-
-   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir rlinf/envs/sim/maniskill/assets
 
 Download the Model
 ------------------
 
-Download a pretrained base checkpoint (either method works):
+Download a pretrained base checkpoint:
 
 .. code:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
 .. include:: _model_path.rst

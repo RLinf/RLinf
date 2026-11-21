@@ -96,23 +96,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
-
-.. code-block:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-   # Inside the container, switch to the MolmoAct2 virtual environment:
-   source switch_env molmoact2
-
-**Option 2: Custom environment** — install bundle ``--model molmoact2 --env libero``:
-
 .. code-block:: bash
 
    # Add --use-mirror for faster downloads in mainland China.

@@ -88,28 +88,6 @@ OpenPI π₀ 策略。
 
 .. include:: _setup_common.rst
 
-**Docker 镜像**
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-robocasa
-
-   # 国内用户可使用：
-   # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-robocasa
-
-在镜像中切换到 OpenPI 虚拟环境：
-
-.. code:: bash
-
-   source switch_env openpi
-
-**自定义环境**
-
 安装 RoboCasa 与 OpenPI 依赖：
 
 .. code:: bash
@@ -136,13 +114,7 @@ OpenPI π₀ 策略。
 .. code-block:: bash
 
    cd /path/to/save/model
-
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
-
-   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
 
 .. include:: _model_path.rst

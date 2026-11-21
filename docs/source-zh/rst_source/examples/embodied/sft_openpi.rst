@@ -221,22 +221,6 @@ BEHAVIOR 不跑上面的脚本，而是用 ``actor.model.openpi_data.norm_stats_
 
 .. include:: _setup_common.rst
 
-**方式一：Docker** —— 镜像 ``agentic-rlinf0.4-maniskill_libero``：
-
-.. code:: bash
-
-    docker run -it --rm --gpus all \
-        --shm-size 20g \
-        --network host \
-        --name rlinf \
-        -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-        # 国内镜像：infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-    source switch_env openpi
-
-**方式二：自建环境**：
-
 .. code:: bash
 
     # 国内可加 --use-mirror

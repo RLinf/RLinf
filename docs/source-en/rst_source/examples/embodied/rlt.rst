@@ -97,31 +97,11 @@ Installation
 2. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-**Option 1: Docker Image**
+Install the OpenPI embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__:
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the OpenPI virtual environment via the built-in ``switch_env`` utility:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
+   # For mainland China users, add `--use-mirror` for faster downloads.
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
@@ -535,7 +515,7 @@ joint-control LeRobot fields above.
 .. code:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   huggingface-cli download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
+   hf download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
        --repo-type dataset \
        --local-dir ${HF_LEROBOT_HOME}/maniskill_peginsertionside_joint
 

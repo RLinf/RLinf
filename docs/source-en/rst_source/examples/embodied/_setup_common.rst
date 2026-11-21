@@ -1,21 +1,13 @@
 .. This file is a reusable include, not a standalone page.
-   It is shared by the embodied example recipes to avoid repeating the
-   identical "clone the repo + choose an install method" boilerplate.
-   Include it with ``.. include:: _setup_common.rst`` and then add the
-   recipe-specific Docker tag / ``--env`` value below it.
+   Shared by embodied recipes. Include with ``.. include:: _setup_common.rst``
+   (or ``:end-before: Install dependencies`` when the page writes its own
+   install intro).
 
-First, clone the RLinf repository:
+Clone the repository:
 
 .. code:: bash
 
-   # Mainland China users can use a mirror for faster cloning:
-   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-Then set up the dependencies with **one** of the two methods below — a prebuilt
-**Docker image** (recommended) or a **custom environment**. The general setup
-(prerequisites, GPU drivers, the in-image ``switch_env`` helper, mirrors, and
-troubleshooting) is documented once in :doc:`/rst_source/start/installation`;
-the commands in this recipe only differ in the Docker **image tag** and the
-``--env`` value.
+Install dependencies with ``requirements/install.sh`` below, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`/rst_source/start/installation` for shared options.

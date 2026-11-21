@@ -5505,3 +5505,85 @@ def test_sd3_pretraining_auxiliary_placement_and_gradients(sd3_policy, offload):
     finally:
         hook.remove()
         model.to("cpu")
+
+
+def test_rollout_model_path_inherits_from_actor():
+    from rlinf.config import validate_rollout_cfg
+
+    algorithm_cfg = OmegaConf.create({"importance_sampling_fix": False})
+    actor_cfg = OmegaConf.create({"model": {"model_path": "/checkpoints/actor"}})
+
+    inherited = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5"},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    validate_rollout_cfg(inherited, algorithm_cfg, actor_cfg)
+    assert inherited.model.model_path == "/checkpoints/actor"
+
+    explicit = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5", "model_path": "/checkpoints/rollout"},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    validate_rollout_cfg(explicit, algorithm_cfg, actor_cfg)
+    assert explicit.model.model_path == "/checkpoints/rollout"
+
+    missing = OmegaConf.create(
+        {
+            "model": {"model_type": "qwen2.5", "model_path": None},
+            "rollout_backend": "sglang",
+            "return_logprobs": False,
+            "sglang": {},
+        }
+    )
+    with pytest.raises(AssertionError, match="rollout.model.model_path"):
+        validate_rollout_cfg(missing, algorithm_cfg, None)
+
+
+def test_embodied_rollout_model_path_inherits_from_actor():
+    from rlinf.config import _inherit_rollout_model_path
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"precision": "bf16"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg.rollout, cfg.actor)
+    assert cfg.rollout.model.model_path == "/checkpoints/openvla"
+
+    cfg_none = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"model_path": None, "precision": "bf16"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg_none.rollout, cfg_none.actor)
+    assert cfg_none.rollout.model.model_path == "/checkpoints/openvla"
+
+    cfg_override = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"model": {"model_path": "/checkpoints/custom-rollout"}},
+        }
+    )
+    _inherit_rollout_model_path(cfg_override.rollout, cfg_override.actor)
+    assert cfg_override.rollout.model.model_path == "/checkpoints/custom-rollout"
+
+    cfg_no_rollout_model = OmegaConf.create(
+        {
+            "actor": {"model": {"model_path": "/checkpoints/openvla"}},
+            "rollout": {"rollout_backend": "huggingface"},
+        }
+    )
+    _inherit_rollout_model_path(
+        cfg_no_rollout_model.rollout, cfg_no_rollout_model.actor
+    )
+    assert cfg_no_rollout_model.rollout.model.model_path == "/checkpoints/openvla"

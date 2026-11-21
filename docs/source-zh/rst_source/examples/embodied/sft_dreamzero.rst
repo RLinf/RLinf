@@ -89,8 +89,7 @@ DreamZero 监督微调和 Franka 真机部署
 
 .. code:: bash
 
-   pip install -U huggingface_hub
-   huggingface-cli download GEAR-Dreams/DreamZero-DROID --local-dir ./DreamZero-DROID
+   hf download GEAR-Dreams/DreamZero-DROID --local-dir ./DreamZero-DROID
 
 YAML 示例（DROID + 官方 14B，见 ``droid_sft_dreamzero_14b.yaml``）：
 
@@ -120,10 +119,10 @@ AgiBot 数据将 ``model_path`` 换为 ``./DreamZero-AgiBot`` 即可。
 
 .. code:: bash
 
-   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
-   huggingface-cli download Wan-AI/Wan2.1-I2V-14B-480P \
+   hf download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
+   hf download Wan-AI/Wan2.1-I2V-14B-480P \
      models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth --local-dir ./Wan2.1-CLIP
-   huggingface-cli download google/umt5-xxl --local-dir ./umt5-xxl
+   hf download google/umt5-xxl --local-dir ./umt5-xxl
 
 YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
@@ -163,13 +162,12 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 .. code:: bash
 
-   pip install -U huggingface_hub
    # LIBERO
-   huggingface-cli download physical-intelligence/libero --repo-type dataset --local-dir ./libero
+   hf download physical-intelligence/libero --repo-type dataset --local-dir ./libero
    # DROID
-   huggingface-cli download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
+   hf download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
    # Franka PnP 真机数据
-   huggingface-cli download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
+   hf download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
 
 生成 metadata.json
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

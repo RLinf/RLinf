@@ -95,13 +95,9 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 先在训练节点上、任何容器之外，执行仓库的准备命令。
 
 .. include:: _setup_common.rst
-   :end-before: 然后，使用下列两种方式之一准备依赖
+   :end-before: 使用下面的
 
-下面两种装法选一种。两种都会装上 GenieSim ``v3.5.0`` 里的 ``rlinf-geniesim-client``，``install.sh`` 会自动克隆对应源码。本机已经有 GenieSim 源码时，把 ``GENIESIM_PATH`` 指到那个目录。前置依赖和 GPU 驱动见 :doc:`安装 </rst_source/start/installation>`。
-
-**自定义环境**
-
-在训练节点的仓库根目录安装 OpenPI 和 GenieSim 客户端，然后激活环境：
+在训练节点的仓库根目录安装 OpenPI 和 GenieSim ``v3.5.0`` 中的 ``rlinf-geniesim-client``，然后激活环境。``install.sh`` 会自动克隆对应源码；本机已有 GenieSim 源码时，将 ``GENIESIM_PATH`` 指向该目录：
 
 .. code:: bash
 
@@ -109,36 +105,7 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
    bash requirements/install.sh embodied --model openpi --env geniesim
    source .venv/bin/activate
 
-**Docker 镜像**
-
-在训练节点的仓库根目录构建镜像：
-
-.. code:: bash
-
-   docker build -f docker/Dockerfile \
-     --build-arg BUILD_TARGET=embodied-geniesim \
-     --build-arg NO_MIRROR=1 \
-     -t rlinf:embodied-geniesim .
-
-镜像基于 NVIDIA CUDA 12.8，里面有 OpenPI 训练环境和 GenieSim 客户端。连上 GenieSim 服务就可以开始训练。
-
-还是在训练节点的 RLinf 仓库根目录，启动容器并挂载仓库：
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 32g \
-      --network host \
-      --name rlinf \
-      -v "$(pwd):/workspace/RLinf" \
-      --workdir /workspace/RLinf \
-      rlinf:embodied-geniesim
-
-容器启动后位于 ``/workspace/RLinf``。在容器里激活 OpenPI：
-
-.. code:: bash
-
-   source switch_env openpi
+也可以从 `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__ 拉取预构建镜像，或通过 ``docker/Dockerfile`` 构建 ``embodied-geniesim`` 目标；前置依赖和通用安装选项见 :doc:`安装 </rst_source/start/installation>`。
 
 下载模型
 ----------------------------------------
@@ -150,8 +117,6 @@ GenieSim 仿真和 RLinf 训练分在两个 GPU 节点上跑。跑 RLinf 的是�
 在已经激活的 OpenPI 环境里下载。用 Docker 时，在训练节点的 RLinf 容器内、``/workspace/RLinf`` 执行；用自定义环境时，在训练节点的 RLinf 仓库根目录执行。已经有检查点的话，把 ``GENIESIM_CHECKPOINT_PATH`` 设成当前环境能读到的目录，然后直接看「运行」。
 
 .. code:: bash
-
-   pip install huggingface-hub
 
    # 中国大陆用户可设置镜像：
    # export HF_ENDPOINT=https://hf-mirror.com

@@ -81,17 +81,11 @@ Checkpoints
      - ``rollout.expert_model.model_path``
      - ``libero_130_no_noops_trajall``
 
-Download the checkpoints with either method:
+Download the checkpoints:
 
 .. code-block:: bash
 
-   # Method 1: git-lfs
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   pip install huggingface-hub
+   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130 --local-dir RLinf-OpenVLAOFT-LIBERO-130
 

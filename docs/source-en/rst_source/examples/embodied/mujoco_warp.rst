@@ -111,21 +111,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Docker image**
-
-Build the MuJoCo Warp target and start a container with GPU access:
-
-.. code:: bash
-
-   docker build -f docker/Dockerfile \
-       --build-arg BUILD_TARGET=embodied-mujoco_warp \
-       -t rlinf:embodied-mujoco_warp .
-   docker run -it --rm --gpus all \
-       --shm-size 32g --network host --name rlinf \
-       -v .:/workspace/RLinf rlinf:embodied-mujoco_warp
-
-**Custom environment**
-
 Install the dependencies and activate the environment:
 
 .. code:: bash

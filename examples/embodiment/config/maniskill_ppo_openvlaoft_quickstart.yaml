@@ -16,7 +16,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-0
+    actor,env,rollout: all
 
 runner:
   task_type: embodied
@@ -106,7 +106,6 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     precision: ${actor.model.precision}
 
 actor:

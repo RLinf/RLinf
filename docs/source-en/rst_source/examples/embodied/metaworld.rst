@@ -86,23 +86,6 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.4-metaworld``:
-
-.. code-block:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-metaworld
-      # Mainland China mirror: infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-metaworld
-
-   # Inside the container, switch to the model's virtual environment:
-   source switch_env openpi        # or: source switch_env openvla-oft
-
-**Option 2: Custom environment** — install bundle ``--env metaworld``:
-
 .. code-block:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
@@ -115,19 +98,11 @@ Installation
 Download the Model
 ------------------
 
-Download the SFT checkpoints used by the reference recipes (either method works):
+Download the SFT checkpoints used by the reference recipes:
 
 .. code-block:: bash
 
-   # Method 1: git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
-   git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT
-
-   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download RLinf/RLinf-Pi0-MetaWorld-SFT --local-dir RLinf-Pi0-MetaWorld-SFT
    hf download RLinf/RLinf-Pi05-MetaWorld-SFT --local-dir RLinf-Pi05-MetaWorld-SFT
    hf download RLinf/RLinf-OpenVLAOFT-MetaWorld-SFT --local-dir RLinf-OpenVLAOFT-MetaWorld-SFT

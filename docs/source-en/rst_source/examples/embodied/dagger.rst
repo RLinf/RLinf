@@ -149,36 +149,13 @@ bridge online DAgger with offline SFT or real-robot datasets.
 Installation
 ------------
 
-For installation details, please first refer to :doc:`../../start/installation`.
-The DAgger examples below use the embodied image or the equivalent local environment.
-
-**Option 1: Docker Image**
+Install the embodied environment with ``requirements/install.sh``, or pull a prebuilt image from `Docker Hub <https://hub.docker.com/r/rlinf/rlinf>`__. See :doc:`../../start/installation` for shared options.
 
 .. code:: bash
 
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # infinigence-ai-registry.cn-beijing.cr.aliyuncs.com/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-Please switch to the corresponding virtual environment via the built-in
-``switch_env`` utility in the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-.. code:: bash
-
-   # For mainland China users, you can add the `--use-mirror` flag for better download speed.
+   # For mainland China users, add `--use-mirror` for faster downloads.
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
-   # For robotwin environment, please use the following command:
+   # For the RoboTwin environment, run:
    # bash requirements/install.sh embodied --model openpi --env robotwin
    source .venv/bin/activate
 
@@ -221,9 +198,7 @@ You can find pretrained Pi0 checkpoints on Hugging Face for student initializati
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT --local-dir /path/to/model
 
 The expert model checkpoint could also come from a PPO run in :doc:`pi0`.
@@ -248,9 +223,7 @@ In the same way, ou can find pretrained Pi0 checkpoints on Hugging Face for stud
 
 .. code:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
+   # For mainland China users, set HF_ENDPOINT=https://hf-mirror.com for faster downloads.
    hf download RLinf/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir /path/to/model
 
 The expert model checkpoint could also come from a PPO run in :doc:`pi0`.
