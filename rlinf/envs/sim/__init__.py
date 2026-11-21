@@ -16,6 +16,6 @@
 
 One subpackage per simulator or benchmark. Nothing is imported here: a node
 needs only the simulator it actually runs, and several of these pull in heavy
-optional dependencies. ``rlinf.envs.get_env_cls`` imports the one selected by
-``env.train.env_type`` and nothing else.
+optional dependencies. ``rlinf.envs.get_env_cls`` imports the one named by the
+``env_type`` of the env a worker hosts, and nothing else.
 """

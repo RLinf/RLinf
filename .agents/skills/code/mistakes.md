@@ -19,6 +19,7 @@ Coding agents repeat a small set of mistakes in RLinf, and reviewers send them b
 | Mistake | Fix | Rule |
 |---|---|---|
 | `hasattr`, `getattr(x, "y", None)`, `isinstance` ladders, and `None` checks for states the caller never produces | Trust the contract inside RLinf; validate once at the boundary | § No unnecessary protection code |
+| Replacing direct member access (`obj.attr`) with `getattr`/`hasattr` or adding guards in product code so incomplete test mocks or stubs pass | Access members directly and trust the contract; fix the test to use a real object or complete fixture | § No unnecessary protection code |
 | `try: ... except Exception:` that logs and continues, bare `except`, `except: pass` | Let the error surface, or handle the specific exception with a clear message | § No unnecessary protection code |
 | Retries, sleeps, fallbacks, and compatibility shims for failures nobody demonstrated | Remove them, or add the test that shows the failure | § No unnecessary protection code |
 | Unused parameters, fields, helpers, and config keys; commented-out code; leftover debug output | Delete them | patterns.md § Code |
