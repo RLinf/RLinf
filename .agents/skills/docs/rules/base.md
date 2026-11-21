@@ -38,9 +38,10 @@ Rewrite such a sentence around the behavior instead of trimming it:
 
 When completeness and readability pull in opposite directions, cut from the main flow rather than piling more text onto the page. A shorter page that gets the reader cleanly through the common path beats an exhaustive page that lists every option, default, and caveat.
 
+- **Write in plain, readable language.** Explain ideas in ordinary, concrete words a colleague understands on the first read—avoid stiff jargon, abstract nominalizations, and convoluted prose. If you would not say a sentence aloud when explaining the feature to a peer, rewrite it.
 - **Apply the delete test.** Every section, paragraph, table row, and note must earn its space. If removing it still lets a reader finish the task (recipe or guide) or grasp the idea (concept), cut it or link to Reference.
-- **Say each thing once.** State a fact or config key once, where the reader acts on it; do not repeat it across the intro, command prose, tables, and results.
-- **Write for scanning.** Keep paragraphs short (1–3 sentences on recipes and guides) and code blocks clean. Never dump a long list of config keys or parameter overrides into a dense prose paragraph; show only the few keys the reader changes and leave the rest to YAML defaults.
+- **Say each thing once.** State a fact or config key once, where the reader acts on it; do not repeat it across the intro, command prose, tables, and results. Do not explain the same point twice from negative and positive sides (such as "this is not A, not B, but C") or stack defensive disclaimers; state directly what it is or does.
+- **Write for scanning.** Keep paragraphs short (1–3 sentences on recipes and guides) and commands clean. Never dump a long list of config keys or parameter overrides into a dense prose paragraph or complex shell command; show only the few keys the reader changes and leave the rest to YAML defaults.
 - **Use progressive disclosure.** Lead with one clean common path; push optional variants and advanced tuning to the end or to a separate guide or reference page.
 
 ## Be accurate
@@ -79,5 +80,5 @@ When completeness and readability pull in opposite directions, cut from the main
 ## Two languages
 
 - Every page exists at the same path under `docs/source-en/` and `docs/source-zh/`. Change both in the same pass, and keep the same sections, commands, config keys, numbers, and links.
-- Write each language from the page plan, in its own idiom; the sentences need not correspond.
+- Write each language from the page plan, in its own idiom; never machine-translate or literally translate the English page sentence by sentence into Chinese.
 - Never translate an identifier: config keys, env and model names, CLI flags, script names.
